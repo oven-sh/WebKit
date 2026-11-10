@@ -259,13 +259,17 @@ static std::optional<Yarr::SharedRoutine::FindFirstPairOfUnits> pairSearchedFor(
 static void testTwoPlacesOfOneUnitEachAreSearchedForAtOnce()
 {
     using Pair = Yarr::SharedRoutine::FindFirstPairOfUnits;
-    AOT_TEST_CHECK((pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 6, false, false }));
-    AOT_TEST_CHECK((pairSearchedFor("ab+c"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 1, false, false }));
-    AOT_TEST_CHECK((pairSearchedFor("k[0-9]s[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 1) == Pair { Yarr::CharSize::Char16, 2, true, true }));
-    AOT_TEST_CHECK((pairSearchedFor("x-[a-z]{2}:[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 1) == Pair { Yarr::CharSize::Char16, 3, false, false }));
+    using enum Yarr::PositionUnits;
+    AOT_TEST_CHECK((pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 6, One, One }));
+    AOT_TEST_CHECK((pairSearchedFor("ab+c"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 1, One, One }));
+    AOT_TEST_CHECK((pairSearchedFor("k[0-9]s[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 1) == Pair { Yarr::CharSize::Char16, 2, IgnoreCase, IgnoreCase }));
+    AOT_TEST_CHECK((pairSearchedFor("x-[a-z]{2}:[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 1) == Pair { Yarr::CharSize::Char16, 3, One, One }));
+    AOT_TEST_CHECK((pairSearchedFor("\"(?:_|\\\\u005[Ff])(?:_|\\\\u005[Ff])p"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 1, One, Two }));
+    AOT_TEST_CHECK((pairSearchedFor("[cd]:[a-z]+e"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 1, Two, One }));
 #if CPU(X86_64)
-    AOT_TEST_CHECK((pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { }, 0) == Pair { Yarr::CharSize::Char8, 6, false, false }));
-    AOT_TEST_CHECK((pairSearchedFor("k[0-9]s[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 0) == Pair { Yarr::CharSize::Char8, 2, true, true }));
+    AOT_TEST_CHECK((pairSearchedFor("\"(?:c|\\\\u0063)(?:o|\\\\u006[Ff])\"\\s*:"_s, { }, 0) == Pair { Yarr::CharSize::Char8, 1, One, Two }));
+    AOT_TEST_CHECK((pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { }, 0) == Pair { Yarr::CharSize::Char8, 6, One, One }));
+    AOT_TEST_CHECK((pairSearchedFor("k[0-9]s[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 0) == Pair { Yarr::CharSize::Char8, 2, IgnoreCase, IgnoreCase }));
 #endif
     AOT_TEST_CHECK((!pairSearchedFor("[a-z]bz?.7"_s, { }, 1)));
     AOT_TEST_CHECK((!pairSearchedFor("[a-z]:#?[^=]+"_s, { }, 1)));

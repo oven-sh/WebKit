@@ -67,6 +67,7 @@ void generateInstanceOf(StubAssembler& jit)
     const bool readsPrototypeOutOfCell = operand == InstanceOfOperand::PrototypeThatIsBuiltin;
     const bool givesWayAtTraps = operand == InstanceOfOperand::PrototypeWithoutTraps;
     const bool isGivenPrototype = operand == InstanceOfOperand::Prototype || givesWayAtTraps;
+    const bool mayAcceptBinaryData = readsPrototypeOutOfCell || operand == InstanceOfOperand::Prototype;
     const GPRReg prototype = readsPrototypeOutOfCell ? jit.clobberRegister(jit.immediate()) : isGivenPrototype ? jit.operand(1) : jit.clobberOperand(1);
     const GPRReg constructor = prototype;
     const GPRReg current = jit.allocateScratch(StubRegister::T11);
@@ -74,6 +75,7 @@ void generateInstanceOf(StubAssembler& jit)
     const GPRReg value = jit.operand(0);
     JumpList isInstance;
     JumpList notInstance;
+    JumpList reachesEndOfChain;
     JumpList slowCases;
     JumpList startsOverWithPrototype;
     JumpList cellIsNotMade;
@@ -123,13 +125,16 @@ void generateInstanceOf(StubAssembler& jit)
         if (!readsPrototypeOutOfCell)
             first.goesOn.link(&jit);
         Label nextLink = jit.label();
-        notInstance.append(jit.branchIfNotCell(next));
+        reachesEndOfChain.append(jit.branchIfNotCell(next));
         jit.move(next, current);
         Link further = followLink(current, false);
         further.goesOn.linkTo(nextLink, &jit);
         readPolyProto(first, value);
         readPolyProto(further, current);
 
+        reachesEndOfChain.link(&jit);
+        if (mayAcceptBinaryData)
+            slowCases.append(jit.branchIfType(value, JSTypeRange { ArrayBufferType, static_cast<JSType>(LastTypedArrayTypeExcludingDataView) }));
         notInstance.link(&jit);
         returnBoolean(false);
         isInstance.link(&jit);

@@ -653,6 +653,7 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         return context;
     };
 
+    SmallSet<JSCell*> visitedCombinators;
     auto getParentGenerator = [&](JSCell* gen) -> JSCell* {
         JSPromise* awaitedPromise = asyncFunctionPromise(gen);
         JSValue promiseContext = getContextValueFromPromise(awaitedPromise);
@@ -663,6 +664,9 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         // handle simple `await`
         if (auto* generator = asyncFunctionIn(promiseContext))
             return generator;
+
+        if (!promiseContext.isCell() || !visitedCombinators.add(promiseContext.asCell()).isNewEntry)
+            return nullptr;
 
         // handle `Promise.all`, `Promise.allSettled`, and `Promise.any`
         if (auto* globalContext = dynamicDowncast<JSPromiseCombinatorsGlobalContext>(promiseContext)) {

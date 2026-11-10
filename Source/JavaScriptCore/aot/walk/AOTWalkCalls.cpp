@@ -51,6 +51,7 @@ struct CallInWalkCalls {
     Reference listOfUnknownLength;
     Reference borrowedHiddenRest;
     Reference borrowedHiddenRestLength;
+    bool listLengthIsBounded { false };
     std::span<const Reference> writtenInFrontOfList;
     BuiltinID calledBuiltin;
     bool isConstruction { false };
@@ -149,6 +150,21 @@ static bool unitMayLeaveByCallInWalkCalls(Walker& walker, CodeUnit entered)
 bool unitMayLeaveByDirectCallOf(Walker& walker, FunctionID callee)
 {
     return unitMayLeaveByCallInWalkCalls(walker, walker.plan().conventions().directEntryOf(callee));
+}
+
+bool canTailCallMethodTable(Walker& walker, uint32_t place, std::span<const FunctionID> methods)
+{
+    const Plan& plan = walker.plan();
+    const CallingConventions& conventions = plan.conventions();
+    CodeUnit unit = walker.unit();
+    if (!returnsResultOfFunction(unit.role) || (plan.resultsPassNoReturn(unit.function) && plan.typeHeldOfResult(walker.program(), walker.facts().linked(), unit.function)))
+        return false;
+    const MethodSelector& selector = conventions.methodSelector(place);
+    if (!unitMayLeaveByCallInWalkCalls(walker, conventions.tableLookupOf(selector)) || conventions.resultRepresentation(unit) != selector.result)
+        return false;
+    return std::ranges::all_of(methods, [&](FunctionID method) {
+        return plan.endsItsTailCalls(method) || conventions.resultRepresentation(conventions.directEntryOf(method)) == selector.result;
+    });
 }
 
 static bool findCapturesInSightInWalkCalls(const Code& code, FunctionID function, Reference closure, size_t numberOfCaptures, Vector<Reference, 8>& captures)
@@ -396,6 +412,19 @@ static std::optional<uint32_t> restArrayFirstArgument(Walker& walker, Reference 
     return allocation.firstArgument();
 }
 
+static bool holdsArgumentsOfUnit(Walker& walker, Reference array)
+{
+    if (restArrayFirstArgument(walker, array))
+        return true;
+    std::optional<uint32_t> index = walker.entryParameterOfUnitBoundTo(array);
+    if (!index)
+        return false;
+    const Function& function = walker.program().at(walker.unit().function);
+    EntryParameter kind = function.entryParameterKind(*index);
+    return kind == EntryParameter::HiddenRest
+        || (kind == EntryParameter::Parameter && function.has(FunctionFlags::HasRestParameter) && *index - function.firstParameterIndex() == function.numberOfPositionalParameters());
+}
+
 static Reference sinkRestArrayAllocation(Walker& walker, Reference array)
 {
     if (!restArrayFirstArgument(walker, array))
@@ -554,7 +583,8 @@ static bool buildDirectCallInWalkCalls(Walker& walker, const BodyValue& call, co
     originInFrontOfCall.isTailCall = false;
     BlockID continuationBlock;
     Reference mergedResult;
-    if (request.listOfUnknownLength && !buildCallAsWrittenForLongListInWalkCalls(walker, written, request, originInFrontOfCall, continuationBlock, mergedResult))
+    bool asksLength = request.listOfUnknownLength && !request.listLengthIsBounded;
+    if (asksLength && !buildCallAsWrittenForLongListInWalkCalls(walker, written, request, originInFrontOfCall, continuationBlock, mergedResult))
         return true;
 
     Vector<Reference, 8> operands;
@@ -950,6 +980,7 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     if (prototype)
         allocation.setPrototypeOperand(prototype);
     walker.chooseConservativeFields(allocation);
+    allocation.setEndsNoGuards(walker.isInLoop() && writerEndsNoGuard(walker, allocation));
     Reference object = walker.build(WTF::move(allocation));
     if (!object)
         return true;
@@ -1215,6 +1246,7 @@ static bool walkConstructionOfListInWalkCalls(Walker& walker, const BodyValue& c
         request.listOfUnknownLength = written->listOperand();
         if (borrowed) {
             request.borrowedHiddenRest = borrowed;
+            request.listLengthIsBounded = holdsArgumentsOfUnit(walker, borrowed);
             request.borrowedHiddenRestLength = buildSpreadArrayLength(walker, borrowed, written->origin());
             if (!request.borrowedHiddenRestLength)
                 return true;

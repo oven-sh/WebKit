@@ -19,7 +19,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+bool stepsOfPatternStandInRow(const BodyIndex&, const BodyValue& open);
+
 static constexpr uint32_t closedOperationsOfProtocolForGenerators = 3;
+static constexpr uint32_t mostStepsOfPatternOverGenerator = 4;
 
 std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex& index, ValueID open)
 {
@@ -310,17 +313,8 @@ static bool openLoopOverGenerator(Walker& walker, const BodyValue& open)
     return true;
 }
 
-static bool stepLoopOverGenerator(Walker& walker, const BodyValue& step)
+static void stepGeneratorInPlace(Walker& walker, BuilderForGenerators& builder, Reference generator, const std::optional<PassedTest>& generatorWasAsMade, const BuilderForGenerators::MeetingOfStep& after)
 {
-    Reference state = walker.referenceOf(step.operand(0));
-    if (!isStateOfLoopOverGenerator(walker, state))
-        return false;
-
-    BuilderForGenerators builder(walker, walker.originOf(step));
-    BuilderForGenerators::MeetingOfStep after = builder.openMeetingOfStep();
-    BlockID byProtocol = builder.addBlock(BlockFrequency::Unlikely);
-    Reference generator = builder.continueIfTypeMatches(state, typeOfGenerators(walker), byProtocol);
-    std::optional<PassedTest> generatorWasAsMade = walker.loopsOverGenerators().statesOpened.get(state.bits()).generatorWasAsMade;
     Reference stepped = generatorWasAsMade ? buildNextStepOfGeneratorAskedAtOpen(walker, builder, generator, *generatorWasAsMade) : buildStepOfGenerator(walker, builder, generator, ResumeMode::Next, GeneratorStepCheck::IsUnmodified);
     Reference value = builder.resultAt(stepped, static_cast<uint32_t>(StepGeneratorResult::Value));
     Reference status = builder.resultAt(stepped, static_cast<uint32_t>(StepGeneratorResult::Status));
@@ -337,6 +331,20 @@ static bool stepLoopOverGenerator(Walker& walker, const BodyValue& step)
 
     builder.continueIn(isStepped);
     builder.endStep(builder.isInteger(status, static_cast<int64_t>(GeneratorStepStatus::Completed)), value, after);
+}
+
+static bool stepLoopOverGenerator(Walker& walker, const BodyValue& step)
+{
+    Reference state = walker.referenceOf(step.operand(0));
+    if (!isStateOfLoopOverGenerator(walker, state))
+        return false;
+
+    BuilderForGenerators builder(walker, walker.originOf(step));
+    BuilderForGenerators::MeetingOfStep after = builder.openMeetingOfStep();
+    BlockID byProtocol = builder.addBlock(BlockFrequency::Unlikely);
+    Reference generator = builder.continueIfTypeMatches(state, typeOfGenerators(walker), byProtocol);
+    std::optional<PassedTest> generatorWasAsMade = walker.loopsOverGenerators().statesOpened.get(state.bits()).generatorWasAsMade;
+    stepGeneratorInPlace(walker, builder, generator, generatorWasAsMade, after);
 
     builder.continueIn(byProtocol);
     Reference words = builder.takeWordsOfProtocol(state, listOfWordsMadeForState(walker, state));
@@ -396,11 +404,83 @@ static bool closeLoopOverGenerator(Walker& walker, const BodyValue& close)
     return true;
 }
 
+static bool takePatternOverGenerator(Walker& walker, const BodyValue& open)
+{
+    auto written = open.as<Opcode::IteratorOpen>();
+    if (!written.isDestructuring() || written.iteratorKind() != IteratorKind::Sync || written.isDelegating() || !walker.isInLoop())
+        return false;
+    Reference generator = walker.referenceOf(written.iterableOperand());
+    TypeID proven = generator && generator.isValue() ? walker.typeOf(generator) : TypeID();
+    if (!proven || !walker.types().isSubset(proven, typeOfGenerators(walker)) || !walker.has(Mechanism::Guesses) || !walker.opensGuesses())
+        return false;
+    uint32_t numberOfSteps = written.elementCount().value_or(0);
+    if (!numberOfSteps || numberOfSteps > mostStepsOfPatternOverGenerator || !engineAnswersForGenerators(walker) || !stepsOfPatternStandInRow(walker.currentBodyIndex(), open))
+        return false;
+
+    BuilderForGenerators builder(walker, walker.originOf(open));
+    BlockID byRunTime = builder.addBlock(BlockFrequency::Rare);
+    BlockID meeting = builder.addBlock();
+    Walker::IndexedIteration pattern;
+    pattern.hasPrecomputedSteps = true;
+    for (uint32_t step = 0; step < numberOfSteps; ++step)
+        pattern.precomputedSteps.append(walker.addParameter(meeting, { }, Representation::JSValue));
+    auto handOn = [&](std::span<const Reference> taken) {
+        if (walker.isUnreachable())
+            return;
+        Vector<Reference, 4> arguments(taken);
+        while (arguments.size() < numberOfSteps)
+            arguments.append(builder.undefined());
+        walker.jumpTo(meeting, arguments.span());
+    };
+
+    Draft test = builder.draft(Opcode::IsUnmodifiedGenerator);
+    test.setValueOperand(generator);
+    std::optional<PassedTest> isAsMade = builder.continueIfCheckPasses(builder.build(WTF::move(test)), byRunTime);
+    if (isAsMade) {
+        buildFirstReadsThatOpenOfGeneratorLeavesOut(walker, builder.origin());
+        Vector<Reference, 4> taken;
+        for (uint32_t step = 0; step < numberOfSteps; ++step) {
+            BuilderForGenerators::MeetingOfStep after = builder.openMeetingOfStep();
+            stepGeneratorInPlace(walker, builder, generator, isAsMade, after);
+            builder.continueIn(after.block);
+            BlockID last = builder.addBlock();
+            BlockID further = builder.addBlock();
+            builder.branch(after.done, last, further);
+            builder.continueIn(last);
+            handOn(taken.span());
+            builder.continueIn(further);
+            taken.append(after.value);
+        }
+        closeGenerator(walker, builder, generator, IteratorCompletion::Normal);
+        handOn(taken.span());
+    } else if (!walker.isUnreachable())
+        builder.jumpTo(byRunTime);
+
+    builder.continueIn(byRunTime);
+    Draft steps = builder.draft(Opcode::DestructureIterable);
+    steps.setIterableOperand(generator);
+    steps.setCount(numberOfSteps);
+    steps.setReadsListsByIndex(isArrayIteratorProtocolIntact(walker));
+    Reference results = builder.build(WTF::move(steps));
+    if (!walker.isUnreachable())
+        walker.state().invalidateHeap();
+    Vector<Reference, 4> taken;
+    for (uint32_t step = 0; step < numberOfSteps; ++step)
+        taken.append(builder.resultAt(results, step));
+    handOn(taken.span());
+
+    builder.continueIn(meeting);
+    walker.recordSpeculation();
+    if (!walker.isUnreachable())
+        walker.bind(open.id(), walker.addIndexedIteration(WTF::move(pattern)));
+    return true;
+}
+
 bool buildLoopOverGenerator(Walker& walker, const BodyValue& value)
 {
     switch (value.opcode()) {
     case Opcode::IteratorOpen:
-        return openLoopOverGenerator(walker, value);
+        return openLoopOverGenerator(walker, value) || takePatternOverGenerator(walker, value);
     case Opcode::IteratorResume:
         return stepLoopOverGenerator(walker, value);
     case Opcode::IteratorClose:

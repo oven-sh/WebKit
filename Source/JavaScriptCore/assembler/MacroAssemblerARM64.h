@@ -1385,8 +1385,13 @@ public:
 
     void or32(TrustedImm32 imm, Address address)
     {
-        load32(address, getCachedDataTempRegisterIDAndInvalidate());
-        or32(imm, dataTempRegister, dataTempRegister);
+        if (!imm.m_value || imm.m_value == -1 || LogicalImmediate::create32(imm.m_value).isValid()) {
+            load32(address, getCachedDataTempRegisterIDAndInvalidate());
+            or32(imm, dataTempRegister, dataTempRegister);
+        } else {
+            load32(address, getCachedMemoryTempRegisterIDAndInvalidate());
+            or32(imm, memoryTempRegister, getCachedDataTempRegisterIDAndInvalidate());
+        }
         store32(dataTempRegister, address);
     }
 
@@ -1999,7 +2004,7 @@ public:
             return;
         }
         loadFloat(Address(src, offset.m_value), dest1);
-        loadFloat(Address(src, offset.m_value + 8), dest2);
+        loadFloat(Address(src, offset.m_value + 4), dest2);
     }
 
     void loadPairFloat(Address src, FPRegisterID dest1, FPRegisterID dest2)
@@ -2649,7 +2654,7 @@ public:
             return;
         }
         storeFloat(src1, Address(dest, offset.m_value));
-        storeFloat(src2, Address(dest, offset.m_value + 8));
+        storeFloat(src2, Address(dest, offset.m_value + 4));
     }
 
     void storePairFloat(FPRegisterID src1, FPRegisterID src2, Address dest)
@@ -5110,7 +5115,7 @@ public:
             if ((cond == Zero) || (cond == NonZero))
                 return Jump(makeCompareAndBranch<64>(static_cast<ZeroCondition>(cond), reg));
             m_assembler.tst<64>(reg, reg);
-        } else if (hasOneBitSet(mask.m_value) && ((cond == Zero) || (cond == NonZero)))
+        } else if (mask.m_value > 0 && hasOneBitSet(mask.m_value) && ((cond == Zero) || (cond == NonZero)))
             return Jump(makeTestBitAndBranch(reg, getLSBSet(mask.m_value), static_cast<ZeroCondition>(cond)));
         else {
             LogicalImmediate logicalImm = LogicalImmediate::create64(mask.m_value);
@@ -7433,14 +7438,10 @@ public:
             // SDOT Vd.4S, Vn.16B, Vm.16B: for each i32 lane, accumulate sum of 4 signed 8-bit products.
             // SDOT accumulates into Vd, so we need addend in dest before the instruction.
             // Handle cases where dest overlaps with a or b to avoid clobbering inputs.
-            if (dest == a) {
-                moveVector(a, scratch1);
+            if (dest == a || dest == b) {
+                moveVector(dest, scratch1);
                 moveVector(addend, dest);
-                m_assembler.sdotv(dest, scratch1, b);
-            } else if (dest == b) {
-                moveVector(b, scratch1);
-                moveVector(addend, dest);
-                m_assembler.sdotv(dest, a, scratch1);
+                m_assembler.sdotv(dest, dest == a ? scratch1 : a, dest == b ? scratch1 : b);
             } else {
                 moveVector(addend, dest);
                 m_assembler.sdotv(dest, a, b);

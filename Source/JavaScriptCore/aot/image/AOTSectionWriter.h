@@ -79,11 +79,12 @@ template<typename T>
 void sortByWordOnPoolKeepingEqualElementsInOrder(const ParallelLoops& loops, std::span<T> list, const Invocable<uint64_t(const T&)> auto& wordOf)
 {
     static_assert(std::is_trivially_copyable_v<T> && alignof(T) <= alignof(std::max_align_t));
-    static constexpr size_t fewestSortedByBytes = 1 << 14;
-    static constexpr size_t valuesOfByte = 256;
+    static constexpr size_t fewestSortedByDigits = 1 << 14;
+    static constexpr unsigned bitsInDigit = 8;
+    static constexpr size_t valuesOfDigit = 1 << bitsInDigit;
 
     size_t count = list.size();
-    if (count < fewestSortedByBytes) {
+    if (count < fewestSortedByDigits) {
         AOT::stableSortInLine(list, { }, wordOf);
         return;
     }
@@ -104,30 +105,38 @@ void sortByWordOnPoolKeepingEqualElementsInOrder(const ParallelLoops& loops, std
     Vector<uint8_t> scratch;
     scratch.grow(count * sizeof(T));
     Vector<uint32_t> places;
-    places.grow(valuesOfByte * numberOfRanges);
+    places.grow(valuesOfDigit * numberOfRanges);
     std::span<T> from = list;
     std::span<T> to(reinterpret_cast<T*>(scratch.mutableSpan().data()), count);
-    for (unsigned shift = 0; shift < 64; shift += 8) {
-        if (!static_cast<uint8_t>(bitsThatDiffer >> shift))
-            continue;
+    while (bitsThatDiffer) {
+        unsigned shift = std::countr_zero(bitsThatDiffer);
+        bitsThatDiffer &= ~(static_cast<uint64_t>(valuesOfDigit - 1) << shift);
+        auto digitOf = [&](const T& element) {
+            return static_cast<size_t>(wordOf(element) >> shift) & (valuesOfDigit - 1);
+        };
         forEachRangeOfIndicesInParallel(loops, count, [&](size_t first, size_t end) {
-            std::array<uint32_t, valuesOfByte> numbersInRange { };
+            std::array<uint32_t, valuesOfDigit> numbersInRange { };
             for (const T& element : from.subspan(first, end - first))
-                ++numbersInRange[static_cast<uint8_t>(wordOf(element) >> shift)];
-            size_t range = first / indicesInRangeOfLoop;
-            for (size_t value = 0; value < valuesOfByte; ++value)
-                places[value * numberOfRanges + range] = numbersInRange[value];
+                ++numbersInRange[digitOf(element)];
+            uint32_t* placeOfRange = places.mutableSpan().data() + first / indicesInRangeOfLoop;
+            for (uint32_t number : numbersInRange) {
+                *placeOfRange = number;
+                placeOfRange += numberOfRanges;
+            }
         });
         uint32_t next = 0;
         for (uint32_t& place : places)
             next += std::exchange(place, next);
         forEachRangeOfIndicesInParallel(loops, count, [&](size_t first, size_t end) {
-            std::array<uint32_t, valuesOfByte> placesOfRange;
-            size_t range = first / indicesInRangeOfLoop;
-            for (size_t value = 0; value < valuesOfByte; ++value)
-                placesOfRange[value] = places[value * numberOfRanges + range];
+            std::array<uint32_t, valuesOfDigit> placesOfRange;
+            const uint32_t* placeOfRange = places.span().data() + first / indicesInRangeOfLoop;
+            for (uint32_t& place : placesOfRange) {
+                place = *placeOfRange;
+                placeOfRange += numberOfRanges;
+            }
+            T* elements = to.data();
             for (const T& element : from.subspan(first, end - first))
-                to[placesOfRange[static_cast<uint8_t>(wordOf(element) >> shift)]++] = element;
+                elements[placesOfRange[digitOf(element)]++] = element;
         });
         std::swap(from, to);
     }
@@ -176,13 +185,14 @@ Vector<uint8_t> bytesOf(const Vector<T>& values)
 [[nodiscard]] bool checkListSize(uint64_t count, size_t sizeOfElement, BuildContext&);
 void growSectionTo(Vector<uint8_t>& bytes, size_t newSize);
 
+Vector<uint32_t> findFirstEqualStreams(std::span<const Vector<uint16_t>> streams, const ParallelLoops&);
+
 class SectionWriter {
     WTF_MAKE_NONCOPYABLE(SectionWriter);
 public:
     explicit SectionWriter(BuildContext&);
 
     uint32_t append(std::span<const uint8_t>, size_t alignment);
-    Vector<uint32_t> appendAll(std::span<const Vector<uint8_t>> streams);
     size_t size() const { return m_bytes.size(); }
     bool didOverflow() const { return m_didOverflow; }
     Vector<uint8_t> takeBytes();

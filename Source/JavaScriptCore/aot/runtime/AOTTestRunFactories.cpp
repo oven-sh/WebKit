@@ -133,12 +133,19 @@ std::optional<ModuleFailureID> Modules::failureByAbsentExport(ModuleID module) c
     return std::nullopt;
 }
 
+std::optional<ModuleID> Modules::moduleThatFailedToLink(ModuleID root) const
+{
+    if (std::optional<ModuleFailureID> id = failureByAbsentExport(root))
+        return m_table.failure(*id).referrerModule();
+    auto failure = m_linkFailures.find(root);
+    return failure == m_linkFailures.end() ? std::nullopt : std::optional(failure->value);
+}
+
 bool Modules::wasLinkedAheadOfFailure(ModuleID root, ModuleID module) const
 {
-    std::optional<ModuleFailureID> id = failureByAbsentExport(root);
-    if (!id)
+    std::optional<ModuleID> referrer = moduleThatFailedToLink(root);
+    if (!referrer)
         return false;
-    ModuleID referrer = m_table.failure(*id).referrerModule();
     struct Step {
         ModuleID importer;
         size_t nextRequest;
@@ -155,7 +162,7 @@ bool Modules::wasLinkedAheadOfFailure(ModuleID root, ModuleID module) const
         Step& step = way.last();
         auto requests = m_table.requests(step.importer);
         if (step.nextRequest == requests.size() || isMocked(step.importer)) {
-            if (step.importer == referrer)
+            if (step.importer == *referrer)
                 return false;
             Step done = way.takeLast();
             if (done.earliestPlaceReached == done.place) {
@@ -190,7 +197,7 @@ bool Modules::wasLinkedAheadOfFailure(ModuleID root, ModuleID module) const
 
 bool Modules::wasRegisteredByFailedLoad(ModuleID module) const
 {
-    if (!m_errorsOfExportsThatBuildFoundAbsent || !data(module).isESModuleOfProgram())
+    if (!hasLinkFailures() || !data(module).isESModuleOfProgram())
         return false;
     if (status(module) == ModuleStatus::Failed)
         return !!failureByAbsentExport(module);
@@ -199,7 +206,7 @@ bool Modules::wasRegisteredByFailedLoad(ModuleID module) const
     bool wasPulledIn = false;
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID root(index);
-        if (!failureByAbsentExport(root) || !modulesInLoadGraph(root).get(module.index()))
+        if (!moduleThatFailedToLink(root) || !modulesInLoadGraph(root).get(module.index()))
             continue;
         if (wasLinkedAheadOfFailure(root, module))
             return false;
@@ -210,11 +217,28 @@ bool Modules::wasRegisteredByFailedLoad(ModuleID module) const
 
 bool Modules::wasLinkedBeforeLinkFailure(ModuleID module) const
 {
-    if (!m_errorsOfExportsThatBuildFoundAbsent)
+    if (!hasLinkFailures())
         return false;
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID root(index);
-        if (failureByAbsentExport(root) && modulesInLoadGraph(root).get(module.index()) && wasLinkedAheadOfFailure(root, module))
+        if (moduleThatFailedToLink(root) && modulesInLoadGraph(root).get(module.index()) && wasLinkedAheadOfFailure(root, module))
+            return true;
+    }
+    return false;
+}
+
+bool Modules::isLinkedForImporterYetToRun(ModuleID module, std::optional<ModuleID> asking) const
+{
+    if (!hasLinkFailures() || status(module) > ModuleStatus::Linked || !wasLinkedBeforeLinkFailure(module))
+        return false;
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        ModuleID importer(index);
+        if (importer == module || importer == asking || !data(importer).isESModuleOfProgram() || data(importer).isFacade() || status(importer) > ModuleStatus::Linked || isOfPackage(importer))
+            continue;
+        bool importsModule = std::ranges::any_of(m_table.imports(importer), [&](const ModuleRequestData& request) {
+            return !request.isHoisted && moduleLoadedBy(request) == module;
+        });
+        if (importsModule && wasLinkedBeforeLinkFailure(importer))
             return true;
     }
     return false;
@@ -259,6 +283,7 @@ void Modules::forgetLoadsRefusedByCheckOfNames(ModuleID mocked)
 
 void Modules::forgetFailuresOfExportsThatBuildFoundAbsent()
 {
+    m_linkFailures.clear();
     JSObject* kept = std::exchange(m_errorsOfExportsThatBuildFoundAbsent, nullptr);
     if (!kept)
         return;
@@ -291,8 +316,6 @@ bool Modules::evaluateLinkedModuleBeforeMock(ModuleID module, bool keepsOriginal
         ModuleStatus current = status(each);
         return current == ModuleStatus::Unlinked || current == ModuleStatus::Linked;
     };
-    if (hasFailedWithoutMock(module) && !isMocked(module) && !m_modulesWithPendingMock.get(module.index()))
-        return !didCaptureExports(module);
     if (!data(module).isESModuleOfProgram() || data(module).isFacade() || !isUnevaluated(module) || isMocked(module) || m_modulesWithPendingMock.get(module.index()))
         return false;
     if (!isImportedByGraphUnderEvaluation(module, keepsOriginalIntact) && (keepsOriginalIntact || !wasLinkedBeforeLinkFailure(module)))
@@ -1064,7 +1087,7 @@ void Modules::deferMockAfterAsyncFailure(ModuleID module)
         m_originalsDueUnderMock.set(module.index());
 }
 
-bool Modules::isOriginalDelegatedToHost(ModuleID mocked, const BitVector& held)
+bool Modules::isOriginalDelegatedToHost(ModuleID mocked, const BitVector& held, const BitVector& isOnPath)
 {
     if (!data(mocked).isESModuleOfProgram() || data(mocked).isFacade() || !host().evaluateOriginalBeforeFactory)
         return true;
@@ -1074,9 +1097,9 @@ bool Modules::isOriginalDelegatedToHost(ModuleID mocked, const BitVector& held)
     while (!work.isEmpty()) {
         for (uint32_t number : m_table.evaluationRequests(work.takeLast())) {
             ModuleID imported(number);
-            if (held.quickGet(number) || imported == mocked)
+            if (isOnPath.quickGet(number) || imported == mocked)
                 continue;
-            if (hasPendingMock(fileOf(imported)) || m_modulesWithPendingMock.get(imported.index()))
+            if (held.quickGet(number) || hasPendingMock(fileOf(imported)) || m_modulesWithPendingMock.get(imported.index()))
                 return true;
             if (!seen.quickSet(number) && status(imported) <= ModuleStatus::Linked && !isMocked(imported))
                 work.append(imported);
@@ -1298,7 +1321,7 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
     };
 
     if (needsOriginalBeforeFactory(root)) {
-        if (isOriginalDelegatedToHost(root, held) || !noteMock(root))
+        if (isOriginalDelegatedToHost(root, held, isOnPath) || !noteMock(root))
             return true;
         OriginalInSweep original = runOriginalInSweep(root);
         EXCEPTION_ASSERT(!scope.exception() || original == OriginalInSweep::Failed);
@@ -1339,7 +1362,7 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
                 fail();
                 RELEASE_AND_RETURN(scope, sweepAheadOfFactories(root));
             }
-            if (isOriginalDelegatedToHost(imported, held))
+            if (isOriginalDelegatedToHost(imported, held, isOnPath))
                 break;
             bool hasBeenEvaluated = m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == imported && above.original; });
             OriginalInSweep original = hasBeenEvaluated ? OriginalInSweep::Evaluated : runOriginalInSweep(imported);
@@ -1864,6 +1887,27 @@ void retryMockInDetachedLoads(JSGlobalObject* realm, ModuleID mocked)
 {
     if (Modules* modules = modulesOf(realm))
         modules->retryMockInDetachedLoads(mocked);
+}
+
+uint64_t Modules::resumingLoadFactoryCall(ModuleID mocked) const
+{
+    if (!m_resumingDetachedLoad)
+        return 0;
+    for (const DetachedLoad& left : m_detachedLoads) {
+        if (left.required != *m_resumingDetachedLoad || left.wait->status() != JSPromise::Status::Pending)
+            continue;
+        for (auto& [awaited, call] : left.awaitedFactoryCalls) {
+            if (awaited == mocked)
+                return call;
+        }
+    }
+    return 0;
+}
+
+uint64_t resumingLoadFactoryCall(JSGlobalObject* realm, ModuleID mocked)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->resumingLoadFactoryCall(mocked) : 0;
 }
 
 bool needsRetryInDetachedLoad(JSGlobalObject* realm, ModuleID mocked)

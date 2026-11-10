@@ -200,8 +200,10 @@ struct NumbersOfImageForModuleLists {
 struct IDsNotedForModuleLists {
     void addTo(NamesOfTables& names) const
     {
-        for (uint32_t id : strings)
+        for (uint32_t id : strings) {
             names.strings.set(id);
+            names.modulePathStrings.set(id);
+        }
         for (uint32_t id : textsNamedAsKeys)
             names.textsNamedAsKeys.set(id);
         for (uint32_t id : variables)

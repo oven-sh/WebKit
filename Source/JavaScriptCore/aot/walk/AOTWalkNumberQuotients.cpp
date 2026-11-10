@@ -310,6 +310,53 @@ static bool codeComesAgainInQuotients(const Walker& walker)
     return !walker.program().at(function).isModuleBody();
 }
 
+namespace {
+
+struct TestOfRemainder {
+    ValueID test;
+    std::optional<int64_t> comparedWith;
+};
+
+} // anonymous namespace
+
+static std::optional<TestOfRemainder> findTestInQuotients(Walker& walker, const BodyValue& remainder, std::optional<int64_t> divisor)
+{
+    if (!divisor || *divisor < 2 || *divisor > std::numeric_limits<int32_t>::max())
+        return std::nullopt;
+    const BodyIndex& index = walker.currentBodyIndex();
+    std::optional<BodyUser> firstMention = index.firstUser(remainder.id());
+    if (!firstMention || firstMention->kind != BodyUseKind::Operand)
+        return std::nullopt;
+    BodyValue test = index.value(firstMention->value);
+    BodyBlock block = index.block(index.blockOf(remainder.id()));
+    if (!block.holds(test.id()) || test.id().index() >= block.firstValue().index() + walker.endOfStretchBeingWalked())
+        return std::nullopt;
+    std::optional<uint32_t> unreadProofs = numberOfUnreadProofsBehindTestInQuotients(index, test.id(), remainder.id());
+    if (!unreadProofs || 1 + *unreadProofs >= BodyIndex::maxCountedUses || index.useCount(remainder.id()) != 1 + *unreadProofs)
+        return std::nullopt;
+
+    if (test.opcode() == Opcode::ToBoolean)
+        return TestOfRemainder { test.id(), std::nullopt };
+    if (test.opcode() != Opcode::StrictEq && test.opcode() != Opcode::Eq)
+        return std::nullopt;
+    ValueID other = test.operand(0) == remainder.id() ? test.operand(1) : test.operand(0);
+    if (!other || index.isParameter(other) || index.opcodeOf(other) != Opcode::Integer)
+        return std::nullopt;
+    return TestOfRemainder { test.id(), index.value(other).as<Opcode::Integer>().integer() };
+}
+
+ValueID findTestOfRemainder(Walker& walker, const BodyValue& remainder)
+{
+    if (remainder.opcode() != Opcode::Mod || !walker.opensGuesses() || !walker.isInLoop())
+        return { };
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID divisor = index.stripCasts(remainder.operand(1));
+    if (!divisor || index.isParameter(divisor) || index.opcodeOf(divisor) != Opcode::Integer)
+        return { };
+    std::optional<TestOfRemainder> found = findTestInQuotients(walker, remainder, index.value(divisor).as<Opcode::Integer>().integer());
+    return found ? found->test : ValueID();
+}
+
 bool buildNumberRemainderWithItsTest(Walker& walker, const BodyValue& remainder)
 {
     if (remainder.opcode() != Opcode::Mod || !walker.opensGuesses() || !codeComesAgainInQuotients(walker))
@@ -318,35 +365,20 @@ bool buildNumberRemainderWithItsTest(Walker& walker, const BodyValue& remainder)
     ValueID writtenDivisor = remainder.operand(1);
     Reference dividend = walker.referenceOf(writtenDividend);
     Reference divisor = walker.referenceOf(writtenDivisor);
-    std::optional<int64_t> knownDivisor = integerKnownInNumberForms(walker, divisor);
-    if (!knownDivisor || *knownDivisor < 2 || *knownDivisor > std::numeric_limits<int32_t>::max() || !dividend.isValue())
+    if (!dividend.isValue())
         return false;
     Type typeOfDividend = typeOfBuiltInQuotients(walker, dividend);
     if (!typeOfDividend.isNumber() || typeOfDividend.isInteger() || !(typeOfDividend.primitives & Primitive::Integer))
         return false;
 
-    const BodyIndex& index = walker.currentBodyIndex();
-    std::optional<BodyUser> firstMention = index.firstUser(remainder.id());
-    if (!firstMention || firstMention->kind != BodyUseKind::Operand)
+    std::optional<TestOfRemainder> found = findTestInQuotients(walker, remainder, integerKnownInNumberForms(walker, divisor));
+    if (!found)
         return false;
-    BodyValue test = index.value(firstMention->value);
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyValue test = index.value(found->test);
     BodyBlock block = index.block(index.blockOf(remainder.id()));
     uint32_t firstValue = block.firstValue().index();
-    if (!block.holds(test.id()) || test.id().index() >= firstValue + walker.endOfStretchBeingWalked())
-        return false;
-    std::optional<uint32_t> unreadProofs = numberOfUnreadProofsBehindTestInQuotients(index, test.id(), remainder.id());
-    if (!unreadProofs || 1 + *unreadProofs >= BodyIndex::maxCountedUses || index.useCount(remainder.id()) != 1 + *unreadProofs)
-        return false;
-
-    std::optional<int64_t> comparedWith;
-    if (test.opcode() != Opcode::ToBoolean) {
-        if (test.opcode() != Opcode::StrictEq && test.opcode() != Opcode::Eq)
-            return false;
-        ValueID other = test.operand(0) == remainder.id() ? test.operand(1) : test.operand(0);
-        if (!other || index.isParameter(other) || index.opcodeOf(other) != Opcode::Integer)
-            return false;
-        comparedWith = index.value(other).as<Opcode::Integer>().integer();
-    }
+    std::optional<int64_t> comparedWith = found->comparedWith;
 
     TypeID whole = walker.types().integer(Range::exact());
     if (walker.types().testablePartOf(whole) != whole)

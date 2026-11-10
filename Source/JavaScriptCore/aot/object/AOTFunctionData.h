@@ -10,6 +10,8 @@
 #include "AOTRecordTypes.h"
 #include "AOTVarint.h"
 #include "CodeType.h"
+#include "JSExportMacros.h"
+#include <bit>
 #include <optional>
 #include <span>
 #include <utility>
@@ -132,6 +134,73 @@ struct ClosureFunctionRangeData {
     uint32_t omittedWordCount;
 };
 static_assert(sizeof(ClosureFunctionRangeData) == 12 && isImageRecord<ClosureFunctionRangeData>);
+
+struct NumberGroup {
+    static constexpr unsigned size = 32;
+    static constexpr unsigned numberOfWords = 2;
+    static constexpr uint32_t isListedFlag = 1u << 31;
+    static constexpr size_t numberOfGroupWords(size_t numberOfEntries) { return (numberOfEntries + size - 1) / size * numberOfWords; }
+};
+
+class SparseNumberTable {
+public:
+    explicit SparseNumberTable(std::span<const uint32_t> words)
+        : m_words(words)
+    {
+    }
+
+    uint32_t at(uint32_t entry) const
+    {
+        std::span group = m_words.subspan(entry / NumberGroup::size * NumberGroup::numberOfWords, NumberGroup::numberOfWords);
+        uint32_t bit = 1u << entry % NumberGroup::size;
+        if (!(group[0] & bit))
+            return 0;
+        uint32_t rank = std::popcount(group[0] & (bit - 1));
+        return group[1] & NumberGroup::isListedFlag ? m_words[(group[1] & ~NumberGroup::isListedFlag) + rank] : group[1] + rank;
+    }
+
+    JS_EXPORT_PRIVATE static Vector<uint32_t> create(std::span<const uint32_t> numbers);
+
+private:
+    std::span<const uint32_t> m_words;
+};
+
+class AscendingNumberTable {
+public:
+    static constexpr uint32_t maxSpan = 512;
+
+    explicit AscendingNumberTable(std::span<const uint32_t> words)
+        : m_words(words)
+    {
+    }
+
+    uint32_t at(uint32_t index) const
+    {
+        std::span group = m_words.subspan(index / NumberGroup::size * NumberGroup::numberOfWords, NumberGroup::numberOfWords);
+        uint32_t entry = index % NumberGroup::size;
+        uint32_t place = group[1];
+        if (place & NumberGroup::isListedFlag)
+            return m_words[(place & ~NumberGroup::isListedFlag) + entry];
+        if (!entry)
+            return group[0];
+        uint32_t word = place / 32;
+        uint32_t bits = m_words[word] & ~0u << place % 32;
+        uint32_t onesLeft = entry;
+        while (static_cast<uint32_t>(std::popcount(bits)) < onesLeft) {
+            onesLeft -= std::popcount(bits);
+            bits = m_words[++word];
+        }
+        while (--onesLeft)
+            bits &= bits - 1;
+        uint32_t placeOfOne = word * 32 + std::countr_zero(bits);
+        return group[0] + (placeOfOne - place) - (entry - 1);
+    }
+
+    JS_EXPORT_PRIVATE static Vector<uint32_t> create(std::span<const uint32_t> numbers);
+
+private:
+    std::span<const uint32_t> m_words;
+};
 
 struct FunctionSources {
     uint32_t numberOfEntries;
@@ -346,13 +415,13 @@ bool forEachNamedCapture(std::span<const uint8_t> bytes, const auto& visit)
     v(functionRecordNumbers, uint8_t) \
     v(functionRecords, FunctionRecordData) \
     v(unsharedFunctionRecords, UnsharedFunctionRecordData) \
-    v(sourceFunctions, Number24) \
+    v(sourceFunctions, uint32_t) \
     v(implementedBuiltins, ImplementedBuiltinData) \
     v(closureFunctionKinds, FunctionKindData) \
     v(functionLengths, uint8_t) \
     v(closureCaptureCounts, uint8_t) \
     v(functionsWithLargeCounts, FunctionWithLargeCountsData) \
-    v(closureCellNumbers, Number24) \
+    v(closureCells, uint32_t) \
     v(namedCaptures, uint8_t) \
     v(functionSources, FunctionSources) \
     v(quotedSourceGroups, QuotedSourceGroupData) \

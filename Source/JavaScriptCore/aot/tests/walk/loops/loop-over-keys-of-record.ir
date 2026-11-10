@@ -1,0 +1,96 @@
+# function total(record) { let sum = 0; for (const k of Object.keys(record)) sum += record[k]; return sum; }
+# function changed(record) { let sum = 0; const keys = Object.keys(record); delete record.beta; for (const k of keys) sum += record[k]; return sum; }
+# function run(n) { let last; for (let i = 0; i < n; i++) { last = total({ alpha: i, beta: 2 }); last = changed({ alpha: i, beta: 2 }); } return last; }
+# The keys of a record are told by the order of its fields: each turn reads its field. A delete between ends that.
+# RUN: walk f2 mechanisms=all
+# CHECK: GetSlot{{*}}key="alpha"
+# CHECK: GetSlot{{*}}key="beta"
+# RUN(CHANGED): walk f3 mechanisms=all
+# CHANGED-NOT: GetSlot{{*}}key="alpha"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="alpha" declared={type=anything} flags=[IsRequired]}, {key="beta" declared={type=anything} flags=[IsRequired]}]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="run"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="run" module=m0 position=14 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Integer
+    v4 = Undefined
+    v5 = Integer integer=2
+    Jump -> next b1(v3, v4)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v6, v0
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = NewObject -, v6, v5 layout=L0 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = Call v1, v4, v11
+    v13 = NewObject -, v6, v5 layout=L0 fields=[0, 1]
+    v14 = FinishObject v13
+    v15 = Call v2, v4, v14
+    v16 = Increment v6
+    Jump -> next b1(v16, v15)
+  b3():
+    Return v7
+}
+function f2 name="total" module=m0 position=24 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectKeys
+    v4 = Call v3, v2, v0 calleeName="Object.keys"
+    v5 = IteratorOpen v4
+    Jump -> next b1(v1)
+  b1(v6):
+    LoopHint
+    v8 = IteratorResume v5
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    Return v6
+  b3() handler=b4():
+    v11 = ElemGet v0, v10
+    v12 = Add v6, v11
+    Jump -> next b1(v12)
+  b4() role=IterationCleanup subject=v5:
+    v13 = CatchException
+    IteratorClose v5 completion=Throw
+    Rethrow v13
+}
+function f3 name="changed" module=m0 position=34 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectKeys
+    v4 = Call v3, v2, v0 calleeName="Object.keys"
+    v5 = PropDelete v0 key="beta"
+    v6 = IteratorOpen v4
+    Jump -> next b1(v1)
+  b1(v7):
+    LoopHint
+    v9 = IteratorResume v6
+    v10 = ResultAt v9
+    v11 = ResultAt v9 index=1
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    Return v7
+  b3() handler=b4():
+    v12 = ElemGet v0, v11
+    v13 = Add v7, v12
+    Jump -> next b1(v13)
+  b4() role=IterationCleanup subject=v6:
+    v14 = CatchException
+    IteratorClose v6 completion=Throw
+    Rethrow v14
+}

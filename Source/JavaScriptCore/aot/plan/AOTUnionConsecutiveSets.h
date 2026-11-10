@@ -22,6 +22,7 @@ public:
     JS_EXPORT_PRIVATE ~ConsecutiveSets();
 
     JS_EXPORT_PRIVATE bool tryKeepTogether(std::span<const uint32_t> leaves);
+    JS_EXPORT_PRIVATE bool tryKeepNestedSetTogether(std::span<const uint32_t> leaves);
     JS_EXPORT_PRIVATE Vector<uint32_t> order(std::span<const uint64_t> keyOfLeaf) const;
 
 private:

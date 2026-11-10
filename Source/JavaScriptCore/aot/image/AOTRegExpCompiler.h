@@ -172,10 +172,13 @@ struct RegExpSection {
 
 JS_EXPORT_PRIVATE std::optional<RegExpSection> layOutRegExpSection(std::span<const CompiledRegExp>, const AssemblerPolicy&, const CodeTemplates&, BuildContext*);
 
+class StringNumbers;
+
 struct RegExpRecordInputs {
     const RegExpRequests& requests;
     const CompiledRegExps& compiled;
     const RegExpSection& section;
+    const StringNumbers& strings;
 };
 
 inline constexpr uint32_t regExpOutputSizeWithoutSubpatterns = 2;

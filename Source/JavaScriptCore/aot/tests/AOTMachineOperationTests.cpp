@@ -835,6 +835,64 @@ void checkComparisonsOf()
 }
 
 template<typename T>
+Vector<T> constantsOfComparisonTest()
+{
+    using U = std::make_unsigned_t<T>;
+    constexpr T least = std::numeric_limits<T>::min();
+    constexpr T greatest = std::numeric_limits<T>::max();
+    Vector<T> result;
+    for (U distance : { U(0), U(1), U(2), U(3), U(5), U(4094), U(4095), U(4096), U(4097), U(0xffe000), U(0xfff000), U(0xfff001), U(0x1000000) }) {
+        result.append(static_cast<T>(static_cast<U>(least) + distance));
+        result.append(static_cast<T>(static_cast<U>(greatest) - distance));
+    }
+    for (unsigned bit = 0; bit < 8 * sizeof(T); ++bit) {
+        for (int distance : { -1, 0, 1 })
+            result.append(static_cast<T>((U(1) << bit) + static_cast<U>(distance)));
+        result.append(static_cast<T>(U(0) - (U(1) << bit)));
+    }
+    return result;
+}
+
+template<typename T>
+void checkComparisonsWithConstantsOf()
+{
+    Vector<T> constants = constantsOfComparisonTest<T>();
+    Vector<uint64_t> values;
+    for (T constant : constants) {
+        for (int distance : { -1, 0, 1 })
+            values.append(static_cast<uint64_t>(constant) + static_cast<uint64_t>(distance));
+    }
+    for (const OperationTestComparison<T>& row : operationTestComparisonsOf<T>()) {
+        for (T constant : constants) {
+            OperationTestProcedure test;
+            Output& out = test.out();
+            LValue argument = test.argumentGPR(0);
+            LValue left = sizeof(T) == sizeof(int32_t) ? out.castToInt32(argument) : argument;
+            auto compare = [&] {
+                LValue comparison = out.binary(row.opcode, out.opaque(left), sizeof(T) == sizeof(int32_t) ? out.constInt32(static_cast<int32_t>(constant)) : out.constInt64(static_cast<int64_t>(constant)));
+                return comparison->isConstant() ? out.opaque(comparison) : comparison;
+            };
+            LValue result = compare();
+            result = out.bitOr(result, out.shl(appendBranchOfOperationTest(out, operationTestUses[1], compare()), 1));
+            result = out.bitOr(result, out.shl(out.select(compare(), out.opaque(out.constInt32(1)), out.opaque(out.constInt32(0))), 2));
+            out.ret(out.zeroExt(result, Int64));
+            compileOrFail(test);
+            for (uint64_t value : values) {
+                uint64_t answer = test.call<uint64_t>(operationTestWithDirtAbove(value, sizeof(T)));
+                uint64_t expected = row.reference(static_cast<T>(value), constant) ? 7 : 0;
+                checkOperationTest(answer == expected, test, descriptionOf(row.opcode).name, "(", RawHex(value), ", ", RawHex(static_cast<uint64_t>(constant)), ") of ", sizeof(T), " bytes gave ", answer);
+            }
+        }
+    }
+}
+
+static void testMachineOperationsThatCompareWithConstants()
+{
+    checkComparisonsWithConstantsOf<int32_t>();
+    checkComparisonsWithConstantsOf<int64_t>();
+}
+
+template<typename T>
 void checkBitTestsOf()
 {
     checkPredicate<T>("BitAnd that is not zero"_s, [](T a, T b) { return !!(a & b); }, operationTestUses, operationTestOperandsOf<T>(), [](Output& out, LValue left, LValue right) {
@@ -1808,7 +1866,7 @@ static void testMachineOperationsOnLowHalfOfSumThatIsExtendedWhereTestFailed()
 
         out.appendTo(passes);
         LValue extendedWhereItPassed = out.zeroExtPtr(out.castToInt32(sum));
-        out.ret(out.add(extendedWhereItPassed, out.constInt64(static_cast<int64_t>(tag))));
+        out.ret(out.add(out.opaque(extendedWhereItPassed), out.constInt64(static_cast<int64_t>(tag))));
 
         out.appendTo(fails);
         LValue wholeAsNumber = out.bitCast(out.intToDouble(sum), Int64);
@@ -1818,7 +1876,7 @@ static void testMachineOperationsOnLowHalfOfSumThatIsExtendedWhereTestFailed()
         out.appendTo(fits);
         if (extendsInBlockBehind)
             extendedWhereItFailed = out.zeroExtPtr(low);
-        out.ret(out.add(extendedWhereItFailed, out.constInt64(static_cast<int64_t>(tag))));
+        out.ret(out.add(out.opaque(extendedWhereItFailed), out.constInt64(static_cast<int64_t>(tag))));
         out.appendTo(doesNotFit);
         out.ret(wholeAsNumber);
         compileOrFail(test);
@@ -1901,6 +1959,7 @@ static std::span<const NativeTest> listOfMachineOperationTests()
         { "machine/operations/numbers/unary"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnOneNumber> },
         { "machine/operations/numbers/what-keeps-the-rest-of-its-destination-does-not-wait-for-an-earlier-block"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatKeepRestOfDestination> },
         { "machine/operations/comparisons/int32"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<int32_t>> },
+        { "machine/operations/comparisons/constants"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatCompareWithConstants> },
         { "machine/operations/comparisons/double"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<double>> },
         { "machine/operations/comparisons/bit-tests"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatTestBits> },
         { "machine/operations/switch"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatSwitch> },

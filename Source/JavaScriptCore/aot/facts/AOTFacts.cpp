@@ -30,6 +30,14 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+bool instancesMayBeLocked(const Program& program, const LinkTables& linked, TypeID testedType)
+{
+    std::span<const LayoutID> layouts = program.types.listOf(program.at(testedType).layouts);
+    return layouts.empty() || std::ranges::any_of(layouts, [&](LayoutID id) {
+        return linked.layout(id).instancesMayBeLocked;
+    });
+}
+
 ASCIILiteral nameOf(FactKind kind)
 {
     switch (kind) {
@@ -685,6 +693,10 @@ static void fillMembersOfClassesForFacts(const Program& program, const ThinSumma
     }
     rows.firstRowOfOwner.append(static_cast<uint32_t>(rows.rows.size()));
 
+    for (const ClassMember& member : rows.rows) {
+        if (member.key)
+            tables.keysOfMembersOfClass.set(member.key.index());
+    }
     tables.placesOfMembersOfClassByKey.resize(rows.rows.size());
     for (uint32_t layout = 0; layout < numberOfLayouts; ++layout) {
         std::span<const ClassMember> members = rows.of(layout);
@@ -698,14 +710,24 @@ static void fillMembersOfClassesForFacts(const Program& program, const ThinSumma
 
 std::span<const uint32_t> Facts::placesOfMembersUnder(LayoutID classLayout, ClassSide side, PropertyKeyID key) const
 {
+    if (key && !m_tables.keysOfMembersOfClass.get(key.index()))
+        return { };
     std::span<const ClassMember> members = membersOf(classLayout);
     if (members.empty())
         return { };
     std::span<const uint32_t> places = m_tables.placesOfMembersOfClassByKey.span().subspan(m_tables.membersOfClass.firstRowOfOwner[classLayout.index()], members.size());
-    auto found = std::ranges::equal_range(places, std::pair { side, key }, { }, [&](uint32_t place) {
-        return std::pair { members[place].side, members[place].key };
-    });
-    return { found.begin(), found.end() };
+    auto wordOf = [](ClassSide sideOfMember, PropertyKeyID keyOfMember) {
+        return static_cast<uint64_t>(sideOfMember) << 32 | keyOfMember.bits();
+    };
+    auto wordOfPlace = [&](uint32_t place) {
+        return wordOf(members[place].side, members[place].key);
+    };
+    const uint64_t word = wordOf(side, key);
+    auto first = std::ranges::lower_bound(places, word, { }, wordOfPlace);
+    auto end = first;
+    while (end != places.end() && wordOfPlace(*end) == word)
+        ++end;
+    return { first, end };
 }
 
 BlockID blockWhereListsOfArgumentsAreFirstNamed(const Program& program, const BodyIndexTable& bodies, FunctionID id)
@@ -892,7 +914,9 @@ FunctionID Facts::functionThatCallEntersByBinding(const BodyIndex& index, const 
 
 bool Facts::testMentionsWhatIsOutOfReach(TypeReader types, TypeID tested, NOESCAPE const ScopedLambda<bool(FunctionID)>& isInReach) const
 {
-    Type type = types.at(tested);
+    if (holdsOnlyPrimitives(tested))
+        return false;
+    const Type& type = types.recordOf(tested);
     if (!type.hasObjects())
         return false;
     bool mentionsIt = types.at(type.layouts).anyOfWithin(m_tables.firstLayoutOfNamespace, m_tables.endOfLayoutsOfNamespaces, [&](LayoutID layout) {

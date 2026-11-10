@@ -63,7 +63,7 @@ static bool keyIsBoundToRemainderInNumberKeys(Walker& walker, ValueID writtenKey
     ValueID record = key.id();
     while (valuePreservingOpcodes.contains(code.at(record).opcode))
         record = code.at(record).operand(0);
-    return code.at(record).opcode == Opcode::Mod;
+    return code.at(record).opcode == Opcode::Mod || code.at(record).opcode == Opcode::RemainderByWholeDivisor;
 }
 
 static WayInNumberForms endOfAccessInNumberKeys(Walker& walker, const BodyValue& value)

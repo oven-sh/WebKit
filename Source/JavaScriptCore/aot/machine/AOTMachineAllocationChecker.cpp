@@ -723,6 +723,10 @@ bool AllocationChecker::checkLeaf(const Operation* reader, const Operation* user
             return fail(FailureKind::WrongValueInRegister, reader);
         [[fallthrough]];
     case Location::Immediate:
+        if (location.isImmediate() && leaf->hasNoPosition() && comparesConstantInMemory(*user, childIndex, *leaf)) {
+            ++numberOfMemoryOperands;
+            return acceptsMemoryOperand(*user, childIndex) || fail(FailureKind::WrongValueInRegister, reader);
+        }
         if (!leaf->hasNoPosition() || !standsInInstruction(m_liveness, user, childIndex, leaf))
             return fail(FailureKind::WrongValueInRegister, reader);
         return true;

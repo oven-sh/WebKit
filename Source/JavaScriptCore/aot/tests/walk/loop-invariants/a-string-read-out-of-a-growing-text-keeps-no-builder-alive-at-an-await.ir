@@ -1,5 +1,5 @@
 # a string that is read out of a text while the text grows in its loop is a cell of its own: it points into no builder. So where it is read behind an await, the builder, a record in the frame, is not live at the await
-# function same(value: string) { return value; }   async function gather(limit: number) { const turns = limit | 0; let text = "", kept = "", at = 0; do { text += at + ","; kept = same(text); at = (at + 1) | 0; } while (at < turns); await null; return kept.length + ":" + text.length; }
+# function same(value: string) { return value; }   async function gather(limit: number) { const turns = limit | 0; let text = "", kept = "", at = 0; do { text += at + ","; if (at & 1) kept = same(text); at = (at + 1) | 0; } while (at < turns); await null; return kept.length + ":" + text.length; }
 # RUN: walk f2:CoroutineBody mechanisms=all
 # CHECK-LABEL: code f2:CoroutineBody
 # CHECK: ([[text]]: opaque(StringBuilder) @Cell
@@ -44,25 +44,31 @@ function f2 name="gather" module=m0 position=57 sourceRange={start=41 end=291} f
     v15 = Add v12, v14 @200
     v16 = Add v10, v15 @200
     v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @187
-    v18 = GetModuleVariable variable=g0 @216
-    v19 = Call v18, -, v17 calleeName="same" @216
-    v20 = Convert v19 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @209
-    v21 = Integer integer=1 @243
-    v22 = Add v12, v21 @243
-    v23 = Integer @248
-    v24 = BitOr v22, v23 @248
-    v25 = Convert v24 declared={type=number} @232
-    v26 = Less v25, v3 @267
-    Branch v26 -> taken b1(v17, v20, v25), notTaken b2() @267
+    v18 = Integer integer=1 @216
+    v19 = BitAnd v12, v18 @216
+    Branch v19 -> taken b2(), notTaken b3(v11) @216
   b2():
-    v27 = Null @283
-    v28 = Await v27, v1, v0 @283
-    v29 = PropGet v20 key="length" @298
-    v30 = String string=":" @312
-    v31 = Add v29, v30 @312
-    v32 = PropGet v17 key="length" @318
-    v33 = Add v31, v32 @318
-    v34 = Convert v33 declared={type=undefined|null|string|object} @318
-    Return v34 @318
+    v20 = GetModuleVariable variable=g0 @216
+    v21 = Call v20, -, v17 calleeName="same" @216
+    v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @209
+    Jump -> next b3(v22) @216
+  b3(v23: undefined|null|string):
+    v24 = Integer integer=1 @243
+    v25 = Add v12, v24 @243
+    v26 = Integer @248
+    v27 = BitOr v25, v26 @248
+    v28 = Convert v27 declared={type=number} @232
+    v29 = Less v28, v3 @267
+    Branch v29 -> taken b1(v17, v23, v28), notTaken b4() @267
+  b4():
+    v30 = Null @283
+    v31 = Await v30, v1, v0 @283
+    v32 = PropGet v23 key="length" @298
+    v33 = String string=":" @312
+    v34 = Add v32, v33 @312
+    v35 = PropGet v17 key="length" @318
+    v36 = Add v34, v35 @318
+    v37 = Convert v36 declared={type=undefined|null|string|object} @318
+    Return v37 @318
 }
 entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTWalkBirths.h"
+#include "AOTWalkKnown.h"
 #include "AOTWalkKnownCalls.h"
 #include "AOTWalkTextBuilders.h"
 
@@ -768,6 +769,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     allocation.setFields(listed.fields.span());
     allocation.setValuesOperands(stores.values.span().first(listed.fields.size()));
     walker.chooseConservativeFields(allocation);
+    allocation.setEndsNoGuards(walker.isInLoop() && writerEndsNoGuard(walker, allocation));
     Reference object = walker.hasFailed() ? Reference() : walker.build(WTF::move(allocation));
     if (!object)
         return true;

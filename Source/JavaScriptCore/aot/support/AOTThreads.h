@@ -137,8 +137,10 @@ Vector<Vector<T>> collectChunksInParallel(const ParallelLoops& loops, unsigned c
     ChunksOfIndices division = divideIntoChunks(count);
     Vector<Vector<T>> chunks(division.size());
     forEachIndexInParallel(loops, division.size(), [&](unsigned chunk) {
-        for (unsigned index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index)
-            collect(index, chunks[chunk]);
+        Vector<T>& collected = chunks[chunk];
+        unsigned end = division.firstIndexOf[chunk + 1];
+        for (unsigned index = division.firstIndexOf[chunk]; index < end; ++index)
+            collect(index, collected);
     });
     return chunks;
 }

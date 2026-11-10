@@ -345,6 +345,8 @@ static void nameInheritedProperty(PropertyAnswer& answer, const ChainWalk& walk)
     answer.holder = walk.holder;
 }
 
+static bool leavesFieldOut(State&, const LayoutData&, uint32_t orderWord, const FieldData&);
+
 static PropertyAnswer classifyFieldRead(const ReadQuery& query, Object& object, const FieldData& field)
 {
     bool isAccessor = field.isAccessor();
@@ -365,10 +367,15 @@ static PropertyAnswer classifyFieldRead(const ReadQuery& query, Object& object, 
         return uncacheableOnce(SlotAccess::Read);
     if (mayExistWithoutStorage) {
         bool findsPlainValue = walk.result == ChainWalkResult::Found && !(walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && isValidOffset(walk.offset);
-        if (isAccessor || walk.firstObjectWithEmptySlot || (walk.result != ChainWalkResult::Absent && !findsPlainValue))
+        bool findsAccessor = walk.result == ChainWalkResult::Found && walk.attributes & PropertyAttribute::Accessor && isValidOffset(walk.offset) && leavesFieldOut(object.state(), object.layout(), object.orderWord(), field);
+        if (isAccessor || walk.firstObjectWithEmptySlot || (walk.result != ChainWalkResult::Absent && !findsPlainValue && !findsAccessor))
             return answer;
         nameInheritedProperty(answer, walk);
-        answer.emptySlotMayBeUndefined = true;
+        if (findsAccessor) {
+            uint32_t orderWord = object.orderWord() & orderAndCountMask;
+            answer.orderWords = std::pair { orderWord, orderWord };
+        } else
+            answer.emptySlotMayBeUndefined = true;
     } else if (walk.firstObjectWithEmptySlot) {
         if (walk.result != ChainWalkResult::Unknown && !isAccessor) {
             answer.kind = PropertyAnswerKind::FieldOrInheritedField;
@@ -496,6 +503,16 @@ static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
     return answer;
 }
 
+static bool readsPrivateMemberOfString(const ReadQuery& query)
+{
+    return query.base.isString() && PropertyName(query.uid).isPrivateName();
+}
+
+static bool readsPrototypeAccessor(const ReadQuery& query)
+{
+    return query.uid == query.globalObject->vm().propertyNames->underscoreProto.impl() && query.slot.isAccessor() && query.slot.slotBase() == query.globalObject->objectPrototype();
+}
+
 PropertyAnswer classifyRead(const ReadQuery& query)
 {
     constexpr SlotAccess access = SlotAccess::Read;
@@ -504,7 +521,7 @@ PropertyAnswer classifyRead(const ReadQuery& query)
     UniquedStringImpl* uid = query.uid;
     const PropertySlot& slot = query.slot;
     bool mayAllocate = query.mode == ChainWalkMode::MayAllocate;
-    if (!structure || isNeverCachedName(vm, uid))
+    if (!structure || (isNeverCachedName(vm, uid) && !readsPrototypeAccessor(query) && !readsPrivateMemberOfString(query)))
         return PropertyAnswer::uncacheable(access);
     if (!query.base.isObject()) {
         if (query.base.isCell() && vm.aotState().propertyCaches->isSharedByInstances())
@@ -710,7 +727,10 @@ static bool isFunctionWithOrdinaryPut(VM& vm, JSCell* base, Structure* structure
 {
     if (isCompiledClosure(base)) {
         auto* closure = uncheckedDowncast<Closure>(base);
-        if (closure->classData() || closure->kind().isConstructor)
+        if (const LayoutData* classLayout = closure->classData()) {
+            if (!closure->state().objects->classes.addsStaticUnobserved(vm, *closure, *classLayout, structure, uid))
+                return false;
+        } else if (closure->kind().isConstructor)
             return false;
     } else if (base->type() != SlimClosureWithPropertiesType && (base->type() != JSFunctionType || base->classInfo() != JSBoundFunction::info()))
         return false;
@@ -720,6 +740,15 @@ static bool isFunctionWithOrdinaryPut(VM& vm, JSCell* base, Structure* structure
         return false;
     JSValue prototype = structure->storedPrototype();
     return prototype.isNull() || (prototype.isObject() && storesAreOrdinaryAlongPrototypeChain(asObject(prototype)->structure()));
+}
+
+static bool definesUnobservedStatic(VM& vm, JSCell* base, Structure* structure, UniquedStringImpl* uid)
+{
+    if (!isCompiledClosure(base) || !structure->isStructureExtensible() || structure->mayHaveImmutableProperties() || Closure::isNameThatBuiltinFunctionsRefuse(vm, uid))
+        return false;
+    auto* closure = uncheckedDowncast<Closure>(base);
+    const LayoutData* classLayout = closure->classData();
+    return classLayout && closure->state().objects->classes.addsStaticUnobserved(vm, *closure, *classLayout, structure, uid);
 }
 
 bool hasOrdinaryDefineForName(VM& vm, JSCell* base, Structure* structure, UniquedStringImpl* uid)
@@ -734,6 +763,18 @@ bool hasOrdinaryDefineForName(VM& vm, JSCell* base, Structure* structure, Unique
         return !ErrorInstance::isLazilyMaterialized(vm, uid);
     TypeInfo typeInfo = structure->typeInfo();
     return structure->classInfoForCells()->methodTable.defineOwnProperty == JSObject::defineOwnProperty && !typeInfo.overridesGetOwnPropertySlot() && !typeInfo.hasStaticPropertyTable();
+}
+
+static bool hasOrdinaryPutForName(VM& vm, JSCell* base, Structure* structure, UniquedStringImpl* uid)
+{
+    JSType type = structure->typeInfo().type();
+    if (isTypedView(type))
+        return !parseIndex(*uid) && !isCanonicalNumericIndexString(uid);
+    if (type == DirectArgumentsType || type == ScopedArgumentsType || type == ClonedArgumentsType)
+        return !parseIndex(*uid) && uid != vm.propertyNames->length.impl() && uid != vm.propertyNames->callee.impl() && uid != vm.propertyNames->iteratorSymbol.impl();
+    if (isJSArray(base) || structure->classInfoForCells() == ErrorInstance::info())
+        return hasOrdinaryDefineForName(vm, base, structure, uid);
+    return !structure->typeInfo().overridesPut();
 }
 
 static std::optional<PropertyAnswer> classifyReplacement(const StoreQuery& query)
@@ -779,10 +820,9 @@ static std::optional<PropertyAnswer> classifyAddition(const StoreQuery& query)
     PropertyAnswer answer = PropertyAnswer::own(PropertyAnswerKind::Addition, access, offset);
     answer.newStructure = after;
     bool isStore = access == SlotAccess::Store;
-    bool isFunction = isStore && isFunctionWithOrdinaryPut(vm, query.base, before, query.uid);
+    bool isFunction = isStore ? isFunctionWithOrdinaryPut(vm, query.base, before, query.uid) : definesUnobservedStatic(vm, query.base, before, query.uid);
     if (isStore) {
-        bool hasOrdinarySet = isJSArray(query.base) ? hasOrdinaryDefineForName(vm, query.base, before, query.uid) : !before->typeInfo().overridesPut();
-        if (!isFunction && !hasOrdinarySet)
+        if (!isFunction && !hasOrdinaryPutForName(vm, query.base, before, query.uid))
             return std::nullopt;
         ChainWalk walk = walkChainAbove(query);
         if (storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
@@ -874,9 +914,13 @@ static PropertyAnswer classifyFieldStore(const StoreQuery& query, Object& object
     bool hasMoved = object.structure() != before && !query.slot.isCacheableSetter();
     if (hasMoved && !hasMovedBetweenSlotAndExtraProperties(query, object, *before, field))
         return uncacheableOnce(access);
-    if (field.flags & fieldAttributeFlags || field.slot.representation() == SlotRepresentation::DeferredClosure)
+    bool hasAttributes = field.flags & fieldAttributeFlags;
+    bool isWritableInSlot = access == SlotAccess::Store && !(field.flags & (fieldIsReadOnly | fieldIsAccessor)) && object.isInSlot(field);
+    if ((hasAttributes && !isWritableInSlot) || field.slot.representation() == SlotRepresentation::DeferredClosure)
         return PropertyAnswer::uncacheable(access);
     PropertyAnswer answer { .kind = PropertyAnswerKind::Field, .access = access, .isOwn = true, .field = &field };
+    if (hasAttributes)
+        return answer;
     answer.undefinedNeedsNoStorage = field.flags & fieldMayExistWithoutStorage && object.state().objects->layouts.slotAdmits(field, jsUndefined());
     answer.fieldTakesAnyValue = access == SlotAccess::Store && !field.isOutOfLine() && field.slot.representation() == SlotRepresentation::JSValue && object.state().objects->layouts.typeOf(field).takesEveryValue();
     if (!field.canLeaveSlot() || before->mayBePrototype() || hasMoved)
@@ -1052,7 +1096,7 @@ PropertyAnswer classifyStore(const StoreQuery& query)
         }
         return answer;
     }
-    if (access == SlotAccess::Define && !hasOrdinaryDefineForName(vm, query.base, structureBefore, query.uid))
+    if (access == SlotAccess::Define && !hasOrdinaryDefineForName(vm, query.base, structureBefore, query.uid) && !definesUnobservedStatic(vm, query.base, structureBefore, query.uid))
         return PropertyAnswer::uncacheable(access);
     if (access == SlotAccess::Store && isLastIndexOfRegExp(vm, query.base, query.uid) && query.base->structure() == structureBefore)
         return PropertyAnswer::own(PropertyAnswerKind::LastIndexOfRegExp, access);
@@ -1133,14 +1177,13 @@ static Slot slotForFieldOrInherited(const PropertyAnswer& answer, Structure* rec
         if (std::optional<uint16_t> extensionWordOffset = locationOfHiddenWord(compiledStructureOf(receiverStructure).extensionSlot()))
             slot = Slot::tryCreateFieldOrInheritedField(receiverStructure->id(), flagsOfKind, answer.field->slot, answer.holder, *extensionWordOffset, cageBase);
     } else {
-        if (isRead && answer.kind == PropertyAnswerKind::FieldOrInheritedAccessor)
+        bool keepsOrderWordThatLeavesFieldOut = !!answer.orderWords;
+        bool readsField = isRead && !keepsOrderWordThatLeavesFieldOut;
+        if (readsField && answer.kind == PropertyAnswerKind::FieldOrInheritedAccessor)
             flagsOfKind |= Slot::inheritsGetter;
-        if (answer.emptySlotMayBeUndefined)
+        if (answer.emptySlotMayBeUndefined || keepsOrderWordThatLeavesFieldOut)
             flagsOfKind |= Slot::emptySlotMayBeUndefined;
-        bool keepsOrderWordThatLeavesFieldOut = !isRead && answer.orderWords;
-        if (keepsOrderWordThatLeavesFieldOut)
-            flagsOfKind |= Slot::emptySlotMayBeUndefined;
-        slot = Slot::tryCreateFieldAndHolder(receiverStructure->id(), isRead ? Slot::Kind::FieldOrInherited : Slot::Kind::FieldOrInheritedSetter, flagsOfKind, keepsOrderWordThatLeavesFieldOut ? SlotData::decode(answer.orderWords->first) : answer.field->slot, answer.holder, answer.offset, cageBase);
+        slot = Slot::tryCreateFieldAndHolder(receiverStructure->id(), readsField ? Slot::Kind::FieldOrInherited : Slot::Kind::FieldOrInheritedAccessor, flagsOfKind, keepsOrderWordThatLeavesFieldOut ? SlotData::decode(answer.orderWords->first) : answer.field->slot, answer.holder, answer.offset, cageBase);
     }
     return slot ? *slot : slotForField(answer, receiverStructure, Slot::Kind::Field, flags);
 }

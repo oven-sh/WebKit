@@ -123,7 +123,7 @@ size_t BodyIndexTable::sizeInBytes() const
         result += capacityInBytes(worker->edges) + capacityInBytes(worker->retreatingEdges);
         result += capacityInBytes(worker->firstPredecessor) + capacityInBytes(worker->predecessors);
         result += capacityInBytes(worker->sizesOfSubtrees) + capacityInBytes(worker->nextNumbersBelow);
-        result += capacityInBytes(worker->worklist) + capacityInBytes(worker->loops) + capacityInBytes(worker->mentionsOfIterations);
+        result += capacityInBytes(worker->worklist) + capacityInBytes(worker->loops) + capacityInBytes(worker->mentionsOfIterations) + capacityInBytes(worker->blocks);
     }
     return result;
 }
@@ -201,10 +201,39 @@ const BodyIndex& BodyIndexBuilder::finish()
     adoptMentionsOfIterations();
     computeDominators();
     numberDominatorTree();
-    m_index->m_blocksInDominatorOrder = m_blocksInDominatorOrder.first(m_blocks[entryBlock.index()].lastDominatorNumberBelow + 1);
+    m_index->m_numberOfReachableBlocks = m_blocks[entryBlock.index()].lastDominatorNumberBelow + 1;
     findLoops();
     adoptLoops();
+    adoptBlocks();
     return *m_index;
+}
+
+void BodyIndexBuilder::adoptBlocks()
+{
+    if (!m_hasNarrowNumbers) {
+        std::span<uint8_t> memory = m_worker.allocate(bytesOfArrayInBodyIndex<BlockPlace>(m_blocks.size()));
+        std::span<BlockPlace> blocks = takeArrayOfBodyIndex<BlockPlace>(memory, m_blocks.size());
+        std::ranges::copy(m_blocks, blocks.begin());
+        m_index->m_wideBlocks = blocks.data();
+        return;
+    }
+    using NarrowBlockPlace = BodyIndex::NarrowBlockPlace;
+    std::span<uint8_t> memory = m_worker.allocate(bytesOfArrayInBodyIndex<NarrowBlockPlace>(m_blocks.size()));
+    std::span<NarrowBlockPlace> blocks = takeArrayOfBodyIndex<NarrowBlockPlace>(memory, m_blocks.size());
+    for (size_t block = 0; block < m_blocks.size(); ++block)
+        new (NotNull, &blocks[block]) NarrowBlockPlace(m_blocks[block]);
+    m_index->m_narrowBlocks = blocks.data();
+    m_index->m_hasNarrowBlocks = true;
+}
+
+BodyIndex::RareParts& BodyIndexBuilder::ensureRareParts()
+{
+    if (!m_rareParts) {
+        std::span<uint8_t> memory = m_worker.allocate(bytesOfArrayInBodyIndex<BodyIndex::RareParts>(1));
+        m_rareParts = new (NotNull, takeArrayOfBodyIndex<BodyIndex::RareParts>(memory, 1).data()) BodyIndex::RareParts;
+        m_index->m_rareParts = m_rareParts;
+    }
+    return *m_rareParts;
 }
 
 void BodyIndexBuilder::begin()
@@ -214,26 +243,36 @@ void BodyIndexBuilder::begin()
     size_t numberOfValues = body.numberOfValues();
     RELEASE_ASSERT(body.words().size() < BodyIndex::isParameterBit);
 
+    m_hasNarrowNumbers = BodyIndex::fitsNarrowNumbers(body);
     std::span<uint8_t> memory = m_worker.allocate(bytesOfArrayInBodyIndex<BodyIndex>(1)
-        + bytesOfArrayInBodyIndex<BlockPlace>(numberOfBlocks)
         + bytesOfArrayInBodyIndex<BlockID>(numberOfBlocks)
-        + 2 * bytesOfArrayInBodyIndex<uint32_t>(numberOfValues)
+        + bytesOfArrayInBodyIndex<uint32_t>(numberOfValues)
+        + (m_hasNarrowNumbers ? bytesOfArrayInBodyIndex<uint16_t>(numberOfValues) : bytesOfArrayInBodyIndex<uint32_t>(numberOfValues))
         + bytesOfArrayInBodyIndex<uint8_t>(numberOfValues));
 
     m_index = new (NotNull, takeArrayOfBodyIndex<BodyIndex>(memory, 1).data()) BodyIndex;
-    m_blocks = takeArrayOfBodyIndex<BlockPlace>(memory, numberOfBlocks);
     m_blocksInDominatorOrder = takeArrayOfBodyIndex<BlockID>(memory, numberOfBlocks);
     m_placesOfValues = takeArrayOfBodyIndex<uint32_t>(memory, numberOfValues);
-    m_onlyUsersOfValues = takeArrayOfBodyIndex<uint32_t>(memory, numberOfValues);
+    if (m_hasNarrowNumbers)
+        m_narrowOnlyUsersOfValues = takeArrayOfBodyIndex<uint16_t>(memory, numberOfValues);
+    else
+        m_onlyUsersOfValues = takeArrayOfBodyIndex<uint32_t>(memory, numberOfValues);
     m_usesOfValues = takeArrayOfBodyIndex<uint8_t>(memory, numberOfValues);
 
-    std::uninitialized_default_construct(m_blocks.begin(), m_blocks.end());
+    m_worker.blocks.shrink(0);
+    m_worker.blocks.grow(numberOfBlocks);
+    m_blocks = m_worker.blocks.mutableSpan();
 
     m_index->m_body = body;
-    m_index->m_blocks = m_blocks;
-    m_index->m_placesOfValues = m_placesOfValues;
-    m_index->m_onlyUsersOfValues = m_onlyUsersOfValues;
-    m_index->m_usesOfValues = m_usesOfValues;
+    m_index->m_wideBlocks = m_blocks.data();
+    m_index->m_blocksInDominatorOrder = m_blocksInDominatorOrder.data();
+    m_index->m_placesOfValues = m_placesOfValues.data();
+    if (m_hasNarrowNumbers)
+        m_index->m_narrowOnlyUsersOfValues = m_narrowOnlyUsersOfValues.data();
+    else
+        m_index->m_onlyUsersOfValues = m_onlyUsersOfValues.data();
+    m_index->m_hasNarrowUsers = m_hasNarrowNumbers;
+    m_index->m_usesOfValues = m_usesOfValues.data();
 
     m_worker.edges.shrink(0);
     m_worker.retreatingEdges.shrink(0);
@@ -378,7 +417,7 @@ void BodyIndexBuilder::adoptMentionsOfIterations()
     std::span<uint8_t> memory = m_worker.allocate(bytesOfArrayInBodyIndex<BodyMentionOfIteration>(found.size()));
     std::span<BodyMentionOfIteration> mentions = takeArrayOfBodyIndex<BodyMentionOfIteration>(memory, found.size());
     std::ranges::copy(found, mentions.begin());
-    m_index->m_mentionsOfIterations = mentions;
+    ensureRareParts().mentionsOfIterations = mentions;
 }
 
 void BodyIndexBuilder::adoptLoops()
@@ -465,8 +504,9 @@ void BodyIndexBuilder::adoptLoops()
         });
     }
     std::ranges::copy(found, loops.begin());
-    m_index->m_loops = loops;
-    m_index->m_membersOfLoops = members;
+    BodyIndex::RareParts& rareParts = ensureRareParts();
+    rareParts.loops = loops;
+    rareParts.membersOfLoops = members;
 }
 
 ValueID BodyIndex::stripCastsSlow(ValueID id) const
@@ -512,7 +552,7 @@ std::optional<BodyEdgeResult> BodyIndex::edgeResultOfAnyTerminator(const BodyTer
         result.isOnTakenEdge = !targetIndex;
     } else
         result.caseIndex = targetIndex;
-    result.parameter = ValueID(m_blocks[target.block().index()].firstParameter + static_cast<uint32_t>(target.arguments().size()) + proofIndex);
+    result.parameter = ValueID(firstParameterOf(target.block()) + static_cast<uint32_t>(target.arguments().size()) + proofIndex);
     return result;
 }
 

@@ -25,7 +25,8 @@ FunctionID functionDeclaredInScopeSlot(const Program& program, LayoutID layout, 
     Type type = program.at(written);
     if (!type.isJavaScriptValue() || type.primitives)
         return { };
-    return singleFunctionOf(program, type);
+    FunctionID function = singleFunctionOf(program, type);
+    return function && isClassConstructorOf(program.at(function).kind) ? FunctionID() : function;
 }
 
 LayoutID scopeThatCaptureTakes(const Program& program, FunctionID function, uint32_t capture)

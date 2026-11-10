@@ -98,9 +98,14 @@ static SignalAction trapHandler(Signal signal, SigInfo& sigInfo, PlatformRegiste
         if (exception) {
             dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "found active fast memory for faulting address");
 
-            auto didFaultInWasm = [](void* faultingInstruction) -> std::tuple<bool, Wasm::Callee*> {
+            auto didFaultInWasm = [&](void* faultingInstruction) -> std::tuple<bool, Wasm::Callee*> {
                 if (LLInt::isWasmIPIntPC(faultingInstruction))
                     return { true, nullptr };
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+                // The sampling profiler holds the registry's lock until it has suspended this thread, which it cannot do while this handler is on an alternate signal stack.
+                if (isInCodeInImage)
+                    return { CodeInImage::isInFunction(faultingInstruction), nullptr };
+#endif
                 auto& calleeRegistry = NativeCalleeRegistry::singleton();
                 Locker locker { calleeRegistry.getLock() };
                 for (auto* callee : calleeRegistry.allCallees()) {
@@ -124,6 +129,12 @@ static SignalAction trapHandler(Signal signal, SigInfo& sigInfo, PlatformRegiste
 #if CPU(ARM64E) && HAVE(HARDENED_MACH_EXCEPTIONS)
                 if (g_wtfConfig.signalHandlers.useHardenedHandler) {
                     MachineContext::setInstructionPointer(context, presignedTrampoline);
+                    return SignalAction::Handled;
+                }
+#endif
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+                if (const void* stub = isInCodeInImage ? CodeInImage::framelessFaultStub(faultingInstruction) : nullptr) {
+                    MachineContext::setInstructionPointer(context, CodePtr<CFunctionPtrTag>::fromUntaggedPtr(const_cast<void*>(stub)));
                     return SignalAction::Handled;
                 }
 #endif

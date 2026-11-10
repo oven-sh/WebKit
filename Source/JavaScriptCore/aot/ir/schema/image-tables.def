@@ -1,28 +1,20 @@
-enum CallSiteKind (isFirstRead: Bool, isConstruct: Bool, isTailCall: Bool, isInsideCallee: Bool, namesBuiltin: Bool) {
+enum CallSiteKind (isFirstRead: Bool, isConstruct: Bool, isTailCall: Bool, isInsideCallee: Bool, namesBuiltin: Bool, isAwaited: Bool) {
     | engine
-    Plain(false, false, false, false, false)
-    Construct(false, true, false, false, false)
-    TailCall(false, false, true, false, false)
-    TailConstruct(false, true, true, false, false)
-    FirstRead(true, false, false, false, false)
-    InsideBuiltin(false, false, false, false, true)
-    InsideCallee(false, false, true, true, false)
-    InsideBuiltinCallee(false, false, true, true, true)
-    ConstructInsideBuiltin(false, true, false, false, true)
-    ConstructInsideBuiltinCallee(false, true, true, true, true)
+    Plain(false, false, false, false, false, false)
+    Construct(false, true, false, false, false, false)
+    TailCall(false, false, true, false, false, false)
+    TailConstruct(false, true, true, false, false, false)
+    FirstRead(true, false, false, false, false, false)
+    InsideBuiltin(false, false, false, false, true, false)
+    InsideCallee(false, false, true, true, false, false)
+    InsideBuiltinCallee(false, false, true, true, true, false)
+    ConstructInsideBuiltin(false, true, false, false, true, false)
+    ConstructInsideBuiltinCallee(false, true, true, true, true, false)
+    AwaitedCall(false, false, false, false, false, true)
 }
 
-packed PrologueCheckRow { callOffset: CodeOffset ; resumeOffset: CodeOffset }
-packed CallSiteHead {
-    hasInlineFrames: Bool hasPrologueChecks: Bool numberOfSites: UInt64
-    ; prologueChecks: List<PrologueCheckRow> if hasPrologueChecks
-    ; numberOfSitesWithoutCode: UInt64
-    ; numberOfInlineFrames: UInt64 if hasInlineFrames
-    ; inlineFrames: Bytes if hasInlineFrames
-}
 packed InlineFrameRow { isTailCall: Bool isConstruct: Bool parent: UInt32 ; function: Function }
 packed CallSiteDetails { kind: CallSiteKind frame: UInt32 ; calledBuiltin: Builtin if namesBuiltin(kind) }
-packed CallSiteRow { hasDetails: Bool distance: CodeOffset ; details: CallSiteDetails if hasDetails }
 
 packed HandlerRow { sitesSkipped: UInt32 ; furtherSites: UInt32 ; type: HandlerType[2] targetChange: Signed }
 

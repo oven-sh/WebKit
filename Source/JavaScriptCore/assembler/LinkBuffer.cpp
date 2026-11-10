@@ -369,7 +369,7 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
             else
                 Assembler::fillNops<jitMemcpyRepatch>(outData + writePtr, size);
             writePtr += size;
-            // A label at the pool's place names the code after the pool, and executableOffsetFor() reads the word before a label.
+            // A label here names the code after the pool, and executableOffsetFor() reads the word before a label.
             recordLinkOffsets(m_assemblerStorage, readPtr - sizeof(InstructionType), readPtr, readPtr - writePtr);
         }
     };

@@ -396,8 +396,12 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
     Word32 position = word32Of(value->positionOperand());
     if (isForward && !position.value()->isInt32(0))
         holdRangeInside(value, position, position);
+    bool readsRange = !!value->startOperand();
+    auto viewOfSubject = [&] {
+        return readsRange ? viewOfRange(value) : viewOf(value, string);
+    };
     if (!isForward && position.value()->isInt32(0) && canCompareInline(literal)) {
-        CharacterView view = viewOf(value, string);
+        CharacterView view = viewOfSubject();
         Word32 length = word32(text.length());
         Condition isAtStart = asBoolean([&](BranchTargets targets) {
             continueIf(aboveOrEqual(view.length, length), targets.notTaken);
@@ -413,11 +417,12 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
         return low32(callOperation<Integer>(value, operation, { in<CellPointer>(string), numberOfText, position }));
     };
     if (!text.is8Bit()) {
+        RELEASE_ASSERT(!readsRange);
         define(value, findInCell());
         return;
     }
 
-    CharacterView view = viewOf(value, string);
+    CharacterView view = viewOfSubject();
     if (!isForward && text.length() == 1) {
         Word32 codeUnit = word32(text[0]);
         define(value, findCodeUnit(view, codeUnit, select(lessThan(position, 0), 0, position), direction));
@@ -425,9 +430,10 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
     }
 
     Word32 found = selectByWidth<Word32>(view.is8Bit, [&](bool is8Bit) {
-        if (!is8Bit)
+        if (!is8Bit && !readsRange)
             return findInCell();
-        RuntimeOperation operation = isForward ? RuntimeOperation::StringFindLiteral8 : RuntimeOperation::StringReverseFindLiteral8;
+        RuntimeOperation operation = isForward ? (is8Bit ? RuntimeOperation::StringFindLiteral8 : RuntimeOperation::StringFindLiteral16)
+            : (is8Bit ? RuntimeOperation::StringReverseFindLiteral8 : RuntimeOperation::StringReverseFindLiteral16);
         return low32(callWithoutSite<Integer>(operation, { view.characters, view.length, numberOfText, position }));
     });
     ensureStillAliveHere(view.owner);
@@ -441,23 +447,22 @@ void StringEmitter::generateStringIndexOfCharacter(const ValueContext& value)
     Word32 position = word32Of(value->positionOperand());
     if (!position.value()->isInt32(0))
         holdRangeInside(value, position, position);
+    if (value->startOperand()) {
+        define(value, findCodeUnit(viewOfRange(value), codeUnit, position, SearchDirection::Forward));
+        return;
+    }
     if (typeOf(string).isOpaque(OpaqueKind::FlatString)) {
         define(value, findCodeUnit(viewOf(value, string), codeUnit, position, SearchDirection::Forward));
         return;
     }
 
     CellPointer cell = in<CellPointer>(string);
-    LBasicBlock flat = newBlock();
     LBasicBlock rope = newBlock();
     Join<Word32> join(m_out);
-    Condition isRope = isRopeString(cell);
     ScopeFork fork = m_out.forkScope();
-    m_out.branch(isRope.value(), unlikelyEdge(rope), normalEdge(flat));
+    join.add(findCodeUnit(viewWithoutResolving(value, cell, unlikelyEdge(rope)), codeUnit, position, SearchDirection::Forward));
 
-    m_out.appendToArm(flat, fork);
-    join.add(findCodeUnit(viewOfFlatString(cell), codeUnit, position, SearchDirection::Forward));
-
-    m_out.appendToArm(rope, fork);
+    m_out.appendTo(rope);
     join.add(low32(callOperation<Integer>(value, RuntimeOperation::StringIndexOfCharacter, { cell, codeUnit, position })));
     define(value, join.finishBehind(fork));
 }

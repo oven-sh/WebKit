@@ -48,6 +48,24 @@
 
 namespace JSC { namespace AOT {
 
+StubSignature signatureOfMoveElementsDown(StubKey)
+{
+    return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A2) });
+}
+
+void generateMoveElementsDown(StubAssembler& jit)
+{
+    const GPRReg butterfly = jit.operand(0);
+    const GPRReg count = jit.operand(1);
+    const GPRReg second = jit.reuseScratch(StubRegister::A1);
+    RELEASE_ASSERT(butterfly == leafArgumentGPR(0) && second == leafArgumentGPR(1) && count == leafArgumentGPR(2));
+    jit.move(butterfly, second);
+    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), second);
+    jit.lshift64(TrustedImm32(CCallHelpers::TimesEight), count);
+    jit.callLeaf(Entry::operationAOTMoveBytes);
+    jit.returnToCaller();
+}
+
 StubSignature signatureOfMoveFewBytes(StubKey)
 {
     return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
@@ -106,11 +124,13 @@ struct ElementRegisters {
 StubSignature signatureOfGetByVal(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1) }); }
 StubSignature signatureOfGetByValAtIndex(StubKey key) { return signatureOfGetByVal(key); }
 StubSignature signatureOfGetByValKeepingRegisters(StubKey key) { return signatureOfGetByVal(key); }
+StubSignature signatureOfGetByValAtConstantIndex(StubKey key) { return signatureOfGetByVal(key); }
 StubSignature signatureOfGetByValExpecting(StubKey key) { return signatureOfGetByVal(key); }
 StubSignature signatureOfGetByValAtIndexExpecting(StubKey key) { return signatureOfGetByVal(key); }
 
 StubSignature signatureOfPutByVal(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 StubSignature signatureOfPutByValAtIndex(StubKey key) { return signatureOfPutByVal(key); }
+StubSignature signatureOfPutByValAtConstantIndex(StubKey key) { return signatureOfPutByVal(key); }
 StubSignature signatureOfPutByValExpecting(StubKey key) { return signatureOfPutByVal(key); }
 StubSignature signatureOfPutByValAtIndexExpecting(StubKey key) { return signatureOfPutByVal(key); }
 
@@ -445,6 +465,30 @@ void loadKeptTextOfIndex(StubAssembler& jit, GPRReg key, GPRReg storage, GPRReg 
     hasNoText.append(jit.branchTestPtr(CCallHelpers::Zero, text));
 }
 
+static void loadStorageOfPlainArray(StubAssembler& jit, const ElementRegisters& registers, JumpList& notHandled)
+{
+    const auto [base, index, storage, length, type, number] = registers;
+
+    notHandled.append(jit.branchIfNotCell(base));
+    notHandled.append(jit.branch8(CCallHelpers::NotEqual, Address(base, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(ArrayWithContiguous)));
+    jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
+    notHandled.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
+}
+
+static Jump emitGetByValAtConstantIndexEntry(StubAssembler& jit, const ElementRegisters& registers)
+{
+    const auto [base, index, storage, length, type, number] = registers;
+    JumpList notHandled;
+
+    jit.bindEntry(getByValAtConstantIndex());
+    loadStorageOfPlainArray(jit, registers, notHandled);
+    returnValueUnlessHole(jit, registers, BaseIndex(storage, index, CCallHelpers::TimesEight), notHandled);
+
+    notHandled.link(&jit);
+    boxInt32(jit, index, index);
+    return jit.jump();
+}
+
 static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCaller)
 {
     const ElementRegisters registers = allocateElementRegisters(jit);
@@ -456,11 +500,16 @@ static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCa
     JumpList absent;
 
     JumpList isNeitherStringNorCompiledObject;
+    Jump isConstantIndex;
     if (registersOfCaller == RegistersOfCaller::AreLost)
         emitGetByValAtIndexEntry(jit, registers, numberScratch, isNeitherStringNorCompiledObject);
+    else
+        isConstantIndex = emitGetByValAtConstantIndexEntry(jit, registers);
     jit.bindEntry(jit.key());
     Jump notInt32 = jit.branch64(CCallHelpers::Below, key, numberTag);
     Label indexReady = jit.label();
+    if (isConstantIndex.isSet())
+        isConstantIndex.linkTo(indexReady, &jit);
     slow.append(jit.branchIfNotCell(base));
     static_assert(JSObject::butterflyOffset() + sizeof(void*) <= MarkedBlock::atomSize);
     jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
@@ -566,6 +615,21 @@ static ECMAMode ecmaModeOf(ElementStoreMode mode)
         return ECMAMode::sloppy();
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+static Jump emitPutByValAtConstantIndexEntry(StubAssembler& jit, const ElementRegisters& registers, GPRReg value, ECMAMode mode)
+{
+    const auto [base, index, storage, length, type, number] = registers;
+    JumpList notHandled;
+
+    jit.bindEntry(putByValAtConstantIndex(mode));
+    loadStorageOfPlainArray(jit, registers, notHandled);
+    jit.store64(value, BaseIndex(storage, index, CCallHelpers::TimesEight));
+    returnAfterStoring(jit, base, value);
+
+    notHandled.link(&jit);
+    boxInt32(jit, index, index);
+    return jit.jump();
 }
 
 static void emitPutByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers, GPRReg value, ECMAMode mode)
@@ -912,9 +976,11 @@ void generatePutByVal(StubAssembler& jit)
     const GPRReg shape = registers.storage;
     JumpList slow;
 
+    Jump isConstantIndex = emitPutByValAtConstantIndexEntry(jit, registers, value, mode);
     emitPutByValAtIndexEntry(jit, registers, value, mode);
     jit.bindEntry(jit.key());
     slow.append(jit.branch64(CCallHelpers::Below, key, numberTag));
+    isConstantIndex.link(&jit);
     slow.append(jit.branchIfNotCell(base));
     jit.load8(Address(base, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask | CopyOnWrite), shape);

@@ -10,16 +10,19 @@
 
 #include "AOTBodiesThatCodeDependsOn.h"
 #include "AOTChildProcess.h"
+#include "AOTCodedTexts.h"
 #include "AOTCompileUnit.h"
 #include "AOTDriver.h"
 #include "AOTIRPrinter.h"
 #include "AOTImageFlagNames.h"
 #include "AOTImageFormat.h"
 #include "AOTImageText.h"
+#include "AOTPrefixCode.h"
 #include "AOTProgramFile.h"
 #include "AOTProgramTables.h"
 #include "AOTSchemaEnums.h"
 #include "AOTShellProcess.h"
+#include "AOTSideTableCodes.h"
 #include "AOTStages.h"
 #include "AOTTemporaryFile.h"
 #include "AOTTestRunner.h"
@@ -312,9 +315,9 @@ static void printBytesOfImageSection(PrintStream& out, std::span<const uint8_t> 
     }
 }
 
-static void printImageFunctionRecord(PrintStream& out, const ImageFunction& function)
+static void printImageFunctionRecord(PrintStream& out, uint32_t number, ImageFunction function)
 {
-    out.print("f", function.function(), " sideTables=", function.sideTables, " flags=[");
+    out.print("f", number, " sideTables=", function.sideTables, " flags=[");
     ASCIILiteral separator = ""_s;
     for (const NamedImageFunctionFlag& named : namedImageFunctionFlags) {
         if (!function.has(named.flag))
@@ -351,11 +354,10 @@ static void printImageStringWord(PrintStream& out, const ImageStringWord& word)
         out.print(" with listed hash");
 }
 
-static void printImageIdentifierWord(PrintStream& out, const ImageIdentifierWord& word)
+static void printImageIdentifierByte(PrintStream& out, uint8_t byte)
 {
+    ImageIdentifierWord word = ImageIdentifierWord::ofByteInImage(byte);
     out.print(nameOf(word.kind()));
-    if (StringID text = word.text())
-        out.print(" text=", text.index());
     if (word.kind() == PropertyKeyKind::WellKnownSymbol)
         out.print(" symbol=", nameOf(word.wellKnownSymbol()));
     else
@@ -446,7 +448,7 @@ static void printImageProgramTables(PrintStream& out, const TokensOfRuntimeFunct
         out.println("  compiledRuntimeFunction ", tokenOf(tokens, RuntimeFunctionID(row.id)), " function=f", row.function);
     printStartsOfModulesInImage(out, tables);
     size_t modulesWithNamedVariables = 0;
-    forEachNamedVariable(tables.namedVariables(), [&](uint32_t module, size_t numberOfVariables) {
+    forEachNamedVariable(decodeVarintBytes(tables.namedVariables()).span(), [&](uint32_t module, size_t numberOfVariables) {
         out.println("  moduleInHeapSnapshots place=", modulesWithNamedVariables, " module=m", module, " variables=", numberOfVariables);
         ++modulesWithNamedVariables;
     }, [&](const VariableData& row) {
@@ -454,19 +456,24 @@ static void printImageProgramTables(PrintStream& out, const TokensOfRuntimeFunct
     }, [&](uint32_t first, uint32_t length) {
         out.println("  closuresOfModule module=", modulesWithNamedVariables - 1, " first=", first, " length=", length);
     });
-    forEachNamedCapture(tables.namedCaptures(), [&](const NamedCaptureData& row) {
+    forEachNamedCapture(decodeVarintBytes(tables.namedCaptures()).span(), [&](const NamedCaptureData& row) {
         out.println("  namedCapture closure=", static_cast<uint32_t>(row.closureNumber), " slot=", static_cast<unsigned>(row.slot), " name=s", row.name, row.isVariableOfModule ? " isVariableOfModule"_s : ""_s);
     });
+}
+
+static void printCodedTextsOfImage(PrintStream& out, const ImageHeader& header, std::span<const uint8_t> image)
+{
+    ImageSectionRange range = header.sections[static_cast<unsigned>(ImageSection::Strings)];
+    size_t sizeOfWords = header.numbers.numberOfStringWords * sizeof(ImageStringWord);
+    CodedTexts texts(image.subspan(range.offset + sizeOfWords, range.size - sizeOfWords), header.numbers.numberOfCodedTexts);
+    for (uint32_t number = 0; number < texts.count(); ++number)
+        out.println("  coded ", String(byteCast<Latin1Character>(texts.at(number).span())));
 }
 
 static void printTextOfImageSection(PrintStream& out, const TokensOfRuntimeFunctions& tokens, ImageSection section, std::span<const uint8_t> bytes)
 {
     if (section == ImageSection::ProgramTables) {
         printImageProgramTables(out, tokens, bytes);
-        return;
-    }
-    if (section == ImageSection::Functions) {
-        printElementsOfImageSection<ImageFunction>(out, bytes, printImageFunctionRecord);
         return;
     }
     if (section == ImageSection::InnerEntries) {
@@ -484,7 +491,7 @@ static void printTextOfImageSection(PrintStream& out, const TokensOfRuntimeFunct
         return;
     }
     if (section == ImageSection::Identifiers) {
-        printElementsOfImageSection<ImageIdentifierWord>(out, bytes, printImageIdentifierWord);
+        printElementsOfImageSection<uint8_t>(out, bytes, printImageIdentifierByte);
         return;
     }
     if (section == ImageSection::StubAddresses) {
@@ -557,7 +564,22 @@ static void runImageCommand(TestCommandContext& context)
             context.out.println("  outside the image");
             continue;
         }
-        printTextOfImageSection(context.out, tokens, named.section, image.subspan(range.offset, range.size));
+        if (named.section == ImageSection::Functions) {
+            ImageSectionRange rangeOfSideTables = rangeOfImageSection(header, ImageSection::SideTables);
+            std::span<const uint8_t> sideTables = image.subspan(rangeOfSideTables.offset, rangeOfSideTables.size);
+            ImageFunctions functions(spanReinterpretCast<const uint32_t>(image.subspan(range.offset, range.size)).data(), header.counts.functions);
+            for (uint32_t index = 0; index < header.counts.functions; ++index) {
+                context.out.print("  ", index, ": ");
+                uint32_t place = functions.sideTableOf(index);
+                printImageFunctionRecord(context.out, functions.numberOf(index), { place, SideTableReader(sideTables, sideTables.data() + place).next(SideTableByte::Flags) });
+                context.out.println();
+            }
+            continue;
+        }
+        size_t size = named.section == ImageSection::Strings ? header.numbers.numberOfStringWords * sizeof(ImageStringWord) : named.section == ImageSection::Identifiers ? header.numbers.endOfIdentifiers : range.size;
+        printTextOfImageSection(context.out, tokens, named.section, image.subspan(range.offset, size));
+        if (named.section == ImageSection::Text)
+            printCodedTextsOfImage(context.out, header, image);
     }
 }
 

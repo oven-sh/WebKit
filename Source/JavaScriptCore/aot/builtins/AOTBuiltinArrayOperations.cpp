@@ -28,9 +28,12 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <climits>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
+#include <utility>
 #include <wtf/Atomics.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringCommon.h>
@@ -429,12 +432,39 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySearchOfAnyValue, EncodedJSValue, (Ins
     OPERATION_RETURN(scope, encodedJSValue());
 }
 
+static bool tryUnshiftItemFast(VM& vm, JSArray* array, JSValue item)
+{
+    IndexingType mode = array->indexingMode();
+    bool itemFits = mode == ArrayWithContiguous || (mode == ArrayWithInt32 && item.isInt32()) || (mode == ArrayWithDouble && item.isNumber() && item.asNumber() == item.asNumber());
+    if (!itemFits)
+        return false;
+    Butterfly* butterfly = array->butterfly();
+    unsigned length = butterfly->publicLength();
+    if (length > JSArray::shiftThreshold || length >= butterfly->vectorLength())
+        return false;
+    butterfly->setPublicLength(length + 1);
+    WriteBarrier<Unknown>* elements = butterfly->contiguous().data();
+    if (mode == ArrayWithContiguous && vm.heap.mutatorShouldBeFenced())
+        gcSafeMemmove(elements + 1, elements, length * sizeof(JSValue));
+    else
+        memmove(static_cast<void*>(elements + 1), static_cast<const void*>(elements), length * sizeof(JSValue));
+    if (mode == ArrayWithDouble)
+        butterfly->contiguousDouble().atUnsafe(0) = item.asNumber();
+    else
+        elements[0].setWithoutWriteBarrier(item);
+    if (mode == ArrayWithContiguous)
+        vm.writeBarrier(array);
+    return true;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshift, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue item))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayUnshift);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayUnshift);
     if (mayRejectOrInterceptWrites(array) || array->structure()->holesMustForwardToPrototype(array)) [[unlikely]]
         OPERATION_RETURN(scope, encodedJSValue());
+    if (tryUnshiftItemFast(vm, array, JSValue::decode(item))) [[likely]]
+        OPERATION_RETURN(scope, JSValue::encode(jsNumber(array->length())));
     uint64_t length = array->length();
     unshift(globalObject, array, 0, 0, 1, length);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -443,6 +473,127 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshift, EncodedJSValue, (Instance* in
     setLength(globalObject, vm, array, length + 1);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(length + 1)));
+}
+
+static constexpr unsigned bitsOfSortDigit = 11;
+static constexpr unsigned numberOfSortDigits = 1 << bitsOfSortDigit;
+
+template<typename Key> static constexpr size_t minLengthSortedByDigits = sizeof(Key) > sizeof(uint32_t) ? 2048 : 512;
+
+template<typename Key>
+static std::span<Key> sortKeysByDigits(std::span<Key> keys, std::span<Key> scratch)
+{
+    constexpr unsigned numberOfPasses = (sizeof(Key) * CHAR_BIT + bitsOfSortDigit - 1) / bitsOfSortDigit;
+    using CountsOfPass = std::array<uint32_t, numberOfSortDigits>;
+    auto digitOf = [](Key key, unsigned pass) -> unsigned {
+        return static_cast<unsigned>(key >> (pass * bitsOfSortDigit)) & (numberOfSortDigits - 1);
+    };
+    void* memory = nullptr;
+    if (!tryFastZeroedMalloc(numberOfPasses * sizeof(CountsOfPass)).getValue(memory))
+        return { };
+    auto counts = std::span { static_cast<CountsOfPass*>(memory), numberOfPasses };
+    for (Key key : keys) {
+        for (unsigned pass = 0; pass < numberOfPasses; ++pass)
+            ++counts[pass][digitOf(key, pass)];
+    }
+    for (unsigned pass = 0; pass < numberOfPasses; ++pass) {
+        CountsOfPass& places = counts[pass];
+        if (places[digitOf(keys[0], pass)] == keys.size())
+            continue;
+        uint32_t place = 0;
+        for (uint32_t& count : places)
+            place += std::exchange(count, place);
+        for (Key key : keys)
+            scratch[places[digitOf(key, pass)]++] = key;
+        std::swap(keys, scratch);
+    }
+    fastFree(memory);
+    return keys;
+}
+
+template<typename Key, typename Element>
+static bool sortElementsByKey(std::span<Element> elements, NOESCAPE const auto& tryMakeKey, NOESCAPE const auto& elementOf)
+{
+    bool usesDigits = elements.size() >= minLengthSortedByDigits<Key> && elements.size() <= std::numeric_limits<uint32_t>::max();
+    void* memory = nullptr;
+    if (!tryFastMalloc((usesDigits ? 2 : 1) * elements.size() * sizeof(Key)).getValue(memory))
+        return false;
+    auto keys = std::span { static_cast<Key*>(memory), elements.size() };
+    bool hasKeys = true;
+    for (size_t i = 0; i < elements.size() && hasKeys; ++i)
+        hasKeys = tryMakeKey(elements[i], keys[i]);
+    std::span<Key> sorted;
+    if (hasKeys && usesDigits)
+        sorted = sortKeysByDigits(keys, std::span { static_cast<Key*>(memory) + elements.size(), elements.size() });
+    else if (hasKeys) {
+        std::sort(keys.begin(), keys.end());
+        sorted = keys;
+    }
+    for (size_t i = 0; i < sorted.size(); ++i)
+        elements[i] = elementOf(sorted[i]);
+    fastFree(memory);
+    return !sorted.empty();
+}
+
+static bool tryMakeSortKeyOfDouble(double number, uint64_t mask, uint64_t& key)
+{
+    constexpr uint64_t signBit = 1ULL << 63;
+    uint64_t bits = std::bit_cast<uint64_t>(number);
+    if (number != number || bits == signBit) [[unlikely]]
+        return false;
+    key = (bits ^ (static_cast<uint64_t>(static_cast<int64_t>(bits) >> 63) | signBit)) ^ mask;
+    return true;
+}
+
+static double doubleOfSortKey(uint64_t key, uint64_t mask)
+{
+    constexpr uint64_t signBit = 1ULL << 63;
+    key ^= mask;
+    return std::bit_cast<double>(key ^ (key & signBit ? signBit : ~0ULL));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSortNumbers, size_t, (Instance*, JSCell* cell, int32_t direction))
+{
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTSortNumbers);
+    Butterfly& butterfly = *array->butterfly();
+    size_t length = butterfly.publicLength();
+    uint64_t mask = direction < 0 ? ~0ULL : 0;
+    switch (array->indexingMode()) {
+    case ArrayWithDouble:
+        return sortElementsByKey<uint64_t>(std::span { butterfly.contiguousDouble().data(), length }, [&](double number, uint64_t& key) {
+            return tryMakeSortKeyOfDouble(number, mask, key);
+        }, [&](uint64_t key) {
+            return doubleOfSortKey(key, mask);
+        });
+    case ArrayWithInt32:
+    case ArrayWithContiguous: {
+        auto elements = std::span { std::bit_cast<EncodedJSValue*>(butterfly.contiguous().data()), length };
+        bool holdsOnlyInt32s = std::ranges::all_of(elements, [](EncodedJSValue element) {
+            return JSValue::decode(element).isInt32();
+        });
+        if (holdsOnlyInt32s) {
+            auto flipped = [&](uint32_t bits) {
+                return bits ^ static_cast<uint32_t>(mask) ^ (1U << 31);
+            };
+            return sortElementsByKey<uint32_t>(elements, [&](EncodedJSValue element, uint32_t& key) {
+                key = flipped(static_cast<uint32_t>(JSValue::decode(element).asInt32()));
+                return true;
+            }, [&](uint32_t key) {
+                return JSValue::encode(jsNumber(static_cast<int32_t>(flipped(key))));
+            });
+        }
+        if (array->indexingMode() == ArrayWithInt32)
+            return false;
+        return sortElementsByKey<uint64_t>(elements, [&](EncodedJSValue element, uint64_t& key) {
+            JSValue number = JSValue::decode(element);
+            return number.isNumber() && tryMakeSortKeyOfDouble(number.asNumber(), mask, key);
+        }, [&](uint64_t key) {
+            return JSValue::encode(jsNumber(doubleOfSortKey(key, mask)));
+        });
+    }
+    default:
+        return false;
+    }
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayIterator, JSCell*, (Instance* instance, JSCell* array, uint32_t kind))
@@ -479,6 +630,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshiftGeneric, EncodedJSValue, (Insta
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayUnshiftGeneric);
     if (mayRejectOrInterceptWrites(array) || array->structure()->holesMustForwardToPrototype(array)) [[unlikely]]
         OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypeUnshift, array, JSValue::decode(item))));
+    if (tryUnshiftItemFast(vm, array, JSValue::decode(item))) [[likely]]
+        OPERATION_RETURN(scope, JSValue::encode(jsNumber(array->length())));
     uint64_t length = array->length();
     unshift(globalObject, array, 0, 0, 1, length);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());

@@ -7,8 +7,9 @@
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: i32 @Int32, {{*}}isInLoop=true isLoopHead=true
+# The header compares the counter with the lesser of its bound and the length, so the iteration checks nothing.
 # CHECK: [[below]]: boolean @Boolean = Less {{*}}form=Integers
-# CHECK: [[below2]]: boolean @Boolean = Less {{*}}form=Integers
+# CHECK-NOT: = Less
 # CHECK-NOT: = IntegerToNumber
 # CHECK: [[word]]: i32 @Int32 = GetTypedArrayElement {{*}}isInsideView
 # CHECK-NOT: form=Numbers

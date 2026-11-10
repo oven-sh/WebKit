@@ -826,7 +826,7 @@ static bool followStoreIntoFreshObject(Walker& walker, const Draft& store, const
         if (!cleared)
             return false;
         WalkState& state = walker.state();
-        state.noteSlot(written.object, *cleared, Reference());
+        state.noteSlot(written.object, *cleared, walker.constant(Draft(Opcode::Absent)));
         state.noteOrderWord(written.object, std::nullopt);
         state.noteElement(written.object, keyOfPropertiesAsListed(), Reference());
         state.invalidateCellFacts(written.object, CellFact::BearsNoMark);

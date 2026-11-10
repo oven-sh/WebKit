@@ -133,9 +133,18 @@ CellPointer ConstantEmitter::singletonClosure(const OperationContext& context, F
     };
     static constexpr OpcodeSet closures { Opcode::NewClosure };
     m_out.noteFormOf(closures, Form::Open, StateOfKnowledge::Singleton);
-    CellPointer created = emitter<ClosureTestEmitter>().closureIfCreated(function);
-    return either<CellPointer>(isNotEmpty(boxCell(created)), [&] {
-        return created;
+    ClosureTestEmitter& tests = emitter<ClosureTestEmitter>();
+    if (m_plan.usesWideReferences()) {
+        CellPointer created = tests.closureIfCreated(function);
+        return either<CellPointer>(isNotEmpty(boxCell(created)), [&] {
+            return created;
+        }, [&] {
+            return askStub(true);
+        });
+    }
+    Word32 tableEntry = tests.closureTableEntry(function);
+    return either<CellPointer>(Condition(m_out.notZero32(tableEntry.value())), [&] {
+        return tests.closureInTableEntry(tableEntry);
     }, [&] {
         return askStub(true);
     });

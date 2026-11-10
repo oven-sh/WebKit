@@ -208,7 +208,9 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         stopUnlessNativeResultIsAsWritten(value, result, overload.builtin, overload.mode == BuiltinCallMode::Construct);
         if (collectionsBefore) {
             Boxed none = boxedConstant(JSValue());
-            callVoidOperation(value, RuntimeOperation::CheckFreshResult, { result, *collectionsBefore, word32(static_cast<int32_t>(overload.builtin.index())), receiver ? boxedOperand(value, receiver) : none, arguments.empty() ? none : boxedOperand(value, arguments[0]) });
+            const Operation* receiverOperation = receiver ? &m_code.at(underlyingCellOf(m_code, receiver)) : nullptr;
+            bool hasOriginalReceiver = receiverOperation && (receiverOperation->opcode != Opcode::ToObject || receiverOperation->calledBuiltin() != overload.builtin);
+            callVoidOperation(value, RuntimeOperation::CheckFreshResult, { result, *collectionsBefore, word32(static_cast<int32_t>(overload.builtin.index())), hasOriginalReceiver ? boxedOperand(value, receiver) : none, arguments.empty() ? none : boxedOperand(value, arguments[0]) });
         }
         defineAs(value, result, typeOf(value.id()));
     };
@@ -449,6 +451,11 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
     bool constructs = overload.mode == BuiltinCallMode::Construct;
     unsigned count = static_cast<unsigned>(arguments.size());
     std::optional<StubKey> stub = stubThatCallsBuiltin(m_builtins, overload, count);
+    if (overload.mode == BuiltinCallMode::Get && receiver && !count && stub && stub->family() == StubFamily::CallHostFunctionWithoutBoxedCall && m_builtins.at(overload.builtin).origin == BuiltinOrigin::Host) {
+        const Operation* call = context.valueID() ? &operationAt(context.valueID()) : nullptr;
+        if (call && call->opcode == Opcode::CallBuiltin && call->overload() == id && call->builtinCallForm() == BuiltinCallForm::Whole)
+            stub = callHostGetter();
+    }
     bool leavesFunctionUnfetched = stub && stub->family() == StubFamily::CallBoxedBuiltin && fetchesFunctionOnlyToLeave(static_cast<BoxedCallForm>(stub->form()), count) && keyOfCalleeOf(overload).hasCell(m_builtins);
     Boxed callee = leavesFunctionUnfetched ? Boxed(zeroExtended(numberOf(m_mentions.builtinCell(keyOfCalleeOf(overload)))).value()) : boxCell(calleeOf(context, overload));
     Boxed thisValue = undefined();

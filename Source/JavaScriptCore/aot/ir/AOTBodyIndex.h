@@ -16,8 +16,11 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -182,10 +185,10 @@ public:
     bool holdsAnyOf(const OpcodeSet& wanted) const { return m_opcodes.intersects(wanted); }
     BlockID blockOf(ValueID id) const
     {
-        if (m_blocks.size() < 2 || id.index() < m_blocks[1].firstParameter)
+        uint32_t numberOfBlocks = this->numberOfBlocks();
+        if (numberOfBlocks < 2)
             return BlockID(0u);
-        auto next = std::ranges::upper_bound(m_blocks, id.index(), { }, &BlockPlace::firstParameter);
-        return BlockID(static_cast<uint32_t>(next - m_blocks.begin()) - 1);
+        return m_hasNarrowBlocks ? findBlockOf(m_narrowBlocks, numberOfBlocks, id) : findBlockOf(m_wideBlocks, numberOfBlocks, id);
     }
 
     uint32_t useCount(ValueID id) const { return m_usesOfValues[id.index()] & maxCountedUses; }
@@ -195,11 +198,7 @@ public:
     {
         if (!hasOneUse(id))
             return std::nullopt;
-        auto kind = static_cast<BodyUseKind>(m_usesOfValues[id.index()] >> bitsOfUseCount);
-        uint32_t user = m_onlyUsersOfValues[id.index()];
-        if (kind == BodyUseKind::Operand)
-            return BodyUser { kind, ValueID(user), { } };
-        return BodyUser { kind, { }, BlockID(user) };
+        return userOf(id);
     }
     ValueID onlyUsingValue(ValueID id) const
     {
@@ -210,18 +209,17 @@ public:
     {
         if (isUnused(id))
             return std::nullopt;
-        auto kind = static_cast<BodyUseKind>(m_usesOfValues[id.index()] >> bitsOfUseCount);
-        uint32_t user = m_onlyUsersOfValues[id.index()];
-        if (kind == BodyUseKind::Operand)
-            return BodyUser { kind, ValueID(user), { } };
-        return BodyUser { kind, { }, BlockID(user) };
+        return userOf(id);
     }
     std::span<const BodyMentionOfIteration> mentionsOfIteration(ValueID open) const
     {
-        auto found = std::ranges::equal_range(m_mentionsOfIterations, open.index(), { }, [](const BodyMentionOfIteration& mention) {
+        if (!m_rareParts)
+            return { };
+        std::span<const BodyMentionOfIteration> mentions = m_rareParts->mentionsOfIterations;
+        auto found = std::ranges::equal_range(mentions, open.index(), { }, [](const BodyMentionOfIteration& mention) {
             return mention.open.index();
         });
-        return m_mentionsOfIterations.subspan(found.begin() - m_mentionsOfIterations.begin(), found.size());
+        return mentions.subspan(found.begin() - mentions.begin(), found.size());
     }
     ValueID stripCasts(ValueID id) const
     {
@@ -232,47 +230,81 @@ public:
 
     BodyBlock block(BlockID id) const
     {
-        const BlockPlace& place = m_blocks[id.index()];
-        return m_body.blockAt(place.wordOffset, place.wordOffsetOfTerminator, id, ValueID(place.firstParameter));
+        return withBlockPlace(id, [&](const auto& place) ALWAYS_INLINE_LAMBDA {
+            return m_body.blockAt(place.wordOffset, place.wordOffsetOfTerminator, id, ValueID(static_cast<uint32_t>(place.firstParameter)));
+        });
     }
-    ALWAYS_INLINE BodyTerminator terminator(BlockID id) const { return m_body.terminatorAt(m_blocks[id.index()].wordOffsetOfTerminator, id); }
+    ALWAYS_INLINE BodyTerminator terminator(BlockID id) const
+    {
+        return withBlockPlace(id, [&](const auto& place) ALWAYS_INLINE_LAMBDA {
+            return m_body.terminatorAt(place.wordOffsetOfTerminator, id);
+        });
+    }
 
-    bool isReachable(BlockID id) const { return m_blocks[id.index()].flags & IsReachable; }
-    uint32_t numberOfIncomingEdges(BlockID id) const { return m_blocks[id.index()].numberOfIncomingEdges; }
-    bool isEnteredByHandlerEdge(BlockID id) const { return m_blocks[id.index()].flags & IsEnteredByHandlerEdge; }
+    bool isReachable(BlockID id) const { return flagsOf(id) & IsReachable; }
+    uint32_t numberOfIncomingEdges(BlockID id) const
+    {
+        return withBlockPlace(id, [](const auto& place) ALWAYS_INLINE_LAMBDA -> uint32_t {
+            return place.numberOfIncomingEdges;
+        });
+    }
+    bool isEnteredByHandlerEdge(BlockID id) const { return flagsOf(id) & IsEnteredByHandlerEdge; }
     std::optional<BodyIncomingEdge> onlyIncomingEdge(BlockID id) const
     {
-        const BlockPlace& place = m_blocks[id.index()];
-        if (place.numberOfIncomingEdges != 1 || place.flags & IsEnteredByHandlerEdge || !place.immediateDominator)
-            return std::nullopt;
-        RELEASE_ASSERT(place.wordOffsetOfFirstIncomingTarget);
-        return BodyIncomingEdge { place.immediateDominator, place.indexOfFirstIncomingTarget, BodyTarget(&m_body.words()[place.wordOffsetOfFirstIncomingTarget]) };
+        return withBlockPlace(id, [&](const auto& place) ALWAYS_INLINE_LAMBDA -> std::optional<BodyIncomingEdge> {
+            BlockID from = place.dominator();
+            if (place.numberOfIncomingEdges != 1 || place.flags & IsEnteredByHandlerEdge || !from)
+                return std::nullopt;
+            RELEASE_ASSERT(place.wordOffsetOfFirstIncomingTarget);
+            return BodyIncomingEdge { from, place.indexOfFirstIncomingTarget, BodyTarget(&m_body.words()[place.wordOffsetOfFirstIncomingTarget]) };
+        });
     }
 
-    BlockID immediateDominator(BlockID id) const { return m_blocks[id.index()].immediateDominator; }
-    std::span<const BlockID> blocksInDominatorOrder() const { return m_blocksInDominatorOrder; }
-    uint32_t dominatorNumber(BlockID id) const { return m_blocks[id.index()].dominatorNumber; }
-    uint32_t lastDominatorNumberBelow(BlockID id) const { return m_blocks[id.index()].lastDominatorNumberBelow; }
+    BlockID immediateDominator(BlockID id) const
+    {
+        return withBlockPlace(id, [](const auto& place) ALWAYS_INLINE_LAMBDA {
+            return place.dominator();
+        });
+    }
+    std::span<const BlockID> blocksInDominatorOrder() const { return unsafeMakeSpan(m_blocksInDominatorOrder, m_numberOfReachableBlocks); }
+    uint32_t dominatorNumber(BlockID id) const
+    {
+        return withBlockPlace(id, [](const auto& place) ALWAYS_INLINE_LAMBDA -> uint32_t {
+            return place.dominatorNumber;
+        });
+    }
+    uint32_t lastDominatorNumberBelow(BlockID id) const
+    {
+        return withBlockPlace(id, [](const auto& place) ALWAYS_INLINE_LAMBDA -> uint32_t {
+            return place.lastDominatorNumberBelow;
+        });
+    }
     bool dominates(BlockID from, BlockID to) const
     {
-        if (!isReachable(from) || !isReachable(to))
-            return false;
-        uint32_t number = dominatorNumber(to);
-        return dominatorNumber(from) <= number && number <= lastDominatorNumberBelow(from);
+        return m_hasNarrowBlocks ? dominatesAmong(m_narrowBlocks, from, to) : dominatesAmong(m_wideBlocks, from, to);
     }
     bool strictlyDominates(BlockID from, BlockID to) const { return from != to && dominates(from, to); }
-    uint32_t numberOfLoops() const { return static_cast<uint32_t>(m_loops.size()); }
-    bool hasLoops() const { return !m_loops.empty(); }
-    const BodyLoop& loop(LoopID id) const { return m_loops[id.index()]; }
-    std::span<const BlockID> membersOf(LoopID id) const { return m_membersOfLoops.subspan(m_loops[id.index()].firstMember, m_loops[id.index()].numberOfMembers); }
-    LoopID loopOf(BlockID id) const { return m_blocks[id.index()].loop; }
-    bool isLoopHead(BlockID id) const { return m_blocks[id.index()].flags & IsLoopHead; }
+    uint32_t numberOfLoops() const { return m_rareParts ? static_cast<uint32_t>(m_rareParts->loops.size()) : 0; }
+    bool hasLoops() const { return numberOfLoops(); }
+    const BodyLoop& loop(LoopID id) const { return m_rareParts->loops[id.index()]; }
+    std::span<const BlockID> membersOf(LoopID id) const { return m_rareParts->membersOfLoops.subspan(loop(id).firstMember, loop(id).numberOfMembers); }
+    LoopID loopOf(BlockID id) const
+    {
+        return withBlockPlace(id, [](const auto& place) ALWAYS_INLINE_LAMBDA {
+            return place.innermostLoop();
+        });
+    }
+    bool isLoopHead(BlockID id) const { return flagsOf(id) & IsLoopHead; }
     bool isInLoop(BlockID block, LoopID loop) const
     {
         LoopID holder = loopOf(block);
-        return holder && m_loops[holder.index()].placeAmongLoops - m_loops[loop.index()].placeAmongLoops < m_loops[loop.index()].numberOfLoopsWithin;
+        return holder && this->loop(holder).placeAmongLoops - this->loop(loop).placeAmongLoops < this->loop(loop).numberOfLoopsWithin;
     }
-    uint32_t loopDepthOf(BlockID id) const { return loopOf(id) ? m_loops[loopOf(id).index()].depth : 0; }
+    uint32_t loopDepthOf(BlockID id) const
+    {
+        LoopID holder = loopOf(id);
+        return holder ? loop(holder).depth : 0;
+    }
     bool hasIrreducibleFlow() const { return m_hasIrreducibleFlow; }
 
     JS_EXPORT_PRIVATE std::optional<BodyEdgeResult> edgeResult(BlockID from, uint32_t targetIndex, uint32_t proofIndex) const;
@@ -304,7 +336,7 @@ public:
             result.isOnTakenEdge = !targetIndex;
         } else
             result.caseIndex = targetIndex;
-        result.parameter = ValueID(m_blocks[target.block().index()].firstParameter + static_cast<uint32_t>(target.arguments().size()) + proofIndex);
+        result.parameter = ValueID(firstParameterOf(target.block()) + static_cast<uint32_t>(target.arguments().size()) + proofIndex);
         return result;
     }
     JS_EXPORT_PRIVATE std::optional<BodyEdgeResult> edgeResultOfAnyTerminator(const BodyTerminator&, uint32_t targetIndex, BodyTarget, uint32_t proofIndex) const;
@@ -355,6 +387,9 @@ private:
     };
 
     struct BlockPlace {
+        BlockID dominator() const { return immediateDominator; }
+        LoopID innermostLoop() const { return loop; }
+
         uint32_t wordOffset { 0 };
         uint32_t wordOffsetOfTerminator { 0 };
         uint32_t firstParameter { 0 };
@@ -369,21 +404,120 @@ private:
     };
     static_assert(sizeof(BlockPlace) == 40);
 
+    struct NarrowBlockPlace {
+        explicit NarrowBlockPlace(const BlockPlace& place)
+            : wordOffset(static_cast<uint16_t>(place.wordOffset))
+            , wordOffsetOfTerminator(static_cast<uint16_t>(place.wordOffsetOfTerminator))
+            , firstParameter(static_cast<uint16_t>(place.firstParameter))
+            , dominatorPlusOne(static_cast<uint16_t>(place.immediateDominator.bits() + 1))
+            , loopPlusOne(static_cast<uint16_t>(place.loop.bits() + 1))
+            , dominatorNumber(static_cast<uint16_t>(place.dominatorNumber))
+            , lastDominatorNumberBelow(static_cast<uint16_t>(place.lastDominatorNumberBelow))
+            , indexOfFirstIncomingTarget(static_cast<uint16_t>(place.indexOfFirstIncomingTarget))
+            , wordOffsetOfFirstIncomingTarget(static_cast<uint16_t>(place.wordOffsetOfFirstIncomingTarget))
+            , numberOfIncomingEdges(place.numberOfIncomingEdges)
+            , flags(place.flags)
+        {
+        }
+
+        BlockID dominator() const { return BlockID::fromBits(static_cast<uint32_t>(dominatorPlusOne) - 1); }
+        LoopID innermostLoop() const { return LoopID::fromBits(static_cast<uint32_t>(loopPlusOne) - 1); }
+
+        uint16_t wordOffset;
+        uint16_t wordOffsetOfTerminator;
+        uint16_t firstParameter;
+        uint16_t dominatorPlusOne;
+        uint16_t loopPlusOne;
+        uint16_t dominatorNumber;
+        uint16_t lastDominatorNumberBelow;
+        uint16_t indexOfFirstIncomingTarget;
+        uint16_t wordOffsetOfFirstIncomingTarget;
+        uint16_t numberOfIncomingEdges;
+        uint16_t flags;
+    };
+    static_assert(sizeof(NarrowBlockPlace) == 22);
+    static_assert(!(BlockID().bits() + 1) && !(LoopID().bits() + 1));
+
+    struct RareParts {
+        std::span<const BodyLoop> loops;
+        std::span<const BlockID> membersOfLoops;
+        std::span<const BodyMentionOfIteration> mentionsOfIterations;
+    };
+
     BodyIndex() = default;
+
+    static bool fitsNarrowNumbers(const Body& body) { return body.words().size() <= UINT16_MAX; }
+
+    template<typename Functor>
+    ALWAYS_INLINE std::invoke_result_t<const Functor&, const BlockPlace&> withBlockPlace(BlockID id, const Functor& functor) const
+    {
+        ASSERT(id.index() < numberOfBlocks());
+        if (m_hasNarrowBlocks) [[likely]]
+            return functor(m_narrowBlocks[id.index()]);
+        return functor(m_wideBlocks[id.index()]);
+    }
+
+    uint16_t flagsOf(BlockID id) const
+    {
+        return withBlockPlace(id, [](const auto& place) ALWAYS_INLINE_LAMBDA {
+            return place.flags;
+        });
+    }
+    uint32_t firstParameterOf(BlockID id) const
+    {
+        return withBlockPlace(id, [](const auto& place) ALWAYS_INLINE_LAMBDA -> uint32_t {
+            return place.firstParameter;
+        });
+    }
+
+    template<typename Place>
+    static ALWAYS_INLINE bool dominatesAmong(const Place* blocks, BlockID from, BlockID to)
+    {
+        const Place& above = blocks[from.index()];
+        const Place& below = blocks[to.index()];
+        return (above.flags & below.flags & IsReachable) && above.dominatorNumber <= below.dominatorNumber && below.dominatorNumber <= above.lastDominatorNumberBelow;
+    }
+
+    template<typename Place>
+    static BlockID findBlockOf(const Place* blocks, uint32_t numberOfBlocks, ValueID id)
+    {
+        if (id.index() < blocks[1].firstParameter)
+            return BlockID(0u);
+        const Place* next = std::ranges::upper_bound(blocks, blocks + numberOfBlocks, id.index(), { }, [](const Place& place) -> uint32_t {
+            return place.firstParameter;
+        });
+        return BlockID(static_cast<uint32_t>(next - blocks) - 1);
+    }
+
+    BodyUser userOf(ValueID id) const
+    {
+        auto kind = static_cast<BodyUseKind>(m_usesOfValues[id.index()] >> bitsOfUseCount);
+        uint32_t user = m_hasNarrowUsers ? m_narrowOnlyUsersOfValues[id.index()] : m_onlyUsersOfValues[id.index()];
+        if (kind == BodyUseKind::Operand)
+            return BodyUser { kind, ValueID(user), { } };
+        return BodyUser { kind, { }, BlockID(user) };
+    }
 
     JS_EXPORT_PRIVATE ValueID stripCastsSlow(ValueID cast) const;
 
     Body m_body;
-    std::span<const BlockPlace> m_blocks;
-    std::span<const BlockID> m_blocksInDominatorOrder;
-    std::span<const BodyLoop> m_loops;
-    std::span<const BlockID> m_membersOfLoops;
-    std::span<const uint32_t> m_placesOfValues;
-    std::span<const uint32_t> m_onlyUsersOfValues;
-    std::span<const uint8_t> m_usesOfValues;
-    std::span<const BodyMentionOfIteration> m_mentionsOfIterations;
-    OpcodeSet m_opcodes;
+    union {
+        const BlockPlace* m_wideBlocks { nullptr };
+        const NarrowBlockPlace* m_narrowBlocks;
+    };
+    const uint32_t* m_placesOfValues { nullptr };
+    union {
+        const uint32_t* m_onlyUsersOfValues { nullptr };
+        const uint16_t* m_narrowOnlyUsersOfValues;
+    };
+    const uint8_t* m_usesOfValues { nullptr };
+    const BlockID* m_blocksInDominatorOrder { nullptr };
+    const RareParts* m_rareParts { nullptr };
+    uint32_t m_numberOfReachableBlocks { 0 };
+    bool m_hasNarrowBlocks { false };
+    bool m_hasNarrowUsers { false };
     bool m_hasIrreducibleFlow { false };
+    OpcodeSet m_opcodes;
     mutable std::atomic<const BodyLivenessData*> m_liveness { nullptr };
     mutable std::atomic<const KeptWithBodyIndex*> m_keptByWalk { nullptr };
 };
@@ -489,5 +623,7 @@ private:
 };
 
 } } } // namespace JSC::AOT::Typed
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(AOT)

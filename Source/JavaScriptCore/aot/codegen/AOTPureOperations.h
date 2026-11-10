@@ -18,6 +18,7 @@ enum class PureOperation : uint16_t {
     BuiltinCell,
     ToInt32,
     TruncateToInt64,
+    ExactInt32,
     NonNegativeInt32,
     RuntimeOperation,
     BoxNumber,

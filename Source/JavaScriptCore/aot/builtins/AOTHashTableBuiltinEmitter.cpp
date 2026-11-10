@@ -63,7 +63,7 @@ Boxed HashTableBuiltinEmitter::normalizedNumber(Number key)
     LBasicBlock fitsInt32 = newBlock();
     LBasicBlock otherwise = newBlock();
     Join<Boxed> join(m_out);
-    Word32 truncated = low32(conversions.toInteger(key));
+    Word32 truncated = conversions.truncateToWord(key);
     m_out.branch(equal(toNumber(truncated), key).value(), normalEdge(fitsInt32), unlikelyEdge(otherwise));
 
     m_out.appendTo(fitsInt32);

@@ -283,8 +283,9 @@ const String JSFunction::calculatedDisplayName(VM& vm)
 
 #if ENABLE(AOT)
     if (isCompiledClosure()) {
+        // An anonymous function has no name, as below: the caller then names an instance after its built-in class.
         if (String displayName = AOT::CompiledCallee::displayName(this); !displayName.isNull())
-            return displayName;
+            return displayName.isEmpty() ? String() : displayName;
     }
 #endif
     

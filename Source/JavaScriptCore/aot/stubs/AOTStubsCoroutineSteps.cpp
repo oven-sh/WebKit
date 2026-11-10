@@ -107,7 +107,11 @@ void generateStepAsyncGenerator(StubAssembler& jit)
         Jump hasDriver = jit.jump();
 
         hasNoSavedFrame.link(&jit);
-        stepsInEngine.append(jit.branchTest32(CCallHelpers::NonZero, consumer, TrustedImm32(consumerMayContinue)));
+        Jump hasNoRightToContinue = jit.branchTest32(CCallHelpers::Zero, consumer, TrustedImm32(consumerMayContinue));
+        jit.and32(TrustedImm32(~(bodyMayContinue | consumerMayContinue)), consumer);
+        jit.orPtr(TrustedImm32(mustSuspendAtNextAwaitBit), fp, word);
+        jit.storePtr(word, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue)));
+        hasNoRightToContinue.link(&jit);
         refill = emitAllocateSavedFrame(jit, CoroutineKind::AsyncFunction, siteWord, { driver, saved, word, other }, isNotAllocatedHere);
         jit.or32(TrustedImm32(consumerOfStepHasNewSavedFrame), consumer);
         hasDriver.link(&jit);
@@ -189,9 +193,9 @@ static void emitGiveBackRightToContinue(StubAssembler& jit, GPRReg consumer, GPR
     Jump mayNotContinue = jit.branchTest32(CCallHelpers::Zero, consumer, TrustedImm32(consumerMayContinue));
     Jump mustSuspendAtAwaits = jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(awaitMustSuspend)));
     jit.loadPtr(Address(fp), stored);
-    mayNotContinue.link(&jit);
     mustSuspendAtAwaits.link(&jit);
     jit.storePtr(stored, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue)));
+    mayNotContinue.link(&jit);
 }
 
 static void emitNoteAwaitPassedOnStack(StubAssembler& jit, GPRReg consumer, GPRReg scratch)

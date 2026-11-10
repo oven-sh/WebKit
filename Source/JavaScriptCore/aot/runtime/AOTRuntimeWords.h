@@ -28,10 +28,11 @@ namespace AOT {
 struct ExceptionWords {
     EncodedJSValue thrownValue;
     void* stackPointerOfHandler;
+    const void* returnAddressOfAwaitedCall;
     uint32_t pollLeavesOwedError;
     uint32_t stateOfGuessesThatFail;
 };
-static_assert(sizeof(ExceptionWords) == 24);
+static_assert(sizeof(ExceptionWords) == 32);
 
 struct GlobalBinding {
     EncodedJSValue constant;

@@ -23,6 +23,7 @@
 #include "AOTWalkLoopsOverGenerators.h"
 #include "AOTWalkKnown.h"
 #include "AOTWalkListReadsInLoops.h"
+#include "AOTWalkNumberGuesses.h"
 #include "AOTWalkResultsInParts.h"
 #include "AOTWalkStrings.h"
 #include "AOTWalkTextBuilders.h"
@@ -361,7 +362,7 @@ static bool isUnseenBetweenStepsOfPattern(Opcode opcode)
     return opcode != Opcode::Builtin && !operandsMayRunCode(opcode) && bound.alwaysCompletes() && !bound.mayThrowByRule() && !bound.writes.containsAny(orderedHeaps) && !bound.reads.containsAny(orderedHeaps);
 }
 
-static bool stepsOfPatternStandInRow(const BodyIndex& index, const BodyValue& open)
+bool stepsOfPatternStandInRow(const BodyIndex& index, const BodyValue& open)
 {
     auto written = open.as<Opcode::IteratorOpen>();
     if (!written.isDestructuring() || written.hasRest() || !written.elementCount())
@@ -577,6 +578,58 @@ static uint32_t endOfRowOfAppendsInIteration(const BodyIndex& index, const BodyB
 }
 
 static FunctionID functionWrittenUnderNextOfIteratorOf(Walker&, ValueID iterated);
+
+static bool returnsIteratorMadeForCaller(const Walker& walker, FunctionID function)
+{
+    const BodyIndex* body = walker.facts().bodies().find(function);
+    if (!body || walker.program().at(function).isCoroutine())
+        return false;
+    ValueID returned;
+    for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
+        BodyTerminator end = body->terminator(BlockID(number));
+        if (!body->isReachable(BlockID(number)) || (end.kind() != TerminatorKind::Return && end.kind() != TerminatorKind::ReturnCall))
+            continue;
+        if (returned || !end.operand(0))
+            return false;
+        returned = end.operand(0);
+        while (!body->isParameter(returned) && inputPassThroughOpcodes.contains(body->opcodeOf(returned)) && body->useCount(returned) == 1)
+            returned = body->value(returned).operand(0);
+    }
+    return returned && !body->isParameter(returned) && body->opcodeOf(returned) == Opcode::Call && body->useCount(returned) == 1 && body->value(returned).as<Opcode::Call>().argumentsOperands().empty();
+}
+
+static std::optional<ClassSteppedUnseen> findCollectionOfIterator(Walker& walker, Reference iterator, Reference& collection)
+{
+    const Code& code = walker.code();
+    if (!iterator || !iterator.isValue())
+        return std::nullopt;
+    const Operation& made = code.at(underlyingCellOf(code, iterator.id()));
+    if (made.opcode != Opcode::CallInline || !made.receiverOperand() || code.isConstant(made.receiverOperand()))
+        return std::nullopt;
+    ContentsStepped contents;
+    switch (made.inlineBuiltin()) {
+    case InlineBuiltin::ArrayIterator:
+        contents = ContentsStepped::List;
+        break;
+    case InlineBuiltin::MapIterator:
+        contents = ContentsStepped::Map;
+        break;
+    case InlineBuiltin::SetIterator:
+        contents = ContentsStepped::Set;
+        break;
+    default:
+        return std::nullopt;
+    }
+    const BuiltinResult& result = walker.program().builtins().at(made.overload()).result;
+    collection = Reference::value(made.receiverOperand());
+    const ClassPart* classOfCollection = singleBuiltinClassOf(walker.types(), walker.types().at(walker.typeOf(collection)));
+    const ClassPart* classOfIterator = singleBuiltinClassOf(walker.types(), walker.types().at(walker.typeOf(iterator)));
+    if (!classOfCollection || !classOfIterator || !result.iteratedOperand || !result.iteratedOperand->isReceiver() || !nobodySeesStepsOfIterators(walker, classOfIterator->builtinClass, false))
+        return std::nullopt;
+    if (contents == ContentsStepped::List && classOfCollection->builtinClass != BuiltinClasses::Array)
+        return std::nullopt;
+    return ClassSteppedUnseen { classOfCollection->builtinClass, contents, result.iterationKind };
+}
 
 namespace {
 
@@ -880,7 +933,7 @@ public:
             }
             iterable = m_walker.referenceOf(m_iteratorCallResult);
         }
-        OpenedIteration opened = open(iterable);
+        OpenedIteration opened = m_iteratorReturned ? openReturned(makeIteratorAgain(m_iteratorReturned)) : open(iterable);
         Vector<Reference, 4> openedByProtocol { undefined() };
         if (keepsStateInMemory) {
             static_assert(!static_cast<uint32_t>(WordOfIteration::Iterator) && static_cast<uint32_t>(WordOfIteration::Next) == 1 && static_cast<uint32_t>(WordOfIteration::IsDone) == 2);
@@ -904,7 +957,7 @@ public:
         return iteration;
     }
 
-    Walker::IndexedIteration openByProtocolAlone(Reference iterable)
+    Walker::IndexedIteration openByProtocolAlone(Reference iterable, Reference iteratorReturned = { })
     {
         Walker::IndexedIteration iteration;
         iteration.canSkipDoneChecks = true;
@@ -914,12 +967,49 @@ public:
         iteration.position = integer(0);
         iteration.isSteppedByCallsAlone = !laysVerdictOnNext(iterable);
         bool asksWay = !iteration.isSteppedByCallsAlone && findHelper(IterationHelper::WayToStepIterator) && findHelper(IterationHelper::StepIteratorInWay);
-        OpenedIteration opened = open(iterable);
+        OpenedIteration opened = iteratorReturned ? openReturned(iteratorReturned) : open(iterable);
         iteration.iterator = opened.iterator;
         iteration.next = opened.next;
         iteration.goesByDriver = opened.goesByDriver;
         if (asksWay)
             iteration.wayToStep = callHelper(findHelper(IterationHelper::WayToStepIterator), { opened.iterator, opened.next });
+        return iteration;
+    }
+
+    std::optional<Walker::IndexedIteration> tryOpenOverReturnedIterator(Reference iterable, bool keepsStateInMemory, bool canSkipDoneChecks)
+    {
+        if (!goesByMethodsInSight() || !iterable || !iterable.isValue())
+            return std::nullopt;
+        PropertyKeyID key = m_walker.types().wellKnownSymbolKey(WellKnownSymbol::Iterator);
+        FunctionID function = findMethodInSightOfProvenType(m_walker, m_walker.types().withoutNullish(m_walker.typeOf(iterable)), key);
+        if (!function || !returnsIteratorMadeForCaller(m_walker, function))
+            return std::nullopt;
+        iterable = requireObjectCoercible(iterable);
+        Reference method = m_walker.isUnreachable() ? Reference() : readMethodInSightOfProvenObject(m_walker, iterable, key, m_origin);
+        if (!method)
+            return m_walker.isUnreachable() ? std::optional(Walker::IndexedIteration()) : std::nullopt;
+
+        m_walker.count(StatisticID::IteratorMethodsCalledDirectly);
+        Reference iterator = call(method, iterable);
+        if (m_walker.isUnreachable())
+            return Walker::IndexedIteration();
+        Reference collection;
+        std::optional<ClassSteppedUnseen> stepped = findCollectionOfIterator(m_walker, iterator, collection);
+        if (!stepped)
+            return openByProtocolAlone(iterable, iterator);
+        m_walker.count(StatisticID::IteratorAllocationsElidedInInlinees);
+        if (stepped->contents == ContentsStepped::List) {
+            m_iteratorReturned = iterator;
+            return openByIndexOrProtocol(collection, *stepped, keepsStateInMemory, canSkipDoneChecks);
+        }
+        Walker::IndexedIteration iteration;
+        iteration.list = collection;
+        iteration.builtinClass = stepped->builtinClass;
+        iteration.contents = stepped->contents;
+        iteration.kind = stepped->kind;
+        iteration.position = integer(0);
+        iteration.table = beginByIndex(collection, stepped->contents);
+        iteration.canSkipDoneChecks = canSkipDoneChecks;
         return iteration;
     }
 
@@ -1159,6 +1249,12 @@ public:
             RELEASE_ASSERT(stepIndex && *stepIndex < iteration.precomputedSteps.size());
             return resultsOf(boolean(false), iteration.precomputedSteps[*stepIndex]);
         }
+        if (std::optional<int64_t> turn = iteration.precomputedSteps.isEmpty() ? std::nullopt : integerIn(iteration.position); turn && static_cast<uint64_t>(*turn) <= iteration.precomputedSteps.size()) {
+            bool isDone = static_cast<uint64_t>(*turn) == iteration.precomputedSteps.size();
+            Reference name = isDone ? undefined() : iteration.precomputedSteps[static_cast<size_t>(*turn)];
+            iteration.position = integer(isDone ? Walker::doneIterationPosition : *turn + 1);
+            return resultsOf(boolean(isDone), name);
+        }
         if (iteration.isOverFlatEntries)
             return resumeThroughFlatEntries(iteration);
         if (iteration.isProtocolOnly) {
@@ -1202,6 +1298,8 @@ public:
         Reference keyOfPair = !iteration.isEntryPairElided ? Reference() : iteration.table ? m_walker.addParameter(after, { }, Representation::JSValue) : m_walker.addParameter(after, { }, m_walker.formOfParameter(m_walker.types().integer(Range { 0, Walker::doneIterationPosition }), { }));
         Reference valueOfPair = iteration.isEntryPairElided ? m_walker.addParameter(after, { }, Representation::JSValue) : Reference();
 
+        if (iteration.hasProtocolFallback)
+            iteration.elementsProven = { };
         stepWithProtocolFallback(iteration, isEffectFree, after);
         iteration.position = position;
         iteration.table = table;
@@ -1279,7 +1377,7 @@ public:
         return build(WTF::move(pair));
     }
 
-    ValueID valueHandedToArithmeticAlone(const BodyValue& resume)
+    ValueID findStepValue(const BodyValue& resume)
     {
         const BodyIndex& index = m_walker.currentBodyIndex();
         ValueID stepValue;
@@ -1287,7 +1385,30 @@ public:
             if (operation.opcode() == Opcode::ResultAt && operation.as<Opcode::ResultAt>().resultsOperand() == resume.id() && operation.as<Opcode::ResultAt>().index() == static_cast<uint32_t>(IteratorResumeResult::Value))
                 stepValue = operation.id();
         }
-        return stepValue && index.useCount(resume.id()) == 2 && onlyUserTakesUndefinedForNaNInTypedElements(m_walker, index.value(stepValue)) ? stepValue : ValueID();
+        return index.useCount(resume.id()) == 2 ? stepValue : ValueID();
+    }
+
+    bool isAddedToNumberForPosition(ValueID stepValue)
+    {
+        const BodyIndex& index = m_walker.currentBodyIndex();
+        ValueID name = stepValue;
+        ValueID user = index.onlyUsingValue(name);
+        while (user && opcodesThatStateTypes.contains(index.opcodeOf(user))) {
+            name = user;
+            user = index.onlyUsingValue(user);
+        }
+        if (!user || (index.opcodeOf(user) != Opcode::Add && index.opcodeOf(user) != Opcode::Sub))
+            return false;
+        BodyValue sum = index.value(user);
+        ValueID other = sum.operand(0) == name ? sum.operand(1) : sum.operand(0);
+        Reference built = other.index() < stepValue.index() ? m_walker.referenceOf(other) : Reference();
+        Type type = built ? m_walker.types().at(m_walker.typeOf(built)) : Type();
+        return built && (type.primitives & Primitive::Integer) && type.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined) && usesSpeakForInt32(m_walker, user);
+    }
+
+    bool isTakenForPosition(ValueID stepValue)
+    {
+        return stepValue && m_walker.canBuildIterationGuard() && (turnTakesElementForKeyInListReadsInLoops(m_walker, stepValue) || isAddedToNumberForPosition(stepValue));
     }
 
     bool isFollowedByDoneBranch(const BodyValue& resume)
@@ -1349,10 +1470,15 @@ public:
                 m_walker.fail("a path of a threaded step did not visit the end of its block"_s);
             return true;
         }
-        m_valueThatStepHandsToArithmeticAlone = entered.kind == JSC::IterationKind::Values ? valueHandedToArithmeticAlone(resume) : ValueID();
+        ValueID stepValue = entered.kind == JSC::IterationKind::Values ? findStepValue(resume) : ValueID();
+        m_stepIsTakenForPosition = isTakenForPosition(stepValue);
+        m_valueThatStepHandsToArithmeticAlone = stepValue && !m_stepIsTakenForPosition && onlyUserTakesUndefinedForNaNInTypedElements(m_walker, index.value(stepValue)) ? stepValue : ValueID();
         std::optional<PassedTest> insideLength = m_walker.boundsProofAfterComparison(entered.list, inside, length, isInside);
         Reference given = entered.contents == ContentsStepped::View ? elementOfView(entered.list, inside, insideLength) : stepValueAt(entered, entered.list, inside, isEffectFree, insideLength, entered.isEntryPairElided);
         m_valueThatStepHandsToArithmeticAlone = { };
+        m_stepIsTakenForPosition = false;
+        if (m_walker.isUnreachable() || m_walker.hasFailed())
+            return true;
         m_walker.indexedIteration(state).position = operatorOnNumbers(Opcode::Increment, inside);
         if (m_walker.isUnreachable())
             return true;
@@ -1377,6 +1503,7 @@ public:
         Walker::IndexedIteration entered = record;
         if (!isFollowedByDoneBranch(resume) || integerIn(entered.position) || !m_walker.canThreadBranchAfter(resume))
             return false;
+        entered.elementsProven = { };
         BlockID finished = addBlock();
         BlockID giving = addBlock();
         Reference given = m_walker.addParameter(giving, { }, Representation::JSValue);
@@ -1828,7 +1955,7 @@ private:
 
     Reference readMethod(Reference object, PropertyKeyID key)
     {
-        Reference method = goesByMethodsInSight() ? readMethodAboveProvenObject(m_walker, object, key, m_origin) : Reference();
+        Reference method = goesByMethodsInSight() ? readMethodForCallAlone(m_walker, object, key, m_origin) : Reference();
         return method ? method : read(object, key);
     }
 
@@ -2235,6 +2362,10 @@ private:
                 m_walker.count(StatisticID::IteratorStepHoleChecksRemoved);
             }
             takeStorageAndLengthFromInFrontOfLoop(m_walker, read, *tested);
+            if (m_stepIsTakenForPosition && read.isInBounds() && isNumericStorage(read.arrayStorage())) {
+                if (!guardElementPresenceInIteration(m_walker, read, list, position, *tested))
+                    return { };
+            }
             built = m_walker.build(WTF::move(read));
         } else {
             Draft read = readOfElementAt(list, position, isEffectFree, insideLength);
@@ -2807,6 +2938,20 @@ private:
 
     OpenedIteration withNextMethod(Reference iterator) { return { iterator, readMethod(iterator, m_walker.program().keyOf(BuiltinNames::next)) }; }
 
+    OpenedIteration openReturned(Reference iterator) { return leftToSteps(withNextMethod(requireObject(iterator, RuntimeErrorKind::IteratorNotObject))); }
+
+    Reference makeIteratorAgain(Reference iterator)
+    {
+        const Code& code = m_walker.code();
+        const Operation& made = code.at(underlyingCellOf(code, iterator.id()));
+        Draft again = draft(Opcode::CallInline);
+        again.setInlineBuiltin(made.inlineBuiltin());
+        again.setInlineParameters(made.inlineParameters());
+        again.setOverload(made.overload());
+        again.setReceiverOperand(Reference::value(made.receiverOperand()));
+        return build(WTF::move(again));
+    }
+
     OpenedIteration leftToSteps(OpenedIteration opened)
     {
         for (Reference named : { opened.iterator, opened.next }) {
@@ -3161,9 +3306,22 @@ private:
         readStepResult(call(method, iterator, singleElementSpan(sent)), readsValueWhenDone, join);
     }
 
+    bool callReturnInSight(Reference iterator)
+    {
+        if (!goesByMethodsInSight())
+            return false;
+        Reference method = readMethodForCallAlone(m_walker, iterator, m_walker.program().keyOf(BuiltinNames::returnKeyword), m_origin);
+        if (!method || !method.isValue() || m_walker.isUnreachable() || !findOnlyCallee(m_walker, *m_site, method))
+            return false;
+        requireObject(call(method, iterator), RuntimeErrorKind::IteratorResultNotObject);
+        return true;
+    }
+
     void callReturn(Reference iterator, ResultOfReturnInIteration expectation)
     {
         if (goesByMethodsInSight() && findsNothingUnderNameOfProvenObject(m_walker, iterator, m_walker.program().keyOf(BuiltinNames::returnKeyword)))
+            return;
+        if (expectation == ResultOfReturnInIteration::MustBeObject && callReturnInSight(iterator))
             return;
         if (FunctionID closes = expectation == ResultOfReturnInIteration::MustBeObject ? findHelper(IterationHelper::CloseIterator) : FunctionID()) {
             callHelper(closes, { iterator });
@@ -3238,6 +3396,7 @@ private:
     BlockID m_whereNeitherTextNorListIsStepped;
     BlockID m_doneBlock;
     ValueID m_valueThatStepHandsToArithmeticAlone;
+    bool m_stepIsTakenForPosition { false };
     bool m_takesListApart { false };
     BlockFrequency m_frequencyOfBlocksAdded { BlockFrequency::Normal };
     Reference m_instanceAsMadeForGood;
@@ -3245,6 +3404,7 @@ private:
     uint32_t m_iteratorCallBegin { 0 };
     uint32_t m_iteratorCallEnd { 0 };
     ValueID m_iteratorCallResult;
+    Reference m_iteratorReturned;
 };
 
 } // anonymous namespace
@@ -3759,10 +3919,15 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
     if (!isSurelyAsMade && !tested) {
         if (!isExpectedToStepGenerator(walker, open.id()))
             builder.expectNoGenerator();
-        iteration = builder.openByProtocolAlone(iterable);
-        if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), open.id()))
-            walker.leaveAnythingAt(listed);
-        walker.state().invalidateHeap();
+        std::optional<Walker::IndexedIteration> returned = builder.tryOpenOverReturnedIterator(iterable, way.stepsStandUnderOwnCleanup || !way.closesStandBelowOnlyStep, way.canSkipDoneChecks);
+        iteration = returned ? WTF::move(*returned) : builder.openByProtocolAlone(iterable);
+        if (!iteration.isProtocolOnly)
+            iteration.isEntryPairElided = canElideEntryPair(walker, index, iteration, open.id());
+        if (iteration.isProtocolOnly || iteration.hasProtocolFallback) {
+            if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), open.id()))
+                walker.leaveAnythingAt(listed);
+            walker.state().invalidateHeap();
+        }
     } else if (isSurelyAsMade) {
         walker.verifyPristineObject(iterable);
         if (isAsMadeForGood)
@@ -4050,6 +4215,38 @@ bool patternMayTakeListApartInCleanTurn(Walker& walker, const BodyValue& open)
 {
     return isOpenThatMayGoByIndex(open) && isArrayIteratorProtocolIntact(walker) && isArrayPrototypeChainSane(walker) && stepsOfPatternStandInRow(walker.currentBodyIndex(), open)
         && isDestructuredArrayLikelyNumeric(walker, open, walker.referenceOf(open.as<Opcode::IteratorOpen>().iterableOperand()));
+}
+
+static bool returnsOnlyArrayLiterals(const Walker& walker, FunctionID function)
+{
+    const BodyIndex* body = walker.facts().bodies().find(function);
+    if (!body || !walker.program().at(function).hasBody())
+        return false;
+    bool returnsSomething = false;
+    for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
+        BodyTerminator end = body->terminator(BlockID(number));
+        if (end.kind() == TerminatorKind::ReturnCall)
+            return false;
+        if (end.kind() != TerminatorKind::Return)
+            continue;
+        ValueID returned = body->stripCasts(end.operand(0));
+        if (!returned || body->isParameter(returned) || body->opcodeOf(returned) != Opcode::NewArray)
+            return false;
+        returnsSomething = true;
+    }
+    return returnsSomething;
+}
+
+bool destructuresReturnedLiteral(const Walker& walker, const BodyIndex& index, ValueID open)
+{
+    if (index.isParameter(open) || index.opcodeOf(open) != Opcode::IteratorOpen || !isOpenThatMayGoByIndex(index.value(open)) || !stepsOfPatternStandInRow(index, index.value(open)))
+        return false;
+    ValueID call = index.stripCasts(index.value(open).as<Opcode::IteratorOpen>().iterableOperand());
+    if (!call || index.isParameter(call) || index.opcodeOf(call) != Opcode::Call || index.onlyUsingValue(call) != open)
+        return false;
+    FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), call);
+    constexpr OptionSet<FunctionFlags> returnsAnotherObject { FunctionFlags::IsAsync, FunctionFlags::IsGenerator };
+    return callee && !walker.program().at(callee).hasAny(returnsAnotherObject) && returnsOnlyArrayLiterals(walker, callee);
 }
 
 bool spreadAppendsElementsOfListAsMade(Walker& walker, ValueID spreadValue)

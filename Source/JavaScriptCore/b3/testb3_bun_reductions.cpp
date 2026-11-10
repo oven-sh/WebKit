@@ -8,6 +8,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirExtendedForms.h"
 #include "B3BulkMemoryValue.h"
 #include "B3EliminateDeadCode.h"
 #include "B3FoldPathConstants.h"
@@ -967,11 +968,16 @@ enum class ExtendedForm : uint8_t {
     SignExtensionOfLoad,
     TestOfLoad,
     SelectOnTestOfLoad,
+    Branch32OnIndexedLoad,
+    Branch32BeforeIndexedLoad,
+    Branch64BeforeIndexedLoad,
+    Branch64OnIndexedLoadAndImmediate,
 };
 
 } // anonymous namespace
 
 static constexpr int64_t factorOfProduct = 1000003;
+static constexpr int64_t boundOfLoad = 300;
 
 static Air::Opcode airOpcodeOf(ExtendedForm form)
 {
@@ -984,10 +990,19 @@ static Air::Opcode airOpcodeOf(ExtendedForm form)
         return Air::Test64;
     case ExtendedForm::SelectOnTestOfLoad:
         return Air::MoveConditionallyTest64;
+    case ExtendedForm::Branch32OnIndexedLoad:
+    case ExtendedForm::Branch32BeforeIndexedLoad:
+        return Air::Branch32;
+    case ExtendedForm::Branch64BeforeIndexedLoad:
+    case ExtendedForm::Branch64OnIndexedLoadAndImmediate:
+        return Air::Branch64;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return Air::Oops;
 }
+
+// Eight times this is in the reach of a load on arm64.
+static constexpr int32_t indexOfLoad = 31;
 
 static void buildUserOfExtendedForm(Graph& graph, ExtendedForm form)
 {
@@ -1012,6 +1027,23 @@ static void buildUserOfExtendedForm(Graph& graph, ExtendedForm form)
     case ExtendedForm::SelectOnTestOfLoad:
         graph.ret(root, graph.select(root, appendMaskedLoad(), operand, other));
         return;
+    case ExtendedForm::Branch32OnIndexedLoad:
+    case ExtendedForm::Branch32BeforeIndexedLoad:
+    case ExtendedForm::Branch64BeforeIndexedLoad:
+    case ExtendedForm::Branch64OnIndexedLoadAndImmediate: {
+        Type type = airOpcodeOf(form) == Air::Branch32 ? Int32 : Int64;
+        Value* address = graph.make(root, Add, pointer, graph.make(root, Shl, other, graph.int32(root, 3)));
+        Value* loaded = graph.load(root, type, address, -indexOfLoad * 8, firstHeap);
+        Value* compared = form == ExtendedForm::Branch64OnIndexedLoadAndImmediate ? graph.int64(root, boundOfLoad) : type == Int32 ? graph.make(root, Trunc, operand) : operand;
+        bool isBefore = form == ExtendedForm::Branch32BeforeIndexedLoad || form == ExtendedForm::Branch64BeforeIndexedLoad;
+        Value* comparison = isBefore ? graph.make(root, LessThan, compared, loaded) : graph.make(root, LessThan, loaded, compared);
+        BasicBlock* whereLess = graph.proc.addBlock();
+        BasicBlock* otherwise = graph.proc.addBlock();
+        graph.branch(root, comparison, whereLess, otherwise);
+        graph.ret(whereLess, graph.int64(whereLess, 1));
+        graph.ret(otherwise, graph.int64(otherwise, 0));
+        return;
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -1027,6 +1059,14 @@ static int64_t resultOfExtendedForm(ExtendedForm form, int64_t loaded, int64_t o
         return !(loaded & operand);
     case ExtendedForm::SelectOnTestOfLoad:
         return (loaded & operand) ? operand : other;
+    case ExtendedForm::Branch32OnIndexedLoad:
+        return static_cast<int32_t>(loaded) < static_cast<int32_t>(operand);
+    case ExtendedForm::Branch32BeforeIndexedLoad:
+        return static_cast<int32_t>(operand) < static_cast<int32_t>(loaded);
+    case ExtendedForm::Branch64BeforeIndexedLoad:
+        return operand < loaded;
+    case ExtendedForm::Branch64OnIndexedLoadAndImmediate:
+        return loaded < boundOfLoad;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return 0;
@@ -1041,7 +1081,7 @@ static void testExtendedFormsAreSelectedOnRequest()
     };
     const Case cases[] = { { Policy::fromProcessOptions(), false }, { Policy(), false }, { selectionPolicy(), true } };
     for (const Case& testCase : cases) {
-        for (ExtendedForm form : { ExtendedForm::ProductWithImmediate, ExtendedForm::SignExtensionOfLoad, ExtendedForm::TestOfLoad, ExtendedForm::SelectOnTestOfLoad }) {
+        for (ExtendedForm form : { ExtendedForm::ProductWithImmediate, ExtendedForm::SignExtensionOfLoad, ExtendedForm::TestOfLoad, ExtendedForm::SelectOnTestOfLoad, ExtendedForm::Branch32OnIndexedLoad, ExtendedForm::Branch32BeforeIndexedLoad, ExtendedForm::Branch64BeforeIndexedLoad, ExtendedForm::Branch64OnIndexedLoadAndImmediate }) {
             bool isSelected = testCase.extendsInstructionSelection && (isX86() || form == ExtendedForm::SignExtensionOfLoad);
             Procedure lowered(testCase.policy);
             Graph loweredGraph { lowered };
@@ -1049,9 +1089,9 @@ static void testExtendedFormsAreSelectedOnRequest()
             lowerToAirForTesting(lowered);
             CHECK_EQ(numberOfInsts(lowered, airOpcodeOf(form)), 1u);
             CHECK_EQ(numberOfInsts(lowered, [&](Air::Inst& inst) {
-                return inst.kind.opcode == airOpcodeOf(form) && std::ranges::any_of(inst.args(), [](const Air::Arg& arg) {
-                    return arg.isImm() || arg.isMemory();
-                });
+                std::span<const Air::Arg> args = inst.args();
+                bool isExtended = args.size() == 2 ? Air::isExtendedForm(inst.kind.opcode, args[0].kind(), args[1].kind()) : args.size() >= 3 && Air::isExtendedForm(inst.kind.opcode, args[0].kind(), args[1].kind(), args[2].kind());
+                return inst.kind.opcode == airOpcodeOf(form) && isExtended;
             }), isSelected ? 1u : 0u);
 
             Procedure proc(testCase.policy);
@@ -1061,8 +1101,7 @@ static void testExtendedFormsAreSelectedOnRequest()
             for (int64_t loaded : { 0ll, 6ll, -1ll, 0x180000001ll }) {
                 int64_t memory[1] = { loaded };
                 for (int64_t operand : { 0ll, 1ll, 2ll, -5ll }) {
-                    constexpr int64_t other = 77;
-                    CHECK_EQ(invoke<int64_t>(*code, memory, operand, other), resultOfExtendedForm(form, loaded, operand, other));
+                    CHECK_EQ(invoke<int64_t>(*code, memory, operand, indexOfLoad), resultOfExtendedForm(form, loaded, operand, indexOfLoad));
                 }
             }
         }

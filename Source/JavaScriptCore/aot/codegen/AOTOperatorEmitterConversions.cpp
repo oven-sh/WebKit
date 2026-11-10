@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCastEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTIRProgram.h"
@@ -120,6 +121,13 @@ public:
         return convertByType(context, get(id), typeIDOf(id));
     }
 
+    StringEmitter::StringPart partOfConcatenation(const OperationContext& context, ValueID id)
+    {
+        if (StringID constant = emitter<StringEmitter>().findNumberedStringConstant(context, id))
+            return constant;
+        return convertAddend(context, id);
+    }
+
     CellPointer convertByType(const OperationContext& context, Operand operand, TypeID typeID)
     {
         Type type = types().at(typeID);
@@ -152,7 +160,7 @@ private:
     CellPointer convertDouble(const OperationContext& context, Number value)
     {
         ConversionEmitter& conversions = emitter<ConversionEmitter>();
-        Word32 whole = low32(conversions.toInteger(value));
+        Word32 whole = conversions.truncateToWord(value);
         Integer bitsOfWhole = conversions.bitsOf(toNumber(whole));
         return selectByBranch<CellPointer>(equal(bitsOfWhole, conversions.bitsOf(value)), [&] {
             return emitter<StringEmitter>().integerToString(context, whole);
@@ -243,6 +251,11 @@ void OperatorEmitter::generateToBoolean(const ValueContext& value)
     case OperatorForm::Bits:
     case OperatorForm::Booleans:
         m_out.noteForm(Form::Open, stateOf(value->form()));
+        if (ValueID check = generator().checkLeftToTruthTest(value.id())) {
+            emitter<CastEmitter>().checkBooleanOrBranch(value, check);
+            if (value.isBranchCondition())
+                return;
+        }
         defineTest(value, truthiness.isTruthy(value, get(tested), typeOf(tested)));
         return;
     case OperatorForm::Unselected:
@@ -287,11 +300,11 @@ CellPointer OperatorEmitter::concatenationOfParts(const ValueContext& value)
     ToStringEmitter toStrings(generator());
     if (!value->isLikelyKey()) {
         Vector<uint32_t, 8> firstOccurrences = firstOccurrencesOfStrcatParts(parts);
-        Vector<CellPointer, 8> fibers;
+        Vector<StringEmitter::StringPart, 8> fibers;
         for (uint32_t index = 0; index < parts.size(); ++index) {
             uint32_t first = firstOccurrences[index];
             bool isConvertedAlready = first < index && !typeOf(parts[index]).hasObjects();
-            fibers.append(isConvertedAlready ? fibers[first] : toStrings.convertAddend(value, parts[index]));
+            fibers.append(isConvertedAlready ? fibers[first] : toStrings.partOfConcatenation(value, parts[index]));
         }
         return emitter<StringEmitter>().concatenate(value, fibers.span());
     }
@@ -314,11 +327,17 @@ Operand OperatorEmitter::addStrings(const ValueContext& value)
     ValueID right = value->rightOperand();
     bool resultIsBoxed = value.representation() == Representation::JSValue;
     switch (value->form()) {
-    case OperatorForm::Strings:
-        return strings.concatenate(value, { in<CellPointer>(left), in<CellPointer>(right) });
+    case OperatorForm::Strings: {
+        auto partOf = [&](ValueID operand) -> StringEmitter::StringPart {
+            if (StringID constant = strings.findNumberedStringConstant(value, operand))
+                return constant;
+            return in<CellPointer>(operand);
+        };
+        return strings.concatenate(value, { partOf(left), partOf(right) });
+    }
     case OperatorForm::StringAndPrimitive: {
-        CellPointer first = toStrings.convertAddend(value, left);
-        CellPointer second = toStrings.convertAddend(value, right);
+        StringEmitter::StringPart first = toStrings.partOfConcatenation(value, left);
+        StringEmitter::StringPart second = toStrings.partOfConcatenation(value, right);
         return strings.concatenate(value, { first, second });
     }
     case OperatorForm::NullableStrings: {

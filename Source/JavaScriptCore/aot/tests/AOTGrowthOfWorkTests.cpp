@@ -116,6 +116,54 @@ static void testEachOfManyMembersIsFoundByItsKey()
     });
 }
 
+static std::optional<uint64_t> instructionsOfIndexingViewsForGrowthTests(unsigned numberOfViews)
+{
+    StringBuilder text;
+    for (unsigned number = 0; number < numberOfViews; ++number) {
+        text.append("layout L"_s, number, " name=\"I"_s, number, "\" module=m0 fields=["_s);
+        for (unsigned field = 0; field <= number; ++field)
+            text.append(field ? ", "_s : ""_s, "{key=\"b"_s, field, "\" declared={type=anything}}"_s);
+        text.append(']');
+        if (number)
+            text.append(" supertypes=[L"_s, number - 1, ']');
+        text.append(" flags=[IsNeverAllocated] ownFieldCount="_s, number + 1, '\n');
+    }
+    for (unsigned number = 0; number < numberOfViews; ++number)
+        text.append("layout L"_s, numberOfViews + number, " module=m0 fields=[] supertypes=[L"_s, number, "]\n"_s);
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n    Return v0\n}\n"_s);
+
+    std::optional<uint64_t> instructions;
+    runOnBuildThread([&] {
+        BuildContext build(makeOptionsOfTestedProgram());
+        std::unique_ptr<Program> program = parseProgram(withStandInLibrary(text.toString()), build);
+        AOT_TEST_CHECK(program);
+        instructions = instructionsOfCurrentThreadIn([&] {
+            program->indexViews(ParallelLoops(1));
+        });
+        LayoutID last(2 * numberOfViews - 1);
+        AOT_TEST_CHECK(program->viewsAbove(last).size() == numberOfViews);
+        PropertyKeyID middle = program->at(LayoutID(numberOfViews / 2)).fields[numberOfViews / 2].key;
+        unsigned numberOfFields = 0;
+        AOT_TEST_CHECK(program->visitFieldsWrittenAbove(last, middle, [&](Program::FieldOfView field) {
+            AOT_TEST_CHECK(program->at(field.view).fields[field.field].key == middle && field.view.index() == numberOfViews / 2 + numberOfFields);
+            ++numberOfFields;
+            return true;
+        }));
+        AOT_TEST_CHECK(numberOfFields == numberOfViews - numberOfViews / 2);
+    });
+    return instructions;
+}
+
+static void testViewIndexGrowth()
+{
+    constexpr unsigned numberOfViews = 100;
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfIndexingViewsForGrowthTests(numberOfViews);
+    std::optional<uint64_t> large = instructionsOfIndexingViewsForGrowthTests(4 * numberOfViews);
+    AOT_TEST_CHECK(!smaller || !large || *large < 28 * *smaller);
+}
+
 static std::optional<uint64_t> instructionsOfLookupsFromFootOfRowForGrowthTests(unsigned numberOfClasses)
 {
     StringBuilder text;
@@ -1846,6 +1894,7 @@ static void testFirstWalkGrowsAsJoinsThatNamesAreReadOffDo()
 std::span<const NativeTest> growthOfWorkTests()
 {
     static constexpr NativeTest tests[] {
+        { "growth-of-work/view-index-growth"_s, testViewIndexGrowth },
         { "growth-of-work/each-of-many-members-of-a-class-is-found-by-its-key"_s, testEachOfManyMembersIsFoundByItsKey },
         { "growth-of-work/members-of-classes-far-above-are-found-by-their-keys"_s, testMembersOfClassesFarAboveAreFoundByTheirKeys },
         { "growth-of-work/asking-each-class-object-of-a-row-what-a-lookup-does-not-find-grows-as-the-row-does"_s, testAskingEachClassObjectOfRowWhatLookupDoesNotFindGrowsAsRowDoes },

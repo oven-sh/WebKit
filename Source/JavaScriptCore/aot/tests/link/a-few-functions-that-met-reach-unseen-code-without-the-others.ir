@@ -1,4 +1,4 @@
-# Two to four closures that meet at a place are still named there. If such a place that leads to unseen code counted as "lost functions have reached unseen code", the first pair of getters in one descriptor would hand out every function of the program that has ever met another.
+# Two to eight closures that meet at a place are still named there. If such a place that leads to unseen code counted as "lost functions have reached unseen code", the first pair of getters in one descriptor would hand out every function of the program that has ever met another.
 # function hand(f) { sink(f); }  function look(f) { return typeof f; }  hand(one); hand(two); look(three); look(four);
 # What `hand` is handed is one or two, and nothing else. They escape. three and four have met each other alone, and nobody calls them.
 # RUN: link functions mechanisms=all

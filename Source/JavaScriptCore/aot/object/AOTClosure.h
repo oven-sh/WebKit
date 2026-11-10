@@ -95,6 +95,7 @@ ALWAYS_INLINE bool isCompiledClosure(const JSCell* cell) { return cell->type() =
 JSValue findOnChainAbove(VM&, const JSObject*, UniquedStringImpl*, unsigned& attributes);
 bool holdsWhatIsFoundAbove(VM&, const JSObject*, UniquedStringImpl*, JSValue, unsigned attributes);
 void holdClosureToLackingNameSlowCase(VM&, const JSCell* closure, UniquedStringImpl*);
+bool closureAdmitsName(VM&, const JSCell* closure, UniquedStringImpl*);
 ALWAYS_INLINE void holdClosureToLackingName(VM& vm, const JSCell* cell, UniquedStringImpl* uid)
 {
     if (isCompiledCalleeType(cell->type())) [[unlikely]]

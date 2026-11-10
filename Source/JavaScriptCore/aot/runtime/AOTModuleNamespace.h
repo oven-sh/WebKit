@@ -47,7 +47,7 @@ public:
     bool isAnsweredByMock() const;
     JSObject* activeMock() const;
     void setKeepsToModule(bool keepsToModule) { m_keepsToModule = keepsToModule; }
-    bool keepsToModule() const { return m_keepsToModule; }
+    bool keepsToModule() const;
     void setMockOfView(VM& vm, JSObject* mock) { m_mockOfView.set(vm, this, mock); }
     void clearMockOfView() { m_mockOfView.clear(); }
     AbstractModuleRecord* recordForResolution();
@@ -60,6 +60,7 @@ public:
     void refuseToShowExport(PropertyName);
 
     void replaceCapturedValue(JSGlobalObject*, const Identifier& name, JSValue);
+    DynamicExports dynamicExports() const { return { m_dynamicExportNames.get(), m_capturedValues.get(), m_liveSources.get() }; }
     void replaceDynamicExports(VM&, const DynamicExports&);
     JSValue capturedValueWithoutAllocating(UniquedStringImpl*) const;
 

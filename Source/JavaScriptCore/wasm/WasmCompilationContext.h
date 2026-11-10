@@ -74,6 +74,9 @@ struct CompilationContext {
     Box<PCToCodeOriginMap> pcToCodeOriginMap;
     Box<PCToCodeOriginMapBuilder> pcToCodeOriginMapBuilder;
     Vector<CCallHelpers::Label> catchEntrypoints;
+    CCallHelpers::Label directEntry;
+    // The direct entry for callers that omit a zero argument.
+    Box<CCallHelpers::Label> directEntryWithZero;
     SegmentedVector<WasmOrigin> origins;
     CodeForImage* codeForImage { nullptr };
 };

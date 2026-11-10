@@ -154,13 +154,33 @@ public:
     std::span<const LayoutID> layoutsExpectedBelow(LayoutID) const LIFETIME_BOUND;
     std::span<const LayoutID> layoutsWithName(PropertyKeyID) const LIFETIME_BOUND;
     std::span<const LayoutID> viewsAbove(LayoutID) const LIFETIME_BOUND;
-    struct FieldWrittenAbove {
-        PropertyKeyID key;
+    struct FieldOfView {
         LayoutID view;
         uint32_t field { 0 };
     };
     static constexpr size_t fewestViewsIndexedByKey = 8;
-    std::span<const FieldWrittenAbove> fieldsWrittenAbove(LayoutID, PropertyKeyID) const LIFETIME_BOUND;
+    std::span<const FieldOfView> fieldsOfViews(PropertyKeyID) const LIFETIME_BOUND;
+    template<typename Functor>
+    bool visitFieldsWrittenAbove(LayoutID id, PropertyKeyID key, const Functor& functor) const
+    {
+        std::span<const FieldOfView> fields = fieldsOfViews(key);
+        std::span<const LayoutID> views = viewsAbove(id);
+        auto nextField = fields.begin();
+        auto nextView = views.begin();
+        while (nextField != fields.end() && nextView != views.end()) {
+            if (nextField->view < *nextView)
+                nextField = std::ranges::lower_bound(nextField, fields.end(), *nextView, { }, &FieldOfView::view);
+            else if (*nextView < nextField->view)
+                nextView = std::ranges::lower_bound(nextView, views.end(), nextField->view);
+            else {
+                if (!functor(*nextField))
+                    return false;
+                ++nextField;
+                ++nextView;
+            }
+        }
+        return true;
+    }
     bool prototypeMaySelectOtherClass(LayoutID) const;
     void indexClasses();
     void indexNames();
@@ -205,9 +225,8 @@ private:
         Vector<LayoutID> layoutsWithName;
         Vector<uint32_t> firstViewAbove;
         Vector<LayoutID> viewsAbove;
-        Vector<uint32_t> rowOfFieldsWrittenAbove;
-        Vector<uint32_t> firstFieldWrittenAbove;
-        Vector<FieldWrittenAbove> fieldsWrittenAbove;
+        Vector<uint32_t> firstFieldsByKey;
+        Vector<FieldOfView> fieldsOfViewsByKey;
         Vector<PropertyKeyID> builtinNameKeys;
         PropertyKeyID keyOfWordOnWhatSeesAccesses;
         Vector<BuiltinName> registeredSymbolNames;

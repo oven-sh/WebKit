@@ -28,6 +28,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
+#include <wtf/MallocSpan.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/SegmentedVector.h>
 
@@ -221,6 +222,16 @@ struct LinkType {
 
     using Words = std::array<uint64_t, 4>;
     ALWAYS_INLINE Words words() const { return std::bit_cast<Words>(*this); }
+    using References = std::array<uint64_t, 3>;
+    ALWAYS_INLINE uint64_t head() const { return words()[0]; }
+    ALWAYS_INLINE References references() const
+    {
+        Words held = words();
+        return { held[1], held[2], held[3] };
+    }
+    static ALWAYS_INLINE References noReferences() { return LinkType { }.references(); }
+    static ALWAYS_INLINE LinkType of(uint64_t head, const References& references) { return std::bit_cast<LinkType>(Words { head, references[0], references[1], references[2] }); }
+    static ALWAYS_INLINE LinkType ofHead(uint64_t head) { return of(head, noReferences()); }
     static ALWAYS_INLINE Words wordsOfShadows()
     {
         LinkType marked;
@@ -269,14 +280,14 @@ struct LinkType {
 };
 static_assert(std::has_unique_object_representations_v<LinkType>);
 
-template<typename MemberID>
-class SetsOfFourInLinkFlow {
-    WTF_MAKE_NONCOPYABLE(SetsOfFourInLinkFlow);
+template<typename MemberID, size_t mostMembersOfSet>
+class SmallSetsInLinkFlow {
+    WTF_MAKE_NONCOPYABLE(SmallSetsInLinkFlow);
 public:
-    static constexpr size_t mostMembers = 4;
+    static constexpr size_t mostMembers = mostMembersOfSet;
 
-    SetsOfFourInLinkFlow() = default;
-    ~SetsOfFourInLinkFlow()
+    SmallSetsInLinkFlow() = default;
+    ~SmallSetsInLinkFlow()
     {
         for (auto& part : m_parts)
             delete[] part.load(std::memory_order_relaxed);
@@ -295,11 +306,18 @@ public:
         RELEASE_ASSERT(sortedMembers.size() >= 2 && sortedMembers.size() <= mostMembers);
         Members members { };
         std::ranges::copy(sortedMembers, members.begin());
-        std::pair<uint64_t, uint64_t> words { static_cast<uint64_t>(members[0].bits()) << 32 | members[1].bits(), static_cast<uint64_t>(members[2].bits()) << 32 | members[3].bits() };
+        auto words = [&](size_t first) -> Words {
+            return { static_cast<uint64_t>(members[first].bits()) << 32 | members[first + 1].bits(), static_cast<uint64_t>(members[first + 2].bits()) << 32 | members[first + 3].bits() };
+        };
+        Key key;
+        if constexpr (mostMembers == 4)
+            key = words(0);
+        else
+            key = { words(0), words(4) };
         while (m_isLocked.load(std::memory_order_relaxed) || m_isLocked.exchange(true, std::memory_order_acquire))
             simde_mm_pause();
         uint32_t next = m_size.load(std::memory_order_relaxed);
-        auto added = m_numbers.add(words, next);
+        auto added = m_numbers.add(key, next);
         if (added.isNewEntry) {
             auto [part, position] = placeOf(next);
             Members* records = m_parts[part].load(std::memory_order_relaxed);
@@ -318,6 +336,9 @@ public:
 
 private:
     using Members = std::array<MemberID, mostMembers>;
+    using Words = std::pair<uint64_t, uint64_t>;
+    static_assert(mostMembers == 4 || mostMembers == 8);
+    using Key = std::conditional_t<mostMembers == 4, Words, std::pair<Words, Words>>;
     static constexpr unsigned log2OfSetsInFirstPart = 10;
     static constexpr size_t numberOfParts = 32 - log2OfSetsInFirstPart;
 
@@ -334,12 +355,65 @@ private:
     }
 
     std::array<std::atomic<Members*>, numberOfParts> m_parts { };
-    UncheckedKeyHashMap<std::pair<uint64_t, uint64_t>, uint32_t> m_numbers;
+    UncheckedKeyHashMap<Key, uint32_t> m_numbers;
     std::atomic<uint32_t> m_size { 0 };
     std::atomic<bool> m_isLocked { false };
 };
-using SetsOfLayoutsInLinkFlow = SetsOfFourInLinkFlow<LayoutID>;
-using SetsOfFunctionsInLinkFlow = SetsOfFourInLinkFlow<FunctionID>;
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+class LinkReferenceTable {
+    WTF_MAKE_NONCOPYABLE(LinkReferenceTable);
+public:
+    using References = LinkType::References;
+
+    JS_EXPORT_PRIVATE LinkReferenceTable();
+    JS_EXPORT_PRIVATE ~LinkReferenceTable();
+
+    ALWAYS_INLINE const References& at(uint32_t number) const { return m_blocks[number >> log2OfRecordsInBlock].load(std::memory_order_relaxed)[number & (recordsInBlock - 1)]; }
+
+    struct Recent {
+        References references { LinkType::noReferences() };
+        uint32_t number { 0 };
+    };
+    using RecentNumbers = std::array<Recent, 256>;
+    JS_EXPORT_PRIVATE uint32_t numberOf(const References&, RecentNumbers&);
+
+private:
+    static constexpr unsigned log2OfRecordsInBlock = 18;
+    static constexpr uint32_t recordsInBlock = 1u << log2OfRecordsInBlock;
+    static constexpr size_t numberOfBlocks = 1u << (32 - log2OfRecordsInBlock);
+    static constexpr unsigned numberOfShards = 128;
+    static constexpr uint32_t recordsTakenAtOnce = 64;
+
+    struct Shard {
+        Vector<uint32_t> slots;
+        uint32_t size { 0 };
+        uint32_t next { 0 };
+        uint32_t end { 0 };
+        std::atomic<bool> isLocked { false };
+    };
+
+    static ALWAYS_INLINE uint64_t hashOf(const References& references)
+    {
+        uint64_t hash = references[0] * 0x9e3779b97f4a7c15ull;
+        hash = (std::rotl(hash, 29) ^ references[1]) * 0xbf58476d1ce4e5b9ull;
+        hash = (std::rotl(hash, 31) ^ references[2]) * 0x94d049bb133111ebull;
+        return hash ^ hash >> 32;
+    }
+    uint32_t findOrAdd(const References&, uint64_t hash);
+    uint32_t takeNumber(Shard&);
+    void growSlots(Shard&);
+
+    MallocSpan<std::atomic<References*>> m_room;
+    std::atomic<References*>* m_blocks;
+    std::array<Shard, numberOfShards> m_shards;
+    std::atomic<uint32_t> m_nextNumber { recordsTakenAtOnce };
+};
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+using SetsOfLayoutsInLinkFlow = SmallSetsInLinkFlow<LayoutID, 4>;
+using SetsOfFunctionsInLinkFlow = SmallSetsInLinkFlow<FunctionID, 8>;
 
 class SetsOfClassesInLinkFlow {
     WTF_MAKE_NONCOPYABLE(SetsOfClassesInLinkFlow);
@@ -638,8 +712,11 @@ public:
     LayoutID classOfConstructor(FunctionID) const;
     NameClass nameClassOf(PropertyKeyID key) const { return m_nameClassesOfKeys[key.index()]; }
 
+    BitVector findClassesWithFollowedPrototypes();
+    bool instancesMayHoldName(LayoutID, PropertyKeyID) const;
     LayoutID layoutOfConstructorFunction(FunctionID) const;
     bool isOfConstructorFunction(LayoutID layout) const { return m_layoutsOfConstructorFunctions.get(layout.index()); }
+    bool followsNamesOnPrototypeOf(LayoutID layout) const { return m_layoutsWithFollowedPrototypes.get(layout.index()); }
     FlowNodeID storedOnPrototypeOf(LayoutID, PropertyKeyID, bool isLaidByBodyOfFile);
     void noteInstancesLaidAsPrototype(const LinkType&);
     enum class AccessorsAbove : bool { AreEnteredByNobody, AreEnteredByCaller };
@@ -654,6 +731,7 @@ public:
     void letAccessorsOnPrototypesAboveEscape(LayoutID, PropertyKeyID);
     Vector<FlowNodeID, 2> halvesOfAccessorsOnPrototypesAbove(LayoutID, PropertyKeyID, bool ofSetters);
     bool isBelowConstructorFunction(LayoutID layout) const { return m_layoutsBelowConstructorFunctions.get(layout.index()); }
+    bool isBelowFollowedPrototype(LayoutID layout) const { return m_layoutsBelowFollowedPrototypes.get(layout.index()); }
     bool mayNotBeLinkedYetBelow(LayoutID from, LayoutID classAbove) const;
     FlowNodeID objectsMadeForClassBelowConstructorFunction(LayoutID);
     FlowNodeID objectsMadeThroughConstructorOf(LayoutID);
@@ -781,25 +859,27 @@ public:
     FlowNodeID madeForLostFunctionsWithoutClass();
     void noteCallOfLostFunctions(const LinkType& callee);
 
-    LinkType typeAt(FlowNodeID id) const
+    ALWAYS_INLINE LinkType typeAt(FlowNodeID id) const
     {
         if (id.index() >= m_nodes.size())
             return { };
-        const LinkType& type = m_nodes[id.index()].type;
-        if (!m_flowIsAtRest)
-            return type;
+        LinkType type = typeOfNode(id.index());
+        return m_flowIsAtRest ? typeSeenAtRest(type) : type;
+    }
+    LinkType typeSeenAtRest(const LinkType& type) const
+    {
         if (ViewAtWork::current())
             return type.directPart();
         if (type.hasUnknownObjects && m_typesAreSettled && (type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None))
             return settled(type);
         return type;
     }
-    void prefetchTypeAt(FlowNodeID id) const { __builtin_prefetch(&m_nodes[id.index()].type); }
-    bool holdsInstancesOfOneSiteAt(FlowNodeID id) const { return id.index() < m_nodes.size() && m_nodes[id.index()].type.classes == LinkType::Classes::Site; }
-    bool hasUnknownObjectsAt(FlowNodeID id) const { return id.index() < m_nodes.size() && m_nodes[id.index()].type.hasUnknownObjects; }
+    void prefetchTypeAt(FlowNodeID id) const { __builtin_prefetch(&m_nodes[id.index()]); }
+    bool holdsInstancesOfOneSiteAt(FlowNodeID id) const { return id.index() < m_nodes.size() && headOfNode(id.index()).classes == LinkType::Classes::Site; }
+    bool hasUnknownObjectsAt(FlowNodeID id) const { return id.index() < m_nodes.size() && headOfNode(id.index()).hasUnknownObjects; }
     FunctionID closureAloneAt(FlowNodeID id) const
     {
-        if (id.index() >= m_nodes.size() || m_nodes[id.index()].type.functions != LinkType::Functions::Closure)
+        if (id.index() >= m_nodes.size() || headOfNode(id.index()).functions != LinkType::Functions::Closure)
             return { };
         return typeAt(id).function;
     }
@@ -1018,7 +1098,7 @@ public:
     private:
         const LinkFlow* m_flow;
     };
-    enum class MadeOnDemand : uint8_t { Contents, ContentsOfFamily, TakenForConstant, FieldReadThroughLost, FieldStoredThroughLost, FieldReadThrough, FieldStoredThrough, FoundOnPrototypesAbove, FoundBesideFieldsUnder, ExtraPropertyReadNode, ExtraPropertyStoreNode, FoundWhereFieldIsEmpty, AppendedField, AppendedStoreNode, FoundOnClosuresOf, FoundOnClassObjectsFrom, LaidOnClosuresOf, WrittenAtMember, WhereLossIsTold, ParameterOfLostFunctions, ReceiverOfLostFunctions, ResultOfLostFunctions, LaidOnLostClosures, NameAddedByTests, FunctionOnObjectPrototype, AnyFieldDefinedOn, AnyFieldReadThrough, AnyFieldStoredThrough, ResultOfOperator };
+    enum class MadeOnDemand : uint8_t { WhereInstancesMayBeLocked, Contents, ContentsOfFamily, TakenForConstant, FieldReadThroughLost, FieldStoredThroughLost, FieldReadThrough, FieldStoredThrough, FoundOnPrototypesAbove, FoundBesideFieldsUnder, ExtraPropertyReadNode, ExtraPropertyStoreNode, FoundWhereFieldIsEmpty, AppendedField, AppendedStoreNode, FoundOnClosuresOf, FoundOnClassObjectsFrom, LaidOnClosuresOf, WrittenAtMember, WhereLossIsTold, ParameterOfLostFunctions, ReceiverOfLostFunctions, ResultOfLostFunctions, LaidOnLostClosures, NameAddedByTests, FunctionOnObjectPrototype, AnyFieldDefinedOn, AnyFieldReadThrough, AnyFieldStoredThrough, ResultOfOperator };
     static constexpr size_t numberOfKindsMadeOnDemand = static_cast<size_t>(MadeOnDemand::ResultOfOperator) + 1;
     uint32_t askedOnceByLane(MadeOnDemand kind, uint64_t words, const Invocable<uint32_t()> auto& make) const
     {
@@ -1194,6 +1274,7 @@ public:
     const TestRunsInLink& testRuns() const { return *m_testRuns; }
 
     BitVector reached;
+    BitVector iterationCallbacks;
     BitVector allocatedLayouts;
     BitVector lostLayouts;
     UnitedFamilies unitedLayouts;
@@ -1536,7 +1617,26 @@ public:
     Vector<uint32_t>& fieldsThatLaneAtWorkHasNotNotedEmpty(LayoutID) LIFETIME_BOUND;
     void noteConstructionsOf(FunctionID);
     FlowNodeID foundWhereFieldIsEmpty(FieldReference);
+    bool instancesMayBeLocked(LayoutID classLayout) const { return m_classesWithInstancesThatMayBeLocked.get(classLayout.index()); }
+    void noteInstancesMayBeLocked(LayoutID);
+    FlowNodeID whereInstancesMayBeLocked(LayoutID classLayout);
     bool mayReadInFrontOfDefinition(FunctionID reader, const SummaryAccess&, LayoutID) const;
+    struct ReadBehindInstanceOf {
+        ValueID site;
+        ValueID test;
+        LayoutID tested;
+    };
+    struct ReadsBehindInstanceOf {
+        Vector<ReadBehindInstanceOf> bySite;
+        Vector<std::pair<ValueID, uint32_t>> accessesByTest;
+    };
+    static ReadsBehindInstanceOf findReadsBehindInstanceOf(const Program&, const BodyIndex&, const ThinSummary&);
+    const ReadsBehindInstanceOf* readsBehindInstanceOf(FunctionID);
+    struct FamilyReadBehindInstanceOf {
+        FlowNodeID fields;
+        FlowNodeID besideFields;
+    };
+    std::optional<FamilyReadBehindInstanceOf> findFamilyReadBehindInstanceOf(FamilyID, PropertyKeyID, LayoutID tested);
     bool superCallMayAnswerWithOlderObject(LayoutID id) const { return m_layoutsWhoseSuperCallMayAnswerWithOlderObject.get(id.index()); }
     bool constructionMayAnswerWithOlderObject(LayoutID id) const { return m_layoutsWhoseConstructionMayAnswerWithOlderObject.get(id.index()); }
     bool everyMemberStandsAtOrBelow(FamilyID family, LayoutID above) const { return m_stretchesAtAndBelowLayouts[above.index()].holds(m_stretchesOfFamilies[family.index()]); }
@@ -1563,15 +1663,36 @@ private:
     };
 
     struct Node {
-        LinkType type;
+        uint64_t head { LinkType { }.head() };
+        uint32_t references { 0 };
         TypeID typeOfPosition;
     };
-    static_assert(sizeof(Node) == 36);
+    static_assert(sizeof(Node) == 16);
     struct ListsOfNode {
         uint32_t firstEdge { UINT32_MAX };
         uint32_t firstObserver { UINT32_MAX };
     };
     LargeList<Node> m_nodes;
+    LinkReferenceTable m_references;
+    LinkReferenceTable::RecentNumbers m_recentNumbers;
+    uint32_t numberOfReferences(const LinkType::References&);
+    static ALWAYS_INLINE LinkType headHeldBy(const Node& node) { return LinkType::ofHead(node.head); }
+    ALWAYS_INLINE LinkType typeHeldBy(const Node& node) const { return LinkType::of(node.head, m_references.at(node.references)); }
+    ALWAYS_INLINE void setTypeHeldBy(Node& node, const LinkType& type, const LinkType& before)
+    {
+        node.head = type.head();
+        LinkType::References references = type.references();
+        if (references != before.references())
+            node.references = references == LinkType::noReferences() ? 0 : numberOfReferences(references);
+    }
+    ALWAYS_INLINE LinkType headOfNode(size_t node) const { return headHeldBy(m_nodes[node]); }
+    ALWAYS_INLINE LinkType typeOfNode(size_t node) const { return typeHeldBy(m_nodes[node]); }
+    ALWAYS_INLINE void setTypeOfNode(size_t node, const LinkType& type, const LinkType& before) { setTypeHeldBy(m_nodes[node], type, before); }
+    ALWAYS_INLINE bool isNeverAt(size_t node) const
+    {
+        const Node& held = m_nodes[node];
+        return !held.references && headHeldBy(held).isNever();
+    }
     using SetOfNumbers = HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     bool hasPreparation(PropertyKeyID symbol) const { return m_everySymbolOfLibraryMayHavePreparation || m_symbolsWithPreparation.contains(symbol.bits()); }
     struct Preparation {
@@ -1797,6 +1918,8 @@ private:
 
     void noteFieldMayBeEmpty(FieldReference);
     Vector<uint32_t> m_nodesFoundWhereFieldsAreEmpty;
+    BitVector m_classesWithInstancesThatMayBeLocked;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesToldWhereInstancesMayBeLocked;
 
     void indexConstructorFunctions();
     uint32_t recordOfNameOnPrototype(LayoutID, PropertyKeyID);
@@ -1806,9 +1929,17 @@ private:
     bool letPrototypesFoundThroughLostEscape();
     class CopiesOfMembers;
     bool layMembersThatCopiesBring();
+    bool leaveFieldsEmptyThatCopiesPassOver();
+    std::optional<Vector<FunctionID>> m_functionsThatMakeCopies;
+    BitVector m_layoutsOfPlainFieldsAlone;
+    bool copyMayPassOverFieldOf(LayoutID);
+    BitVector m_layoutsThatParsersMake;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_edgesLaidByCopiesOfMembers;
     BitVector m_layoutsOfConstructorFunctions;
     BitVector m_layoutsBelowConstructorFunctions;
+    BitVector m_layoutsWithFollowedPrototypes;
+    BitVector m_layoutsBelowFollowedPrototypes;
+    BitVector m_namesStoredOnObjects;
     Vector<LayoutID> m_nearestConstructorFunctionsFrom;
     BitVector m_prototypesPassedByLookups;
     BitVector m_prototypesWithDefinitions;
@@ -2023,6 +2154,8 @@ private:
     Vector<NameOnClosures> m_namesOnClosures;
     UncheckedKeyHashMap<uint32_t, Vector<FlowNodeID, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesThatLeaveWithClassObjects;
     BitVector m_classObjectsThatAreOpen;
+    BitVector m_layoutsNotedWithBases;
+    BitVector& layoutsNotedWithBases();
     Vector<uint32_t> m_newestNameOnClosuresOf;
     void ensureExtraPropertyNodes(LayoutID);
     void open(LayoutID);
@@ -2185,6 +2318,7 @@ private:
         uint16_t primitives { 0 };
     };
     HashMap<uint32_t, TestOfEdge, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_testsOfEdges;
+    HashMap<uint32_t, std::unique_ptr<ReadsBehindInstanceOf>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_readsBehindInstanceOf;
 
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_nodesOnDemand;
     Vector<uint32_t> m_extraPropertyNodes;
@@ -2228,6 +2362,13 @@ private:
         HashMap<uint32_t, Vector<LayoutID, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> membersWithNothingAboveByKey;
         uint32_t numberWithNothingAbove { 0 };
         FlowNodeID foundBesideTheirFields;
+        struct MembersThatListName {
+            Vector<uint32_t> places;
+            FlowNodeID fields;
+        };
+        HashMap<uint32_t, MembersThatListName, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> membersThatListNames;
+        std::optional<bool> everyMemberIsOfWrittenClass;
+        Vector<uint32_t> placesOfMembers;
         uint32_t numberLost { 0 };
         Vector<ReadThroughFamily> readsWithoutLostMember;
     };

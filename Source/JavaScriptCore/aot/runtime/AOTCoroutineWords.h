@@ -19,6 +19,8 @@ namespace AOT {
 
 class AsyncGeneratorStepInProgress;
 
+inline constexpr int32_t mustSuspendAtNextAwaitBit = 1;
+
 struct CoroutineWords {
     uint64_t savedFrameHeader;
     uint64_t plainGeneratorHeader;

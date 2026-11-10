@@ -3620,7 +3620,7 @@ static void allocatorExtendsCountOfLoop()
     out.setOrigin(allocationTestOriginOfExtension);
     LValue extended = out.zeroExtPtr(count);
     out.setOrigin(Origin());
-    LValue nextSum = out.add(sum, extended);
+    LValue nextSum = out.add(sum, out.opaque(extended));
     out.upsilon(nextCount, count);
     out.upsilon(nextSum, sum);
     out.branch(out.notEqual(nextCount, end), normalEdge(loop), normalEdge(behindLoop));

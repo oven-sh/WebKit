@@ -56,6 +56,48 @@ const CyclesOfImports::Member* CyclesOfImports::find(ModuleID module) const
     return found != membersByModule.end() && found->module == module.index() ? &*found : nullptr;
 }
 
+ImportersOfModules::ImportersOfModules(const ModuleTable& table)
+    : namedByListsAlone(table.size())
+{
+    auto forEachRequest = [&](auto&& functor) {
+        for (uint32_t importer = 0; importer < table.size(); ++importer) {
+            for (const ModuleRequestData& request : table.requests(ModuleID(importer))) {
+                if (!request.isHoisted)
+                    functor(importer, request.target());
+            }
+        }
+    };
+    firstImporterOf.fill(0, table.size() + 1);
+    forEachRequest([&](uint32_t, uint32_t imported) {
+        ++firstImporterOf[imported];
+    });
+    for (uint32_t module = 0; module < table.size(); ++module)
+        firstImporterOf[module + 1] += firstImporterOf[module];
+    importers.fill(0, firstImporterOf[table.size()]);
+    forEachRequest([&](uint32_t importer, uint32_t imported) {
+        importers[--firstImporterOf[imported]] = importer;
+    });
+
+    BitVector isAskedFor(table.size());
+    for (const ModuleRequestData& request : table.allRequests()) {
+        if (!request.isHoisted || table.data(request.targetModule()).kind == ModuleKind::SourceText)
+            isAskedFor.quickSet(request.target());
+    }
+    for (uint32_t module = 0; module < table.size(); ++module)
+        namedByListsAlone.quickSet(module, !isAskedFor.quickGet(module));
+}
+
+void ImportersOfModules::addModulesAbove(Vector<ModuleID, 32>&& modules, BitVector& found) const
+{
+    while (!modules.isEmpty()) {
+        uint32_t module = modules.takeLast().index();
+        if (found.quickSet(module))
+            continue;
+        for (uint32_t position = firstImporterOf[module]; position < firstImporterOf[module + 1]; ++position)
+            modules.append(ModuleID(importers[position]));
+    }
+}
+
 ReexportedNames::ReexportedNames(const ModuleTable& table)
     : m_answers(table.programTables().requiredNames().size())
     , m_seen(table.size())
@@ -599,6 +641,24 @@ String ModuleTable::fullPath(ModuleID module) const
     for (StringView piece : pieces)
         path.append(piece);
     return path.toString();
+}
+
+bool ModuleTable::hasQueryInDirectory() const
+{
+    return std::ranges::any_of(m_tables->moduleDirectories(), [&](const ModuleDirectoryData& directory) {
+        return ProgramStrings::viewInImage(*m_tables, StringID(directory.name)).contains('?');
+    });
+}
+
+bool ModuleTable::pathWithoutQueryEndsWith(ModuleID module, StringView end, bool hasQueryInDirectory) const
+{
+    StringView name = ProgramStrings::viewInImage(*m_tables, StringID(data(module).publicPathOrName));
+    size_t query = name.reverseFind('?');
+    StringView nameWithoutQuery = name.left(query);
+    if (nameWithoutQuery.length() >= end.length() && (query != notFound || !hasQueryInDirectory))
+        return nameWithoutQuery.endsWith(end);
+    String path = fullPath(module);
+    return StringView(path).left(path.reverseFind('?')).endsWith(end);
 }
 
 String ModuleTable::displayPathText(ModuleID module) const

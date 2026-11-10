@@ -51,6 +51,7 @@ enum class Presence : uint8_t { Present, Absent, Unknown };
 enum class Integrity : uint8_t { NonExtensible, Sealed, Frozen };
 enum class Elements : bool { NeedGenericPath, Skip };
 enum class Preparations : bool { NeedGenericPath, AreDone };
+enum class IdenticalValues : bool { Skip, Append };
 
 ALWAYS_INLINE bool isCompiledObject(const JSCell* cell) { return cell->type() == CompiledObjectType; }
 JS_EXPORT_PRIVATE bool wouldHaveArrayStorage(JSObject* compiledObject);
@@ -76,6 +77,8 @@ Presence hasOwnProperty(JSObject*, UniquedStringImpl*);
 const CachedPropertyList* tryGetOwnPropertyList(VM&, JSObject* compiledObject, JSObject*& extraProperties);
 Presence hasPropertyOnChain(Structure*, UniquedStringImpl*);
 bool ensureExtraPropertiesStructure(VM&, JSObject*);
+JS_EXPORT_PRIVATE bool structureGuaranteesAbsence(Structure*, UniquedStringImpl*);
+JS_EXPORT_PRIVATE bool appendDifferingValues(JSObject*, JSObject*, IdenticalValues, MarkedArgumentBuffer&);
 JS_EXPORT_PRIVATE JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned* attributesOrNull);
 JS_EXPORT_PRIVATE bool ordinaryGetOwnPropertySlot(JSGlobalObject*, JSObject*, PropertyName, PropertySlot&);
 JS_EXPORT_PRIVATE bool isOrdinaryPrototypeChain(JSObject* first, JSObject* last);

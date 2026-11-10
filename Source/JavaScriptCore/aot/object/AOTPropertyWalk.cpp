@@ -368,6 +368,37 @@ Result forEachOwnPropertyAsCreatedAfterPreparing(JSGlobalObject* globalObject, J
     return forEachOwnPropertyAsCreated(vm, object, visitor, elements, Preparations::AreDone);
 }
 
+bool structureGuaranteesAbsence(Structure* structure, UniquedStringImpl* name)
+{
+    return Object::structureGuaranteesAbsence(structure, name);
+}
+
+bool appendDifferingValues(JSObject* first, JSObject* second, IdenticalValues identicalValues, MarkedArgumentBuffer& pairs)
+{
+    if (!isCompiledObject(first) || !isCompiledObject(second) || !haveSameFieldsInKeyOrder(first, second) || hasExtraProperties(first))
+        return false;
+    const Object& left = *uncheckedDowncast<Object>(first);
+    const Object& right = *uncheckedDowncast<Object>(second);
+    if (left.layout().hasFieldsWithSymbolKeys)
+        return false;
+    auto fields = left.fieldsInKeyOrder();
+    if (!fields)
+        return false;
+    for (auto& field : *fields) {
+        JSValue leftValue = left.readListedField(field);
+        JSValue rightValue = right.readListedField(field);
+        if (leftValue == rightValue && (!leftValue || identicalValues == IdenticalValues::Skip))
+            continue;
+        if (!leftValue || !rightValue) {
+            pairs.clear();
+            return false;
+        }
+        pairs.appendWithCrashOnOverflow(leftValue);
+        pairs.appendWithCrashOnOverflow(rightValue);
+    }
+    return true;
+}
+
 bool hasGetterToCall(JSObject* object)
 {
     const Object& typed = *uncheckedDowncast<Object>(object);

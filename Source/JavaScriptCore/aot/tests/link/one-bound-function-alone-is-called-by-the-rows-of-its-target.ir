@@ -1,7 +1,7 @@
 # const act = Math.floor.bind(null); act(65.5)
 # The control of two-bound-functions-that-meet-at-one-call-are-called-as-unseen-code.ir: one bound function over a built-in function alone is called by the rows of its target.
 # RUN: link functions mechanisms=all
-# CHECK: function f0 {{*}}result=number
+# CHECK: function f0 {{*}}result=int|whole
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

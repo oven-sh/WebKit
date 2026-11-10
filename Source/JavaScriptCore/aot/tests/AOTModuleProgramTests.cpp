@@ -1157,7 +1157,7 @@ static uint32_t operationsInRowsOfStarts(const String& programText)
     std::span<const uint8_t> bytesOfTables = sectionOfImageWithRows(image, ImageSection::ProgramTables);
     AOT_TEST_CHECK(bytesOfTables.size() >= sizeof(ProgramTables));
     const ProgramTables& tables = spanReinterpretCast<const ProgramTables>(bytesOfTables.first(sizeof(ProgramTables)))[0];
-    size_t numberOfFunctions = sectionOfImageWithRows(image, ImageSection::FunctionStarts).size() / sizeof(uint32_t);
+    size_t numberOfFunctions = spanReinterpretCast<const ImageHeader>(image.first(sizeof(ImageHeader)))[0].counts.functions;
     std::span<const uint32_t> starts = tables.moduleStarts();
     std::span<const ModuleStartStepData> steps = tables.moduleStartSteps();
     AOT_TEST_CHECK(!starts.empty() && !steps.empty() && steps[0].operation() == Operation::Trap);

@@ -9,6 +9,7 @@
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 
 #include "AOTBuildContext.h"
+#include "AOTNumbering.h"
 #include "AOTSectionLinker.h"
 #include "AOTSectionWriter.h"
 #include "AOTSort.h"
@@ -424,13 +425,13 @@ std::optional<RegExpSection> layOutRegExpSection(std::span<const CompiledRegExp>
     return RegExpSectionBuilder(regExps, policy, templates, context).build();
 }
 
-static uint32_t encodeRegExpNamedGroups(SectionWriter& details, const RegExpRequest& request, const RegExpSummary& summary)
+static uint32_t encodeRegExpNamedGroups(SectionWriter& details, const RegExpRequest& request, const RegExpSummary& summary, const StringNumbers& strings)
 {
     Vector<uint32_t> words;
     for (StringID name : request.captureGroupNames)
-        words.append(name ? name.index() + 1 : 0);
+        words.append(name ? strings.requiredNumberOf(name) + 1 : 0);
     for (const RegExpNamedGroupStrings& group : request.namedGroups) {
-        words.append(group.name.index());
+        words.append(strings.requiredNumberOf(group.name));
         words.append(static_cast<uint32_t>(group.parenIndices.size()));
         words.appendVector(group.parenIndices);
     }
@@ -446,7 +447,7 @@ static uint32_t encodeRegExpNamedGroups(SectionWriter& details, const RegExpRequ
     return offset;
 }
 
-static void encodeRegExpMetadata(ImageRegExp& record, const RegExpRequest& request, const RegExpSummary& summary, SectionWriter& details)
+static void encodeRegExpMetadata(ImageRegExp& record, const RegExpRequest& request, const RegExpSummary& summary, const StringNumbers& strings, SectionWriter& details)
 {
     record.numSubpatterns = summary.numSubpatterns;
     record.minimumSize = summary.minimumSize;
@@ -455,7 +456,7 @@ static void encodeRegExpMetadata(ImageRegExp& record, const RegExpRequest& reque
     record.hasNamedGroups = summary.hasNamedGroups();
     RELEASE_ASSERT(!record.hasNamedGroups || !record.hasCharacterSet());
     if (record.hasNamedGroups)
-        record.details = encodeRegExpNamedGroups(details, request, summary);
+        record.details = encodeRegExpNamedGroups(details, request, summary, strings);
     if (record.hasCharacterSet()) {
         RELEASE_ASSERT(summary.characterSet);
         const Yarr::CharacterSetWithRanges& set = *summary.characterSet;
@@ -467,13 +468,13 @@ static void encodeRegExpMetadata(ImageRegExp& record, const RegExpRequest& reque
     }
 }
 
-static ImageRegExp createRegExpRecord(const RegExpRequest& request, const CompiledRegExp& compiled, const RegExpSummary& summary, const std::array<uint32_t, 2>& entries, SectionWriter& details)
+static ImageRegExp createRegExpRecord(const RegExpRequest& request, const CompiledRegExp& compiled, const RegExpSummary& summary, const std::array<uint32_t, 2>& entries, const StringNumbers& strings, SectionWriter& details)
 {
     RegExpRecordForm form = compiled.form;
     ASSERT(request.flags == ImageRegExp::significantFlags(request.flags));
     RELEASE_ASSERT((form == RegExpRecordForm::NoMetadata) == (summary.metadata == RegExpMetadata::Unknown));
     ImageRegExp record { };
-    record.pattern = request.pattern.index();
+    record.pattern = strings.requiredNumberOf(request.pattern);
     record.rawFlags = request.flags.toRaw();
     record.rawForm = static_cast<uint8_t>(form);
     record.isLiteral = request.origin == RegExpRequestOrigin::Literal;
@@ -482,7 +483,7 @@ static ImageRegExp createRegExpRecord(const RegExpRequest& request, const Compil
     case RegExpMetadata::Unknown:
         break;
     case RegExpMetadata::Known:
-        encodeRegExpMetadata(record, request, summary, details);
+        encodeRegExpMetadata(record, request, summary, strings, details);
         break;
     }
 
@@ -496,7 +497,7 @@ static ImageRegExp createRegExpRecord(const RegExpRequest& request, const Compil
         break;
     case RegExpRecordForm::Atom:
         RELEASE_ASSERT(request.atom);
-        record.atom = request.atom.index();
+        record.atom = strings.requiredNumberOf(request.atom);
         break;
     case RegExpRecordForm::NoCode:
     case RegExpRecordForm::NoMetadata:
@@ -538,7 +539,7 @@ RegExpSections encodeRegExpRecords(const RegExpRecordInputs& inputs, BuildContex
         const RegExpSummary* summary = context.regExpSummaries().summaryIfComputed(request.pattern, request.flags);
         RELEASE_ASSERT(summary);
 
-        records.append(createRegExpRecord(request, compiled, *summary, inputs.section.entries[index], details));
+        records.append(createRegExpRecord(request, compiled, *summary, inputs.section.entries[index], inputs.strings, details));
         hashes.append(ImageRegExpHash { ImageRegExp::hashOf(summary->patternHash, request.flags), recordNumber });
         if (compiled.form == RegExpRecordForm::Code || compiled.form == RegExpRecordForm::NoCode)
             maxOutputSize = std::max(maxOutputSize, (summary->numSubpatterns + 1) * 2 + summary->numDuplicateNamedCaptureGroups);

@@ -29,7 +29,7 @@ template<Opcode known> ALWAYS_INLINE bool buildDeferredDefinition(Walker& walker
 extern const OpcodeSet opcodesThatFoldOperationTakes;
 inline constexpr OpcodeSet opcodesThatFoldOperationTakesInChains = operationsOnPrimitivesInFolding | castsOfFolding | passThroughChecks | OpcodeSet { Opcode::TypeTest, Opcode::IsClosureOf, Opcode::ToBoolean, Opcode::Eq, Opcode::StrictEq,
     Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::PropGet, Opcode::ElemGet, Opcode::PutModuleVariable, Opcode::PutEnvironmentField,
-    Opcode::ToObject, Opcode::ToThis, Opcode::TypeOf, Opcode::ToLength };
+    Opcode::ToObject, Opcode::ToThis, Opcode::TypeOf, Opcode::ToLength, Opcode::IsUnlockedInstance };
 AOT_LINK_OF_WALK(foldOperation, opcodesThatFoldOperationTakesInChains)
 inline constexpr OpcodeSet allocationsOfEscapeAnalysis = opcodesWhere([](Opcode opcode) {
     if (opcode == Opcode::NewClosure || opcode == Opcode::Data)

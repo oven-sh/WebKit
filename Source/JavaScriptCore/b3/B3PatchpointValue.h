@@ -73,6 +73,10 @@ public:
     bool iterationsAreShort { false };
     // Emits no code and has no result. It only keeps its children live up to this point.
     bool onlyKeepsChildrenAlive { false };
+    // The result is a pinned register.
+    bool emitsNoCode { false };
+    // x86-64: on return the zero flag reflects the first result, an Int32 in a register.
+    bool zeroFlagReflectsFirstResult { false };
     std::optional<PureFunction> pureFunction;
     ClientTag clientTag;
 

@@ -18,13 +18,26 @@
 
 namespace JSC { namespace AOT {
 
+struct WalksOfOneLink final : RefCounted<WalksOfOneLink> {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(WalksOfOneLink);
+
+    explicit WalksOfOneLink(const VisitedModuleRecords& visited)
+        : visited(&visited)
+    {
+    }
+
+    const VisitedModuleRecords* visited;
+    Vector<uint64_t> modulesWalked;
+    Vector<ModuleID, 8> roots;
+};
+
 class ModuleLinkWalk {
     WTF_MAKE_NONCOPYABLE(ModuleLinkWalk);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ModuleLinkWalk);
 public:
     enum class Leaf : uint8_t { CapturesExports, IsUncompiled };
 
-    ModuleLinkWalk(const Modules&, ModuleID root);
+    ModuleLinkWalk(const Modules&, ModuleID root, RefPtr<WalksOfOneLink>&& earlier = nullptr);
 
     ModuleID root() const { return m_root; }
     bool bringUpToDate(const Modules&);
@@ -33,6 +46,16 @@ public:
 
     template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>
     bool replay(ThrowScope&, const ShouldEnterFunctor&, const VisitLeafFunctor&, const DidLeaveFunctor&) const;
+
+    void forEachModuleOfProgram(NOESCAPE const Invocable<void(ModuleID)> auto& functor) const
+    {
+        for (const Step& step : m_steps) {
+            if (static_cast<StepKind>(step.kind) == StepKind::Enter || static_cast<StepKind>(step.kind) == StepKind::CapturesExports)
+                functor(ModuleID(step.module));
+        }
+        for (uint32_t module : m_modulesThatOnlyBecomeLinked)
+            functor(ModuleID(module));
+    }
 
 private:
     using StepKind = StepOfLinkWalk;
@@ -48,6 +71,8 @@ private:
     void append(ModuleID, StepKind, bool resolvesNames = false);
 
     ModuleID m_root;
+    RefPtr<WalksOfOneLink> m_earlier;
+    size_t m_numberOfEarlierRoots { 0 };
     unsigned m_linkEpoch;
     std::span<const LinkPlanStepData> m_plan;
     Vector<Step, 64> m_steps;

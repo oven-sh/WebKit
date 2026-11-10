@@ -277,10 +277,12 @@ void generateRegExpMatchLiteral(StubAssembler& jit)
     JumpList miss;
     JumpList outOfLine;
 
+    const bool matchesSubstringInPlace = form == RegExpMatchForm::Test || form == RegExpMatchForm::Search;
     jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
-    outOfLine.append(jit.branchIfRopeStringImpl(impl));
+    Jump isRope = jit.branchIfRopeStringImpl(impl);
     jit.loadPtr(Address(impl, StringImpl::dataOffset()), characters);
     jit.load32(Address(impl, StringImpl::lengthMemoryOffset()), subjectLength);
+    Label hasCharacters = jit.label();
 
     if (lastIndexUse.isReset || lastIndexUse.isStoredAndPutBack)
         outOfLine.append(branchIfReadOnlyLastIndex(jit, *regExpObject));
@@ -307,6 +309,13 @@ void generateRegExpMatchLiteral(StubAssembler& jit)
     if (lastIndexUse.isReset)
         resetLastIndex(jit, *regExpObject);
     returnResult(jit, TrustedImm64(JSValue::encode(traitsOfMatchForm(form).miss)));
+
+    if (matchesSubstringInPlace) {
+        isRope.link(&jit);
+        loadSubstringCharacters(jit, string, impl, characters, subjectLength, outOfLine);
+        jit.jump().linkTo(hasCharacters, &jit);
+    } else
+        outOfLine.append(isRope);
 
     outOfLine.link(&jit);
     matchLiteralOutOfLineAndReturn(jit, form, regExpObject, string);

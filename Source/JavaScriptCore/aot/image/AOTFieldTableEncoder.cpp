@@ -239,7 +239,7 @@ static TypeRecordForFieldTable describeTypeForFieldTable(const Typed::Type& type
 static LayoutID layoutOfRecordForFieldTable(const TableEncoder& encoder, uint32_t shape)
 {
     const Typed::ShapeTable& shapes = encoder.plan.shapes();
-    if (!shapes.isAssigned(shape) || !encoder.plan.isInUse(shapes.shape(shape).layout))
+    if (!shapes.isAssigned(shape) || !encoder.plan.isAllocatable(shapes.shape(shape).layout))
         return { };
     return shapes.shape(shape).layout;
 }

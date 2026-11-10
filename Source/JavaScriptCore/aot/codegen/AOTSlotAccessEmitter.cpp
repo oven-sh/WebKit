@@ -359,6 +359,12 @@ Operand SlotAccessEmitter::loadSlotOrUndefined(const ValueContext& value, CellPo
         build().statistics().count(StatisticID::EmptySlotConversionsSkipped);
         return loadSlot(cell, access);
     }
+    bool holdsMarkedNumber = representation == SlotRepresentation::OptionalDouble || representation == SlotRepresentation::OptionalInt64;
+    bool answersMayBeAskedAgain = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckWalkAtRunTime) || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckBoundsInEmittersOnly);
+    if (holdsMarkedNumber && value.representation() == Typed::representationOf(representation) && !access.slot.isOutOfLine() && !checksWhatSlotsHold && !answersMayBeAskedAgain && generator().isReadBehindOwnUndefinedTest(value)) {
+        build().statistics().count(StatisticID::EmptySlotConversionsSkipped);
+        return loadSlot(cell, access);
+    }
     if (traits.hasUndefined)
         return inResultRepresentation(value, slots.loadSlotOrUndefined(cell, access.slot, locationOfSlotAccess(access), extensionWordOfSlotAccess(access)));
 
@@ -427,7 +433,7 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
             return readIfMemberHasField(value, cell, access, [&] {
                 CellPointer base = baseOfSlot(cell, access);
                 if (sourcesOfProofsCheckedUnder(build().options().testing) & bitOfSourceOfProofs(ProofSource::Field))
-                    emitter<ThrowEmitter>().requireOrCrash(value, emitter<SlotEmitter>().holdsValue(base, access.slot, locationOfSlotAccess(access), extensionWordOfSlotAccess(access)), std::nullopt, ProofSource::Field);
+                    emitter<ThrowEmitter>().requireOrCrash(value, emitter<SlotEmitter>().isFilled(base, access.slot, locationOfSlotAccess(access), extensionWordOfSlotAccess(access)), std::nullopt, ProofSource::Field);
                 return inResultRepresentation(value, loadFilledSlot(value, base, access));
             });
         }

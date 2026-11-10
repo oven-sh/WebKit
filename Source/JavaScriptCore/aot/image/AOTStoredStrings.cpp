@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCodedTexts.h"
 #include "AOTImageFormat.h"
 #include "AOTImageText.h"
 #include "AOTProgramTables.h"
@@ -16,6 +17,7 @@
 #include <array>
 #include <cstring>
 #include <optional>
+#include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/CString.h>
@@ -174,20 +176,31 @@ VerdictOnStoredStrings ReaderOfImage::read()
     auto bytesOfWords = section(ImageSection::Strings);
     auto bytesOfListedStrings = section(ImageSection::LongStrings);
     auto bytesOfHeaders = section(ImageSection::StringHeaders);
+    auto bytesOfConstants = section(ImageSection::StringConstants);
     auto text = section(ImageSection::Text);
-    if (!bytesOfWords || !bytesOfListedStrings || !bytesOfHeaders || !text)
+    if (!bytesOfWords || !bytesOfListedStrings || !bytesOfHeaders || !bytesOfConstants || !text)
         return refuse("a section lies outside the image");
     RecordsInFile<ImageStringWord> words(*bytesOfWords);
+    RecordsInFile<ImageStringWord> constants(*bytesOfConstants);
     RecordsInFile<uint32_t> listedStrings(*bytesOfListedStrings);
     RecordsInFile<ImageStringHeader> headers(*bytesOfHeaders);
     RecordsInFile<ImageStringRecord> records(*bytesOfHeaders);
     bool hasRecords = m_header.options.form() == ImageForm::PositionIndependent;
     uint64_t addressOfText = m_header.address + m_header.sections[static_cast<unsigned>(ImageSection::Text)].offset;
 
+    size_t numberOfWords = m_header.numbers.numberOfStringWords;
+    if (numberOfWords > words.size())
+        return refuse("a section lies outside the image");
+    CodedTexts codedTexts(bytesOfWords->subspan(numberOfWords * sizeof(ImageStringWord)), m_header.numbers.numberOfCodedTexts);
+
     Vector<RangeOfBytes> covered;
-    for (size_t index = 0; index < words.size(); ++index) {
-        ImageStringWord word = words[index];
-        if (!word.hasText())
+    HashSet<uint32_t> bitsOfWords;
+    size_t endOfIdentifiers = m_header.numbers.endOfIdentifiers;
+    size_t endOfWords = endOfIdentifiers + numberOfWords;
+    for (size_t index = 0; index < endOfWords + constants.size(); ++index) {
+        ImageStringWord word = index < endOfIdentifiers ? ImageStringWord::ofIdentifier(static_cast<uint32_t>(index)) : index < endOfWords ? words[index - endOfIdentifiers] : constants[index - endOfWords];
+        bool is16Bit = word.is16Bit();
+        if (!word.hasText() || !bitsOfWords.add(word.bits).isNewEntry)
             continue;
         std::optional<ImageLongString> range = ImageLongString { 0, 0 };
         if (!word.hasHeader())
@@ -196,28 +209,32 @@ VerdictOnStoredStrings ReaderOfImage::read()
             range = std::nullopt;
         else if (hasRecords) {
             ImageStringRecord record = records[word.number()];
+            is16Bit = record.is16Bit();
             if (uint32_t length = record.rangeOrIndex & ImageString::lengthMask)
                 range = ImageLongString { record.rangeOrIndex >> ImageString::lengthBits, length };
             else if (record.hasText())
                 range = listedString(listedStrings, record.rangeOrIndex >> ImageString::lengthBits);
         } else if (ImageStringHeader header = headers[word.number()]; header.length) {
+            is16Bit = !header.is8Bit();
             uint64_t offset = header.characters - addressOfText;
             range = offset <= text->size() ? std::optional(ImageLongString { static_cast<uint32_t>(offset), header.length }) : std::nullopt;
         }
-        uint64_t sizeOfUnit = word.is16Bit() ? sizeof(char16_t) : sizeof(Latin1Character);
+        uint64_t sizeOfUnit = is16Bit ? sizeof(char16_t) : sizeof(Latin1Character);
         if (!range || range->offset + range->length * sizeOfUnit > text->size())
             return refuse("string ", index, " lies outside the section of text");
         if (!range->length)
             continue;
         std::span<const uint8_t> bytes = text->subspan(range->offset, range->length * sizeOfUnit);
         covered.append({ range->offset, range->offset + bytes.size() });
-        if (word.is16Bit()) {
+        if (is16Bit) {
             Vector<char16_t> units(range->length);
             memcpy(units.mutableSpan().data(), bytes.data(), bytes.size());
             appendString(byteCast<uint8_t>(StringView(units.span()).utf8().span()));
         } else
             appendLatin1String(bytes);
     }
+    for (uint32_t number = 0; number < codedTexts.count(); ++number)
+        appendLatin1String(codedTexts.at(number).span());
     VerdictOnStoredStrings verdictOnText = reportSection("Text"_s, m_header.sections[static_cast<unsigned>(ImageSection::Text)].offset, *text, covered);
     return std::max(verdictOnText, readTextsOfProgramTables());
 }

@@ -41,7 +41,6 @@ struct FunctionTableInputs {
     const CodeLayout& layout;
     const SharedCode& sharedCode;
     const CodeIndex& index;
-    std::span<const OptionSet<ImageFunctionFlag>> sideTableFlags;
     std::span<const uint32_t> sideTableOffsets;
     const ProgramTables& programTables;
     bool hasPositions;

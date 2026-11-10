@@ -116,6 +116,14 @@ bool ElementAccessEmitter::goesByKindOfListOfNumbers(ValueID list, ValueID store
     return type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull) && isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(list));
 }
 
+const ArrayStorageForm& ElementAccessEmitter::expectedFormOf(ValueID array)
+{
+    ArrayStorage declared = arrayStorageDeclaredBy(m_program, types(), typeIDOf(array)).predicted();
+    if (hasArrayStorageForm(declared))
+        return arrayStorageFormOf(declared);
+    return arrayStorageFormOf(isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(array)) ? ArrayStorage::Int32 : ArrayStorage::Contiguous);
+}
+
 ArrayStorageFormList ElementAccessEmitter::formsThatMayHold(ValueID list, ValueID stored)
 {
     return goesByKindOfListOfNumbers(list, stored) ? formsOfListOfNumbersFor(stored, true) : candidateFormsFor(stored, ArrayStorage::Other);
@@ -123,7 +131,8 @@ ArrayStorageFormList ElementAccessEmitter::formsThatMayHold(ValueID list, ValueI
 
 ArrayStorageFormList ElementAccessEmitter::formExpectedToHold(ValueID list, ValueID stored)
 {
-    if (goesByKindOfListOfNumbers(list, stored))
+    bool isTestedForNumber = representationOf(stored) == Representation::JSValue && typeOf(stored).primitives & Primitive::Number && isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(list));
+    if (isTestedForNumber || goesByKindOfListOfNumbers(list, stored))
         return formsOfListOfNumbersFor(stored, false);
     ArrayStorageFormList forms = candidateFormsFor(stored, storageExpectedToHold(representationOf(stored)));
     if (forms.size() > 1)
@@ -517,7 +526,7 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
     Join<Condition> join(m_out);
     Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
     ArrayElements elements = elementsOf(array);
-    forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, candidateFormsFor(stored, storageExpectedToHold(representationOf(stored))), otherwise, [&](const ArrayStorageForm& form) {
+    forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, candidateFormsFor(stored, typeOf(stored).isInt32() ? ArrayStorage::Int32 : storageExpectedToHold(representationOf(stored))), otherwise, [&](const ArrayStorageForm& form) {
         Operand rawElement = *rawElementToStore(form, stored, otherwise);
         if (leavesStorageAsItIs) {
             LengthTest test = testLength(index, elements);

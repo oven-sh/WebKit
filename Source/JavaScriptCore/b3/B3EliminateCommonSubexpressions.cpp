@@ -248,13 +248,12 @@ private:
                 continue;
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "Looking at ", *m_block, ":");
 
-            m_data = ImpureBlockData();
             for (m_index = 0; m_index < m_block->size(); ++m_index) {
                 m_value = m_block->at(m_index);
                 process();
             }
             m_insertionSet.execute(m_block);
-            m_impureBlockData[m_block] = m_data;
+            m_impureBlockData[m_block] = std::exchange(m_data, { });
         }
     }
 

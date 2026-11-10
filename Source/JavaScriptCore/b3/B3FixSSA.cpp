@@ -120,6 +120,9 @@ public:
 
     static constexpr unsigned noEdge = UINT_MAX;
 
+    // Up to this many edges are scanned linearly, without a tree.
+    static constexpr unsigned maxScannedEdges = 16;
+
     void clear() { m_edges.shrink(0); }
     unsigned size() const { return m_edges.size(); }
     const Edge& at(unsigned position) const LIFETIME_BOUND { return m_edges[position]; }
@@ -127,8 +130,13 @@ public:
     // In ascending order of `from`.
     void append(const Edge& edge) { m_edges.append(edge); }
 
+    // Called for each number in order, before its edges are appended, and once after the last.
+    void beginEdgesFromNextNumber() { m_firstEdgeFrom.append(m_edges.size()); }
+
     void finish()
     {
+        if (m_edges.size() <= maxScannedEdges)
+            return;
         m_leafCount = std::bit_ceil(std::max<unsigned>(m_edges.size(), 1));
         m_leastBound.fill(UINT_MAX, 2 * m_leafCount);
         for (unsigned position = 0; position < m_edges.size(); ++position)
@@ -139,6 +147,9 @@ public:
 
     void remove(unsigned position)
     {
+        m_edges[position].bound = UINT_MAX;
+        if (m_edges.size() <= maxScannedEdges)
+            return;
         unsigned node = m_leafCount + position;
         m_leastBound[node] = UINT_MAX;
         while (node >>= 1)
@@ -150,8 +161,24 @@ public:
     template<typename Functor>
     bool forEachJoinInFrontier(unsigned first, unsigned last, NOESCAPE const Functor& functor)
     {
-        unsigned begin = std::ranges::lower_bound(m_edges, first, { }, &Edge::from) - m_edges.begin();
-        unsigned end = std::ranges::upper_bound(m_edges, last, { }, &Edge::from) - m_edges.begin();
+        unsigned begin;
+        unsigned end;
+        if (m_firstEdgeFrom.isEmpty()) {
+            begin = std::ranges::lower_bound(m_edges, first, { }, &Edge::from) - m_edges.begin();
+            end = std::ranges::upper_bound(m_edges, last, { }, &Edge::from) - m_edges.begin();
+        } else if (first >= m_firstEdgeFrom.size())
+            return true; // The block is unreachable.
+        else {
+            begin = m_firstEdgeFrom[first];
+            end = m_firstEdgeFrom[last + 1];
+        }
+        if (end - begin <= maxScannedEdges) {
+            for (unsigned position = begin; position < end; ++position) {
+                if (m_edges[position].bound < first && !functor(position))
+                    return false;
+            }
+            return true;
+        }
         return visit(1, 0, m_leafCount, begin, end, first, functor);
     }
 
@@ -169,6 +196,8 @@ private:
     }
 
     Vector<Edge> m_edges;
+    // Indexed by number: the position of its first edge. Empty if the edges are sparse.
+    Vector<unsigned> m_firstEdgeFrom;
     // A binary tree over the edges: node n has the children 2 n and 2 n + 1, and the edges are its last m_leafCount nodes.
     Vector<unsigned> m_leastBound;
     unsigned m_leafCount { 1 };
@@ -208,9 +237,11 @@ public:
 
         auto& dominators = m_dominators;
         unsigned nextNumber = 1;
+        m_frontiers.beginEdgesFromNextNumber();
         dominators.forAllBlocksInDominatorTreePreOrder(
             [&](BasicBlock* block) {
                 unsigned number = nextNumber++;
+                m_frontiers.beginEdgesFromNextNumber();
                 m_firstDominated[block] = number;
                 for (BasicBlock* join : block->successorBlocks()) {
                     if (join->numPredecessors() < 2)
@@ -224,6 +255,7 @@ public:
                 }
             },
             [&](BasicBlock* block) { m_lastDominated[block] = nextNumber - 1; });
+        m_frontiers.beginEdgesFromNextNumber();
         m_frontiers.finish();
         m_numberOfBlocks = nextNumber;
     }
@@ -794,6 +826,9 @@ void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
         dataLog("\n");
     }
 
+    auto variableOf = [&](Value* value) { return values.contains(value) ? map.get(value) : nullptr; };
+    auto phiVariableOf = [&](Value* value) { return values.contains(value) ? phiMap.get(value) : nullptr; };
+
     // Change accesses to the values to accesses to the stack slots.
     InsertionSet insertionSet(proc);
     for (BasicBlock* block : proc) {
@@ -801,7 +836,7 @@ void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
             // Deal with terminals that produce values (i.e. patchpoint terminals, like the ones we
             // generate for the allocation fast path).
             Value* value = block->predecessor(0)->last();
-            Variable* variable = map.get(value);
+            Variable* variable = variableOf(value);
             if (variable && block->predecessor(0)->successorBlock(0) == block) {
                 RELEASE_ASSERT(block->numPredecessors() == 1); // Critical edges better be broken.
                 insertionSet.insert<VariableValue>(0, Set, value->origin(), variable, value);
@@ -812,21 +847,21 @@ void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
             Value* value = block->at(valueIndex);
 
             if (value->opcode() == Phi) {
-                if (Variable* variable = phiMap.get(value)) {
+                if (Variable* variable = phiVariableOf(value)) {
                     value->replaceWithIdentity(
                         insertionSet.insert<VariableValue>(
                             valueIndex, Get, value->origin(), variable));
                 }
             } else {
                 for (Value*& child : value->children()) {
-                    if (Variable* variable = map.get(child)) {
+                    if (Variable* variable = variableOf(child)) {
                         child = insertionSet.insert<VariableValue>(
                             valueIndex, Get, value->origin(), variable);
                     }
                 }
 
                 if (UpsilonValue* upsilon = value->as<UpsilonValue>()) {
-                    if (Variable* variable = phiMap.get(upsilon->phi())) {
+                    if (Variable* variable = phiVariableOf(upsilon->phi())) {
                         insertionSet.insert<VariableValue>(
                             valueIndex, Set, upsilon->origin(), variable, upsilon->child(0));
                         value->replaceWithNop();
@@ -834,7 +869,7 @@ void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
                 }
             }
 
-            if (Variable* variable = map.get(value)) {
+            if (Variable* variable = variableOf(value)) {
                 if (valueIndex + 1 < block->size()) {
                     insertionSet.insert<VariableValue>(
                         valueIndex + 1, Set, value->origin(), variable, value);

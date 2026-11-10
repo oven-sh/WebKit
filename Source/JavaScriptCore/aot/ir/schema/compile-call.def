@@ -23,7 +23,7 @@ enum ResultSection {
     MissingLibraryFunctions WorkerStartsWithoutName
     BytesByForm BytesByModule
     FunctionNames LayoutNames
-    WorkerURLs
+    WorkerStartsFromURLs
     MissingLibraryModules
 }
 
@@ -46,7 +46,7 @@ record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witnes
 record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
 record WorkerEntryRecord abi { path: TextRange witness: Witness }
 record WorkerStartRecord abi { witness: Witness }
-record WorkerURLRecord abi { witness: Witness }
+record WorkerURLStartRecord abi { witness: Witness }
 record AccessRecord abi {
     location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause layout: Layout? copies: UInt32
     function: Function? cost: AccessCost loopDepth: UInt32

@@ -15,6 +15,7 @@ std::optional<CoroutineKind> kindOfSuspendingBody(Walker&, Reference& driver);
 Reference buildSuspensionInCoroutine(Walker&, Draft&& suspension);
 
 bool isProvenToHaveNoThen(Walker&, Reference);
+bool hasNoThen(const Walker&, TypeID);
 bool leansOnProofOfNoThen(Walker&, Reference, Origin);
 Reference buildTestForNoThen(Walker&, Reference value, Origin);
 

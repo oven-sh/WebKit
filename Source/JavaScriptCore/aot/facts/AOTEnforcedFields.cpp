@@ -119,10 +119,11 @@ static TypeID typeWrittenInFamilyInEnforcedFields(const Program& program, TypeAr
     LayoutID declaring = declaredLayoutOf(program, layout);
     std::span<const LayoutID> views = program.viewsAbove(declaring);
     if (views.size() >= Program::fewestViewsIndexedByKey) {
-        for (const Program::FieldWrittenAbove& listed : program.fieldsWrittenAbove(declaring, key)) {
-            if (!add(listed.view, listed.field))
-                return { };
-        }
+        bool isAnswered = program.visitFieldsWrittenAbove(declaring, key, [&](Program::FieldOfView listed) {
+            return add(listed.view, listed.field);
+        });
+        if (!isAnswered)
+            return { };
     } else {
         for (LayoutID view : views) {
             if (std::optional<uint32_t> field = program.at(view).findField(key); field && !add(view, *field))

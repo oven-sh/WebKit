@@ -179,6 +179,19 @@ namespace Typed {
 enum class CountInEffectsNet : uint8_t;
 }
 
+struct GrowingFlatText {
+    JSString* buffer;
+    const StringImpl* lastResolved;
+    uint32_t resolvesInTurn;
+};
+
+struct WideCharacterStrings {
+    static constexpr unsigned size = 256;
+
+    std::array<JSString*, size> strings;
+    std::array<char16_t, size> characters;
+};
+
 struct State {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(State);
     WTF_MAKE_NONCOPYABLE(State);
@@ -193,6 +206,8 @@ struct State {
     ZeroedPages pages;
     ZeroedTableArena tableArena;
     std::unique_ptr<CacheRegistry> caches;
+    GrowingFlatText growingFlatText { };
+    WideCharacterStrings wideCharacterStrings { };
     std::unique_ptr<ImmortalCells> immortalCells;
     JSObject* objectThatHoldsUndefined { nullptr };
     std::unique_ptr<ProgramStrings> strings;
@@ -218,6 +233,7 @@ struct State {
     EncodedJSValue receiverOfPendingRead { 0 };
     uint32_t keyOfPendingRead { 0 };
     uint32_t slowPathReadCountAtPendingRead { 0 };
+    bool acceptsForeignBinaryData { false };
     void countWriteForEffectsNet(Typed::CountInEffectsNet count) { ++writesCountedForEffectsNet[static_cast<size_t>(count)]; }
 
 private:

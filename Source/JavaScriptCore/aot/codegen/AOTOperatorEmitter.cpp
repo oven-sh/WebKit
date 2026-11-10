@@ -27,6 +27,7 @@ namespace {
 struct ArithmeticOperatorTraits {
     BinaryOperator stub;
     bool hasStubWithDouble;
+    RuntimeOperation onBigInts;
 };
 
 struct UnaryOperatorTraits {
@@ -40,15 +41,15 @@ static ArithmeticOperatorTraits traitsOfArithmeticOperator(ArithmeticOperator op
 {
     switch (op) {
     case ArithmeticOperator::Add:
-        return { BinaryOperator::Add, true };
+        return { BinaryOperator::Add, true, RuntimeOperation::ValueAdd };
     case ArithmeticOperator::Sub:
-        return { BinaryOperator::Sub, true };
+        return { BinaryOperator::Sub, true, RuntimeOperation::ValueSub };
     case ArithmeticOperator::Mul:
-        return { BinaryOperator::Mul, true };
+        return { BinaryOperator::Mul, true, RuntimeOperation::ValueMul };
     case ArithmeticOperator::Div:
-        return { BinaryOperator::Div, true };
+        return { BinaryOperator::Div, true, RuntimeOperation::ValueDiv };
     case ArithmeticOperator::Mod:
-        return { BinaryOperator::Mod, false };
+        return { BinaryOperator::Mod, false, RuntimeOperation::ValueMod };
     case ArithmeticOperator::Pow:
         break;
     }
@@ -103,6 +104,8 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
         m_out.noteForm(op == ArithmeticOperator::Pow ? Form::Runtime : Form::Closed, StateOfKnowledge::Generic);
         Boxed x = in<Boxed>(left);
         Boxed y = in<Boxed>(right);
+        if (sumsInt32sInPlace(value, op))
+            return sumOfAnyValues(value, op, x, y);
         return arithmeticOnBoxedOperands(value, op, x, y);
     }
     case OperatorForm::Integers:
@@ -120,12 +123,12 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
             };
             Operand x = termOfBoxedSum(left);
             Operand y = termOfBoxedSum(right);
-            return sumOfBoxedNumbers(op, x, typeOf(left), y, typeOf(right));
+            return sumOfBoxedNumbers(op, x, typeOf(left), y, typeOf(right), emitter<CastEmitter>().takeNumberChecksOf(value.id()).span());
         }
         if (handsOnBitsOfNaN(value.value()) && (generator().holdsAnyNaN(left) || generator().holdsAnyNaN(right))) {
             Number x = asNumericOperandWithAnyNaN(left);
             Number y = asNumericOperandWithAnyNaN(right);
-            return generator().settleNaNOf(value, arithmeticOnNumbers(op, x, y));
+            return generator().settleNaNOf(value, arithmeticOnNumbers(op, x, y, &value));
         }
         if (representationOf(left) == Representation::OptionalDouble && representationOf(right) == Representation::OptionalDouble && markersMayMeetInArithmetic(op, typeOf(left), typeOf(right))) {
             build().statistics().count(StatisticID::ArithmeticOnMarkers);
@@ -133,7 +136,7 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
         }
         Number x = asNumericOperand(left, &value);
         Number y = asNumericOperand(right, &value);
-        return arithmeticOnNumbers(op, x, y);
+        return arithmeticOnNumbers(op, x, y, &value);
     }
     case OperatorForm::NumberAndValue:
         if (op != ArithmeticOperator::Pow && traitsOfArithmeticOperator(op).hasStubWithDouble)
@@ -143,6 +146,8 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
         m_out.noteForm(op == ArithmeticOperator::Pow ? Form::Runtime : Form::Closed, StateOfKnowledge::BigInts);
         Boxed x = boxCell(in<CellPointer>(left));
         Boxed y = boxCell(in<CellPointer>(right));
+        if (op != ArithmeticOperator::Pow && generator().isInLoop(value.block()))
+            return unboxCell(callOperation<Boxed>(value, traitsOfArithmeticOperator(op).onBigInts, { x, y }));
         return unboxCell(arithmeticOnBoxedOperands(value, op, x, y));
     }
     case OperatorForm::Strings:
@@ -185,6 +190,36 @@ Boxed OperatorEmitter::arithmeticOnBoxedOperands(const ValueContext& value, Arit
     return Boxed(callBinaryStub(value, traitsOfArithmeticOperator(op).stub, left, right));
 }
 
+bool OperatorEmitter::sumsInt32sInPlace(const ValueContext& value, ArithmeticOperator op)
+{
+    if ((op != ArithmeticOperator::Add && op != ArithmeticOperator::Sub) || !generator().isInLoop(value.block()) || standsInRareBlock(value))
+        return false;
+    return typeOf(value->leftOperand()).primitives & Primitive::Integer && typeOf(value->rightOperand()).primitives & Primitive::Integer;
+}
+
+Boxed OperatorEmitter::sumOfAnyValues(const ValueContext& value, ArithmeticOperator op, Boxed left, Boxed right)
+{
+    bool isLeftInt32 = typeOf(value->leftOperand()).isInt32();
+    bool isRightInt32 = typeOf(value->rightOperand()).isInt32();
+    Boxed tested = isLeftInt32 ? right : isRightInt32 ? left : Boxed(m_out.bitAnd(left.value(), right.value()));
+    LBasicBlock int32Case = newBlock();
+    LBasicBlock otherCase = newBlock();
+    Join<Boxed> join(m_out);
+    Condition areInt32 = isInt32(tested);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(areInt32.value(), normalEdge(int32Case), unlikelyEdge(otherCase));
+
+    m_out.appendToArm(int32Case, fork);
+    Integer x = signExtended(low32(left));
+    Integer y = signExtended(low32(right));
+    Integer exact = op == ArithmeticOperator::Add ? add(x, y) : sub(x, y);
+    join.add(emitter<ConversionEmitter>().boxInteger(exact, { 2 * static_cast<int64_t>(INT32_MIN), 2 * static_cast<int64_t>(INT32_MAX) + 1 }));
+
+    m_out.appendToArm(otherCase, fork);
+    join.add(arithmeticOnBoxedOperands(value, op, left, right));
+    return join.finishBehind(fork);
+}
+
 Number OperatorEmitter::arithmeticOnNumberAndValue(const ValueContext& value, ArithmeticOperator op)
 {
     bool numberIsOnRight = !typeOf(value->leftOperand()).isNumber();
@@ -202,7 +237,7 @@ Number OperatorEmitter::arithmeticOnNumberAndValue(const ValueContext& value, Ar
         if (standsInRareBlock(value))
             return byStub();
         auto withNumber = [&](Number otherNumber) {
-            return numberIsOnRight ? arithmeticOnNumbers(op, otherNumber, numberOperand) : arithmeticOnNumbers(op, numberOperand, otherNumber);
+            return numberIsOnRight ? arithmeticOnNumbers(op, otherNumber, numberOperand, &value) : arithmeticOnNumbers(op, numberOperand, otherNumber, &value);
         };
         LBasicBlock int32Case = newBlock();
         LBasicBlock noInt32Case = newBlock();
@@ -403,10 +438,21 @@ Operand OperatorEmitter::convertedToNumber(const ValueContext& value, const Func
     return failWithZero(value);
 }
 
+bool OperatorEmitter::isCutToInt32Alone(ValueID number)
+{
+    ValueID user = generator().code().useCountOf(number) == 1 ? generator().code().onlyUserOf(number) : ValueID();
+    return user && (opcodeOf(user) == Opcode::ToInt32 || opcodeOf(user) == Opcode::ToUint32);
+}
+
 void OperatorEmitter::generateToNumber(const ValueContext& value)
 {
     if (ValueID operand = value->valueOperand(); handsOnBitsOfNaN(value.value()) && generator().holdsAnyNaN(operand)) {
         define(value, generator().settleNaNOf(value, generator().getWithAnyNaN(operand).as<Number>()));
+        return;
+    }
+    if (ValueID operand = value->valueOperand(); representationOf(operand) == Representation::OptionalDouble && value->form() == OperatorForm::Numbers && isCutToInt32Alone(value.id())) {
+        m_out.noteForm(Form::Open, StateOfKnowledge::Numbers);
+        define(value, asNumber(get(operand), typeOf(operand), PayloadOfNaN::Stays));
         return;
     }
     define(value, convertedToNumber(value, [&](Boxed operand) -> Operand {

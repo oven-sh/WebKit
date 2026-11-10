@@ -11,42 +11,12 @@
 #include "AOTMachineFrame.h"
 #include "AOTMachineSlots.h"
 #include "AllowMacroScratchRegisterUsage.h"
+#include "MarkedBlockCage.h"
 #include <wtf/CheckedArithmetic.h>
 
 namespace JSC { namespace AOT { namespace Machine {
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
-template<typename T>
-class UncheckedSpan {
-public:
-    UncheckedSpan() = default;
-    template<typename U>
-    UncheckedSpan(std::span<U> span)
-        : m_data(span.data())
-        , m_size(span.size())
-    {
-    }
-    template<typename U>
-    UncheckedSpan(UncheckedSpan<U> other)
-        : m_data(other.data())
-        , m_size(other.size())
-    {
-    }
-
-    T& operator[](size_t index) const
-    {
-        ASSERT(index < m_size);
-        return m_data[index];
-    }
-    T* data() const { return m_data; }
-    size_t size() const { return m_size; }
-    bool empty() const { return !m_size; }
-
-private:
-    T* m_data { nullptr };
-    size_t m_size { 0 };
-};
 
 inline Operation* childWithoutCheck(const Operation* operation, unsigned index)
 {
@@ -128,6 +98,8 @@ struct Test {
     const Operation* loadOnLeft { nullptr };
     AddressForm addressOnLeft { };
     bool rightIsNumberOfBit { false };
+    IndexExtension extensionOfRight { IndexExtension::None };
+    const Operation* linkedNumberOnRight { nullptr };
 };
 
 struct FrameAtBlock {
@@ -143,6 +115,22 @@ struct FrameAtBlock {
 enum class MemoryOfEncodedMove : bool { IsRead, IsWritten };
 
 inline constexpr unsigned minBytesOfTeardownSharedByReturns = isARM64() ? 12 : 8;
+
+inline bool tryMoveSmallConstant(CCallHelpers& jit, int32_t constant, GPRReg destination)
+{
+#if CPU(X86_64)
+    static_assert(!static_cast<uint32_t>(MarkedBlockCage::maxSize));
+    if (!isRepresentableAs<int8_t>(constant))
+        return false;
+    jit.m_assembler.leal_mr(constant, cellCageBaseGPR, destination);
+    return true;
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(constant);
+    UNUSED_PARAM(destination);
+    return false;
+#endif
+}
 
 class Encoder {
     WTF_MAKE_NONCOPYABLE(Encoder);
@@ -403,7 +391,10 @@ public:
     MacroAssembler::Jump jumpOnOverflow(bool whenItOverflowed);
 
     void encodeNumber(const Step&);
+    void materializeBitsInFPR(uint64_t bits, Width, FPRReg destination);
     bool blockHasWrittenNumberRegisterInFrontOf(const Step&, FPRReg);
+    bool writesNumberRegister(const Step&, FPRReg) const;
+    bool numberRegisterMayBeWrittenShortlyInFrontOf(const Step&, FPRReg) const;
 
     void encodeLoad(const Step&);
     void encodeStore(const Step&);

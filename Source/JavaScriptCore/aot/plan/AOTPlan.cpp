@@ -1403,7 +1403,7 @@ void CheckerOfPlan::checkLayout(LayoutID id)
     checkArea(id, planned, SlotStorage::Inline, isEnvironment ? offsetOfFirstEnvironmentVariable : offsetOfFirstField, planned.size, RuleOfPlan::SlotOutsideCell);
     checkArea(id, planned, SlotStorage::OutOfLine, offsetOfFirstExtensionSlot, std::min(planned.extensionSize, maxExtensionSize), RuleOfPlan::SlotOutsideExtension);
 
-    if (!m_plan.isInUse(id) || !(planned.holdsCompiledObjects() || isEnvironment))
+    if (!m_plan.isAllocatable(id) || !(planned.holdsCompiledObjects() || isEnvironment))
         return;
     expect(m_plan.shapes().isAssigned(m_plan.shapes().generalShapeOf(id)), RuleOfPlan::ShapeMissing, id);
     for (FieldIndex field = 0; field < planned.numberOfFields(); ++field)

@@ -18,6 +18,7 @@
 #include "AOTStubsPropertyKeys.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
+#include "JSCustomGetterFunction.h"
 #include "JSFunction.h"
 #include "NativeExecutable.h"
 
@@ -28,6 +29,7 @@ StubSignature signatureOfCallHostFunctionWithoutBoxedCall(StubKey) { return call
 StubSignature signatureOfCallHostFunctionThatMayBeUnfetched(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallInternalFunction(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallHostFunctionWithCount(StubKey) { return callConventionSignatureWithCount(); }
+StubSignature signatureOfCallHostGetter(StubKey) { return callConventionSignature({ }); }
 
 static void emitLoadExecutable(StubAssembler& jit, GPRReg executable)
 {
@@ -146,6 +148,38 @@ void generateCallHostFunction(StubAssembler& jit)
     jit.emitFunctionPrologue();
     emitHostCallFrame(jit, { calleeGPR, thisGPR, count, std::nullopt });
     callNativeFunctionAndReturn(jit, CodeSpecializationKind::CodeForCall, registers.word, Address(calleeGPR, JSCallee::offsetOfScopeChain()), nativeFunction);
+}
+
+void generateCallHostGetter(StubAssembler& jit)
+{
+    const CallRegisters registers = CallRegisters::allocate(jit);
+    loadStructure(jit, calleeGPR, registers.word);
+    jit.loadPtr(Address(registers.word, Structure::classInfoOffset()), registers.word);
+    jit.loadRuntimePointer(Entry::CustomGetterClassInfo, registers.scratch);
+    jit.linkToStub(jit.branchPtr(CCallHelpers::NotEqual, registers.word, registers.scratch), callHostFunctionWithoutBoxedCall(0));
+
+    jit.emitFunctionPrologue();
+    const GPRReg function = registers.word;
+    const GPRReg realmArgument = jit.reuseScratch(StubRegister::A0);
+    const GPRReg receiverArgument = jit.reuseScratch(StubRegister::A1);
+    const GPRReg nameArgument = jit.reuseScratch(StubRegister::A2);
+    RELEASE_ASSERT(noOverlap(calleeGPR, realmArgument, receiverArgument, nameArgument, function, registers.scratch) && noOverlap(thisGPR, realmArgument, nameArgument, function, registers.scratch));
+    jit.loadPtr(Address(calleeGPR, JSCustomGetterFunction::offsetOfGetter()), function);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), registers.scratch);
+    jit.storePtr(GPRInfo::callFrameRegister, Address(registers.scratch, VM::offsetOfTopCallFrame()));
+    jit.move(thisGPR, receiverArgument);
+    jit.loadPtr(Address(calleeGPR, JSCustomGetterFunction::offsetOfPropertyName()), nameArgument);
+    jit.loadPtr(Address(calleeGPR, JSCallee::offsetOfScopeChain()), realmArgument);
+    jit.call(function, CustomAccessorPtrTag);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), registers.scratch);
+    Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, Address(registers.scratch, VM::exceptionOffset()));
+    jit.emitFunctionEpilogue();
+    jit.pollBeforeReturningFromNativeCode();
+    jit.returnToCaller();
+
+    exception.link(&jit);
+    jit.emitFunctionEpilogue();
+    jit.jumpToExceptionHandler();
 }
 
 StubSignature signatureOfCallFunctionOfBuiltinAtSite(StubKey key) { return signatureOf(callMethodAtSite(key.count())); }

@@ -31,6 +31,7 @@ JSString* functionSourceText(JSGlobalObject*, FunctionID);
 std::optional<std::span<const Latin1Character>> functionSourceBytes(FunctionID);
 std::optional<std::span<const Latin1Character>> quotedSourceBytes(uint32_t start, uint32_t length);
 
+String computedNameInFrames(VM&, const FunctionDescription&);
 String writtenFunctionName(FunctionID);
 String initialNameProperty(FunctionID);
 JSString* initialNamePropertyString(VM&, State&, FunctionID);

@@ -43,12 +43,7 @@ constexpr StubKey stubOfTableMethod(TableMethod method, KeyComparison comparison
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
-constexpr StubKey formForAnyValueOf(StubKey key)
-{
-    if (isCallOfMethodOfTable(key))
-        return stubOfTableMethod(tableMethodOf(key), KeyComparison::AnyValue);
-    return key.withForm(static_cast<uint8_t>(KeyComparison::AnyValue));
-}
+constexpr StubKey formForAnyValueOf(StubKey key) { return key.withForm(static_cast<uint8_t>(KeyComparison::AnyValue)); }
 constexpr StubKey weakMapGet() { return StubKey(StubFamily::WeakMapGet); }
 constexpr StubKey weakMapHas() { return StubKey(StubFamily::WeakMapHas); }
 constexpr StubKey weakSetHas() { return StubKey(StubFamily::WeakSetHas); }

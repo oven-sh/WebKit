@@ -237,7 +237,7 @@ bool groundsShowPositionInside(const Code& code, const TypeArena& types, ValueID
     bool isFromZeroUp = (isIntegerInSumOverRecords(code, types, position) && types.at(code.at(position).type).integers.minimum >= 0) || fromZero.isFromZeroUp();
     if (!isFromZeroUp && grounds.counter && !(fromZero.add(grounds.counter, -1) && fromZero.add(grounds.start, 1)))
         return false;
-    isFromZeroUp = isFromZeroUp || fromZero.isFromZeroUp() || (mayBeTaken(grounds.isFromZeroUp) && fromZero.takeAwayWhatIsFromZeroUp(grounds.isFromZeroUp) && fromZero.isFromZeroUp());
+    isFromZeroUp = isFromZeroUp || fromZero.isFromZeroUp() || (mayBeTaken(grounds.isFromZeroUp, grounds.isFromZeroUpResult) && fromZero.takeAwayWhatIsFromZeroUp(grounds.isFromZeroUp, grounds.isFromZeroUpResult) && fromZero.isFromZeroUp());
     auto isShownBelow = [&](const SumOverRecords& sum) {
         SumOverRecords behindTest(sum);
         bool isBehindTest = mayBeTaken(grounds.isBelow, grounds.isBelowResult) && behindTest.takeAwayWhatIsFromZeroUp(grounds.isBelow, grounds.isBelowResult);

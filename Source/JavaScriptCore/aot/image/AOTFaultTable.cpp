@@ -17,7 +17,9 @@
 #include "AOTInstanceLayout.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTOperationData.h"
+#include "AOTPrefixCode.h"
 #include "AOTSectionWriter.h"
+#include "AOTSort.h"
 #include "AOTState.h"
 #include "AOTStubDescriptor.h"
 #include "AOTStubKey.h"
@@ -65,63 +67,37 @@ constexpr uint32_t faultSitesBetweenCheckpoints = 64;
 
 struct FaultTableHeader {
     uint32_t numberOfSites;
-    uint32_t numberOfNullChecks;
     uint32_t numberOfFirstWords;
-    uint32_t numberOfSecondWords;
     uint32_t defaultSecondWord;
-    uint32_t numberOfThirdWords;
-    uint32_t bytesOfSecondWord;
-    uint32_t reserved;
+    uint32_t sizeOfCodes;
 };
 
 struct FaultCheckpoint {
-    bool hasSecondWord(uint32_t siteBehindCheckpoint) const { return sitesWithSecondWord[siteBehindCheckpoint / 32] >> (siteBehindCheckpoint % 32) & 1; }
-    uint32_t numberOfSecondWordsInFrontOf(uint32_t siteBehindCheckpoint) const
-    {
-        uint64_t sites = sitesWithSecondWord[0] | static_cast<uint64_t>(sitesWithSecondWord[1]) << 32;
-        return static_cast<uint32_t>(std::popcount(sites & ((uint64_t(1) << siteBehindCheckpoint) - 1)));
-    }
-
     uint32_t previousSiteOffset;
     uint32_t stepsPosition;
-    uint32_t firstNullCheck;
-    uint32_t firstSecondWord;
-    uint32_t sitesWithSecondWord[2];
-};
-static_assert(faultSitesBetweenCheckpoints == 64);
-
-struct FaultSiteWord {
-    uint32_t nullCheck;
-    uint32_t word;
 };
 
-static_assert(sizeof(FaultTableHeader) == 32 && sizeof(FaultCheckpoint) == 24 && sizeof(FaultSiteWord) == 8);
+static_assert(sizeof(FaultTableHeader) == 16 && sizeof(FaultCheckpoint) == 8);
 
 struct FaultTableLayout {
-    FaultTableLayout(uint64_t numberOfSites, uint64_t numberOfNullChecks, uint64_t numberOfFirstWords, uint64_t numberOfSecondWords, uint64_t bytesOfSecondWord, uint64_t numberOfThirdWords)
+    FaultTableLayout(uint64_t numberOfSites, uint64_t numberOfFirstWords, uint64_t sizeOfCodes)
         : numberOfCheckpoints((numberOfSites + faultSitesBetweenCheckpoints - 1) / faultSitesBetweenCheckpoints)
-        , hasNarrowWordNumbers(numberOfFirstWords <= std::numeric_limits<uint16_t>::max() + 1u)
         , firstWordsOffset(sizeof(FaultTableHeader) + numberOfCheckpoints * sizeof(FaultCheckpoint))
-        , thirdWordsOffset(firstWordsOffset + numberOfFirstWords * sizeof(uint32_t))
-        , wordNumbersOffset(thirdWordsOffset + numberOfThirdWords * sizeof(FaultSiteWord))
-        , secondWordsOffset(wordNumbersOffset + numberOfNullChecks * (hasNarrowWordNumbers ? sizeof(uint16_t) : sizeof(uint32_t)))
-        , stepsOffset(secondWordsOffset + numberOfSecondWords * bytesOfSecondWord)
+        , codesOffset(firstWordsOffset + numberOfFirstWords * sizeof(uint32_t))
+        , stepsOffset(codesOffset + sizeOfCodes)
     {
     }
 
     explicit FaultTableLayout(const FaultTableHeader& header)
-        : FaultTableLayout(header.numberOfSites, header.numberOfNullChecks, header.numberOfFirstWords, header.numberOfSecondWords, header.bytesOfSecondWord, header.numberOfThirdWords)
+        : FaultTableLayout(header.numberOfSites, header.numberOfFirstWords, header.sizeOfCodes)
     {
     }
 
     uint64_t sizeWithSteps(uint64_t sizeOfSteps) const { return roundUpToMultipleOf<sizeof(uint32_t)>(stepsOffset + sizeOfSteps); }
 
     uint64_t numberOfCheckpoints;
-    bool hasNarrowWordNumbers;
     uint64_t firstWordsOffset;
-    uint64_t thirdWordsOffset;
-    uint64_t wordNumbersOffset;
-    uint64_t secondWordsOffset;
+    uint64_t codesOffset;
     uint64_t stepsOffset;
 };
 
@@ -135,6 +111,92 @@ struct CollectedSite {
     uint8_t numberOfWords;
     uint8_t unused;
     std::array<uint32_t, FaultSite::maxThrowSiteWords> words;
+};
+
+enum SiteByte : unsigned { StepStart, StepContinuation, NumberStart, NumberContinuation, LaterWordsCode, ShortWordLow, ShortWordHigh, LaterWordsVarint, NumberOfSiteBytes };
+using FaultSiteCodes = PrefixCodes<NumberOfSiteBytes>;
+
+class LaterWordsOfBlock {
+public:
+    static constexpr size_t maxSize = 1 + 2 * sizeOfVarint(UINT32_MAX);
+
+    static constexpr bool isShort(uint8_t code) { return code >= firstShort; }
+    static constexpr unsigned numberOfVarints(uint8_t code) { return code == codeOfTwoWords ? 2 : code == codeOfWide; }
+
+    explicit LaterWordsOfBlock(uint32_t defaultWord)
+        : m_defaultWord(defaultWord)
+    {
+    }
+
+    void append(PrefixSymbolWriter& symbols, std::span<const uint32_t> words)
+    {
+        uint32_t word = words[0];
+        if (words.size() > 1) {
+            symbols.append(LaterWordsCode, codeOfTwoWords);
+            symbols.appendVarint(LaterWordsVarint, LaterWordsVarint, word);
+            symbols.appendVarint(LaterWordsVarint, LaterWordsVarint, words[1]);
+            return;
+        }
+        if (word == m_defaultWord) {
+            symbols.append(LaterWordsCode, codeOfDefault);
+            return;
+        }
+        for (uint8_t index = 0; index < m_size; ++index) {
+            if (m_words[index] == word) {
+                symbols.append(LaterWordsCode, static_cast<uint8_t>(firstRepeated + index));
+                return;
+            }
+        }
+        if (word < endOfShortWords) {
+            symbols.append(LaterWordsCode, static_cast<uint8_t>(firstShort + (word >> 16)));
+            symbols.append(ShortWordLow, static_cast<uint8_t>(word));
+            symbols.append(ShortWordHigh, static_cast<uint8_t>(word >> 8));
+        } else {
+            symbols.append(LaterWordsCode, codeOfWide);
+            symbols.appendVarint(LaterWordsVarint, LaterWordsVarint, word);
+        }
+        note(word);
+    }
+
+    std::array<uint32_t, 2> read(const uint8_t*& cursor)
+    {
+        uint8_t code = *cursor++;
+        if (code == codeOfDefault)
+            return { m_defaultWord, 0 };
+        if (code == codeOfTwoWords) {
+            uint32_t first = static_cast<uint32_t>(readVarint(cursor));
+            return { first, static_cast<uint32_t>(readVarint(cursor)) };
+        }
+        if (code < codeOfWide)
+            return { m_words[code - firstRepeated], 0 };
+        uint32_t word;
+        if (code == codeOfWide)
+            word = static_cast<uint32_t>(readVarint(cursor));
+        else {
+            word = static_cast<uint32_t>(code - firstShort) << 16 | static_cast<uint32_t>(cursor[1]) << 8 | cursor[0];
+            cursor += 2;
+        }
+        note(word);
+        return { word, 0 };
+    }
+
+private:
+    static constexpr uint8_t codeOfDefault = 0;
+    static constexpr uint8_t firstRepeated = 1;
+    static constexpr uint8_t codeOfWide = 62;
+    static constexpr uint8_t codeOfTwoWords = 63;
+    static constexpr uint8_t firstShort = 64;
+    static constexpr uint32_t endOfShortWords = (256u - firstShort) << 16;
+
+    void note(uint32_t word)
+    {
+        if (m_size < m_words.size())
+            m_words[m_size++] = word;
+    }
+
+    uint32_t m_defaultWord;
+    uint8_t m_size { 0 };
+    std::array<uint32_t, codeOfWide - firstRepeated> m_words;
 };
 
 void writeFaultSites(std::span<CollectedSite> sites, const CompiledCode& code, uint32_t bodyStart)
@@ -191,6 +253,42 @@ uint32_t findMostFrequentWord(const ParallelLoops& loops, Vector<uint32_t>&& wor
     return mostFrequentWord;
 }
 
+constexpr size_t maxSizeOfSite = FaultStep::maxSize + sizeOfVarint(uint64_t(UINT32_MAX) << 1) + LaterWordsOfBlock::maxSize;
+
+struct StepSymbols {
+    friend void appendVarint(StepSymbols& step, uint64_t value) { step.symbols.appendVarint(StepStart, StepContinuation, value); }
+
+    PrefixSymbolWriter& symbols;
+};
+
+template<typename NextByte>
+void readSiteBytes(const NextByte& nextByte)
+{
+    uint8_t byte = nextByte(StepStart);
+    bool isLoopPoll = byte & 2;
+    while (byte & 0x80)
+        byte = nextByte(StepContinuation);
+    if (isLoopPoll)
+        return;
+    byte = nextByte(NumberStart);
+    bool hasLaterWords = byte & 1;
+    while (byte & 0x80)
+        byte = nextByte(NumberContinuation);
+    if (!hasLaterWords)
+        return;
+    uint8_t code = nextByte(LaterWordsCode);
+    if (LaterWordsOfBlock::isShort(code)) {
+        nextByte(ShortWordLow);
+        nextByte(ShortWordHigh);
+        return;
+    }
+    for (unsigned left = LaterWordsOfBlock::numberOfVarints(code); left; --left) {
+        do {
+            byte = nextByte(LaterWordsVarint);
+        } while (byte & 0x80);
+    }
+}
+
 Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const ParallelLoops& loops)
 {
     auto numberOfBlocks = static_cast<unsigned>((sites.size() + faultSitesBetweenCheckpoints - 1) / faultSitesBetweenCheckpoints);
@@ -199,59 +297,19 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
         return sites.subspan(first, std::min<size_t>(faultSitesBetweenCheckpoints, sites.size() - first));
     };
 
-    Vector<Vector<uint8_t>> steps(numberOfBlocks);
-    Vector<FaultCheckpoint> checkpoints(numberOfBlocks);
-    forEachIndexInParallel(loops, numberOfBlocks, [&](unsigned block) {
-        uint32_t previousOffset = block ? sites[block * faultSitesBetweenCheckpoints - 1].offset : 0;
-        uint32_t offsetBeforeBlock = previousOffset;
-        uint32_t nullChecksInBlock = 0;
-        steps[block].grow(sitesOf(block).size() * FaultStep::maxSize);
-        uint8_t* firstStepByte = steps[block].mutableSpan().data();
-        WriterOfReservedBytes stepBytes(firstStepByte);
+    Vector<uint32_t> everyFirstWord = collectInParallel<uint32_t>(loops, numberOfBlocks, [&](unsigned block, Vector<uint32_t>& words) {
         for (const CollectedSite& site : sitesOf(block)) {
-            RELEASE_ASSERT(site.offset > previousOffset);
-            site.stepFrom(previousOffset).append(stepBytes);
-            previousOffset = site.offset;
-            nullChecksInBlock += site.isNullCheck();
-        }
-        steps[block].shrink(stepBytes.end() - firstStepByte);
-        checkpoints[block] = { offsetBeforeBlock, 0, nullChecksInBlock, 0, { 0, 0 } };
-    });
-    size_t sizeOfSteps = 0;
-    uint32_t numberOfNullChecks = 0;
-    for (unsigned block = 0; block < numberOfBlocks; ++block) {
-        checkpoints[block].stepsPosition = static_cast<uint32_t>(sizeOfSteps);
-        sizeOfSteps += steps[block].size();
-        uint32_t nullChecksInBlock = std::exchange(checkpoints[block].firstNullCheck, numberOfNullChecks);
-        numberOfNullChecks += nullChecksInBlock;
-    }
-
-    auto collectSparseWords = [&](unsigned index, std::optional<uint32_t> omittedWord) {
-        return collectInParallel<FaultSiteWord>(loops, numberOfBlocks, [&](unsigned block, Vector<FaultSiteWord>& words) {
-            uint32_t nullCheck = checkpoints[block].firstNullCheck;
-            for (const CollectedSite& site : sitesOf(block)) {
-                if (index < site.numberOfWords && site.words[index] != omittedWord)
-                    words.append(FaultSiteWord { nullCheck, site.words[index] });
-                nullCheck += site.isNullCheck();
+            if (site.isNullCheck()) {
+                RELEASE_ASSERT(site.numberOfWords);
+                words.append(site.words[0]);
             }
-        });
-    };
-    Vector<uint64_t> firstWordsWithNullChecks = collectInParallel<uint64_t>(loops, numberOfBlocks, [&](unsigned block, Vector<uint64_t>& words) {
-        uint32_t nullCheck = checkpoints[block].firstNullCheck;
-        for (const CollectedSite& site : sitesOf(block)) {
-            if (!site.isNullCheck())
-                continue;
-            RELEASE_ASSERT(site.numberOfWords);
-            words.append(static_cast<uint64_t>(site.words[0]) << 32 | nullCheck);
-            ++nullCheck;
         }
     });
-    sortByWordOnPoolKeepingEqualElementsInOrder(loops, firstWordsWithNullChecks.mutableSpan(), [](uint64_t wordWithNullCheck) {
-        return wordWithNullCheck >> 32;
+    sortByWordOnPoolKeepingEqualElementsInOrder(loops, everyFirstWord.mutableSpan(), [](uint32_t word) {
+        return word;
     });
     Vector<uint32_t> firstWords;
-    for (uint64_t wordWithNullCheck : firstWordsWithNullChecks) {
-        uint32_t word = static_cast<uint32_t>(wordWithNullCheck >> 32);
+    for (uint32_t word : everyFirstWord) {
         if (firstWords.isEmpty() || firstWords.last() != word)
             firstWords.append(word);
     }
@@ -261,80 +319,92 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
             firstWords[i] = firstWords[i + 1];
     }
     removeRepeatedElements(firstWords);
+
+    Vector<uint32_t> usesOfFirstWord(FillWith { }, firstWords.size(), 0u);
+    size_t indexOfFirstWord = 0;
+    for (uint32_t word : everyFirstWord) {
+        while (firstWords[indexOfFirstWord] < word)
+            ++indexOfFirstWord;
+        ++usesOfFirstWord[indexOfFirstWord];
+    }
+    Vector<uint32_t> mostUsedFirst(firstWords.size());
+    for (size_t index = 0; index < firstWords.size(); ++index)
+        mostUsedFirst[index] = static_cast<uint32_t>(index);
+    AOT::sort(mostUsedFirst, [&](uint32_t a, uint32_t b) {
+        return usesOfFirstWord[a] != usesOfFirstWord[b] ? usesOfFirstWord[a] > usesOfFirstWord[b] : a < b;
+    });
+    Vector<uint32_t> numberOfFirstWord(firstWords.size());
+    for (size_t number = 0; number < mostUsedFirst.size(); ++number)
+        numberOfFirstWord[mostUsedFirst[number]] = static_cast<uint32_t>(number);
+
     uint32_t defaultSecondWord = findMostFrequentWord(loops, collectInParallel<uint32_t>(loops, sites.size(), [&](unsigned site, Vector<uint32_t>& words) {
         if (sites[site].numberOfWords > 1)
             words.append(sites[site].words[1]);
     }));
-    auto hasSecondWordOfItsOwn = [&](const CollectedSite& site) {
-        return site.numberOfWords > 1 && site.words[1] != defaultSecondWord;
-    };
-    Vector<uint32_t> secondWords = collectInParallel<uint32_t>(loops, numberOfBlocks, [&](unsigned block, Vector<uint32_t>& words) {
-        std::span<const CollectedSite> sitesOfBlock = sitesOf(block);
-        for (size_t site = 0; site < sitesOfBlock.size(); ++site) {
-            if (!hasSecondWordOfItsOwn(sitesOfBlock[site]))
+
+    Vector<Vector<PrefixSymbol>> symbolsOfBlocks(numberOfBlocks);
+    Vector<FaultCheckpoint> checkpoints(numberOfBlocks);
+    forEachIndexInParallel(loops, numberOfBlocks, [&](unsigned block) {
+        uint32_t previousOffset = block ? sites[block * faultSitesBetweenCheckpoints - 1].offset : 0;
+        checkpoints[block] = { previousOffset, 0 };
+        symbolsOfBlocks[block].grow(sitesOf(block).size() * maxSizeOfSite);
+        PrefixSymbol* firstSymbol = symbolsOfBlocks[block].mutableSpan().data();
+        PrefixSymbolWriter symbols(firstSymbol);
+        StepSymbols stepSymbols { symbols };
+        LaterWordsOfBlock laterWords(defaultSecondWord);
+        for (const CollectedSite& site : sitesOf(block)) {
+            RELEASE_ASSERT(site.offset > previousOffset);
+            site.stepFrom(previousOffset).append(stepSymbols);
+            previousOffset = site.offset;
+            if (!site.isNullCheck())
                 continue;
-            words.append(sitesOfBlock[site].words[1]);
-            checkpoints[block].sitesWithSecondWord[site / 32] |= 1u << (site % 32);
+            size_t index = std::ranges::lower_bound(firstWords, site.words[0]) - firstWords.begin();
+            bool hasLaterWords = site.numberOfWords > 1;
+            symbols.appendVarint(NumberStart, NumberContinuation, static_cast<uint64_t>(numberOfFirstWord[index]) << 1 | hasLaterWords);
+            if (hasLaterWords)
+                laterWords.append(symbols, std::span<const uint32_t>(site.words).subspan(1, site.numberOfWords - 1));
         }
+        symbolsOfBlocks[block].shrink(symbols.end() - firstSymbol);
     });
-    uint32_t numberOfSecondWordsSoFar = 0;
-    uint32_t largestSecondWord = 0;
-    for (FaultCheckpoint& checkpoint : checkpoints) {
-        checkpoint.firstSecondWord = numberOfSecondWordsSoFar;
-        numberOfSecondWordsSoFar += static_cast<uint32_t>(std::popcount(checkpoint.sitesWithSecondWord[0]) + std::popcount(checkpoint.sitesWithSecondWord[1]));
+
+    FaultSiteCodes::Counts counts { };
+    for (const Vector<PrefixSymbol>& symbols : symbolsOfBlocks)
+        FaultSiteCodes::count(counts, symbols.span());
+    FaultSiteCodes codes(counts);
+    Vector<Vector<uint8_t>> steps(numberOfBlocks);
+    forEachIndexInParallel(loops, numberOfBlocks, [&](unsigned block) {
+        std::span symbols = symbolsOfBlocks[block].span();
+        steps[block].grow(symbols.size() * PrefixCode::maxLength / 8 + 1);
+        uint8_t* firstByte = steps[block].mutableSpan().data();
+        steps[block].shrink(codes.write(firstByte, symbols) - firstByte);
+    });
+
+    size_t sizeOfSteps = 0;
+    for (unsigned block = 0; block < numberOfBlocks; ++block) {
+        checkpoints[block].stepsPosition = static_cast<uint32_t>(sizeOfSteps);
+        sizeOfSteps += steps[block].size();
     }
-    RELEASE_ASSERT(numberOfSecondWordsSoFar == secondWords.size());
-    for (uint32_t word : secondWords)
-        largestSecondWord = std::max(largestSecondWord, word);
-    uint32_t bytesOfSecondWord = (std::bit_width(largestSecondWord | 1u) + 7) / 8;
-    Vector<FaultSiteWord> thirdWords = collectSparseWords(2, std::nullopt);
 
     FaultTableHeader header {
         .numberOfSites = static_cast<uint32_t>(sites.size()),
-        .numberOfNullChecks = numberOfNullChecks,
         .numberOfFirstWords = static_cast<uint32_t>(firstWords.size()),
-        .numberOfSecondWords = static_cast<uint32_t>(secondWords.size()),
         .defaultSecondWord = defaultSecondWord,
-        .numberOfThirdWords = static_cast<uint32_t>(thirdWords.size()),
-        .bytesOfSecondWord = bytesOfSecondWord,
-        .reserved = 0,
+        .sizeOfCodes = static_cast<uint32_t>(codes.bytes().size()),
     };
     FaultTableLayout layout(header);
 
     Vector<uint8_t> bytes;
     bytes.grow(layout.sizeWithSteps(sizeOfSteps));
     std::span<uint8_t> section = bytes.mutableSpan();
-    forEachRangeOfIndicesInParallel(loops, section.size(), [&](size_t first, size_t end) {
-        zeroSpan(section.subspan(first, end - first));
-    });
+    zeroSpan(section.subspan(layout.stepsOffset + sizeOfSteps));
     memcpySpan(section, asByteSpan(header));
     memcpySpan(section.subspan(sizeof(FaultTableHeader)), asBytes(checkpoints.span()));
-    memcpySpan(section.subspan(layout.firstWordsOffset), asBytes(firstWords.span()));
-    memcpySpan(section.subspan(layout.thirdWordsOffset), asBytes(thirdWords.span()));
-    forEachIndexInParallel(loops, numberOfBlocks, [&](unsigned block) {
-        uint32_t end = block + 1 < numberOfBlocks ? checkpoints[block + 1].firstSecondWord : static_cast<uint32_t>(secondWords.size());
-        for (uint32_t number = checkpoints[block].firstSecondWord; number < end; ++number) {
-            uint8_t* bytesOfWord = section.data() + layout.secondWordsOffset + static_cast<uint64_t>(number) * bytesOfSecondWord;
-            for (uint32_t byte = 0; byte < bytesOfSecondWord; ++byte)
-                bytesOfWord[byte] = static_cast<uint8_t>(secondWords[number] >> (8 * byte));
-        }
-    });
+    auto* firstWordsByNumber = reinterpret_cast<uint32_t*>(section.data() + layout.firstWordsOffset);
+    for (size_t number = 0; number < mostUsedFirst.size(); ++number)
+        firstWordsByNumber[number] = firstWords[mostUsedFirst[number]];
+    memcpySpan(section.subspan(layout.codesOffset), codes.bytes().span());
     forEachIndexInParallel(loops, numberOfBlocks, [&](unsigned block) {
         memcpySpan(section.subspan(layout.stepsOffset + checkpoints[block].stepsPosition), steps[block].span());
-    });
-    forEachRangeOfIndicesInParallel(loops, firstWordsWithNullChecks.size(), [&](size_t first, size_t end) {
-        uint8_t* wordNumbers = section.data() + layout.wordNumbersOffset;
-        size_t number = std::ranges::lower_bound(firstWords, static_cast<uint32_t>(firstWordsWithNullChecks[first] >> 32)) - firstWords.begin();
-        for (size_t index = first; index < end; ++index) {
-            uint32_t word = static_cast<uint32_t>(firstWordsWithNullChecks[index] >> 32);
-            uint32_t nullCheck = static_cast<uint32_t>(firstWordsWithNullChecks[index]);
-            while (number < firstWords.size() && firstWords[number] < word)
-                ++number;
-            if (layout.hasNarrowWordNumbers)
-                reinterpret_cast<uint16_t*>(wordNumbers)[nullCheck] = static_cast<uint16_t>(number);
-            else
-                reinterpret_cast<uint32_t*>(wordNumbers)[nullCheck] = static_cast<uint32_t>(number);
-        }
     });
     return bytes;
 }
@@ -347,51 +417,31 @@ struct Fault {
 };
 
 struct FaultTableView {
-    explicit FaultTableView(const uint8_t* bytes)
-        : header(*reinterpret_cast<const FaultTableHeader*>(bytes))
+    explicit FaultTableView(std::span<const uint8_t> bytes)
+        : header(*reinterpret_cast<const FaultTableHeader*>(bytes.data()))
         , layout(header)
-        , checkpoints(reinterpret_cast<const FaultCheckpoint*>(bytes + sizeof(FaultTableHeader)), layout.numberOfCheckpoints)
-        , firstWords(reinterpret_cast<const uint32_t*>(bytes + layout.firstWordsOffset), header.numberOfFirstWords)
-        , secondWords(bytes + layout.secondWordsOffset)
-        , thirdWords(reinterpret_cast<const FaultSiteWord*>(bytes + layout.thirdWordsOffset), header.numberOfThirdWords)
-        , wordNumbers(bytes + layout.wordNumbersOffset)
-        , steps(bytes + layout.stepsOffset)
+        , checkpoints(reinterpret_cast<const FaultCheckpoint*>(bytes.data() + sizeof(FaultTableHeader)), layout.numberOfCheckpoints)
+        , firstWords(reinterpret_cast<const uint32_t*>(bytes.data() + layout.firstWordsOffset), header.numberOfFirstWords)
+        , codes(bytes.data() + layout.codesOffset)
+        , steps(bytes.subspan(layout.stepsOffset))
     {
     }
 
-    static std::optional<uint32_t> findWord(std::span<const FaultSiteWord> words, uint32_t nullCheck)
+    std::array<uint32_t, FaultSite::maxThrowSiteWords> readThrowSite(const uint8_t*& cursor, LaterWordsOfBlock& laterWords) const
     {
-        auto entry = std::ranges::lower_bound(words, nullCheck, { }, &FaultSiteWord::nullCheck);
-        if (entry == words.end() || entry->nullCheck != nullCheck)
-            return std::nullopt;
-        return entry->word;
-    }
-
-    uint32_t secondWordOf(const FaultCheckpoint& checkpoint, uint32_t siteBehindCheckpoint) const
-    {
-        if (!checkpoint.hasSecondWord(siteBehindCheckpoint))
-            return header.defaultSecondWord;
-        const uint8_t* bytesOfWord = secondWords + static_cast<uint64_t>(checkpoint.firstSecondWord + checkpoint.numberOfSecondWordsInFrontOf(siteBehindCheckpoint)) * header.bytesOfSecondWord;
-        uint32_t word = 0;
-        for (uint32_t byte = 0; byte < header.bytesOfSecondWord; ++byte)
-            word |= static_cast<uint32_t>(bytesOfWord[byte]) << (8 * byte);
-        return word;
-    }
-
-    std::array<uint32_t, FaultSite::maxThrowSiteWords> throwSiteOf(const FaultCheckpoint& checkpoint, uint32_t siteBehindCheckpoint, uint32_t nullCheck) const
-    {
-        uint32_t number = layout.hasNarrowWordNumbers ? reinterpret_cast<const uint16_t*>(wordNumbers)[nullCheck] : reinterpret_cast<const uint32_t*>(wordNumbers)[nullCheck];
-        return { firstWords[number], secondWordOf(checkpoint, siteBehindCheckpoint), findWord(thirdWords, nullCheck).value_or(0) };
+        uint64_t number = readVarint(cursor);
+        std::array<uint32_t, 2> later { header.defaultSecondWord, 0 };
+        if (number & 1)
+            later = laterWords.read(cursor);
+        return { firstWords[number >> 1], later[0], later[1] };
     }
 
     const FaultTableHeader& header;
     FaultTableLayout layout;
     std::span<const FaultCheckpoint> checkpoints;
     std::span<const uint32_t> firstWords;
-    const uint8_t* secondWords;
-    std::span<const FaultSiteWord> thirdWords;
-    const uint8_t* wordNumbers;
-    const uint8_t* steps;
+    const uint8_t* codes;
+    std::span<const uint8_t> steps;
 };
 
 } // anonymous namespace
@@ -426,7 +476,7 @@ Vector<uint8_t> encodeFaultSites(const LinkedFunctions& functions, std::span<con
     if (!numberOfSites)
         return { };
 
-    uint64_t maxSectionSize = FaultTableLayout(numberOfSites, numberOfNullChecks, numberOfNullChecks, numberOfNullChecks, sizeof(uint32_t), numberOfNullChecks).sizeWithSteps(numberOfSites * FaultStep::maxSize);
+    uint64_t maxSectionSize = FaultTableLayout(numberOfSites, numberOfNullChecks, FaultSiteCodes::maxSize).sizeWithSteps(numberOfSites * maxSizeOfSite * sizeof(PrefixSymbol));
     if (!checkSectionSize(std::max<uint64_t>(maxSectionSize, numberOfSites * sizeof(CollectedSite)), context))
         return { };
 
@@ -452,7 +502,7 @@ std::optional<FaultSite> Image::faultSiteAt(const void* pc) const
     if (offset >= header().code.functionsEnd)
         return std::nullopt;
 
-    FaultTableView table(bytes.data());
+    FaultTableView table(bytes);
     auto nextCheckpoint = std::ranges::lower_bound(table.checkpoints, static_cast<uint32_t>(offset), { }, &FaultCheckpoint::previousSiteOffset);
     if (nextCheckpoint == table.checkpoints.begin())
         return std::nullopt;
@@ -460,22 +510,31 @@ std::optional<FaultSite> Image::faultSiteAt(const void* pc) const
 
     uint32_t firstSite = static_cast<uint32_t>(checkpoint - table.checkpoints.begin()) * faultSitesBetweenCheckpoints;
     uint32_t numberOfSteps = std::min(faultSitesBetweenCheckpoints, table.header.numberOfSites - firstSite);
-    const uint8_t* cursor = table.steps + checkpoint->stepsPosition;
+    PrefixCodeReader reader(table.steps.data() + checkpoint->stepsPosition, table.steps.data() + table.steps.size());
+    std::array<uint8_t, maxSizeOfSite> siteBytes;
     uint64_t currentOffset = checkpoint->previousSiteOffset;
-    uint32_t nullCheck = checkpoint->firstNullCheck;
+    LaterWordsOfBlock laterWords(table.header.defaultSecondWord);
     for (uint32_t i = 0; i < numberOfSteps; ++i) {
+        size_t size = 0;
+        readSiteBytes([&](unsigned code) {
+            RELEASE_ASSERT(size < siteBytes.size());
+            return siteBytes[size++] = static_cast<uint8_t>(reader.read(FaultSiteCodes::code(table.codes, code)));
+        });
+        const uint8_t* cursor = siteBytes.data();
         FaultStep step = FaultStep::read(cursor);
         currentOffset += step.distance;
-        if (currentOffset < offset) {
-            nullCheck += !step.isLoopPoll;
-            continue;
-        }
         if (currentOffset > offset)
             return std::nullopt;
+        bool isFound = currentOffset == offset;
         bool hasFrame = !step.isFrameless;
-        if (step.isLoopPoll)
-            return FaultSite { FaultSiteKind::LoopPoll, hasFrame, { } };
-        return FaultSite { FaultSiteKind::NullCheck, hasFrame, table.throwSiteOf(*checkpoint, i, nullCheck) };
+        if (step.isLoopPoll) {
+            if (isFound)
+                return FaultSite { FaultSiteKind::LoopPoll, hasFrame, { } };
+            continue;
+        }
+        std::array throwSite = table.readThrowSite(cursor, laterWords);
+        if (isFound)
+            return FaultSite { FaultSiteKind::NullCheck, hasFrame, throwSite };
     }
     return std::nullopt;
 }

@@ -121,6 +121,14 @@ public:
     bool isLayingOutTurns() const { return !!m_headOfTurnsLaidOut; }
     bool leavesTurnLaidOut(BlockID target) const { return m_headOfTurnsLaidOut && target != m_headOfTurnsLaidOut && !std::ranges::contains(m_turnLaidOut, target); }
     bool isInLoop(BlockID block) const { return code().at(block).isInLoop; }
+    bool mayStayRope(ValueID flatString) const { return m_stringsThatMayStayRopes.contains(flatString); }
+    void forEachLoopThatCarries(ValueID flatString, NOESCAPE const Invocable<void(BlockID head, LValue characters, LValue implFlags)> auto& functor) const
+    {
+        for (const StringCarriedByLoop& carried : m_stringsCarriedByLoops) {
+            if (carried.string == flatString)
+                functor(carried.head, carried.characters, carried.implFlags);
+        }
+    }
     bool isStoredIntoByName(ValueID) const;
     bool takesOpenForm(const OperationContext&, StateOfKnowledge = StateOfKnowledge::Always) const;
     bool takesFormOfLoops(const OperationContext&, StateOfKnowledge = StateOfKnowledge::Always) const;
@@ -138,6 +146,8 @@ public:
     std::optional<ArrayStorage> kindOfListFoundInFrontOfTurnsLaidOut(ValueID list) const;
     bool liesInsideByQuestionInFrontOfTurnsLaidOut(ValueID read) const;
     bool leavesHoleToTestBehind(const ValueContext& read);
+    bool leaveCheckToTruthTest(const ValueContext& check);
+    ValueID checkLeftToTruthTest(ValueID test) const { return m_truthTestWithCheck == test ? m_checkLeftToTruthTest : ValueID(); }
     bool holeIsLeftToTestBehind(ValueID read) const { return m_elementsWhoseHolesAreLeftToTestsBehind.get(read.index()); }
     LValue& wordWhoseHoleIsLeftToTestAtWork() { return m_wordWhoseHoleIsLeftToTestAtWork; }
     bool holdsByQuestionInFrontOfTurnsLaidOut(ValueID relation) const { return m_relationsAskedInFrontOfTurnsLaidOut.contains(relation); }
@@ -167,7 +177,7 @@ public:
     LValue wordOf(ValueID id) const { return m_values[id.index()]; }
     void nameAgain(ValueID id, LValue lowered) { m_values[id.index()] = lowered; }
     bool keepsValuesInHeapFrame() const { return m_keepsValuesInHeapFrame; }
-    std::span<const BlockID> order() const { return m_order; }
+    std::span<const BlockID> order() const { return m_order.span(); }
     BlockID onlyPredecessorOf(BlockID block) const { return m_singlePredecessors[block.index()]; }
     bool blockDominates(BlockID above, BlockID below);
     BlockID nearestDominatorOf(BlockID);
@@ -200,6 +210,33 @@ public:
         RELEASE_ASSERT(!value.isBranchCondition());
         defineValue(value.id(), value.representation(), result);
     }
+    bool isOnlyBoxed(ValueID id) const
+    {
+        ValueID user = code().useCountOf(id) == 1 ? code().onlyUserOf(id) : ValueID();
+        return user && !m_keepsValuesInHeapFrame && code().at(user).opcode == Opcode::Box && code().at(user).representation == Representation::JSValue;
+    }
+    bool isOnlyTakenAsPosition(ValueID id) const
+    {
+        const Operation& unboxed = code().at(id);
+        if (unboxed.opcode != Opcode::Unbox || unboxed.representation != Representation::Double || m_keepsValuesInHeapFrame || code().useCountOf(id) != 1 || !code().onlyUserOf(id))
+            return false;
+        const Operation& access = code().at(code().onlyUserOf(id));
+        if ((access.opcode != Opcode::GetTypedArrayElement && access.opcode != Opcode::PutTypedArrayElement) || access.positionOperand() != id || access.block() != unboxed.block() || access.isInsideView() || access.level() == KnowledgeLevel::Expected)
+            return false;
+        return code().at(unboxed.valueOperand()).representation == Representation::JSValue && !isCarriedBoxed(unboxed.valueOperand());
+    }
+    void defineBoxed(const ValueContext& value, Boxed result)
+    {
+        RELEASE_ASSERT(!value.isBranchCondition());
+        defineValue(value.id(), Representation::JSValue, result);
+        m_valuesDefinedBoxed.set(value.id().index());
+    }
+    void forgetBoxed(ValueID id)
+    {
+        if (m_valuesDefinedBoxed.get(id.index())) [[unlikely]]
+            m_valuesDefinedBoxed.clear(id.index());
+    }
+    std::optional<Boxed> findBoxed(ValueID id) const { return m_valuesDefinedBoxed.get(id.index()) && m_values[id.index()] ? std::optional { Boxed(m_values[id.index()]) } : std::nullopt; }
     void defineTest(const ValueContext&, Condition);
     void defineResults(const ValueContext&, std::span<const Operand>);
     Operand resultAt(ValueID producer, uint32_t index) const;
@@ -211,6 +248,9 @@ public:
     LBasicBlock blockFor(BlockID) const;
     BlockEdge edgeTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
     std::optional<BlockEdge> edgeThatBringsNothing(EdgeID);
+    BlockEdge edgeWithoutArguments(const Edge&);
+    void expectOtherJumps(BlockID block) { m_blocksWithOtherJumps.set(block.index()); }
+    ValueID testOfBranch(BlockID id) const { return testReadByBranchAlone(id, code().at(id).terminator); }
     bool isTakenIntoSwitchInFront(BlockID block) const { return m_switchesTakenIntoSwitchInFront.get(block.index()); }
     void noteSwitchTakenIntoSwitchInFront(BlockID block) { m_switchesTakenIntoSwitchInFront.set(block.index()); }
     void jumpTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
@@ -230,6 +270,7 @@ public:
     };
     std::optional<WaysOfTruth> waysOfTruthOf(const ValueContext& read) const;
     bool isReadAgainBehindItsOwnTruthAlone(const ValueContext& read) const;
+    bool isReadBehindOwnUndefinedTest(const ValueContext& read) const;
     void generateReturnedCall(const TerminatorContext&, ValueID call);
 
     template<typename T> T& emitter();
@@ -296,6 +337,15 @@ public:
 private:
     BlockID m_blockWhoseUsersOfLiteralsAreListed;
     Vector<std::pair<ValueID, ValueID>> m_usersOfLiteralsInBlock;
+    struct StringCarriedByLoop {
+        ValueID string;
+        BlockID head;
+        LValue characters;
+        LValue implFlags;
+    };
+    void findStringsThatMayStayRopes();
+    Vector<ValueID, 4> m_stringsThatMayStayRopes;
+    Vector<StringCarriedByLoop, 4> m_stringsCarriedByLoops;
 public:
 private:
     Vector<std::pair<ValueID, ValueID>, 2> m_scheduledLifetimeEnds;
@@ -372,12 +422,15 @@ private:
         return getSlow(id, operation);
     }
     BitVector m_elementsWhoseHolesAreLeftToTestsBehind;
+    ValueID m_truthTestWithCheck;
+    ValueID m_checkLeftToTruthTest;
     LValue m_wordWhoseHoleIsLeftToTestAtWork { nullptr };
     UncheckedKeyHashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsMadePresentAtHeadsOfBlocks;
     Operand getSlow(ValueID, const Operation&);
     Operand zeroInPlaceOfValueOfFailedCode(Representation);
     Operand getNumberInFormKept(ValueID, LValue lowered);
     COLD NEVER_INLINE void failAtNumberOrNothingReadForItsBits(ValueID);
+    COLD NEVER_INLINE void reportBoxedNumberUse(ValueID);
     Operand makeInWantedForm(ValueID, const Operation&, Representation wanted);
     Operand makeConstant(ValueID, const Operation&);
     void defineValue(ValueID id, Representation representation, Operand operand)
@@ -393,7 +446,7 @@ private:
         RELEASE_ASSERT(!lowered && operand.value && operand.value->type() == machineTypeOf(operand.representation));
         lowered = operand.value;
     }
-    BlockEdge edgeLeavingTurnLaidOut(const Block& blockAtEnd);
+    BlockEdge edgeLeavingTurnLaidOut(BlockID blockAtEnd);
     BlockEdge edgeThatPassesArguments(const TerminatorContext&, const Edge&, std::span<const Operand> declaredResults);
     void passArguments(const Edge&, std::span<const ValueID> parameters, std::span<const Operand> declaredResults);
     void passArgument(ValueID parameter, Operand);
@@ -470,7 +523,7 @@ private:
     };
     bool findStoresOfWhatComesRound(CountedLoop&, const Edge& back) const;
     void storeLoopCarriedValue(const CountedLoop&, const LoopCarriedValueStore&, LValue);
-    static void askKindsReadWhereLoopIsComeBackTo(CountedLoop&);
+    void versionTurnsByKindsRead(CountedLoop&) const;
     struct LimitOfWrittenLoop {
         BlockID asking;
         Opcode relation { Opcode::Less };
@@ -541,13 +594,14 @@ private:
     bool m_notesForms { false };
     bool m_keepsValuesInHeapFrame { false };
     BitVector m_switchesTakenIntoSwitchInFront;
+    BitVector m_blocksWithOtherJumps;
     bool m_looksBehindEachOperation { false };
     BitVector m_storesBehindWhichOwnerIsRemembered;
     PinnedValues m_pinned;
     std::span<LValue> m_values;
     std::span<ResultRange> m_resultRanges;
     Vector<Operand> m_results;
-    std::span<LBasicBlock> m_blocks;
+    Machine::UncheckedSpan<LBasicBlock> m_blocks;
     bool m_nextBlockGoesOnHere { false };
     Vector<LBasicBlock, 4> m_blocksLeftOut;
     BlockID m_headOfTurnsLaidOut;
@@ -558,6 +612,10 @@ private:
     Vector<Operand, 8> m_argumentsForNextTurn;
     std::span<const BlockID> m_turnLaidOut;
     WTF::Function<LBasicBlock()> m_blockLeavingTurnLaidOut;
+    WTF::Function<LBasicBlock()> m_blockEndingLoop;
+    Vector<BlockID, 16> m_blocksOfLoopLaidOut;
+    Vector<BlockID, 16> findBlocksOfLoop(const CountedLoop&) const;
+    LBasicBlock blockForLeavingEdge(BlockID target);
     Vector<SumOfIntegers, 2> m_sumsOfIntegers;
     Vector<ValueID, 4> m_valuesLeftOutOfTurnsLaidOut;
     std::span<const ListAskedForKind> m_listsAskedForKindInFrontOfTurnsLaidOut;
@@ -573,15 +631,15 @@ private:
     bool m_asksElementsBehindTurns { false };
     LValue m_boxedWordsOfElementsInTurns { nullptr };
     Vector<std::pair<ValueID, LValue>, 2> m_wordsOfElementsInTurnLaidOut;
-    std::span<const BlockID> m_order;
-    std::span<BlockID> m_singlePredecessors;
-    std::span<ScopeFork> m_scopeAtEndOfBlock;
+    Machine::UncheckedSpan<const BlockID> m_order;
+    Machine::UncheckedSpan<BlockID> m_singlePredecessors;
+    Machine::UncheckedSpan<ScopeFork> m_scopeAtEndOfBlock;
     BlockID m_onlyEntryBlock;
     bool m_firstBlockHasOtherWaysIn { false };
     Vector<WayIntoBlock, 16> m_waysIntoJoins;
-    std::span<uint32_t> m_places;
-    std::span<uint32_t> m_dominatorsByPlace;
-    std::span<SubtreeOfDominators> m_subtreesByPlace;
+    Machine::UncheckedSpan<uint32_t> m_places;
+    Machine::UncheckedSpan<uint32_t> m_dominatorsByPlace;
+    Machine::UncheckedSpan<SubtreeOfDominators> m_subtreesByPlace;
     std::array<BlockID, 4> m_homesProven;
     BlockID m_userOfHomesProven;
     std::optional<DominatorsOfCode> m_dominators;
@@ -597,6 +655,7 @@ private:
     bool m_hasFailed { false };
     bool m_carriesParametersBoxed { false };
     BitVector m_parametersCarriedBoxed;
+    BitVector m_valuesDefinedBoxed;
     bool m_followsNumbersOutOfBytes { false };
     BitVector m_valuesHoldingAnyNaN;
     BitVector m_valuesReadForBitsOfNaN;

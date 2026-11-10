@@ -17,6 +17,7 @@
 #include "AOTObjectVisiting.h"
 #include "AOTObjectWords.h"
 #include "AOTPlan.h"
+#include "AOTPrefixCode.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeType.h"
 #include "AOTStringUses.h"
@@ -467,7 +468,6 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
     checkSorted(tables.addedPrototypeNames(), std::identity { }, "addedPrototypeNames"_s);
     checkSorted(tables.namesOfStatements(), &NameOfStatementData::module, "namesOfStatements"_s);
     checkSorted(tables.requestedOriginals(), &RequestedOriginalData::function, "requestedOriginals"_s);
-    checkSorted(tables.parsedRecordFields(), &ParsedRecordFieldData::nameNumber, "parsedRecordFields"_s);
     checkSorted(tables.quotedSourceGroups(), [](const QuotedSourceGroupData& group) { return std::tuple { group.module, group.line, group.column }; }, "quotedSourceGroups"_s);
     checkSorted(tables.sourceStamps(), &SourceStampData::module, "sourceStamps"_s);
     checkSorted(tables.starsAsWritten(), &StarAsWrittenData::module, "starsAsWritten"_s);
@@ -569,14 +569,14 @@ static void checkFunctionTables(const JoinedTables& check)
     const Typed::CallingConventions& conventions = check.plan.conventions();
     const FunctionNumbers& functions = check.numbers.functions();
     size_t numberOfClosureFunctions = tables.closureFunctions.end - tables.closureFunctions.first;
-    std::span<const Number24> cellNumbers = tables.closureCellNumbers();
+    SparseNumberTable cells(tables.closureCells());
     bool hasRowForEachFunction = tables.numberOfFunctions() == functions.numberOfFunctions() && tables.closureFunctionKinds().size() == numberOfClosureFunctions && tables.functionLengths().size() == numberOfClosureFunctions
-        && tables.closureCaptureCounts().size() == numberOfClosureFunctions && cellNumbers.size() == numberOfClosureFunctions;
+        && tables.closureCaptureCounts().size() == numberOfClosureFunctions && tables.closureCells().size() >= NumberGroup::numberOfGroupWords(numberOfClosureFunctions);
     if (!check.expect(hasRowForEachFunction, "TableOutOfBounds"_s, { }, "functionRecordNumbers"_s))
         return;
     for (uint32_t number = 0; number < numberOfClosureFunctions; ++number) {
         CodeUnit unit = conventions.unitAt(functions.unitOf(FunctionID(tables.closureFunctionWithNumber(number))));
-        uint32_t cell = cellNumbers[number];
+        uint32_t cell = cells.at(number);
         bool isCellOfFunction = unit.role != Typed::CodeRole::GenericCallEntry || cell == check.numbers.closureCellNumber(unit.function);
         if (!check.expect(isCellOfFunction && (!cell || cell < tables.numberOfClosureCells), "ClosureCellDiffersFromNumbers"_s, unit.function))
             return;
@@ -614,7 +614,7 @@ static void checkNamesForHeapSnapshots(const JoinedTables& check)
     Vector<VariableData> variables;
     uint32_t lastModule = 0;
     uint32_t endOfClosureNumbers = 0;
-    bool endsWhereModuleEnds = forEachNamedVariable(tables.namedVariables(), [&](uint32_t module, size_t) {
+    bool endsWhereModuleEnds = forEachNamedVariable(decodeVarintBytes(tables.namedVariables()).span(), [&](uint32_t module, size_t) {
         lastModule = module;
     }, [&](const VariableData& variable) {
         variables.append(variable);
@@ -634,7 +634,7 @@ static void checkNamesForHeapSnapshots(const JoinedTables& check)
     }), "TableOutOfBounds"_s, { }, "namedVariables"_s);
 
     Vector<NamedCaptureData> captures;
-    bool endsWhereClosureNumberEnds = forEachNamedCapture(tables.namedCaptures(), [&](const NamedCaptureData& capture) {
+    bool endsWhereClosureNumberEnds = forEachNamedCapture(decodeVarintBytes(tables.namedCaptures()).span(), [&](const NamedCaptureData& capture) {
         captures.append(capture);
     });
     check.expect(endsWhereClosureNumberEnds && ascendsStrictlyInTable(captures.span(), [](const NamedCaptureData& capture) { return capture.closureNumber << 8 | capture.slot; }), "TableNotSorted"_s, { }, "namedCaptures"_s);
@@ -662,7 +662,7 @@ static void checkListedFunctions(const JoinedTables& check)
     }
     for (size_t index = 0; index < check.program.layouts.size(); ++index) {
         FunctionID constructor = check.program.layouts[index].constructor;
-        if (!constructor || !check.plan.isInUse(LayoutID(index)))
+        if (!constructor || !check.plan.isAllocatable(LayoutID(index)))
             continue;
         std::optional<FunctionID> entry = check.encoder.findEntrypoint(constructor);
         check.expect(!entry || std::ranges::binary_search(tables.constructors(), entry->index(), { }, &ConstructorData::function), "FunctionNotListed"_s, LayoutID(index), "constructors"_s);
@@ -839,7 +839,7 @@ static void checkLayoutRecords(const JoinedTables& check)
     for (uint32_t shape = 0; shape < offsets.size(); ++shape) {
         uint32_t offset = offsets[shape];
         LayoutID id = shapes.isAssigned(shape) ? shapes.shape(shape).layout : LayoutID();
-        if (id && !check.plan.isInUse(id))
+        if (id && !check.plan.isAllocatable(id))
             id = { };
         if (!check.expect(!offset == !id, "ShapeWithoutLayout"_s, id) || !id)
             continue;

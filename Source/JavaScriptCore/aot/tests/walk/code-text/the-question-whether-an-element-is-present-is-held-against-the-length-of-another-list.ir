@@ -6,7 +6,7 @@
 #   b0(v0: Array @Cell, v1: Array @Cell, v2: int[0, 100] @Int32, v3: anything @JSValue) entry=0:
 #     v4: opaque(ArrayStoragePointer) @RawWord = GetArrayStorage v0 traits=[mayTouchMemory]
 #     v5: int[0, 4294967295] @Int64 = GetArrayLength v1 traits=[mayTouchMemory]
-#     v6: boolean @Boolean = IsElementPresent v0, v2, v4, v5 arrayStorage=Double [keyIsIntegral] traits=[mayTouchMemory]
+#     v6: boolean @Boolean = IsElementPresent v0, v2, v4, -, v5 arrayStorage=Double [keyIsIntegral] traits=[mayTouchMemory]
 #     Return v3
 # }
 # -- end of code

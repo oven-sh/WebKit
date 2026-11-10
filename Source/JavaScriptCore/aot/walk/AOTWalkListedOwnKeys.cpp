@@ -16,6 +16,7 @@
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
 #include "AOTWalkCopies.h"
+#include "AOTWalkKnown.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -228,6 +229,19 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
     return true;
 }
 
+void noteListedOwnKeys(Walker& walker, ValueID id)
+{
+    BodyValue call = walker.currentBodyIndex().value(id);
+    if (call.opcode() != Opcode::Call || listAskedForInListedOwnKeys(walker, call) != OwnKeyList::Keys)
+        return;
+    Reference list = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.id());
+    Reference object = walker.referenceOf(call.argumentsOperands()[0]);
+    if (!list || !list.isValue() || !object || !object.isValue())
+        return;
+    static constexpr AbstractHeapSet heapsThatTellOwnKeys { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
+    noteKnown(walker, KnownNote::ListedOwnKeys, object, list, 0, LocationMasks(heapsThatTellOwnKeys), 1, true);
+}
+
 bool buildOwnKeyListOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
     if (!walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::TypedOperations))
@@ -247,6 +261,8 @@ bool buildOwnKeyListOfItsOpcodes(Walker& walker, const BodyValue& value)
     if (!buildListOfObjectInSightInListedOwnKeys(walker, asked, source) && !buildListBehindTestsInListedOwnKeys(walker, asked, written, source))
         return false;
     walker.count(StatisticID::OwnKeyWalksExpanded);
+    if (*list == OwnKeyList::Keys)
+        noteListedOwnKeys(walker, value.id());
     return true;
 }
 

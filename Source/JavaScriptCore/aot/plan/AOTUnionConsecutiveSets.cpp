@@ -25,6 +25,7 @@ struct ConsecutiveSets::Tree {
     explicit Tree(uint32_t numberOfLeaves);
 
     bool tryKeepTogether(std::span<const uint32_t> leaves);
+    bool tryKeepNestedSetTogether(std::span<const uint32_t> leaves);
     Vector<uint32_t> order(std::span<const uint64_t> keyOfLeaf) const;
 
 private:
@@ -87,18 +88,29 @@ private:
     void replaceInParent(uint32_t node, uint32_t replacement);
 
     void beginVisiting(uint32_t node);
-    uint32_t markLeaves(std::span<const uint32_t> leaves);
+    uint32_t markNodes(std::span<const uint32_t> nodes);
     void countPertinentChildren();
-    uint32_t labelPertinentNodes(uint32_t numberOfLeavesInSet);
+    uint32_t labelPertinentNodes(uint32_t numberOfNodesInSet);
     bool tryLabel(uint32_t node, bool isPertinentRoot);
 
     uint32_t takeFullChildrenOfP(uint32_t node);
     PartialRow flatten(uint32_t node, uint32_t q);
     void reducePertinentRootP(uint32_t root);
+    uint32_t findNestedSetOf(uint32_t leaf);
     void reducePertinentRootQ(uint32_t root);
+
+    struct NestedSet {
+        uint32_t parent { none };
+        uint32_t node { none };
+        uint32_t numberOfLeaves { 1 };
+        uint32_t lastEnclosingSet { 0 };
+    };
 
     Vector<Node> m_nodes;
     Vector<uint32_t> m_queue;
+    Vector<NestedSet> m_nestedSets;
+    Vector<uint32_t> m_nestedSetsInside;
+    uint32_t m_numberOfNestedSets { 0 };
     uint32_t m_numberOfLeaves { 0 };
     uint32_t m_root { none };
     uint32_t m_epoch { 0 };
@@ -222,19 +234,19 @@ void ConsecutiveSets::Tree::beginVisiting(uint32_t index)
     node.firstFullChild = none;
 }
 
-uint32_t ConsecutiveSets::Tree::markLeaves(std::span<const uint32_t> leaves)
+uint32_t ConsecutiveSets::Tree::markNodes(std::span<const uint32_t> nodes)
 {
     ++m_epoch;
     RELEASE_ASSERT(m_epoch);
     m_queue.shrink(0);
-    for (uint32_t leaf : leaves) {
-        RELEASE_ASSERT(leaf < m_numberOfLeaves);
-        if (at(leaf).epoch == m_epoch)
+    for (uint32_t node : nodes) {
+        RELEASE_ASSERT(node < m_nodes.size());
+        if (at(node).epoch == m_epoch)
             continue;
-        beginVisiting(leaf);
-        at(leaf).label = Label::Full;
-        at(leaf).numberOfPertinentLeaves = 1;
-        m_queue.append(leaf);
+        beginVisiting(node);
+        at(node).label = Label::Full;
+        at(node).numberOfPertinentLeaves = 1;
+        m_queue.append(node);
     }
     return static_cast<uint32_t>(m_queue.size());
 }
@@ -256,13 +268,13 @@ void ConsecutiveSets::Tree::countPertinentChildren()
     }
 }
 
-uint32_t ConsecutiveSets::Tree::labelPertinentNodes(uint32_t numberOfLeavesInSet)
+uint32_t ConsecutiveSets::Tree::labelPertinentNodes(uint32_t numberOfNodesInSet)
 {
-    m_queue.shrink(numberOfLeavesInSet);
+    m_queue.shrink(numberOfNodesInSet);
     for (size_t head = 0; head < m_queue.size(); ++head) {
         uint32_t node = m_queue[head];
-        bool isPertinentRoot = at(node).numberOfPertinentLeaves == numberOfLeavesInSet;
-        if (at(node).kind != Kind::Leaf && !tryLabel(node, isPertinentRoot))
+        bool isPertinentRoot = at(node).numberOfPertinentLeaves == numberOfNodesInSet;
+        if (head >= numberOfNodesInSet && !tryLabel(node, isPertinentRoot))
             return none;
         if (isPertinentRoot)
             return node;
@@ -452,7 +464,7 @@ bool ConsecutiveSets::Tree::tryKeepTogether(std::span<const uint32_t> leaves)
 {
     if (leaves.size() < 2)
         return true;
-    uint32_t numberOfLeavesInSet = markLeaves(leaves);
+    uint32_t numberOfLeavesInSet = markNodes(leaves);
     if (numberOfLeavesInSet < 2)
         return true;
     countPertinentChildren();
@@ -465,6 +477,61 @@ bool ConsecutiveSets::Tree::tryKeepTogether(std::span<const uint32_t> leaves)
         reducePertinentRootP(pertinentRoot);
     else
         reducePertinentRootQ(pertinentRoot);
+    return true;
+}
+
+uint32_t ConsecutiveSets::Tree::findNestedSetOf(uint32_t leaf)
+{
+    uint32_t set = leaf;
+    while (m_nestedSets[set].parent != none)
+        set = m_nestedSets[set].parent;
+    while (leaf != set)
+        leaf = std::exchange(m_nestedSets[leaf].parent, set);
+    return set;
+}
+
+bool ConsecutiveSets::Tree::tryKeepNestedSetTogether(std::span<const uint32_t> leaves)
+{
+    if (leaves.size() < 2)
+        return true;
+    if (m_nestedSets.isEmpty()) {
+        m_nestedSets.grow(m_numberOfLeaves);
+        for (uint32_t leaf = 0; leaf < m_numberOfLeaves; ++leaf)
+            m_nestedSets[leaf] = NestedSet { .node = leaf };
+    }
+    ++m_numberOfNestedSets;
+    m_nestedSetsInside.shrink(0);
+    size_t numberOfLeavesInside = 0;
+    for (uint32_t leaf : leaves) {
+        uint32_t set = findNestedSetOf(leaf);
+        if (std::exchange(m_nestedSets[set].lastEnclosingSet, m_numberOfNestedSets) == m_numberOfNestedSets)
+            continue;
+        m_nestedSetsInside.append(set);
+        numberOfLeavesInside += m_nestedSets[set].numberOfLeaves;
+    }
+    if (numberOfLeavesInside != leaves.size())
+        return false;
+    if (m_nestedSetsInside.size() == 1)
+        return true;
+
+    Vector<uint32_t, 16> nodes;
+    for (uint32_t set : m_nestedSetsInside)
+        nodes.append(m_nestedSets[set].node);
+    uint32_t numberOfNodes = markNodes(nodes.span());
+    RELEASE_ASSERT(numberOfNodes == nodes.size());
+    countPertinentChildren();
+    uint32_t root = labelPertinentNodes(numberOfNodes);
+    RELEASE_ASSERT(root != none && at(root).kind == Kind::P && !at(root).numberOfPartialChildren);
+    uint32_t node = root;
+    if (at(root).label != Label::Full) {
+        reducePertinentRootP(root);
+        node = at(root).endChildren[1];
+    }
+    uint32_t united = m_nestedSetsInside[0];
+    for (uint32_t set : m_nestedSetsInside.span().subspan(1))
+        m_nestedSets[set].parent = united;
+    m_nestedSets[united].node = node;
+    m_nestedSets[united].numberOfLeaves = static_cast<uint32_t>(numberOfLeavesInside);
     return true;
 }
 
@@ -529,6 +596,11 @@ ConsecutiveSets::~ConsecutiveSets() = default;
 bool ConsecutiveSets::tryKeepTogether(std::span<const uint32_t> leaves)
 {
     return m_tree->tryKeepTogether(leaves);
+}
+
+bool ConsecutiveSets::tryKeepNestedSetTogether(std::span<const uint32_t> leaves)
+{
+    return m_tree->tryKeepNestedSetTogether(leaves);
 }
 
 Vector<uint32_t> ConsecutiveSets::order(std::span<const uint64_t> keyOfLeaf) const

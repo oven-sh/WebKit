@@ -62,6 +62,8 @@ public:
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     T& operator[](size_t index) LIFETIME_BOUND { return m_elements[checked(index)]; }
     const T& operator[](size_t index) const LIFETIME_BOUND { return m_elements[checked(index)]; }
+    ALWAYS_INLINE void prefetch(size_t index) const { __builtin_prefetch(m_elements + index); }
+    template<typename Member> ALWAYS_INLINE void prefetch(size_t index, Member T::* member) const { __builtin_prefetch(&(m_elements[index].*member)); }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     void reserve(size_t room)

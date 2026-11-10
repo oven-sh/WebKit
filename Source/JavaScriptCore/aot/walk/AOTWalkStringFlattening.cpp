@@ -47,17 +47,26 @@ static Draft draftOfFlatStringForFlattening(Reference string, Origin origin)
     return flatten;
 }
 
-static Reference flattenInFrontOfLoopForFlattening(Walker& walker, Reference string, Origin origin)
+static std::optional<uint32_t> loopToFlattenInFrontOfForFlattening(const Walker& walker, Reference string)
 {
     const auto& here = walker.code().at(walker.currentBlock());
     if (!walker.has(Mechanism::LoopInvariants) || here.frequency == BlockFrequency::Rare || here.handler)
-        return { };
-    std::optional<uint32_t> loop = walker.outermostLoopToMakeTextInFrontOf(singleElementSpan(string), declaredBoundOf(Opcode::FlattenString));
+        return std::nullopt;
+    return walker.outermostLoopToMakeTextInFrontOf(singleElementSpan(string), declaredBoundOf(Opcode::FlattenString));
+}
+
+static Reference flattenInFrontOfLoopForFlattening(Walker& walker, Reference string, Origin origin)
+{
+    std::optional<uint32_t> loop = loopToFlattenInFrontOfForFlattening(walker, string);
     if (!loop)
         return { };
     Draft flatten = draftOfFlatStringForFlattening(string, origin);
-    if (Reference begins = walker.buildLoopEntryCondition(*loop))
-        flatten.setIsReadOperand(begins);
+    Vector<Reference, 2> conditions;
+    if (!walker.tryBuildFirstArrivalConditions(*loop, conditions) && walker.innermostOpenLoop() == loop && !walker.isFlattenedBeforeLoop(*loop, string, conditions.span()))
+        flatten.setMayStayRope(true);
+    if (walker.hasFailed())
+        return { };
+    flatten.setIsReadOperands(conditions.span());
     return walker.buildInFrontOfOpenLoop(*loop, WTF::move(flatten));
 }
 
@@ -69,6 +78,13 @@ Reference flatStringInSight(Walker& walker, Reference string)
         return string;
     Reference flat = flatStringNotedForFlattening(walker, string);
     return flat && walker.isInSightWhereWalkBuilds(flat) ? flat : Reference();
+}
+
+bool isOrCanBeFlattenedBeforeLoop(Walker& walker, Reference string)
+{
+    if (walker.isUnreachable() || !string.isValue())
+        return false;
+    return flatStringInSight(walker, string) || loopToFlattenInFrontOfForFlattening(walker, string);
 }
 
 Reference flatStringMadeWhereWalkStands(Walker& walker, Reference string, Origin origin)

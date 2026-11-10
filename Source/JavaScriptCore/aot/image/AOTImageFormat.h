@@ -10,12 +10,15 @@
 #include "AOTClosureWord.h"
 #include "AOTCompileOptions.h"
 #include "AOTLimits.h"
+#include "AOTPrefixCode.h"
+#include "AOTRecordTypes.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubFrames.h"
 #include "AOTVarint.h"
 #include "AOTVector.h"
 #include "CPU.h"
 #include "CPUFeatureSet.h"
+#include "JSExportMacros.h"
 #include "StackAlignment.h"
 #include <algorithm>
 #include <array>
@@ -48,8 +51,41 @@ static constexpr size_t sizeOfNearCall = isX86_64() ? 5 : sizeof(uint32_t);
 static constexpr size_t sizeOfJump = isX86_64() ? 5 : sizeof(uint32_t);
 static constexpr size_t codeOffsetUnit = isX86_64() ? 1 : sizeof(uint32_t);
 
+class FunctionStarts {
+public:
+    static constexpr unsigned groupShift = 5;
+    static constexpr uint32_t functionsInGroup = 1u << groupShift;
+    static constexpr uint32_t wideGroup = 1u << 31;
+
+    static constexpr size_t numberOfWordsOfSteps(size_t numberOfFunctions) { return (numberOfFunctions + 2) / 2; }
+    static constexpr size_t numberOfGroupsFor(size_t numberOfFunctions) { return (numberOfFunctions + functionsInGroup) / functionsInGroup; }
+    static constexpr size_t numberOfWordsWithoutLists(size_t numberOfFunctions) { return numberOfWordsOfSteps(numberOfFunctions) + numberOfGroupsFor(numberOfFunctions); }
+    JS_EXPORT_PRIVATE static Vector<uint8_t> encode(std::span<const uint32_t> starts);
+
+    FunctionStarts(const uint32_t* words, size_t numberOfFunctions)
+        : m_steps(reinterpret_cast<const uint16_t*>(words))
+        , m_groups(words + numberOfWordsOfSteps(numberOfFunctions))
+    {
+    }
+
+    uint32_t operator[](uint32_t function) const
+    {
+        uint32_t group = m_groups[function >> groupShift];
+        if (group & wideGroup) [[unlikely]]
+            return m_groups[(group & ~wideGroup) + function % functionsInGroup];
+        return group + m_steps[function];
+    }
+
+    const uint16_t* steps() const { return m_steps; }
+    const uint32_t* groups() const { return m_groups; }
+
+private:
+    const uint16_t* m_steps;
+    const uint32_t* m_groups;
+};
+
 #define FOR_EACH_AOT_IMAGE_SECTION(macro) \
-    macro(Functions, ImageFunction) \
+    macro(Functions, uint32_t) \
     macro(FunctionStarts, uint32_t) \
     macro(CodeGranules, uint32_t) \
     macro(InnerEntries, ImageInnerEntry) \
@@ -63,7 +99,7 @@ static constexpr size_t codeOffsetUnit = isX86_64() ? 1 : sizeof(uint32_t);
     macro(Strings, ImageStringWord) \
     macro(LongStrings, uint32_t) \
     macro(Text, uint8_t) \
-    macro(Identifiers, ImageIdentifierWord) \
+    macro(Identifiers, uint8_t) \
     macro(StringConstants, uint32_t) \
     macro(NamesOfSites, uint16_t) \
     macro(StringHeaders, ImageStringHeaderOrRecord) \
@@ -134,6 +170,8 @@ struct ImageNumberRanges {
     uint32_t endOfClosureNumbers;
     uint32_t endOfIdentifiers;
     uint32_t endOfStringHeaders;
+    uint32_t numberOfStringWords;
+    uint32_t numberOfCodedTexts;
 };
 
 struct ImageHeader {
@@ -183,25 +221,64 @@ enum class ImageFunctionFlag : uint8_t {
 };
 
 struct ImageFunction {
-    static constexpr unsigned numberOfFunctionBits = 24;
-    static constexpr unsigned flagsShift = numberOfFunctionBits;
-    static constexpr uint32_t functionMask = (1u << numberOfFunctionBits) - 1;
-
-    static ImageFunction create(uint32_t sideTables, uint32_t function, OptionSet<ImageFunctionFlag> flags)
-    {
-        RELEASE_ASSERT(function <= functionMask);
-        return { sideTables, function | static_cast<uint32_t>(flags.toRaw()) << flagsShift };
-    }
-
-    uint32_t function() const { return functionAndFlags & functionMask; }
-    OptionSet<ImageFunctionFlag> flags() const { return OptionSet<ImageFunctionFlag>::fromRaw(static_cast<uint8_t>(functionAndFlags >> flagsShift)); }
+    OptionSet<ImageFunctionFlag> flags() const { return OptionSet<ImageFunctionFlag>::fromRaw(flagBits); }
     bool has(ImageFunctionFlag flag) const { return flags().contains(flag); }
 
     uint32_t sideTables;
-    uint32_t functionAndFlags;
+    uint8_t flagBits;
 };
-static_assert(sizeof(ImageFunction) == 8 && std::has_unique_object_representations_v<ImageFunction>);
-static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) <= 1ull << ImageFunction::numberOfFunctionBits);
+
+class ImageFunctions {
+public:
+    static constexpr unsigned functionsInGroup = 32;
+    static constexpr size_t wordsOfGroup = 3;
+    static constexpr uint16_t isListedPlace = 1u << 15;
+    static constexpr uint32_t hasWholePlaces = UINT32_MAX;
+
+    ImageFunctions(const uint32_t* words, uint32_t count)
+        : m_places(words + wordsOfHead)
+        , m_groups(words + firstGroupWord(words[0], count))
+        , m_listedPlaces(words + firstListWord(words[0], count))
+        , m_listedNumbers(reinterpret_cast<const Number24*>(m_listedPlaces + numberOfListedPlaces(words[0])))
+        , m_hasWholePlaces(words[0] == hasWholePlaces)
+    {
+    }
+
+    uint32_t sideTableOf(uint32_t index) const
+    {
+        if (m_hasWholePlaces) [[unlikely]]
+            return m_places[index];
+        uint16_t step = reinterpret_cast<const uint16_t*>(m_places)[index];
+        return step & isListedPlace ? m_listedPlaces[step & ~isListedPlace] : group(index)[2] + step;
+    }
+    uint32_t numberOf(uint32_t index) const
+    {
+        uint32_t entry = index % functionsInGroup;
+        uint32_t listed = ~group(index)[0] & UINT32_MAX >> (functionsInGroup - 1 - entry);
+        uint32_t lastListed = functionsInGroup - 1 - std::countl_zero(listed);
+        return m_listedNumbers[group(index)[1] + std::popcount(listed) - 1] + (entry - lastListed);
+    }
+
+    static bool hasSize(std::span<const uint32_t> words, size_t count) { return words.size() >= wordsOfHead && words[2] == count && words.size() == firstListWord(words[0], count) + numberOfListedPlaces(words[0]) + wordsOfNumbers(words[1]); }
+    JS_EXPORT_PRIVATE static Vector<uint8_t> encode(std::span<const uint32_t> sideTables, std::span<const uint32_t> numbers);
+
+private:
+    static constexpr size_t wordsOfHead = 3;
+
+    static constexpr size_t numberOfListedPlaces(uint32_t firstWord) { return firstWord == hasWholePlaces ? 0 : firstWord; }
+    static constexpr size_t firstGroupWord(uint32_t firstWord, size_t count) { return wordsOfHead + (firstWord == hasWholePlaces ? count : (count + 1) / 2); }
+    static constexpr size_t firstListWord(uint32_t firstWord, size_t count) { return firstGroupWord(firstWord, count) + (count + functionsInGroup - 1) / functionsInGroup * wordsOfGroup; }
+    static constexpr size_t wordsOfNumbers(size_t count) { return (count * sizeof(Number24) + sizeof(uint32_t) - 1) / sizeof(uint32_t); }
+
+    const uint32_t* group(uint32_t index) const { return m_groups + index / functionsInGroup * wordsOfGroup; }
+
+    const uint32_t* m_places;
+    const uint32_t* m_groups;
+    const uint32_t* m_listedPlaces;
+    const Number24* m_listedNumbers;
+    bool m_hasWholePlaces;
+};
+static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) <= static_cast<uint64_t>(Number24::max) + 1);
 static_assert(defaultLimitValue(LimitID::ImageClosureFunctions, hostArchitecture()) == ClosureWord::firstReservedFunction);
 static_assert(defaultLimitValue(LimitID::CodeBytes, hostArchitecture()) <= ClosureWord::maxSizeOfCode);
 
@@ -253,141 +330,19 @@ static_assert(sizeof(StubAddressInImage) == 16);
 
 static constexpr uint32_t offsetOfAbsentStub = 0xffffffffu;
 
-struct SideTableInputs {
-    OptionSet<ImageFunctionFlag> flags() const;
-
-    std::span<const uint8_t> frameRanges;
-    uint32_t frame { 0 };
-    std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
-    std::span<const uint8_t> handlers;
-    std::span<const std::pair<uint32_t, uint32_t>> constructedCallees;
-    std::span<const uint8_t> callSites;
-};
-
-struct SideTableParts {
-    static SideTableParts read(const ImageFunction&, const uint8_t* sideTables);
-    static void append(Vector<uint8_t>& stream, const SideTableInputs&);
-    static void appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change);
-
-    bool hasFrameAt(uint32_t offset) const;
-    std::optional<uint32_t> constructedCalleeAt(uint32_t site) const;
-
-    std::span<const uint8_t> frameRanges;
-    uint32_t frame { 0 };
-    uint32_t firstFrameMapWord { 0 };
-    uint32_t numberOfFrameMapWords { 0 };
-    std::span<const uint8_t> handlers;
-    std::span<const uint8_t> constructedCallees;
-    const uint8_t* callSites { nullptr };
-};
-
 struct PositionIndex {
     static constexpr unsigned functionsBetween = 32;
+    static constexpr unsigned numberOfCodes = 15;
     static constexpr size_t numberOfEntriesFor(size_t numberOfFunctions) { return (numberOfFunctions + functionsBetween - 1) / functionsBetween; }
+
+    static const uint8_t* firstEntry(const uint8_t* section, size_t group, size_t numberOfFunctions)
+    {
+        const uint8_t* index = PrefixCodes<numberOfCodes>::endOfCodes(section);
+        uint32_t place;
+        memcpy(&place, index + group * sizeof(uint32_t), sizeof(uint32_t));
+        return index + numberOfEntriesFor(numberOfFunctions) * sizeof(uint32_t) + place;
+    }
 };
-
-inline SideTableParts SideTableParts::read(const ImageFunction& function, const uint8_t* sideTables)
-{
-    SideTableParts parts;
-    const uint8_t* cursor = sideTables + function.sideTables;
-    size_t frameRangesSize = static_cast<size_t>(readVarint(cursor));
-    parts.frameRanges = unsafeMakeSpan(cursor, frameRangesSize);
-    cursor += frameRangesSize;
-    if (frameRangesSize)
-        parts.frame = static_cast<uint32_t>(readVarint(cursor));
-    if (function.has(ImageFunctionFlag::HasFrameMaps)) {
-        parts.firstFrameMapWord = static_cast<uint32_t>(readVarint(cursor));
-        parts.numberOfFrameMapWords = static_cast<uint32_t>(readVarint(cursor));
-    }
-    if (function.has(ImageFunctionFlag::HasHandlers)) {
-        size_t size = static_cast<size_t>(readVarint(cursor));
-        parts.handlers = unsafeMakeSpan(cursor, size);
-        cursor += size;
-    }
-    if (function.has(ImageFunctionFlag::HasConstructedCallees)) {
-        size_t size = static_cast<size_t>(readVarint(cursor));
-        parts.constructedCallees = unsafeMakeSpan(cursor, size);
-        cursor += size;
-    }
-    if (function.has(ImageFunctionFlag::HasCallSites))
-        parts.callSites = cursor;
-    return parts;
-}
-
-inline OptionSet<ImageFunctionFlag> SideTableInputs::flags() const
-{
-    OptionSet<ImageFunctionFlag> flags;
-    flags.set(ImageFunctionFlag::HasFrameMaps, frameMapRange && frameMapRange->second);
-    flags.set(ImageFunctionFlag::HasHandlers, !handlers.empty());
-    flags.set(ImageFunctionFlag::HasConstructedCallees, !constructedCallees.empty());
-    flags.set(ImageFunctionFlag::HasCallSites, !callSites.empty());
-    return flags;
-}
-
-inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInputs& inputs)
-{
-    OptionSet<ImageFunctionFlag> flags = inputs.flags();
-    appendVarint(stream, inputs.frameRanges.size());
-    stream.append(inputs.frameRanges);
-    if (!inputs.frameRanges.empty())
-        appendVarint(stream, inputs.frame);
-    if (flags.contains(ImageFunctionFlag::HasFrameMaps)) {
-        appendVarint(stream, inputs.frameMapRange->first);
-        appendVarint(stream, inputs.frameMapRange->second);
-    }
-    if (flags.contains(ImageFunctionFlag::HasHandlers)) {
-        appendVarint(stream, inputs.handlers.size());
-        stream.append(inputs.handlers);
-    }
-    if (flags.contains(ImageFunctionFlag::HasConstructedCallees)) {
-        Vector<uint8_t> rows;
-        uint32_t previous = 0;
-        for (auto [site, function] : inputs.constructedCallees) {
-            RELEASE_ASSERT(site > previous);
-            appendVarint(rows, site - std::exchange(previous, site));
-            appendVarint(rows, function);
-        }
-        appendVarint(stream, rows.size());
-        stream.appendVector(rows);
-    }
-    stream.append(inputs.callSites);
-}
-
-inline std::optional<uint32_t> SideTableParts::constructedCalleeAt(uint32_t site) const
-{
-    const uint8_t* cursor = constructedCallees.data();
-    const uint8_t* end = cursor + constructedCallees.size();
-    uint64_t listed = 0;
-    while (cursor < end && listed < site) {
-        listed += readVarint(cursor);
-        uint32_t function = static_cast<uint32_t>(readVarint(cursor));
-        if (listed == site)
-            return function;
-    }
-    return std::nullopt;
-}
-
-inline void SideTableParts::appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change)
-{
-    RELEASE_ASSERT(previousChange <= change && !(previousChange % codeOffsetUnit) && !(change % codeOffsetUnit));
-    appendVarint(bytes, (change - previousChange) / codeOffsetUnit);
-}
-
-inline bool SideTableParts::hasFrameAt(uint32_t offset) const
-{
-    const uint8_t* cursor = frameRanges.data();
-    const uint8_t* end = cursor + frameRanges.size();
-    uint64_t position = offset / codeOffsetUnit;
-    uint64_t change = 0;
-    bool hasFrame = false;
-    while (cursor < end) {
-        change += readVarint(cursor);
-        if (position < change)
-            return hasFrame;
-        hasFrame = !hasFrame;
-    }
-    return hasFrame;
-}
 
 } } // namespace JSC::AOT
 

@@ -309,7 +309,9 @@ static void testBodyEntries()
     StubCatalog catalog(StubOptions { });
     checkEntries(catalog, getByVal(false), { getByVal(false), getByVal(true) });
     checkEntries(catalog, getByValCached(), { getByValCached(), getByValCachedCells(), getByValCachedAtPlace(), getByValCachedBehindPlaces() });
-    checkEntries(catalog, getByValKeepingRegisters(), { getByValKeepingRegisters() });
+    checkEntries(catalog, getByValKeepingRegisters(), { getByValKeepingRegisters(), getByValAtConstantIndex() });
+    for (ECMAMode mode : { ECMAMode::strict(), ECMAMode::sloppy() })
+        checkEntries(catalog, putByVal(false, mode), { putByVal(false, mode), putByVal(true, mode), putByValAtConstantIndex(mode) });
     checkEntries(catalog, getByValCached(RegistersOfCaller::AreKept), { getByValCached(RegistersOfCaller::AreKept), getByValCachedCells(RegistersOfCaller::AreKept), getByValCachedAtPlace(RegistersOfCaller::AreKept), getByValCachedBehindPlaces(RegistersOfCaller::AreKept) });
     for (BaseOfKeyedRead base : { BaseOfKeyedRead::IsCell, BaseOfKeyedRead::IsAnyValue }) {
         RegisterSet keptByRead = registersClobberedByOperations();

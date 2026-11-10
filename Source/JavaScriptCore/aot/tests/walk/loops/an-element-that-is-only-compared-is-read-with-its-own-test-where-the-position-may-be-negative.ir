@@ -7,7 +7,7 @@
 # an-element-of-a-view-is-read-behind-its-tests-under-a-position-that-may-be-negative.ir; the read that tests for itself under such a position where it is only compared has no test of its own any more).
 # RUN: walk f1 f2 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = GreaterEq {{*}}form=Integers
+# CHECK: = TypeTest {{*}} testedType=int[0, 2147483647]
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: = GreaterEq
 # CHECK: : i32 @Int32 = GetTypedArrayElement {{*}}isInsideView
@@ -16,7 +16,7 @@
 # CHECK-NOT: = GreaterEq
 # CHECK: = StrictEq {{*}}form=Integers
 # CHECK-LABEL: code f2:Body
-# CHECK: = GreaterEq {{*}}form=Integers
+# CHECK: = TypeTest {{*}} testedType=int[0, 2147483647]
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: = GreaterEq
 # CHECK: : i32 @Int32 = GetTypedArrayElement {{*}}isInsideView

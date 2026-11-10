@@ -173,6 +173,7 @@ void nameWhatModuleTablesName(const TableInputs& inputs, const GatheredMentions&
 
     auto noteString = [&](StringID id) -> uint32_t {
         names.strings.set(id.index());
+        names.modulePathStrings.set(id.index());
         return 0;
     };
     nameWhatModuleListsName(inputs, answers, loops, names);
@@ -434,7 +435,7 @@ static void listStateOfLibraryModulesInClasses(const TableEncoder& encoder, size
 {
     const Typed::Program& program = encoder.program;
     for (size_t index = first; index < end; ++index) {
-        FunctionID constructor = encoder.plan.isInUse(LayoutID(static_cast<uint32_t>(index))) ? program.layouts[index].constructor : FunctionID();
+        FunctionID constructor = encoder.plan.isAllocatable(LayoutID(static_cast<uint32_t>(index))) ? program.layouts[index].constructor : FunctionID();
         ModuleID module = constructor ? program.at(constructor).module : ModuleID();
         if (isLibraryModuleWithBodyForModuleTables(program, module))
             found.append(StateOfLibraryModuleData::create(module.index(), StateOfLibraryModuleData::Kind::Classes, static_cast<uint32_t>(index), 1));

@@ -12,6 +12,7 @@
 #include "AOTConstantPool.h"
 #include "AOTFFIStubs.h"
 #include "AOTImageFormat.h"
+#include "AOTPrefixCode.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTNumbering.h"
 #include "AOTRegExpCompiler.h"
@@ -32,7 +33,7 @@ class StubCatalog;
 struct SideTables {
     Vector<uint8_t> bytes;
     Vector<uint32_t> offsets;
-    Vector<OptionSet<ImageFunctionFlag>> flags;
+    Vector<uint32_t> sizes;
     Vector<uint8_t> positions;
     Vector<uint32_t> frameMapWords;
     Vector<ImageFrame> frames;
@@ -86,7 +87,7 @@ void reportLinkFailure(LinkFailure, FunctionID, BuildContext&);
 OptionSet<ImageFlag> imageFlagsAdmittedBy(Wire::UnseenCodeCause);
 OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts&, const CompileOptions&);
 ResolvedCallees resolveCallees(const LinkedFunctions&, const Typed::Plan&, BuildContext&);
-SideTables encodeSideTables(const LinkedFunctions&, std::span<const Vector<uint8_t>> callSites, BuildContext&);
+SideTables encodeSideTables(const LinkedFunctions&, std::span<const Vector<PrefixSymbol>> callSites, BuildContext&);
 struct CalledSharedCode {
     Vector<StubKey> stubKeys;
     Vector<StubKey> stubKeysOfArgumentMoves;

@@ -651,6 +651,7 @@ void StateOfLinkReach::noteNamedByReachedCode(FunctionID named)
 void StateOfLinkReach::loseLayout(LayoutID id)
 {
     if (!m_flow.lostLayouts.set(id.index())) {
+        m_flow.noteInstancesMayBeLocked(id);
         m_flow.noteLayoutToTie(id);
         m_steps.append(QueuedStep { Step::TieLostLayout, id.index() });
     }
@@ -680,6 +681,7 @@ void StateOfLinkReach::escapeLayout(LayoutID id)
     }
     if (m_flow.escapedLayouts.set(id.index()))
         return;
+    m_flow.noteInstancesMayBeLocked(id);
     m_steps.append(QueuedStep { Step::OpenLayout, id.index() });
     if (m_program.at(id).kind == LayoutKind::ModuleNamespace) {
         m_flow.arrive(m_flow.whereInstancesLoseTheirConstructor(), LinkType::anything());
@@ -2470,8 +2472,8 @@ void LinkFlow::arriveFromSource(FlowNodeID node, TypeID id)
 
 void LinkFlow::noteAllocatedWithRowAbove(LayoutID id)
 {
-    size_t stepsLeft = program.layouts.size();
-    for (LayoutID current = id; current && stepsLeft; current = program.at(current).base, --stepsLeft)
+    BitVector& noted = layoutsNotedWithBases();
+    for (LayoutID current = id; current && !noted.set(current.index()); current = program.at(current).base)
         noteAllocated(current);
 }
 

@@ -261,6 +261,94 @@ void absenceBesidePairDoesNotOutliveItsCount()
 
 } // namespace
 
+void fewCharactersHashAsTheirText()
+{
+    auto check = [](const StringKeyCache::FewCharacters& joined, std::span<const Latin1Character> text) {
+        AOT_TEST_CHECK(joined.length == text.size());
+        auto characters = joined.text();
+        AOT_TEST_CHECK(equalSpans(std::span<const Latin1Character> { characters }.first(joined.length), text));
+        AOT_TEST_CHECK(joined.hash() == RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(text));
+        if (text.size() < 2)
+            return;
+        Ref<StringImpl> impl = StringImpl::create(text);
+        AOT_TEST_CHECK(joined.isTextOf(impl.get()));
+        for (size_t i = 0; i < text.size(); ++i) {
+            std::array<Latin1Character, StringKeyCache::FewCharacters::mostCharacters> other { };
+            memcpySpan(std::span { other }, text);
+            other[i] = static_cast<Latin1Character>(static_cast<uint8_t>(other[i]) ^ 1);
+            AOT_TEST_CHECK(!joined.isTextOf(StringImpl::create(std::span<const Latin1Character> { other }.first(text.size())).get()));
+        }
+        AOT_TEST_CHECK(!joined.isTextOf(StringImpl::create(text.first(text.size() - 1)).get()));
+    };
+
+    uint64_t state = 0x9e3779b97f4a7c15ull;
+    auto next = [&] {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    };
+    for (unsigned round = 0; round < 20000; ++round) {
+        std::array<Latin1Character, StringKeyCache::FewCharacters::mostCharacters> text;
+        StringKeyCache::FewCharacters joined;
+        size_t length = 0;
+        while (true) {
+            size_t size = next() % (text.size() + 1);
+            std::array<Latin1Character, StringKeyCache::FewCharacters::mostCharacters> part;
+            for (Latin1Character& character : part)
+                character = static_cast<Latin1Character>(next());
+            bool fits = length + size <= text.size();
+            AOT_TEST_CHECK(joined.tryAppend(std::span<const Latin1Character> { part }.first(size)) == fits);
+            if (!fits)
+                break;
+            memcpySpan(std::span { text }.subspan(length), std::span<const Latin1Character> { part }.first(size));
+            length += size;
+        }
+        if (length)
+            check(joined, std::span<const Latin1Character> { text }.first(length));
+    }
+
+    for (unsigned round = 0; round < 20000; ++round) {
+        uint32_t integer = round < 10000 ? round : static_cast<uint32_t>(next() % StringKeyCache::FewCharacters::limitOfIntegers);
+        StringKeyCache::FewCharacters joined;
+        AOT_TEST_CHECK(joined.tryAppendInteger(integer));
+        check(joined, String::number(integer).span8());
+    }
+    StringKeyCache::FewCharacters full;
+    AOT_TEST_CHECK(!full.tryAppendInteger(StringKeyCache::FewCharacters::limitOfIntegers) && !full.tryAppendInteger(static_cast<uint32_t>(-1)));
+    AOT_TEST_CHECK(full.tryAppendInteger(99999999) && full.tryAppendInteger(10000000) && !full.tryAppendInteger(0));
+}
+
+void pairKeysOfNeighborsFindPlaces()
+{
+    constexpr size_t tableSize = 1 << 14;
+    constexpr size_t numberOfSets = tableSize / StringKeyCache::waysOfKeysOfPairs;
+    constexpr EncodedJSValue firstCell = 0x7f0012340000;
+    auto check = [&](size_t firsts, EncodedJSValue first, EncodedJSValue stepOfFirst, size_t seconds, EncodedJSValue second, EncodedJSValue stepOfSecond) {
+        std::array<uint16_t, numberOfSets> pairsOfSet { };
+        size_t withoutPlace = 0;
+        for (size_t i = 0; i < firsts; ++i) {
+            for (size_t j = 0; j < seconds; ++j) {
+                uint64_t offset = StringKeyCache::hashOfPair(first + i * stepOfFirst, second + j * stepOfSecond) & StringKeyCache::keyOfPairMaskFor(tableSize);
+                size_t set = offset >> StringKeyCache::keyOfPairSetShift;
+                AOT_TEST_CHECK(set < numberOfSets);
+                withoutPlace += ++pairsOfSet[set] > StringKeyCache::waysOfKeysOfPairs;
+            }
+        }
+        AOT_TEST_CHECK(withoutPlace * 20 <= firsts * seconds);
+    };
+    EncodedJSValue zero = JSValue::encode(jsNumber(0));
+    for (EncodedJSValue spacing : { 16, 32, 48, 64, 96 }) {
+        check(40, firstCell, spacing, 18, zero, 1);
+        check(12, firstCell, spacing, 400, zero, 1);
+        check(400, zero, 1, 12, firstCell, spacing);
+        check(40, firstCell, spacing, 40, firstCell + 0x20000, spacing);
+    }
+    check(64, zero, 1, 64, zero, 1);
+    check(12, zero, 1, 400, zero, 1);
+    check(400, zero, 1, 12, zero, 1);
+}
+
 std::span<const NativeTest> propertyLookupTableTests()
 {
     static constexpr NativeTest tests[] = {
@@ -270,6 +358,8 @@ std::span<const NativeTest> propertyLookupTableTests()
         { "property-lookup-table/second-instance-clears-once"_s, secondInstanceClearsOnce },
         { "property-lookup-table/only-instance-counts-as-run"_s, onlyInstanceCountsAsRun },
         { "property-lookup-table/absence-beside-pair-does-not-outlive-its-count"_s, absenceBesidePairDoesNotOutliveItsCount },
+        { "property-lookup-table/few-characters-hash-as-their-text"_s, fewCharactersHashAsTheirText },
+        { "property-lookup-table/pair-keys-of-neighbors-find-places"_s, pairKeysOfNeighborsFindPlaces },
     };
     return tests;
 }

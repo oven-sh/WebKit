@@ -726,7 +726,7 @@ static void testInheritedSettersOfAbsentFields()
     FakePlainObject holder(0);
     holder.word(Slot::wordIndexFor(offset)) = accessors.address();
     const SlotData field = SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::JSValue);
-    const Slot slot = *Slot::tryCreateFieldAndHolder(toStructureID(PropertyStores::structureID), Slot::Kind::FieldOrInheritedSetter, Slot::dependsOnChain, field, std::bit_cast<JSCell*>(holder.address()), offset, stores.runner.instance().cellCageBase);
+    const Slot slot = *Slot::tryCreateFieldAndHolder(toStructureID(PropertyStores::structureID), Slot::Kind::FieldOrInheritedAccessor, Slot::dependsOnChain, field, std::bit_cast<JSCell*>(holder.address()), offset, stores.runner.instance().cellCageBase);
 
     for (PutMode mode : { PutMode::Strict, PutMode::Sloppy }) {
         StoreCase storeCase { mode, FiledIn::HashedTable };
@@ -744,7 +744,7 @@ static void testInheritedSettersOfAbsentFields()
         AOT_TEST_CHECK(object.field() == JSValue::ValueUndefined);
 
         constexpr uint32_t orderWordThatLeavesFieldOut = orderWordOf(9, 3);
-        stores.file(storeCase, *Slot::tryCreateFieldAndHolder(toStructureID(PropertyStores::structureID), Slot::Kind::FieldOrInheritedSetter, Slot::dependsOnChain | Slot::emptySlotMayBeUndefined, SlotData::decode(orderWordThatLeavesFieldOut), std::bit_cast<JSCell*>(holder.address()), offset, stores.runner.instance().cellCageBase));
+        stores.file(storeCase, *Slot::tryCreateFieldAndHolder(toStructureID(PropertyStores::structureID), Slot::Kind::FieldOrInheritedAccessor, Slot::dependsOnChain | Slot::emptySlotMayBeUndefined, SlotData::decode(orderWordThatLeavesFieldOut), std::bit_cast<JSCell*>(holder.address()), offset, stores.runner.instance().cellCageBase));
         for (uint32_t otherBits : { 0u, orderWordHasExtraProperties, orderWordIntegrityBits }) {
             FakeTypedObject objectThatLeavesFieldOut(JSValue::ValueEmpty, orderWordThatLeavesFieldOut | otherBits);
             StubRun run = stores.store(storeCase, objectThatLeavesFieldOut.address(), value);

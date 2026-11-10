@@ -59,7 +59,7 @@ bool readsNumberOrNothingOutOfBytes(const Operation& operation)
 {
     if (operation.opcode != Opcode::GetTypedArrayElement || operation.isInsideView() || operation.representation != Representation::OptionalDouble)
         return false;
-    return isFloat(operation.typedArrayType()) && hasInlineElementAccess(operation.typedArrayType());
+    return !isBigInt(operation.typedArrayType()) && hasInlineElementAccess(operation.typedArrayType());
 }
 
 bool handsOnBitsOfNaN(const Operation& operation)

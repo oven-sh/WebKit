@@ -3437,16 +3437,6 @@ public:
         insn(floatingPointImmediate(DATASIZE, encodeFPImm<datasize>(imm), vd));
     }
 
-    ALWAYS_INLINE void fmov_top(FPRegisterID vd, RegisterID rn)
-    {
-        insn(floatingPointIntegerConversions(Datasize_64, Datasize_64, FPIntConvOp_FMOV_XtoQ_top, rn, vd));
-    }
-
-    ALWAYS_INLINE void fmov_top(RegisterID rd, FPRegisterID vn)
-    {
-        insn(floatingPointIntegerConversions(Datasize_64, Datasize_64, FPIntConvOp_FMOV_QtoX_top, vn, rd));
-    }
-
     template<int datasize>
     ALWAYS_INLINE void fmsub(FPRegisterID vd, FPRegisterID vn, FPRegisterID vm, FPRegisterID va)
     {

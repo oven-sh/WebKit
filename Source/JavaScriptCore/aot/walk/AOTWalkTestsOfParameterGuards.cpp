@@ -83,6 +83,21 @@ static TypeID typeThatCastsOfOnlyMentionEnterForTestsOfGuards(TypeArena& types, 
     return entered;
 }
 
+TypeID withoutOmittedNullish(Walker& walker, FunctionID id, uint32_t entryParameter, TypeID type)
+{
+    const DeclaredType* declared = walker.program().at(id).declaredEntryParameter(entryParameter);
+    return type && declared ? withoutOmittedNullishForTestsOfGuards(walker.types(), type, *declared) : type;
+}
+
+static TypeID withoutUndefinedOfElements(Walker& walker, FunctionID id, uint32_t entryParameter, TypeID seen)
+{
+    TypeArena& types = walker.types();
+    const DeclaredType* declared = walker.program().at(id).declaredEntryParameter(entryParameter);
+    Type type = types.at(seen);
+    bool mayBeElement = !type.hasObjects() && (type.primitives & ~Primitive::UndefinedOrNull);
+    return mayBeElement && declared && declared->has(PositionFlags::OmitsUndefined) ? types.withoutPrimitives(seen, Primitive::Undefined) : seen;
+}
+
 static bool everyArrivalInSightFitsForTestsOfGuards(Walker& walker, FunctionID id, uint32_t entryParameter, TypeID tested, TypeID narrower)
 {
     const LinkTables& held = walker.facts().held();
@@ -98,7 +113,7 @@ static bool everyArrivalInSightFitsForTestsOfGuards(Walker& walker, FunctionID i
         return false;
     if (type.isAnything())
         return true;
-    seen = types.intersectionOf(seen, tested);
+    seen = types.intersectionOf(withoutUndefinedOfElements(walker, id, entryParameter, seen), tested);
     if (types.withOnlyObjects(tested) == types.withOnlyObjects(narrower))
         seen = types.withoutObjects(seen);
     return types.isSubset(seen, narrower);

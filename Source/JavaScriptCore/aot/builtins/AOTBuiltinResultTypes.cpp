@@ -95,6 +95,8 @@ static TypeID applyRangeRuleToBuiltinResult(const BuiltinTypeContext& context, c
     const BuiltinResult& result = overload.result;
     if (result.rangeRule == BuiltinRangeRule::None || !result.rangeOperand)
         return declared;
+    if (result.rangeRule == BuiltinRangeRule::IntegerPart)
+        declared = context.types.intersectionOf(TypeArena::fromPrimitives(Primitive::NumberWithoutFraction), declared);
 
     TypeID onlyOperand;
     std::span<const TypeID> rangeOperands;
@@ -129,8 +131,6 @@ static TypeID applyRangeRuleToBuiltinResult(const BuiltinTypeContext& context, c
         Range range = computeResultRange(result.rangeRule, ranges.span());
         return types.intersectionOf(takesOnlyIntegers ? types.integer(range) : typeOfRuledResultOfFractions(types, overload, range), declared);
     }
-    if (result.rangeRule == BuiltinRangeRule::IntegerPart && rangeOperands.front() && types.at(rangeOperands.front()).isNumber())
-        return types.intersectionOf(TypeArena::fromPrimitives(Primitive::NumberWithoutFraction), declared);
     return declared;
 }
 

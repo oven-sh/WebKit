@@ -519,14 +519,18 @@ void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
     OperandJoin join(m_out, representation);
     bool isWhole = types().at(types().withoutPrimitives(typeIDOf(value.id()), Primitive::Undefined)).isNumberWithoutFraction();
     ArrayStorageFormList forms { &arrayStorageFormOf(isWhole ? ArrayStorage::Int32 : ArrayStorage::Double), &arrayStorageFormOf(isWhole ? ArrayStorage::Double : ArrayStorage::Int32), &arrayStorageFormOf(ArrayStorage::Contiguous) };
-    elements.forEachFormByShape(elements.indexingMode(list, arrayStorageTestMask), &ElementAccessEmitter::hasShape, forms, outOfLine, [&](const ArrayStorageForm& form) {
+    auto readInForm = [&](const ArrayStorageForm& form) {
         LengthTest test = elements.testLength(value, index, storage);
         if (!value->isInBounds())
             continueGuessedAccessIf(m_out, test.isInside, rareEdge(outOfLine));
         Operand element = elements.loadRawElement(form, storage, test.indexInside);
         continueGuessedAccessIf(m_out, logicalNot(elements.isHole(form, element)), rareEdge(outOfLine));
         join.add(elements.convertRawElement(value, form, element, representation, typeIDOf(value.id())));
-    }, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
+    };
+    if (m_code.at(value.block()).frequency == BlockFrequency::Rare)
+        m_out.jump(outOfLine);
+    else
+        elements.forEachFormByShape(elements.indexingMode(list, arrayStorageTestMask), &ElementAccessEmitter::hasShape, forms, outOfLine, readInForm, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
 
     m_out.appendTo(outOfLine);
     elements.stopUnlessListIsAsMadeWhereNothingIsFound(value, list);
@@ -561,7 +565,10 @@ void GuessedAccessEmitter::generateElementRead(const ValueContext& value)
         return;
     }
     if (value.opcode() == Opcode::GetArrayElement) {
-        define(value, Boxed(callStub(value, getByValKeepingRegisters(), { in<Boxed>(value->arrayOperand()).value(), in<Boxed>(value->positionOperand()).value() }).first));
+        Boxed position = in<Boxed>(value->positionOperand());
+        LValue constantIndex = emitter<AccessEmitter>().tryUnboxConstantIndex(position);
+        StubKey stub = constantIndex ? getByValAtConstantIndex() : getByValKeepingRegisters();
+        define(value, Boxed(callStub(value, stub, { in<Boxed>(value->arrayOperand()).value(), constantIndex ? constantIndex : position.value() }).first));
         return;
     }
 

@@ -11,6 +11,7 @@
 #include "AOTGlobalBindings.h"
 #include "AOTIRProgram.h"
 #include "AOTPlan.h"
+#include "AOTPrefixCode.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include <algorithm>
@@ -315,7 +316,7 @@ static void encodeNamesOfVariables(TableEncoder& encoder)
         writer.endModule(closureNumbers[module].span());
     }
     RELEASE_ASSERT(first == named.size());
-    encoder.part.setTable(ProgramTableIndex::namedVariables, writer.bytes());
+    encoder.part.setTable(ProgramTableIndex::namedVariables, encodeVarintBytes(writer.bytes().span()));
 }
 
 static Vector<uint32_t> collectBitsOfNamesOfClassGuards(const TableEncoder& encoder)

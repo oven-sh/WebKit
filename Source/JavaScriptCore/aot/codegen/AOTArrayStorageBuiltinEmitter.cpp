@@ -47,7 +47,14 @@ void ArrayStorageBuiltinEmitter::generateArrayPush(const InlineCall& call)
 void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer array)
 {
     ValueID pushed = call.argument(0);
-    ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(call.receiver())).kind;
+    Representation representation = call.canMiss() && !resultIsRead(call) ? Representation::Void : resultRepresentationOf(call);
+    BlockID block = call.context().block();
+    if (m_code.at(block).frequency == BlockFrequency::Rare && !generator().isInLoop(block)) {
+        finishInlineCall(call, pushOutOfLine(call, array, pushed, representation));
+        return;
+    }
+
+    ArrayStorage expected = elements().expectedFormOf(call.receiver()).kind;
     ArrayStorage declared = arrayStorageDeclaredBy(m_program, types(), typeIDOf(call.receiver())).predicted();
     ArrayStorageFormList forms = elements().candidateFormsFor(pushed, expected);
     if (!hasArrayStorageForm(declared) && representationOf(pushed) == Representation::Int32) {
@@ -73,7 +80,7 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     bool mayPushCell = typeOf(pushed).hasCells();
     LBasicBlock isStored = newBlock();
     LBasicBlock slowPath = newBlock();
-    OperandJoin join(m_out, resultRepresentationOf(call));
+    OperandJoin join(m_out, representation);
 
     build().statistics().count(StatisticID::ArrayPushesInlined);
     ArrayElements storage = elements().elementsOf(array);
@@ -100,17 +107,19 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     m_out.appendTo(isStored);
     Word32 newLength = add(length, word32(1));
     elements().setPublicLength(storage, newLength);
-    join.add(lengthResult(call, zeroExtended(newLength)));
+    join.add(representation == Representation::Void ? Operand() : lengthResult(call, zeroExtended(newLength)));
 
     m_out.appendTo(slowPath);
-    join.add(pushOutOfLine(call, array, pushed));
+    join.add(pushOutOfLine(call, array, pushed, representation));
     finishInlineCall(call, join.finish());
 }
 
-Operand ArrayStorageBuiltinEmitter::pushOutOfLine(const InlineCall& call, CellPointer array, ValueID pushed)
+Operand ArrayStorageBuiltinEmitter::pushOutOfLine(const InlineCall& call, CellPointer array, ValueID pushed, Representation representation)
 {
     Boxed newLength = elements().appendOutOfLine(call.context(), array, pushed);
-    return emitter<ConversionEmitter>().unbox(newLength, resultTypeOf(call), resultRepresentationOf(call));
+    if (representation == Representation::Void)
+        return { };
+    return emitter<ConversionEmitter>().unbox(newLength, resultTypeOf(call), representation);
 }
 
 void ArrayStorageBuiltinEmitter::generateArrayIsArray(const InlineCall& call)

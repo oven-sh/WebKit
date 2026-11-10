@@ -113,6 +113,7 @@ JS_EXPORT_PRIVATE std::optional<SourcePosition> positionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE std::optional<SourcePosition> definitionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE LineColumn obfuscatedPositionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE String sourceURLOf(ModuleID);
+JS_EXPORT_PRIVATE String displayPathOf(ModuleID);
 String sourceProviderURLOf(ModuleID);
 String sourceProviderURLOf(const TraceFrame&, const std::optional<SourcePosition>&);
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);

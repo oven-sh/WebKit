@@ -19,6 +19,8 @@ class BodyIndexTable;
 template<typename Operation> Effects effectsOf(const TypingContext&, const Operation&, OperandTypes, TypeID result, const Effects* foundByCaller = nullptr);
 template<typename Terminator> Effects effectsOfTerminator(const TypingContext&, const Terminator&, OperandTypes, const Effects* foundByCaller = nullptr);
 
+template<typename Operation> bool namespaceReadRunsNoCode(const Program&, const Operation&);
+
 Effects effectsOfOperator(const TypingContext&, Opcode, std::span<const TypeID> operandTypes, TypeID result);
 Effects effectsOfProtocolsOn(const TypingContext&, OptionSet<Protocol>, TypeID operand);
 bool operandsMayRunCode(Opcode);

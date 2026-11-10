@@ -7,7 +7,7 @@
 # CHECK: Butterfly_publicLength
 # CHECK: = Below(
 # RUN(STOPS): emit f1 mechanisms=all
-# STOPS-COUNT-20: effects = Terminal|ControlDependent
+# STOPS-COUNT-21: effects = Terminal|ControlDependent
 # STOPS-NOT: effects = Terminal|ControlDependent
 
 module m0 path="main.mjs" displayPath="main.mjs" body=f0

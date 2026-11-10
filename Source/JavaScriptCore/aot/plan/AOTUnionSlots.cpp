@@ -51,6 +51,44 @@ bool remainingRowsFitInUnionSlots(const WidthCountsInUnionSlots& room, const Wid
     return true;
 }
 
+class CountsInUnionSlots {
+public:
+    explicit CountsInUnionSlots(size_t numberOfWords)
+        : m_numberOfWords(numberOfWords)
+    {
+    }
+
+    void add(std::span<const uint64_t> positions, uint32_t amount)
+    {
+        for (unsigned lowest = 0; amount >> lowest; ++lowest) {
+            if (!(amount >> lowest & 1))
+                continue;
+            for (size_t word = 0; word < positions.size(); ++word) {
+                uint64_t carry = positions[word];
+                for (unsigned plane = lowest; carry; ++plane) {
+                    while (m_planes.size() <= plane * m_numberOfWords)
+                        m_planes.insertFill(m_planes.size(), 0, m_numberOfWords);
+                    uint64_t& bits = m_planes[plane * m_numberOfWords + word];
+                    carry = std::exchange(bits, bits ^ carry) & carry;
+                }
+            }
+        }
+    }
+
+    template<typename Functor>
+    void forEachCount(const Functor& functor) const
+    {
+        for (size_t index = 0; index < m_planes.size(); ++index) {
+            for (uint64_t bits = m_planes[index]; bits; bits &= bits - 1)
+                functor(index % m_numberOfWords * 64 + std::countr_zero(bits), 1u << (index / m_numberOfWords));
+        }
+    }
+
+private:
+    size_t m_numberOfWords;
+    Vector<uint64_t, 64> m_planes;
+};
+
 class CellInUnionSlots {
 public:
     bool isInitialized() const { return m_isInitialized; }
@@ -69,6 +107,9 @@ public:
             m_occupied[offset / 64] |= maskOf(offset, widestSlotInUnionSlots);
         for (unsigned logSize = 0; logSize < numberOfWidthsInUnionSlots; ++logSize)
             m_room[logSize] = (limit - firstByte) >> logSize;
+        m_freeWidestSlots.fill(0, limit / widestSlotInUnionSlots / 64 + 1);
+        for (uint32_t offset = roundUpToWidestSlotInUnionSlots(firstByte); offset + widestSlotInUnionSlots <= limit; offset += widestSlotInUnionSlots)
+            m_freeWidestSlots[offset / widestSlotInUnionSlots / 64] |= 1ull << (offset / widestSlotInUnionSlots % 64);
     }
 
     uint32_t limit() const { return m_limit; }
@@ -86,6 +127,25 @@ public:
         WidthCountsInUnionSlots unplaced = m_unplaced;
         --unplaced[logSize];
         return remainingRowsFitInUnionSlots(roomAfterTaking(offset, logSize), unplaced);
+    }
+
+    void keepPlaceableOffsets(std::span<uint64_t> words, unsigned logSize) const
+    {
+        std::array<bool, numberOfWidthsInUnionSlots> fits = fitsInLargerBlocks(logSize);
+        for (size_t word = 0; word < words.size(); ++word) {
+            uint64_t placeable = 0;
+            if (logSize == numberOfWidthsInUnionSlots - 1) {
+                if (fits[0] && word < m_freeWidestSlots.size())
+                    placeable = m_freeWidestSlots[word];
+            } else {
+                for (unsigned part = 0; part < 1u << logSize; ++part) {
+                    size_t occupied = (word << logSize) + part;
+                    if (occupied < m_occupied.size())
+                        placeable |= joinFirstBytes(placeableFirstBytes(m_occupied[occupied], logSize, fits), logSize) << (part * (64 >> logSize));
+                }
+            }
+            words[word] &= placeable;
+        }
     }
 
     void place(uint32_t offset, unsigned logSize)
@@ -138,14 +198,64 @@ private:
         return room;
     }
 
+    std::array<bool, numberOfWidthsInUnionSlots> fitsInLargerBlocks(unsigned logSize) const
+    {
+        std::array<bool, numberOfWidthsInUnionSlots> fits { };
+        if (!m_unplaced[logSize])
+            return fits;
+        WidthCountsInUnionSlots unplaced = m_unplaced;
+        --unplaced[logSize];
+        WidthCountsInUnionSlots room = m_room;
+        for (unsigned other = 0; other <= logSize; ++other)
+            room[other] -= 1u << (logSize - other);
+        for (unsigned larger = 0; logSize + larger < numberOfWidthsInUnionSlots; ++larger) {
+            if (larger)
+                --room[logSize + larger];
+            fits[larger] = remainingRowsFitInUnionSlots(room, unplaced);
+        }
+        return fits;
+    }
+
+    static uint64_t placeableFirstBytes(uint64_t occupied, unsigned logSize, const std::array<bool, numberOfWidthsInUnionSlots>& fits)
+    {
+        constexpr std::array<uint64_t, numberOfWidthsInUnionSlots> firstBytesOfBlocks { UINT64_MAX, 0x5555555555555555, 0x1111111111111111, 0x0101010101010101 };
+        std::array<uint64_t, numberOfWidthsInUnionSlots> freeBlocks;
+        freeBlocks[0] = ~occupied;
+        for (unsigned log = 1; log < numberOfWidthsInUnionSlots; ++log)
+            freeBlocks[log] = freeBlocks[log - 1] & (freeBlocks[log - 1] >> (1u << (log - 1))) & firstBytesOfBlocks[log];
+        uint64_t placeable = 0;
+        uint64_t inLargerBlocks = 0;
+        for (unsigned larger = numberOfWidthsInUnionSlots - logSize; larger--;) {
+            uint64_t blocks = freeBlocks[logSize + larger];
+            for (unsigned log = logSize + larger; log > logSize; --log)
+                blocks |= blocks << (1u << (log - 1));
+            if (fits[larger])
+                placeable |= blocks & ~inLargerBlocks;
+            inLargerBlocks |= blocks;
+        }
+        return placeable;
+    }
+
+    static uint64_t joinFirstBytes(uint64_t bits, unsigned logSize)
+    {
+        for (; logSize; --logSize) {
+            for (unsigned shift = 1; shift < 32; shift *= 2)
+                bits = (bits | bits >> shift) & masksOfEveryOtherRun[std::countr_zero(shift)];
+        }
+        return bits;
+    }
+    static constexpr std::array<uint64_t, 5> masksOfEveryOtherRun { 0x3333333333333333, 0x0f0f0f0f0f0f0f0f, 0x00ff00ff00ff00ff, 0x0000ffff0000ffff, 0x00000000ffffffff };
+
     void take(uint32_t offset, unsigned logSize)
     {
         m_room = roomAfterTaking(offset, logSize);
         m_occupied[offset / 64] |= maskOf(offset, 1u << logSize);
+        m_freeWidestSlots[offset / widestSlotInUnionSlots / 64] &= ~(1ull << (offset / widestSlotInUnionSlots % 64));
         m_end = std::max(m_end, offset + (1u << logSize));
     }
 
     Vector<uint64_t, 4> m_occupied;
+    Vector<uint64_t, 1> m_freeWidestSlots;
     bool m_isInitialized { false };
     uint32_t m_firstByte { 0 };
     uint32_t m_limit { 0 };
@@ -789,51 +899,74 @@ private:
         if (unplaced.size() < 2)
             return;
         unsigned logSize = m_units[unplaced[0]].logWidth;
-        auto offsetAt = [&](size_t candidate) {
-            return offsetOfFirstField + (static_cast<uint32_t>(candidate) << logSize);
+        struct OffsetsOfUnit {
+            UnitIndex unit { 0 };
+            size_t firstWord { 0 };
+            size_t numberOfWords { 0 };
         };
-
-        Vector<size_t, 8> candidatesWithinLimits;
-        size_t numberOfCandidates = 0;
+        Vector<OffsetsOfUnit, 8> unitsLeft;
+        Vector<uint64_t, 64> fittingOffsets;
+        size_t mostWords = 0;
         for (UnitIndex unit : unplaced) {
             uint32_t leastLimit = UINT32_MAX;
             for (uint32_t row : rowsOf(unit))
                 leastLimit = std::min(leastLimit, cellOfRow(row).limit());
-            candidatesWithinLimits.append(static_cast<size_t>(std::max(offsetOfFirstField, leastLimit) - offsetOfFirstField) >> logSize);
-            numberOfCandidates = std::max(numberOfCandidates, candidatesWithinLimits.last());
+            size_t numberOfOffsets = std::max(offsetOfFirstField, leastLimit) >> logSize;
+            size_t numberOfWords = (numberOfOffsets + 63) / 64;
+            size_t firstWord = fittingOffsets.size();
+            fittingOffsets.insertFill(firstWord, UINT64_MAX, numberOfWords);
+            std::span<uint64_t> words = fittingOffsets.mutableSpan().subspan(firstWord);
+            words[0] &= UINT64_MAX << (offsetOfFirstField >> logSize);
+            if (numberOfOffsets % 64)
+                words.back() &= (1ull << (numberOfOffsets % 64)) - 1;
+            for (uint32_t row : rowsOf(unit))
+                cellOfRow(row).keepPlaceableOffsets(words, logSize);
+            unitsLeft.append(OffsetsOfUnit { unit, firstWord, numberOfWords });
+            mostWords = std::max(mostWords, numberOfWords);
         }
-        if (!numberOfCandidates)
-            return;
+        auto countRows = [&](std::span<const OffsetsOfUnit> units) {
+            CountsInUnionSlots counts(mostWords);
+            for (const OffsetsOfUnit& offsets : units)
+                counts.add(fittingOffsets.subspan(offsets.firstWord, offsets.numberOfWords), m_units[offsets.unit].numberOfRows);
+            return counts;
+        };
+        Vector<uint32_t, 64> rowsThatFit(FillWith { }, mostWords * 64, 0u);
+        countRows(unitsLeft.span()).forEachCount([&](size_t position, uint32_t count) {
+            rowsThatFit[position] += count;
+        });
 
-        BitVector fits(unplaced.size() * numberOfCandidates);
-        Vector<uint32_t, 64> rowsThatFit(FillWith { }, numberOfCandidates, 0u);
-        for (size_t index = 0; index < unplaced.size(); ++index) {
-            for (size_t candidate = 0; candidate < candidatesWithinLimits[index]; ++candidate) {
-                if (!fitsEveryRow(unplaced[index], offsetAt(candidate)))
-                    continue;
-                fits.quickSet(index * numberOfCandidates + candidate);
-                rowsThatFit[candidate] += m_units[unplaced[index]].numberOfRows;
-            }
-        }
-
+        Vector<OffsetsOfUnit, 8> unitsPlaced;
         while (true) {
             size_t best = std::ranges::max_element(rowsThatFit) - rowsThatFit.begin();
             if (rowsThatFit[best] < 2)
                 break;
-            uint32_t placeAtOffset = placeInUseAt(unitsOfGroup, offsetAt(best));
-            for (size_t index = 0; index < unplaced.size(); ++index) {
-                if (!fits.quickGet(index * numberOfCandidates + best))
-                    continue;
-                uint32_t numberOfRows = m_units[unplaced[index]].numberOfRows;
-                if (!tryPlace(unplaced[index], offsetAt(best), placeAtOffset)) {
-                    fits.quickClear(index * numberOfCandidates + best);
-                    rowsThatFit[best] -= numberOfRows;
-                    continue;
+            uint32_t offset = static_cast<uint32_t>(best) << logSize;
+            uint32_t placeAtOffset = placeInUseAt(unitsOfGroup, offset);
+            unitsPlaced.shrink(0);
+            unitsLeft.removeAllMatching([&](const OffsetsOfUnit& offsets) {
+                if (best / 64 >= offsets.numberOfWords)
+                    return false;
+                uint64_t& word = fittingOffsets[offsets.firstWord + best / 64];
+                uint64_t bit = 1ull << (best % 64);
+                if (!(word & bit))
+                    return false;
+                if (!tryPlace(offsets.unit, offset, placeAtOffset)) {
+                    word &= ~bit;
+                    rowsThatFit[best] -= m_units[offsets.unit].numberOfRows;
+                    return false;
                 }
-                for (size_t candidate = 0; candidate < candidatesWithinLimits[index]; ++candidate) {
-                    if (fits.quickClear(index * numberOfCandidates + candidate))
-                        rowsThatFit[candidate] -= numberOfRows;
-                }
+                unitsPlaced.append(offsets);
+                return true;
+            });
+            if (unitsPlaced.size() < unitsLeft.size()) {
+                countRows(unitsPlaced.span()).forEachCount([&](size_t position, uint32_t count) {
+                    rowsThatFit[position] -= count;
+                });
+            } else {
+                rowsThatFit.fill(0);
+                countRows(unitsLeft.span()).forEachCount([&](size_t position, uint32_t count) {
+                    rowsThatFit[position] += count;
+                });
             }
         }
         unplaced.removeAllMatching([&](UnitIndex unit) {

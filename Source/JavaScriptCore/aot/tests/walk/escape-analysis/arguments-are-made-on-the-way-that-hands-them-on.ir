@@ -22,18 +22,20 @@
 # BOTH: = CreateUnmappedArguments
 # BOTH: Return
 # function twice(c) { if (c) { log(arguments); return keep(arguments); } return 0; }
-# Behind the first call the object is named again: it is one cell, made where it is written
+# Behind the first call the object is named again: it is one cell, made on the one way that names it
 # RUN(TWICE): walk f3 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # TWICE-LABEL: code f3:Body
-# TWICE: = CreateUnmappedArguments
+# TWICE-NOT: = CreateUnmappedArguments
 # TWICE: Branch
+# TWICE: = CreateUnmappedArguments
 # TWICE-NOT: = CreateUnmappedArguments
 # function stored(c) { if (c) { arguments[0] = 1; return keep(arguments); } return 0; }
-# A store changes what the object holds
+# A store changes what the object holds: the object stands in front of it
 # RUN(STORED): walk f4 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # STORED-LABEL: code f4:Body
-# STORED: = CreateUnmappedArguments
+# STORED-NOT: = CreateUnmappedArguments
 # STORED: Branch
+# STORED: = CreateUnmappedArguments
 # STORED-NOT: = CreateUnmappedArguments
 # function looped(a) { do { } while (keep(arguments)); return a; }
 # An object from in front of a loop is one object in every turn

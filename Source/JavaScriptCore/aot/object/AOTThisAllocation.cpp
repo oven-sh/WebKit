@@ -123,6 +123,7 @@ void ClassTable::keepWordsOfObjectWithoutFields(const LayoutData& layout, const 
 Object* ClassTable::createWithoutFields(VM& vm, Structure* structure, const LayoutData& layout)
 {
     Object* object = Object::create(vm, structure, layout, layout.size, orderWordOf(0, 0));
+    validateMutation(vm, *object, ObjectMutation::ConstructDirectly);
     CompiledStructure* compiled = uncheckedDowncast<CompiledStructure>(structure);
     if (!compiled->wordsOfObjectWithoutFields()) {
         if (!wordsOfObjectWithoutFields(layout))
@@ -377,6 +378,7 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
     const LayoutData& allocatedClass = classOfInstances(allocatedLayout);
     const LayoutData* requested = isDefinedByClass(allocatedClass) ? classWithPrototype(prototype) : nullptr;
     if (!requested || requested->index == allocatedClass.index) {
+        validateMutation(vm, *allocated, ObjectMutation::ConstructDirectly);
         if (!requested && isDefinedByClass(allocatedClass))
             validateMutation(vm, *allocated, ObjectMutation::ChangePrototype);
         allocated->setPrototypeAtCreation(vm, prototype);

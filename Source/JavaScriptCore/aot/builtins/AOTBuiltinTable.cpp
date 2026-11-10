@@ -413,6 +413,20 @@ bool BuiltinTable::ignoresReceiver(BuiltinID builtin) const
     });
 }
 
+bool BuiltinTable::ignoresArgument(BuiltinID builtin, unsigned argument) const
+{
+    BuiltinID canonical = canonicalID(builtin);
+    if (at(canonical).origin != BuiltinOrigin::Engine || argument > BuiltinOperand::maxArgumentIndex)
+        return false;
+    std::span<const BuiltinOverload> rows = overloadsOf(canonical);
+    bool noRowSpeaksOfIt = !rows.empty() && std::ranges::all_of(rows, [&](const BuiltinOverload& row) {
+        return !row.isUndeclared() && !parameterFor(row, BuiltinOperand::argument(argument));
+    });
+    return noRowSpeaksOfIt && std::ranges::all_of(overloadSummariesOf(canonical), [](const BuiltinOverloadSummary& overload) {
+        return overload.callee == BuiltinCallee::HostFunction || overload.callee == BuiltinCallee::InternalFunction;
+    });
+}
+
 bool BuiltinTable::mayDefineOnNewInstances(BuiltinClassID builtinClass, BuiltinName name) const
 {
     if (listsOwnPropertiesOfNewInstances(builtinClass))

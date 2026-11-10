@@ -15,7 +15,9 @@ namespace JSC {
 class InlineWatchpointSet;
 class JSArray;
 class JSCell;
+class InternalFunction;
 class JSFunction;
+class JSValue;
 class ObjectPropertyCondition;
 class PropertyName;
 
@@ -40,6 +42,7 @@ using AOT::takePreallocatedStaticProperty;
 void willInitializeRealm(JSGlobalObject*);
 Structure* structureForHostFunctions(JSGlobalObject*, Structure*);
 bool rejectsNativeConstructorProperty(JSGlobalObject*, PropertyName);
+bool acceptsHasInstanceOfHost(InternalFunction*, PropertyName, JSValue method);
 inline bool locksNativeConstructorPrototypes(JSGlobalObject* realm) { return locksBuiltins(realm); }
 String lockedBuiltinPropertyErrorMessage(PropertyName);
 String lockedBuiltinPrototypeErrorMessage();

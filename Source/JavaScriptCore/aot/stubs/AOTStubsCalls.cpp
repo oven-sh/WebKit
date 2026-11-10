@@ -880,13 +880,15 @@ void generateConstructValue(StubAssembler& jit)
     isCallable.link(&jit);
     JumpList isNotRemembered;
     isNotRemembered.append(jit.branchTest64(CCallHelpers::Zero, registers.word, TrustedImm64(static_cast<int64_t>(1ULL << ClosureWord::takesNewTargetBit))));
-    isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, argumentGPR(0), calleeGPR));
     Address remembered = emitLocateRememberedConstructWord(jit, registers.word, registers.scratch);
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, remembered.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfCall)), registers.word));
+    Jump hasOtherNewTarget = jit.branch64(CCallHelpers::NotEqual, argumentGPR(0), calleeGPR);
     jit.load64(remembered.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfConstruct)), registers.word);
     jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
     emitEnterClosure(jit, registers, std::nullopt, never);
 
+    hasOtherNewTarget.link(&jit);
+    jit.and64(TrustedImm64(static_cast<int64_t>(~(1ULL << ClosureWord::takesNewTargetBit))), registers.word);
     isNotRemembered.link(&jit);
     JumpList isNotPlainFunction;
     emitSpillArgumentsAndPushFrame(jit);
@@ -898,6 +900,23 @@ void generateConstructValue(StubAssembler& jit)
     jit.jump().linkTo(hasCell, &jit);
 
     isNotRememberedForwardingFunction.link(&jit);
+    if (static_cast<ConstructSyntax>(jit.key().form()) == ConstructSyntax::NewExpression) {
+        JumpList isNotNativeClass;
+        isNotNativeClass.append(jit.branchIfNotType(calleeGPR, InternalFunctionType));
+        isNotNativeClass.append(jit.branch64(CCallHelpers::NotEqual, argumentGPR(0), calleeGPR));
+        jit.loadPtr(Address(calleeGPR, InternalFunction::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForConstruct)), registers.word);
+        jit.loadRuntimePointer(Entry::NonConstructorHostFunction, registers.scratch);
+        isNotNativeClass.append(jit.branchPtr(CCallHelpers::Equal, registers.word, registers.scratch));
+        for (unsigned count = 0; count < numberOfArgumentGPRs; ++count) {
+            Jump hasOtherCount = jit.branch32(CCallHelpers::NotEqual, countGPR, TrustedImm32(count + 1));
+            jit.move(argumentGPR(0), thisGPR);
+            for (unsigned index = 0; index < count; ++index)
+                jit.move(argumentGPR(index + 1), argumentGPR(index));
+            jit.jumpToStub(callInternalFunction(CodeSpecializationKind::CodeForConstruct, count));
+            hasOtherCount.link(&jit);
+        }
+        isNotNativeClass.link(&jit);
+    }
     isNotCell.link(&jit);
     emitSpillArgumentsAndPushFrame(jit);
     isNotPlainFunction.link(&jit);

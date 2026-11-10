@@ -212,6 +212,8 @@ static ASCIILiteral nameInFactsText(SummaryTrait trait)
         return "OnlyPassesOnGatheredArguments"_s;
     case SummaryTrait::HoldsInt32Promise:
         return "HoldsInt32Promise"_s;
+    case SummaryTrait::ReturnsUInt32:
+        return "ReturnsUInt32"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -488,7 +490,7 @@ static void printAccessOfSummary(IRPrinter& printer, const ThinSummary& summary,
     if (access.isToContents()) {
         out.print("contents "_s);
         printSlotOfContents(printer, access.slot);
-        printNamedNodeOfSummary(printer, summary, "else "_s, access.whatHoldsNothing);
+        printNamedNodeOfSummary(printer, summary, "else "_s, access.whatHoldsNothing());
         printNamedNodeOfSummary(printer, summary, "then "_s, access.keyNode);
     } else if (access.key)
         printer.print(access.key);
@@ -508,9 +510,9 @@ static void printAccessOfSummary(IRPrinter& printer, const ThinSummary& summary,
     case SummaryAccess::Kind::Has:
         break;
     }
-    if (access.beginningOfKey) {
+    if (StringID beginning = access.beginningOfKey()) {
         out.print(" begins-with "_s);
-        printer.print(access.beginningOfKey);
+        printer.print(beginning);
     }
     if (access.isPartOfConstruction)
         out.print(" at-construction"_s);
@@ -519,18 +521,19 @@ static void printAccessOfSummary(IRPrinter& printer, const ThinSummary& summary,
     if (access.storesObjectMadeForIt)
         out.print(" made-for-it"_s);
     if (access.laysAccessorAsWritten) {
+        const SummaryWrittenAccessor& written = summary.writtenAccessorOf(index);
         out.print(" accessor-as-written"_s);
-        if (access.writtenGetter) {
+        if (written.getter) {
             out.print(" getter="_s);
-            printer.print(access.writtenGetter);
+            printer.print(written.getter);
         }
-        if (access.writtenSetter) {
+        if (written.setter) {
             out.print(" setter="_s);
-            printer.print(access.writtenSetter);
+            printer.print(written.setter);
         }
-        if (access.mapOfWrittenAccessor) {
+        if (written.map) {
             out.print(" in-map="_s);
-            printer.print(access.mapOfWrittenAccessor);
+            printer.print(written.map);
         }
     }
     if (access.kind == SummaryAccess::Kind::Define)
@@ -1335,6 +1338,8 @@ static void printLinkedLayouts(IRPrinter& printer, const LinkTables& tables)
         printFlagsInFactsText(out, layout.possibleChanges - LayoutChange::GetsObjectAbove);
         if (!layout.reachesUnseenCode)
             out.print(" stays-with-compiled-code"_s);
+        if (layout.isAllocated && !layout.hasDirectInstances)
+            out.print(" has-no-direct-instances"_s);
         if (layout.isRedefinedByLiteralsAlone)
             out.print(" redefined-by-literals-alone"_s);
         if (layout.isFilledUnderComputedKeys)

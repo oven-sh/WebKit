@@ -152,6 +152,11 @@ struct NameOfText {
     UniquedStringImpl* uid;
 };
 
+struct UsesOfSubstringAsKey {
+    static constexpr uint8_t one = 1 << 3;
+    static constexpr uint8_t two = 2 * one;
+};
+
 struct KeyedValuePlace {
     static constexpr unsigned numberOfPlacesPerAccess = 512;
     static constexpr unsigned numberOfPlaces = 2 * numberOfPlacesPerAccess;

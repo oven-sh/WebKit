@@ -245,10 +245,14 @@ static void layOutWhatFollowsFunctions(const CodeLayoutInputs& inputs, CodeLayou
     const RegExpSection& regExpSection = inputs.regExpSection;
     size_t webAssemblyCodeOffset = WTF::roundUpToMultipleOf(inputs.webAssemblyCodeAlignment, functionsEnd);
     size_t ffiCodeOffset = WTF::roundUpToMultipleOf(inputs.ffiCodeAlignment, webAssemblyCodeOffset + inputs.webAssemblyCodeSize);
-    size_t executableSize = WTF::roundUpToMultipleOf<imagePageSize>(ffiCodeOffset + inputs.ffiCodeSize + regExpSection.dataOffset);
+    size_t endOfFFICode = ffiCodeOffset + inputs.ffiCodeSize;
+    size_t executableSize = WTF::roundUpToMultipleOf<imagePageSize>(endOfFFICode + regExpSection.dataOffset);
     size_t regExpCodeOffset = executableSize - regExpSection.dataOffset;
     size_t constantsOffset = WTF::roundUpToMultipleOf<imageConstantsAlignment>(regExpCodeOffset + regExpSection.bytes.size());
-    size_t ffiDirectoryOffset = constantsOffset + inputs.constantsSize;
+    size_t sizeOfAlignedConstants = WTF::roundUpToMultipleOf<imageConstantsAlignment>(inputs.constantsSize);
+    if (sizeOfAlignedConstants && !inputs.ffiCodeSize && regExpSection.bytes.isEmpty() && sizeOfAlignedConstants <= executableSize - endOfFFICode)
+        constantsOffset = executableSize - sizeOfAlignedConstants;
+    size_t ffiDirectoryOffset = std::max(executableSize, constantsOffset + inputs.constantsSize);
     if (inputs.ffiCodeSize)
         ffiDirectoryOffset = WTF::roundUpToMultipleOf<imageFFIDirectoryAlignment>(ffiDirectoryOffset);
     layout.codeSize = ffiDirectoryOffset + inputs.ffiDirectorySize;

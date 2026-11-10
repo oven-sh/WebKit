@@ -12,6 +12,7 @@
 #include "AOTOpcodeSets.h"
 #include "AOTRepresentationRules.h"
 #include "AOTTypeArena.h"
+#include "AOTWalkNumberGuesses.h"
 #include "JSGlobalObjectFunctions.h"
 #include <array>
 #include <cmath>
@@ -142,8 +143,61 @@ static Reference valueThatArithmeticGives(Walker& walker, Opcode opcode, const O
     }
 }
 
+static Reference buildConversionInNumberOperators(Walker&, Opcode conversion, Reference number, Origin);
+
+static Reference buildSumWithUndefined(Walker& walker, Origin origin, ValueID written)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID sum = index.stripCasts(written);
+    static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub };
+    if (!walker.has(Mechanism::Folding) || !walker.has(Mechanism::UnboxedNumbers) || index.isParameter(sum) || !sums.contains(index.opcodeOf(sum)))
+        return { };
+    TypeArena& types = walker.types();
+    std::array<Reference, 2> terms;
+    std::optional<uint32_t> optionalTerm;
+    for (uint32_t side = 0; side < 2; ++side) {
+        terms[side] = walker.referenceOf(index.value(sum).operand(side));
+        TypeID type = terms[side] && terms[side].isRecord() ? walker.typeOf(terms[side]) : TypeID();
+        if (type && types.isSubset(type, TypeTable::int32))
+            continue;
+        if (!type || optionalTerm || !types.overlap(type, TypeTable::int32) || !types.isSubset(type, types.withPrimitives(TypeTable::int32, Primitive::Undefined)))
+            return { };
+        optionalTerm = side;
+    }
+    if (!optionalTerm)
+        return { };
+
+    Reference& term = terms[*optionalTerm];
+    Draft test(Opcode::TypeTest, origin);
+    test.setValueOperand(term);
+    test.setTestedType(TypeArena::fromPrimitives(Primitive::Undefined));
+    Reference isUndefined = walker.build(WTF::move(test));
+    if (!isUndefined || !isUndefined.isValue() || walker.code().isConstant(isUndefined.id()) || walker.isUnreachable())
+        return { };
+    walker.count(StatisticID::SumsWithUndefinedTruncated);
+    BlockID undefinedBlock = walker.addBlock(BlockFrequency::Unlikely);
+    BlockID integerBlock = walker.addBlock();
+    BlockID meeting = walker.addBlock();
+    walker.branch(isUndefined, undefinedBlock, integerBlock);
+
+    walker.continueIn(integerBlock);
+    term = buildNarrowedInNumberForms(walker, term, isUndefined, OperandIndex::TypeTest::value, false, origin);
+    Reference added = term ? buildOperatorInNumberForms(walker, index.opcodeOf(sum), terms[0], terms[1], origin) : Reference();
+    Reference bits = added ? buildConversionInNumberOperators(walker, Opcode::ToInt32, added, origin) : Reference();
+    if (!bits)
+        return { };
+    std::array<WayInNumberForms, 2> ways { WayInNumberForms { walker.currentBlock(), bits, { } }, WayInNumberForms { } };
+    walker.continueIn(undefinedBlock);
+    ways[1] = WayInNumberForms { walker.currentBlock(), integerInNumberForms(walker, 0), { } };
+    return meetInNumberForms(walker, meeting, ways);
+}
+
 static Reference buildSimplerOperandOfBitOperator(Walker& walker, Origin origin, ValueID written)
 {
+    if (Reference bits = buildSumWithUndefined(walker, origin, written))
+        return bits;
+    if (walker.hasFailed() || walker.isUnreachable())
+        return { };
     InputsOfTypedOperation inputs(walker, nullptr);
     if (std::optional<DivisionAsWritten> quotient = findQuotientOfIntegers(walker, written, inputs))
         return buildDivisionOfIntegers(walker, origin, walker.referenceOf(quotient->dividend), walker.referenceOf(quotient->divisor), QuotientRounding::ToInt32);
@@ -193,6 +247,35 @@ static Reference buildBitsOfNumberInNumberOperators(Walker& walker, Opcode conve
     return buildConversionInNumberOperators(walker, conversion, number, origin);
 }
 
+static bool isBoxedNumberOrNullish(Walker& walker, Reference operand)
+{
+    Type type = walker.types().at(walker.typeOf(operand));
+    return operand.isValue() && !type.isNumber() && (type.primitives & Primitive::Integer) && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull)
+        && walker.code().at(operand.id()).representation == Representation::JSValue;
+}
+
+static Reference buildBitsOfNumberOrNullish(Walker& walker, Reference operand, Origin origin)
+{
+    Reference number;
+    BlockID whereNullish = walker.splitNumberOffContainer(operand, number);
+    if (!whereNullish && !walker.hasFailed()) {
+        Reference isNumber = buildTestOfNumber(walker, operand, walker.types().withoutNullish(walker.typeOf(operand)), origin);
+        if (!isNumber || !isNumber.isValue())
+            return { };
+        whereNullish = walker.addBlock(BlockFrequency::Rare);
+        continueIfTrue(walker, isNumber, whereNullish);
+        number = buildProofOfNumber(walker, operand, isNumber, origin);
+    }
+    Reference bits = number ? buildConversionInNumberOperators(walker, Opcode::ToInt32, number, origin) : Reference();
+    if (!bits)
+        return { };
+    WayInNumberForms underNumber { walker.currentBlock(), bits, { } };
+    walker.continueIn(whereNullish);
+    WayInNumberForms underNullish { walker.currentBlock(), walker.constant(PrimitiveKnownToFolding::number(0)), { } };
+    std::array<WayInNumberForms, 2> ways { underNumber, underNullish };
+    return meetInNumberForms(walker, walker.addBlock(), ways);
+}
+
 static bool convertOperandsOfBitOperatorOnce(Walker& walker, Opcode opcode, Origin origin, std::span<Reference> operands)
 {
     TypeArena& types = walker.types();
@@ -209,7 +292,13 @@ static bool convertOperandsOfBitOperatorOnce(Walker& walker, Opcode opcode, Orig
             continue;
         if (!walker.isInLoop() && opcode == Opcode::BitAnd && isMaskOfLowestBitsOfInt32(types.at(walker.typeOf(operands[1 - operandIndex]))))
             continue;
+        if (opcode != Opcode::BitNot && !type.isNumber() && walker.representationOf(number) == Representation::JSValue && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
+            continue;
         hasConverted = true;
+        if (walker.isInLoop() && walker.opensGuesses() && isBoxedNumberOrNullish(walker, number)) {
+            operands[operandIndex] = buildBitsOfNumberOrNullish(walker, number, origin);
+            continue;
+        }
         if (!type.isNumber())
             number = buildOperatorInNumberForms(walker, Opcode::ToNumber, number, { }, origin);
         if (!number) {

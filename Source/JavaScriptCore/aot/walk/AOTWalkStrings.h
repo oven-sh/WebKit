@@ -70,6 +70,8 @@ struct PieceOfString {
 };
 std::optional<PieceOfString> pieceInSight(Walker&, Reference text, bool alsoWhereNothingMayStand = false);
 bool isRangeOfPieceInOrder(Walker&, const PieceOfString&);
+Reference buildLengthOfPiece(Walker&, const PieceOfString&, Origin);
+std::optional<PieceOfString> pieceReadInLoop(Walker&, Reference text, Origin);
 Reference codePointOfCharacterInSight(Walker&, Reference character);
 void noteCodePointBesideCharacter(Walker&, Reference character, Reference codePoint);
 Reference codeUnitOfCharCodeInSight(Walker&, Reference number);
@@ -100,6 +102,7 @@ AOT_LINK_OF_WALK(buildTestAgainstJoinOfTexts, opcodesThatBuildTestAgainstJoinOfT
 Reference buildTestOfCodeUnitBesidePartOfJoin(Walker&, Reference string, Reference lengthOfPart, Reference holdsOfPart, char16_t unit, bool testsStart, Origin);
 ValueID findTestOfEndThatTakesJoinApart(Walker&, const BodyValue& join, Reference takenToHaveText);
 bool goesByOneRowOnOperandAsMade(Walker&, const BodyValue& call, BuiltinID, Reference value, TypeID behindTest, BuiltinOverloadID* onlyRow = nullptr);
+ValueID findLastCallInMethodChain(Walker&, const BodyValue& firstCall, uint32_t behindStretch);
 void openGuessAtOperandTakenAsMade(Walker&, const BodyValue& call, Reference value, TypeID tested, std::optional<uint32_t> firstPlace = std::nullopt, std::span<const ValueID> readsOffHolders = { });
 
 struct NotesOfStrings final : Walker::KeptForBuild {
@@ -152,6 +155,7 @@ bool nameProvesPositionBelowLengthForStrings(const Walker&, Reference position, 
 
 Reference flatStringForReaderOfCharacters(Walker&, Reference string, Origin);
 Reference flatStringInSight(Walker&, Reference string);
+bool isOrCanBeFlattenedBeforeLoop(Walker&, Reference string);
 Reference flatStringMadeWhereWalkStands(Walker&, Reference string, Origin);
 
 } } } // namespace JSC::AOT::Typed

@@ -69,12 +69,13 @@ private:
     void defineValueAndWord(const ValueContext&, StubCallResult);
     void branchUnlessUnmodifiedGenerator(Operand, const Type&, LBasicBlock otherwise);
 
-    struct HeapWordsInFrame {
-        ValueID made;
-        Machine::StackSlot* slot { nullptr };
+    struct UsesOfHeapWords {
+        uint32_t numberOfAccesses { 0 };
+        bool isUsedOtherwise { false };
     };
     void findHeapWordsAliveAtSuspensions();
-    bool areNamedOnlyByReadsAndStoresOfWords(ValueID made) const;
+    void findUsesOfHeapWords();
+    bool areNamedOnlyByReadsAndStoresOfWords(ValueID made);
     Machine::StackSlot* slotOfHeapWordsInFrame(ValueID frame);
     TypedPointer wordInFrame(Machine::StackSlot*, uint32_t index);
 
@@ -165,8 +166,10 @@ private:
     std::span<uint32_t> m_headsOfLoopsInsideStretchesBehind;
     std::span<const BlockID> m_orderOfBlocks;
 
-    Vector<HeapWordsInFrame, 2> m_heapWordsInFrame;
-    Vector<ValueID, 2> m_heapWordsAliveAtSuspensions;
+    UncheckedKeyHashMap<uint32_t, Machine::StackSlot*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_slotsOfHeapWords;
+    UncheckedKeyHashMap<uint32_t, UsesOfHeapWords, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_usesOfHeapWords;
+    BitVector m_heapWordsAliveAtSuspensions;
+    bool m_hasFoundUsesOfHeapWords { false };
     bool m_hasLookedForHeapWordsAliveAtSuspensions { false };
 };
 

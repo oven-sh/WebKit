@@ -536,8 +536,24 @@ static TypeID numberResultWithinBounds(TypeArena& types, Opcode opcode, NaturalO
     }
 }
 
+static bool isIntegerOrNullish(const NaturalOperand& operand)
+{
+    return operand.isMadeOfPrimitives && operand.primitives & Primitive::UndefinedOrNull && operand.hasOnlyPrimitives(Primitive::Integer | Primitive::UndefinedOrNull);
+}
+
 static TypeID numberResultOf(TypeArena& types, Opcode opcode, NaturalOperands operands)
 {
+    if (allBitwiseOperators.contains(opcode) && std::ranges::any_of(operands, isIntegerOrNullish)) {
+        Vector<NaturalOperand, 2> converted;
+        for (const NaturalOperand& operand : operands) {
+            converted.append(operand);
+            if (!isIntegerOrNullish(operand))
+                continue;
+            converted.last().primitives = Primitive::Integer;
+            converted.last().integers = operand.integers.unionWith(Range::one(0));
+        }
+        return numberResultOf(types, opcode, converted.span());
+    }
     if ((opcode == Opcode::ToNumber || opcode == Opcode::ToNumeric) && operands[0].isBoolean())
         return naturalTypeOfIntegers(types, { operands[0].primitives & Primitive::False ? 0 : 1, operands[0].primitives & Primitive::True ? 1 : 0 });
     if (shiftOperators.contains(opcode))

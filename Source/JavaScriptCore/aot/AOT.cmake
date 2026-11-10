@@ -74,8 +74,10 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/image/AOTImageForward.h
     aot/image/AOTImageLoading.h
     aot/image/AOTImageText.h
+    aot/image/AOTPrefixCode.h
     aot/image/AOTRegExpSummary.h
     aot/image/AOTRuntimeDescription.h
+    aot/image/AOTSideTableCodes.h
     aot/image/AOTStoredStrings.h
     aot/image/AOTVarint.h
     aot/image/AOTWasmInterface.h

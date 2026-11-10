@@ -853,6 +853,7 @@ struct GroundsOfPosition {
     ValueID isBelow;
     bool isBelowResult { true };
     ValueID isFromZeroUp;
+    bool isFromZeroUpResult { true };
     ValueID counter;
     ValueID start;
     ValueID stepNonNegativeCheck;
@@ -1376,7 +1377,7 @@ inline std::optional<uint64_t> lengthThatListIsMadeWith(const Code& code, const 
 }
 inline bool hasTestedForHole(const Operation& read)
 {
-    return read.opcode == Opcode::GetArrayElement && !read.isPresent() && !read.readsHoleAsNaN() && !testsItsOwnGuess(read);
+    return read.opcode == Opcode::GetArrayElement && !read.isPresent() && !read.readsHoleAsNaN();
 }
 template<typename Read>
 ReadOfEmptySlot whatReadOfEmptySlotGives(const Read& read)

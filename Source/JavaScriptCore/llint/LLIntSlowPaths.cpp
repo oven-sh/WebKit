@@ -1911,6 +1911,13 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_new_object)
     LLINT_RETURN(reinterpret_cast<JSObject*>(cell));
 }
 
+LLINT_SLOW_PATH_DECL(slow_path_aot_new_empty_array)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpNewArray>();
+    LLINT_RETURN(AOT::Interpreter::createEmptyArray(globalObject, bytecode.metadata(codeBlock).m_arrayAllocationProfile));
+}
+
 // llint_aot_op_get_by_id already found the accessor, so there is no second lookup.
 extern "C" UGPRPair SYSV_ABI llint_slow_path_aot_call_custom_getter(CallFrame* callFrame, const JSInstruction* pc, const AOT::CustomAccessorRecord* record, JSCell* base)
 {

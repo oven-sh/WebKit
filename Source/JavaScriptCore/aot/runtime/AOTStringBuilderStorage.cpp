@@ -137,6 +137,10 @@ void StringBuilderStorage::reset()
         Locker locker { cellLock() };
         m_segments.shrink(0);
     }
+    if (m_units.size() > maxRetainedUnits)
+        m_units.clear();
+    else
+        m_units.shrink(0);
     size_t longestTextInBuffer = std::max(m_position, std::exchange(m_positionWhenSegmentsWereJoined, 0));
     m_position = 0;
     m_positionJoinedIntoFirstSegment = 0;
@@ -260,6 +264,11 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, std::span<const 
 {
     if (characters.empty())
         return AppendResult::Appended;
+    if (hasRoomForUnits(characters.size())) {
+        return addUnits(globalObject, static_cast<uint32_t>(characters.size()), [&](std::span<char16_t> units) {
+            StringImpl::copyCharacters(units, characters);
+        });
+    }
     std::span<char16_t> copy;
     RefPtr<StringImpl> impl = canGrowBy(characters.size()) ? StringImpl::tryCreateUninitialized(characters.size(), copy) : nullptr;
     if (!impl) {
@@ -278,8 +287,16 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSString* string
         return AppendResult::Appended;
     bool wasEmpty = !this->length();
     uint32_t minLengthByReference = wasEmpty ? minLengthOfStringBuilderFiber : minLengthAppendedByReference;
-    bool isAppendedByReference = length >= minLengthByReference || !string->is8Bit();
-    AppendResult result = isAppendedByReference ? addSegment(globalObject, string) : appendCharactersOf(globalObject, string);
+    bool is8Bit = string->is8Bit();
+    AppendResult result;
+    if (is8Bit && length < minLengthByReference)
+        result = appendCharactersOf(globalObject, string);
+    else if (!is8Bit && hasRoomForUnits(length)) {
+        result = addUnits(globalObject, length, [&](std::span<char16_t> units) {
+            string->resolveToBuffer(units);
+        });
+    } else
+        result = addSegment(globalObject, string);
     if (wasEmpty && result == AppendResult::Appended) {
         m_lastString.set(vm, this, string);
         m_lengthOfLastString = length;
@@ -302,6 +319,32 @@ auto StringBuilderStorage::appendCharactersOf(JSGlobalObject* globalObject, JSSt
     return AppendResult::Appended;
 }
 
+template<typename CopyUnits>
+auto StringBuilderStorage::addUnits(JSGlobalObject* globalObject, uint32_t length, const CopyUnits& copyUnits) -> AppendResult
+{
+    if (!canGrowBy(length)) {
+        throwOutOfMemory(globalObject);
+        return AppendResult::Failed;
+    }
+    bool extendsLastSegment = !m_segments.isEmpty() && !m_segments.last().string && m_segments.last().offsetInBuffer == m_position;
+    if (!extendsLastSegment && m_segments.size() >= maxSegments) {
+        if (!collapseSegments(globalObject))
+            return AppendResult::Failed;
+    }
+    uint32_t start = static_cast<uint32_t>(m_units.size());
+    m_units.grow(start + length);
+    copyUnits(m_units.mutableSpan().subspan(start));
+    if (extendsLastSegment)
+        m_segments.last().length += length;
+    else {
+        Locker locker { cellLock() };
+        m_segments.append(Segment { m_position, length, start, { } });
+    }
+    m_lengthOutsideBuffer += length;
+    updateLimit();
+    return AppendResult::Appended;
+}
+
 auto StringBuilderStorage::addSegment(JSGlobalObject* globalObject, JSString* string) -> AppendResult
 {
     VM& vm = globalObject->vm();
@@ -316,7 +359,7 @@ auto StringBuilderStorage::addSegment(JSGlobalObject* globalObject, JSString* st
     }
     {
         Locker locker { cellLock() };
-        m_segments.append(Segment { m_position, length, WriteBarrier<JSString>(vm, this, string) });
+        m_segments.append(Segment { m_position, length, 0, WriteBarrier<JSString>(vm, this, string) });
     }
     m_lengthOutsideBuffer += length;
     updateLimit();
@@ -414,6 +457,8 @@ void StringBuilderStorage::rollBack(uint32_t length)
         Locker locker { cellLock() };
         uint32_t remainingLength = length > start ? length - start : 0;
         m_lengthOutsideBuffer -= last.length - remainingLength;
+        if (!last.string)
+            m_units.shrink(last.startOfUnits + remainingLength);
         if (remainingLength) {
             last.length = remainingLength;
             break;
@@ -432,19 +477,20 @@ void StringBuilderStorage::forEachPiece(const Functor& functor) const
     uint32_t taken = m_positionJoinedIntoFirstSegment;
     for (const Segment& segment : m_segments) {
         if (segment.offsetInBuffer > taken)
-            functor(Piece { nullptr, taken, segment.offsetInBuffer - taken });
+            functor(Piece { nullptr, nullptr, taken, segment.offsetInBuffer - taken });
         if (segment.length)
-            functor(Piece { segment.string.get(), 0, segment.length });
+            functor(Piece { segment.string.get(), segment.string ? nullptr : m_units.span().subspan(segment.startOfUnits).data(), 0, segment.length });
         taken = segment.offsetInBuffer;
     }
     if (m_position > taken)
-        functor(Piece { nullptr, taken, m_position - taken });
+        functor(Piece { nullptr, nullptr, taken, m_position - taken });
 }
 
 RefPtr<StringImpl> StringBuilderStorage::tryShareOrGiveAwayBuffer(bool mayGiveBufferAway)
 {
     ASSERT(m_segments.isEmpty());
-    if (m_position < minLengthAdoptedByFinish)
+    bool isShared = !mayGiveBufferAway && m_position >= minLengthShared && m_position >= capacity() / 2;
+    if (m_position < minLengthAdoptedByFinish && !isShared)
         return nullptr;
     if (!mayGiveBufferAway) {
         m_sharedLength = std::max(m_sharedLength, m_position);
@@ -514,7 +560,7 @@ JSString* StringBuilderStorage::createFlatRun(JSGlobalObject* globalObject, std:
     bool is8Bit = true;
     for (const Piece& piece : run) {
         total += piece.length;
-        is8Bit &= !piece.string || piece.string->is8Bit();
+        is8Bit &= piece.is8Bit();
     }
 
     std::span<Latin1Character> output8;
@@ -525,11 +571,17 @@ JSString* StringBuilderStorage::createFlatRun(JSGlobalObject* globalObject, std:
         return nullptr;
     }
 
-    auto copyPieces = [&](auto output) {
+    auto copyPieces = [&]<typename CharacterType>(std::span<CharacterType> output) {
         size_t at = 0;
         for (const Piece& piece : run) {
             auto destination = output.subspan(at, piece.length);
             at += piece.length;
+            if constexpr (std::is_same_v<CharacterType, char16_t>) {
+                if (piece.units) {
+                    StringImpl::copyCharacters(destination, unsafeMakeSpan(piece.units, piece.length));
+                    continue;
+                }
+            }
             if (!piece.string) {
                 StringImpl::copyCharacters(destination, std::span<const Latin1Character> { m_characters + piece.start, piece.length });
                 continue;
@@ -563,17 +615,30 @@ JSString* StringBuilderStorage::createStringFromPieces(JSGlobalObject* globalObj
     if (length() < minLengthOfStringBuilderFiber)
         RELEASE_AND_RETURN(scope, createFlatRun(globalObject, pieces.span()));
 
-    auto is8Bit = [](const Piece& piece) {
-        return !piece.string || piece.string->is8Bit();
-    };
+    constexpr size_t minLengthOfRunOfOtherWidth = 256;
     auto isFiber = [&](const Piece& piece) {
         return piece.string && (piece.length >= minLengthOfStringBuilderFiber || (!piece.string->is8Bit() && piece.string->isRope() && !piece.string->isSubstring()));
     };
     JSRopeString::RopeBuilder<RecordOverflow> fibers(vm);
     size_t runStart = 0;
+    size_t lengthOfRun = 0;
+    bool runIs8Bit = true;
+    auto extendsRun = [&](size_t index) {
+        const Piece& piece = pieces[index];
+        if (index == runStart) {
+            lengthOfRun = piece.length;
+            runIs8Bit = piece.is8Bit();
+            return true;
+        }
+        if (piece.is8Bit() != runIs8Bit && (lengthOfRun >= minLengthOfRunOfOtherWidth || piece.length >= minLengthOfRunOfOtherWidth))
+            return false;
+        lengthOfRun += piece.length;
+        runIs8Bit &= piece.is8Bit();
+        return true;
+    };
     for (size_t index = 0; index <= pieces.size(); ++index) {
         bool hasFiber = index < pieces.size() && isFiber(pieces[index]);
-        if (index < pieces.size() && !hasFiber && (index == runStart || is8Bit(pieces[index]) == is8Bit(pieces[runStart])))
+        if (index < pieces.size() && !hasFiber && extendsRun(index))
             continue;
         if (index > runStart) {
             JSString* run = createFlatRun(globalObject, pieces.span().subspan(runStart, index - runStart));
@@ -587,7 +652,8 @@ JSString* StringBuilderStorage::createStringFromPieces(JSGlobalObject* globalObj
             RETURN_IF_EXCEPTION(scope, nullptr);
             fibers.append(fiber);
             runStart = index + 1;
-        }
+        } else if (index < pieces.size())
+            extendsRun(index);
     }
     if (fibers.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -607,8 +673,9 @@ bool StringBuilderStorage::collapseSegments(JSGlobalObject* globalObject)
     {
         Locker locker { cellLock() };
         m_segments.shrink(0);
-        m_segments.append(Segment { 0, length, WriteBarrier<JSString>(vm, this, all) });
+        m_segments.append(Segment { 0, length, 0, WriteBarrier<JSString>(vm, this, all) });
     }
+    m_units.shrink(0);
     m_lengthOutsideBuffer = length;
     m_positionWhenSegmentsWereJoined = std::max(m_positionWhenSegmentsWereJoined, m_position);
     m_position = 0;
@@ -625,8 +692,9 @@ void StringBuilderStorage::joinPiecesInto(VM& vm, JSString* all)
     {
         Locker locker { cellLock() };
         m_segments.shrink(0);
-        m_segments.append(Segment { m_position, all->length(), WriteBarrier<JSString>(vm, this, all) });
+        m_segments.append(Segment { m_position, all->length(), 0, WriteBarrier<JSString>(vm, this, all) });
     }
+    m_units.shrink(0);
     m_positionJoinedIntoFirstSegment = m_position;
     m_lastString.set(vm, this, all);
     m_lengthOfLastString = all->length();
@@ -822,6 +890,21 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendString, void, (Instance*
     if (uncheckedDowncast<StringBuilderStorage>(builder)->tryAppendShortString(uncheckedDowncast<JSString>(string)))
         return { nullptr };
     AOT_MUST_TAIL_CALL return appendAnyStringToBuilder(instance, builder, string);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderAppendCodeUnit, uint8_t*, (Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t codeUnit))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderAppendCodeUnit);
+    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    StringBuilderStorage* storage = stackBuilder.moveToStorage(globalObject, *instance, byteCast<Latin1Character>(cursor));
+    if (!storage) [[unlikely]]
+        OPERATION_RETURN(scope, nullptr);
+    std::array<char16_t, 1> units { static_cast<char16_t>(codeUnit) };
+    bool appended = storage->append(globalObject, std::span<const char16_t> { units }) == StringBuilderStorage::AppendResult::Appended;
+    Latin1Character* next = appended ? stackBuilder.didChangeStorage(globalObject, *storage) : nullptr;
+    if (!next) [[unlikely]]
+        stackBuilder.abandonChangeOfStorage(*instance, *storage);
+    OPERATION_RETURN(scope, byteCast<uint8_t>(next));
 }
 
 struct NarrowPartOfWideString {

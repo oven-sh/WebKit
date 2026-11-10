@@ -81,7 +81,7 @@ JSONRuntime::JSONRuntime(Instance& instance, CacheRegistry& registry, ZeroedTabl
     , m_learnedNames(arena)
 {
     instance.json.runtime = this;
-    m_hasParsedRecords = instance.state && !instance.state->tables.parsedRecordFields().empty();
+    m_hasParsedRecords = instance.state && !instance.state->tables.parsedRecordShapes().empty();
     registry.add(CacheKind::ClearedEachCollection, "JSON source copy"_s, *this);
 }
 
@@ -122,7 +122,7 @@ auto JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* structure) -> Record
     if (structureOfNamesInRecord && structureOfNamesInRecord != structure && m_structuresThatNoPlanFits && m_structuresThatNoPlanFits->get(structureOfNamesInRecord))
         return { };
     std::optional<uint32_t> lastNameNumber = lastNameThatProgramSpells ? identifiersOf(m_instance).numberOf(lastNameThatProgramSpells) : std::nullopt;
-    if (!lastNameNumber || std::ranges::equal_range(m_instance.state->tables.parsedRecordFields(), *lastNameNumber, { }, &ParsedRecordFieldData::nameNumber).empty())
+    if (!lastNameNumber || m_instance.state->tables.parsedRecordShapesWithName(*lastNameNumber).empty())
         return { };
 
     unsigned inlineCapacity = structure->inlineCapacity();

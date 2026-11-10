@@ -1,0 +1,126 @@
+# class Box { constructor() { this.v = null; } }
+# class Store {
+#   constructor() { this.values = new Map(); this.items = []; this.found = null; this.picked = null; this.front = null; }
+#   put(key, at) { this.values.set(key, new Box()); this.items[at] = new Box(); }
+#   take(key) { this.found = this.values.get(key); }
+#   pick(at) { this.picked = this.items[at]; }
+#   get best() { return this.items[0]; }
+#   look() { this.front = this.best; }
+# }
+# The store escapes. The held reading leaves out what reaches these fields through the escape alone: primitive receivers of get(), other getters under best, other keys of items.
+# RUN: link held fields mechanisms=all
+# CHECK: field L1.2 "found" proven=undefined|null|L0
+# CHECK: field L1.3 "picked" proven=undefined|null|L0
+# CHECK: field L1.4 "front" proven=undefined|null|L0
+
+layout L0 kind=Instance name="Box" module=m0 position=20 constructor=f1 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] place=20 ownFieldCount=1
+layout L1 kind=Instance name="Store" module=m0 position=67 constructor=f2 fields=[{key="values" declared={type=anything} flags=[IsRequired]}, {key="items" declared={type=anything} flags=[IsRequired]}, {key="found" declared={type=anything} flags=[IsRequired]}, {key="picked" declared={type=anything} flags=[IsRequired]}, {key="front" declared={type=anything} flags=[IsRequired]}] place=67 ownFieldCount=5
+variable g0 name="Box" module=m0 declared={type=absent|f1 flags=[IsFromCompiler]} flags=[IsImmutable] place=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Convert v2 declared={type=f1 flags=[IsFromCompiler]}
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f2
+    v6 = NewClass v5 layout=L1
+    v7 = NewClosure function=f3
+    DefineMethod v6, v7 layout=L1 key="put"
+    v9 = NewClosure function=f4
+    DefineMethod v6, v9 layout=L1 index=1 key="take"
+    v11 = NewClosure function=f5
+    DefineMethod v6, v11 layout=L1 index=2 key="pick"
+    v13 = NewClosure function=f6
+    DefineMethod v6, v13 layout=L1 methodKind=Getter index=3 key="best"
+    v15 = NewClosure function=f7
+    DefineMethod v6, v15 layout=L1 index=4 key="look"
+    v17 = FinishClass v6 layout=L1
+    v18 = Convert v17 declared={type=f2 flags=[IsFromCompiler]}
+    v19 = Construct v18 calleeName="Store"
+    v20 = Integer integer=1
+    v21 = PropGet v19 key="put"
+    v22 = Call v21, v19, v20, v20 calleeKey="put"
+    v23 = PropGet v19 key="take"
+    v24 = Call v23, v19, v20 calleeKey="take"
+    v25 = PropGet v19 key="pick"
+    v26 = Call v25, v19, v20 calleeKey="pick"
+    v27 = PropGet v19 key="look"
+    v28 = Call v27, v19 calleeKey="look"
+    v29 = Builtin builtin=GlobalThis
+    PropSet v29, v19 key="kept"
+    v31 = Undefined
+    Return v31
+}
+function f1 name="Box" module=m0 position=30 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0}
+    v4 = Null
+    PropSet v3, v4 key="v"
+    Return v3
+}
+function f2 name="Store" module=m0 position=88 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Convert v2 declared={type=L1}
+    v4 = Builtin builtin=Map
+    v5 = Construct v4 calleeName="Map"
+    PropSet v3, v5 key="values"
+    v7 = NewArray contents=anything
+    PropSet v3, v7 key="items"
+    v9 = Null
+    PropSet v3, v9 key="found"
+    PropSet v3, v9 key="picked"
+    PropSet v3, v9 key="front"
+    Return v3
+}
+function f3 name="put" module=m0 position=134 kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything, v2: anything):
+    v3 = PropGet v0 key="values"
+    v4 = PropGet v3 key="set"
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="Box"
+    v7 = Construct v6 calleeName="Box"
+    v8 = Call v4, v3, v1, v7 calleeKey="set"
+    v9 = PropGet v0 key="items"
+    v10 = Construct v6 calleeName="Box"
+    ElemSet v9, v2, v10
+    v12 = Undefined
+    Return v12
+}
+function f4 name="take" module=m0 position=176 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    v2 = PropGet v0 key="values"
+    v3 = PropGet v2 key="get"
+    v4 = Call v3, v2, v1 calleeKey="get"
+    PropSet v0, v4 key="found"
+    v6 = Undefined
+    Return v6
+}
+function f5 name="pick" module=m0 position=226 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    v2 = PropGet v0 key="items"
+    v3 = ElemGet v2, v1
+    PropSet v0, v3 key="picked"
+    v5 = Undefined
+    Return v5
+}
+function f6 name="best" module=m0 position=266 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="items"
+    v2 = Integer
+    v3 = ElemGet v1, v2
+    Return v3
+}
+function f7 name="look" module=m0 position=306 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="best"
+    PropSet v0, v1 key="front"
+    v3 = Undefined
+    Return v3
+}

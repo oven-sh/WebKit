@@ -12,10 +12,16 @@
 #include "AOTCallSiteTable.h"
 #include "AOTFunctionTable.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPositionEncoder.h"
+#include "AOTPrefixCode.h"
 #include "AOTSectionWriter.h"
+#include "AOTSideTableCodes.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVarint.h"
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -35,8 +41,7 @@ struct SideTableScratch {
     Vector<uint8_t> frameRanges;
     Vector<uint8_t> handlers;
     Vector<std::pair<uint32_t, uint32_t>, 8> constructedCallees;
-    Vector<uint8_t> stream;
-    Vector<uint8_t> roomForPositions;
+    Vector<PrefixSymbol> symbols;
 };
 
 struct HashedFrameMaps {
@@ -112,6 +117,12 @@ static void forEachOffsetAskedForFrameInOrder(Vector<uint32_t, 32>& offsets, con
     }
 }
 
+static void appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change)
+{
+    RELEASE_ASSERT(previousChange <= change && !(previousChange % codeOffsetUnit) && !(change % codeOffsetUnit));
+    appendVarint(bytes, (change - previousChange) / codeOffsetUnit);
+}
+
 static void encodeFrameRanges(SideTableScratch& scratch, const CompiledCode& code)
 {
     Vector<uint8_t>& bytes = scratch.frameRanges;
@@ -135,7 +146,7 @@ static void encodeFrameRanges(SideTableScratch& scratch, const CompiledCode& cod
     uint32_t endOfLastUnitAsked = 0;
     forEachOffsetAskedForFrameInOrder(scratch.offsetsAskedForFrame, code, [&](uint32_t offset) ALWAYS_INLINE_LAMBDA {
         if (hasFrameAt(offset) != hasFrame) {
-            SideTableParts::appendFrameChange(bytes, previousChange, endOfLastUnitAsked);
+            appendFrameChange(bytes, previousChange, endOfLastUnitAsked);
             previousChange = endOfLastUnitAsked;
             hasFrame = !hasFrame;
         }
@@ -177,9 +188,27 @@ static FrameMapPlaces findPlacesOfFrameMaps(const LinkedFunctions& functions, co
     return places;
 }
 
-static Vector<uint8_t> joinPositionsOfChunks(const ChunksOfIndices& chunks, std::span<const Vector<uint8_t>> positionsOfChunks, std::span<const uint32_t> placesInChunks, BuildContext& context)
+static Vector<uint8_t> joinPositionsOfChunks(const ChunksOfIndices& chunks, std::span<PositionEncoder> encoders, BuildContext& context)
 {
-    RELEASE_ASSERT(positionsOfChunks.size() == chunks.size());
+    RELEASE_ASSERT(encoders.size() == chunks.size());
+    PositionCodes::Counts counts { };
+    for (const PositionEncoder& encoder : encoders)
+        PositionCodes::add(counts, encoder.counts());
+    PositionCodes codes(counts);
+    const Vector<uint8_t>& bytesOfCodes = codes.bytes();
+
+    Vector<Vector<uint8_t>> positionsOfChunks(chunks.size());
+    Vector<uint32_t> placesInChunks;
+    placesInChunks.fill(0, PositionIndex::numberOfEntriesFor(chunks.firstIndexOf.last()));
+    forEachIndexInParallel(context.parallelLoops(), chunks.size(), [&](unsigned chunk) {
+        Vector<uint8_t>& positions = positionsOfChunks[chunk];
+        for (unsigned position = chunks.firstIndexOf[chunk]; position < chunks.firstIndexOf[chunk + 1]; ++position) {
+            if (!(position % PositionIndex::functionsBetween))
+                placesInChunks[position / PositionIndex::functionsBetween] = static_cast<uint32_t>(positions.size());
+            encoders[chunk].appendNextCoded(positions, codes);
+        }
+    });
+
     size_t sizeOfIndex = placesInChunks.size() * sizeof(uint32_t);
     uint64_t sizeOfEntries = 0;
     Vector<uint32_t> placeOfChunk(positionsOfChunks.size());
@@ -187,12 +216,13 @@ static Vector<uint8_t> joinPositionsOfChunks(const ChunksOfIndices& chunks, std:
         placeOfChunk[chunk] = static_cast<uint32_t>(sizeOfEntries);
         sizeOfEntries += positionsOfChunks[chunk].size();
     }
-    if (!checkSectionSize(sizeOfIndex + sizeOfEntries, context))
+    if (!checkSectionSize(bytesOfCodes.size() + sizeOfIndex + sizeOfEntries, context))
         return { };
 
-    Vector<uint8_t> result(sizeOfIndex + sizeOfEntries);
-    std::span<uint8_t> index = result.mutableSpan().first(sizeOfIndex);
-    std::span<uint8_t> entries = result.mutableSpan().subspan(sizeOfIndex);
+    Vector<uint8_t> result(bytesOfCodes.size() + sizeOfIndex + sizeOfEntries);
+    memcpySpan(result.mutableSpan(), bytesOfCodes.span());
+    std::span<uint8_t> index = result.mutableSpan().subspan(bytesOfCodes.size(), sizeOfIndex);
+    std::span<uint8_t> entries = result.mutableSpan().subspan(bytesOfCodes.size() + sizeOfIndex);
     forEachIndexInParallel(context.parallelLoops(), chunks.size(), [&](unsigned chunk) {
         memcpySpan(entries.subspan(placeOfChunk[chunk]), positionsOfChunks[chunk].span());
         size_t endOfGroups = PositionIndex::numberOfEntriesFor(chunks.firstIndexOf[chunk + 1]);
@@ -204,7 +234,235 @@ static Vector<uint8_t> joinPositionsOfChunks(const ChunksOfIndices& chunks, std:
     return result;
 }
 
-SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Vector<uint8_t>> callSites, BuildContext& context)
+namespace {
+
+struct SideTableInputs {
+    OptionSet<ImageFunctionFlag> flags() const;
+
+    OptionSet<ImageFunctionFlag> flagsOfFunction;
+    std::span<const uint8_t> frameRanges;
+    uint32_t frame { 0 };
+    std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
+    std::span<const uint8_t> handlers;
+    std::span<const std::pair<uint32_t, uint32_t>> constructedCallees;
+    std::span<const PrefixSymbol> callSites;
+};
+
+OptionSet<ImageFunctionFlag> SideTableInputs::flags() const
+{
+    OptionSet<ImageFunctionFlag> flags = flagsOfFunction;
+    flags.set(ImageFunctionFlag::HasFrameMaps, frameMapRange && frameMapRange->second);
+    flags.set(ImageFunctionFlag::HasHandlers, !handlers.empty());
+    flags.set(ImageFunctionFlag::HasConstructedCallees, !constructedCallees.empty());
+    flags.set(ImageFunctionFlag::HasCallSites, !callSites.empty());
+    return flags;
+}
+
+struct SideTableStream {
+    static SideTableStream read(std::span<const PrefixSymbol> words)
+    {
+        SideTableStream stream;
+        auto take = [&](size_t size) {
+            return std::exchange(words, words.subspan(size)).first(size);
+        };
+        auto takeBytes = [&](std::span<uint8_t> bytes) {
+            memcpySpan(bytes, asBytes(take(bytes.size() / sizeof(PrefixSymbol))));
+        };
+        std::array<uint32_t, 2> numbersOfSymbols;
+        takeBytes(asMutableByteSpan(numbersOfSymbols));
+        stream.own = take(numbersOfSymbols[0]);
+        stream.handlers = take(numbersOfSymbols[1]);
+        if (words.empty())
+            return stream;
+        takeBytes(asMutableByteSpan(stream.head));
+        stream.blocks = take(stream.head.numberOfBlocks * sizeof(CallSiteStreamHead::Block) / sizeof(PrefixSymbol));
+        stream.callSites = words;
+        return stream;
+    }
+
+    CallSiteStreamHead::Block block(size_t index) const
+    {
+        constexpr size_t size = sizeof(CallSiteStreamHead::Block);
+        CallSiteStreamHead::Block result;
+        memcpySpan(asMutableByteSpan(result), asBytes(blocks).subspan(index * size, size));
+        return result;
+    }
+
+    std::span<const PrefixSymbol> own;
+    std::span<const PrefixSymbol> handlers;
+    CallSiteStreamHead head { };
+    std::span<const PrefixSymbol> blocks;
+    std::span<const PrefixSymbol> callSites;
+};
+
+} // anonymous namespace
+
+static void appendStream(Vector<PrefixSymbol>& stream, Vector<PrefixSymbol>& room, const SideTableInputs& inputs)
+{
+    constexpr size_t maxSymbolsOfWord = 10;
+    OptionSet<ImageFunctionFlag> flags = inputs.flags();
+    room.shrink(0);
+    room.grow(8 * maxSymbolsOfWord + inputs.frameRanges.size() + inputs.handlers.size() + inputs.constructedCallees.size() * 2 * maxSymbolsOfWord);
+    PrefixSymbol* firstSymbol = room.mutableSpan().data();
+    SideTableSymbolWriter symbols(firstSymbol);
+    symbols.append(SideTableByte::Flags, static_cast<uint8_t>(flags.toRaw()));
+    symbols.appendVarint(SideTableByte::FrameChangesSize, inputs.frameRanges.size());
+    if (!inputs.frameRanges.empty()) {
+        SideTableByte kind = SideTableByte::FirstFrameChange;
+        for (uint8_t byte : inputs.frameRanges)
+            symbols.append(std::exchange(kind, SideTableByte::LaterFrameChange), byte);
+        symbols.appendVarint(SideTableByte::Frame, inputs.frame);
+    }
+    if (flags.contains(ImageFunctionFlag::HasFrameMaps)) {
+        symbols.appendVarint(SideTableByte::FrameMapStart, SideTableByte::FrameMapStartContinuation, inputs.frameMapRange->first);
+        symbols.appendVarint(SideTableByte::FrameMapSize, inputs.frameMapRange->second);
+    }
+    if (flags.contains(ImageFunctionFlag::HasConstructedCallees)) {
+        Vector<uint8_t> rows;
+        uint32_t previous = 0;
+        for (auto [site, function] : inputs.constructedCallees) {
+            RELEASE_ASSERT(site > previous);
+            appendVarint(rows, site - std::exchange(previous, site));
+            appendVarint(rows, function);
+        }
+        symbols.appendVarint(SideTableByte::Continuation, rows.size());
+        for (uint8_t byte : rows)
+            symbols.append(SideTableByte::ConstructedCallee, byte);
+    }
+    PrefixSymbol* endOfOwn = symbols.end();
+    if (flags.contains(ImageFunctionFlag::HasHandlers)) {
+        Vector<uint64_t, 16> words;
+        for (const uint8_t* cursor = inputs.handlers.data(); cursor < inputs.handlers.data() + inputs.handlers.size();)
+            words.append(readVarint(cursor));
+        constexpr size_t wordsOfRow = 3;
+        RELEASE_ASSERT(!(words.size() % wordsOfRow));
+        symbols.appendVarint(SideTableByte::HandlerRows, words.size() / wordsOfRow);
+        for (size_t word = 0; word < words.size(); word += wordsOfRow) {
+            symbols.appendVarint(SideTableByte::HandlerStart, words[word]);
+            symbols.appendVarint(SideTableByte::HandlerSites, words[word + 1]);
+            symbols.appendVarint(SideTableByte::HandlerTarget, SideTableByte::HandlerTargetContinuation, words[word + 2]);
+        }
+    }
+    std::array<uint32_t, 2> numbersOfSymbols { static_cast<uint32_t>(endOfOwn - firstSymbol), static_cast<uint32_t>(symbols.end() - endOfOwn) };
+    stream.reserveInitialCapacity(sizeof(numbersOfSymbols) / sizeof(PrefixSymbol) + (symbols.end() - firstSymbol) + inputs.callSites.size());
+    stream.append(spanReinterpretCast<const PrefixSymbol>(asByteSpan(numbersOfSymbols)));
+    stream.append(std::span<const PrefixSymbol>(firstSymbol, symbols.end()));
+    stream.append(inputs.callSites);
+}
+
+static uint8_t* writeStream(uint8_t* to, const SideTableStream& stream, const SideTableCodes& codes)
+{
+    std::span<const PrefixSymbol> left = stream.callSites;
+    auto take = [&](size_t size) {
+        return std::exchange(left, left.subspan(size)).first(size);
+    };
+    auto writePart = [&](std::span<const PrefixSymbol> symbols) {
+        constexpr size_t maxSizeOfVarint = 10;
+        uint8_t* part = to + maxSizeOfVarint;
+        uint8_t* endOfPart = codes.write(part, symbols);
+        WriterOfReservedBytes sizeOfPart(to);
+        appendVarint(sizeOfPart, endOfPart - part);
+        memmove(sizeOfPart.end(), part, endOfPart - part);
+        to = sizeOfPart.end() + (endOfPart - part);
+    };
+    to = codes.write(to, stream.own, take(stream.head.numberOfHeadSymbols));
+    if (!stream.handlers.empty())
+        writePart(stream.handlers);
+    if (stream.callSites.empty())
+        return to;
+    if (stream.head.hasInlineFrames) {
+        writePart(take(stream.head.numberOfParentSymbols));
+        writePart(take(stream.head.numberOfFunctionSymbols));
+    }
+    uint32_t numberOfBlocks = stream.head.numberOfBlocks;
+    uint8_t* checkpoints = to;
+    uint8_t* firstBlock = to += numberOfBlocks ? (numberOfBlocks - 1) * sizeof(SiteCheckpoint) : 0;
+    for (uint32_t number = 0; number < numberOfBlocks; ++number) {
+        CallSiteStreamHead::Block block = stream.block(number);
+        if (number) {
+            SiteCheckpoint checkpoint { block.offset, static_cast<uint32_t>(to - firstBlock), block.frame };
+            memcpy(checkpoints + (number - 1) * sizeof(SiteCheckpoint), &checkpoint, sizeof(SiteCheckpoint));
+        }
+        to = codes.write(to, take(block.numberOfSymbols));
+    }
+    RELEASE_ASSERT(left.empty());
+    return to;
+}
+
+static void codeStreams(SideTables& result, std::span<const Vector<PrefixSymbol>> streams, BuildContext& context)
+{
+    const ParallelLoops& loops = context.parallelLoops();
+    Vector<uint32_t> firstEqualStream = findFirstEqualStreams(streams, loops);
+    Vector<uint32_t> distinctStreams;
+    for (uint32_t position = 0; position < streams.size(); ++position) {
+        if (firstEqualStream[position] == position)
+            distinctStreams.append(position);
+    }
+
+    ChunksOfIndices chunks = divideIntoChunks(static_cast<unsigned>(distinctStreams.size()));
+    auto forEachStreamOf = [&](unsigned chunk, const auto& functor) {
+        for (unsigned number = chunks.firstIndexOf[chunk]; number < chunks.firstIndexOf[chunk + 1]; ++number)
+            functor(distinctStreams[number], SideTableStream::read(streams[distinctStreams[number]].span()));
+    };
+    Vector<SideTableCodes::Counts> countsOfChunks(chunks.size());
+    forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
+        countsOfChunks[chunk].fill(0);
+        forEachStreamOf(chunk, [&](uint32_t, const SideTableStream& stream) {
+            SideTableCodes::count(countsOfChunks[chunk], stream.own);
+            SideTableCodes::count(countsOfChunks[chunk], stream.handlers);
+            SideTableCodes::count(countsOfChunks[chunk], stream.callSites);
+        });
+    });
+    SideTableCodes::Counts counts { };
+    for (const SideTableCodes::Counts& countsOfChunk : countsOfChunks)
+        SideTableCodes::add(counts, countsOfChunk);
+    SideTableCodes codes(counts);
+
+    Vector<Vector<uint8_t>> bytesOfChunks(chunks.size());
+    result.offsets.grow(streams.size());
+    forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
+        size_t maxSize = 0;
+        forEachStreamOf(chunk, [&](uint32_t position, const SideTableStream& stream) {
+            constexpr size_t maxSizeOfPartEnd = 16;
+            maxSize += streams[position].size() * sizeof(PrefixSymbol) + (4 + stream.head.numberOfBlocks) * maxSizeOfPartEnd;
+        });
+        Vector<uint8_t>& bytes = bytesOfChunks[chunk];
+        bytes.grow(maxSize);
+        uint8_t* begin = bytes.mutableSpan().data();
+        uint8_t* end = begin;
+        forEachStreamOf(chunk, [&](uint32_t position, const SideTableStream& stream) {
+            result.offsets[position] = static_cast<uint32_t>(end - begin);
+            end = writeStream(end, stream, codes);
+        });
+        RELEASE_ASSERT(end <= begin + maxSize);
+        bytes.shrink(end - begin);
+    });
+
+    uint64_t size = codes.bytes().size();
+    Vector<uint32_t> firstByteOfChunk(chunks.size());
+    for (unsigned chunk = 0; chunk < chunks.size(); ++chunk) {
+        firstByteOfChunk[chunk] = static_cast<uint32_t>(size);
+        size += bytesOfChunks[chunk].size();
+    }
+    size += sideTablePadding;
+    if (!checkSectionSize(size, context)) {
+        result.offsets.fill(0);
+        return;
+    }
+    result.bytes.grow(static_cast<size_t>(size));
+    std::span<uint8_t> section = result.bytes.mutableSpan();
+    memcpySpan(section, codes.bytes().span());
+    memsetSpan(section.last(sideTablePadding), std::numeric_limits<uint8_t>::max());
+    forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
+        memcpySpan(section.subspan(firstByteOfChunk[chunk]), bytesOfChunks[chunk].span());
+        for (unsigned number = chunks.firstIndexOf[chunk]; number < chunks.firstIndexOf[chunk + 1]; ++number)
+            result.offsets[distinctStreams[number]] += firstByteOfChunk[chunk];
+    });
+    for (uint32_t position = 0; position < streams.size(); ++position)
+        result.offsets[position] = result.offsets[firstEqualStream[position]];
+}
+
+SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Vector<PrefixSymbol>> callSites, BuildContext& context)
 {
     RELEASE_ASSERT(callSites.size() == functions.size());
     const ParallelLoops& loops = context.parallelLoops();
@@ -226,17 +484,14 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
     SideTables result;
     result.frames = WTF::move(frameTable->frames);
     result.frameMapWords.grow(frameMaps.numberOfWords);
-    result.flags.grow(numberOfFunctions);
+    result.sizes.grow(numberOfFunctions);
     std::span<uint32_t> frameMapWords = result.frameMapWords.mutableSpan();
-    Vector<Vector<uint8_t>> streams(numberOfFunctions);
+    Vector<Vector<PrefixSymbol>> streams(numberOfFunctions);
 
     ChunksOfIndices chunks = divideIntoChunks(numberOfFunctions);
-    Vector<Vector<uint8_t>> positionsOfChunks(chunks.size());
-    Vector<uint32_t> placesInChunks;
-    placesInChunks.fill(0, PositionIndex::numberOfEntriesFor(numberOfFunctions));
+    Vector<PositionEncoder> encoders(hasPositions ? chunks.size() : 0);
     forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
         SideTableScratch scratch;
-        Vector<uint8_t>& positions = positionsOfChunks[chunk];
         for (unsigned position = chunks.firstIndexOf[chunk]; position < chunks.firstIndexOf[chunk + 1]; ++position) {
             const CompiledCode& code = functions[position];
             const SiteDescription& sites = code.sites;
@@ -256,7 +511,12 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
                 RELEASE_ASSERT(callee);
                 scratch.constructedCallees.append({ row.site, callee.function.index() });
             }
+            OptionSet<ImageFunctionFlag> flagsOfFunction;
+            flagsOfFunction.set(ImageFunctionFlag::HasInlineFrames, sites.hasEncodedInlineFrames());
+            flagsOfFunction.set(ImageFunctionFlag::HasPositions, hasPositions && !sites.positions.isEmpty());
+            flagsOfFunction.set(ImageFunctionFlag::SpillsArgumentRegisters, code.frame.spillsArgumentRegisters);
             SideTableInputs inputs {
+                .flagsOfFunction = flagsOfFunction,
                 .frameRanges = scratch.frameRanges.span(),
                 .frame = frameOf[position],
                 .frameMapRange = frameMapRange,
@@ -264,32 +524,27 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
                 .constructedCallees = scratch.constructedCallees.span(),
                 .callSites = callSites[position].span(),
             };
-            scratch.stream.shrink(0);
-            SideTableParts::append(scratch.stream, inputs);
-            streams[position].reserveInitialCapacity(scratch.stream.size());
-            streams[position].append(scratch.stream.span());
-            result.flags[position] = inputs.flags();
+            appendStream(streams[position], scratch.symbols, inputs);
+            result.sizes[position] = static_cast<uint32_t>(scratch.frameRanges.size() + scratch.handlers.size() + callSites[position].size());
             if (!hasPositions)
                 continue;
             bool beginsGroup = !(position % PositionIndex::functionsBetween);
-            if (beginsGroup)
-                placesInChunks[position / PositionIndex::functionsBetween] = static_cast<uint32_t>(positions.size());
-            encodePositions(positions, scratch.roomForPositions, sites, beginsGroup ? OwnPosition { } : OwnPosition::of(functions[position - 1].sites));
+            encoders[chunk].encode(sites, beginsGroup ? OwnPosition { } : OwnPosition::of(functions[position - 1].sites));
         }
     });
 
     times.didFinish("encode"_s);
 
-    SectionWriter writer(context);
-    result.offsets = writer.appendAll(streams.span());
-    result.bytes = writer.takeBytes();
-    times.didFinish("hold equal streams once"_s);
-    result.positions = joinPositionsOfChunks(chunks, positionsOfChunks.span(), placesInChunks.span(), context);
-    times.didFinish("join positions"_s);
+    codeStreams(result, streams.span(), context);
+    times.didFinish("code streams, hold equal ones once"_s);
+    if (hasPositions)
+        result.positions = joinPositionsOfChunks(chunks, encoders.mutableSpan(), context);
+    times.didFinish("code and join positions"_s);
     forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
         for (unsigned position = chunks.firstIndexOf[chunk]; position < chunks.firstIndexOf[chunk + 1]; ++position)
             streams[position].clear();
-        positionsOfChunks[chunk].clear();
+        if (hasPositions)
+            encoders[chunk] = { };
     });
     times.didFinish("free the streams"_s);
     return result;

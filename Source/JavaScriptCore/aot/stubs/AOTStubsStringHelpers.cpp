@@ -22,13 +22,22 @@ void loadSubstringBaseAndOffset(StubAssembler& jit, GPRReg string, GPRReg base, 
 {
     using CompactFibers = JSRopeString::CompactFibers;
     RELEASE_ASSERT(noOverlap(string, base, offset));
-    constexpr int32_t bytesInFrontOfFiber1 = sizeof(uint64_t) - 6;
     static_assert(CompactFibers::widthOfFiber1LowerInLengthWord == 32 && CompactFibers::shiftOfFiber2InUpperWord == 16 && JSRopeString::offsetOfFiber2() == JSRopeString::offsetOfFiber1Lower() + 4);
-    static_assert(std::endian::native == std::endian::little && JSRopeString::offsetOfFiber1Lower() - bytesInFrontOfFiber1 >= JSRopeString::offsetOfLength());
-    jit.load64(Address(string, JSRopeString::offsetOfFiber1Lower() - bytesInFrontOfFiber1), base);
-    jit.urshift64(TrustedImm32(8 * bytesInFrontOfFiber1), base);
+    static_assert(std::endian::native == std::endian::little);
+#if CPU(ARM64)
+    static_assert(JSRopeString::offsetOfFiber1Lower() == JSRopeString::offsetOfLength() + 4 && !(JSRopeString::offsetOfLength() % sizeof(uint64_t)));
+    jit.loadPair64(Address(string, JSRopeString::offsetOfLength()), base, offset);
+    jit.urshift64(TrustedImm32(CompactFibers::widthOfFiber1LowerInLengthWord), base);
+    jit.insertBitField64(offset, TrustedImm32(CompactFibers::widthOfFiber1LowerInLengthWord), TrustedImm32(CompactFibers::shiftOfFiber2InUpperWord), base);
+    jit.urshift64(TrustedImm32(CompactFibers::shiftOfFiber2InUpperWord), offset);
+#else
+    jit.load32(Address(string, JSRopeString::offsetOfFiber1Lower()), base);
+    jit.load16(Address(string, JSRopeString::offsetOfFiber2()), offset);
+    jit.lshift64(TrustedImm32(CompactFibers::widthOfFiber1LowerInLengthWord), offset);
+    jit.or64(offset, base);
     jit.load64(Address(string, JSRopeString::offsetOfFiber2()), offset);
     jit.urshift64(TrustedImm32(CompactFibers::shiftOfFiber2InUpperWord), offset);
+#endif
 }
 
 void packSubstringFibers(StubAssembler& jit, GPRReg base, GPRReg offset, GPRReg length, GPRReg lengthWord)

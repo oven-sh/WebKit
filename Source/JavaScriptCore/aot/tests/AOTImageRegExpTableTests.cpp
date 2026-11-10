@@ -11,6 +11,7 @@
 #include "AOTImageTestSupport.h"
 #include "AOTImageText.h"
 #include "AOTLimits.h"
+#include "AOTNumbering.h"
 #include "AOTRegExpCompiler.h"
 #include "AOTRegExpRecords.h"
 #include "AOTRegExpSummary.h"
@@ -84,6 +85,7 @@ public:
     RegExpRequests requests;
     CompiledRegExps compiled;
     RegExpSection section;
+    StringNumbers strings;
     RegExpSections sections;
     AlignedBytes bytes;
     std::unique_ptr<Image> image;
@@ -110,6 +112,8 @@ static AlignedBytes imageWithSections(std::initializer_list<std::pair<ImageSecti
         auto content = std::ranges::find(contents, static_cast<ImageSection>(index), [](auto& entry) { return entry.first; });
         size_t size = content == contents.end() ? 0 : content->second.size();
         header.sections[index] = { static_cast<uint32_t>(offset), static_cast<uint32_t>(size) };
+        if (static_cast<ImageSection>(index) == ImageSection::Strings)
+            header.numbers.numberOfStringWords = static_cast<uint32_t>(size / sizeof(ImageStringWord));
         offset = roundUpToMultipleOf<imageSectionAlignment>(offset + size);
     }
     header.codeOffset = roundUpToMultipleOf<imagePageSize>(offset);
@@ -223,7 +227,11 @@ RegExpImage::RegExpImage(std::span<const Pattern> literals, const TestOptions& o
     requests = RegExpRequests(WTF::move(literalRequests), makeRequests(predictedTexts, RegExpRequestOrigin::Candidate));
     if (code == CodeOfRegExpImage::Compiled)
         compileAndLayOut();
-    sections = encodeRegExpRecords({ requests, compiled, section }, context);
+    BitVector everyString(program->strings.size());
+    for (size_t index = 0; index < program->strings.size(); ++index)
+        everyString.quickSet(index);
+    strings = StringNumbers(everyString, { }, program->strings.size());
+    sections = encodeRegExpRecords({ requests, compiled, section, strings }, context);
     TextOfRegExpImage text = encodeNamedText();
     AOT_TEST_CHECK(!context.diagnostics().hasErrors());
 
@@ -588,7 +596,7 @@ static void testEncodingIsDeterministic()
     AOT_TEST_CHECK(first.sections.details == second.sections.details);
     AOT_TEST_CHECK(first.sections.maxOutputSize == second.sections.maxOutputSize);
 
-    RegExpSections again = encodeRegExpRecords({ first.requests, first.compiled, first.section }, first.context);
+    RegExpSections again = encodeRegExpRecords({ first.requests, first.compiled, first.section, first.strings }, first.context);
     AOT_TEST_CHECK(again.records == first.sections.records && again.hashes == first.sections.hashes && again.details == first.sections.details);
 }
 

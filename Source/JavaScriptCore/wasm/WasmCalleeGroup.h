@@ -263,6 +263,7 @@ public:
     MemoryMode mode() const { return m_mode; }
 
     void* const* imageCodePointers() const;
+    void didFault(CallFrame*, const void* pc);
     CodePtr<JSEntryPtrTag> jsEntrypointInImage(const RTT&) const;
     CodePtr<WasmEntryPtrTag> javaScriptImportStubInImage(FunctionSpaceIndex importIndex) const;
 

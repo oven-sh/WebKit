@@ -112,6 +112,32 @@ static Reference buildRemainderByReciprocalMadeInFrontOfLoop(Walker& walker, con
     return built;
 }
 
+static Reference buildRemainderByWholeDivisor(Walker& walker, const Draft& remainder)
+{
+    std::optional<uint32_t> loop = walker.has(Mechanism::LoopInvariants) ? walker.innermostOpenLoop() : std::nullopt;
+    Reference dividend = remainder.operand(OperandIndex::Mod::left);
+    Reference divisor = remainder.operand(OperandIndex::Mod::right);
+    if (!loop || !divisor.isValue() || !walker.standsInFrontOfOpenLoop(*loop, divisor) || walker.standsInFrontOfOpenLoop(*loop, dividend))
+        return { };
+    const Type& typeOfDivisor = walker.types().at(walker.typeOf(divisor));
+    if (!walker.types().at(walker.typeOf(dividend)).isNumber() || !typeOfDivisor.isNumber() || typeOfDivisor.isInteger())
+        return { };
+
+    Draft inFront(Opcode::WholeDivisor, remainder.origin());
+    walker.chooseConservativeFields(inFront);
+    inFront.setDivisorOperand(divisor);
+    Reference wholeDivisor = walker.build(WTF::move(inFront));
+    if (!wholeDivisor || !walker.standsInFrontOfOpenLoop(*loop, wholeDivisor))
+        return { };
+
+    Draft byWholeDivisor(Opcode::RemainderByWholeDivisor, remainder.origin());
+    walker.chooseConservativeFields(byWholeDivisor);
+    byWholeDivisor.setDividendOperand(dividend);
+    byWholeDivisor.setDivisorOperand(divisor);
+    byWholeDivisor.setWholeDivisorOperand(wholeDivisor);
+    return walker.build(WTF::move(byWholeDivisor));
+}
+
 bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     OperatorForm form = operatorFormFor(walker, value.opcode(), value, inputs);
@@ -132,8 +158,12 @@ bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const Inputs
     if (sumStaysBoxed(walker, value, draft))
         draft.representation = Representation::JSValue;
     Origin origin = draft.origin();
-    Reference byReciprocal = value.opcode() == Opcode::Mod && form == OperatorForm::Integers ? buildRemainderByReciprocalMadeInFrontOfLoop(walker, draft) : Reference();
-    walker.bind(value.id(), boxNumberIfNeeded(walker, byReciprocal ? byReciprocal : walker.build(WTF::move(draft)), origin));
+    Reference remainder;
+    if (value.opcode() == Opcode::Mod && form == OperatorForm::Integers)
+        remainder = buildRemainderByReciprocalMadeInFrontOfLoop(walker, draft);
+    else if (value.opcode() == Opcode::Mod && form == OperatorForm::Numbers)
+        remainder = buildRemainderByWholeDivisor(walker, draft);
+    walker.bind(value.id(), boxNumberIfNeeded(walker, remainder ? remainder : walker.build(WTF::move(draft)), origin));
     return true;
 }
 

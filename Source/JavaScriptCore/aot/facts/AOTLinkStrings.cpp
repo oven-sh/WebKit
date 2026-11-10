@@ -16,9 +16,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 bool keyThatBeginsSoMayNamePrototypeLink(const Program& program, const SummaryAccess& access)
 {
-    if (!access.beginningOfKey)
+    StringID beginningOfKey = access.beginningOfKey();
+    if (!beginningOfKey)
         return true;
-    std::span<const uint8_t> beginning = program.string(access.beginningOfKey);
+    std::span<const uint8_t> beginning = program.string(beginningOfKey);
     std::span<const uint8_t> nameOfLink = program.string(program.stringOf(BuiltinNames::__proto__));
     return beginning.size() <= nameOfLink.size() && std::ranges::equal(beginning, nameOfLink.first(beginning.size()));
 }

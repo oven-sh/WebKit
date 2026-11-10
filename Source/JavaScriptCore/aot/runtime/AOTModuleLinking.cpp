@@ -351,15 +351,23 @@ ALWAYS_INLINE_INTO_OTHER_FILES void ModuleLinkWalk::append(ModuleID module, Step
     m_steps.unsafeAppendWithoutCapacityCheck(Step { module.index(), static_cast<uint32_t>(kind), resolvesNames, 0 });
 }
 
-ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
+ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root, RefPtr<WalksOfOneLink>&& earlier)
     : m_root(root)
+    , m_earlier(WTF::move(earlier))
+    , m_numberOfEarlierRoots(m_earlier ? m_earlier->roots.size() : 0)
     , m_linkEpoch(modules.linkEpoch())
 {
+    Vector<uint64_t> passedOver;
+    if (m_earlier) {
+        passedOver = modules.modulesSettledForLinks();
+        for (size_t index = 0; index < passedOver.size(); ++index)
+            passedOver[index] |= m_earlier->modulesWalked[index];
+    }
     struct World {
         const ModuleData& data(uint32_t module) const { return table.data(ModuleID(module)); }
         bool isUnlinked(uint32_t module) const { return modules.status(ModuleID(module)) == ModuleStatus::Unlinked; }
         bool isSettledForLinks(uint32_t module) const { return modules.isSettledForLinks(ModuleID(module)); }
-        std::span<const uint64_t> modulesSettledForLinks() const { return modules.modulesSettledForLinks(); }
+        std::span<const uint64_t> modulesSettledForLinks() const { return passedOver.empty() ? modules.modulesSettledForLinks() : passedOver; }
         bool loadsModulesIndividually() const { return modules.loadsModulesIndividually(); }
         bool goesByAllRequests(uint32_t module) const { return modules.linkGoesByAllRequestsOf(ModuleID(module)); }
         void didGetStateOfItsOwn(uint32_t module) const { modules.didGetStateOfItsOwn(ModuleID(module)); }
@@ -370,6 +378,7 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
         bool resolvesNames(uint32_t module) const { return !table.data(ModuleID(module)).capturesExports() && (!table.requiredNames(ModuleID(module)).empty() || !table.syntheticExports(ModuleID(module)).empty()); }
         const Modules& modules;
         const ModuleTable& table;
+        std::span<const uint64_t> passedOver;
     };
     struct Steps {
         uint32_t size() const { return static_cast<uint32_t>(walk.m_steps.size()); }
@@ -395,7 +404,7 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
         return;
     }
     Steps steps { *this };
-    walkModulesToLink(World { modules, table }, root.index(), steps);
+    walkModulesToLink(World { modules, table, passedOver.span() }, root.index(), steps);
     m_linkEpoch = modules.linkEpoch();
 }
 
@@ -403,6 +412,10 @@ bool ModuleLinkWalk::bringUpToDate(const Modules& modules)
 {
     if (m_linkEpoch != modules.linkEpoch())
         return false;
+    for (size_t index = 0; index < m_numberOfEarlierRoots; ++index) {
+        if (modules.status(m_earlier->roots[index]) == ModuleStatus::Unlinked)
+            return false;
+    }
     if (hasPlan())
         return modules.status(m_root) == ModuleStatus::Unlinked;
     std::span<Step> steps = m_steps.mutableSpan();
@@ -471,35 +484,41 @@ static void reachModulesByRequests(const ModuleTable& table, const BitVector& mo
     }
 }
 
-static Box<MockedModules> createMockedModules(const ModuleTable& table, BitVector&& modules, const MockedModules* earlier)
+static Box<MockedModules> createMockedModules(const ModuleTable& table, const ImportersOfModules& importers, BitVector&& modules, const MockedModules* earlier, std::optional<ModuleID> added)
 {
-    Box<MockedModules> mocks = Box<MockedModules>::create();
+    Box<MockedModules> mocks = Box<MockedModules>::create(importers);
     mocks->modules = WTF::move(modules);
-    BitVector below(table.size());
     Vector<ModuleID, 32> work;
-    for (size_t module : mocks->modules)
-        appendModulesRequestedBy(table, ModuleID(module), work);
-    reachModulesByRequests(table, BitVector(table.size()), WTF::move(work), below);
-    below.merge(mocks->modules);
-    mocks->positionBelow.fill(MockedModules::notBelow, table.size());
-    for (size_t module : below)
-        mocks->positionBelow[module] = mocks->numberBelow++;
-
-    if (earlier)
-        mocks->namedByListsAlone = earlier->namedByListsAlone;
-    else {
-        BitVector isAskedFor(table.size());
-        for (const ModuleRequestData& request : table.allRequests()) {
-            if (!request.isHoisted || table.data(request.targetModule()).kind == ModuleKind::SourceText)
-                isAskedFor.quickSet(request.targetModule().index());
-        }
-        mocks->namedByListsAlone = BitVector(table.size());
-        for (uint32_t module = 0; module < table.size(); ++module) {
-            if (!isAskedFor.quickGet(module))
-                mocks->namedByListsAlone.quickSet(module);
-        }
+    if (earlier && added) {
+        mocks->positionBelow = earlier->positionBelow;
+        mocks->numberBelow = earlier->numberBelow;
+        work.append(*added);
+    } else {
+        mocks->positionBelow.fill(MockedModules::notBelow, table.size());
+        for (size_t module : mocks->modules)
+            work.append(ModuleID(module));
+    }
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        uint32_t& position = mocks->positionBelow[module.index()];
+        if (position != MockedModules::notBelow)
+            continue;
+        position = mocks->numberBelow++;
+        appendModulesRequestedBy(table, module, work);
+    }
+    if (earlier && added && earlier->comeToMock) {
+        mocks->comeToMock = earlier->comeToMock;
+        importers.addModulesAbove({ *added }, *mocks->comeToMock);
     }
     return mocks;
+}
+
+const ImportersOfModules& Modules::importersOfModules() const
+{
+    std::unique_ptr<ImportersOfModules>& importers = m_instance.vm->aotState().importersOfModules;
+    if (!importers)
+        importers = makeUnique<ImportersOfModules>(m_table);
+    return *importers;
 }
 
 void Modules::willMock(ModuleID mocked)
@@ -522,7 +541,7 @@ void Modules::willMock(ModuleID mocked)
     ++m_timesMocked.add(mocked, 0u).iterator->value;
     BitVector modules = m_mocks ? m_mocks->modules : BitVector(m_table.size());
     modules.quickSet(mocked.index());
-    m_mocks = createMockedModules(m_table, WTF::move(modules), m_mocks.get());
+    m_mocks = createMockedModules(m_table, importersOfModules(), WTF::move(modules), m_mocks.get(), mocked);
 }
 
 void Modules::didRemoveMock(ModuleID mocked)
@@ -547,52 +566,18 @@ void Modules::didRemoveMock(ModuleID mocked)
     }
     for (size_t module : others)
         momentOfFirstMockInTestFile(ModuleID(module));
-    m_mocks = createMockedModules(m_table, WTF::move(others), m_mocks.get());
-}
-
-static BitVector findModulesThatComeToMock(const ModuleTable& table, const BitVector& mocked)
-{
-    auto forEachRequestFollowed = [&](auto&& visit) {
-        for (uint32_t importer = 0; importer < table.size(); ++importer) {
-            if (mocked.quickGet(importer))
-                continue;
-            for (const ModuleRequestData& request : table.requests(ModuleID(importer))) {
-                if (!request.isHoisted)
-                    visit(importer, request.targetModule().index());
-            }
-        }
-    };
-    Vector<uint32_t> boundsOfImporters;
-    boundsOfImporters.fill(0, table.size() + 1);
-    forEachRequestFollowed([&](uint32_t, uint32_t imported) {
-        ++boundsOfImporters[imported];
-    });
-    for (uint32_t module = 0; module < table.size(); ++module)
-        boundsOfImporters[module + 1] += boundsOfImporters[module];
-    Vector<uint32_t> importers;
-    importers.fill(0, boundsOfImporters[table.size()]);
-    forEachRequestFollowed([&](uint32_t importer, uint32_t imported) {
-        importers[--boundsOfImporters[imported]] = importer;
-    });
-
-    BitVector comeToMock = mocked;
-    Vector<uint32_t, 32> work;
-    for (size_t module : mocked)
-        work.append(module);
-    while (!work.isEmpty()) {
-        uint32_t imported = work.takeLast();
-        for (uint32_t position = boundsOfImporters[imported]; position < boundsOfImporters[imported + 1]; ++position) {
-            if (!comeToMock.quickSet(importers[position]))
-                work.append(importers[position]);
-        }
-    }
-    return comeToMock;
+    m_mocks = createMockedModules(m_table, importersOfModules(), WTF::move(others), nullptr, std::nullopt);
 }
 
 bool Modules::MocksInGraph::rootComesToMock() const
 {
-    if (!m_mocks->comeToMock)
-        m_mocks->comeToMock = findModulesThatComeToMock(m_table, m_mocks->modules);
+    if (!m_mocks->comeToMock) {
+        Vector<ModuleID, 32> mocked;
+        for (size_t module : m_mocks->modules)
+            mocked.append(ModuleID(module));
+        m_mocks->comeToMock = BitVector(m_table.size());
+        m_mocks->importers->addModulesAbove(WTF::move(mocked), *m_mocks->comeToMock);
+    }
     return m_mocks->comeToMock->quickGet(m_root.index());
 }
 
@@ -693,10 +678,33 @@ void Modules::link(const ModuleLinkWalk& walk)
 void Modules::captureSyntheticExports(ModuleID root, VisitedModuleRecords& visited)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    std::unique_ptr<ModuleLinkWalk> walk = takeLinkWalk(root);
+    if (data(root).linkFollowsRequests() && status(root) == ModuleStatus::Unlinked) {
+        if (ModuleRecord* record = recordIfExists(root); record && visited.contains(record))
+            return;
+    }
+    std::unique_ptr<ModuleLinkWalk> walk = takeKeptLinkWalk(root);
+    if (!walk) {
+        countEvent(*m_instance.vm, RuntimeCounterID::ModuleLinkWalksCreated);
+        RefPtr earlier = m_walksOfLink && m_walksOfLink->visited == &visited && !m_walksOfLink->roots.isEmpty() ? m_walksOfLink : nullptr;
+        bool leavesOutEarlierWalks = !!earlier;
+        walk = makeUnique<ModuleLinkWalk>(*this, root, WTF::move(earlier));
+        if (leavesOutEarlierWalks && !resolvesNamesOutsideLibrary(*walk, scope))
+            walk = makeUnique<ModuleLinkWalk>(*this, root);
+    }
     captureSyntheticExports(*walk, visited);
     RETURN_IF_EXCEPTION(scope, void());
     keepLinkWalk(WTF::move(walk));
+}
+
+bool Modules::resolvesNamesOutsideLibrary(const ModuleLinkWalk& walk, ThrowScope& scope) const
+{
+    bool resolvesNames = false;
+    walk.replay(scope, [&](ModuleID module) {
+        return status(module) == ModuleStatus::Unlinked;
+    }, [](ModuleLinkWalk::Leaf, ModuleID) { }, [&](ModuleID module, bool moduleResolvesNames) {
+        resolvesNames = resolvesNames || (moduleResolvesNames && !findsItsNamesInLibraryAlone(module));
+    });
+    return resolvesNames;
 }
 
 void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleRecords& visited)
@@ -704,19 +712,19 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
-    bool resolvesNames = false;
-    walk.replay(scope, [&](ModuleID module) {
-        return status(module) == ModuleStatus::Unlinked;
-    }, [](ModuleLinkWalk::Leaf, ModuleID) { }, [&](ModuleID module, bool moduleResolvesNames) {
-        resolvesNames |= moduleResolvesNames && !findsItsNamesInLibraryAlone(module);
-    });
-
+    bool resolvesNames = resolvesNamesOutsideLibrary(walk, scope);
     MocksInGraph mocks = mocksInGraph(walk.root());
     bool needsPath = data(walk.root()).reachesUncompiledCode();
+    RefPtr<WalksOfOneLink> walks = m_walksOfLink;
+    if (walks && walks->visited != &visited)
+        walks = nullptr;
+    if (!walks && needsPath)
+        walks = adoptRef(*new WalksOfOneLink(visited));
+    SetForScope walksOfLink(m_walksOfLink, walks);
     Vector<ModuleID, 16> path;
     size_t visitedPathLength = 0;
 
-    walk.replay(scope, [&](ModuleID module) {
+    bool didEnterRoot = walk.replay(scope, [&](ModuleID module) {
         if (status(module) != ModuleStatus::Unlinked)
             return false;
         ModuleRecord* record = recordIfExists(module);
@@ -762,6 +770,16 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
         path.removeLast();
         visitedPathLength = std::min(visitedPathLength, path.size());
     });
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!walks || !didEnterRoot)
+        return;
+    if (walks->modulesWalked.isEmpty())
+        walks->modulesWalked.fill(0, m_modulesSettledForLinks.size());
+    walk.forEachModuleOfProgram([&](ModuleID module) {
+        if (!mocks.hides(module))
+            walks->modulesWalked[module.index() / 64] |= 1ull << (module.index() % 64);
+    });
+    walks->roots.append(walk.root());
 }
 
 void Modules::finishLink(ModuleID root, LinkContext& context)
@@ -810,8 +828,15 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         return;
 
     KeepsAnswers keepsAnswers(*this);
-    checkRequiredNames(modulesThatResolveNames.span());
-    RETURN_IF_EXCEPTION(scope, void());
+    for (const ModuleID& module : modulesThatResolveNames) {
+        checkRequiredNames(std::span(&module, 1));
+        if (scope.exception()) [[unlikely]] {
+            m_linkFailures.set(walk.root(), module);
+            return;
+        }
+    }
+    if (!m_linkFailures.isEmpty()) [[unlikely]]
+        m_linkFailures.remove(walk.root());
 
     for (ModuleID module : modulesThatResolveNames) {
         if (!isUnlinked(module))
@@ -1396,6 +1421,17 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
     }
     if (JSValue original = isCommonJSFile && activeMock(file) ? ensureLoaded(file).exportsOfOriginalBesideMock.get() : JSValue())
         return original;
+    if (!isCommonJSFile && isMocked(file) && m_originalsEvaluatedUnderMock.get(file.index()) && !m_modulesRetainedByInFlightLoads.get(file.index()) && status(file) == ModuleStatus::Evaluated && !delegatesWithoutPlugins(file)) {
+        if (JSValue error = ensureLoaded(file).errorOfModuleThatRanBesideMock.get()) [[unlikely]] {
+            throwException(realm, scope, error);
+            return { };
+        }
+        if (owedBelowOriginal == OwedBelowOriginal::IsPaid) {
+            evaluateDueDependencies(file);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        RELEASE_AND_RETURN(scope, originalNamespace(file));
+    }
     if (activeMock(file) || delegatesWithoutPlugins(file))
         return { };
     LoadedModule* loaded = loadedIfExists(file);

@@ -1,5 +1,5 @@
-# Five closures meet at the parameter of `run`, so its call is a call of the lost functions, and `wrap` is one of them: it is entered with one argument, `true`. If a function that only passes its rest list on heard of the calls that name it alone, the second parameter of `take` would be proven a string while `run(wrap)` leaves it `undefined`, and the first an `i32` while it is `true`.
-#   function take(a, b) { return b; }  function wrap(...list) { return take(...list); }  function run(f) { return f(true); }  wrap(1, "x"); run(wrap); run(other4); run(other5); run(other6); run(other7);
+# Nine closures meet at the parameter of `run`, so its call is a call of the lost functions, and `wrap` is one of them: it is entered with one argument, `true`. If a function that only passes its rest list on heard of the calls that name it alone, the second parameter of `take` would be proven a string while `run(wrap)` leaves it `undefined`, and the first an `i32` while it is `true`.
+#   function take(a, b) { return b; }  function wrap(...list) { return take(...list); }  function run(f) { return f(true); }  wrap(1, "x"); run(wrap); run(other4); run(other5); run(other6); run(other7); run(<one of four more>);
 # RUN: link functions mechanisms=all
 # CHECK: function f2 callers-known {{*}}result=undefined|true|string returns=
 # CHECK-NEXT: parameter 0 expected=undefined|true|i32 proven=undefined|true|int[0, 2147483647]
@@ -15,19 +15,27 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v2 = NewClosure function=f1
     v3 = Integer integer=1
     v4 = String string="x"
-    v5 = Call v2, -, v3, v4 calleeName="wrap"
-    v6 = NewClosure function=f3
-    v7 = NewClosure function=f4
-    v8 = NewClosure function=f5
-    v9 = NewClosure function=f6
-    v10 = NewClosure function=f7
-    v11 = Call v6, -, v2 calleeName="run"
-    v12 = Call v6, -, v7 calleeName="run"
-    v13 = Call v6, -, v8 calleeName="run"
-    v14 = Call v6, -, v9 calleeName="run"
-    v15 = Call v6, -, v10 calleeName="run"
-    v16 = Undefined
-    Return v16
+    v5 = NewClosure function=f8
+    v6 = NewClosure function=f9
+    v7 = NewClosure function=f10
+    v8 = NewClosure function=f11
+    v9 = Call v2, -, v3, v4 calleeName="wrap"
+    v10 = NewClosure function=f3
+    v11 = NewClosure function=f4
+    v12 = NewClosure function=f5
+    v13 = NewClosure function=f6
+    v14 = NewClosure function=f7
+    v15 = Call v10, -, v2 calleeName="run"
+    v16 = Call v10, -, v11 calleeName="run"
+    v17 = Call v10, -, v12 calleeName="run"
+    v18 = Call v10, -, v13 calleeName="run"
+    v19 = Call v10, -, v14 calleeName="run"
+    v20 = Call v10, -, v5 calleeName="run"
+    v21 = Call v10, -, v6 calleeName="run"
+    v22 = Call v10, -, v7 calleeName="run"
+    v23 = Call v10, -, v8 calleeName="run"
+    v24 = Undefined
+    Return v24
 }
 function f1 name="wrap" module=m0 flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
   b0(v0: Array):
@@ -61,6 +69,26 @@ function f6 name="other6" module=m0 thisType={type=anything} results=[{type=anyt
     Return v0
 }
 function f7 name="other7" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f8 name="more8" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f9 name="more9" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f10 name="more10" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f11 name="more11" module=m0 thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=7
     Return v0

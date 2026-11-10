@@ -16,6 +16,7 @@
 #include "AOTHeaps.h"
 #include "AOTInliningAcrossFiles.h"
 #include "AOTPureOperations.h"
+#include "AOTRelocation.h"
 #include "AOTSavedFrameEmitter.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTStubCatalog.h"
@@ -260,7 +261,7 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
     }
     emitCallInstruction(jit, called, moves);
     if (neverReturns)
-        jit.breakpoint();
+        emitUnreachable(jit);
     else if (branchesOnFlags)
         emitBranchOnFlags(jit, params);
 }
@@ -1666,6 +1667,10 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     bool isTailCall = origin.isTailCall || options.callerHasLeft;
     uint8_t kind = callSiteKindsByColumns[(options.constructs ? 1 : 0) | (isTailCall ? 2 : 0) | (isInsideCallee ? 4 : 0) | (calledBuiltin ? 8 : 0)];
     RELEASE_ASSERT(kind != noCallSiteKind);
+    if (options.rejectsOnThrow) {
+        RELEASE_ASSERT(static_cast<CallSiteKind>(kind) == CallSiteKind::Plain);
+        return { .origin = origin, .kind = CallSiteKind::AwaitedCall };
+    }
     return { .origin = origin, .kind = static_cast<CallSiteKind>(kind), .calledBuiltin = calledBuiltin, .constructedCallee = options.constructedCallee };
 }
 

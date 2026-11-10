@@ -879,6 +879,8 @@ void AccessEmitter::returnWhatMethodOfBuiltinClassGives(const ValueContext& read
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     auto boxed = [&](ValueID id) {
         ValueID made = inFrontOfBox(id);
+        if (std::optional<Boxed> word = generator().findBoxed(made))
+            return word->value();
         return conversions.box(read, get(made), typeOf(made)).value();
     };
     for (ValueID argument : call.argumentsOperands())
@@ -1327,6 +1329,16 @@ Condition AccessEmitter::hasByVal(const OperationContext& context, Boxed receive
     return Condition(m_out.castToInt32(callStub(context, inByValCached(PresenceQuestion::In), { receiver.value(), key.value() }).first));
 }
 
+LValue AccessEmitter::tryUnboxConstantIndex(Boxed key)
+{
+    if (!key.value()->hasInt64())
+        return nullptr;
+    JSValue constant = JSValue::decode(key.value()->asInt64());
+    if (!constant.isInt32() || constant.asInt32() < 0)
+        return nullptr;
+    return m_out.constInt64(constant.asInt32());
+}
+
 std::optional<AccessEmitter::ElementKey> AccessEmitter::elementKeyOf(const ValueContext& value)
 {
     ValueID property = value->propertyOperand();
@@ -1364,6 +1376,41 @@ static std::optional<AOT::ExpectedElements> stubFormOfExpectedElements(ExpectedE
         return AOT::ExpectedElements::Float64Array;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool AccessEmitter::readsElementsInLoop(const ValueContext& value, ValueID object)
+{
+    bool standsInRareBlock = m_code.at(value.block()).frequency == BlockFrequency::Rare;
+    return !standsInRareBlock && m_generator.isInLoop(value.block()) && typeOf(object).hasObjects();
+}
+
+Boxed AccessEmitter::presentElementOrElse(ValueID objectOperand, const ElementKey& key, LBasicBlock outOfLine)
+{
+    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
+    Boxed object = in<Boxed>(objectOperand);
+    Integer index;
+    if (key.isInteger)
+        index = Integer(key.value);
+    else {
+        Boxed boxedKey(key.value);
+        branchUnless(isInt32(boxedKey), outOfLine);
+        index = signExtended(unboxInt32(boxedKey));
+    }
+    Type known = typeOf(objectOperand);
+    if (known.primitives) {
+        Condition isPresentCell = isCell(object);
+        if (known.primitives & Primitive::Absent)
+            isPresentCell = logicalAnd(isPresentCell, isNotEmpty(object));
+        branchUnless(isPresentCell, outOfLine);
+    }
+    CellPointer cell = unboxCell(object);
+    branchUnless(elements.holdsBoxedElements(cell), outOfLine);
+    ArrayElements storage = elements.elementsOf(cell);
+    LengthTest test = elements.testLength(index, storage);
+    branchUnless(test.isInside, outOfLine);
+    Boxed element = elements.loadBoxedElement(storage, test.indexInside);
+    branchUnless(isNotEmpty(element), outOfLine);
+    return element;
 }
 
 void AccessEmitter::generateElemGet(const ValueContext& value)
@@ -1425,6 +1472,17 @@ void AccessEmitter::generateElemGet(const ValueContext& value)
         define(value, join.finish());
         return;
     }
+    bool keyIsIndex = key->isInteger || value->keyIsIntegral() || typeOf(value->propertyOperand()).isNumber();
+    if (!extraPropertiesWord && !expected && keyIsIndex && readsElementsInLoop(value, value->objectOperand())) {
+        LBasicBlock outOfLine = newBlock();
+        Join<Boxed> join(m_out);
+        join.add(presentElementOrElse(value->objectOperand(), *key, outOfLine));
+
+        m_out.appendTo(outOfLine);
+        join.add(Boxed(callStub(value, stub, { object.value(), key->value }, { .isOnRarePath = true }).first));
+        define(value, join.finish());
+        return;
+    }
     if (!extraPropertiesWord) {
         define(value, Boxed(callStub(value, stub, { object.value(), key->value }).first));
         return;
@@ -1476,7 +1534,11 @@ void AccessEmitter::generateElemSet(const ValueContext& value)
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     const PlacedSlot* extraPropertiesWord = elements.extraPropertiesWordOfReadByPosition(value);
     if (!extraPropertiesWord) {
-        callStub(value, stub, { object.value(), key->value, stored.value() });
+        LValue constantIndex = key->isInteger || expected ? nullptr : tryUnboxConstantIndex(Boxed(key->value));
+        if (constantIndex)
+            callStub(value, putByValAtConstantIndex(forMode(value->mode(), JSC::ECMAMode::strict(), JSC::ECMAMode::sloppy())), { object.value(), constantIndex, stored.value() });
+        else
+            callStub(value, stub, { object.value(), key->value, stored.value() });
         return;
     }
     LBasicBlock outOfLine = newBlock();
@@ -1506,7 +1568,19 @@ void AccessEmitter::generateElemSet(const ValueContext& value)
 void AccessEmitter::generateElemHas(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->objectOperand());
-    defineTest(value, hasByVal(value, object, in<Boxed>(value->propertyOperand())));
+    Boxed key = in<Boxed>(value->propertyOperand());
+    if (!typeOf(value->propertyOperand()).isNumber() || !readsElementsInLoop(value, value->objectOperand())) {
+        defineTest(value, hasByVal(value, object, key));
+        return;
+    }
+    LBasicBlock outOfLine = newBlock();
+    Join<Word32> join(m_out);
+    presentElementOrElse(value->objectOperand(), ElementKey { key.value(), false }, outOfLine);
+    join.add(word32(1));
+
+    m_out.appendTo(outOfLine);
+    join.add(Word32(hasByVal(value, object, key).value()));
+    defineTest(value, Condition(join.finish().value()));
 }
 
 void AccessEmitter::generateElemDelete(const ValueContext& value)

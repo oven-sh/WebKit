@@ -137,6 +137,7 @@ public:
     std::optional<ModuleID> writerOfExport(ModuleID, unsigned place) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
     std::optional<ModuleFailureID> loadFailure(ModuleID) const;
+    bool hasLoadFailures() const { return !m_tables->moduleFailures().empty() && m_tables->moduleFailures().back().isLoadOfModule(); }
 
     std::optional<ModuleID> findByPath(StringView publicPath) const { return findByPath(publicPath, publicPath.hash()); }
     std::optional<ModuleID> findByPath(StringView publicPath, unsigned hashOfPath) const;
@@ -156,6 +157,8 @@ public:
     bool isRuntimeFunction(FunctionID) const;
 
     String fullPath(ModuleID) const;
+    bool hasQueryInDirectory() const;
+    bool pathWithoutQueryEndsWith(ModuleID, StringView end, bool hasQueryInDirectory) const;
     String displayPathText(ModuleID) const;
     String pathTextForLineColumns(ModuleID) const;
     bool hasFilePath(ModuleID module) const { return data(module).hasExportTable() || data(module).kind == ModuleKind::CommonJs; }
@@ -193,6 +196,18 @@ struct CyclesOfImports {
     Vector<Member> membersByModule;
     Vector<uint32_t> members;
     Vector<uint32_t> firstMemberOf;
+};
+
+struct ImportersOfModules {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ImportersOfModules);
+
+    explicit ImportersOfModules(const ModuleTable&);
+
+    void addModulesAbove(Vector<ModuleID, 32>&&, BitVector& found) const;
+
+    Vector<uint32_t> importers;
+    Vector<uint32_t> firstImporterOf;
+    BitVector namedByListsAlone;
 };
 
 struct ReexportedNames {

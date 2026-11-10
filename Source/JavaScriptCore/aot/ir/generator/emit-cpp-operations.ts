@@ -240,22 +240,20 @@ struct PositionTable {
 // Which case of a switch each member takes, in one table that every copy of the switch reads.
 template<typename E, uint8_t (*find)(E)>
 struct CaseTable {
-    static constexpr std::array<uint8_t, numberOfEnumerators<E>> tabulate()
+    static constexpr size_t numberOfPlaces = std::bit_ceil<size_t>(numberOfEnumerators<E>);
+
+    static constexpr std::array<uint8_t, numberOfPlaces> tabulate()
     {
-        std::array<uint8_t, numberOfEnumerators<E>> cases { };
+        std::array<uint8_t, numberOfPlaces> cases { };
+        cases.fill(std::numeric_limits<uint8_t>::max());
         for (E member : allMembersOf<E>)
             cases[static_cast<size_t>(member)] = find(member);
         return cases;
     }
 
-    static constexpr std::array<uint8_t, numberOfEnumerators<E>> cases = tabulate();
+    static constexpr std::array<uint8_t, numberOfPlaces> cases = tabulate();
 
-    static uint8_t at(E member)
-    {
-        size_t index = static_cast<size_t>(member);
-        RELEASE_ASSERT(index < cases.size());
-        return cases[index];
-    }
+    static uint8_t at(E member) { return cases[static_cast<size_t>(member) % numberOfPlaces]; }
 };`.split("\n");
 
 const positionIncludes = `#include "AOTSchemaFlagMasks.h"
@@ -434,6 +432,8 @@ function operationsHeader(schema: Schema): string[] {
     '"AOTSchemaOperandIndexes.h"',
     "<algorithm>",
     "<array>",
+    "<bit>",
+    "<limits>",
     "<optional>",
     "<span>",
     "<wtf/StdLibExtras.h>",

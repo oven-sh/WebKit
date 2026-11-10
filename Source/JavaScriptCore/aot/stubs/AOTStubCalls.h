@@ -163,10 +163,18 @@ struct RememberedStubKey {
     GPRReg immediateGPR;
 };
 
+struct CachedStubIndex {
+    uint64_t bits;
+    uint32_t unit;
+    uint32_t index;
+};
+
 struct RememberedStubKeys {
     static constexpr unsigned logOfNumberOfKeys = 8;
 
-    std::array<RememberedStubKey, 1u << logOfNumberOfKeys> keys;
+    std::array<RememberedStubKey, 1u << logOfNumberOfKeys> keys { };
+    std::array<CachedStubIndex, 1u << logOfNumberOfKeys> indexCache { };
+    uint32_t unit { 0 };
 };
 
 class StubCalls {
@@ -207,7 +215,8 @@ private:
     ResolvedKey resolveKey(StubKey, std::optional<uint32_t> immediate) const;
     StubKey prepare(CCallHelpers&, StubKey, std::optional<uint32_t> immediate);
     CodeSymbol prepare(StubKey, NumberedImmediate);
-    uint32_t indexOf(StubKey, std::optional<uint32_t> mentionOfImmediate = std::nullopt);
+    uint32_t indexOf(StubKey);
+    uint32_t indexOf(StubKey, std::optional<uint32_t> mentionOfImmediate);
     uint32_t indexOf(Typed::CodeUnit);
     uint32_t emitCall(CCallHelpers&, StubKey called, CodeSymbol, const RecordedCall&);
     Reg m_registerFilledInFrontOfNextCall;
@@ -218,6 +227,7 @@ private:
     RelocationRecorder& m_relocations;
     std::unique_ptr<RememberedStubKeys> m_ownRememberedKeys;
     RememberedStubKeys& m_rememberedKeys;
+    const uint32_t m_unit;
     Vector<RecordedCall, 32> m_calls;
     Vector<StubKey> m_stubKeys;
     Vector<std::optional<uint32_t>, 16> m_mentionsOfImmediates;

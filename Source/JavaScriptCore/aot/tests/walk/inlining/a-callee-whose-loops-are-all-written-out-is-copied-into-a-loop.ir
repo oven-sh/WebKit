@@ -3,7 +3,7 @@
 # RUN: walk f2:Body mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: frame 1 callee=f1
-# Nine turns are not written out: such a callee is called as before.
+# Nine turns are not written out: such a callee is called as before, where it has a second call.
 # RUN(NINE): walk f4:Body mechanisms=all
 # NINE-LABEL: code f4:Body
 # NINE-NOT: frame 1 callee=f3
@@ -12,7 +12,7 @@
 # ANSWER-NEXT: NaN
 # ANSWER-NEXT: NaN
 # ANSWER-NEXT: 1000
-# ANSWER-NEXT: 4500
+# ANSWER-NEXT: 4545
 # ANSWER-NEXT: TypeError
 # ANSWER-NEXT: exited with 0
 
@@ -104,5 +104,7 @@ function f4 name="g" module=m0 flags=[HasExplicitName] length=2 thisType={type=a
     v12 = Increment v6
     Jump -> next b1(v11, v12)
   b3():
-    Return v5
+    v13 = Call v2, -, v0, v1
+    v14 = Add v5, v13
+    Return v14
 }

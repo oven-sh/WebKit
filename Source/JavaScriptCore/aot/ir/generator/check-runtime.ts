@@ -144,6 +144,7 @@ const justifiedDifferences: ReadonlyMap<string, string> = new Map([
   ["AppendValuesOfMap names an index of Elements", "as AppendHole"],
   ["SetArrayLength names an index of Elements", "as AppendHole"],
   ["TruncateNewArray names an index of Elements", "as AppendHole"],
+  ["SortNumbers names an index of Elements", "as AppendHole"],
   ["SetMappedArgument names an index of Elements", "a row of the run time has no index; the receiver is an arguments object"],
   ["NewArray leaves out throws", "for want of memory alone: the cell is null and the next use faults"],
   ["CreateRest leaves out throws", "as NewArray"],

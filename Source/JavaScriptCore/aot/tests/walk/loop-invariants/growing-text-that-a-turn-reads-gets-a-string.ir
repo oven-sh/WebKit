@@ -1,18 +1,20 @@
 # whoever takes a growing text in its loop and is no growth gets a string that is made of what the builder holds, and the builder goes on. The reads of one state in one block share one string
-# function told(n, part) { .. let s = ""; for (let i = 0; i < n; i++) { s += part; sink(s); } return s; }
-# function twice(n, part) { .. for (..) { s += part; sink(s); sink(s); } .. }
-# function handed(n, part) { .. for (..) { s += part; keep(s); } .. }   a direct call looks at the kind of no argument: only the string in the place of the name keeps the builder from the callee
+# function told(n, part) { .. let s = ""; for (let i = 0; i < n; i++) { s += part; if (kept) sink(s); } return s; }
+# function twice(n, part) { .. for (..) { s += part; if (kept) { sink(s); sink(s); } } .. }
+# function handed(n, part) { .. for (..) { s += part; if (kept) keep(s); } .. }   a direct call looks at the kind of no argument: only the string in the place of the name keeps the builder from the callee
 # function joined(n, part) { .. for (..) { s += part; sink(s + ": " + part); } .. }   a join with the text in front whose result is never the variable again reads the text
 # function older(n, part) { .. for (..) { const before = s; s += part; sink(before); } .. }   the one property that is changed: the state that is read is not the newest, so two states are live and nothing is begun
+# function always(n, part) { .. for (..) { s += part; sink(s); } .. }   every iteration passes the text: a builder would copy it every time, so it stays a rope
+# function either(n, part) { .. for (..) { s += part; if (kept) sink(s); else keep(s); } .. }   every iteration passes the text, on one arm or the other: a rope too
 # RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
 # CHECK-LABEL: code f1:Body
 # CHECK: StringBuilderBegin
 # CHECK: isLoopHead=true
 # CHECK: StringBuilderAppendString
+# CHECK: StringBuilderFinish
 # CHECK: [[string]]: {{*}}StringBuilderToString
 # CHECK: [[boxed]]: {{*}}= Box [[string]]
 # CHECK: = CallResolved {{*}}[[boxed]]
-# CHECK: StringBuilderFinish
 # RUN(ALL): walk f1 mechanisms=all
 # ALL-LABEL: code f1:Body
 # ALL: isLoopHead=true
@@ -41,6 +43,12 @@
 # RUN(OLDERALL): walk f4 mechanisms=all
 # OLDERALL-LABEL: code f4:Body
 # OLDERALL-NOT: StringBuilder
+# RUN(ALWAYS): walk f7 mechanisms=all
+# ALWAYS-LABEL: code f7:Body
+# ALWAYS-NOT: StringBuilder
+# RUN(EITHER): walk f8 mechanisms=all
+# EITHER-LABEL: code f8:Body
+# EITHER-NOT: StringBuilder
 
 variable g0 name="kept" module=m0 declared={type=anything}
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -54,13 +62,15 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v4 = NewClosure function=f3
     v5 = NewClosure function=f4
     v6 = NewClosure function=f6
-    v7 = Call v1, -, v2, v3, v4, v5, v6
-    Return v7
+    v7 = NewClosure function=f7
+    v8 = NewClosure function=f8
+    v9 = Call v1, -, v2, v3, v4, v5, v6, v7, v8
+    Return v9
 }
 function f1 name="told" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = TypeTest v1 testedType=string
-    Branch v2 -> taken b1(| 0), notTaken b5()
+    Branch v2 -> taken b1(| 0), notTaken b7()
   b1(v3):
     v4 = Builtin builtin=GlobalThis
     v5 = PropGet v4 key="sink" [isFreeName]
@@ -70,21 +80,26 @@ function f1 name="told" module=m0 length=2 thisType={type=anything} parameters=[
   b2(v8, v9):
     LoopHint
     v11 = Less v9, v0
-    Branch v11 -> taken b3(), notTaken b4()
+    Branch v11 -> taken b3(), notTaken b6()
   b3():
     v12 = Add v8, v3
-    v13 = Call v5, -, v12
-    v14 = Increment v9
-    Jump -> next b2(v12, v14)
+    v13 = GetModuleVariable variable=g0
+    Branch v13 -> taken b4(), notTaken b5()
   b4():
-    Return v8
+    v14 = Call v5, -, v12
+    Jump -> next b5()
   b5():
+    v15 = Increment v9
+    Jump -> next b2(v12, v15)
+  b6():
+    Return v8
+  b7():
     Return v1
 }
 function f2 name="twice" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = TypeTest v1 testedType=string
-    Branch v2 -> taken b1(| 0), notTaken b5()
+    Branch v2 -> taken b1(| 0), notTaken b7()
   b1(v3):
     v4 = Builtin builtin=GlobalThis
     v5 = PropGet v4 key="sink" [isFreeName]
@@ -94,22 +109,27 @@ function f2 name="twice" module=m0 length=2 thisType={type=anything} parameters=
   b2(v8, v9):
     LoopHint
     v11 = Less v9, v0
-    Branch v11 -> taken b3(), notTaken b4()
+    Branch v11 -> taken b3(), notTaken b6()
   b3():
     v12 = Add v8, v3
-    v13 = Call v5, -, v12
-    v14 = Call v5, -, v12
-    v15 = Increment v9
-    Jump -> next b2(v12, v15)
+    v13 = GetModuleVariable variable=g0
+    Branch v13 -> taken b4(), notTaken b5()
   b4():
-    Return v9
+    v14 = Call v5, -, v12
+    v15 = Call v5, -, v12
+    Jump -> next b5()
   b5():
+    v16 = Increment v9
+    Jump -> next b2(v12, v16)
+  b6():
+    Return v9
+  b7():
     Return v1
 }
 function f3 name="handed" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = TypeTest v1 testedType=string
-    Branch v2 -> taken b1(| 0), notTaken b5()
+    Branch v2 -> taken b1(| 0), notTaken b7()
   b1(v3):
     v4 = NewClosure function=f5
     v5 = String string=""
@@ -118,15 +138,20 @@ function f3 name="handed" module=m0 length=2 thisType={type=anything} parameters
   b2(v7, v8):
     LoopHint
     v10 = Less v8, v0
-    Branch v10 -> taken b3(), notTaken b4()
+    Branch v10 -> taken b3(), notTaken b6()
   b3():
     v11 = Add v7, v3
-    v12 = Call v4, -, v11 calleeName="keep"
-    v13 = Increment v8
-    Jump -> next b2(v11, v13)
+    v12 = GetModuleVariable variable=g0
+    Branch v12 -> taken b4(), notTaken b5()
   b4():
-    Return v7
+    v13 = Call v4, -, v11 calleeName="keep"
+    Jump -> next b5()
   b5():
+    v14 = Increment v8
+    Jump -> next b2(v11, v14)
+  b6():
+    Return v7
+  b7():
     Return v1
 }
 function f4 name="older" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -184,5 +209,62 @@ function f6 name="joined" module=m0 length=2 thisType={type=anything} parameters
   b4():
     Return v8
   b5():
+    Return v1
+}
+function f7 name="always" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = String string=""
+    v7 = Integer
+    Jump -> next b2(v6, v7)
+  b2(v8, v9):
+    LoopHint
+    v11 = Less v9, v0
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    v12 = Add v8, v3
+    v13 = Call v5, -, v12
+    v14 = Increment v9
+    Jump -> next b2(v12, v14)
+  b4():
+    Return v8
+  b5():
+    Return v1
+}
+function f8 name="either" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b8()
+  b1(v3):
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = NewClosure function=f5
+    v7 = String string=""
+    v8 = Integer
+    Jump -> next b2(v7, v8)
+  b2(v9, v10):
+    LoopHint
+    v12 = Less v10, v0
+    Branch v12 -> taken b3(), notTaken b7()
+  b3():
+    v13 = Add v9, v3
+    v14 = GetModuleVariable variable=g0
+    Branch v14 -> taken b4(), notTaken b5()
+  b4():
+    v15 = Call v5, -, v13
+    Jump -> next b6()
+  b5():
+    v16 = Call v6, -, v13 calleeName="keep"
+    Jump -> next b6()
+  b6():
+    v17 = Increment v10
+    Jump -> next b2(v13, v17)
+  b7():
+    Return v9
+  b8():
     Return v1
 }

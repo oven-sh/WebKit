@@ -604,6 +604,7 @@ JSValue BuiltinCells::fillWatchedValue(JSGlobalObject* realm, BuiltinCellKey key
         }
         return value;
     }
+    m_state.immortalCells->add(holder);
     if (m_watchesOfValues.size() <= place)
         m_watchesOfValues.grow(m_values.size());
     m_watchesOfValues[place] = WTF::move(watch);
@@ -959,6 +960,13 @@ static constinit bool locksBuiltinsWithoutImage = false;
 bool locksBuiltins(JSGlobalObject* realm)
 {
     return (realm->vm().hasCompiledCode() || locksBuiltinsWithoutImage) && realm->globalObjectMethodTable()->moduleHost;
+}
+
+void acceptForeignBinaryData(JSGlobalObject* realm)
+{
+    Instance* instance = realm->aotInstance();
+    if (instance && instance->state)
+        instance->state->acceptsForeignBinaryData = true;
 }
 
 void lockBuiltinsWithoutImage()

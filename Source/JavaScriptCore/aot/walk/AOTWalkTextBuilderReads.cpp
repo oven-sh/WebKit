@@ -12,6 +12,8 @@
 #include "AOTIRProgram.h"
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
+#include "AOTWalkStrings.h"
+#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -75,6 +77,34 @@ Reference buildTruthinessOfStringInBuilder(Walker& walker, StringInBuilder& text
     return buildTestOfLengthInTextBuilderReads(walker, WTF::move(hasCodeUnits));
 }
 
+static bool buildEqualityBehindLengthInTextBuilderReads(Walker& walker, const BodyValue& reader, StringInBuilder& text, Reference name, Reference written, Origin origin)
+{
+    StringID known = written ? textKnownForStrings(walker, written) : StringID();
+    if (!known || operandsNarrowedBehindTestForStrings(walker, reader.id()) != std::optional<uint32_t>(0))
+        return false;
+    Reference length = lengthOfTextInTextBuilderReads(walker, text, name, origin);
+    if (!length)
+        return true;
+    Draft hasLength(Opcode::StrictEq, origin);
+    hasLength.setLeftOperand(length);
+    hasLength.setRightOperand(integerForStrings(walker, lengthOfTextForStrings(walker, known)));
+    Reference isOfSameLength = buildTestOfLengthInTextBuilderReads(walker, WTF::move(hasLength));
+    std::array<Reference, 1> isEqual;
+    auto compare = [&](std::span<Reference> results) {
+        Reference string = materializeStringInBuilder(walker, text, name, origin);
+        results[0] = string ? buildOperatorForStrings(walker, Opcode::StrictEq, string, written, origin) : Reference();
+    };
+    auto giveNo = [&](std::span<Reference> results) {
+        results[0] = walker.constant(PrimitiveKnownToFolding::boolean(false));
+    };
+    bool isBuilt = buildArmsForStrings(walker, isOfSameLength, BlockFrequency::Normal, ArmForStrings(compare), ArmForStrings(giveNo), isEqual);
+    text.stringOfState = { };
+    text.lengthOfState = { };
+    if (isBuilt)
+        walker.bind(reader.id(), isEqual[0]);
+    return true;
+}
+
 bool readsTextWithoutString(Walker& walker, const BodyValue& reader, StringInBuilder& text, Reference name)
 {
     Opcode opcode = reader.opcode();
@@ -105,8 +135,11 @@ bool readsTextWithoutString(Walker& walker, const BodyValue& reader, StringInBui
         ValueID left = reader.operand(OperandIndex::StrictEq::left);
         ValueID right = reader.operand(OperandIndex::StrictEq::right);
         bool comparesWithEmptyText = (namesText(left) && isEmptyTextInTextBuilderReads(walker, walker.referenceOf(right))) || (namesText(right) && isEmptyTextInTextBuilderReads(walker, walker.referenceOf(left)));
-        if (!comparesWithEmptyText)
-            return false;
+        if (!comparesWithEmptyText) {
+            if (namesText(left) == namesText(right))
+                return false;
+            return buildEqualityBehindLengthInTextBuilderReads(walker, reader, text, name, walker.referenceOf(namesText(left) ? right : left), origin);
+        }
         Reference length = lengthOfTextInTextBuilderReads(walker, text, name, origin);
         if (!length)
             return true;

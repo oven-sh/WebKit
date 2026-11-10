@@ -480,6 +480,26 @@ ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker& walker, ValueID i
     return { cut, found.isDeclared, found.isHeld };
 }
 
+ExpectationOfNumber numberExpectedOfAddendOfPosition(Walker& walker, const BodyValue& operation, ValueID operand, ExpectationOfNumber found)
+{
+    if (!found.type || !sumsFollowedInNumberExpectations.contains(operation.opcode()) || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers))
+        return found;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID written = index.stripCasts(operand);
+    LoopID loop = index.loopOf(index.blockOf(operation.id()));
+    if (!written || !loop || index.isInLoop(index.blockOf(written), loop))
+        return found;
+    TypeArena& types = walker.types();
+    Type expected = types.at(found.type);
+    if (!holdsNumbersBesideNullishAlone(expected) || expected.isInt32OrNullish())
+        return found;
+    TypeID cut = withNumbersCutToInt32(types, expected);
+    TypeID proven = provenTypeInNumberExpectations(walker, operand);
+    if (!cut || (proven && !types.overlap(proven, cut)) || !usesSpeakForInt32(walker, operation.id()))
+        return found;
+    return { cut, found.isDeclared, found.isHeld };
+}
+
 ExpectationOfNumber numbersExpectedOf(Walker& walker, ValueID input, ExpectationOfNumber found)
 {
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers))

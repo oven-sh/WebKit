@@ -107,9 +107,67 @@ static ValueID findLastCallInRowOfCallsOfMethodsOfTable(Walker& walker, const Bo
     }
 }
 
+static bool passesCallbackToCopy(Walker& walker, const BodyValue& call)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto arguments = call.as<Opcode::Call>().argumentsOperands();
+    ValueID callback = arguments.empty() ? ValueID() : index.stripCasts(arguments[0]);
+    FunctionID function;
+    if (callback && !index.isParameter(callback) && index.opcodeOf(callback) == Opcode::NewClosure)
+        function = index.value(callback).function();
+    else if (callback && !index.isParameter(callback) && index.opcodeOf(callback) == Opcode::GetModuleVariable) {
+        const Variable& variable = walker.program().at(index.value(callback).as<Opcode::GetModuleVariable>().variable());
+        if (variable.initialization == VariableInitialization::Function && variable.flags.contains(VariableFlags::IsImmutable))
+            function = variable.function;
+    }
+    return function && walker.facts().linked().function(function).weightAsLeaf != LinkedFunction::notLeaf;
+}
+
+static bool argumentsStayInsideCall(const BodyIndex& index, ValueID read, ValueID call)
+{
+    for (uint32_t number = read.index() + 1; number < call.index(); ++number) {
+        ValueID user = index.onlyUsingValue(ValueID(number));
+        if (!user || call < user)
+            return false;
+    }
+    return true;
+}
+
+ValueID findLastCallInMethodChain(Walker& walker, const BodyValue& firstCall, uint32_t behindStretch)
+{
+    const Program& program = walker.program();
+    const BuiltinTable& table = program.builtins();
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(firstCall.id()));
+    ValueID last = firstCall.id();
+    if (!passesCallbackToCopy(walker, firstCall))
+        return last;
+    for (;;) {
+        ValueID result = last;
+        uint32_t next = result.index() + 1;
+        while (next < behindStretch && index.opcodeOf(ValueID(next)) == Opcode::Convert && index.value(ValueID(next)).operand(0) == result && index.onlyUsingValue(result) == ValueID(next))
+            result = ValueID(next++);
+        if (next >= behindStretch || index.opcodeOf(ValueID(next)) != Opcode::PropGet || index.useCount(result) != 2)
+            return last;
+        BodyValue read = index.value(ValueID(next));
+        BuiltinID member = !read.isFreeName() && read.key() && read.objectOperand() == result ? findOwnMember(program, table.at(BuiltinClassID(BuiltinClasses::Array)).prototype, read.key()) : BuiltinID();
+        bool hasLibraryImplementation = member && findLibraryFunctionsBehindBuiltin(walker, walker.types().forBuiltin(table.canonicalID(member))).enteredByValue;
+        ValueID callID = hasLibraryImplementation ? index.onlyUsingValue(read.id()) : ValueID();
+        if (!callID || index.isParameter(callID) || !block.holds(callID) || index.opcodeOf(callID) != Opcode::Call || callID.index() >= behindStretch)
+            return last;
+        BodyValue call = index.value(callID);
+        if (call.calleeOperand() != read.id() || call.thisValueOperand() != result || !passesCallbackToCopy(walker, call) || !argumentsStayInsideCall(index, read.id(), callID))
+            return last;
+        last = callID;
+    }
+}
+
 bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& read)
 {
-    if (read.isFreeName() || !walker.isInLoop() || walker.walksStretchInsideAnother() || walker.isUnreachable() || !walker.has(Mechanism::Inlining) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::EscapeAnalysis))
+    if (read.isFreeName() || !walker.isInLoop() || walker.isUnreachable() || !walker.has(Mechanism::Inlining) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::EscapeAnalysis))
+        return false;
+    Walker::MethodChain& chain = walker.methodChainBeingWalked();
+    if (walker.walksStretchInsideAnother() && (chain.depthOfCopies != walker.depthOfCopies() || !(chain.openRead < read.id()) || chain.lastCall < read.id()))
         return false;
     const Program& program = walker.program();
     const BuiltinTable& table = program.builtins();
@@ -134,36 +192,23 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
         return false;
     BodyValue call = index.value(callID);
     ValueID receiverID = read.objectOperand();
-    auto arguments = call.as<Opcode::Call>().argumentsOperands();
     if (call.calleeOperand() != read.id() || call.thisValueOperand() != receiverID)
         return false;
-    ValueID callbackArgument = hasLibraryImplementation && !arguments.empty() ? index.stripCasts(arguments[0]) : ValueID();
-    FunctionID callbackFunction;
-    if (callbackArgument && !index.isParameter(callbackArgument) && index.opcodeOf(callbackArgument) == Opcode::NewClosure)
-        callbackFunction = index.value(callbackArgument).function();
-    else if (callbackArgument && !index.isParameter(callbackArgument) && index.opcodeOf(callbackArgument) == Opcode::GetModuleVariable) {
-        const Variable& variable = program.at(index.value(callbackArgument).as<Opcode::GetModuleVariable>().variable());
-        if (variable.initialization == VariableInitialization::Function && variable.flags.contains(VariableFlags::IsImmutable))
-            callbackFunction = variable.function;
-    }
-    if (hasLibraryImplementation && (!callbackFunction || walker.facts().linked().function(callbackFunction).weightAsLeaf == LinkedFunction::notLeaf))
+    if ((hasLibraryImplementation && !passesCallbackToCopy(walker, call)) || !argumentsStayInsideCall(index, read.id(), callID))
         return false;
-    for (uint32_t number = read.id().index() + 1; number < callID.index(); ++number) {
-        ValueID user = index.onlyUsingValue(ValueID(number));
-        if (!user || callID < user)
-            return false;
-    }
 
     TypeID instances = types.builtinClass(builtinClass);
     if (!types.isSubset(proven, instances) || isKnownPristine(walker, receiver) || receiverStaysAsMadeByLink(walker, read))
         return false;
     Vector<ValueID, 4> readsOffHolders;
-    ValueID last = !hasLibraryImplementation ? findLastCallInRowOfCallsOfMethodsOfTable(walker, read, call, builtinClass, readsOffHolders) : callID;
+    uint32_t behindStretch = block.firstValue().index() + std::min<uint32_t>(block.numberOfValues(), walker.endOfStretchBeingWalked());
+    ValueID last = hasLibraryImplementation ? findLastCallInMethodChain(walker, call, behindStretch) : findLastCallInRowOfCallsOfMethodsOfTable(walker, read, call, builtinClass, readsOffHolders);
     if (last == callID)
         readsOffHolders.shrink(0);
     else
-        walker.count(StatisticID::CollectionCallRunsGuardedOnce);
-    if (hasLibraryImplementation && index.opcodeOf(callbackArgument) == Opcode::GetModuleVariable)
+        walker.count(hasLibraryImplementation ? StatisticID::MethodChainsKeptInArm : StatisticID::CollectionCallRunsGuardedOnce);
+    SetForScope walksChain(chain, Walker::MethodChain { walker.depthOfCopies(), read.id(), last == callID ? read.id() : last });
+    if (hasLibraryImplementation && index.opcodeOf(index.stripCasts(call.as<Opcode::Call>().argumentsOperands()[0])) == Opcode::GetModuleVariable)
         walker.count(StatisticID::ReceiversSpeculatedForNamedCallbacks);
     openGuessAtOperandTakenAsMade(walker, index.value(last), receiver, instances, read.id().index() - block.firstValue().index(), readsOffHolders.span());
     return true;

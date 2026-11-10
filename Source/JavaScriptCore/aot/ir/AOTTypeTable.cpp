@@ -681,6 +681,12 @@ TypeTable::TypeTable(const BuiltinTable& builtins, const Program* program)
     };
     internRangeAtStart(int16, { INT16_MIN, INT16_MAX });
     internRangeAtStart(uint16, { 0, UINT16_MAX });
+    internAtStart(anythingButUndefined, Primitive::All & ~Primitive::Undefined, true);
+    internAtStart(anythingButNull, Primitive::All & ~Primitive::Null, true);
+    internAtStart(anythingButNullish, Primitive::All & ~Primitive::UndefinedOrNull, true);
+    internAtStart(anythingButString, Primitive::All & ~Primitive::String, true);
+    internAtStart(anythingButNumber, Primitive::All & ~Primitive::Number, true);
+    internAtStart(anythingButBoolean, Primitive::All & ~Primitive::Boolean, true);
     RELEASE_ASSERT(m_types.size() == numberOfTypesInternedAtStart);
 }
 
@@ -727,6 +733,14 @@ void TypeTable::endStableNumbersOfPropertyKeys()
     endStableNumbersOfPropertyKeys(ParallelLoops(1));
 }
 
+static bool keyIsLookedUpAsName(const Program& program, const PropertyKey& key, PropertyKeyID id)
+{
+    if (key.kind == PropertyKeyKind::PrivateName)
+        return false;
+    NameClass nameClass = program.nameClassOf(id);
+    return !mayBeElementKey(nameClass) && nameClass != NameClass::Proto;
+}
+
 void TypeTable::endStableNumbersOfPropertyKeys(const ParallelLoops& loops)
 {
     bool isFirstCall = m_numberOfKeysWithStableNumbers == UINT32_MAX;
@@ -735,9 +749,13 @@ void TypeTable::endStableNumbersOfPropertyKeys(const ParallelLoops& loops)
         return;
 
     m_locationBitsOfKeys.grow(m_numberOfKeysWithStableNumbers);
+    m_keysLookedUpAsNames.grow(m_numberOfKeysWithStableNumbers);
     forEachRangeOfIndicesInParallel(loops, m_numberOfKeysWithStableNumbers, [&](size_t first, size_t end) {
-        for (size_t position = first; position < end; ++position)
-            m_locationBitsOfKeys[position] = locationBitOfKeyInTypeTable(*m_program, m_propertyKeys.at(static_cast<uint32_t>(position)));
+        for (size_t position = first; position < end; ++position) {
+            const PropertyKey& key = m_propertyKeys.at(static_cast<uint32_t>(position));
+            m_locationBitsOfKeys[position] = locationBitOfKeyInTypeTable(*m_program, key);
+            m_keysLookedUpAsNames[position] = keyIsLookedUpAsName(*m_program, key, PropertyKeyID(static_cast<uint32_t>(position)));
+        }
     });
 }
 

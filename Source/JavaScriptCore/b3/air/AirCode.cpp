@@ -90,6 +90,7 @@ Code::Code(Procedure& proc)
             all.exclude(RegisterSet::stackRegisters());
             all.exclude(RegisterSet::reservedHardwareRegisters());
             auto calleeSave = RegisterSet::calleeSaveRegisters();
+            calleeSave.exclude(m_policy.registers.unsavedCalleeSaves);
             calleeSave.merge(m_policy.registers.savedByCallee);
             all.forEach(
                 [&] (Reg reg) {

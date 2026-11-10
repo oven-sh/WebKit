@@ -56,15 +56,14 @@ Effects effectsOfLibraryFunctionBehindRow(const Walker& walker, const BuiltinOve
 
 std::optional<Effects> effectsOfSearchForWhatIsNoString(const TypeArena& types, InlineBuiltin builtin, TypeID searchedOrNotPassed)
 {
-    bool isLookupInTable = builtin == InlineBuiltin::MapGet || builtin == InlineBuiltin::MapHas || builtin == InlineBuiltin::SetHas;
-    if (!isLookupInTable && builtin != InlineBuiltin::ArrayIndexOf && builtin != InlineBuiltin::ArrayIncludes)
+    if (!isLookupInTable(builtin) && builtin != InlineBuiltin::ArrayIndexOf && builtin != InlineBuiltin::ArrayIncludes)
         return std::nullopt;
     if (!searchedOrNotPassed)
         return std::nullopt;
     Type searched = types.at(searchedOrNotPassed);
     if (!searched.isJavaScriptValue() || (searched.primitives & Primitive::AnyString))
         return std::nullopt;
-    if (isLookupInTable)
+    if (isLookupInTable(builtin))
         return searched.primitives & Primitive::BigInt ? std::nullopt : std::optional<Effects>(declaredBoundOf(InlineBuiltin::WeakMapGet));
     return declaredBoundOf(InlineBuiltin::ArrayAt);
 }
@@ -233,6 +232,13 @@ bool isLeafHandedToMethodOfLists(const Walker& walker, TypeID argumentType)
     return only && walker.facts().linked().function(only).weightAsLeaf != LinkedFunction::notLeaf;
 }
 
+static bool handsOverOwnClosureForKnownRows(Walker& walker, const BodyValue& call)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID handed = index.stripCasts(call.argumentsOperands()[0]);
+    return handed && !index.isParameter(handed) && index.opcodeOf(handed) == Opcode::NewClosure && index.hasOneUse(handed);
+}
+
 static bool loopReadsOffResultFirstForKnownRows(Walker& walker, ValueID value)
 {
     static constexpr OpcodeSet readersOfFirstOperand { Opcode::PropGet, Opcode::PropHas, Opcode::ElemGet, Opcode::ElemHas };
@@ -398,7 +404,9 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             Reference firstArgument = call.argumentsOperands().empty() ? Reference() : walker.referenceOf(call.argumentsOperands()[0]);
             Reference receiver = call.thisValueOperand() ? walker.referenceOf(call.thisValueOperand()) : Reference();
             bool isListAsItWasMade = receiver && (isKnownPristine(walker, receiver) || receiverStaysAsMadeByLink(walker, call));
-            mayCopy = ((walker.isInLoop() || walker.isCurrentFrameRecursive()) ? isListAsItWasMade || walker.walksOwnBodyOfUnit() : isListAsItWasMade && isReadOutOfVariableOfFileThatStays(walker, call.thisValueOperand())) && firstArgument && isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument)) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
+            mayCopy = ((walker.isInLoop() || walker.isCurrentFrameRecursive()) ? isListAsItWasMade || walker.walksOwnBodyOfUnit() : isListAsItWasMade && isReadOutOfVariableOfFileThatStays(walker, call.thisValueOperand())) && firstArgument && (isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument)) || (walker.isInLoop() && handsOverOwnClosureForKnownRows(walker, call))) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
+            if (mayCopy == MayCopyFunctionCalledDirectly::Yes && !isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument)))
+                walker.count(StatisticID::ListCallbacksCopiedWithCalls);
         } else if (!behind.named.isEmpty())
             function = findLibraryFunctionOfRowsReachedBy(walker, call);
         isFoundByRowsReached = function && function != behind.enteredByValue;

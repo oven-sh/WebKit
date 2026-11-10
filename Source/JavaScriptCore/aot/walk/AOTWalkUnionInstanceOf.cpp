@@ -345,9 +345,9 @@ bool canDecideInstanceOfByHierarchy(const Walker& walker, TypeID typeOfConstruct
     return tested && !tested->isConstructorFunction && walker.plan().hasClassRecord(tested->layout) && walker.facts().families().nearestFamilyOf(tested->layout);
 }
 
-void noteWhatInstanceOfDenied(Walker& walker, const BodyValue& test)
+void noteWhatInstanceOfSaid(Walker& walker, const BodyValue& test, bool passed)
 {
-    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || walker.isUnreachable())
+    if (!walker.has(Mechanism::Guesses) || walker.isUnreachable())
         return;
     Reference value = walker.referenceOf(test.valueOperand());
     Reference constructor = walker.referenceOf(test.constructorOperand());
@@ -359,10 +359,11 @@ void noteWhatInstanceOfDenied(Walker& walker, const BodyValue& test)
     TypeArena& types = walker.types();
     Vector<LayoutID, 8> layouts { tested->layout };
     layouts.append(walker.program().layoutsExpectedBelow(tested->layout));
-    TypeID denied = types.forLayouts(layouts.span());
-    if (std::optional<uint64_t> before = findKnown(walker, KnownNote::ClassesThatInstanceOfDenied, value))
-        denied = types.unionOf(denied, types.forLayoutSet(LayoutSetID::fromBits(static_cast<uint32_t>(*before))));
-    noteKnown(walker, KnownNote::ClassesThatInstanceOfDenied, value, { }, 0, LocationMasks(), types.at(denied).layouts.bits());
+    TypeID asked = types.forLayouts(layouts.span());
+    KnownNote note = passed ? KnownNote::ClassesThatInstanceOfPassed : KnownNote::ClassesThatInstanceOfDenied;
+    if (std::optional<uint64_t> before = passed ? std::nullopt : findKnown(walker, note, value))
+        asked = types.unionOf(asked, types.forLayoutSet(LayoutSetID::fromBits(static_cast<uint32_t>(*before))));
+    noteKnown(walker, note, value, { }, 0, LocationMasks(), types.at(asked).layouts.bits());
 }
 
 static ChainEndForInstanceOf followChainForInstanceOf(const Walker& walker, LayoutID layout, LayoutID tested)
@@ -763,7 +764,11 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         return false;
     bool valueHasLayoutPrototype = !inputs.areOnlyTypes() && knownCellFacts(walker, walker.referenceOf(test.valueOperand())).contains(CellFact::HasLayoutPrototype);
     valueHasLayoutPrototype |= walker.shouldAssumeLayoutPrototype() && !inputs.areOnlyTypes();
-    TypeID expectedOfValue = !inputs.areOnlyTypes() && maySpendBytesForTimeInInstanceOf(walker) ? findExpectation(walker, test.valueOperand()).type : TypeID();
+    bool asksWhatIsExpected = !inputs.areOnlyTypes() && maySpendBytesForTimeInInstanceOf(walker);
+    TypeID expectedOfValue = asksWhatIsExpected ? findExpectation(walker, test.valueOperand()).type : TypeID();
+    TypeID expectedOfAnswer = asksWhatIsExpected ? walker.typeExpectedOfAnswerOfCopy() : TypeID();
+    if (expectedOfAnswer && walker.types().at(expectedOfAnswer).hasObjects() && walker.copyHandsBack(test.valueOperand()))
+        expectedOfValue = expectedOfValue ? walker.types().unionOf(expectedOfValue, expectedOfAnswer) : expectedOfAnswer;
     std::optional<FormOfInstanceOf> form = planFormOfInstanceOf(walker, typeOfValue, typeOfConstructor, valueHasLayoutPrototype, expectedOfValue);
     if (!form)
         return false;
@@ -1105,6 +1110,36 @@ static bool holdsNoObjectForInstanceOf(const Walker& walker, TypeID typeOfValue)
     return subject.isJavaScriptValue() && !subject.mayBeUnspecified() && !subject.hasObjects();
 }
 
+static bool chainsHoldNoOtherBuiltinThanObjectPrototype(const Walker& walker, TypeID typeOfValue)
+{
+    TypeArena& types = walker.types();
+    Type subject = types.at(typeOfValue);
+    Type objects = types.at(types.withOnlyObjects(typeOfValue));
+    if (!subject.isJavaScriptValue() || subject.mayBeUnspecified() || !subject.hasObjects() || !objects.isObject() || !objects.hasOnlyLayouts() || objects.hasOnlyClosures() || !walker.plan().hasOneInstance())
+        return false;
+    const Program& program = walker.program();
+    const LinkTables& link = walker.facts().linked();
+    return std::ranges::all_of(membersOf(types, objects.layouts), [&](LayoutID member) {
+        if (possibleChangesForInstanceOf(link, member).containsAny({ LayoutChange::ChangesPrototype, LayoutChange::GetsObjectAbove }))
+            return false;
+        const Layout& layout = program.at(member);
+        if (layout.has(LayoutFlags::IsOfCreatedObject) || layout.has(LayoutFlags::IsConstructorFunction))
+            return false;
+        if (layout.kind == LayoutKind::Record)
+            return !layout.constructor;
+        if (layout.kind != LayoutKind::Instance || member.index() >= link.layouts.size() || !link.layout(member).listsEveryMemberAbove)
+            return false;
+        size_t classesLeft = program.layouts.size();
+        LayoutID highest = member;
+        while (LayoutID base = program.at(highest).base) {
+            if (program.at(highest).writtenBuiltinBase || !classesLeft--)
+                return false;
+            highest = base;
+        }
+        return !program.at(highest).writtenBuiltinBase && !program.at(highest).has(LayoutFlags::HasHeritage);
+    });
+}
+
 static bool classTestAnswersBuiltinInstanceOf(const Walker& walker, const BuiltinTestedByInstanceOf& tested, TypeID typeOfValue)
 {
     const BuiltinTable& table = walker.program().builtins();
@@ -1172,13 +1207,14 @@ static bool buildInstanceOfBuiltinByValue(Walker& walker, const BodyValue& test,
         return false;
 
     bool holdsNoObject = walker.has(Mechanism::Folding) && holdsNoObjectForInstanceOf(walker, typeOfValue);
+    bool isDecidedByLayouts = !holdsNoObject && walker.has(Mechanism::Folding) && tested->prototype && chainsHoldNoOtherBuiltinThanObjectPrototype(walker, typeOfValue);
     bool testsClass = false;
-    if (!holdsNoObject && tested->prototype && mayBuildArmsForInstanceOf(walker) && classTestAnswersBuiltinInstanceOf(walker, *tested, typeOfValue)) {
+    if (!holdsNoObject && !isDecidedByLayouts && tested->prototype && mayBuildArmsForInstanceOf(walker) && classTestAnswersBuiltinInstanceOf(walker, *tested, typeOfValue)) {
         TypeID expected = walker.isInLoop() ? TypeID() : findExpectation(walker, test.valueOperand()).type;
         testsClass = walker.isInLoop() || (expected && walker.types().overlap(expected, walker.types().builtinClass(tested->builtinClass)));
     }
     if (inputs.areOnlyTypes())
-        return holdsNoObject || testsClass;
+        return holdsNoObject || isDecidedByLayouts || testsClass;
 
     Reference value = walker.referenceOf(test.valueOperand());
     Reference constructor = walker.referenceOf(test.constructorOperand());
@@ -1186,9 +1222,13 @@ static bool buildInstanceOfBuiltinByValue(Walker& walker, const BodyValue& test,
         return false;
     Origin origin = walker.originOf(test);
     Reference answer;
-    if (holdsNoObject)
+    bool isObjectPrototype = tested->prototype == walker.program().builtins().canonicalID(Builtins::ObjectPrototype);
+    if (holdsNoObject || (isDecidedByLayouts && !isObjectPrototype))
         answer = booleanAnswerOfInstanceOf(walker, false);
-    else {
+    else if (isDecidedByLayouts) {
+        TypeID objects = walker.types().withOnlyObjects(walker.typeOf(value));
+        answer = walker.typeOf(value) == objects ? booleanAnswerOfInstanceOf(walker, true) : buildTypeTestOfInstanceOf(walker, value, objects, origin);
+    } else {
         bool isSeenAsMade = tested->builtinClass && walker.has(Mechanism::Folding) && walker.plan().hasOneInstance() && walker.types().isSubset(walker.typeOf(value), walker.types().builtinClass(tested->builtinClass)) && isKnownPristine(walker, value);
         if (isSeenAsMade) {
             walker.verifyPristineObject(value);

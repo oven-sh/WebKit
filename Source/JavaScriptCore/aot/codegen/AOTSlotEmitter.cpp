@@ -538,7 +538,10 @@ Operand SlotEmitter::loadSlotOrUndefined(CellPointer cell, const PlacedSlot& slo
     Operand loaded = load(pointer, representation);
     if (representsAbsentAsZero(representation)) {
         Condition holdsAbsent = isAbsent(loaded, representation);
-        return Operand(loaded.representation, m_out.select(holdsAbsent.value(), constantWithBits(loaded.value->type(), traits.undefinedBits), loaded.value));
+        LValue loadedOrUndefined = m_out.select(holdsAbsent.value(), constantWithBits(loaded.value->type(), traits.undefinedBits), loaded.value);
+        if (loaded.is<Boxed>() && loadedOrUndefined != loaded.value)
+            m_wordsOfSlots.set(loadedOrUndefined, loaded.value);
+        return Operand(loaded.representation, loadedOrUndefined);
     }
 
     LBasicBlock isValue = newBlock();

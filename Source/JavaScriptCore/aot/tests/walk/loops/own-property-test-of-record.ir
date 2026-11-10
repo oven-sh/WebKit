@@ -1,0 +1,96 @@
+# function count(n) { let found = 0; for (let i = 0; i < n; i++) { const it = { kind: i, size: n }; if (Object.hasOwn(it, "size")) found++; if (Object.hasOwn(it, "color")) found++; } return found; }
+# function cleared(n) { let found = 0; for (let i = 0; i < n; i++) { const it = { kind: i, size: n }; if (i > 3) delete it.size; if (Object.hasOwn(it, "size")) found++; } return found; }
+# The layout of a record answers whether a written name is its own; where the name may be deleted the slot answers.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: PropHasOwn
+# CHECK-NOT: IsSlotFilled
+# RUN(CLEARED): walk f2 mechanisms=all
+# CLEARED-NOT: PropHasOwn
+# CLEARED: IsSlotFilled
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="color" declared={type=anything} flags=[IsRequired]}]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    PropSet v2, v0 key="count"
+    PropSet v2, v1 key="cleared"
+    v5 = NewObject -, v0 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    PropSet v2, v6 key="kept"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="count" module=m0 position=14 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectHasOwn
+    Jump -> next b1(v1, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b7()
+  b2():
+    v9 = NewObject -, v6, v0 layout=L0 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = String string="size"
+    v12 = Call v4, v3, v10, v11
+    v13 = ToBoolean v12
+    Branch v13 -> taken b3(| 0), notTaken b4(v5)
+  b3(v14):
+    v15 = Increment v5
+    Jump -> next b4(v15)
+  b4(v16):
+    v17 = String string="color"
+    v18 = Call v4, v3, v10, v17
+    v19 = ToBoolean v18
+    Branch v19 -> taken b5(| 0), notTaken b6(v16)
+  b5(v20):
+    v21 = Increment v16
+    Jump -> next b6(v21)
+  b6(v22):
+    v23 = Increment v6
+    Jump -> next b1(v22, v23)
+  b7():
+    Return v5
+}
+function f2 name="cleared" module=m0 position=24 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectHasOwn
+    Jump -> next b1(v1, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b7()
+  b2():
+    v9 = NewObject -, v6, v0 layout=L0 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = Integer integer=3
+    v12 = Greater v6, v11
+    Branch v12 -> taken b3(), notTaken b4()
+  b3():
+    v13 = PropDelete v10 key="size"
+    Jump -> next b4()
+  b4():
+    v14 = String string="size"
+    v15 = Call v4, v3, v10, v14
+    v16 = ToBoolean v15
+    Branch v16 -> taken b5(| 0), notTaken b6(v5)
+  b5(v17):
+    v18 = Increment v5
+    Jump -> next b6(v18)
+  b6(v19):
+    v20 = Increment v6
+    Jump -> next b1(v19, v20)
+  b7():
+    Return v5
+}

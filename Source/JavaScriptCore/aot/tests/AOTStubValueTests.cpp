@@ -9,6 +9,7 @@
 
 #include "AOTStubRunner.h"
 #include "AOTClosureWord.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRuntimeType.h"
 #include "AOTSlimClosure.h"
 #include "AOTStubTestSupport.h"
@@ -26,6 +27,7 @@
 #include <limits>
 #include <numeric>
 #include <span>
+#include <string_view>
 #include <wtf/text/StringImpl.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -142,6 +144,46 @@ static void testSubstringsFromEveryStateOfTheFreeList()
     ropes.allocator.makeRoomAt(0, 0);
     ropes.allocator.nextInterval() = FakeAllocator::noNextInterval;
     AOT_TEST_CHECK(ropes.runner.run(substring(), { string.address(), 2, 5 }).calledOperation);
+}
+
+static void testOneCharacterOfJoinedText()
+{
+    RopeAllocation ropes;
+    std::array<uint64_t, maxSingleCharacterString + 1> singleCharacterStrings;
+    std::iota(singleCharacterStrings.begin(), singleCharacterStrings.end(), 1);
+    ropes.runner.instance().singleCharacterStrings = singleCharacterStrings.data();
+    Ref<StringImpl> firstText = StringImpl::create("ab"_span);
+    Ref<StringImpl> secondText = StringImpl::create("cde"_span);
+    FakeFlatString first(firstText.get());
+    FakeFlatString second(secondText.get());
+    ropes.allocator.makeRoomAt(ropes.room.address(), sizeof(ropes.room.bytes));
+    uint64_t joined = ropes.runner.run(concatenate(2), { first.address(), second.address() }).result;
+    constexpr std::string_view letters = "abcde";
+    for (uint64_t position = 0; position < letters.size(); ++position) {
+        StubRun run = ropes.runner.run(substring(), { joined, position, position + 1 });
+        AOT_TEST_CHECK(!run.calledOperation && run.result == singleCharacterStrings[letters[position]]);
+    }
+    Ref<StringImpl> longText = StringImpl::create("vwxyz"_span);
+    FakeFlatString whole(longText.get());
+    uint64_t piece = ropes.runner.run(substring(), { whole.address(), 1, 5 }).result;
+    StubRun run = ropes.runner.run(substring(), { piece, 2, 3 });
+    AOT_TEST_CHECK(!run.calledOperation && run.result == singleCharacterStrings['y']);
+}
+
+static void testLongKeyOfPairIsJoinedAsText()
+{
+    RopeAllocation ropes;
+    std::array<Latin1Character, StringKeyCache::maxCachedKeyLength + 1> letters;
+    letters.fill('x');
+    Ref<StringImpl> longText = StringImpl::create(std::span<const Latin1Character> { letters });
+    Ref<StringImpl> shortText = StringImpl::create("ab"_span);
+    FakeFlatString first(longText.get());
+    FakeFlatString second(shortText.get());
+    StubKey stub = concatenateKeyOfPair(ConcatenatedKeyForm::Name);
+    ropes.allocator.makeRoomAt(ropes.room.address(), sizeof(ropes.room.bytes));
+    StubRun run = ropes.runner.run(stub, { first.address(), second.address() });
+    AOT_TEST_CHECK(!run.calledOperation && run.result == ropes.room.address() && ropes.word(1) == (first.address() | JSString::isRopeInPointer | JSRopeString::is8BitInPointer));
+    AOT_TEST_CHECK(ropes.runner.run(stub, { second.address(), second.address() }).calledOperation);
 }
 
 static void testTruthinessOfDoubles()
@@ -476,11 +518,29 @@ static void testMovesOfFewBytes()
     }
 }
 
+static void testMovesOfElementsDown()
+{
+    StubRunner runner;
+    runner.install(Entry::operationAOTMoveBytes, operationAOTMoveBytes);
+    for (uint64_t count : { 1u, 2u, 3u, 16u, 17u, 64u, 127u }) {
+        std::array<uint64_t, 130> words;
+        std::iota(words.begin(), words.end(), 1);
+        std::array<uint64_t, 130> expected = words;
+        std::memmove(expected.data(), expected.data() + 1, count * sizeof(uint64_t));
+        StubRun run = runner.run(moveElementsDown(), { std::bit_cast<uintptr_t>(words.data()), count });
+        AOT_TEST_CHECK(words == expected);
+        UNUSED_PARAM(run);
+    }
+}
+
 std::span<const NativeTest> stubValueTests()
 {
     static constexpr NativeTest tests[] = {
         { "stubs/move-few-bytes/every-length-and-overlap"_s, ImageTests::whenExecutable<testMovesOfFewBytes> },
+        { "stubs/move-elements-down/every-count"_s, ImageTests::whenExecutable<testMovesOfElementsDown> },
         { "stubs/concatenate/ropes-from-every-state-of-the-free-list"_s, ImageTests::whenExecutable<testRopesFromEveryStateOfTheFreeList> },
+        { "stubs/concatenate/long-key-of-pair"_s, ImageTests::whenExecutable<testLongKeyOfPairIsJoinedAsText> },
+        { "stubs/substring/one-character-of-joined-text"_s, ImageTests::whenExecutable<testOneCharacterOfJoinedText> },
         { "stubs/substring/ropes-from-every-state-of-the-free-list"_s, ImageTests::whenExecutable<testSubstringsFromEveryStateOfTheFreeList> },
         { "stubs/to-boolean/doubles"_s, ImageTests::whenExecutable<testTruthinessOfDoubles> },
         { "stubs/check-proof-of-kinds/a-value-passes-where-its-kind-is-among-them-and-nowhere-else"_s, ImageTests::whenExecutable<testKindsThatPassTheCheckOfAProof> },

@@ -89,6 +89,7 @@ public:
     Condition hasById(const OperationContext&, Boxed receiver, PropertyKeyID);
     Condition findsName(const OperationContext&, Boxed receiver, PropertyKeyID, PresenceQuestion);
     Boxed getByVal(const OperationContext&, Boxed receiver, Boxed key);
+    LValue tryUnboxConstantIndex(Boxed key);
     bool isSymbolOfRealm(PropertyKeyID key) const { return !m_plan.hasOneInstance() && !liesInThread(key) && m_program.at(key).kind == PropertyKeyKind::CreatedSymbol; }
     Boxed cellOfKey(const OperationContext&, PropertyKeyID);
     void putByVal(const OperationContext&, Boxed receiver, Boxed key, Boxed value, PutMode);
@@ -149,6 +150,8 @@ private:
         bool isInteger;
     };
     std::optional<ElementKey> elementKeyOf(const ValueContext&);
+    bool readsElementsInLoop(const ValueContext&, ValueID object);
+    Boxed presentElementOrElse(ValueID objectOperand, const ElementKey&, LBasicBlock outOfLine);
     Boxed keyOperand(const OperationContext&, PropertyKeyID key, ValueID computedKey);
     struct ExcludedKeys {
         Word32 run;

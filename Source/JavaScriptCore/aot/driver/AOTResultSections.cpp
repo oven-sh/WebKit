@@ -180,12 +180,10 @@ static void writeWorkerSections(const Typed::Program& program, const Typed::Fact
         startsWithoutName.append(Wire::WorkerStartRecord { .witness = start });
     setRecordsOfResultSection(output, Wire::ResultSection::WorkerStartsWithoutName, startsWithoutName);
 
-    const Vector<Wire::Witness>& workerURLs = facts.tables().program.workerURLs;
-    Vector<Wire::WorkerURLRecord> urls;
-    urls.reserveInitialCapacity(workerURLs.size());
-    for (const Wire::Witness& witness : workerURLs)
-        urls.append(Wire::WorkerURLRecord { .witness = witness });
-    setRecordsOfResultSection(output, Wire::ResultSection::WorkerURLs, urls);
+    Vector<Wire::WorkerURLStartRecord> startsFromURLs;
+    for (const Wire::Witness& start : facts.tables().program.workerStartsFromURLs)
+        startsFromURLs.append(Wire::WorkerURLStartRecord { .witness = start });
+    setRecordsOfResultSection(output, Wire::ResultSection::WorkerStartsFromURLs, startsFromURLs);
 }
 
 static void writeLackedFunctionSection(const Typed::Facts& facts, CompileOutput& output)
