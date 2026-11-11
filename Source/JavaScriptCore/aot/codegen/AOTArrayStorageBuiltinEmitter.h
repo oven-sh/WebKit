@@ -24,7 +24,7 @@ private:
     ElementAccessEmitter& elements() { return emitter<ElementAccessEmitter>(); }
     Operand lengthResult(const InlineCall&, Integer length);
     void pushOne(const InlineCall&, CellPointer array);
-    Operand pushOutOfLine(const InlineCall&, CellPointer array, ValueID pushed);
+    Operand pushOutOfLine(const InlineCall&, CellPointer array, ValueID pushed, Representation);
 };
 
 static_assert(sizeof(ArrayStorageBuiltinEmitter) == sizeof(OperationEmitter));

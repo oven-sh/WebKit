@@ -486,6 +486,8 @@ String changeThatCompiledCodeRulesOutMessage(ObjectMutation mutation)
             return "make this object a prototype"_s;
         case ObjectMutation::StoreOfOtherType:
             return "store a value of this type in this property"_s;
+        case ObjectMutation::ConstructDirectly:
+            return "construct an object of this class"_s;
         }
         RELEASE_ASSERT_NOT_REACHED();
     };

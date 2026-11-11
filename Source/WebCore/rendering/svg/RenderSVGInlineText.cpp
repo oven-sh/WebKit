@@ -38,6 +38,7 @@
 #include "RenderObjectInlines.h"
 #include "RenderSVGText.h"
 #include "SVGElementTypeHelpers.h"
+#include "SVGRenderSupport.h"
 #include "SVGRenderingContext.h"
 #include "SVGTextBoxPainter.h"
 #include "SVGTextFragment.h"
@@ -98,6 +99,12 @@ void RenderSVGInlineText::setTextInternal(const String& newText, bool force)
         setRenderedText(newText);
     if (CheckedPtr textAncestor = RenderSVGText::locateRenderSVGTextAncestor(*this))
         textAncestor->setNeedsLayout();
+}
+
+void RenderSVGInlineText::setRenderedText(const String& text)
+{
+    RenderText::setRenderedText(text);
+    m_canUseSimplifiedTextMeasuringWithScaledFont = { };
 }
 
 void RenderSVGInlineText::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
@@ -161,17 +168,15 @@ static int offsetForPositionInFragment(const InlineIterator::SVGTextBox& textBox
 
 PositionWithAffinity RenderSVGInlineText::positionForPoint(const LayoutPoint& point, HitTestSource, const RenderFragmentContainer*)
 {
-    if (!InlineIterator::lineLeftmostTextBoxFor(*this) || text().isEmpty())
+    auto firstTextBox = InlineIterator::lineLeftmostTextBoxFor(*this);
+    if (!firstTextBox || text().isEmpty())
         return createPositionWithAffinity(0, Affinity::Downstream);
 
     float baseline = m_scaledFont.metricsOfPrimaryFont().ascent();
 
-    RenderBlock* containingBlock = this->containingBlock();
-    ASSERT(containingBlock);
-
     // Map local point to absolute point, as the character origins stored in the text fragments use absolute coordinates.
     FloatPoint absolutePoint(point);
-    absolutePoint.moveBy(containingBlock->location());
+    absolutePoint.moveBy(firstTextBox->formattingContextRoot().location());
 
     float closestDistance = std::numeric_limits<float>::max();
     float closestDistancePosition = 0;
@@ -211,25 +216,38 @@ PositionWithAffinity RenderSVGInlineText::positionForPoint(const LayoutPoint& po
 
 void RenderSVGInlineText::updateScaledFont()
 {
-    // FIXME: FontCascade comparison also compares the font list, which FontCascadeCache::invalidate() replaces,
-    // so the text metrics are dropped after complex text measurement even if the font did not change.
     float scalingFactor = 1;
     FontCascade scaledFont;
     if (computeNewScaledFontForStyle(*this, style(), scalingFactor, scaledFont))
-        m_canUseSimplifiedTextMeasuring = { };
+        m_canUseSimplifiedTextMeasuringWithScaledFont = { };
     if (scalingFactor != m_scalingFactor || scaledFont != m_scaledFont)
         m_hasValidTextMetrics = false;
     m_scalingFactor = scalingFactor;
     m_scaledFont = WTF::move(scaledFont);
 }
 
-float RenderSVGInlineText::computeScalingFactorForRenderer(const RenderObject& renderer)
+static float computeScalingFactorForRenderer(const RenderObject& renderer)
 {
     if (renderer.document().settings().layerBasedSVGEngineEnabled()) {
         if (const auto* layerRenderer = lineageOfType<RenderLayerModelObject>(renderer).first())
             return SVGTransformComputation(*layerRenderer).calculateScreenFontSizeScalingFactor();
     }
     return SVGRenderingContext::calculateScreenFontSizeScalingFactor(renderer);
+}
+
+float RenderSVGInlineText::computeNonScalingStrokeScaleForRenderer(const RenderObject& renderer)
+{
+    auto transform = [&] -> AffineTransform {
+        if (renderer.document().settings().layerBasedSVGEngineEnabled()) {
+            if (const auto* layerRenderer = lineageOfType<RenderLayerModelObject>(renderer).first())
+                return SVGTransformComputation(*layerRenderer).computeTransformToSVGRoot();
+            return { };
+        }
+        if (RefPtr element = dynamicDowncast<SVGElement>(renderer.node()))
+            return SVGRenderSupport::legacyNonScalingStrokeTransform(*element);
+        return { };
+    }();
+    return narrowPrecisionToFloat(std::hypot(transform.xScale(), transform.yScale()) / std::numbers::sqrt2);
 }
 
 bool RenderSVGInlineText::computeNewScaledFontForStyle(const RenderObject& renderer, const Style::ComputedStyle& style, float& scalingFactor, FontCascade& scaledFont)

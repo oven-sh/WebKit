@@ -75,6 +75,13 @@
 // whether a pull may commit to a refresh. False during momentum so a flick cannot refresh.
 @property (nonatomic, readonly) BOOL _refreshControlHostIsTrackingForTesting;
 
+@property (nonatomic, readonly) NSRect _clickHighlightRectForTesting;
+@property (nonatomic, readonly) BOOL _isShowingClickHighlightForTesting;
+@property (nonatomic, readonly) NSColor *_clickHighlightColorForTesting;
+
+// The bounds of the element whose click was handled as hover, in view coordinates, or NSZeroRect if there is none.
+@property (nonatomic, readonly) NSRect _hoverActivatedByClickBoundsForTesting;
+
 - (BOOL)isPointInScrollbar:(NSPoint)locationInView;
 
 @end

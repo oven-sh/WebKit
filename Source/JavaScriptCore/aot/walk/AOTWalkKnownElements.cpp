@@ -47,21 +47,41 @@ std::optional<PassedTest> Walker::findWhatHoldsPositionInsideList(Reference list
     return fromZeroUp ? showPositionInsideBehindTestOfSum(list, position, length) : std::nullopt;
 }
 
+static bool isTermTestedForPosition(const Code& code, const Operation& narrowed, bool isWholePosition)
+{
+    static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
+    if (!narrowed.testOperand())
+        return false;
+    const Operation& test = code.at(narrowed.testOperand());
+    if (!allRelations.contains(test.opcode) || test.form() != OperatorForm::Integers || narrowed.operandIndex() > 1)
+        return false;
+    if (!isWholePosition)
+        return true;
+    ValueID bound = test.operand(1 - narrowed.operandIndex());
+    while (valuePreservingOpcodes.contains(code.at(bound).opcode))
+        bound = code.at(bound).operand(0);
+    return sums.contains(code.at(bound).opcode);
+}
+
 std::optional<PassedTest> Walker::showPositionInsideBehindTestOfSum(Reference list, Reference position, Reference length)
 {
     if (!list.isRecord() || !position.isValue() || !length.isRecord())
         return std::nullopt;
     for (ValueID term = position.id(); term && !m_code.isConstant(term);) {
         const Operation& record = m_code.at(term);
-        if (record.opcode == Opcode::Narrowed && record.narrowsTermOfOperand()) {
+        bool isTermTested = record.opcode == Opcode::Narrowed && !record.narrowsTermOfOperand() && isTermTestedForPosition(m_code, record, term == position.id());
+        if (isTermTested || (record.opcode == Opcode::Narrowed && record.narrowsTermOfOperand())) {
             GroundsOfPosition grounds { .view = list.id(), .position = position.id(), .length = length.id(), .isBelow = record.testOperand(), .isBelowResult = record.isOnTakenEdge() };
             std::optional<PassedTest> shown = m_inputs.options.shouldSkipBoundsProof ? findPassedTest(referenceTo(grounds.isBelow), grounds.isBelowResult) : showPositionInside(grounds);
             if (shown && m_inputs.options.shouldSkipBoundsProof)
                 shown->m_groundsOfPosition = grounds;
+            if (shown && isTermTested)
+                count(StatisticID::PositionsShownByTestedTerms);
             if (shown)
                 return shown;
         }
-        if (valuePreservingOpcodes.contains(record.opcode) || record.opcode == Opcode::Increment) {
+        bool stepsDown = record.opcode == Opcode::Decrement || (record.opcode == Opcode::Sub && m_code.isConstant(record.operand(1)));
+        if (valuePreservingOpcodes.contains(record.opcode) || record.opcode == Opcode::Increment || stepsDown) {
             term = record.operand(0);
             continue;
         }

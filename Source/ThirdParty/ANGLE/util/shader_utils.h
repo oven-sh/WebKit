@@ -8,7 +8,6 @@
 #define SAMPLE_UTIL_SHADER_UTILS_H
 
 #include <functional>
-#include <map>
 #include <string>
 #include <vector>
 
@@ -53,12 +52,6 @@ ANGLE_UTIL_EXPORT GLuint LoadBinaryProgramES3(const std::vector<uint8_t> &binary
 
 ANGLE_UTIL_EXPORT void EnableDebugCallback(GLDEBUGPROC callbackChain, const void *userParam);
 
-using CounterNameToIndexMap = std::map<std::string, GLuint>;
-
-ANGLE_UTIL_EXPORT CounterNameToIndexMap BuildCounterNameToIndexMap();
-ANGLE_UTIL_EXPORT angle::VulkanPerfCounters GetPerfCounters(const CounterNameToIndexMap &indexMap);
-ANGLE_UTIL_EXPORT std::vector<angle::PerfMonitorTriplet> GetPerfMonitorTriplets();
-
 namespace angle
 {
 
@@ -80,6 +73,9 @@ ANGLE_UTIL_EXPORT const char *Simple();
 
 // A shader that sets gl_Position to attribute a_position, and sets gl_PointSize to 1.
 ANGLE_UTIL_EXPORT const char *SimpleForPoints();
+
+// A shader that sets gl_Position to attribute a_position, and sets gl_PointSize to 10.
+ANGLE_UTIL_EXPORT const char *SimpleForPoints10();
 
 // A shader that passes through attribute a_position, setting it to gl_Position and varying
 // v_position.

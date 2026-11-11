@@ -29,6 +29,7 @@
 #include <WebCore/QuirkMatchPattern.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Vector.h>
+#include <wtf/text/TextStream.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -38,6 +39,7 @@ enum class QuirkParametersNeeded : uint8_t {
     NeedsUserAgent = 1 << 1,
     NeedsChromeCompatibilityVersion = 1 << 2,
     NeedsCookieNames = 1 << 3,
+    NeedsStyleSheet = 1 << 4,
 };
 
 enum class QuirkConditionsSupported : uint8_t {
@@ -68,10 +70,13 @@ struct QuirkBehavior {
     String userAgent { };
     String chromeCompatibilityVersion { };
     Vector<String> cookieNames { };
+    String styleSheet { };
 
     String elementSelector { };
     String documentSelector { };
     Vector<QuirkMatchPattern> secondaryURL { };
 };
+
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const QuirkBehavior&);
 
 } // namespace WebCore

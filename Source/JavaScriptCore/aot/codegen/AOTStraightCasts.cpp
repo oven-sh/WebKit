@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 OpcodeSet StraightEmitter::opcodesOfCasts()
 {
-    return inputIdentityOpcodes | OpcodeSet { Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject, Opcode::TypeTest };
+    return inputIdentityOpcodes | OpcodeSet { Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject, Opcode::TypeTest, Opcode::IsUnlockedInstance };
 }
 
 static ThrowKind throwKindOfStraightForm(NullishAccess access)
@@ -101,6 +101,14 @@ void StraightEmitter::generateCast(const BodyValue& value)
         return;
     case Opcode::TypeTest:
         generateTypeTest(*this, value);
+        return;
+    case Opcode::IsUnlockedInstance:
+        if (!instancesMayBeLocked(program(), facts().linked(), value.testedType())) {
+            generateTypeTest(*this, value);
+            return;
+        }
+        jit().move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), takeResultRegister());
+        define(value);
         return;
     default:
         break;

@@ -41,7 +41,6 @@
 #include "InlineIteratorLineBoxInlines.h"
 #include "LayoutRepainter.h"
 #include "LegacyRenderSVGRoot.h"
-#include "LineSelection.h"
 #include "LocalFrame.h"
 #include "PositionedLayoutConstraints.h"
 #include "PaintInfoInlines.h"
@@ -804,19 +803,19 @@ LayoutUnit RenderReplaced::computeConstrainedLogicalWidth() const
     return std::max(0_lu, (logicalWidth - (marginStart + marginEnd + borderLeft() + borderRight() + paddingLeft() + paddingRight())));
 }
 
-static inline LayoutUnit LEGACY_NODELETE resolveWidthForRatio(LayoutUnit borderAndPaddingLogicalHeight, LayoutUnit borderAndPaddingLogicalWidth, LayoutUnit logicalHeight, double aspectRatio, BoxSizing boxSizing)
+NODELETE static inline LayoutUnit resolveWidthForRatio(LayoutUnit borderAndPaddingLogicalHeight, LayoutUnit borderAndPaddingLogicalWidth, LayoutUnit logicalHeight, double aspectRatio, BoxSizing boxSizing)
 {
     if (boxSizing == BoxSizing::BorderBox)
         return LayoutUnit((logicalHeight + borderAndPaddingLogicalHeight) * aspectRatio) - borderAndPaddingLogicalWidth;
     return LayoutUnit(logicalHeight * aspectRatio);
 }
 
-static inline bool LEGACY_NODELETE hasIntrinsicSize(const RenderReplaced* svgRoot, bool hasIntrinsicWidth, bool hasIntrinsicHeight)
+NODELETE static inline bool hasIntrinsicSize(const RenderReplaced* svgRoot, bool hasIntrinsicWidth, bool hasIntrinsicHeight)
 {
     return (hasIntrinsicWidth && hasIntrinsicHeight) || ((hasIntrinsicWidth || hasIntrinsicHeight) && svgRoot);
 }
 
-static bool LEGACY_NODELETE behavesAsAutoSize(const Style::PreferredSize& size, const Style::PreferredSize& otherAxisSize)
+NODELETE static bool behavesAsAutoSize(const Style::PreferredSize& size, const Style::PreferredSize& otherAxisSize)
 {
     return size.isAuto() && (!size.isCalcSize() || otherAxisSize.isCalcSize());
 }
@@ -881,8 +880,8 @@ LayoutUnit RenderReplaced::computeReplacedLogicalWidth(IsComputingIntrinsicSize 
                 // calculated from the constraint equation used for block-level,
                 // non-replaced elements in normal flow.
                 if (computedHeightIsAuto && !hasIntrinsicWidth && !hasIntrinsicHeight) {
-                    bool isFlexItemComputingBaseSize = isFlexItem() && downcast<RenderFlexibleBox>(parent())->isComputingFlexBaseSizes();
-                    if (isComputingIntrinsicSize == IsComputingIntrinsicSize::Yes && !isFlexItemComputingBaseSize) {
+                    // A flex base size measures such an item into the available space instead (see stretchFitLogicalWidthWithoutNaturalSize()).
+                    if (isComputingIntrinsicSize == IsComputingIntrinsicSize::Yes) {
                         // When there's a min/max-height and an intrinsic ratio, the preferred width
                         // should reflect the transferred size constraints from the opposite axis.
                         auto [transferredMin, transferredMax] = computeMinMaxLogicalWidthFromAspectRatio();
@@ -1021,66 +1020,100 @@ std::pair<LayoutUnit, LayoutUnit> RenderReplaced::computeAspectRatioAdjustedIntr
     return { computedIntrinsicLogicalWidth, computedIntrinsicLogicalWidth };
 }
 
-void RenderReplaced::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderReplaced::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
+
+    auto minContentLogicalWidth = LayoutUnit { };
+    auto maxContentLogicalWidth = LayoutUnit { };
 
     // We cannot resolve any percent logical width here as the available logical
     // width may not be set on our containing block.
     if (style().logicalWidth().isPercentOrCalculated())
-        std::tie(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution) = computeAspectRatioAdjustedIntrinsicLogicalWidths();
+        std::tie(minContentLogicalWidth, maxContentLogicalWidth) = computeAspectRatioAdjustedIntrinsicLogicalWidths();
     else {
-        m_maxContentLogicalWidthContribution = computeReplacedLogicalWidth(IsComputingIntrinsicSize::Yes);
-        m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
+        maxContentLogicalWidth = computeReplacedLogicalWidth(IsComputingIntrinsicSize::Yes);
+        minContentLogicalWidth = maxContentLogicalWidth;
         if (preferredAspectRatio() && !style().logicalWidth().isFixed())
-            applyTransferredMinMaxSizesFromAspectRatio(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
+            applyTransferredMinMaxSizesFromAspectRatio(minContentLogicalWidth, maxContentLogicalWidth);
     }
 
+    // A percentage width or max-width resolves against zero here, which makes the min-content contribution zero (CSS Sizing 3 section 5.2.1).
     auto& styleToUse = style();
     if (styleToUse.logicalWidth().isPercentOrCalculated() || styleToUse.logicalMaxWidth().isPercentOrCalculated())
-        m_minContentLogicalWidthContribution = 0_lu;
+        minContentLogicalWidth = 0_lu;
 
-    auto applyExplicitMinMaxWidthConstraints = [&] {
-        if (shouldIgnoreLogicalMinMaxWidthSizes())
-            return;
+    // computeAspectRatioAdjustedIntrinsicLogicalWidths() can return a negative width.
+    return { std::max(minContentLogicalWidth, 0_lu), std::max(maxContentLogicalWidth, 0_lu) };
+}
 
-        // Resolve the used min/max width, then clamp by max-width before min-width so that min-width
-        // wins when min > max (CSS 2.1 section 10.4). A min-content/max-content keyword min-width floors
-        // the contribution by the box's own min-content/max-content size; this matters for a
-        // percentage-width replaced element, whose min-content contribution is resolved against zero
-        // (CSS Sizing 3 section 5.2.1) and is then floored by the minimum size in its own axis.
-        // Mirrors RenderBox::constrainIntrinsicLogicalWidthsByMinMax().
-        auto& logicalMinWidth = styleToUse.logicalMinWidth();
+void RenderReplaced::constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const
+{
+    auto& style = this->style();
+    auto& logicalMinWidth = style.logicalMinWidth();
+    auto& logicalMaxWidth = style.logicalMaxWidth();
+    if (logicalMinWidth.isAuto() && logicalMaxWidth.isNone())
+        return;
 
-        auto usedMaxLogicalWidth = [&] -> LayoutUnit {
-            if (auto fixedLogicalMaxWidth = styleToUse.logicalMaxWidth().tryFixed())
-                return adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalMaxWidth);
-            return LayoutUnit::max();
-        }();
-
-        auto usedMinLogicalWidth = [&] -> LayoutUnit {
-            if (auto fixedLogicalMinWidth = logicalMinWidth.tryFixed())
-                return adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalMinWidth);
-            if (logicalMinWidth.isMaxContent())
-                return m_maxContentLogicalWidthContribution;
-            if (logicalMinWidth.isMinContent())
-                return m_minContentLogicalWidthContribution;
-            return { };
-        }();
-
-        m_maxContentLogicalWidthContribution = std::min(m_maxContentLogicalWidthContribution, usedMaxLogicalWidth);
-        m_minContentLogicalWidthContribution = std::min(m_minContentLogicalWidthContribution, usedMaxLogicalWidth);
-
-        m_maxContentLogicalWidthContribution = std::max(m_maxContentLogicalWidthContribution, usedMinLogicalWidth);
-        m_minContentLogicalWidthContribution = std::max(m_minContentLogicalWidthContribution, usedMinLogicalWidth);
-    };
-
-    applyExplicitMinMaxWidthConstraints();
+    // min-width and max-width apply to the content box. A percentage doesn't resolve here (CSS Sizing 3 section 5.2.1).
     auto borderAndPadding = borderAndPaddingLogicalWidth();
-    m_minContentLogicalWidthContribution += borderAndPadding;
-    m_maxContentLogicalWidthContribution += borderAndPadding;
+    auto minLogicalWidth = minContentLogicalWidthContribution - borderAndPadding;
+    auto maxLogicalWidth = maxContentLogicalWidthContribution - borderAndPadding;
 
-    clearContentLogicalWidthsInvalidation();
+    auto usedMaxLogicalWidth = [&] -> LayoutUnit {
+        if (logicalMaxWidth.isNone() || logicalMaxWidth.isPercentOrCalculated())
+            return LayoutUnit::max();
+        // A keyword maximum doesn't apply to a percentage width, whose min-content contribution resolves against zero. With an auto
+        // width, the contributions are the box's own min-content/max-content sizes, which include the min/max sizes transferred
+        // through the aspect ratio: an indefinite maximum doesn't cap those (CSS Sizing 4 section 5.3).
+        if (logicalMaxWidth.isMinContent() || logicalMaxWidth.isMaxContent()) {
+            if (style.logicalWidth().isPercentOrCalculated())
+                return LayoutUnit::max();
+            if (style.logicalWidth().isAuto())
+                return logicalMaxWidth.isMaxContent() ? maxLogicalWidth : minLogicalWidth;
+        }
+        return computeReplacedLogicalWidthUsing(logicalMaxWidth);
+    }();
+
+    // A min-content/max-content keyword min-width floors the contribution by the box's own min-content/max-content size;
+    // this matters for a percentage-width replaced element, whose min-content contribution is resolved against zero
+    // (CSS Sizing 3 section 5.2.1) and is then floored by the minimum size in its own axis.
+    auto usedMinLogicalWidth = [&] -> LayoutUnit {
+        if (logicalMinWidth.isMaxContent())
+            return maxLogicalWidth;
+        if (logicalMinWidth.isMinContent())
+            return minLogicalWidth;
+        if (logicalMinWidth.isAuto() || logicalMinWidth.isPercentOrCalculated())
+            return { };
+        return computeReplacedLogicalWidthUsing(logicalMinWidth);
+    }();
+
+    // Clamp by max-width before min-width so that min-width wins when min > max (CSS 2.1 section 10.4).
+    maxLogicalWidth = std::max(std::min(maxLogicalWidth, usedMaxLogicalWidth), usedMinLogicalWidth);
+    minLogicalWidth = std::max(std::min(minLogicalWidth, usedMaxLogicalWidth), usedMinLogicalWidth);
+
+    minContentLogicalWidthContribution = minLogicalWidth + borderAndPadding;
+    maxContentLogicalWidthContribution = maxLogicalWidth + borderAndPadding;
+}
+
+std::optional<LayoutUnit> RenderReplaced::stretchFitLogicalWidthWithoutNaturalSize() const
+{
+    // The max-content width of a box with a preferred aspect ratio but no natural size is the stretch fit into a definite
+    // available space (CSS Box Sizing 3 section 5.1). See the matching case in computeReplacedLogicalWidth().
+    auto& style = this->style();
+    if (!behavesAsAutoSize(style.logicalWidth(), style.logicalHeight()) || !behavesAsAutoSize(style.logicalHeight(), style.logicalWidth()))
+        return { };
+
+    FloatSize intrinsicRatio;
+    FloatSize constrainedSize;
+    computeIntrinsicSizesConstrainedByTransferredMinMaxSizes(constrainedSize, intrinsicRatio);
+    bool hasIntrinsicWidth = constrainedSize.width() > 0 || (!constrainedSize.width() && shouldRespectZeroIntrinsicWidth()) || shouldApplySizeOrInlineSizeContainment();
+    bool hasIntrinsicHeight = constrainedSize.height() > 0 || (!constrainedSize.height() && shouldRespectZeroIntrinsicHeight()) || shouldApplySizeContainment();
+    if (intrinsicRatio.isEmpty() || hasIntrinsicWidth || hasIntrinsicHeight)
+        return { };
+
+    auto [transferredMinLogicalWidth, transferredMaxLogicalWidth] = computeMinMaxLogicalWidthFromAspectRatio();
+    return std::clamp(computeConstrainedLogicalWidth(), transferredMinLogicalWidth, transferredMaxLogicalWidth);
 }
 
 PositionWithAffinity RenderReplaced::positionForPoint(const LayoutPoint& point, HitTestSource source, const RenderFragmentContainer* fragment)
@@ -1089,7 +1122,7 @@ PositionWithAffinity RenderReplaced::positionForPoint(const LayoutPoint& point, 
         if (auto run = InlineIterator::boxFor(*this)) {
             auto lineBox = run->lineBox();
             auto lineContentTop = LayoutUnit { std::min(previousLineBoxContentBottomOrBorderAndPadding(lineBox), lineBox.contentLogicalTop()) };
-            return std::make_pair(lineContentTop, LineSelection::logicalBottom(lineBox));
+            return std::make_pair(lineContentTop, lineBox.contentLogicalBottomAdjustedForFollowingLineBox());
         }
         return std::make_pair(logicalTop(), logicalBottom());
     }();
@@ -1246,7 +1279,7 @@ void RenderReplaced::layoutShadowContent(const LayoutSize& oldSize)
         renderBox.mutableStyle().setHeight(Style::PreferredSize::Fixed { newSize.height() / usedZoom.value });
         renderBox.mutableStyle().setWidth(Style::PreferredSize::Fixed { newSize.width() / usedZoom.value });
 
-        renderBox.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        renderBox.setNeedsLayout(MarkingBehavior::OnlyThis);
         renderBox.layout();
     }
 
@@ -1293,15 +1326,14 @@ void RenderReplaced::computeReplacedOutOfFlowPositionedLogicalHeight(LogicalExte
 
 LayoutUnit RenderReplaced::computeReplacedLogicalWidthRespectingMinMaxWidth(LayoutUnit logicalWidth, IsComputingIntrinsicSize isComputingIntrinsicSize) const
 {
-    if (shouldIgnoreLogicalMinMaxWidthSizes())
+    // The intrinsic width contributions apply min-width and max-width once, in constrainIntrinsicLogicalWidthContributionsByMinMax().
+    if (isComputingIntrinsicSize == IsComputingIntrinsicSize::Yes)
         return logicalWidth;
 
     auto& logicalMinWidth = style().logicalMinWidth();
     auto& logicalMaxWidth = style().logicalMaxWidth();
-    bool useLogicalWidthForMinWidth = (isComputingIntrinsicSize == IsComputingIntrinsicSize::Yes && logicalMinWidth.isPercentOrCalculated());
-    bool useLogicalWidthForMaxWidth = (isComputingIntrinsicSize == IsComputingIntrinsicSize::Yes && logicalMaxWidth.isPercentOrCalculated()) || logicalMaxWidth.isNone();
-    auto minLogicalWidth =  useLogicalWidthForMinWidth ? logicalWidth : computeReplacedLogicalWidthUsing(logicalMinWidth);
-    auto maxLogicalWidth =  useLogicalWidthForMaxWidth ? logicalWidth : computeReplacedLogicalWidthUsing(logicalMaxWidth);
+    auto minLogicalWidth = computeReplacedLogicalWidthUsing(logicalMinWidth);
+    auto maxLogicalWidth = logicalMaxWidth.isNone() ? logicalWidth : computeReplacedLogicalWidthUsing(logicalMaxWidth);
     return std::max(minLogicalWidth, std::min(logicalWidth, maxLogicalWidth));
 }
 

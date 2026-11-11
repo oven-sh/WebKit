@@ -35,6 +35,7 @@
 
 namespace WebKit {
 
+class BrowsingContextGroup;
 class SuspendedPageProxy;
 class WebBackForwardCacheEntry;
 class WebBackForwardListItem;
@@ -48,7 +49,7 @@ public:
     explicit WebBackForwardCache(WebProcessPool&);
     ~WebBackForwardCache();
 
-    void LEGACY_NODELETE ref() const;
+    NODELETE void ref() const;
     void deref() const;
 
     void setCapacity(WebProcessPool&, unsigned);
@@ -60,6 +61,7 @@ public:
     void removeEntriesForProcess(WebProcessProxy&);
     void removeEntriesForPage(WebPageProxy&);
     void removeEntriesForPageAndProcess(WebPageProxy&, WebProcessProxy&);
+    void removeEntriesForPageAndBrowsingContextGroup(WebPageProxy&, BrowsingContextGroup&);
     void removeEntriesForSession(PAL::SessionID);
 
     void addEntry(WebBackForwardListItem&, Ref<SuspendedPageProxy>&&);

@@ -33,6 +33,7 @@
 #include "Logging.h"
 #include "MessageSenderInlines.h"
 #include "PDFPlugin.h"
+#include "PageScaleFactor.h"
 #include "UnifiedPDFPlugin.h"
 #include "WebFrame.h"
 #include "WebKeyboardEvent.h"
@@ -42,7 +43,6 @@
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"
 #include "WebWheelEvent.h"
-#include <WebCore/BitmapImage.h>
 #include <WebCore/Chrome.h>
 #include <WebCore/ContainerNodeInlines.h>
 #include <WebCore/CookieJar.h>
@@ -69,6 +69,7 @@
 #include <WebCore/MIMETypeRegistry.h>
 #include <WebCore/MouseEvent.h>
 #include <WebCore/MouseEventTypes.h>
+#include <WebCore/NativeImage.h>
 #include <WebCore/NetscapePlugInStreamLoader.h>
 #include <WebCore/NodeDocument.h>
 #include <WebCore/OriginAccessPatterns.h>
@@ -352,6 +353,14 @@ void PluginView::setPageScaleFactor(double scaleFactor, std::optional<IntPoint> 
     m_plugin->setPageScaleFactor(scaleFactor, origin);
 }
 
+void PluginView::setClampedPageScaleFactor(double scaleFactor)
+{
+    if (std::isnan(scaleFactor))
+        return;
+
+    setPageScaleFactor(std::clamp(scaleFactor, m_plugin->minScaleFactor(), m_plugin->maxScaleFactor()), std::nullopt);
+}
+
 void PluginView::mainFramePageScaleFactorDidChange()
 {
     if (!m_isInitialized)
@@ -375,6 +384,10 @@ void PluginView::pluginScaleFactorDidChange()
     if (!m_plugin->handlesPageScaleFactor())
         return;
     auto scaleFactor = pageScaleFactor();
+    if (!isValidScaleFactor(scaleFactor)) [[unlikely]] {
+        RELEASE_LOG_ERROR(Plugins, "PluginView::pluginScaleFactorDidChange: not reporting out-of-range scale factor %f", scaleFactor);
+        return;
+    }
     RefPtr webPage = m_webPage.get();
     webPage->send(Messages::WebPageProxy::PluginScaleFactorDidChange(scaleFactor));
     webPage->send(Messages::WebPageProxy::PluginZoomFactorDidChange(scaleFactor));
@@ -553,10 +566,10 @@ void PluginView::paint(GraphicsContext& context, const IntRect& dirtyRect, Widge
 
     if (RefPtr transientPaintingSnapshot = m_transientPaintingSnapshot) {
         if (!context.hasPlatformContext()) {
-            RefPtr image = BitmapImage::create(*transientPaintingSnapshot);
+            RefPtr image = transientPaintingSnapshot->createNativeImage();
             if (!image)
                 return;
-            image->draw(context, frameRect());
+            context.drawNativeImage(*image, frameRect());
         } else {
             auto deviceScaleFactor = 1;
             if (auto* page = m_pluginElement->document().page())
@@ -1221,6 +1234,11 @@ std::optional<FloatRect> PluginView::highlightRectForTapAtPoint(FloatPoint point
 CursorContext PluginView::cursorContext(FloatPoint pointInRootView) const
 {
     return m_plugin->cursorContext(pointInRootView);
+}
+
+bool PluginView::hasSelectableTextAtPoint(FloatPoint pointInRootView) const
+{
+    return m_plugin->hasSelectableTextAtPoint(pointInRootView);
 }
 
 void PluginView::clearSelection()

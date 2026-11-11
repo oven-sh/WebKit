@@ -30,6 +30,7 @@ enum class KnownNote : uint8_t {
     PassedTestOfBeingAsMade,
     AnswerOfQuestionStillStands,
     ViewOverMemoryThatNoOtherThreadGrows,
+    BoundsOfPieceAreInOrder,
     MemberOfBuiltinIsAsBuilt,
     HolderOfBuiltinHasNoAddedNames,
     RoomOfViewIsAsInFrontOfLoop,
@@ -41,6 +42,7 @@ enum class KnownNote : uint8_t {
     NeverLiesBelow,
     LengthOfViewIsFoundAbove,
     ElementReadOffFreshList,
+    ElementReadUnderNumber,
     StructureOfClassIsSeen,
     ValueOfFieldOfHeir,
     LoopAppendsToLiteral,
@@ -51,12 +53,16 @@ enum class KnownNote : uint8_t {
     CapacityCoversLoop,
     LoopCapacityGuard,
     ClassesThatInstanceOfDenied,
+    ClassesThatInstanceOfPassed,
     AnswerOfReadOfSlotThatMayBeEmpty,
     PieceIsStoredByBodyThatCutIt,
+    ListedOwnKeys,
 };
 void noteKnown(Walker&, KnownNote, Reference subject, Reference other, uint32_t word, const LocationMasks& restsOn, uint64_t noted, bool endsAtSuspension = false);
 std::optional<uint64_t> findKnown(const Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
 void endKnown(Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
+constexpr bool isLookupInTable(InlineBuiltin builtin) { return builtin == InlineBuiltin::MapGet || builtin == InlineBuiltin::MapHas || builtin == InlineBuiltin::SetHas; }
+
 extern const OpcodeSet opcodesThatFindEqualOperationBuiltTakes;
 extern const OpcodeSet opcodesThatNoteOperationBuiltTakes;
 Reference findEqualOperationBuiltOfItsOpcodes(Walker&, const Draft&, const Effects&);

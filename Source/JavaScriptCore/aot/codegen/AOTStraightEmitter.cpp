@@ -12,6 +12,7 @@
 #include "AOTBuiltinTableBindings.h"
 #include "AOTCellFormat.h"
 #include "AOTModuleEmitter.h"
+#include "AOTRelocation.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsArithmetic.h"
 #include "AOTRepresentationRules.h"
@@ -902,7 +903,7 @@ void StraightEmitter::emitCallInstruction(StubKey key, const StubSignature& sign
         m_records.traps.callThrowSites.append(CallThrowSite { returnSite, WTF::move(words), wordsThatAreMentions });
     }
     if (options.neverReturns)
-        m_jit->breakpoint();
+        emitUnreachable(*m_jit);
 }
 
 void StraightEmitter::callStub(const BodyValue& value, StubKey key, std::initializer_list<StraightArgument> arguments, const StraightCallOptions& options)

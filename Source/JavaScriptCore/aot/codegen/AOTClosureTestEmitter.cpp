@@ -105,6 +105,21 @@ void ClosureTestEmitter::branchOnClosureTest(CellPointer cell, FunctionID functi
     branchOnIsChangedClosureWithNumber(cell, isSlim, m_mentions.add(NumberSpace::ClosureFunction, function), targets);
 }
 
+void ClosureTestEmitter::branchOnChangedClosure(CellPointer cell, std::span<const ClosureCase> cases, BlockEdge otherwise)
+{
+    LBasicBlock isChanged = newBlock();
+    m_out.branch(hasMutableCellType(cell, SlimClosureWithPropertiesType).value(), rareEdge(isChanged), otherwise);
+
+    m_out.appendTo(isChanged);
+    Word32 number = numberOfChangedClosure(cell);
+    for (const ClosureCase& closureCase : cases) {
+        LBasicBlock next = newBlock();
+        m_out.branch(equal(number, closureNumberOf(closureCase.function)).value(), closureCase.target, normalEdge(next));
+        m_out.appendToContinuation(next);
+    }
+    m_out.jump(otherwise);
+}
+
 Condition ClosureTestEmitter::isClosureOfAny(CellPointer cell, std::span<const FunctionID> functions)
 {
     return asBoolean([&](BranchTargets targets) {
@@ -307,7 +322,12 @@ CellPointer ClosureTestEmitter::closureIfCreated(FunctionID function)
     Word32 entry = closureTableEntry(function);
     Condition isNotCreated = isZero(entry);
     CellPointer none(m_out.constInt64(0));
-    return select(isNotCreated, none, decode(NarrowReference(add(entry, 1).value())));
+    return select(isNotCreated, none, closureInTableEntry(entry));
+}
+
+CellPointer ClosureTestEmitter::closureInTableEntry(Word32 entry)
+{
+    return decode(NarrowReference(add(entry, 1).value()));
 }
 
 Word32 ClosureTestEmitter::closureTableEntry(FunctionID function)

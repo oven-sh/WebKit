@@ -1378,6 +1378,16 @@ angle::Result VertexArrayVk::syncNeedsConversionAttrib(ContextVk *contextVk,
     size_t numberOfVerticesToSkip = srcRelativeOffset / srcStride;
     size_t dstRelativeOffset      = numberOfVerticesToSkip * dstStride;
 
+    if (!bufferVk->hasValidData() && conversion->dirty())
+    {
+        // In case of uninitialized buffer or redefined buffer with no input data, conversion should
+        // not occur, even though a conversion buffer may still be allocated to be used for drawing.
+        size_t maxNumVertices;
+        ANGLE_TRY(CalculateMaxVertexCountForConversion(contextVk, bufferVk, conversion, srcFormat,
+                                                       dstFormat, &maxNumVertices));
+        conversion->clearDirty();
+    }
+
     if (conversion->dirty())
     {
         if (bindingIsAligned)
@@ -1761,6 +1771,9 @@ angle::Result VertexArrayVk::updateDefaultAttribs(ContextVk *contextVk,
 
         setDefaultPackedInput(contextVk, attribIndex, &mDefaultAttribFormatIDs[attribIndex]);
         setVertexInputAttribDescFormat(renderer, attribIndex, mDefaultAttribFormatIDs[attribIndex]);
+
+        // Ensure the offset is set to 0 for default attributes
+        mVertexInputAttribDescs[attribIndex].offset = 0;
     }
     mCurrentDefaultAttribsMask |= dirtyDefaultAttribsMask;
     mCurrentEmptyBufferMask &= ~dirtyDefaultAttribsMask;

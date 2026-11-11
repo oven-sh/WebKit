@@ -246,7 +246,7 @@ const auto WebEventMouseDown = NSEventTypeLeftMouseDown;
 - (void)forwardContextMenuAction:(id)sender;
 @end
 
-static std::optional<WebCore::ContextMenuAction> LEGACY_NODELETE toAction(NSInteger tag)
+NODELETE static std::optional<WebCore::ContextMenuAction> toAction(NSInteger tag)
 {
     using namespace WebCore;
     if (tag >= ContextMenuItemBaseCustomTag && tag <= ContextMenuItemLastCustomTag) {
@@ -431,7 +431,7 @@ static std::optional<WebCore::ContextMenuAction> LEGACY_NODELETE toAction(NSInte
     return std::nullopt;
 }
 
-static std::optional<NSInteger> LEGACY_NODELETE toTag(WebCore::ContextMenuAction action)
+NODELETE static std::optional<NSInteger> toTag(WebCore::ContextMenuAction action)
 {
     using namespace WebCore;
     switch (action) {
@@ -722,7 +722,7 @@ static BOOL forceNSViewHitTest;
 // if YES, do the "top WebHTMLView" hit test (which we'd like to do all the time but can't because of Java requirements [see bug 4349721])
 static BOOL forceWebHTMLViewHitTest;
 
-static RetainPtr<WebHTMLView>& LEGACY_NODELETE lastHitView()
+NODELETE static RetainPtr<WebHTMLView>& lastHitView()
 {
     static NeverDestroyed<RetainPtr<WebHTMLView>> lastHitView;
     return lastHitView;
@@ -814,6 +814,9 @@ static void setCursor(NSWindow *self, SEL cmd, NSPoint point)
 
 const float _WebHTMLViewPrintingMinimumShrinkFactor = WebCore::PrintContext::minimumShrinkFactor();
 const float _WebHTMLViewPrintingMaximumShrinkFactor = WebCore::PrintContext::maximumShrinkFactor();
+
+// Screen pagination isn't printing, so it keeps the old factor.
+static constexpr float screenPaginationMinimumShrinkFactor = 1.25;
 
 // Any non-zero value will do, but using something recognizable might help us debug some day.
 #define TRACKING_RECT_TAG 0xBADFACE
@@ -1045,7 +1048,7 @@ struct WebHTMLViewInterpretKeyEventsParameters {
 
 #if PLATFORM(MAC)
 
-static NSControlStateValue LEGACY_NODELETE kit(TriState state)
+NODELETE static NSControlStateValue kit(TriState state)
 {
     switch (state) {
     case TriState::False:
@@ -2018,7 +2021,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         [pasteboard _web_writePromisedRTFDFromArchive:archive.get() containsImage:[[pasteboard types] containsObject:WebCore::legacyTIFFPasteboardTypeSingleton()]];
     } else if ([type isEqualToString:WebCore::legacyTIFFPasteboardTypeSingleton()] && _private->promisedDragTIFFDataSource && _private->promisedDragTIFFDataConcreteObjectSize) {
         if (RefPtr image = protect(_private->promisedDragTIFFDataSource.get())->image())
-            [pasteboard setData:protect((__bridge NSData *)image->adapter().tiffRepresentation(*_private->promisedDragTIFFDataConcreteObjectSize)) forType:WebCore::legacyTIFFPasteboardTypeSingleton()];
+            [pasteboard setData:protect((__bridge NSData *)image->adapter().tiffRepresentation(WebCore::ImageDrawDescriptor { *_private->promisedDragTIFFDataConcreteObjectSize })) forType:WebCore::legacyTIFFPasteboardTypeSingleton()];
         [self clearPromisedDragTIFFDataSource];
     }
 }
@@ -2498,8 +2501,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     // If we are a frameset just print with the layout we have onscreen, otherwise relayout
     // according to the page width.
     if (shrinkToFit && (!frame->document() || !protect(frame->document())->isFrameSet())) {
-        minLayoutSize = frame->resizePageRectsKeepingRatio(WebCore::FloatSize(pageLogicalWidth, pageLogicalHeight), WebCore::FloatSize(pageLogicalWidth * _WebHTMLViewPrintingMinimumShrinkFactor, pageLogicalHeight * _WebHTMLViewPrintingMinimumShrinkFactor));
-        maximumShrinkRatio = _WebHTMLViewPrintingMaximumShrinkFactor / _WebHTMLViewPrintingMinimumShrinkFactor;
+        minLayoutSize = frame->resizePageRectsKeepingRatio(WebCore::FloatSize(pageLogicalWidth, pageLogicalHeight), WebCore::FloatSize(pageLogicalWidth * screenPaginationMinimumShrinkFactor, pageLogicalHeight * screenPaginationMinimumShrinkFactor));
+        maximumShrinkRatio = _WebHTMLViewPrintingMaximumShrinkFactor / screenPaginationMinimumShrinkFactor;
     }
 
     [self _setPrinting:[self _isInPrintMode] minimumPageLogicalWidth:minLayoutSize.width() logicalHeight:minLayoutSize.height() originalPageWidth:pageLogicalWidth originalPageHeight:pageLogicalHeight maximumShrinkRatio:maximumShrinkRatio adjustViewSize:YES paginateScreenContent:[self _isInScreenPaginationMode]];
@@ -4248,7 +4251,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 #if ENABLE(DRAG_SUPPORT) && PLATFORM(MAC)
 
-static NSDragOperation LEGACY_NODELETE kit(OptionSet<WebCore::DragOperation> operationMask)
+NODELETE static NSDragOperation kit(OptionSet<WebCore::DragOperation> operationMask)
 {
     NSDragOperation result = NSDragOperationNone;
     if (operationMask.contains(WebCore::DragOperation::Copy))

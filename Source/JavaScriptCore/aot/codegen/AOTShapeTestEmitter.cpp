@@ -85,15 +85,13 @@ Condition ShapeTestEmitter::bearsNoMark(CellPointer cell)
 void ShapeTestEmitter::setMark(CellPointer cell)
 {
     CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap::No);
-    TypedPointer byteWithMark = m_out.address(m_heaps.AOTObject_shapeWord, cell.value(), offsetOfByteWithMark);
-    m_out.store32As8(bitAnd(Word32(m_out.load8ZeroExt32(byteWithMark)), word32(static_cast<uint8_t>(~byteWithMarkIsUnmarked))).value(), byteWithMark);
+    storeField(cell, m_heaps.AOTObject_shapeWord, bitAnd(loadField<Word32>(cell, m_heaps.AOTObject_shapeWord), word32(static_cast<int32_t>(~shapeWordIsUnmarked))));
 }
 
 void ShapeTestEmitter::clearMark(CellPointer cell)
 {
     CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap::No);
-    TypedPointer byteWithMark = m_out.address(m_heaps.AOTObject_shapeWord, cell.value(), offsetOfByteWithMark);
-    m_out.store32As8(bitOr(Word32(m_out.load8ZeroExt32(byteWithMark)), word32(byteWithMarkIsUnmarked)).value(), byteWithMark);
+    storeField(cell, m_heaps.AOTObject_shapeWord, bitOr(loadField<Word32>(cell, m_heaps.AOTObject_shapeWord), word32(static_cast<int32_t>(shapeWordIsUnmarked))));
 }
 
 Word32 ShapeTestEmitter::orderWordOf(CellPointer cell)

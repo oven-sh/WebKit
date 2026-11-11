@@ -79,7 +79,7 @@
 @end
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-static RetainPtr<WKProcessPool>& LEGACY_NODELETE sharedProcessPool()
+NODELETE static RetainPtr<WKProcessPool>& sharedProcessPool()
 {
     static NeverDestroyed<RetainPtr<WKProcessPool>> sharedProcessPool;
     return sharedProcessPool;
@@ -469,6 +469,25 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     _processPool->setShouldMakeNextWebProcessLaunchFailForTesting(true);
 }
 
+static WebKit::WebProcessPool::AXAuthenticationTestingMode toAXAuthenticationTestingMode(_WKAXAuthenticationTestingMode mode)
+{
+    switch (mode) {
+    case _WKAXAuthenticationTestingModeDefault:
+        return WebKit::WebProcessPool::AXAuthenticationTestingMode::Default;
+    case _WKAXAuthenticationTestingModeAllow:
+        return WebKit::WebProcessPool::AXAuthenticationTestingMode::Allow;
+    case _WKAXAuthenticationTestingModeDeny:
+        return WebKit::WebProcessPool::AXAuthenticationTestingMode::Deny;
+    }
+    ASSERT_NOT_REACHED();
+    return WebKit::WebProcessPool::AXAuthenticationTestingMode::Default;
+}
+
+- (void)_setAXAuthenticationModeForTesting:(_WKAXAuthenticationTestingMode)mode
+{
+    _processPool->setAXAuthenticationTestingMode(toAXAuthenticationTestingMode(mode));
+}
+
 - (BOOL)_hasPrewarmedWebProcess
 {
     for (Ref process : borrow(_processPool->processes()).get()) {
@@ -567,11 +586,6 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 + (void)_crashOnMessageCheckFailureForTesting
 {
     IPC::Connection::setShouldCrashOnMessageCheckFailure(true);
-}
-
-+ (void)_forceUseSharedMemoryForSendingForTesting:(BOOL)force
-{
-    IPC::Connection::setForceUseSharedMemoryForSendingForTesting(force);
 }
 
 + (void)_setLinkedOnOrAfterEverything
@@ -789,7 +803,7 @@ static NSArray<_WKProcessInfo *> *allWebContentProcessInfo()
 @synthesize totalSystemCPUTime = _totalSystemCPUTime;
 @synthesize physicalFootprint = _physicalFootprint;
 
-static _WKProcessState LEGACY_NODELETE processStateFromThrottleState(WebKit::ProcessThrottleState state)
+NODELETE static _WKProcessState processStateFromThrottleState(WebKit::ProcessThrottleState state)
 {
     switch (state) {
     case WebKit::ProcessThrottleState::Foreground:

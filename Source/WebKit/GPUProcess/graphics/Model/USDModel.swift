@@ -32,6 +32,7 @@ typealias NodeIdentifier = UInt64
 import USDKit
 import DirectResource
 import RealityKit
+internal import Spatial
 import UniformTypeIdentifiers
 
 extension MTLCaptureDescriptor {
@@ -122,7 +123,7 @@ private func makeMTLTextureFromImageAsset(
     }
 
     var mipLevelsInData = 0
-    unsafe imageAssetData.bytes.withUnsafeBytes { textureBytes in
+    let uploadTexture = { (textureBytes: UnsafeRawBufferPointer) in
         guard let baseAddress = textureBytes.baseAddress else {
             logError("nil base address in imageAssetData")
             return
@@ -212,6 +213,11 @@ private func makeMTLTextureFromImageAsset(
             }
         }
     }
+    #if compiler(>=6.4)
+    imageAssetData.bytes.withUnsafeBytes(uploadTexture)
+    #else
+    unsafe imageAssetData.bytes.withUnsafeBytes(uploadTexture)
+    #endif
 
     guard mipLevelsInData > 0 else {
         return nil
@@ -514,6 +520,7 @@ extension WKBridgeUSDConfiguration {
 
     var standardDynamicRange: Bool = false
 
+    @concurrent
     func makeStandaloneResources() async {
         do {
             appRenderer.pendingStandaloneResources = try await LowLevelRenderContextStandalone.Resources(device: self.device)
@@ -533,6 +540,7 @@ extension WKBridgeUSDConfiguration {
         }
     }
 
+    @concurrent
     func makeRendererResources() async {
         do {
             let colorPixelFormat: MTLPixelFormat = standardDynamicRange ? .bgra8Unorm : .rgba16Float
@@ -1917,15 +1925,17 @@ private func fromWKBridgeDataType(_ dataType: WKBridgeDataType) -> ShaderGraph.D
     }
 }
 
+
+private let cgColorComponentCount = 3
+
 private func makeCGColor3(colorSpace: CGColorSpace, _ a: CGFloat, _ b: CGFloat, _ c: CGFloat) -> CGColor {
-    // rdar://177971578 - CG should provide an API for not requiring unsafe
-    guard let cs = unsafe CGColor(colorSpace: colorSpace, components: [a, b, c, 1.0]) else {
-        fatalError("\(a) \(b) \(c) could not form a CGColor with colorSpace \(colorSpace)")
-    }
-    return cs
+    makeCGColor4(colorSpace: colorSpace, a, b, c, 1.0)
 }
 
 private func makeCGColor4(colorSpace: CGColorSpace, _ a: CGFloat, _ b: CGFloat, _ c: CGFloat, _ d: CGFloat) -> CGColor {
+    guard colorSpace.numberOfComponents == cgColorComponentCount else {
+        fatalError("colorSpace \(colorSpace) has \(colorSpace.numberOfComponents) components, expected \(cgColorComponentCount)")
+    }
     // rdar://177971578 - CG should provide an API for not requiring unsafe
     guard let cs = unsafe CGColor(colorSpace: colorSpace, components: [a, b, c, d]) else {
         fatalError("\(a) \(b) \(c) \(d) could not form a CGColor with colorSpace \(colorSpace)")
@@ -1933,18 +1943,29 @@ private func makeCGColor4(colorSpace: CGColorSpace, _ a: CGFloat, _ b: CGFloat, 
     return cs
 }
 
-private func fromWKBridgeConstant(_ constant: WKBridgeConstantContainer) -> ShaderGraph.Value {
-    let values = constant.constantValues
+private func bridgeColorSpace(named name: String?) -> CGColorSpace {
     // Resolve the color space from the transmitted name, falling back to extendedLinearSRGB.
     // USD color3f/color4f values are in linear sRGB, so extendedLinearSRGB is the correct fallback.
-    // swift-format-ignore: NeverForceUnwrap
-    guard
-        let colorSpace =
-            (constant.colorSpaceName.flatMap { CGColorSpace(name: $0 as CFString) }
-                ?? CGColorSpace(name: CGColorSpace.extendedLinearSRGB))
-    else {
+    if let name, let colorSpace = CGColorSpace(name: name as CFString) {
+        if colorSpace.model == .rgb && colorSpace.numberOfComponents == cgColorComponentCount {
+            return colorSpace
+        }
+        logError(
+            "rejecting color space \"\(name)\": model \(colorSpace.model.rawValue) with "
+                + "\(colorSpace.numberOfComponents) components, expected a "
+                + "\(cgColorComponentCount)-component RGB space"
+        )
+    }
+    guard let fallback = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) else {
         fatalError("extendedLinearSRGB could not be constructed, should never occur")
     }
+    return fallback
+}
+
+
+private func fromWKBridgeConstant(_ constant: WKBridgeConstantContainer) -> ShaderGraph.Value {
+    let values = constant.constantValues
+    let colorSpace = bridgeColorSpace(named: constant.colorSpaceName)
 
     switch constant.constant {
     case .bool:
@@ -2304,6 +2325,8 @@ final class USDModelLoader {
     private let objcLoader: WKBridgeModelLoader
     private let gpuFamily: MTLGPUFamily
     private var rootJointIndicesCache: [String: [UInt32]] = [:]
+    private var primsByName: [String: USDPrim] = [:]
+    private var missingPrimNames: Set<String> = []
 
     // TextureID → shader parameter name (e.g. "diffuseColor"). Populated from
     // MaterialData.assignedTextures so we can set WKBridgeUpdateTexture.hashString
@@ -2353,6 +2376,8 @@ final class USDModelLoader {
 
     private func resetLoaderState() {
         rootJointIndicesCache.removeAll()
+        primsByName.removeAll()
+        missingPrimNames.removeAll()
         textureIdToParameterName.removeAll()
         deformationDataById.removeAll()
         deformationOverridesById.removeAll()
@@ -2404,6 +2429,44 @@ final class USDModelLoader {
 
     func currentTime() -> Double {
         time - startTime
+    }
+
+    private func prim(named name: String, in stage: USDStage) -> USDPrim? {
+        if let cachedPrim = primsByName[name] {
+            return cachedPrim
+        }
+
+        guard !missingPrimNames.contains(name) else {
+            return nil
+        }
+
+        guard let prim = stage.descendants.first(where: { $0.path.name.string == name }) else {
+            logError("the model has no prim named '\(name)'")
+            missingPrimNames.insert(name)
+            return nil
+        }
+
+        primsByName[name] = prim
+        return prim
+    }
+
+    func localToWorldTransform(ofPrimNamed name: String) -> simd_float4x4? {
+        guard let stage, let prim = prim(named: name, in: stage) else {
+            return nil
+        }
+
+        let timeCode = USDStage.TimeCode(time * timeCodePerSecond)
+
+        var transform = matrix_identity_float4x4
+        var current: USDPrim? = prim
+        while let ancestor = current, ancestor.isValid {
+            if let local = ancestor.transform(at: timeCode) {
+                transform = simd_float4x4(local.projectiveTransform) * transform
+            }
+            current = ancestor.parent
+        }
+
+        return transform
     }
 
     func setCurrentTime(_ newTime: Double) {
@@ -2766,6 +2829,10 @@ extension WKBridgeModelLoader {
         return loader.currentTime()
     }
 
+    func anchorPlacementNamed(_ name: String) -> simd_float4x4 {
+        loader?.localToWorldTransform(ofPrimNamed: name) ?? matrix_identity_float4x4
+    }
+
     func setCurrentTime(_ newTime: Double) {
         loader?.setCurrentTime(newTime)
     }
@@ -2915,12 +2982,14 @@ extension WKBridgeUSDConfiguration {
 
     var standardDynamicRange: Bool = false
 
+    @concurrent
     func makeStandaloneResources() async {
     }
 
     func createMaterialCompiler() {
     }
 
+    @concurrent
     func makeRendererResources() async {
     }
 
@@ -3040,6 +3109,10 @@ extension WKBridgeModelLoader {
 
     func currentTime() -> Double {
         0.0
+    }
+
+    func anchorPlacementNamed(_ name: String) -> simd_float4x4 {
+        matrix_identity_float4x4
     }
 
     func setCurrentTime(_ newTime: Double) {

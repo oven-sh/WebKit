@@ -36,6 +36,7 @@
 #include "EventNames.h"
 #include "ExtendableMessageEvent.h"
 #include "IDBConnectionProxy.h"
+#include "InspectorObjectIdentifier.h"
 #include "InstallEvent.h"
 #include "JSDOMPromise.h"
 #include "LoaderStrategy.h"
@@ -59,7 +60,6 @@
 #include "WorkerDebuggerProxy.h"
 #include "WorkerLoaderProxy.h"
 #include "WorkerObjectProxy.h"
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/RuntimeFlags.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
@@ -73,7 +73,7 @@ class DummyServiceWorkerThreadProxy final : public WorkerObjectProxy, public Can
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DummyServiceWorkerThreadProxy);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DummyServiceWorkerThreadProxy);
 public:
-    static DummyServiceWorkerThreadProxy& LEGACY_NODELETE singleton()
+    NODELETE static DummyServiceWorkerThreadProxy& singleton()
     {
         static NeverDestroyed<DummyServiceWorkerThreadProxy> proxy;
         return proxy;
@@ -103,8 +103,9 @@ static WorkerParameters generateWorkerParameters(const ServiceWorkerContextData&
         contextData.scriptURL,
         URL(), // FIXME: Should pass owner URL.
         emptyString(),
-        makeString("serviceworker:"_s, Inspector::IdentifiersFactory::createIdentifier()),
+        makeString("serviceworker:"_s, generateInspectorObjectIdentifierString()),
         WTF::move(userAgent),
+        { },
         platformStrategies()->loaderStrategy()->isOnLine(),
         contextData.contentSecurityPolicy,
         false,
@@ -128,7 +129,7 @@ static WorkerParameters generateWorkerParameters(const ServiceWorkerContextData&
     };
 }
 
-static WorkerThreadStartMode LEGACY_NODELETE threadStartModeFromSettings()
+NODELETE static WorkerThreadStartMode threadStartModeFromSettings()
 {
 #if ENABLE(REMOTE_INSPECTOR) && ENABLE(REMOTE_INSPECTOR_SERVICE_WORKER_AUTO_INSPECTION)
     // FIXME: Find a reasonable heuristic for when the service worker definitely won't be

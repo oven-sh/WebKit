@@ -481,10 +481,27 @@ void Modules::markOriginalDue(ModuleID module)
         record->clearTopLevelCapability();
 }
 
+bool Modules::isLeftByFailedLoad(ModuleID module) const
+{
+    bool wasReached = false;
+    for (uint32_t index = 0; index < m_table.size() && !wasReached; ++index) {
+        ModuleID importer(index);
+        ModuleRecord* record = m_records.get(importer);
+        wasReached = record && record->hasUnresolvableRequest() && status(importer) <= ModuleStatus::Linked && modulesInLoadGraph(importer).get(module.index());
+    }
+    if (!wasReached || m_rootAwaitingLoader)
+        return false;
+    for (const LoadInFlight& load : m_loadsInFlight) {
+        if (m_loadsInFlight.isBeingLoaded(load) && modulesInLoadGraph(load.root).get(module.index()))
+            return false;
+    }
+    return true;
+}
+
 void Modules::retainRecordForInFlightLoads(ModuleID module)
 {
     const ModuleData& moduleData = data(module);
-    if (!moduleData.isESModuleOfProgram() || moduleData.isFacade() || activeMock(module))
+    if (!moduleData.isESModuleOfProgram() || moduleData.isFacade() || activeMock(module) || isLeftByFailedLoad(module))
         return;
     ModuleRecord* record = m_records.get(module);
     if (!record || record->hasLiveExports() || record->keepsToModule())

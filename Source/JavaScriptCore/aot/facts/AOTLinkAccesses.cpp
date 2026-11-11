@@ -26,6 +26,7 @@
 #include "AOTResultRules.h"
 #include <algorithm>
 #include <optional>
+#include <tuple>
 #include <wtf/HashMap.h>
 #include <wtf/SetForScope.h>
 
@@ -176,11 +177,13 @@ private:
 
     bool isRead() const { return m_access.kind == Kind::Read; }
     void noteSiteOfCopyThatSpellsStore();
+    void layAccessorAsWrittenOnPrototypeOf(LayoutID);
     bool readsThroughSuperWhatIsOnlyCalled() const;
     bool isNamed() const { return !!m_access.key; }
     bool isTakenByLoader() const { return isRead() && m_function && isLibraryCode(m_program, m_program.at(m_function)) && std::ranges::contains(m_flow.summaries.at(m_function).namesThatLoaderTakes, m_access.value, &ThinSummary::NameThatLoaderTakes::read); }
     bool readKey();
     bool readsOrStoresUnderTextsThatBodyWrites();
+    bool isFinalListRead();
 
     void give(const LinkType&);
     void giveSymbol(PropertyKeyID);
@@ -190,6 +193,11 @@ private:
     void giveWhatIsHeldAt(FlowNodeID);
     void giveWhatIsEstablishedOf(const DeclaredType&);
     void storeInto(FlowNodeID);
+    LayoutID classTestedByInstanceOf();
+    bool isExcludedByInstanceOf(LayoutID);
+    LayoutID findClassRefusedByTest();
+    LayoutID classRefusedByTest();
+    bool isRefusedByTest(LayoutID);
     bool storesTextNumberOrBooleanThatIsWritten() const;
     bool isStoreByBodyOfFileInItsOwnText() const;
     bool storesWhatSetterOfPrototypeLinkPassesOver() const;
@@ -198,7 +206,7 @@ private:
     enum class UnknownIs : uint8_t { ByEscapeAlone, InSight };
     enum class TellsName : uint8_t { No, Yes };
     void cannotTell(UnknownIs = UnknownIs::InSight, TellsName = TellsName::Yes);
-    void cannotTellWhatRuns();
+    void cannotTellWhatRuns(UnknownIs = UnknownIs::InSight);
 
     void noteChange(LayoutID layout, LayoutChange change)
     {
@@ -213,6 +221,8 @@ private:
     }
     template<typename Functor> void forEachLayoutUpTheBases(LayoutID, const Functor&) const;
 
+    std::optional<LayoutID> m_classTestedByInstanceOf;
+    std::optional<LayoutID> m_classRefusedByTest;
     FlowNodeID extraPropertyReadNode(LayoutID id) { return m_flow.extraPropertyReadNode(id); }
     FlowNodeID foundBesideFieldsUnderKey() { return m_flow.foundBesideFieldsUnder(m_access.key); }
     void storeBesideFieldsOf(LayoutID);
@@ -330,6 +340,7 @@ private:
     bool m_keyCannotNameBuiltin { false };
     bool m_keyIsNumberBooleanOrNullish { false };
     bool m_keyIsSymbolAsFarAsIsSeen { false };
+    bool m_seenKeysAreNumbers { false };
     bool m_keyMayNamePrototypeLink { false };
     bool m_hasThrown { false };
     bool m_wasAskedToThrow { false };
@@ -440,6 +451,169 @@ void AccessInLinkAccesses::storeInto(FlowNodeID to)
 {
     if (!isRead() && m_value)
         m_flow.addEdge(m_value, to);
+}
+
+static ValueID valueBehindCastsAndProofs(const BodyIndex& index, ValueID value)
+{
+    while (true) {
+        ValueID stripped = index.stripCasts(value);
+        if (ValueID subject = index.valueNarrowedInto(stripped))
+            stripped = subject;
+        if (stripped == value)
+            return value;
+        value = stripped;
+    }
+}
+
+static LayoutID classNamedByBinding(const Program& program, const BodyIndex& index, ValueID value)
+{
+    while (!index.isParameter(value) && index.opcodeOf(value) == Opcode::CheckInitialized)
+        value = index.value(value).operand(0);
+    if (index.isParameter(value) || index.opcodeOf(value) != Opcode::GetModuleVariable)
+        return { };
+    const Variable& variable = program.at(index.value(value).as<Opcode::GetModuleVariable>().variable());
+    if (!variable.flags.contains(VariableFlags::IsImmutable) || !variable.declared.isEstablished() || !variable.declared.written())
+        return { };
+    Type declared = program.at(variable.declared.written());
+    declared.primitives &= ~Primitive::Absent;
+    FunctionID constructor = singleFunctionOf(TypeReader(program), declared);
+    return constructor && isClassConstructorOf(program.at(constructor).kind) ? program.at(constructor).constructedClass : LayoutID();
+}
+
+LinkFlow::ReadsBehindInstanceOf LinkFlow::findReadsBehindInstanceOf(const Program& program, const BodyIndex& index, const ThinSummary& summary)
+{
+    struct Place {
+        uint32_t subject { 0 };
+        uint32_t dominatorNumber { 0 };
+        uint32_t lastBelow { 0 };
+        ValueID read;
+        ValueID test;
+        LayoutID tested;
+    };
+    ReadsBehindInstanceOf found;
+    Vector<Place> places;
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> subjects;
+    for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+        BlockID block(number);
+        std::optional<BodyIncomingEdge> edge = index.isReachable(block) ? index.onlyIncomingEdge(block) : std::nullopt;
+        if (!edge || edge->targetIndex)
+            continue;
+        BodyTerminator end = index.terminator(edge->from);
+        if (end.kind() != TerminatorKind::Branch)
+            continue;
+        ValueID condition = end.as<TerminatorKind::Branch>().conditionOperand();
+        while (!index.isParameter(condition) && index.opcodeOf(condition) == Opcode::ToBoolean)
+            condition = index.value(condition).operand(0);
+        if (index.isParameter(condition) || index.opcodeOf(condition) != Opcode::InstanceOf)
+            continue;
+        auto test = index.value(condition).as<Opcode::InstanceOf>();
+        LayoutID tested = classNamedByBinding(program, index, test.constructorOperand());
+        if (!tested)
+            continue;
+        uint32_t subject = valueBehindCastsAndProofs(index, test.valueOperand()).index();
+        subjects.add(subject);
+        places.append(Place { subject, index.dominatorNumber(block), index.lastDominatorNumberBelow(block), { }, condition, tested });
+    }
+    if (places.isEmpty())
+        return found;
+    for (const SummaryAccess& access : summary.accesses) {
+        if (access.kind != SummaryAccess::Kind::Read || !access.key || access.site.index() >= index.numberOfValues() || index.isParameter(access.site) || index.opcodeOf(access.site) != Opcode::PropGet)
+            continue;
+        uint32_t subject = valueBehindCastsAndProofs(index, index.value(access.site).as<Opcode::PropGet>().objectOperand()).index();
+        if (subjects.contains(subject))
+            places.append(Place { subject, index.dominatorNumber(index.blockOf(access.site)), 0, access.site, { }, { } });
+    }
+    std::ranges::sort(places, [](const Place& first, const Place& second) {
+        return std::tuple(first.subject, first.dominatorNumber, !!first.read, first.read.bits()) < std::tuple(second.subject, second.dominatorNumber, !!second.read, second.read.bits());
+    });
+    Vector<const Place*, 8> testsAround;
+    for (const Place& place : places) {
+        while (!testsAround.isEmpty() && (testsAround.last()->subject != place.subject || testsAround.last()->lastBelow < place.dominatorNumber))
+            testsAround.removeLast();
+        if (!place.read)
+            testsAround.append(&place);
+        else if (!testsAround.isEmpty())
+            found.bySite.append(ReadBehindInstanceOf { place.read, testsAround.last()->test, testsAround.last()->tested });
+    }
+    std::ranges::sort(found.bySite, { }, &ReadBehindInstanceOf::site);
+    for (uint32_t number = 0; number < summary.accesses.size(); ++number) {
+        const SummaryAccess& access = summary.accesses[number];
+        auto read = std::ranges::lower_bound(found.bySite, access.site, { }, &ReadBehindInstanceOf::site);
+        if (access.kind == SummaryAccess::Kind::Read && access.value != noSummaryNode && read != found.bySite.end() && read->site == access.site)
+            found.accessesByTest.append({ read->test, number });
+    }
+    std::ranges::sort(found.accessesByTest);
+    return found;
+}
+
+LayoutID AccessInLinkAccesses::classTestedByInstanceOf()
+{
+    if (!m_classTestedByInstanceOf) {
+        m_classTestedByInstanceOf = LayoutID();
+        if (const LinkFlow::ReadsBehindInstanceOf* reads = m_shared || !isRead() || !isNamed() ? nullptr : m_flow.readsBehindInstanceOf(m_function)) {
+            auto read = std::ranges::lower_bound(reads->bySite, m_access.site, { }, &LinkFlow::ReadBehindInstanceOf::site);
+            if (read != reads->bySite.end() && read->site == m_access.site)
+                m_classTestedByInstanceOf = read->tested;
+        }
+    }
+    return *m_classTestedByInstanceOf;
+}
+
+bool AccessInLinkAccesses::isExcludedByInstanceOf(LayoutID id)
+{
+    if (m_program.at(id).kind != LayoutKind::Instance || m_program.at(id).has(LayoutFlags::IsOfCreatedObject))
+        return false;
+    LayoutID tested = classTestedByInstanceOf();
+    if (!tested)
+        return false;
+    size_t stepsLeft = m_program.layouts.size();
+    for (LayoutID current = declaredLayoutOf(m_program, id); current && stepsLeft; --stepsLeft) {
+        const Layout& layout = m_program.at(current);
+        if (current == tested || !layout.constructor || !isClassConstructorOf(m_program.at(layout.constructor).kind) || (layout.has(LayoutFlags::HasHeritage) && !layout.base))
+            return false;
+        current = layout.base;
+    }
+    return true;
+}
+
+LayoutID AccessInLinkAccesses::findClassRefusedByTest()
+{
+    const BodyIndex* index = m_shared || isRead() || !isNamed() || m_program.at(m_function).kind != FunctionKind::DerivedConstructor ? nullptr : bodiesLookedAt(m_flow.looks).find(m_function);
+    if (!index || !index->opcodes().contains(Opcode::IsUnlockedInstance) || m_access.site.index() >= index->numberOfValues() || index->isParameter(m_access.site))
+        return { };
+    BodyValue store = index->value(m_access.site);
+    ValueID object = store.opcode() == Opcode::PropDefine ? store.as<Opcode::PropDefine>().objectOperand() : store.opcode() == Opcode::PropSet ? store.as<Opcode::PropSet>().objectOperand() : ValueID();
+    std::optional<BodyIncomingEdge> edge = object ? index->onlyIncomingEdge(index->blockOf(m_access.site)) : std::nullopt;
+    if (!edge || !edge->targetIndex)
+        return { };
+    BodyTerminator end = index->terminator(edge->from);
+    if (end.kind() != TerminatorKind::Branch)
+        return { };
+    ValueID condition = end.as<TerminatorKind::Branch>().conditionOperand();
+    if (index->isParameter(condition) || index->opcodeOf(condition) != Opcode::IsUnlockedInstance || index->stripCasts(index->value(condition).operand(0)) != index->stripCasts(object))
+        return { };
+    const Type& tested = m_program.at(index->value(condition).as<Opcode::IsUnlockedInstance>().testedType());
+    std::span<const LayoutID> layouts = m_program.types.listOf(tested.layouts);
+    if (layouts.size() != 1 || m_flow.instancesMayBeLocked(layouts[0]))
+        return { };
+    FlowNodeID told = m_flow.whereInstancesMayBeLocked(layouts[0]);
+    FlowObserver observer { FlowObserver::Kind::MemberOfAccess, m_function, m_record };
+    if (laysWatchAt(told, observer))
+        m_flow.observe(told, observer);
+    return m_flow.instancesMayBeLocked(layouts[0]) ? LayoutID() : layouts[0];
+}
+
+LayoutID AccessInLinkAccesses::classRefusedByTest()
+{
+    if (!m_classRefusedByTest)
+        m_classRefusedByTest = findClassRefusedByTest();
+    return *m_classRefusedByTest;
+}
+
+bool AccessInLinkAccesses::isRefusedByTest(LayoutID id)
+{
+    LayoutID refused = m_program.at(id).kind == LayoutKind::Instance && !m_program.at(id).has(LayoutFlags::IsOfCreatedObject) ? classRefusedByTest() : LayoutID();
+    return refused && m_flow.standsAtOrBelow(declaredLayoutOf(m_program, id), refused);
 }
 
 bool AccessInLinkAccesses::isStoreByBodyOfFileInItsOwnText() const
@@ -717,10 +891,10 @@ void AccessInLinkAccesses::cannotTell(UnknownIs unknownIs, TellsName tellsName)
         m_flow.addEdge(m_receiver, m_flow.unseen());
 }
 
-void AccessInLinkAccesses::cannotTellWhatRuns()
+void AccessInLinkAccesses::cannotTellWhatRuns(UnknownIs unknownIs)
 {
     m_flow.addEdge(m_subject, m_flow.unseen());
-    cannotTell();
+    cannotTell(unknownIs);
 }
 
 template<typename Functor>
@@ -806,6 +980,8 @@ bool AccessInLinkAccesses::readKey()
     m_keyCannotNameBuiltin = !holdsObjects && !(key.primitives & LinkType::closed(Primitive::AnyString | Primitive::AnySymbol));
     m_keyIsNumberBooleanOrNullish = !holdsObjects && !(key.primitives & ~LinkType::closed(Primitive::Number | Primitive::Boolean | Primitive::UndefinedOrNull));
     m_keyIsSymbolAsFarAsIsSeen = hasNode && LinkFlow::isSymbolAsFarAsIsSeen(key);
+    LinkType seenKeys = key.directPart();
+    m_seenKeysAreNumbers = !holdsObjectsForLinkAccesses(seenKeys) && !(seenKeys.primitives & ~LinkType::closed(Primitive::Number));
     bool keyIsTextOrNumber = !holdsObjects && !(key.primitives & LinkType::closed(Primitive::AnySymbol));
     m_keyMayNamePrototypeLink = (holdsObjects || key.primitives & Primitive::AnyString) && keyThatBeginsSoMayNamePrototypeLink(m_program, m_access) && !(keyIsTextOrNumber && storesWhatSetterOfPrototypeLinkPassesOver());
     return true;
@@ -928,9 +1104,121 @@ bool AccessInLinkAccesses::readsOrStoresUnderTextsThatBodyWrites()
         underName.m_keyIsOnlyNumbers = false;
         underName.m_keyCannotNameBuiltin = false;
         underName.m_keyIsSymbolAsFarAsIsSeen = false;
+        underName.m_seenKeysAreNumbers = false;
         underName.m_keyMayNamePrototypeLink = false;
         underName.m_before = { };
         underName.resolve();
+    }
+    return true;
+}
+
+static void collectListAliases(const BodyIndex& index, BitVector& aliases)
+{
+    bool grows = true;
+    auto unite = [&](ValueID one, ValueID other) {
+        if (!one || !other || aliases.get(one.index()) == aliases.get(other.index()))
+            return;
+        aliases.set(one.index());
+        aliases.set(other.index());
+        grows = true;
+    };
+    while (std::exchange(grows, false)) {
+        for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+            BodyBlock block = index.block(BlockID(number));
+            for (uint32_t place = 0; place < block.numberOfParameters(); ++place)
+                unite(block.parameter(place), index.valueNarrowedInto(block.parameter(place)));
+            for (BodyValue value : block.values()) {
+                if (opcodesThatStateTypes.contains(value.opcode()))
+                    unite(value.id(), value.operand(0));
+            }
+            for (BodyTarget target : index.terminator(block.id()).targets()) {
+                std::span<const ValueID> arguments = target.arguments();
+                for (uint32_t place = 0; place < arguments.size(); ++place)
+                    unite(arguments[place], index.block(target.block()).parameter(place));
+            }
+        }
+    }
+}
+
+static bool isLocalListMethod(const Program& program, PropertyKeyID key)
+{
+    const BuiltinName methods[] = { BuiltinNames::push, BuiltinNames::pop, BuiltinNames::shift, BuiltinNames::unshift, BuiltinNames::indexOf, BuiltinNames::includes, BuiltinNames::at };
+    return std::ranges::any_of(methods, [&](BuiltinName method) {
+        return key == program.keyOf(method);
+    });
+}
+
+static bool usesListLocally(const Program& program, const BodyIndex& index, const BitVector& aliases, const BodyValue& user, uint32_t operandIndex)
+{
+    switch (user.opcode()) {
+    case Opcode::PropGet:
+        return operandIndex == OperandIndex::PropGet::object;
+    case Opcode::ElemGet:
+        return operandIndex == OperandIndex::ElemGet::object;
+    case Opcode::ElemSet:
+        return operandIndex == OperandIndex::ElemSet::object;
+    case Opcode::Call: {
+        if (operandIndex != OperandIndex::Call::thisValue)
+            return false;
+        ValueID callee = index.stripCasts(user.as<Opcode::Call>().calleeOperand());
+        if (index.isParameter(callee) || index.opcodeOf(callee) != Opcode::PropGet)
+            return false;
+        auto method = index.value(callee).as<Opcode::PropGet>();
+        return aliases.get(method.objectOperand().index()) && isLocalListMethod(program, method.key());
+    }
+    default:
+        return opcodesThatStateTypes.contains(user.opcode());
+    }
+}
+
+bool AccessInLinkAccesses::isFinalListRead()
+{
+    const BodyIndex* index = isRead() && !isNamed() && !m_shared && m_receiver == m_subject && !m_program.at(m_function).isCoroutine() ? bodiesLookedAt(m_flow.looks).find(m_function) : nullptr;
+    if (!index || m_access.site.index() >= index->numberOfValues() || index->isParameter(m_access.site) || index->opcodeOf(m_access.site) != Opcode::ElemGet)
+        return false;
+    BodyBlock last = index->block(index->blockOf(m_access.site));
+    if (last.hasHandler() || index->terminator(last.id()).numberOfTargets())
+        return false;
+    ValueID list = index->value(m_access.site).as<Opcode::ElemGet>().objectOperand();
+    ValueID root = index->stripCasts(list);
+    auto isRoot = [&](ValueID value) {
+        return index->opcodeOf(value) == Opcode::NewArray || (index->opcodeOf(value) == Opcode::Data && !!m_program.at(index->value(value).as<Opcode::Data>().data()).root.tryAs<DataNode::Array>());
+    };
+    if (index->isParameter(root) ? index->blockOf(root) == entryBlock : !isRoot(root))
+        return false;
+
+    BitVector aliases(index->numberOfValues());
+    aliases.set(list.index());
+    collectListAliases(*index, aliases);
+    for (uint32_t number = 0; number < index->numberOfBlocks(); ++number) {
+        BodyBlock block = index->block(BlockID(number));
+        for (uint32_t place = 0; place < block.numberOfParameters(); ++place) {
+            if (aliases.get(block.parameter(place).index()) && (block.id() == entryBlock || block.isHandlerBlock()))
+                return false;
+        }
+        for (BodyValue value : block.values()) {
+            if (aliases.get(value.id().index()) && !opcodesThatStateTypes.contains(value.opcode()) && !isRoot(value.id()))
+                return false;
+            bool isBehindRead = block.id() == last.id() && value.id().index() > m_access.site.index();
+            bool staysLocal = true;
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                staysLocal &= !operand || !aliases.get(operand.index()) || (!isBehindRead && usesListLocally(m_program, *index, aliases, value, operandIndex));
+            });
+            if (!staysLocal)
+                return false;
+        }
+        bool staysInBlocks = true;
+        index->terminator(block.id()).forEachOperand([&](ValueID operand, uint32_t) {
+            staysInBlocks &= !operand || !aliases.get(operand.index());
+        });
+        if (!staysInBlocks)
+            return false;
+        if (block.hasHandler()) {
+            for (ValueID argument : block.handler().arguments()) {
+                if (aliases.get(argument.index()))
+                    return false;
+            }
+        }
     }
     return true;
 }
@@ -1055,7 +1343,7 @@ void AccessInLinkAccesses::resolve()
         } else
             m_flow.noteWhatIsStoredOn(subject, stored);
     }
-    if (!isNamed() && !m_keyIsOnlyNumbers && m_access.kind != Kind::Define && !membersOfObjectPrototypeAreWhatTableLists())
+    if (!isNamed() && !m_keyIsOnlyNumbers && m_access.kind != Kind::Define && !membersOfObjectPrototypeAreWhatTableLists() && !isFinalListRead())
         m_flow.addEdge(m_subject, m_flow.unseen());
     if ((subject.hasUnknownObjects && !m_before.hasUnknownObjects) || (subject.hasDirectUnknownObjects() && !m_before.hasDirectUnknownObjects()))
         cannotTell(subject.hasDirectUnknownObjects() ? UnknownIs::InSight : UnknownIs::ByEscapeAlone);
@@ -1166,6 +1454,8 @@ void AccessInLinkAccesses::resolveUnderPrivateName()
 
 void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
 {
+    if (isRefusedByTest(id))
+        return;
     const Layout& layout = m_program.at(id);
     switch (layout.kind) {
     case LayoutKind::Record:
@@ -1251,7 +1541,7 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
         return;
     bool goesOnAboveClasses = members.lookupGoesOnAboveClasses() && !isPrivateName;
     FlowNodeID foundOnPrototypes;
-    if (!isPrivateName && m_flow.isBelowConstructorFunction(id)) {
+    if (!isPrivateName && m_flow.isBelowFollowedPrototype(id)) {
         if (isRead())
             foundOnPrototypes = m_flow.foundOnPrototypesAbove(id, m_access.key, LinkFlow::AccessorsAbove::AreEnteredByCaller);
         else if (!isDefinition)
@@ -1282,6 +1572,8 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
             giveConstructorsOfRowAbove(id);
         if (m_nameClass == NameClass::Constructor && layout.kind == LayoutKind::Instance && layout.constructor && !mayFindClassAbove)
             give(closureForLinkAccesses(layout.constructor));
+        else if (BuiltinID member; !field && isExcludedByInstanceOf(id) && lookUpFrom(Builtins::ObjectPrototype, member) == LookupInLinkAccesses::Absent)
+            return;
         else if (!giveWhatIsFoundFrom(Builtins::ObjectPrototype))
             m_flow.escape(id);
         return;
@@ -1502,6 +1794,15 @@ void AccessInLinkAccesses::resolveOnFamily(FamilyID family)
             if (mayComeInFrontOfDefinition)
                 givePrimitives(Primitive::Undefined);
         }
+        if (LayoutID tested = classTestedByInstanceOf()) {
+            if (auto read = m_flow.findFamilyReadBehindInstanceOf(family, m_access.key, tested)) {
+                giveWhatIsHeldAt(read->fields);
+                giveWhatIsHeldAt(read->besideFields);
+                return;
+            }
+        }
+        if (LayoutID refused = classRefusedByTest(); refused && m_flow.everyMemberStandsAtOrBelow(family, refused))
+            return;
         if (isRead())
             giveWhatIsHeldAt(m_flow.fieldReadThrough(family, m_access.key));
         else
@@ -1593,14 +1894,15 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
     LinkFlow::FoundMembers members = m_flow.findMembers(id, ClassSide::Prototype, m_access.key);
     layOnReceiverUnlessAccessorAnswers(members);
     bool isPrivateName = m_program.at(m_access.key).kind == PropertyKeyKind::PrivateName;
-    if (!isDefinition && !isPrivateName && m_flow.isBelowConstructorFunction(id)) {
+    if (!isDefinition && !isPrivateName && m_flow.isBelowFollowedPrototype(id)) {
         if (!isRead())
             m_flow.lookForSetterOnPrototypesAbove(id, m_access.key, LinkFlow::AccessorsAbove::AreEnteredByCaller);
         else if (FlowNodeID foundOnPrototypes = m_flow.foundOnPrototypesAbove(id, m_access.key, LinkFlow::AccessorsAbove::AreEnteredByCaller))
             giveFrom(foundOnPrototypes);
         enterAccessorsOnPrototypesAbove(id);
     }
-    if (!isRead() && !isPrivateName && m_receiver == m_subject && m_flow.isOfConstructorFunction(id)) {
+    bool laysFollowedName = m_flow.isOfConstructorFunction(id) || (!isRead() && m_flow.followsNamesOnPrototypeOf(id) && m_nameClass != NameClass::Constructor && members.lookupGoesOnAboveClasses() && !m_flow.instancesMayHoldName(id, m_access.key));
+    if (!isRead() && !isPrivateName && m_receiver == m_subject && laysFollowedName) {
         bool findsAccessor = std::ranges::any_of(members, [](const LinkFlow::FoundMember& found) {
             return found.kind != MethodKind::Method;
         });
@@ -1610,7 +1912,7 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
             return;
         }
         if (isDefinition && m_access.laysAccessorAsWritten && m_flow.isDefinedByDescriptorSomewhere(m_access.key))
-            m_flow.layAccessorOnPrototypeOf(id, m_access.key, m_access.writtenGetter, m_access.writtenSetter);
+            layAccessorAsWrittenOnPrototypeOf(id);
         else if (isDefinition && m_value == m_flow.unseen())
             m_flow.defineOnPrototypeOf(id, m_access.key);
         else
@@ -2080,12 +2382,14 @@ void AccessInLinkAccesses::enterAccessorAt(FlowNodeID member)
     tellAgainOnceClimbsWhoeverTells(member);
 
     const LinkType held = m_flow.typeAt(member);
-    if (held.primitives)
+    if (held.hasUnknownObjects ? held.directPrimitives() : held.primitives)
         givePrimitives(Primitive::Undefined);
     if (held.builtin)
         m_flow.note(LinkFlow::Note::BuiltinUsedViaFlow, m_table.canonicalID(held.builtin).index());
-    if (held.hasUnknownObjects || held.builtin || held.objects != LinkType::Objects::None || held.classes != LinkType::Classes::None)
+    if (held.hasDirectUnknownObjects() || held.builtin || held.objects != LinkType::Objects::None || held.classes != LinkType::Classes::None)
         cannotTellWhatRuns();
+    else if (held.hasUnknownObjects)
+        cannotTellWhatRuns(UnknownIs::ByEscapeAlone);
 
     switch (held.functions) {
     case LinkType::Functions::None:
@@ -2282,7 +2586,12 @@ void AccessInLinkAccesses::resolveOnClasses(const LinkType& instances)
         return;
     }
     bool namesNoMemberAbove = !isElement && keyNamesNoMemberAbove(instances);
-    if (!isElement && !namesNoMemberAbove)
+    if (!isElement && !namesNoMemberAbove && isFinalListRead()) {
+        m_flow.addEdge(m_flow.contentsOf(instances, SlotOfContents::underAnyName()), m_flow.unseen());
+        forEachListOfElements(instances, [&](FlowNodeID elements) {
+            m_flow.addEdge(elements, m_flow.unseen());
+        });
+    } else if (!isElement && !namesNoMemberAbove)
         m_flow.addEdge(m_subject, m_flow.unseen());
     if (isRead() && !isElement)
         giveFrom(m_flow.contentsOf(instances, SlotOfContents::underAnyName()));
@@ -2307,7 +2616,7 @@ void AccessInLinkAccesses::resolveOnClasses(const LinkType& instances)
             givePrimitives(Primitive::Undefined);
         storeIntoUnseen();
         if (!isElement && !namesNoMemberAbove)
-            cannotTell(UnknownIs::InSight, tellsOfInstances() ? TellsName::No : TellsName::Yes);
+            cannotTell(m_seenKeysAreNumbers ? UnknownIs::ByEscapeAlone : UnknownIs::InSight, tellsOfInstances() ? TellsName::No : TellsName::Yes);
         return;
     }
 
@@ -2338,11 +2647,13 @@ void AccessInLinkAccesses::resolveOnClasses(const LinkType& instances)
         m_flow.arrive(m_flow.contentsOf(instances, SlotOfContents::isChanged()), m_flow.fromTypeID(TypeTable::undefined));
     if (!isRead() && (isNamed() ? m_nameClass != NameClass::Index : !m_access.keyIsSurelyIndex))
         m_flow.arrive(m_flow.contentsOf(instances, SlotOfContents::noLongerAsMade()), m_flow.fromTypeID(TypeTable::undefined));
-    BuiltinID prototype = isOneClass && (isElement || namesNoMemberAbove) && hasElements ? prototypeOfInstancesOf(builtinClass) : BuiltinID();
-    if (prototype && indexesAreAbsentFrom(prototype))
+    bool namesOnlyOwnElements = isElement || namesNoMemberAbove;
+    BuiltinID prototype = isOneClass && (namesOnlyOwnElements || m_seenKeysAreNumbers) && hasElements ? prototypeOfInstancesOf(builtinClass) : BuiltinID();
+    bool indexesAreAbsentAbove = prototype && indexesAreAbsentFrom(prototype);
+    if (indexesAreAbsentAbove)
         givePrimitives(Primitive::Undefined);
-    else
-        cannotTell(UnknownIs::InSight, !isElement && tellsOfInstances() ? TellsName::No : TellsName::Yes);
+    if (!indexesAreAbsentAbove || !namesOnlyOwnElements)
+        cannotTell(indexesAreAbsentAbove ? UnknownIs::ByEscapeAlone : UnknownIs::InSight, !isElement && tellsOfInstances() ? TellsName::No : TellsName::Yes);
 }
 
 void AccessInLinkAccesses::resolveUnderNameOnClass(const LinkType& instances)
@@ -2418,13 +2729,20 @@ void AccessInLinkAccesses::resolveUnderNameOnClass(const LinkType& instances)
 
 void AccessInLinkAccesses::handOn(const LinkType& type)
 {
-    if (m_access.whatHoldsNothing != noSummaryNode)
-        m_flow.arriveFromSource(m_flow.nodeOf(m_function, m_access.whatHoldsNothing), type);
+    if (uint32_t node = m_access.whatHoldsNothing(); node != noSummaryNode)
+        m_flow.arriveFromSource(m_flow.nodeOf(m_function, node), type);
+}
+
+void AccessInLinkAccesses::layAccessorAsWrittenOnPrototypeOf(LayoutID id)
+{
+    RELEASE_ASSERT(!m_shared);
+    const SummaryWrittenAccessor& written = m_flow.summaries.at(m_function).writtenAccessorOf(m_record);
+    m_flow.layAccessorOnPrototypeOf(id, m_access.key, written.getter, written.setter);
 }
 
 void AccessInLinkAccesses::resolveContents(const LinkType& subject)
 {
-    bool settles = m_access.whatHoldsNothing != noSummaryNode;
+    bool settles = m_access.whatHoldsNothing() != noSummaryNode;
     if (uint16_t primitives = (subject.primitives & ~m_before.primitives) | (subject.directPrimitives() & ~m_before.directPrimitives())) {
         LinkType handed = primitivesForLinkAccesses(primitives);
         handed.escapeOnlyPrimitives = handed.primitives & ~LinkType::closed(subject.directPrimitives());
@@ -2521,7 +2839,7 @@ bool AccessInLinkAccesses::settlesPromiseThatCallHasJustMade()
 
 void AccessInLinkAccesses::resolveContentsOfInstances(const LinkType& instances)
 {
-    bool settles = m_access.whatHoldsNothing != noSummaryNode;
+    bool settles = m_access.whatHoldsNothing() != noSummaryNode;
     bool isOneClass = instances.classes != LinkType::Classes::Mixed;
 
     if (!isOneClass && m_access.slot.indexOfInternalField()) {

@@ -55,7 +55,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SourceCodeDumpDebugInfo);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LinkBuffer);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(LinkBuffer::Records);
 
-static const char* LEGACY_NODELETE profileName(LinkBuffer::Profile profile)
+NODELETE static const char* profileName(LinkBuffer::Profile profile)
 {
 #define RETURN_LINKBUFFER_PROFILE_NAME(name) case LinkBuffer::Profile::name: return #name;
     switch (profile) {
@@ -249,7 +249,7 @@ public:
             BranchCompactionLinkBufferMalloc::free(m_data);
     }
 
-    uint8_t* LEGACY_NODELETE data()
+    NODELETE uint8_t* data()
     {
         return m_data;
     }
@@ -369,7 +369,7 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
             else
                 Assembler::fillNops<jitMemcpyRepatch>(outData + writePtr, size);
             writePtr += size;
-            // A label at the pool's place names the code after the pool, and executableOffsetFor() reads the word before a label.
+            // A label here names the code after the pool, and executableOffsetFor() reads the word before a label.
             recordLinkOffsets(m_assemblerStorage, readPtr - sizeof(InstructionType), readPtr, readPtr - writePtr);
         }
     };

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -67,7 +67,7 @@ bool SharedVideoFrameWriter::wait(NOESCAPE const Function<void(IPC::Semaphore&)>
         newSemaphoreCallback(m_semaphore.get());
         return true;
     }
-    return !WTF::atomicLoad(&m_isDisabled, std::memory_order_relaxed) && m_semaphore->waitFor(defaultTimeout);
+    return !WTF::atomicLoad<MemoryOrder::Relaxed>(&m_isDisabled) && m_semaphore->waitFor(defaultTimeout);
 }
 
 bool SharedVideoFrameWriter::allocateStorage(size_t size, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback)
@@ -108,18 +108,23 @@ bool SharedVideoFrameWriter::prepareWriting(const SharedVideoFrameInfo& info, NO
     return true;
 }
 
-std::optional<SharedVideoFrame> SharedVideoFrameWriter::write(const VideoFrame& frame, NOESCAPE const Function<void(IPC::Semaphore&)>& newSemaphoreCallback, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback)
+std::optional<SharedVideoFrame> SharedVideoFrameWriter::write(const VideoFrame& frame, const IPC::Connection& connection, NOESCAPE const Function<void(IPC::Semaphore&)>& newSemaphoreCallback, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback)
 {
-    auto buffer = writeBuffer(frame, newSemaphoreCallback, newMemoryCallback);
+    auto buffer = writeBuffer(frame, connection, newSemaphoreCallback, newMemoryCallback);
     if (!buffer)
         return { };
     return SharedVideoFrame { frame.presentationTime(), frame.isMirrored(), frame.rotation(), frame.colorSpace(), frame.shouldIgnoreAlpha(), WTF::move(*buffer) };
 }
 
-std::optional<SharedVideoFrame::Buffer> SharedVideoFrameWriter::writeBuffer(const VideoFrame& frame, NOESCAPE const Function<void(IPC::Semaphore&)>& newSemaphoreCallback, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback)
+std::optional<SharedVideoFrame::Buffer> SharedVideoFrameWriter::writeBuffer(const VideoFrame& frame, const IPC::Connection& connection, NOESCAPE const Function<void(IPC::Semaphore&)>& newSemaphoreCallback, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback)
 {
-    if (auto* frameProxy = dynamicDowncast<RemoteVideoFrameProxy>(frame))
-        return frameProxy->newReadReference();
+    if (auto* frameProxy = dynamicDowncast<RemoteVideoFrameProxy>(frame)) {
+        // The frames of another GPU process are not in the GPU process of `connection`.
+        auto reference = frameProxy->newReadReference(connection);
+        if (!reference)
+            return { };
+        return WTF::move(*reference);
+    }
 
 #if USE(LIBWEBRTC)
     if (auto* webrtcFrame = dynamicDowncast<VideoFrameLibWebRTC>(frame))
@@ -164,10 +169,10 @@ std::optional<SharedVideoFrame::Buffer> SharedVideoFrameWriter::writeBuffer(CVPi
 }
 
 #if USE(LIBWEBRTC)
-std::optional<SharedVideoFrame::Buffer> SharedVideoFrameWriter::writeBuffer(const webrtc::VideoFrame& frame, NOESCAPE const Function<void(IPC::Semaphore&)>& newSemaphoreCallback, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback)
+std::optional<SharedVideoFrame::Buffer> SharedVideoFrameWriter::writeBuffer(const webrtc::VideoFrame& frame, const IPC::Connection& connection, NOESCAPE const Function<void(IPC::Semaphore&)>& newSemaphoreCallback, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback)
 {
     if (auto* provider = webrtc::videoFrameBufferProvider(frame))
-        return writeBuffer(*static_cast<VideoFrame*>(provider), newSemaphoreCallback, newMemoryCallback);
+        return writeBuffer(*static_cast<VideoFrame*>(provider), connection, newSemaphoreCallback, newMemoryCallback);
 
     if (auto pixelBuffer = adoptCF(webrtc::copyPixelBufferForFrame(frame)))
         return writeBuffer(pixelBuffer.get(), newSemaphoreCallback, newMemoryCallback);
@@ -201,7 +206,7 @@ void SharedVideoFrameWriter::signalInCaseOfError()
 
 void SharedVideoFrameWriter::disable()
 {
-    WTF::atomicStore(&m_isDisabled, true, std::memory_order_relaxed);
+    WTF::atomicStore<MemoryOrder::Relaxed>(&m_isDisabled, true);
     m_semaphore->signal();
 }
 

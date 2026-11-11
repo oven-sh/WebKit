@@ -16,7 +16,7 @@
 # RUN(ONCE): walk f2
 # ONCE-NOT: frame 1 callee=f
 # ONCE-NOT: TryCallInline
-# ONCE: = Call {{*}}calleeKey="every"
+# ONCE: = CallDirect {{*}}function=f
 module m0 path="x.ts" displayPath="x.ts" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 module m2 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)

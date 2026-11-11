@@ -313,7 +313,7 @@ constexpr uint64_t locationMaskOfBit(std::optional<uint8_t> bit, uint32_t offset
     return uint64_t { 1 } << ((*bit + offset) & 63);
 }
 
-constexpr uint64_t markOfElementsOfArraysNotStoredAsRawDoubles = uint64_t { 1 } << 63;
+constexpr uint64_t markOfElementsThatMayHoldCells = uint64_t { 1 } << 63;
 
 constexpr uint64_t locationMaskOfElementBase(ElementBase base)
 {
@@ -321,7 +321,7 @@ constexpr uint64_t locationMaskOfElementBase(ElementBase base)
     case ElementBase::Unknown:
         return LocationMasks::entireHeap;
     case ElementBase::Array:
-        return (uint64_t { 1 } << static_cast<unsigned>(base)) | markOfElementsOfArraysNotStoredAsRawDoubles;
+        return (uint64_t { 1 } << static_cast<unsigned>(base)) | markOfElementsThatMayHoldCells;
     case ElementBase::Arguments:
     case ElementBase::Object:
         return uint64_t { 1 } << static_cast<unsigned>(base);

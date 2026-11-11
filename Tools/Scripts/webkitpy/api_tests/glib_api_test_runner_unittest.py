@@ -114,7 +114,7 @@ class GLibAPITestRunnerTest(unittest.TestCase):
         self._git("branch", "base")
 
     def _git(self, *args):
-        subprocess.check_output(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"] + list(args), cwd=self._source_directory)
+        subprocess.check_output(["git", "-c", "commit.gpgsign=false", "-c", "user.name=Test", "-c", "user.email=test@example.com"] + list(args), cwd=self._source_directory)
 
     def _write_sources(self, files):
         for path, content in files.items():
@@ -124,9 +124,14 @@ class GLibAPITestRunnerTest(unittest.TestCase):
                 fd.write(content)
 
     def _changed_tests(self, google_test_cases=()):
+        return self._changed_tests_and_output(google_test_cases)[0]
+
+    def _changed_tests_and_output(self, google_test_cases=()):
         runner = ChangedTestsStubTestRunner(self._base_directory, self._source_directory, google_test_cases)
-        with contextlib.redirect_stdout(io.StringIO()):
-            return runner._changed_tests("base")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            changed_tests = runner._changed_tests("base")
+        return changed_tests, output.getvalue()
 
     def _create_executable(self, directory, name):
         path = os.path.join(directory, name)
@@ -134,6 +139,12 @@ class GLibAPITestRunnerTest(unittest.TestCase):
             pass
         os.chmod(path, 0o755)
         return path
+
+    def test_requested_tests_that_do_not_exist_select_nothing(self):
+        runner = StubTestRunner(self._base_directory)
+        runner.TEST_TARGETS = ["WPE"]
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual([], runner._get_tests(["TestMissing", "TestPrinting:/webkit/WebKitPrintOperation/custom-widget"]))
 
     def test_resolves_bare_and_prefixed_binary_names(self):
         runner = StubTestRunner(self._base_directory)
@@ -275,6 +286,16 @@ class GLibAPITestRunnerTest(unittest.TestCase):
             "TestDownloads:/webkit/Downloads/new",
             "TestWebKitWebView",
         ], self._changed_tests())
+
+    def test_an_expectation_change_is_reported_over_a_source_change(self):
+        expectations = "Tools/TestWebKitAPI/glib/TestExpectations.json"
+        source = "Tools/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestDownloads.cpp"
+        self._create_source_repository({source: "", expectations: json.dumps({"TestDownloads": {"expected": {"all": {"slow": True}}}})})
+        self._write_sources({source: "changed", expectations: json.dumps({})})
+
+        changed_tests, output = self._changed_tests_and_output()
+        self.assertEqual(["TestDownloads"], changed_tests)
+        self.assertIn(f"    TestDownloads ({expectations})\n", output)
 
     def test_deleted_test_source_selects_nothing(self):
         path = "Tools/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestDownloads.cpp"

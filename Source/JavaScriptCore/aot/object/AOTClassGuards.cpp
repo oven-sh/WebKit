@@ -23,6 +23,7 @@
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTObjectModelCaches.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyWalk.h"
@@ -1144,6 +1145,34 @@ bool ClassTable::nobodyHearsOfValueUnder(const LayoutData& layout, ClassSide sid
             return false;
     }
     return true;
+}
+
+bool ClassTable::addsStaticUnobserved(VM& vm, const Closure& classObject, const LayoutData& layout, Structure* before, UniquedStringImpl* uid) const
+{
+    if (!hasNoGuardLeft(layout, ClassSide::Static) || uid->isSymbol() || isImplicitMemberOfClassHolder(vm, ClassSide::Static, uid) || uid == vm.propertyNames->displayName.impl() || parseIndex(PropertyName(uid)) || !closureAdmitsName(vm, &classObject, uid))
+        return false;
+    std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
+    for (const LayoutData* current = &layout; current; current = assumedBaseOf(*current)) {
+        if (hasComputedMemberNames(*current) || (key && declaresMember(*current, ClassSide::Static, *key)))
+            return false;
+    }
+    JSValue prototype = classObject.getDirect(vm, vm.propertyNames->prototype);
+    if (!prototype || !prototype.isObject() || !before->storedPrototype().isObject())
+        return false;
+    JSObject* parent = asObject(before->storedPrototype());
+    JSValue parentOfPrototype = asObject(prototype)->getPrototypeDirect();
+    JSCell* parentOfPrototypeCell = parentOfPrototype.isCell() ? parentOfPrototype.asCell() : nullptr;
+    const ClassStructureCache& cache = m_state.objects->caches->classStructures;
+    ClassStructures kept = cache.find(layout.index, parent, parentOfPrototypeCell);
+    if (!kept && parent == m_state.instance.globalObject->functionPrototype())
+        kept = cache.find(layout.index, nullptr, parentOfPrototypeCell);
+    if (!kept || sharesStructureOfRootClasses(kept.classObjectStructure))
+        return false;
+    for (Structure* structure = before; structure; structure = structure->previousID()) {
+        if (structure == kept.classObjectStructure)
+            return true;
+    }
+    return false;
 }
 
 void ClassTable::holdMemberToProof(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid)

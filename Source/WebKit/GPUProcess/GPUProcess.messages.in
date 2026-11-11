@@ -32,7 +32,7 @@ messages -> GPUProcess : AuxiliaryProcess {
 
     CreateGPUConnectionToWebProcess(WebCore::ProcessIdentifier processIdentifier, PAL::SessionID sessionID, IPC::ConnectionHandle connectionHandle, struct WebKit::GPUProcessConnectionParameters parameters) -> () AllowedWhenWaitingForSyncReply
     SharedPreferencesForWebProcessDidChange(WebCore::ProcessIdentifier processIdentifier, struct WebKit::SharedPreferencesForWebProcess sharedPreferencesForWebProcess) -> ()
-    SecurityFlagsDidChange(struct WebKit::SecurityFlags securityFlags)
+    SecurityFlagsDidChange(struct WebKit::SecurityFlags::Storage securityFlags)
 
     UpdateGPUProcessPreferences(struct WebKit::GPUProcessPreferences preferences)
     UpdateSandboxAccess(Vector<WebKit::SandboxExtensionHandle> extensions);
@@ -59,13 +59,18 @@ messages -> GPUProcess : AuxiliaryProcess {
     TriggerMockCaptureConfigurationChange(bool forCamera, bool forMicrophone, bool forDisplay)
     SetShouldListenToVoiceActivity(bool shouldListen)
     EnableMicrophoneMuteStatusAPI()
+
+#if PLATFORM(COCOA)
+    StartCapturePreview(std::optional<WebCore::CaptureDevice> videoDevice, std::optional<WebCore::CaptureDevice> audioDevice, WebCore::PageIdentifier pageIdentifier, WebCore::IntSize previewSize, WebCore::IntDegrees orientation, Vector<WebKit::SandboxExtensionHandle> sandboxExtensions, String applicationBundleIdentifier, WebCore::SecurityOriginData origin) -> (struct WebCore::HostingContext hostingContext)
+    StopCapturePreview(WebCore::PageIdentifier pageIdentifier) -> ()
+#endif
 #endif
 #if PLATFORM(MAC)
     SetScreenProperties(struct WebCore::ScreenProperties screenProperties)
 #endif
 
 #if PLATFORM(COCOA)
-    SinkCompletedSnapshotToPDF(WebKit::RemoteSnapshotIdentifier identifier, WebCore::FrameIdentifier rootFrameIdentifier) -> (RefPtr<WebCore::SharedBuffer> result) ReplyCanDispatchOutOfOrder
+    SinkCompletedSnapshotToPDF(WebKit::RemoteSnapshotIdentifier identifier, WebCore::FrameIdentifier rootFrameIdentifier, std::optional<WebCore::ProcessIdentifier> printProcessIdentifier) -> (RefPtr<WebCore::SharedBuffer> result) ReplyCanDispatchOutOfOrder
 #endif
     SinkCompletedSnapshotToBitmap(WebKit::RemoteSnapshotIdentifier identifier, WebCore::FrameIdentifier rootFrameIdentifier) -> (std::optional<WebCore::ShareableBitmapHandle> image) ReplyCanDispatchOutOfOrder
 #if HAVE(IOSURFACE)
@@ -97,7 +102,10 @@ messages -> GPUProcess : AuxiliaryProcess {
     UserPreferredLanguagesChanged(Vector<String> languages)
 
     WebProcessConnectionCountForTesting() -> (uint64_t count)
-    RunDisplayListDataTestsForTesting() -> (Vector<String> failures)
+    RunDisplayListDataTestsForTesting(Vector<Ref<WebCore::SharedBuffer>> webFonts) -> (std::optional<Vector<String>> failures)
+#if PLATFORM(COCOA)
+    PrintProcessDrawingCountsForTesting() -> (uint64_t drawnInPrintProcess, uint64_t drawnAfterPrintProcessFailed)
+#endif
 
 #if USE(EXTENSIONKIT)
     ResolveBookmarkDataForCacheDirectory(std::span<const uint8_t> bookmarkData)

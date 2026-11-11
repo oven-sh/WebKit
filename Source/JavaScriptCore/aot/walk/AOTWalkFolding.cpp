@@ -46,7 +46,7 @@ static constexpr OpcodeSet storesThatStateFollowsForFolding { Opcode::PutModuleV
 static constexpr OpcodeSet placesThatStateFollowsForFolding = storesThatStateFollowsForFolding | OpcodeSet { Opcode::GetModuleVariable, Opcode::GetEnvironmentField };
 static constexpr OpcodeSet conversionsToObjectsInFolding { Opcode::ToObject, Opcode::ToThis };
 static constexpr OpcodeSet opcodesOfFolding = operationsOnPrimitivesInFolding | testsThatTypesDecideInFolding | castsOfFolding | readsOfFolding | storesThatStateFollowsForFolding | passThroughChecks
-    | conversionsToObjectsInFolding | OpcodeSet { Opcode::TypeOf, Opcode::ToLength };
+    | conversionsToObjectsInFolding | OpcodeSet { Opcode::TypeOf, Opcode::ToLength, Opcode::IsUnlockedInstance };
 
 static ALWAYS_INLINE PrimitiveKnownToFolding onlyValueOfTypeInFolding(const TypeArena& types, TypeID id)
 {
@@ -779,11 +779,47 @@ static bool holdsAccessorInFolding(Walker& walker, FieldReference field)
     return fieldAt(walker.program(), field).form.contains(FieldForm::IsAccessor) || facts.formOfValue.contains(FieldForm::IsAccessor) || facts.facts.contains(FieldFact::IsAccessor);
 }
 
+static const Operation* findTemplateObject(const Walker& walker, Reference object)
+{
+    if (!object || !object.isValue())
+        return nullptr;
+    const Operation& made = walker.code().at(underlyingCellOf(walker.code(), object.id()));
+    return made.opcode == Opcode::NewTemplateObject ? &made : nullptr;
+}
+
+static Reference partOfTemplateObject(Walker& walker, Reference object, Reference index)
+{
+    const Operation* made = index.isConstant() ? findTemplateObject(walker, object) : nullptr;
+    if (!made)
+        return { };
+    const Operation& key = walker.code().at(index.id());
+    if (key.opcode != Opcode::Integer)
+        return { };
+    Vector<TemplateString, 8> parts;
+    for (TemplateString part : made->templateStrings())
+        parts.append(part);
+    if (key.integer() < 0 || static_cast<uint64_t>(key.integer()) >= parts.size())
+        return { };
+    StringID cooked = parts[key.integer()].cooked;
+    Draft constant(cooked ? Opcode::String : Opcode::Undefined);
+    if (cooked)
+        constant.setString(cooked);
+    return walker.constant(WTF::move(constant));
+}
+
 static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<Opcode::PropGet>& read)
 {
     if (read.isFreeName())
         return { };
     Reference object = walker.referenceOf(read.objectOperand());
+    if (const Operation* made = walker.program().nameClassOf(read.key()) == NameClass::Length ? findTemplateObject(walker, object) : nullptr) {
+        int64_t numberOfParts = 0;
+        for ([[maybe_unused]] TemplateString part : made->templateStrings())
+            ++numberOfParts;
+        Draft length(Opcode::Integer);
+        length.setInteger(numberOfParts);
+        return walker.constant(WTF::move(length));
+    }
     if (!walker.state().mayHoldPlaceOf(object))
         return propertyOfResultTakenInParts(walker, object, read.key());
     TypeID type = typeToJudgeByInFolding(walker, object);
@@ -807,6 +843,8 @@ static Reference elementAnsweredByStateInFolding(Walker& walker, const BodyValue
     TypeID typeOfIndex = typeToJudgeByInFolding(walker, index);
     if (!typeOfIndex || !walker.types().at(typeOfIndex).isNumber())
         return { };
+    if (Reference part = partOfTemplateObject(walker, walker.referenceOf(read.objectOperand()), index))
+        return part;
     if (Reference part = partOfListThatIsOnlyTakenApart(walker, walker.referenceOf(read.objectOperand()), index))
         return part;
     Reference held = unlessAbsentInFolding(walker, walker.state().element(walker.referenceOf(read.objectOperand()), index));
@@ -923,9 +961,23 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
     return true;
 }
 
+static Reference answerWhetherInstanceIsUnlocked(Walker& walker, const BodyValue& value)
+{
+    auto asked = value.as<Opcode::IsUnlockedInstance>();
+    if (instancesMayBeLocked(walker.program(), walker.facts().linked(), asked.testedType()))
+        return walker.constant(PrimitiveKnownToFolding::boolean(false));
+    Reference object = walker.referenceOf(asked.valueOperand());
+    TypeID type = typeToJudgeByInFolding(walker, object);
+    if (type && walker.types().isSubset(type, asked.testedType()))
+        return walker.constant(PrimitiveKnownToFolding::boolean(true));
+    return { };
+}
+
 static ALWAYS_INLINE Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
 {
     Opcode opcode = value.opcode();
+    if (opcode == Opcode::IsUnlockedInstance)
+        return answerWhetherInstanceIsUnlocked(walker, value);
     if (readsOfFolding.contains(opcode))
         return answerOfReadInFolding(walker, value);
     if (passThroughChecks.contains(opcode))

@@ -201,6 +201,7 @@ aot/image/AOTCallSiteTable.cpp
 aot/image/AOTClassRecords.cpp
 aot/image/AOTCodeLayout.cpp
 aot/image/AOTCodeLinker.cpp
+aot/image/AOTCodedTexts.cpp
 aot/image/AOTConstantPool.cpp
 aot/image/AOTConstantTables.cpp
 aot/image/AOTDataTable.cpp
@@ -222,6 +223,7 @@ aot/image/AOTModuleTables.cpp
 aot/image/AOTNumberConstants.cpp
 aot/image/AOTNumberFunctions.cpp
 aot/image/AOTNumbering.cpp
+aot/image/AOTPrefixCode.cpp
 aot/image/AOTProgramTablesDriver.cpp
 aot/image/AOTRegExpCompiler.cpp
 aot/image/AOTRegExpInProcessLoader.cpp

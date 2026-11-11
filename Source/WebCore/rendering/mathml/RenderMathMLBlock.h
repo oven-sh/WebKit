@@ -65,7 +65,7 @@ protected:
     inline LayoutUnit ruleThicknessFallback() const;
 
     LayoutUnit mathAxisHeight() const;
-    LayoutUnit LEGACY_NODELETE mirrorIfNeeded(LayoutUnit horizontalOffset, LayoutUnit boxWidth = 0_lu) const;
+    NODELETE LayoutUnit mirrorIfNeeded(LayoutUnit horizontalOffset, LayoutUnit boxWidth = 0_lu) const;
     inline LayoutUnit mirrorIfNeeded(LayoutUnit horizontalOffset, const RenderBox& child) const;
 
     static inline LayoutUnit ascentForChild(const RenderBox& child);
@@ -75,8 +75,7 @@ protected:
     void insertPositionedChildrenIntoContainingBlock();
     void layoutFloatingChildren();
 
-    void LEGACY_NODELETE shiftInFlowChildren(LayoutUnit left, LayoutUnit top);
-    void adjustContentLogicalWidthsForBorderAndPadding();
+    NODELETE void shiftInFlowChildren(LayoutUnit left, LayoutUnit top);
     void adjustLayoutForBorderAndPadding();
 
     enum class LayoutPhase : uint8_t {
@@ -86,17 +85,21 @@ protected:
     struct SizeAppliedToMathContent {
         std::optional<LayoutUnit> logicalWidth;
         std::optional<LayoutUnit> logicalHeight;
+        std::optional<LayoutUnit> logicalMinWidth;
+        std::optional<LayoutUnit> logicalMaxWidth;
     };
-    // Retrieve the specified (and supported) CSS width/height to apply to math
+    // Retrieve the specified (and supported) CSS width/height, and in layout min-width/max-width, to apply to math
     // content box, if any.
     SizeAppliedToMathContent sizeAppliedToMathContent(LayoutPhase);
     // Whether math content should be centered on the inline axis if a different size is specified by the user.
     virtual bool isMathContentCentered() const { return false; }
-    // Apply the specified CSS width/height to the math content box and return inline shift for further adjustments.
+    // The min-content and max-content widths of math content of the given width, which a specified CSS width replaces.
+    std::pair<LayoutUnit, LayoutUnit> intrinsicLogicalWidthContributionsForMathContent(LayoutUnit mathContentLogicalWidth);
+    // Apply the specified CSS width/height/min-width/max-width to the math content box and return inline shift for further adjustments.
     LayoutUnit applySizeToMathContent(LayoutPhase, const SizeAppliedToMathContent&);
 
 private:
-    bool LEGACY_NODELETE isRenderMathMLBlock() const final { return true; }
+    NODELETE bool isRenderMathMLBlock() const final { return true; }
     ASCIILiteral renderName() const override { return "RenderMathMLBlock"_s; }
     bool canDropAnonymousBlockChild() const final { return false; }
     void layoutItems(RelayoutChildren);

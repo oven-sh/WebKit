@@ -10,6 +10,7 @@
 #include "AOTMachineOrder.h"
 #include "AOTMachineTarget.h"
 #include <array>
+#include <bit>
 #include <cstdlib>
 
 namespace JSC { namespace AOT { namespace Machine {
@@ -195,6 +196,54 @@ struct OverflowCheckedSum {
 
 JS_EXPORT_PRIVATE OverflowCheckedSum overflowCheckedSumOf(const Liveness&, const Operation* sumOrBranch);
 
+inline bool namesWord(const Operation* operation) { return operation->opcode() == ZExt32 && clearsUpperHalf(operation->child(0)); }
+
+inline bool isShiftByConstant(const Operation* operation)
+{
+    Opcode opcode = operation->opcode();
+    return (opcode == Shl || opcode == ZShr || opcode == SShr) && operation->child(1)->hasInt32();
+}
+
+inline unsigned amountOfShift(const Operation* shift)
+{
+    ASSERT(isShiftByConstant(shift));
+    return static_cast<unsigned>(shift->child(1)->asInt32()) & (shift->type() == Int32 ? 31 : 63);
+}
+
+struct BitField {
+    unsigned lowestBit;
+    unsigned numberOfBits;
+    bool extendsSign;
+};
+
+inline std::optional<BitField> bitFieldOf(const Operation* operation)
+{
+    Opcode opcode = operation->opcode();
+    if (opcode != BitAnd && opcode != ZShr && opcode != SShr)
+        return std::nullopt;
+    const Operation* shift = operation->child(0);
+    const Operation* constant = operation->child(1);
+    if (!constant->hasInt() || !isShiftByConstant(shift))
+        return std::nullopt;
+
+    unsigned width = operation->type() == Int32 ? 32 : 64;
+    unsigned amount = amountOfShift(shift);
+    if (opcode == BitAnd) {
+        uint64_t mask = static_cast<uint64_t>(constant->asInt());
+        if (width == 32)
+            mask = static_cast<uint32_t>(mask);
+        unsigned numberOfBits = static_cast<unsigned>(std::popcount(mask));
+        if (shift->opcode() == Shl || !mask || (mask & (mask + 1)) || amount + numberOfBits > width)
+            return std::nullopt;
+        return BitField { amount, numberOfBits, false };
+    }
+
+    unsigned rightShiftAmount = amountOfShift(operation);
+    if (shift->opcode() != Shl || rightShiftAmount < amount)
+        return std::nullopt;
+    return BitField { rightShiftAmount - amount, width - rightShiftAmount, opcode == SShr };
+}
+
 struct WayOutOfBranch {
     bool holds(Position position) const { return begin <= position && position < end; }
 
@@ -309,7 +358,7 @@ ALWAYS_INLINE void forEachLeaf(const Liveness& liveness, const Operation* operat
 
 inline bool addsScaledIndex(const Liveness& liveness, const Operation* operation)
 {
-    if (operation->opcode() != Add || liveness.isFused(operation))
+    if (operation->opcode() != Add || operation->type() != Int64 || liveness.isFused(operation))
         return false;
     auto isFusedShift = [&](const Operation* child) {
         return child->opcode() == Shl && liveness.isFused(child);

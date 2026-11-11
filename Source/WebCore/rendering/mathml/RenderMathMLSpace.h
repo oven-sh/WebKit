@@ -39,12 +39,12 @@ public:
     RenderMathMLSpace(MathMLSpaceElement&, Style::ComputedStyle&&);
     virtual ~RenderMathMLSpace();
 
-    MathMLSpaceElement& LEGACY_NODELETE element() const;
+    NODELETE MathMLSpaceElement& element() const;
 
 private:
     ASCIILiteral renderName() const final { return "RenderMathMLSpace"_s; }
     bool isChildAllowed(const RenderObject&, const Style::ComputedStyle&) const final { return false; }
-    void computeIntrinsicLogicalWidthContributions() final;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() final;
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) final;
     std::optional<LayoutUnit> firstLineBaseline() const final;
 

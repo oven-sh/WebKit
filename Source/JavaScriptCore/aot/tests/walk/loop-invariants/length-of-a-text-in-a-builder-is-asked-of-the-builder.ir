@@ -2,7 +2,7 @@
 # function rows(n) { let s = ""; for (let i = 0; i < n; i++) { if (s.length > 8) s += ","; s += i; } return s; }
 # function joined(n) { let s = ""; for (let i = 0; i < n; i++) { if (s) s += ","; s += i; } return s; }
 # function spaced(n) { let s = ""; for (let i = 0; i < n; i++) { if (s !== "") s += ","; s += i; } return s; }
-# function marked(n) { let s = ""; for (let i = 0; i < n; i++) { if (s === "0") s += ","; s += i; } return s; }   another text than the empty one is compared with the string
+# function marked(n) { let s = ""; for (let i = 0; i < n; i++) { if (s === "0") s += ","; s += i; } return s; }   the length is asked before the equality with another text: only a builder of that length makes its string
 # each function is handed to code that nobody has seen, so nothing is known of n
 # RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
 # CHECK-LABEL: code f1:Body
@@ -30,9 +30,10 @@
 # RUN(OTHER): walk f4 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
 # OTHER-LABEL: code f4:Body
 # OTHER: StringBuilderBegin
+# OTHER: StringBuilderLength
+# OTHER: = StrictEq
 # OTHER: StringBuilderToString
-# RUN(OTHERONLY): walk f4 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
-# OTHERONLY-NOT: StringBuilderLength
+# OTHER: = StrictEq
 # RUN(ALL): walk f1 mechanisms=all
 # ALL-LABEL: code f1:Body
 # ALL: StringBuilderLength

@@ -195,9 +195,8 @@ private:
 // of the synchronous load do. (The job that resumes a module behind its own await is no such job: it has the context
 // of that await, as any await has.)
 //
-// What a job with a store does more is out of line. A job of the loader is rare, and runInternalMicrotask() keeps, ahead
-// of the case of each microtask, the instructions that it had: inline, the far fields of the VM that these scopes read
-// are hoisted there on ARM64.
+// What a job with a store does more is out of line: a load with a store is rare, and the function of each job of the
+// loader (JSMicrotask.cpp) gains a test of its async context and no more.
 class ModuleLoaderAsyncContextScope : public AsyncContextSwapScope {
 public:
     ALWAYS_INLINE ModuleLoaderAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)

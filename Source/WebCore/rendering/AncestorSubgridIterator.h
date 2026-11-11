@@ -35,19 +35,19 @@ enum class GridTrackSizingDirection : bool;
 
 class AncestorSubgridIterator {
 public:
-    AncestorSubgridIterator();
+    NODELETE AncestorSubgridIterator();
     AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, Style::GridTrackSizingDirection);
 
-    RenderGrid& LEGACY_NODELETE operator*();
+    NODELETE RenderGrid& operator*();
 
-    bool LEGACY_NODELETE operator==(const AncestorSubgridIterator&) const;
+    NODELETE bool operator==(const AncestorSubgridIterator&) const;
 
     AncestorSubgridIterator& operator++();
     AncestorSubgridIterator begin();
     AncestorSubgridIterator end();
 private:
     AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestor, Style::GridTrackSizingDirection);
-    AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestor, std::optional<Style::GridTrackSizingDirection>);
+    NODELETE AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestor, std::optional<Style::GridTrackSizingDirection>);
 
     const SingleThreadWeakPtr<const RenderGrid> m_firstAncestorSubgrid;
     SingleThreadWeakPtr<RenderGrid> m_currentAncestorSubgrid;

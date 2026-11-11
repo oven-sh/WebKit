@@ -57,7 +57,7 @@ class FloatPoint {
 public:
     constexpr FloatPoint() = default;
     constexpr FloatPoint(float x, float y) : m_x(x), m_y(y) { }
-    WEBCORE_EXPORT FloatPoint(const IntPoint&);
+    NODELETE WEBCORE_EXPORT FloatPoint(const IntPoint&);
     explicit FloatPoint(const FloatSize& size) : m_x(size.width()), m_y(size.height()) { }
     explicit FloatPoint(const DoublePoint& point)
         : m_x(static_cast<float>(point.x())), m_y(static_cast<float>(point.y())) { }
@@ -65,7 +65,7 @@ public:
     static constexpr FloatPoint zero() { return FloatPoint(); }
     constexpr bool isZero() const { return !m_x && !m_y; }
 
-    WEBCORE_EXPORT static FloatPoint LEGACY_NODELETE narrowPrecision(double x, double y);
+    NODELETE WEBCORE_EXPORT static FloatPoint narrowPrecision(double x, double y);
 
     constexpr float x() const { return m_x; }
     constexpr float y() const { return m_y; }
@@ -133,7 +133,7 @@ public:
 
     void rotate(double angleInRadians, const FloatPoint& aboutPoint);
 
-    WEBCORE_EXPORT void LEGACY_NODELETE normalize();
+    NODELETE WEBCORE_EXPORT void normalize();
 
     constexpr float dot(const FloatPoint& a) const
     {
@@ -158,9 +158,9 @@ public:
         return m_x * m_x + m_y * m_y;
     }
 
-    WEBCORE_EXPORT FloatPoint LEGACY_NODELETE constrainedBetween(const FloatPoint& min, const FloatPoint& max) const;
+    NODELETE WEBCORE_EXPORT FloatPoint constrainedBetween(const FloatPoint& min, const FloatPoint& max) const;
     
-    WEBCORE_EXPORT FloatPoint LEGACY_NODELETE constrainedWithin(const FloatRect&) const;
+    NODELETE WEBCORE_EXPORT FloatPoint constrainedWithin(const FloatRect&) const;
 
     constexpr FloatPoint shrunkTo(const FloatPoint& other) const
     {
@@ -183,16 +183,16 @@ public:
     }
 
 #if USE(CG)
-    WEBCORE_EXPORT FloatPoint(const CGPoint&);
-    WEBCORE_EXPORT operator CGPoint LEGACY_NODELETE () const;
+    NODELETE WEBCORE_EXPORT FloatPoint(const CGPoint&);
+    NODELETE WEBCORE_EXPORT operator CGPoint() const;
 #endif
 
 #if PLATFORM(WIN)
     WEBCORE_EXPORT FloatPoint(const POINT&);
 #endif
 
-    WEBCORE_EXPORT FloatPoint LEGACY_NODELETE matrixTransform(const TransformationMatrix&) const;
-    WEBCORE_EXPORT FloatPoint LEGACY_NODELETE matrixTransform(const AffineTransform&) const;
+    NODELETE WEBCORE_EXPORT FloatPoint matrixTransform(const TransformationMatrix&) const;
+    NODELETE WEBCORE_EXPORT FloatPoint matrixTransform(const AffineTransform&) const;
 
     static constexpr FloatPoint nanPoint();
     constexpr bool isNaN() const;

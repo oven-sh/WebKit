@@ -203,8 +203,8 @@ public:
         return m_weakRandom.getUint32();
     }
 
-    static constexpr uint32_t LEGACY_NODELETE min() { return std::numeric_limits<uint32_t>::min(); }
-    static constexpr uint32_t LEGACY_NODELETE max() { return std::numeric_limits<uint32_t>::max(); }
+    NODELETE static constexpr uint32_t min() { return std::numeric_limits<uint32_t>::min(); }
+    NODELETE static constexpr uint32_t max() { return std::numeric_limits<uint32_t>::max(); }
 
 private:
     WeakRandom& m_weakRandom;
@@ -264,8 +264,7 @@ void BinarySwitch::build(unsigned start, bool hardStart, unsigned end)
         if (BinarySwitchInternal::verbose)
             dataLog("allConsecutive = ", allConsecutive, "\n");
         
-        Vector<unsigned, 8> localCaseIndices;
-        localCaseIndices.reserveInitialCapacity(size);
+        Vector<unsigned, 8> localCaseIndices(ReserveCapacityTag { }, size);
         for (unsigned i = 0; i < size; ++i)
             localCaseIndices.append(start + i);
         

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <WebCore/BoxExtents.h>
+#include <WebCore/CSSUnits.h>
 #include <WebCore/FrameDestructionObserver.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
@@ -36,13 +37,14 @@ class FloatRect;
 class FloatSize;
 class GraphicsContext;
 class IntRect;
+class IntSize;
 class LocalFrame;
 class Node;
 
 class PrintContext : public FrameDestructionObserver, public RefCounted<PrintContext> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(PrintContext, WEBCORE_EXPORT);
 public:
-    WEBCORE_EXPORT static Ref<PrintContext> LEGACY_NODELETE create(LocalFrame*);
+    NODELETE WEBCORE_EXPORT static Ref<PrintContext> create(LocalFrame*);
     ~PrintContext();
 
     // FrameDestructionObserver.
@@ -85,17 +87,17 @@ public:
     WEBCORE_EXPORT static bool isPageBoxVisible(LocalFrame*, int pageNumber);
     WEBCORE_EXPORT static String pageSizeAndMarginsInPixels(LocalFrame*, int pageNumber, int width, int height, int marginTop, int marginRight, int marginBottom, int marginLeft);
     WEBCORE_EXPORT static int numberOfPages(LocalFrame&, const FloatSize& pageSizeInPixels);
+    // Used by print reftests.
+    WEBCORE_EXPORT static IntSize cssPageBoxesSize(LocalFrame&, const IntSize& defaultPageBoxSize, const IntBoxExtent& defaultPageMargin);
+    WEBCORE_EXPORT static void spoolAllCSSPageBoxes(LocalFrame&, GraphicsContext&, const IntSize& defaultPageBoxSize, const IntBoxExtent& defaultPageMargin);
     // Draw all pages into a graphics context with lines which mean page boundaries.
     // The height of the graphics context should be
     // (pageSizeInPixels.height() + 1) * number-of-pages - 1
     WEBCORE_EXPORT static void spoolAllPagesWithBoundaries(LocalFrame&, GraphicsContext&, const FloatSize& pageSizeInPixels);
     
-    // By imaging to a width a little wider than the available pixels,
-    // thin pages will be scaled down a little, matching the way they
-    // print in IE and Camino. This lets them use fewer sheets than they
-    // would otherwise, which is presumably why other browsers do this.
-    // Wide pages will be scaled down more than this.
-    static constexpr float minimumShrinkFactor() { return 1.25; }
+    // In CSS px per point, like maximumShrinkFactor(). Printing passes page sizes in points,
+    // so this lays out 96 CSS px per inch.
+    static constexpr float minimumShrinkFactor() { return static_cast<float>(CSS::pixelsPerPt); }
 
     // This number determines how small we are willing to reduce the page content
     // in order to accommodate the widest line. If the page would have to be
@@ -108,6 +110,8 @@ private:
 
     void computePageRectsWithPageSizeInternal(const FloatSize& pageSizeInPixels, bool allowHorizontalTiling);
     bool beginAndComputePageRectsWithPageSize(LocalFrame&, const FloatSize& pageSizeInPixels);
+    struct PageBox;
+    std::optional<PageBox> beginWithPageBoxSize(const IntSize& defaultPageBoxSize, const IntBoxExtent& defaultPageMargin);
     void collectLinkedDestinations(Document&);
     void outputLinkedDestinations(GraphicsContext&, Document&, const IntRect& pageRect);
 

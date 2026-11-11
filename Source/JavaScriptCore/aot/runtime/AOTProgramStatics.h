@@ -49,6 +49,7 @@ public:
     static JSValue readVariableWithoutAllocating(const Instance&, SlotData);
     static bool isVariableEmpty(const Instance&, SlotData);
     static void writeVariable(Instance&, SlotData, JSValue);
+    static void writeNamespace(Instance& instance, SlotData slot, JSValue value) { write(instance, slot, value); }
     static void emptyVariableWhoseValueHasMoved(Instance&, SlotData);
 
     template<typename Visitor> void visitRoots(Visitor&);

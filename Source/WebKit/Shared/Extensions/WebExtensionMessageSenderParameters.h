@@ -27,11 +27,14 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
-#include "WebExtensionContext.h"
+#include "WebExtensionContentWorldType.h"
 #include "WebExtensionFrameIdentifier.h"
 #include "WebExtensionTabParameters.h"
+#include "WebExtensionWindowIdentifier.h"
+#include "WebPageProxyIdentifier.h"
 #include <wtf/Forward.h>
 #include <wtf/Markable.h>
+#include <wtf/URL.h>
 #include <wtf/UUID.h>
 
 namespace WebKit {
@@ -44,6 +47,7 @@ struct WebExtensionMessageSenderParameters {
     WebExtensionContentWorldType contentWorldType { WebExtensionContentWorldType::ContentScript };
     URL url;
     Markable<WTF::UUID> documentIdentifier;
+    std::optional<WebExtensionWindowIdentifier> windowIdentifier;
 };
 
 } // namespace WebKit

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCodedTexts.h"
 #include "AOTFieldTable.h"
 #include "AOTIRProgram.h"
 #include "AOTIdentifierNumbering.h"
@@ -265,6 +266,40 @@ static Vector<StringID> sortStringsByFirstFunction(const ParallelLoops& loops, c
     });
 }
 
+static Vector<StringID> sortTextsForCoding(const Typed::StringTable& strings, const BitVector& candidates, const ParallelLoops& loops)
+{
+    struct TextByFront {
+        uint64_t front;
+        StringID id;
+    };
+    Vector<TextByFront> texts;
+    for (size_t index : candidates) {
+        StringID id(index);
+        std::span<const uint8_t> text = strings[id];
+        if (!CodedTexts::canHold(text))
+            continue;
+        uint64_t front = 0;
+        for (size_t place = 0; place < sizeof(front); ++place)
+            front = front << 8 | (place < text.size() ? text[place] : 0);
+        texts.append({ front, id });
+    }
+    sortByWordOnPoolKeepingEqualElementsInOrder(loops, texts.mutableSpan(), [](const TextByFront& text) {
+        return text.front;
+    });
+    for (size_t begin = 0; begin < texts.size();) {
+        size_t end = begin + 1;
+        while (end < texts.size() && texts[end].front == texts[begin].front)
+            ++end;
+        AOT::sort(texts.mutableSpan().subspan(begin, end - begin), [&](const TextByFront& a, const TextByFront& b) {
+            return std::ranges::lexicographical_compare(strings[a.id], strings[b.id]);
+        });
+        begin = end;
+    }
+    return texts.map([](const TextByFront& text) {
+        return text.id;
+    });
+}
+
 void ImageNumbersBuilder::collectNamesAndStringsWithText()
 {
     const Typed::Program& program = inputs.program;
@@ -307,6 +342,13 @@ void ImageNumbersBuilder::collectNamesAndStringsWithText()
                     numbers.m_textsOfNames.quickSet(name.identifier.text.index());
             }
             numbers.m_otherStringsWithText.exclude(numbers.m_textsOfNames);
+
+            BitVector candidates = numbers.m_stringsOnlyShown;
+            candidates.exclude(toNumber->numberedConstants);
+            candidates.exclude(tables.modulePathStrings);
+            toNumber->codedStrings = sortTextsForCoding(program.strings, candidates, context.parallelLoops());
+            for (StringID id : toNumber->codedStrings)
+                numbers.m_otherStringsWithText.quickClear(id.index());
         },
         [&] {
             toNumber->firstFunctionsNamingTexts = findFirstFunctionsNamingTexts(program, mentions, names);
@@ -385,6 +427,7 @@ void ImageNumbersBuilder::numberIdentifiersAndStrings()
     context.statistics().count(StatisticID::NamesWithoutColumn, mentionedWithoutColumn);
     context.statistics().count(StatisticID::StringConstantsNumbered, constants.count());
 
+    numbers.m_stringNumbers = StringNumbers(numbers.m_namedStrings, WTF::move(toNumber->codedStrings), numberOfStrings, &identifiers);
     numbers.m_identifiers = makeUniqueWithoutFastMallocCheck<IdentifierNumbering>(WTF::move(identifiers));
     numbers.m_stringConstants = makeUniqueWithoutFastMallocCheck<StringConstantNumbering>(WTF::move(constants));
     destroyInBackground(context.backgroundJobs(), WTF::move(toNumber));

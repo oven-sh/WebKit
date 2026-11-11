@@ -63,6 +63,7 @@ class InspectorWorkerAgent;
 class FrameCSSAgent;
 class FrameCanvasAgent;
 class FrameDOMAgent;
+class FrameDOMDebuggerAgent;
 class FrameDOMStorageAgent;
 class FrameDebuggerAgent;
 class FrameRuntimeAgent;
@@ -86,6 +87,7 @@ class WebHeapAgent;
 #define DEFINE_INSPECTOR_AGENT_CSS_Frame(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, FrameCSSAgent, FrameCSSAgent, Getter, Setter)
 #define DEFINE_INSPECTOR_AGENT_DOM(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, InspectorDOMAgent, DOMAgent, Getter, Setter)
 #define DEFINE_INSPECTOR_AGENT_DOMDebugger(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, InspectorDOMDebuggerAgent, DOMDebuggerAgent, Getter, Setter)
+#define DEFINE_INSPECTOR_AGENT_DOMDebugger_Frame(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, FrameDOMDebuggerAgent, FrameDOMDebuggerAgent, Getter, Setter)
 #define DEFINE_INSPECTOR_AGENT_DOMDebugger_Page(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, PageDOMDebuggerAgent, PageDOMDebuggerAgent, Getter, Setter)
 #define DEFINE_INSPECTOR_AGENT_DOMStorage(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, InspectorDOMStorageAgent, DOMStorageAgent, Getter, Setter)
 #define DEFINE_INSPECTOR_AGENT_DOMStorage_Frame(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, FrameDOMStorageAgent, FrameDOMStorageAgent, Getter, Setter)
@@ -125,7 +127,8 @@ class WebHeapAgent;
 // Set when part of a timeline recording.
 #define DEFINE_TRACKING_INSPECTOR_AGENT(macro, Agent) DEFINE_INSPECTOR_AGENT_##Agent(macro, tracking, Tracking)
 
-#define FOR_EACH_INSPECTOR_AGENT(macro) \
+// A frame's agents fall back to its page's agents for slots that the frame has not filled itself.
+#define FOR_EACH_INSPECTOR_AGENT_WITH_FALLBACK(macro) \
     DEFINE_INSPECTOR_AGENT(macro, WebConsoleAgent, ConsoleAgent, web, Web) \
     DEFINE_PERSISTENT_INSPECTOR_AGENT(macro, Animation) \
     DEFINE_PERSISTENT_INSPECTOR_AGENT(macro, CPUProfiler) \
@@ -147,6 +150,7 @@ class WebHeapAgent;
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, Debugger_Page) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, Debugger_Web) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, DOMDebugger) \
+    DEFINE_ENABLED_INSPECTOR_AGENT(macro, DOMDebugger_Frame) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, DOMDebugger_Page) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, DOMStorage) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, DOMStorage_Frame) \
@@ -159,23 +163,35 @@ class WebHeapAgent;
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, PageProxy) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, Runtime_Frame) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, Runtime_Page) \
-    DEFINE_ENABLED_INSPECTOR_AGENT(macro, Timeline) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, Timeline_Page) \
     DEFINE_TRACKING_INSPECTOR_AGENT(macro, Animation) \
-    DEFINE_TRACKING_INSPECTOR_AGENT(macro, Timeline) \
     DEFINE_TRACKING_INSPECTOR_AGENT(macro, Timeline_Page) \
+
+// Under Site Isolation, a frame reports these only through its own frame target, so a frame's slots for them
+// never fall back to its page's agents, even while empty.
+#define FOR_EACH_INSPECTOR_AGENT_WITHOUT_FALLBACK_UNDER_SITE_ISOLATION(macro) \
+    DEFINE_ENABLED_INSPECTOR_AGENT(macro, Timeline) \
+    DEFINE_TRACKING_INSPECTOR_AGENT(macro, Timeline) \
+
+#define FOR_EACH_INSPECTOR_AGENT(macro) \
+    FOR_EACH_INSPECTOR_AGENT_WITH_FALLBACK(macro) \
+    FOR_EACH_INSPECTOR_AGENT_WITHOUT_FALLBACK_UNDER_SITE_ISOLATION(macro) \
 
 class WEBCORE_EXPORT InstrumentingAgents : public WTF::RefCountedAndCanMakeWeakPtr<InstrumentingAgents> {
     WTF_MAKE_NONCOPYABLE(InstrumentingAgents);
     WTF_MAKE_TZONE_ALLOCATED(InstrumentingAgents);
 public:
-    static Ref<InstrumentingAgents> LEGACY_NODELETE create(Inspector::InspectorEnvironment&);
-    static Ref<InstrumentingAgents> LEGACY_NODELETE create(Inspector::InspectorEnvironment&, InstrumentingAgents& fallbackAgents);
+    NODELETE static Ref<InstrumentingAgents> create(Inspector::InspectorEnvironment&);
+    NODELETE static Ref<InstrumentingAgents> create(Inspector::InspectorEnvironment&, InstrumentingAgents& fallbackAgents);
 
     ~InstrumentingAgents();
     void reset();
 
     bool developerExtrasEnabled() const;
+
+    // Set once, before any script runs in the frame, so a "will" hook and its "did" hook always reach the
+    // same agent.
+    void siteIsolationFirstEnabled();
 
 #define DECLARE_GETTER_SETTER_FOR_INSPECTOR_AGENT(Class, Name, Getter, Setter) \
     Class* Getter##Name() const; \
@@ -189,6 +205,7 @@ private:
 
     WeakRef<Inspector::InspectorEnvironment> m_environment;
     const WeakPtr<InstrumentingAgents> m_fallbackAgents;
+    bool m_siteIsolationEnabled { false };
 
 #define DECLARE_MEMBER_VARIABLE_FOR_INSPECTOR_AGENT(Class, Name, Getter, Setter) \
     CheckedPtr<Class> m_##Getter##Name; \

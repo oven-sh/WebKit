@@ -97,7 +97,11 @@ static void printUsageStatement(const char* programName)
     SAFE_PRINTF("  -h,          --help             Prints this help message\n");
     SAFE_PRINTF("  -p <port>,   --port=<port>      Port number the driver will use\n");
     SAFE_PRINTF("               --host=<host>      Host IP the driver will use, or either 'local' or 'all' (default: 'local')\n");
+#if !PLATFORM(COCOA)
+    SAFE_PRINTF("               --allow-hosts=<host>[,<host>...]       Additional hostnames, without port, to accept in the Host header (localhost and IP addresses are always accepted)\n");
+    SAFE_PRINTF("               --allow-origins=<origin>[,<origin>...] Origins, as <scheme>://<host>[:<port>], to accept in the Origin header (requests with any other Origin are rejected)\n");
     SAFE_PRINTF("  -t <ip:port> --target=<ip:port> Target IP and port\n");
+#endif
 #if ENABLE(WEBDRIVER_BIDI)
     SAFE_PRINTF("               --bidi-port=<port>        Port number to use for BiDi's WebSocket connections\n");
 #endif
@@ -111,6 +115,11 @@ int WebDriverService::run(int argc, char** argv)
 {
     String portString;
     std::optional<String> host;
+#if !PLATFORM(COCOA)
+    // minidriver has its own loopback-only checks of the Host and Origin headers.
+    Vector<String> allowedHosts;
+    Vector<URL> allowedOrigins;
+#endif
 #if ENABLE(WEBDRIVER_BIDI)
     String bidiPortString;
 #endif
@@ -144,6 +153,29 @@ int WebDriverService::run(int argc, char** argv)
             host = String::fromLatin1(arg.subspan(hostArgument.size()));
             continue;
         }
+
+#if !PLATFORM(COCOA)
+        static constexpr auto allowHostsArgument = "--allow-hosts="_span;
+        if (spanHasPrefix(arg, allowHostsArgument)) {
+            allowedHosts.appendVector(String::fromLatin1(arg.subspan(allowHostsArgument.size())).split(','));
+            continue;
+        }
+
+        static constexpr auto allowOriginsArgument = "--allow-origins="_span;
+        if (spanHasPrefix(arg, allowOriginsArgument)) {
+            for (auto& originString : String::fromLatin1(arg.subspan(allowOriginsArgument.size())).split(',')) {
+                URL origin { originString };
+                bool isOrigin = origin.isValid() && origin.protocolIsInHTTPFamily() && origin.path() == "/"_s
+                    && !origin.hasQuery() && !origin.hasFragmentIdentifier() && !origin.hasCredentials();
+                if (!isOrigin) {
+                    SAFE_FPRINTF(stderr, "Invalid origin %s in --allow-origins, expected <scheme>://<host>[:<port>]\n", originString.utf8());
+                    return EXIT_FAILURE;
+                }
+                allowedOrigins.append(WTF::move(origin));
+            }
+            continue;
+        }
+#endif
 
 #if ENABLE(WEBDRIVER_BIDI)
         static constexpr auto bidiPortArgument = "--bidi-port="_span;
@@ -227,6 +259,11 @@ int WebDriverService::run(int argc, char** argv)
         RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d", programNameStr, hostStr, *port);
     else
         RELEASE_LOG_INFO(WebDriverClassic, "%s starting: http=%s:%d target=%s:%d", programNameStr, hostStr, *port, m_targetAddress.utf8(), m_targetPort);
+#endif
+
+#if !PLATFORM(COCOA)
+    setAllowedHosts(WTF::move(allowedHosts));
+    setAllowedOrigins(WTF::move(allowedOrigins));
 #endif
 
     if (!m_server.listen(host, *port)) {
@@ -814,19 +851,102 @@ static std::optional<PageLoadStrategy> deserializePageLoadStrategy(const String&
     return std::nullopt;
 }
 
-static std::optional<UnhandledPromptBehavior> deserializeUnhandledPromptBehavior(const String& unhandledPromptBehavior)
+static std::optional<PromptHandlerConfiguration> deserializePromptHandlerConfiguration(const String& handler)
 {
-    if (unhandledPromptBehavior == "dismiss"_s)
-        return UnhandledPromptBehavior::Dismiss;
-    if (unhandledPromptBehavior == "accept"_s)
-        return UnhandledPromptBehavior::Accept;
-    if (unhandledPromptBehavior == "dismiss and notify"_s)
-        return UnhandledPromptBehavior::DismissAndNotify;
-    if (unhandledPromptBehavior == "accept and notify"_s)
-        return UnhandledPromptBehavior::AcceptAndNotify;
-    if (unhandledPromptBehavior == "ignore"_s)
-        return UnhandledPromptBehavior::Ignore;
+    // https://w3c.github.io/webdriver/#dfn-known-prompt-handlers
+    if (handler == "dismiss"_s)
+        return PromptHandlerConfiguration { PromptHandlerType::Dismiss, false };
+    if (handler == "accept"_s)
+        return PromptHandlerConfiguration { PromptHandlerType::Accept, false };
+    if (handler == "dismiss and notify"_s)
+        return PromptHandlerConfiguration { PromptHandlerType::Dismiss, true };
+    if (handler == "accept and notify"_s)
+        return PromptHandlerConfiguration { PromptHandlerType::Accept, true };
+    if (handler == "ignore"_s)
+        return PromptHandlerConfiguration { PromptHandlerType::Ignore, true };
     return std::nullopt;
+}
+
+static std::optional<UserPromptHandler> deserializeUnhandledPromptBehavior(const JSON::Value& value)
+{
+    // https://w3c.github.io/webdriver/#dfn-deserialize-as-an-unhandled-prompt-behavior
+    UserPromptHandler userPromptHandler;
+
+    if (auto handler = value.asString(); !!handler) {
+        userPromptHandler.fallbackDefault = deserializePromptHandlerConfiguration(handler);
+        if (!userPromptHandler.fallbackDefault)
+            return std::nullopt;
+        return userPromptHandler;
+    }
+
+    auto handlers = value.asObject();
+    if (!handlers)
+        return std::nullopt;
+
+    for (auto& [promptType, handlerValue] : *handlers) {
+        auto handler = handlerValue->asString();
+        if (!handler)
+            return std::nullopt;
+        auto configuration = deserializePromptHandlerConfiguration(handler);
+        if (!configuration)
+            return std::nullopt;
+
+        if (promptType == "alert"_s)
+            userPromptHandler.alert = configuration;
+        else if (promptType == "beforeUnload"_s)
+            userPromptHandler.beforeUnload = configuration;
+        else if (promptType == "confirm"_s)
+            userPromptHandler.confirm = configuration;
+        else if (promptType == "default"_s)
+            userPromptHandler.defaultHandler = configuration;
+        else if (promptType == "file"_s)
+            userPromptHandler.file = configuration;
+        else if (promptType == "prompt"_s)
+            userPromptHandler.prompt = configuration;
+        else
+            return std::nullopt;
+    }
+
+    return userPromptHandler;
+}
+
+static String serializePromptHandlerConfiguration(const PromptHandlerConfiguration& configuration)
+{
+    // https://w3c.github.io/webdriver/#dfn-serialize-a-prompt-handler-configuration
+    switch (configuration.handler) {
+    case PromptHandlerType::Accept:
+        return configuration.notify ? "accept and notify"_s : "accept"_s;
+    case PromptHandlerType::Dismiss:
+        return configuration.notify ? "dismiss and notify"_s : "dismiss"_s;
+    case PromptHandlerType::Ignore:
+        return "ignore"_s;
+    }
+
+    ASSERT_NOT_REACHED();
+    return "ignore"_s;
+}
+
+static Ref<JSON::Value> serializeUserPromptHandler(const std::optional<UserPromptHandler>& userPromptHandler)
+{
+    // https://w3c.github.io/webdriver/#dfn-serialize-the-user-prompt-handler
+    if (!userPromptHandler)
+        return JSON::Value::create(String("dismiss and notify"_s));
+
+    if (userPromptHandler->fallbackDefault)
+        return JSON::Value::create(serializePromptHandlerConfiguration(*userPromptHandler->fallbackDefault));
+
+    auto serialized = JSON::Object::create();
+    auto serializeIfPresent = [&](ASCIILiteral promptType, const std::optional<PromptHandlerConfiguration>& configuration) {
+        if (configuration)
+            serialized->setString(promptType, serializePromptHandlerConfiguration(*configuration));
+    };
+    serializeIfPresent("alert"_s, userPromptHandler->alert);
+    serializeIfPresent("beforeUnload"_s, userPromptHandler->beforeUnload);
+    serializeIfPresent("confirm"_s, userPromptHandler->confirm);
+    serializeIfPresent("default"_s, userPromptHandler->defaultHandler);
+    serializeIfPresent("file"_s, userPromptHandler->file);
+    serializeIfPresent("prompt"_s, userPromptHandler->prompt);
+    return serialized;
 }
 
 void WebDriverService::parseCapabilities(const JSON::Object& matchedCapabilities, Capabilities& capabilities) const
@@ -868,9 +988,8 @@ void WebDriverService::parseCapabilities(const JSON::Object& matchedCapabilities
     if (!!pageLoadStrategy)
         capabilities.pageLoadStrategy = deserializePageLoadStrategy(pageLoadStrategy);
 
-    auto unhandledPromptBehavior = matchedCapabilities.getString("unhandledPromptBehavior"_s);
-    if (!!unhandledPromptBehavior)
-        capabilities.unhandledPromptBehavior = deserializeUnhandledPromptBehavior(unhandledPromptBehavior);
+    if (auto unhandledPromptBehavior = matchedCapabilities.getValue("unhandledPromptBehavior"_s))
+        capabilities.unhandledPromptBehavior = deserializeUnhandledPromptBehavior(*unhandledPromptBehavior);
 
     if (auto webSocketURL = matchedCapabilities.getBoolean("webSocketUrl"_s))
         capabilities.webSocketURL = *webSocketURL;
@@ -892,12 +1011,27 @@ bool WebDriverService::findSessionOrCompleteWithError(JSON::Object& parameters, 
     }
 
     if (!m_session->isConnected()) {
-        m_session = nullptr;
+        discardSessionIfDisconnected();
         completionHandler(CommandResult::fail(CommandResult::ErrorCode::InvalidSessionID, String("session deleted because of page crash or hang."_s)));
         return false;
     }
 
     return true;
+}
+
+void WebDriverService::discardSessionIfDisconnected()
+{
+    // The browser can go away without the session being deleted, for example when it crashes or
+    // when the user quits it. Such a session must not prevent creating a new one.
+    if (!m_session || m_session->isConnected())
+        return;
+
+#if ENABLE(WEBDRIVER_BIDI)
+    // Close the session's BiDi connection first, as when the browser terminates. The handlers of
+    // BiDi messages and of closed connections expect every connection to belong to the session.
+    onBrowserTerminated(m_session->id());
+#endif
+    m_session = nullptr;
 }
 
 RefPtr<JSON::Object> WebDriverService::validatedCapabilities(const JSON::Object& capabilities) const
@@ -940,10 +1074,9 @@ RefPtr<JSON::Object> WebDriverService::validatedCapabilities(const JSON::Object&
                 return nullptr;
             result->setValue(it->key, *timeouts);
         } else if (it->key == "unhandledPromptBehavior"_s) {
-            auto unhandledPromptBehavior = it->value->asString();
-            if (!unhandledPromptBehavior || !deserializeUnhandledPromptBehavior(unhandledPromptBehavior))
+            if (!deserializeUnhandledPromptBehavior(it->value))
                 return nullptr;
-            result->setString(it->key, unhandledPromptBehavior);
+            result->setValue(it->key, it->value.copyRef());
         } else if (it->key.find(':') != notFound) {
             if (!platformValidateCapability(it->key, it->value))
                 return nullptr;
@@ -1111,8 +1244,7 @@ Vector<Capabilities> WebDriverService::processCapabilities(const JSON::Object& p
     }
 
     // 6. For each first match capabilities corresponding to an indexed property in validated first match capabilities.
-    Vector<Capabilities> matchedCapabilitiesList;
-    matchedCapabilitiesList.reserveInitialCapacity(validatedFirstMatchCapabilitiesList.size());
+    Vector<Capabilities> matchedCapabilitiesList(ReserveCapacityTag { }, validatedFirstMatchCapabilitiesList.size());
     for (auto& validatedFirstMatchCapabilies : validatedFirstMatchCapabilitiesList) {
         // 6.1. Let merged capabilities be the result of trying to merge capabilities with required capabilities and first match capabilities as arguments.
         auto mergedCapabilities = mergeCapabilities(*requiredCapabilities, *validatedFirstMatchCapabilies);
@@ -1142,6 +1274,7 @@ void WebDriverService::newSession(RefPtr<JSON::Object>&& parameters, Function<vo
     if (matchedCapabilitiesList.isEmpty())
         return;
 
+    discardSessionIfDisconnected();
     if (!m_session) {
         // Reverse the vector to always take last item.
         matchedCapabilitiesList.reverse();
@@ -1225,23 +1358,7 @@ void WebDriverService::createSession(Vector<Capabilities>&& capabilitiesList, Re
             capabilitiesObject->setBoolean("strictFileInteractability"_s, capabilities.strictFileInteractability.value_or(false));
             capabilitiesObject->setBoolean("setWindowRect"_s, capabilities.setWindowRect.value_or(true));
             capabilitiesObject->setInteger("webkit:processID"_s, capabilities.processID.value_or(0));
-            switch (capabilities.unhandledPromptBehavior.value_or(UnhandledPromptBehavior::DismissAndNotify)) {
-            case UnhandledPromptBehavior::Dismiss:
-                capabilitiesObject->setString("unhandledPromptBehavior"_s, "dismiss"_s);
-                break;
-            case UnhandledPromptBehavior::Accept:
-                capabilitiesObject->setString("unhandledPromptBehavior"_s, "accept"_s);
-                break;
-            case UnhandledPromptBehavior::DismissAndNotify:
-                capabilitiesObject->setString("unhandledPromptBehavior"_s, "dismiss and notify"_s);
-                break;
-            case UnhandledPromptBehavior::AcceptAndNotify:
-                capabilitiesObject->setString("unhandledPromptBehavior"_s, "accept and notify"_s);
-                break;
-            case UnhandledPromptBehavior::Ignore:
-                capabilitiesObject->setString("unhandledPromptBehavior"_s, "ignore"_s);
-                break;
-            }
+            capabilitiesObject->setValue("unhandledPromptBehavior"_s, serializeUserPromptHandler(capabilities.unhandledPromptBehavior));
             switch (capabilities.pageLoadStrategy.value_or(PageLoadStrategy::Normal)) {
             case PageLoadStrategy::None:
                 capabilitiesObject->setString("pageLoadStrategy"_s, "none"_s);
@@ -1322,6 +1439,7 @@ void WebDriverService::status(RefPtr<JSON::Object>&&, Function<void (CommandResu
 {
     // §8.3 Status
     // https://w3c.github.io/webdriver/webdriver-spec.html#status
+    discardSessionIfDisconnected();
     auto body = JSON::Object::create();
     body->setBoolean("ready"_s, !m_session);
     body->setString("message"_s, m_session ? "A session already exists"_s : "No sessions"_s);
@@ -2876,6 +2994,7 @@ void WebDriverService::takeElementScreenshot(RefPtr<JSON::Object>&& parameters, 
 #if ENABLE(WEBDRIVER_BIDI)
 void WebDriverService::bidiSessionStatus(unsigned id, RefPtr<JSON::Object>&&, Function<void(WebSocketMessageHandler::Message&&)>&& completionHandler)
 {
+    discardSessionIfDisconnected();
     auto result = JSON::Object::create();
     bool ready = !m_session;
     result->setBoolean("ready"_s, ready);

@@ -45,6 +45,7 @@
 #import <WebCore/MIMETypeRegistry.h>
 #import <wtf/FileSystem.h>
 #import <wtf/cf/TypeCastsCF.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/text/MakeString.h>
 
 #if PLATFORM(MAC)
@@ -242,12 +243,14 @@ std::expected<Ref<API::Data>, RefPtr<API::Error>> WebExtension::resourceDataForP
     if ([cocoaPath isEqualToString:generatedBackgroundPageFilename] || [cocoaPath isEqualToString:generatedBackgroundServiceWorkerFilename])
         return API::Data::create(generatedBackgroundContent().utf8().span());
 
-    if (auto maybeData = m_dataResources.getOptional(path))
+    auto resourceKey = resourceKeyForPath(originalPath);
+
+    if (auto maybeData = m_dataResources.getOptional(resourceKey))
         return *maybeData;
 
-    if (auto maybeString = m_stringResources.getOptional(path)) {
+    if (auto maybeString = m_stringResources.getOptional(resourceKey)) {
         auto data = API::Data::create(maybeString->utf8().span());
-        m_dataResources.set(path, data);
+        m_dataResources.set(resourceKey, data);
         return data;
     }
 
@@ -275,7 +278,7 @@ std::expected<Ref<API::Data>, RefPtr<API::Error>> WebExtension::resourceDataForP
 
     Ref data = API::Data::createWithoutCopying(resultData);
     if (cacheResult == CacheResult::Yes)
-        m_dataResources.set(path, data);
+        m_dataResources.set(resourceKey, data);
 
     return data;
 }
@@ -469,7 +472,7 @@ RefPtr<WebCore::Icon> WebExtension::bestIcon(RefPtr<JSON::Object> icons, WebCore
     });
 
     if (images.count == 1)
-        return WebCore::Icon::create(images.allValues.firstObject);
+        return WebCore::Icon::create(checked_objc_cast<UIImage>(images.allValues.firstObject));
 
     auto *sortedImageScales = [images.allKeys sortedArrayUsingSelector:@selector(compare:)];
 
@@ -502,8 +505,14 @@ RefPtr<WebCore::Icon> WebExtension::bestIcon(RefPtr<JSON::Object> icons, WebCore
 RefPtr<WebCore::Icon> WebExtension::bestIconVariant(RefPtr<JSON::Array> variants, WebCore::FloatSize idealSize, NOESCAPE const Function<void(Ref<API::Error>)>& reportError)
 {
     auto idealPointSize = idealSize.width() > idealSize.height() ? idealSize.width() : idealSize.height();
-    RefPtr lightIconsObject = bestIconVariantJSONObject(variants, idealPointSize, ColorScheme::Light);
-    RefPtr darkIconsObject = bestIconVariantJSONObject(variants, idealPointSize, ColorScheme::Dark);
+
+    // Variant sizes are pixel sizes, so the largest available screen scale is preferred.
+    auto screenScales = availableScreenScales();
+    auto largestScreenScale = std::ranges::max(screenScales);
+    auto idealPixelSize = idealPointSize * largestScreenScale;
+
+    RefPtr lightIconsObject = bestIconVariantJSONObject(variants, idealPixelSize, ColorScheme::Light);
+    RefPtr darkIconsObject = bestIconVariantJSONObject(variants, idealPixelSize, ColorScheme::Dark);
 
     // If the light and dark icons dictionaries are the same, or if either is nil, return the available image directly.
     if (!lightIconsObject || !darkIconsObject || lightIconsObject == darkIconsObject)

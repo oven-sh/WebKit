@@ -320,6 +320,7 @@ public:
             m_enteredFromReachableBlock.clearAll();
             m_enteredFromReachableBlock.ensureSize(m_proc.size());
             m_valueForConstant.clear();
+            m_proc.resetValueOwners(); // Used by Phi folding.
 
             m_dominators = &m_proc.dominators(); // Recompute if necessary.
             m_layeredCSE.clear();
@@ -1480,11 +1481,10 @@ private:
 
             // Turn this: BitAnd(SExt32(value), mask) where (mask & 0xffffffff00000000) == 0
             // Into this: BitAnd(ZExt32(value), mask)
-            if (m_value->child(0)->opcode() == SExt32 && m_value->child(1)->hasInt32()
-                && !(m_value->child(1)->asInt32() & 0xffffffff00000000llu)) {
+            if (m_value->child(0)->opcode() == SExt32 && m_value->child(1)->hasInt64()
+                && !(m_value->child(1)->asInt64() & 0xffffffff00000000llu)) {
                 m_value->child(0) = m_insertionSet.insert<Value>(
-                    m_index, ZExt32, m_value->origin(),
-                    m_value->child(0)->child(0), m_value->child(0)->child(1));
+                    m_index, ZExt32, m_value->origin(), m_value->child(0)->child(0));
                 m_changed = true;
                 break;
             }
@@ -3609,28 +3609,10 @@ private:
                     }
                 }
 
-                // DupElement: i64x2 and i32x4 on all platforms
-                if (auto lane = SIMDShuffle::isI64x2DupElement(pattern)) {
-                    replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i64x2, SIMDSignMode::None, lane.value(), inner);
+                if (auto dup = SIMDShuffle::isDupElement(pattern)) {
+                    auto [lane, index] = *dup;
+                    replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, lane, SIMDSignMode::None, index, inner);
                     break;
-                }
-
-                if (auto lane = SIMDShuffle::isI32x4DupElement(pattern)) {
-                    replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i32x4, SIMDSignMode::None, lane.value(), inner);
-                    break;
-                }
-
-                // DupElement: i16x8 and i8x16 — ARM64 only
-                if constexpr (isARM64()) {
-                    if (auto lane = SIMDShuffle::isI16x8DupElement(pattern)) {
-                        replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i16x8, SIMDSignMode::None, lane.value(), inner);
-                        break;
-                    }
-
-                    if (auto lane = SIMDShuffle::isI8x16DupElement(pattern)) {
-                        replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, lane.value(), inner);
-                        break;
-                    }
                 }
 
                 if (m_pass == ReduceStrengthPass::Final) {
@@ -3737,20 +3719,19 @@ private:
                 if (auto result = SIMDShuffle::isOnlyOneSideMask(pattern)) {
                     auto [child, newPattern] = result.value();
                     switch (child) {
-                    case 0: {
+                    case SIMDShuffleSide::Left: {
                         Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, newPattern);
                         m_insertionSet.insertValue(m_index, newPatternValue);
                         replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, m_value->child(0), newPatternValue);
                         break;
                     }
-                    case 1: {
+                    case SIMDShuffleSide::Right: {
                         Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, newPattern);
                         m_insertionSet.insertValue(m_index, newPatternValue);
                         replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, m_value->child(1), newPatternValue);
                         break;
                     }
-                    case 2: {
-                        // All OOB.
+                    case SIMDShuffleSide::AllOutOfBounds: {
                         replaceWithNewValue(m_proc.addConstant(m_value->origin(), B3::V128, vectorAllZeros()));
                         break;
                     }
@@ -3800,20 +3781,19 @@ private:
                     if (auto result = SIMDShuffle::isOnlyOneSideMask(newPattern)) {
                         auto [child, unaryPattern] = result.value();
                         switch (child) {
-                        case 0: {
+                        case SIMDShuffleSide::Left: {
                             Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, unaryPattern);
                             m_insertionSet.insertValue(m_index, newPatternValue);
                             replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, newChild0, newPatternValue);
                             break;
                         }
-                        case 1: {
+                        case SIMDShuffleSide::Right: {
                             Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, unaryPattern);
                             m_insertionSet.insertValue(m_index, newPatternValue);
                             replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, newChild1, newPatternValue);
                             break;
                         }
-                        case 2: {
-                            // All OOB.
+                        case SIMDShuffleSide::AllOutOfBounds: {
                             replaceWithNewValue(m_proc.addConstant(m_value->origin(), B3::V128, vectorAllZeros()));
                             break;
                         }
@@ -4500,6 +4480,9 @@ private:
             return true;
         case RangeReduction::Kind::Comparison:
             replaceWithNew<Value>(reduction.opcode, m_value->origin(), reduction.value, reduction.right);
+            return true;
+        case RangeReduction::Kind::ComparisonWithConstant:
+            replaceWithNew<Value>(reduction.opcode, m_value->origin(), reduction.value, m_insertionSet.insertIntConstant(m_index, m_value->origin(), Int32, reduction.constant));
             return true;
         }
         RELEASE_ASSERT_NOT_REACHED();

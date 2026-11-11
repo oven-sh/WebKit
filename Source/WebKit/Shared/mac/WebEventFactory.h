@@ -52,17 +52,16 @@ public:
     static WebMouseEventInit createWebMouseEvent(NSEvent *, NSEvent *lastPressureEvent, NSView *windowView, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
     static WebWheelEventInit createWebWheelEvent(NSEvent *, NSView *windowView);
     static WebKeyboardEventInit createWebKeyboardEvent(NSEvent *, bool handledByInputMethod, bool replacesSoftSpace, const Vector<WebCore::KeypressCommand>&);
-    static bool LEGACY_NODELETE shouldBeHandledAsContextClick(const WebCore::PlatformMouseEvent&);
 
 #if defined(__OBJC__)
-    static NSEventModifierFlags LEGACY_NODELETE toNSEventModifierFlags(OptionSet<WebKit::WebEventModifier>);
-    static NSInteger LEGACY_NODELETE toNSButtonNumber(WebKit::WebMouseEventButton);
+    NODELETE static NSEventModifierFlags toNSEventModifierFlags(OptionSet<WebKit::WebEventModifier>);
+    NODELETE static NSInteger toNSButtonNumber(WebKit::WebMouseEventButton);
 
-    static OptionSet<WebKit::WebEventModifier> LEGACY_NODELETE toWebEventModifierFlags(NSEventModifierFlags);
+    NODELETE static OptionSet<WebKit::WebEventModifier> toWebEventModifierFlags(NSEventModifierFlags);
 
     static WebEventPhase phaseForEvent(NSEvent *);
-    static WebEventPhase LEGACY_NODELETE phaseForNativeEventPhase(NSEventPhase);
-    static NSEventPhase LEGACY_NODELETE toNativeEventPhase(WebEventPhase);
+    NODELETE static WebEventPhase phaseForNativeEventPhase(NSEventPhase);
+    NODELETE static NSEventPhase toNativeEventPhase(WebEventPhase);
 #endif
 #endif // USE(APPKIT)
 };

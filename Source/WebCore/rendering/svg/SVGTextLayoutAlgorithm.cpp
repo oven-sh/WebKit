@@ -27,7 +27,6 @@
 #include "SVGTextLayoutAlgorithm.h"
 
 #include "ComplexTextController.h"
-#include "FontCascadeCache.h"
 #include "FontCascadeInlines.h"
 #include "InlineDisplayBoxInlines.h"
 #include "LayoutElementBox.h"
@@ -52,12 +51,12 @@
 namespace WebCore {
 
 // SVG specific inputs live on the renderers and the DOM.
-static RenderSVGInlineText* LEGACY_NODELETE svgInlineText(const Layout::InlineTextBox& inlineTextBox)
+NODELETE static RenderSVGInlineText* svgInlineText(const Layout::InlineTextBox& inlineTextBox)
 {
     return dynamicDowncast<RenderSVGInlineText>(inlineTextBox.rendererForIntegration());
 }
 
-static const SVGTextContentElement* LEGACY_NODELETE textContentElement(const Layout::ElementBox& elementBox)
+NODELETE static const SVGTextContentElement* textContentElement(const Layout::ElementBox& elementBox)
 {
     // Anonymous inline boxes, like the ones for display: contents, have no element.
     auto* renderer = elementBox.rendererForIntegration();
@@ -66,36 +65,36 @@ static const SVGTextContentElement* LEGACY_NODELETE textContentElement(const Lay
     return SVGTextContentElement::elementFromRenderer(renderer);
 }
 
-static const RenderSVGTextPath* LEGACY_NODELETE svgTextPath(const Layout::ElementBox& elementBox)
+NODELETE static const RenderSVGTextPath* svgTextPath(const Layout::ElementBox& elementBox)
 {
     return dynamicDowncast<RenderSVGTextPath>(elementBox.rendererForIntegration());
 }
 
-static const Vector<SVGTextMetrics>& LEGACY_NODELETE textMetrics(const Layout::InlineTextBox& inlineTextBox)
+NODELETE static const Vector<SVGTextMetrics>& textMetrics(const Layout::InlineTextBox& inlineTextBox)
 {
     return svgInlineText(inlineTextBox)->textMetrics();
 }
 
-// Text boxes have a style with the non-inherited properties reset. The SVG text properties like alignment-baseline and
-// baseline-shift come from the parent.
-static const Style::ComputedStyle& LEGACY_NODELETE textStyle(const Layout::InlineTextBox& inlineTextBox)
+// Text boxes have a style with the non-inherited properties reset. The non-inherited alignment-baseline and baseline-shift
+// are properties of the parent box.
+NODELETE static const Style::ComputedStyle& parentBoxStyle(const Layout::InlineTextBox& inlineTextBox)
 {
     return inlineTextBox.parent().style();
 }
 
 static constexpr float unspecifiedValue = std::numeric_limits<float>::quiet_NaN();
 
-static bool LEGACY_NODELETE isUnspecified(float value)
+NODELETE static bool isUnspecified(float value)
 {
     return std::isnan(value);
 }
 
-static float LEGACY_NODELETE valueAt(std::span<const float> values, unsigned index)
+NODELETE static float valueAt(std::span<const float> values, unsigned index)
 {
     return values.empty() ? unspecifiedValue : values[index];
 }
 
-static float LEGACY_NODELETE valueOrZeroAt(std::span<const float> values, unsigned index)
+NODELETE static float valueOrZeroAt(std::span<const float> values, unsigned index)
 {
     auto value = valueAt(values, index);
     return isUnspecified(value) ? 0 : value;
@@ -155,7 +154,6 @@ static void ensureTextMetrics(RenderSVGInlineText& text)
     };
 
     if (shouldUseComplexTextController(scaledFont, run)) {
-        FontCascadeCache::forCurrentThread().invalidate();
         auto controller = ComplexTextController { scaledFont, run, true };
         auto totalWidth = 0.f;
         for (unsigned position = 0; position < length;) {
@@ -172,10 +170,10 @@ static void ensureTextMetrics(RenderSVGInlineText& text)
     auto canUseSimplifiedTextMeasuring = [&] {
         if (run.direction() != TextDirection::LTR)
             return false;
-        if (auto cachedValue = text.canUseSimplifiedTextMeasuring())
+        if (auto cachedValue = text.canUseSimplifiedTextMeasuringWithScaledFont())
             return *cachedValue;
         auto value = Layout::TextUtil::canUseSimplifiedTextMeasuring(run.text(), scaledFont, text.style().collapseWhiteSpace(), nullptr);
-        text.setCanUseSimplifiedTextMeasuring(value);
+        text.setCanUseSimplifiedTextMeasuringWithScaledFont(value);
         return value;
     }();
 
@@ -362,7 +360,7 @@ void SVGTextLayoutAlgorithm::collectTextBoxes()
                     auto start = textContent.start + static_cast<unsigned>(displayBox.text().start());
                     auto length = static_cast<unsigned>(displayBox.text().length());
 
-                    CheckedRef style = textStyle(textContent.inlineTextBox);
+                    CheckedRef style = parentBoxStyle(textContent.inlineTextBox);
                     auto baselineLayout = SVGTextLayoutEngineBaseline { protect(style->fontCascade()) };
                     auto baselineShift = baselineLayout.calculateBaselineShift(style) - baselineLayout.calculateAlignmentBaselineShift(m_isVertical, style);
 
@@ -406,7 +404,7 @@ void SVGTextLayoutAlgorithm::computeCSSPositions()
 {
     auto position = 0.f;
     for (auto& textBox : m_textBoxes) {
-        CheckedRef style = textStyle(textBox.inlineTextBox);
+        CheckedRef style = textBox.inlineTextBox->style();
         auto& content = textBox.inlineTextBox->content();
         auto baselineLayout = SVGTextLayoutEngineBaseline { protect(style->fontCascade()) };
         auto spacingLayout = SVGTextLayoutEngineSpacing { protect(style->fontCascade()) };
@@ -673,7 +671,7 @@ void SVGTextLayoutAlgorithm::applyTextLength()
 
 float SVGTextLayoutAlgorithm::anchorShift(std::span<const unsigned> chunk) const
 {
-    auto& style = textStyle(m_textBoxes[m_characters[chunk.front()].textBoxIndex].inlineTextBox);
+    auto& style = m_textBoxes[m_characters[chunk.front()].textBoxIndex].inlineTextBox->style();
     auto [start, end] = extent(chunk);
     auto length = end - start;
     auto isRightToLeft = style.writingMode().isBidiRTL();
@@ -763,14 +761,22 @@ void SVGTextLayoutAlgorithm::positionOnPaths()
     for (unsigned textPathIndex = 0; textPathIndex < m_textPaths.size(); ++textPathIndex) {
         auto& textPath = m_textPaths[textPathIndex];
 
+        auto isOnTextPath = [&](unsigned charIndex) {
+            return m_textBoxes[m_characters[charIndex].textBoxIndex].textPathIndex == textPathIndex;
+        };
+
         auto rangeStart = notFound;
         size_t rangeEnd = 0;
-        for (size_t i = 0; i < m_displayOrder.size(); ++i) {
-            if (m_textBoxes[m_characters[m_displayOrder[i]].textBoxIndex].textPathIndex != textPathIndex)
+        for (size_t glyphIndex = 0; glyphIndex < m_displayOrder.size(); ++glyphIndex) {
+            if (!isOnTextPath(m_displayOrder[glyphIndex])) {
+                if (rangeStart != notFound)
+                    break;
                 continue;
+            }
+
             if (rangeStart == notFound)
-                rangeStart = i;
-            rangeEnd = i + 1;
+                rangeStart = glyphIndex;
+            rangeEnd = glyphIndex + 1;
         }
         if (rangeStart == notFound)
             continue;

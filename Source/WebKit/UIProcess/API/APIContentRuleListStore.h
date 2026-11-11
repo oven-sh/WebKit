@@ -52,7 +52,7 @@ public:
 #if ENABLE(CONTENT_EXTENSIONS)
     // This should be incremented every time a functional change is made to the bytecode, file format, etc.
     // to prevent crashing while loading old data.
-    static constexpr uint32_t CurrentContentRuleListFileVersion = 21;
+    static constexpr uint32_t CurrentContentRuleListFileVersion = 22;
 
     static ContentRuleListStore& defaultStoreSingleton();
     static Ref<ContentRuleListStore> storeWithPath(const WTF::String& storePath);
@@ -87,7 +87,7 @@ private:
 #endif // ENABLE(CONTENT_EXTENSIONS)
 };
 
-const std::error_category& LEGACY_NODELETE contentRuleListStoreErrorCategory();
+NODELETE const std::error_category& contentRuleListStoreErrorCategory();
 
 inline std::error_code make_error_code(ContentRuleListStore::Error error)
 {

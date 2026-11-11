@@ -25,6 +25,7 @@
 #include "AOTProgramStrings.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
+#include "AOTVMState.h"
 #include "FunctionRareData.h"
 #include "JSCInlines.h"
 #include "NativeExecutable.h"
@@ -230,6 +231,35 @@ String functionName(const FunctionDescription& description, NameForm form)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static JSString* shareComputedName(VM& vm, FunctionID function, const String& name)
+{
+    VMState::ComputedFunctionName ownName { .hash = name.hash(), .length = name.length() };
+    VMState::ComputedFunctionName& shared = vm.aotState().computedFunctionNames.add(sourceFunctionOf(function).index(), WTF::move(ownName)).iterator->value;
+    if (shared.hash != name.hash() || shared.length != name.length())
+        shared.isOneOfSeveral = true;
+    if (JSString* string = shared.name.get(); string && !shared.isOneOfSeveral) {
+        if (string->tryGetValue().data == name)
+            return string;
+        shared.isOneOfSeveral = true;
+    }
+    JSString* string = jsString(vm, name);
+    shared.name = shared.isOneOfSeveral ? Weak<JSString>() : Weak<JSString>(string);
+    return string;
+}
+
+String computedNameInFrames(VM& vm, const FunctionDescription& description)
+{
+    if (runsInBodyWithoutName(description))
+        return emptyString();
+    FunctionID source = sourceFunctionOf(description.function());
+    if (functionKindData(source).isGenerator)
+        return emptyString();
+    const auto& names = vm.aotState().computedFunctionNames;
+    auto found = names.find(source.index());
+    JSString* name = found == names.end() ? nullptr : found->value.name.get();
+    return name ? String(name->tryGetValueWithoutGC().data) : emptyString();
+}
+
 static String computedFunctionName(JSGlobalObject* globalObject, const Identifier& key, MethodKind kind)
 {
     VM& vm = globalObject->vm();
@@ -260,10 +290,12 @@ void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, M
     auto scope = DECLARE_THROW_SCOPE(vm);
     String name = computedFunctionName(closure->realm(), key, kind);
     RETURN_IF_EXCEPTION(scope, void());
-    if (std::optional<FunctionID> function = functionOf(closure); function && !closure->getDirect(vm, vm.propertyNames->name) && initialNameProperty(sourceFunctionOf(*function)) == name)
+    std::optional<FunctionID> function = functionOf(closure);
+    if (function && !closure->getDirect(vm, vm.propertyNames->name) && initialNameProperty(sourceFunctionOf(*function)) == name)
         return;
+    JSString* nameString = function ? shareComputedName(vm, *function, name) : jsString(vm, name);
     CompiledCallee::reifyProperties(vm, closure);
-    closure->putDirect(vm, vm.propertyNames->name, jsString(vm, name), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+    closure->putDirect(vm, vm.propertyNames->name, nameString, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     if (isCompiledClosure(closure)) {
         FunctionRareData* rareData = uncheckedDowncast<Closure>(closure)->ensureRareData(vm);
         rareData->setHasReifiedName();

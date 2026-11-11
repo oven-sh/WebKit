@@ -39,14 +39,14 @@ namespace WebCore {
 
 using HandleToGlobalMap = JSC::WeakGCMap<JSHandleIdentifier, JSDOMGlobalObject>;
 
-static HandleToGlobalMap& LEGACY_NODELETE handleToGlobalMap(JSC::VM& vm)
+NODELETE static HandleToGlobalMap& handleToGlobalMap(JSC::VM& vm)
 {
     return downcast<JSVMClientData>(vm.clientData)->jsHandleGlobalObjects();
 }
 
 // Handles are only ever created on the main thread, so the global object a handle names always
 // belongs to the common VM.
-static HandleToGlobalMap* LEGACY_NODELETE handleToGlobalMapIfExists()
+NODELETE static HandleToGlobalMap* handleToGlobalMapIfExists()
 {
     ASSERT(isMainThread());
     auto* vm = commonVMOrNull();
@@ -93,7 +93,7 @@ JSC::JSObject* WebKitJSHandle::objectForIdentifier(JSHandleIdentifier identifier
     return global->jsHandle(identifier);
 }
 
-static Markable<FrameIdentifier> LEGACY_NODELETE windowFrameIdentifier(JSC::JSObject* object)
+NODELETE static Markable<FrameIdentifier> windowFrameIdentifier(JSC::JSObject* object)
 {
     if (auto* window = dynamicDowncast<WebCore::JSWindowProxy>(object)) {
         if (auto* frame = window->wrapped().frame())
@@ -102,16 +102,21 @@ static Markable<FrameIdentifier> LEGACY_NODELETE windowFrameIdentifier(JSC::JSOb
     return std::nullopt;
 }
 
+static JSHandleIdentifier registerHandle(JSC::JSObject* object)
+{
+    if (auto* global = dynamicDowncast<JSDOMGlobalObject>(object->realmMayBeNull())) {
+        ASSERT(&global->vm() == commonVMOrNull());
+        auto identifier = global->addJSHandle(*object);
+        handleToGlobalMap(global->vm()).set(identifier, global);
+        return identifier;
+    }
+    return JSHandleIdentifier(WebProcessJSHandleIdentifier::generate(), Process::identifier());
+}
+
 WebKitJSHandle::WebKitJSHandle(JSC::JSObject* object)
-    : m_identifier(JSHandleIdentifier(WebProcessJSHandleIdentifier(reinterpret_cast<uintptr_t>(object)), Process::identifier()))
+    : m_identifier(registerHandle(object))
     , m_windowFrameIdentifier(WebCore::windowFrameIdentifier(object))
 {
-    auto* global = dynamicDowncast<JSDOMGlobalObject>(object->realmMayBeNull());
-    if (!global)
-        return;
-    global->addJSHandle(m_identifier, *object);
-    ASSERT(&global->vm() == commonVMOrNull());
-    handleToGlobalMap(global->vm()).set(m_identifier, global);
 }
 
 }

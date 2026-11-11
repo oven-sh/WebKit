@@ -38,6 +38,7 @@
 #include "JSWebAssemblyInstance.h"
 #include "JSWebAssemblyLinkError.h"
 #include "JSWebAssemblyModule.h"
+#include "JSWebAssemblySuspendingWrapper.h"
 #include "JSWebAssemblyTag.h"
 #include "ObjectConstructor.h"
 #if USE(BUN_JSC_ADDITIONS)
@@ -48,6 +49,7 @@
 #include "WasmTypeDefinitionInlines.h"
 #include "WebAssemblyBuiltin.h"
 #include "WebAssemblyFunction.h"
+#include "WebAssemblySuspending.h"
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -278,6 +280,13 @@ NEVER_INLINE void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* glo
 
         switch (import.kind) {
         case Wasm::ExternalKind::Function: {
+            // If this is a WebAssembly.Suspending wrapper object, substitute an actual function.
+            // The function is created per import binding and can't be cached because it
+            // captures the creation realm, which is tied to the binding.
+            if (auto* wrapper = dynamicDowncast<JSWebAssemblySuspendingWrapper>(value)) {
+                value = createWebAssemblySuspendingFunction(vm, globalObject, wrapper->wrappedFunction());
+                RETURN_IF_EXCEPTION(scope, void());
+            }
             // 4. If i is a function import:
             // i. If IsCallable(v) is false, throw a WebAssembly.LinkError.
             if (!value.isCallable())
@@ -883,8 +892,8 @@ NEVER_INLINE JSValue WebAssemblyModuleRecord::evaluate(JSGlobalObject* globalObj
 
     Wasm::Module& module = m_instance->module(); const Wasm::ModuleInformation& moduleInformation = module.moduleInformation();
 
-    const Vector<std::unique_ptr<Wasm::Segment>>& data = moduleInformation.data;
-    
+    const Wasm::Segments& data = moduleInformation.data;
+
     std::optional<JSValue> exception;
 
     auto forEachActiveElement = [&] (auto fn) {
@@ -930,29 +939,30 @@ NEVER_INLINE JSValue WebAssemblyModuleRecord::evaluate(JSGlobalObject* globalObj
     };
 
     auto forEachActiveDataSegment = [&] (auto fn) {
-        for (const auto& segment : data) {
-            if (!segment->isActive())
+        for (size_t place = 0; place < data.sizeInBytes();) {
+            Wasm::Segment segment = data.readAt(place);
+            if (!segment.isActive())
                 continue;
 
-            auto& wasmMemory = m_instance->memory(segment->memoryIndex())->memory();
+            auto& wasmMemory = m_instance->memory(segment.memoryIndex)->memory();
             uint8_t* memory = static_cast<uint8_t*>(wasmMemory.basePointer());
             uint64_t sizeInBytes = wasmMemory.size();
 
-            const bool isMemory64 = moduleInformation.memory(segment->memoryIndex()).isMemory64();
+            const bool isMemory64 = moduleInformation.memory(segment.memoryIndex).isMemory64();
             uint64_t offset = 0;
-            if (segment->offsetIfActive()->isGlobalImport()) {
+            if (segment.offsetIfActive->isGlobalImport()) {
                 if (isMemory64)
-                    offset = static_cast<uint64_t>(m_instance->loadI64Global(segment->offsetIfActive()->globalImportIndex()));
+                    offset = static_cast<uint64_t>(m_instance->loadI64Global(segment.offsetIfActive->globalImportIndex()));
                 else
-                    offset = static_cast<uint32_t>(m_instance->loadI32Global(segment->offsetIfActive()->globalImportIndex()));
-            } else if (segment->offsetIfActive()->isConst()) {
+                    offset = static_cast<uint32_t>(m_instance->loadI32Global(segment.offsetIfActive->globalImportIndex()));
+            } else if (segment.offsetIfActive->isConst()) {
                 if (isMemory64)
-                    offset = segment->offsetIfActive()->constValue();
+                    offset = segment.offsetIfActive->constValue();
                 else
-                    offset = static_cast<uint32_t>(segment->offsetIfActive()->constValue());
+                    offset = static_cast<uint32_t>(segment.offsetIfActive->constValue());
             } else {
                 uint64_t result;
-                evaluateConstantExpression(globalObject, segment->offsetIfActive()->constantExpressionIndex(), result);
+                evaluateConstantExpression(globalObject, segment.offsetIfActive->constantExpressionIndex(), result);
                 RETURN_IF_EXCEPTION(scope, void());
                 offset = isMemory64 ? result : static_cast<uint32_t>(result);
             }
@@ -982,20 +992,20 @@ NEVER_INLINE JSValue WebAssemblyModuleRecord::evaluate(JSGlobalObject* globalObj
         return exception.value();
 
     // Validation of all segment ranges comes before all Table and Memory initialization.
-    forEachActiveDataSegment([&](uint8_t* memory, uint64_t sizeInBytes, const std::unique_ptr<Wasm::Segment>& segment, uint64_t offset) {
-        if (sizeInBytes < segment->sizeInBytes()) [[unlikely]] {
-            exception = dataSegmentFail(globalObject, vm, scope, sizeInBytes, static_cast<uint64_t>(segment->sizeInBytes()), offset, ", segment is too big"_s);
+    forEachActiveDataSegment([&](uint8_t* memory, uint64_t sizeInBytes, const Wasm::Segment& segment, uint64_t offset) {
+        if (sizeInBytes < segment.bytes.size()) [[unlikely]] {
+            exception = dataSegmentFail(globalObject, vm, scope, sizeInBytes, static_cast<uint64_t>(segment.bytes.size()), offset, ", segment is too big"_s);
             return IterationStatus::Done;
         }
-        if (offset > sizeInBytes - segment->sizeInBytes()) [[unlikely]] {
-            exception = dataSegmentFail(globalObject, vm, scope, sizeInBytes, static_cast<uint64_t>(segment->sizeInBytes()), offset, ", segment writes outside of memory"_s);
+        if (offset > sizeInBytes - segment.bytes.size()) [[unlikely]] {
+            exception = dataSegmentFail(globalObject, vm, scope, sizeInBytes, static_cast<uint64_t>(segment.bytes.size()), offset, ", segment writes outside of memory"_s);
             return IterationStatus::Done;
         }
 
         // Empty segments are valid, but only if memory isn't present, which would be undefined behavior in memcpy.
-        if (segment->sizeInBytes()) {
+        if (!segment.bytes.empty()) {
             RELEASE_ASSERT(memory);
-            memcpy(memory + offset, segment->span().data(), segment->sizeInBytes());
+            memcpy(memory + offset, segment.bytes.data(), segment.bytes.size());
         }
         return IterationStatus::Continue;
     });

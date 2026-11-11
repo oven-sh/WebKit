@@ -49,6 +49,7 @@ namespace WebCore {
 
 enum class URLEnvironment : uint8_t {
     SmallScreen,
+    Desktop,
     TubularApp,
     LensApp,
     SafariWebApp,
@@ -93,13 +94,15 @@ public:
     friend bool operator==(const QuirkMatchPattern& a, const QuirkMatchPattern& b) { return a.m_string == b.m_string; }
 
 private:
-    QuirkMatchPattern(String&&, UserContentURLPattern&&, bool matchesAnyPublicSuffix);
+    NODELETE QuirkMatchPattern(String&&, UserContentURLPattern&&, bool matchesAnyPublicSuffix);
 
     String m_string;
 
     UserContentURLPattern m_pattern;
     bool m_matchesAnyPublicSuffix { false };
 };
+
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const QuirkMatchPattern&);
 
 inline bool anyPatternMatches(std::span<const QuirkMatchPattern> patterns, const URLMatchContext& context)
 {

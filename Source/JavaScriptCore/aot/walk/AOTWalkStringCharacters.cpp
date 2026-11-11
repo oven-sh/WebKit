@@ -312,7 +312,10 @@ bool BuilderOfCharacterRead::build(Reference position)
         return true;
     }
 
-    if (std::optional<PieceOfString> piece = pieceInSight(m_walker, m_string)) {
+    std::optional<PieceOfString> piece = pieceReadInLoop(m_walker, m_string, m_origin);
+    if (!piece)
+        piece = pieceInSight(m_walker, m_string);
+    if (piece) {
         m_stringRead = piece->string;
         m_startOfPiece = piece->start;
         m_length = operate(Opcode::Sub, piece->end, piece->start);

@@ -47,12 +47,6 @@ static std::span<const uint8_t> allocateClosureCells(State& state)
     return { static_cast<const uint8_t*>(instance.closureCells), numberOfCells * sizeof(uint32_t) };
 }
 
-static uint32_t cellNumberOf(const ProgramTables& tables, FunctionID function)
-{
-    ClosureFunctionRangeData range = tables.closureFunctions;
-    return function.index() >= range.first && function.index() < range.end ? tables.closureCellNumbers()[function.index() - range.first] : 0;
-}
-
 static RememberedSlot<uint32_t>* narrowClosureCells(const Instance& instance)
 {
     ASSERT(!instance.options().useWideReferences());
@@ -230,7 +224,7 @@ JSObject* ClosureTable::calleeOfModuleBodies(VM& vm, FunctionID body)
 
 JSCell* ClosureTable::closureIfCreated(FunctionID function) const
 {
-    uint32_t number = cellNumberOf(m_tables, function);
+    uint32_t number = m_tables.cellOfClosureFunction(function.index());
     if (m_state.instance.options().useWideReferences()) {
         JSCell* cell = static_cast<JSCell**>(m_state.instance.closureCells)[number];
         return cell ? cell : m_state.objects->classes.classObjectHeldWhileReached(function);
@@ -241,7 +235,7 @@ JSCell* ClosureTable::closureIfCreated(FunctionID function) const
 
 bool ClosureTable::hasCellFor(FunctionID function) const
 {
-    return cellNumberOf(m_tables, function);
+    return m_tables.cellOfClosureFunction(function.index());
 }
 
 bool ClosureTable::hasSingletonClosure(FunctionID function) const
@@ -255,7 +249,7 @@ void ClosureTable::didCreateClosureFor(FunctionID function, JSCell* cell)
     m_state.objects->classes.didRegisterClosure(function);
     if (!m_tables.kindOfFunction(function.index()).isInRuntimeModule)
         m_state.instance.closureTable.cards = m_writtenRegions.cards();
-    uint32_t number = cellNumberOf(m_tables, function);
+    uint32_t number = m_tables.cellOfClosureFunction(function.index());
     RELEASE_ASSERT(number);
     if (m_state.instance.options().useWideReferences()) {
         static_cast<JSCell**>(m_state.instance.closureCells)[number] = cell;

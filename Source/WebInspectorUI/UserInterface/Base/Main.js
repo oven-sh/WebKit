@@ -242,8 +242,6 @@ WI.contentLoaded = function()
     WI.layoutMeasurementContainer = document.body.appendChild(document.createElement("div"));
     WI.layoutMeasurementContainer.id = "layout-measurement-container";
 
-    WI.settings.showJavaScriptTypeInformation.addEventListener(WI.Setting.Event.Changed, WI._showJavaScriptTypeInformationSettingChanged, WI);
-    WI.settings.enableControlFlowProfiler.addEventListener(WI.Setting.Event.Changed, WI._enableControlFlowProfilerSettingChanged, WI);
     WI.settings.clearNetworkOnNavigate.addEventListener(WI.Setting.Event.Changed, WI._clearResourceDataOnNavigateSettingChanged, WI);
     WI.settings.experimentalAllowInspectingInspector.addEventListener(WI.Setting.Event.Changed, WI._allowInspectingInspectorSettingChanged, WI);
 
@@ -641,6 +639,17 @@ WI.initializeTarget = function(target)
                 console.error(error);
             });
     }
+
+    if (target instanceof WI.FrameTarget && !WI._siteIsolationDetected) {
+        WI._siteIsolationDetected = true;
+        WI._updateSiteIsolationBanner();
+    }
+};
+
+WI.setSiteIsolationDisablingAvailable = function(available)
+{
+    WI._siteIsolationDisablingAvailable = available;
+    WI._updateSiteIsolationBanner();
 };
 
 WI.targetsAvailable = function()
@@ -2023,6 +2032,48 @@ WI._tabBrowserSizeDidChange = function()
     WI.quickConsole.updateLayout(WI.View.LayoutReason.Resize);
 };
 
+WI._updateSiteIsolationBanner = function()
+{
+    let shouldShowBanner = WI._siteIsolationDetected && !WI._siteIsolationBannerDismissed;
+    let shouldShowActionButton = !!WI._siteIsolationDisablingAvailable && !WI._siteIsolationDisablingRequested;
+
+    // WI.BannerView can't change its action button after creation.
+    if (WI._siteIsolationBanner && (!shouldShowBanner || WI._siteIsolationBannerShowsActionButton !== shouldShowActionButton)) {
+        WI.View.rootView().removeSubview(WI._siteIsolationBanner);
+        WI._siteIsolationBanner = null;
+        WI._tabBrowserSizeDidChange();
+    }
+
+    if (!shouldShowBanner || WI._siteIsolationBanner)
+        return;
+
+    WI._siteIsolationBanner = new WI.BannerView(WI.UIString("Some Web Inspector features don't work with Site Isolation yet"), {
+        actionButtonMessage: shouldShowActionButton ? WI.UIString("Reload Page Without Site Isolation") : null,
+        actionButtonToolTip: shouldShowActionButton ? WI.UIString("Reopens this page with Site Isolation off and closes the pop-ups that can still reach it.") : null,
+        showDismissButton: true,
+    });
+    WI._siteIsolationBannerShowsActionButton = shouldShowActionButton;
+    WI._siteIsolationBanner.addEventListener(WI.BannerView.Event.ActionButtonClicked, (event) => {
+        // Only ask once, since the application reopens the page in response.
+        if (WI._siteIsolationDisablingRequested)
+            return;
+
+        WI._siteIsolationDisablingRequested = true;
+        WI._updateSiteIsolationBanner();
+        InspectorFrontendHost.requestDisableSiteIsolation();
+    });
+    WI._siteIsolationBanner.addEventListener(WI.BannerView.Event.DismissButtonClicked, (event) => {
+        WI._siteIsolationBannerDismissed = true;
+        WI._updateSiteIsolationBanner();
+    });
+
+    // Span the whole window, below the tab bar.
+    let mainElement = document.getElementById("main");
+    mainElement.insertBefore(WI._siteIsolationBanner.element, mainElement.firstChild);
+    WI.View.rootView().addSubview(WI._siteIsolationBanner);
+    WI._tabBrowserSizeDidChange();
+};
+
 WI._consoleDrawerCollapsedStateDidChange = function(event)
 {
     WI._showingSplitConsoleSetting.value = WI.isShowingSplitConsole();
@@ -2636,36 +2687,6 @@ WI._showTabAtIndexFromShortcut = function(i)
         WI.tabBar.selectTabBarItem(i - 1, {
             initiatorHint: WI.TabBrowser.TabNavigationInitiator.KeyboardShortcut,
         });
-    }
-};
-
-WI._showJavaScriptTypeInformationSettingChanged = function(event)
-{
-    let shouldEnable = WI.settings.showJavaScriptTypeInformation.value;
-    for (let target of WI.targets) {
-        // FIXME: <https://webkit.org/b/298910> Add Runtime support for FrameTarget.
-        if (target instanceof WI.FrameTarget)
-            continue;
-
-        if (shouldEnable)
-            target.RuntimeAgent.enableTypeProfiler();
-        else
-            target.RuntimeAgent.disableTypeProfiler();
-    }
-};
-
-WI._enableControlFlowProfilerSettingChanged = function(event)
-{
-    let shouldEnable = WI.settings.enableControlFlowProfiler.value;
-    for (let target of WI.targets) {
-        // FIXME: <https://webkit.org/b/298910> Add Runtime support for FrameTarget.
-        if (target instanceof WI.FrameTarget)
-            continue;
-
-        if (shouldEnable)
-            target.RuntimeAgent.enableControlFlowProfiler();
-        else
-            target.RuntimeAgent.disableControlFlowProfiler();
     }
 };
 

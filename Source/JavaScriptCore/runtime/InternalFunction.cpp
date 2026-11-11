@@ -62,6 +62,11 @@ bool InternalFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globa
 {
     VM& vm = globalObject->vm();
     if (rejectsNewProperty(vm, uncheckedDowncast<InternalFunction>(object), propertyName)) [[unlikely]] {
+        if (AOT::RuntimeHooks::acceptsHasInstanceOfHost(uncheckedDowncast<InternalFunction>(object), propertyName, descriptor.value())) {
+            AllowLazyMaterializationOfImmutableProperties allowDefinition(vm);
+            object->putDirect(vm, propertyName, descriptor.value(), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+            return true;
+        }
         auto scope = DECLARE_THROW_SCOPE(vm);
         return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
     }
@@ -200,6 +205,8 @@ static ALWAYS_INLINE bool retainsInternalFunctionAllocationStructure(JSFunction*
     if (!function->isCompiledClosure())
         return false;
 #if ENABLE(AOT)
+    if (FunctionRareData* rareData = function->rareData(); rareData && rareData->internalFunctionAllocationStructure())
+        return true;
     switch (AOT::CompiledCallee::kind(function)) {
     case AOT::CompiledCallee::FunctionKind::Class:
     case AOT::CompiledCallee::FunctionKind::Generator:

@@ -115,6 +115,7 @@ public:
     bool isRequestedByWalkedModule() const { return m_isRequestedByWalkedModule; }
     void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
     void setHasUnresolvableRequest() { m_hasUnresolvableRequest = true; }
+    bool hasUnresolvableRequest() const { return m_hasUnresolvableRequest; }
     uint8_t willLoadImportedModule(const Identifier& key);
     static BitVector willRefetchFromHost(JSGlobalObject*);
     static void didRefetchFromHost(JSGlobalObject*, const BitVector& savedHostRequests);
@@ -167,6 +168,7 @@ private:
     ModuleRecord(Instance&, Structure*, JSModuleLoader*, const Identifier& moduleKey, ModuleID);
     Modules& modules() const;
     void appendDynamicStarTargets(StarExportTargets&);
+    void appendDynamicStarTargets(const Identifier& exportName, StarExportTargets&);
     bool appendStarsThatMayProvide(const Identifier& exportName, unsigned index, StarExportTargets&);
     AbstractModuleRecord* recordBehindStar(ModuleID);
 

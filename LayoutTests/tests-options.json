@@ -638,7 +638,10 @@
     "imported/w3c/web-platform-tests/audio-output/setSinkId-manual.https.html": [
         "slow"
     ],
-    "imported/w3c/web-platform-tests/clipboard-apis/async-idlharness.https.html": [
+    "imported/w3c/web-platform-tests/clipboard-apis/clipboard-copy-selection-line-break.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/clipboard-apis/downloadurl-list-custom-clipboard-data.tentative.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/close-watcher/iframes/dialog-same-origin-nn.html": [
@@ -1658,6 +1661,12 @@
     "imported/w3c/web-platform-tests/css/css-fonts/variations/font-style-interpolation.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/css/css-page/monolithic-overflow-024-print.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/css/css-page/monolithic-overflow-025-print.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/css/css-pseudo/idlharness.html": [
         "slow"
     ],
@@ -1775,6 +1784,9 @@
     "imported/w3c/web-platform-tests/css/css-writing-modes/forms/select-multiple-options-visual-order.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/css/cssom-view/element-scroll-promise-interruption.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/css/cssom-view/element-scroll-promises.html": [
         "slow"
     ],
@@ -1812,6 +1824,15 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/css/cssom-view/scroll-behavior-subframe-window.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/css/cssom-view/scroll-target-into-view-fragment-in-same-origin-subframe.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/css/cssom-view/user-scroll-interrupts-smooth-scroll.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/css/cssom-view/window-scroll-promise-interruption.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/css/cssom-view/window-scroll-promises.html": [
@@ -1998,6 +2019,9 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/dom/traversal/TreeWalker.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/domparsing/tentative/stream-html-parser-blocking-script.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/editing/crashtests/insertparagraph-in-listitem-in-svg-followed-by-collapsible-spaces.html": [
@@ -3470,19 +3494,79 @@
     "imported/w3c/web-platform-tests/html/document-isolation-policy/agent-cluster.tentative.https.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/back-forward-cache-frames.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/back-forward-cache-same-origin-frames.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/back-forward-cache.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/broadcast-channel.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-frame.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-isolated-permissions-policy-nested.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-isolated-permissions-policy.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-isolated.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/dedicated-worker.tentative.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/html/document-isolation-policy/header-parsing.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/history-traversal-frames.tentative.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp.tentative.https.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/location-replace-keeps-entry.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/message-channel.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/navigate-across-policies.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/origin-agent-cluster.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/partial-deployment.tentative.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-cache-storage-corp.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-cached-and-service-worker-responses.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-dedicated-worker.tentative.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-subresource-corp.tentative.https.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/reporting.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/shared-array-buffer.tentative.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/html/document-isolation-policy/shared-workers.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/document-isolation-policy/window-reuse.tentative.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/dom/documents/resource-metadata-management/document-lastModified-01.html": [
@@ -4568,7 +4652,25 @@
     "imported/w3c/web-platform-tests/media-source/mediasource-replay.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-canvas-media-source.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-events-and-exceptions.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-mimetype.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-pause-resume.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection-no-sink.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/mediacapture-record/legacy/MediaRecorder-canvas-media-source-legacy.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/mediacapture-streams/GUM-echoCancellation-all.https.html": [
@@ -5064,6 +5166,15 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/page-lifecycle/idlharness.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/page-visibility/iframe-session-history.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/page-visibility/minimize.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/page-visibility/visibility-state-entry.tentative.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/payment-request/payment-is-showing.https.html": [
@@ -5657,10 +5768,16 @@
     "imported/w3c/web-platform-tests/shadow-dom/focus-navigation/reading-flow/tentative/source-order-valid.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/speculation-rules/activation-header/prefetch-activation-beacon.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/speculation-rules/activation-header/prerender-activation-beacon.tentative.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/speculation-rules/invalid-rules.https.html": [
         "slow"
     ],
-    "imported/w3c/web-platform-tests/speculation-rules/prefetch/anonymous/cross-origin-cookies-anonymous-client-ip-duplicate.https.html": [
+    "imported/w3c/web-platform-tests/speculation-rules/prefetch/clear-prefetch-cache-after-clear-site-data-cache.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/speculation-rules/prefetch/cross-origin-cookies.https.html": [
@@ -5681,10 +5798,31 @@
     "imported/w3c/web-platform-tests/speculation-rules/prefetch/initiators-window-open.sub.https.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/speculation-rules/prefetch/list-rule-eagerness-conservative-pointerdown-preventdefault.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/speculation-rules/prefetch/list-rule-eagerness-conservative-pointerdown.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/speculation-rules/prefetch/list-rule-eagerness-eager-hover.tentative.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/speculation-rules/prefetch/list-rule-eagerness-moderate-hover.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/speculation-rules/prefetch/mutate-rules.https.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/speculation-rules/prefetch/no-http-cache-interference-inflight.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/speculation-rules/prefetch/no-http-cache-interference-slow-error.https.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/speculation-rules/prefetch/no-prefetch-for-post.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/speculation-rules/prefetch/prefetch-inflight-success.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/speculation-rules/prefetch/prefetch-traverse-reload.sub.html": [
@@ -5708,16 +5846,13 @@
     "imported/w3c/web-platform-tests/speculation-rules/prefetch/sec-fetch-headers.https.html": [
         "slow"
     ],
-    "imported/w3c/web-platform-tests/speculation-rules/prefetch/tentative/cookie-indices.https.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/speculation-rules/prefetch/tentative/service-worker/basic.sub.https.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/speculation-rules/prefetch/tentative/service-worker/redirect.sub.https.html": [
-        "slow"
-    ],
     "imported/w3c/web-platform-tests/speculation-rules/prefetch/user-pass.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/speculation-rules/prerender-until-script/prerender-until-script.https.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/speculation-rules/prerender-until-script/pus-to-prerender-upgrade.https.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/speculation-rules/speculation-tags/cross-site-prefetch.https.html": [
@@ -5784,9 +5919,6 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/svg/interact/scripted/pointer-events-fill-stroke-hittest.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/svg/interact/scripted/pointer-events-getBoundingClientRect.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/svg/linking/scripted/a.rel-noopener-policy.html": [

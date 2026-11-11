@@ -190,24 +190,24 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlanOfSmallestRecord(
 {
     VM& vm = *state.instance.vm;
     countEvent(vm, RuntimeCounterID::RecordPlanChoices);
-    std::span<const ParsedRecordFieldData> recordsWithRarestName;
+    std::span<const Number24> shapesWithRarestName;
     for (UniquedStringImpl* name : names) {
         std::optional<uint32_t> number = identifiersOf(state.instance).numberOf(name);
         if (!number)
             return nullptr;
-        std::span<const ParsedRecordFieldData> recordsWithName { std::ranges::equal_range(state.tables.parsedRecordFields(), *number, { }, &ParsedRecordFieldData::nameNumber) };
-        if (recordsWithName.empty())
+        std::span<const Number24> shapesWithName = state.tables.parsedRecordShapesWithName(*number);
+        if (shapesWithName.empty())
             return nullptr;
-        if (recordsWithRarestName.empty() || recordsWithName.size() < recordsWithRarestName.size())
-            recordsWithRarestName = recordsWithName;
+        if (shapesWithRarestName.empty() || shapesWithName.size() < shapesWithRarestName.size())
+            shapesWithRarestName = shapesWithName;
     }
 
     RuntimeLayoutTable& layouts = state.objects->layouts;
     size_t recordsAsked = 0;
     std::unique_ptr<ObjectBuilderPlan> chosen;
-    for (const ParsedRecordFieldData& row : recordsWithRarestName) {
+    for (Number24 shape : shapesWithRarestName) {
         ++recordsAsked;
-        const LayoutData& layout = layouts.layoutForShape(row.shape);
+        const LayoutData& layout = layouts.layoutForShape(shape);
         if (layout.numberOfFields < names.size() || !canBuildWithoutCompilerKnowledge(layout))
             continue;
         std::unique_ptr<ObjectBuilderPlan> plan = tryCreatePlan(state, layout, names);

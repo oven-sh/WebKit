@@ -94,7 +94,7 @@ bool Recorder::decomposeDrawGlyphsIfNeeded(const Font& font, std::span<const Gly
     return false;
 }
 
-void Recorder::drawConsumingImageBuffer(RefPtr<ImageBuffer> imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void Recorder::drawConsumingImageBuffer(RefPtr<ImageBuffer> imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     // ImageBuffer draws are recorded as ImageBuffer draws, not as NativeImage draws. So for consistency,
     // record this too. This should be removed once NativeImages are the only image types drawn from.
@@ -272,6 +272,12 @@ void Recorder::updateStateForClipPath(const Path& path)
 {
     appendStateChangeItemIfNecessary(); // Conservative: we do not know if the clip application might use state such as antialiasing.
     currentState().clipBounds.intersect(currentState().ctm.mapRect(path.fastBoundingRect()));
+}
+
+void Recorder::updateStateForClipTransformedPath(const AffineTransform& pathTransform, const Path& path)
+{
+    appendStateChangeItemIfNecessary(); // Conservative: we do not know if the clip application might use state such as antialiasing.
+    currentState().clipBounds.intersect((currentState().ctm * pathTransform).mapRect(path.fastBoundingRect()));
 }
 
 void Recorder::updateStateForClipToImageBuffer(const FloatRect& rect)

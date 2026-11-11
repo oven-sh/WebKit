@@ -3840,8 +3840,11 @@ bool ValidateCopySubTextureCHROMIUM(const Context *context,
         return false;
     }
 
-    if (static_cast<size_t>(x + width) > source->getWidth(sourceTarget, sourceLevel) ||
-        static_cast<size_t>(y + height) > source->getHeight(sourceTarget, sourceLevel))
+    // The values are not negative, so the size_t sums cannot overflow.
+    if (static_cast<size_t>(x) + static_cast<size_t>(width) >
+            source->getWidth(sourceTarget, sourceLevel) ||
+        static_cast<size_t>(y) + static_cast<size_t>(height) >
+            source->getHeight(sourceTarget, sourceLevel))
     {
         ANGLE_VALIDATION_ERROR(GL_INVALID_VALUE, kSourceTextureTooSmall);
         return false;
@@ -3913,8 +3916,11 @@ bool ValidateCopySubTextureCHROMIUM(const Context *context,
         return false;
     }
 
-    if (static_cast<size_t>(xoffset + width) > dest->getWidth(destTarget, destLevel) ||
-        static_cast<size_t>(yoffset + height) > dest->getHeight(destTarget, destLevel))
+    // The values are not negative, so the size_t sums cannot overflow.
+    if (static_cast<size_t>(xoffset) + static_cast<size_t>(width) >
+            dest->getWidth(destTarget, destLevel) ||
+        static_cast<size_t>(yoffset) + static_cast<size_t>(height) >
+            dest->getHeight(destTarget, destLevel))
     {
         ANGLE_VALIDATION_ERROR(GL_INVALID_VALUE, kOffsetOverflow);
         return false;
@@ -5018,9 +5024,6 @@ bool ValidateGetShaderPrecisionFormat(const Context *context,
         case GL_VERTEX_SHADER:
         case GL_FRAGMENT_SHADER:
             break;
-        case GL_COMPUTE_SHADER:
-            ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kUnimplementedComputeShaderPrecision);
-            return false;
         default:
             ANGLE_VALIDATION_ERROR(GL_INVALID_ENUM, kInvalidShaderType);
             return false;

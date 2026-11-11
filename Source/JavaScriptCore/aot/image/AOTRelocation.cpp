@@ -77,6 +77,16 @@ void emitPadding(CCallHelpers& jit)
 #endif
 }
 
+void emitUnreachable(CCallHelpers& jit)
+{
+#if CPU(X86_64)
+    constexpr uint8_t undefinedInstruction = 0xd6;
+    jit.m_assembler.buffer().putByte(static_cast<int8_t>(undefinedInstruction));
+#else
+    jit.oops();
+#endif
+}
+
 RelocationRecorder::RelocationRecorder(CCallHelpers& jit, const AssemblerPolicy& policy)
     : m_jit(jit)
 {
@@ -95,6 +105,18 @@ void RelocationRecorder::load64(CodeSymbol symbol, GPRReg dest)
 {
     append(m_jit.loadPCRelative64(dest), RelocationKind::Load64, symbol);
 }
+
+#if CPU(X86_64)
+void RelocationRecorder::compare64(GPRReg left, CodeSymbol symbol)
+{
+    append(m_jit.comparePCRelative64(left), RelocationKind::Load64, symbol);
+}
+
+void RelocationRecorder::loadDouble(CodeSymbol symbol, FPRReg dest)
+{
+    append(m_jit.loadPCRelativeDouble(dest), RelocationKind::Load64, symbol);
+}
+#endif
 
 void RelocationRecorder::emitNumber32(CodeSymbol symbol)
 {

@@ -483,8 +483,7 @@ Ref<MediaSamplesDecoder::DecodePromise> MediaSamplesDecoder::decodeOnQueue(Media
 
     if (RefPtr videoDecoder = m_videoDecoder) {
         int64_t firstSequence = m_nextSequence;
-        Vector<Ref<VideoDecoder::DecodePromise>> promises;
-        promises.reserveInitialCapacity(block.size());
+        Vector<Ref<VideoDecoder::DecodePromise>> promises(ReserveCapacityTag { }, block.size());
         for (auto& item : block) {
             int64_t sequence = m_nextSequence++;
             auto metadata = item;
@@ -503,8 +502,7 @@ Ref<MediaSamplesDecoder::DecodePromise> MediaSamplesDecoder::decodeOnQueue(Media
     }
 
     RefPtr audioDecoder = m_audioDecoder;
-    Vector<Ref<AudioDecoder::DecodePromise>> promises;
-    promises.reserveInitialCapacity(block.size());
+    Vector<Ref<AudioDecoder::DecodePromise>> promises(ReserveCapacityTag { }, block.size());
     for (auto& item : block) {
         auto [trimAtStart, trimAtEnd] = item.trimInterval;
         auto startTime = item.presentationTime - trimAtStart;
@@ -627,6 +625,17 @@ void MediaSamplesDecoder::didDecodeAudio(Ref<PlatformRawAudioData>&& data)
     if (!frames || !channels || !rate)
         return;
 
+    // The output info changes only with the channel layout; the frames decoded until then keep the previous info.
+    auto channelLayout = data->channelLayout();
+    Ref outputInfo = downcast<AudioInfo>(m_outputInfo);
+    if (outputInfo->channelLayout() != channelLayout) {
+        if (!m_pendingOutput.isEmpty())
+            m_completedOutput.append({ m_outputInfo.ptr(), std::exchange(m_pendingOutput, { }) });
+        auto outputInfoData = outputInfo->toAudioInfoData();
+        outputInfoData.second.channelLayout = channelLayout;
+        m_outputInfo = AudioInfo::create(WTF::move(outputInfoData));
+    }
+
     auto startTime = MediaTime(data->timestamp(), microsecondsTimeScale);
     auto endTime = startTime + MediaTime(frames, rate);
     auto frameAt = [&](const MediaTime& time) -> size_t {
@@ -700,7 +709,8 @@ void MediaSamplesDecoder::didDecodeVideo(Ref<VideoFrame>&& frame, int64_t sequen
         return;
     }
 
-    if (FloatSize { size } != downcast<VideoInfo>(m_outputInfo).size())
+    Ref outputInfo = downcast<VideoInfo>(m_outputInfo);
+    if (FloatSize { size } != outputInfo->size())
         m_outputInfo = outputVideoInfo(downcast<VideoInfo>(m_inputInfo), size);
 
     auto buffer = copyToI420Buffer(frame, m_filters.contains(Filter::UseSharedMemory));

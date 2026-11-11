@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
@@ -264,9 +265,10 @@ private:
     bool insert(const Slot& slot)
     {
         size_t mask = m_slots.size() - 1;
+        Slot* slots = m_slots.mutableSpan().data();
         uint64_t words = (static_cast<uint64_t>(slot.from) << 32 | slot.to) ^ static_cast<uint64_t>(slot.passes) << 15;
         for (size_t place = (words * 0x9e3779b97f4a7c15ull) >> m_shift;; place = (place + 1) & mask) {
-            Slot& held = m_slots[place];
+            Slot& held = slots[place];
             if (held.from == UINT32_MAX) {
                 held = slot;
                 return true;
@@ -292,12 +294,37 @@ private:
     unsigned m_shift { 64 };
 };
 
+class ListedFlowObserver {
+public:
+    ListedFlowObserver(const FlowObserver& observer, uint32_t next)
+        : m_kindAndFunction(static_cast<uint32_t>(observer.kind) << bitsOfFunction | (observer.function.bits() + 1))
+        , m_record(observer.record)
+        , m_next(next)
+    {
+        RELEASE_ASSERT(observer.function.bits() + 1 < 1u << bitsOfFunction);
+    }
+
+    FlowObserver::Kind kind() const { return static_cast<FlowObserver::Kind>(m_kindAndFunction >> bitsOfFunction); }
+    FlowObserver observer() const { return { kind(), FunctionID::fromBits((m_kindAndFunction & ((1u << bitsOfFunction) - 1)) - 1), m_record }; }
+    uint32_t next() const { return m_next; }
+
+private:
+    static constexpr unsigned bitsOfFunction = 27;
+    static_assert(static_cast<uint32_t>(FlowObserver::Kind::FieldIsOnlyAsked) < 1u << (32 - bitsOfFunction));
+
+    uint32_t m_kindAndFunction;
+    uint32_t m_record;
+    uint32_t m_next;
+};
+static_assert(sizeof(ListedFlowObserver) == 12);
+
 struct alignas(128) LinkFlow::Lane {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Lane);
 
     unsigned index { 0 };
     SegmentedVector<Edge, 1 << 16> edges;
-    SegmentedVector<std::pair<FlowObserver, uint32_t>, 1 << 16> observers;
+    SegmentedVector<ListedFlowObserver, 1 << 16> observers;
+    LinkReferenceTable::RecentNumbers recentNumbers;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> nodesThatAccessorsFoundAsked;
     EdgesOfBusyNodesInLinkFlow edgesOfBusyNodes;
     Vector<uint64_t> numbersOfNodesToTell;
@@ -349,6 +376,7 @@ struct alignas(128) LinkFlow::Lane {
     Vector<NoteTaken> notes;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> notesListed;
     std::array<uint64_t, 1024> notesListedLately { };
+    BitVector layoutsNotedWithBases;
     HashMap<uint32_t, Vector<uint32_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> fieldsNotNotedEmpty;
     LinkType typeObservedBefore;
     uint64_t numberOfObserversTold { 0 };
@@ -361,6 +389,7 @@ struct alignas(128) LinkFlow::Lane {
     Vector<LayoutID> layoutsMetInFamilies;
     Vector<LinkType> typesAtUnseen;
     HashMap<uint32_t, TestOfEdge, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> testsOfEdges;
+    HashMap<uint32_t, std::unique_ptr<ReadsBehindInstanceOf>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> readsBehindInstanceOf;
     uint64_t numberOfNodesTakenOffWorklist { 0 };
     uint64_t scatteredNumber { 88172645463325252ull };
 };
@@ -493,6 +522,11 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
     fieldsWrittenAfterConstruction.ensureSize(m_firstFieldOfLayout.last());
     fieldsThatMayBeEmpty.ensureSize(m_firstFieldOfLayout.last());
     fieldsNotOfBirth.ensureSize(m_firstFieldOfLayout.last());
+    m_classesWithInstancesThatMayBeLocked.ensureSize(program.layouts.size());
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        if (const Layout& layout = program.layouts[index]; layout.kind != LayoutKind::Instance || !isFoundByShapeTest(layout))
+            noteInstancesMayBeLocked(LayoutID(index));
+    }
     gettersThatMayBeAbsent.ensureSize(m_firstFieldOfLayout.last());
     settersThatMayBeAbsent.ensureSize(m_firstFieldOfLayout.last());
 
@@ -514,6 +548,7 @@ void LinkFlow::makeTablesThatNeedNoNodes()
     size_t numberOfFunctions = program.functions.size();
     size_t numberOfLayouts = program.layouts.size();
     reached.ensureSize(numberOfFunctions);
+    iterationCallbacks.ensureSize(numberOfFunctions);
     lostFunctions.ensureSize(numberOfFunctions);
     escapedFunctions.ensureSize(numberOfFunctions);
     libraryFunctionsEntered.ensureSize(numberOfFunctions);
@@ -766,7 +801,7 @@ void LinkFlow::numberNodes(Vector<uint32_t>&& numbersOfMemberNodesOfSides)
             m_nodes.grow(build.parallelLoops(), next);
             m_listsOfNodes.reserve(roomForNodes);
             m_listsOfNodes.grow(build.parallelLoops(), next);
-            m_nodes[unseen().index()].type = LinkType::anything();
+            setTypeOfNode(unseen().index(), LinkType::anything(), LinkType { });
             for (uint32_t node = m_firstMemberNodeOfSide[0]; node < m_nodesOfFunctions[0].firstParameter; ++node)
                 m_nodes[node].typeOfPosition = TypeTable::anything;
             auto bind = [&](FlowNodeID node, const DeclaredType& declared) {
@@ -886,6 +921,91 @@ void LinkFlow::numberNodes(Vector<uint32_t>&& numbersOfMemberNodesOfSides)
             calleesOfCalls.grow(build.parallelLoops(), numberOfCalls);
         },
     });
+}
+
+LinkReferenceTable::LinkReferenceTable()
+    : m_room(MallocSpan<std::atomic<References*>>::zeroedMalloc(numberOfBlocks * sizeof(std::atomic<References*>)))
+    , m_blocks(m_room.mutableSpan().data())
+{
+    auto* records = new References[recordsInBlock];
+    records[0] = LinkType::noReferences();
+    m_room[0].store(records, std::memory_order_relaxed);
+}
+
+LinkReferenceTable::~LinkReferenceTable()
+{
+    size_t end = (m_nextNumber.load(std::memory_order_relaxed) + recordsInBlock - 1) / recordsInBlock;
+    for (auto& block : m_room.mutableSpan().first(end))
+        delete[] block.load(std::memory_order_relaxed);
+}
+
+uint32_t LinkReferenceTable::takeNumber(Shard& shard)
+{
+    if (shard.next == shard.end) {
+        shard.next = m_nextNumber.fetch_add(recordsTakenAtOnce, std::memory_order_relaxed);
+        shard.end = shard.next + recordsTakenAtOnce;
+        RELEASE_ASSERT(shard.next < shard.end);
+        auto& block = m_room[shard.next / recordsInBlock];
+        References* expected = block.load(std::memory_order_acquire);
+        if (!expected) {
+            auto* records = new References[recordsInBlock];
+            if (!block.compare_exchange_strong(expected, records, std::memory_order_acq_rel))
+                delete[] records;
+        }
+    }
+    return shard.next++;
+}
+
+uint32_t LinkReferenceTable::numberOf(const References& references, RecentNumbers& recentNumbers)
+{
+    uint64_t hash = hashOf(references);
+    Recent& recent = recentNumbers[hash >> 32 & (recentNumbers.size() - 1)];
+    if (recent.references != references)
+        recent = { references, findOrAdd(references, hash) };
+    return recent.number;
+}
+
+uint32_t LinkReferenceTable::findOrAdd(const References& references, uint64_t hash)
+{
+    Shard& shard = m_shards[hash % numberOfShards];
+    while (shard.isLocked.load(std::memory_order_relaxed) || shard.isLocked.exchange(true, std::memory_order_acquire))
+        simde_mm_pause();
+    if (4 * static_cast<size_t>(shard.size) >= 3 * shard.slots.size())
+        growSlots(shard);
+    size_t mask = shard.slots.size() - 1;
+    size_t slot = hash / numberOfShards & mask;
+    uint32_t number;
+    while ((number = shard.slots[slot]) && at(number) != references)
+        slot = (slot + 1) & mask;
+    if (!number) {
+        number = takeNumber(shard);
+        m_room[number / recordsInBlock].load(std::memory_order_relaxed)[number % recordsInBlock] = references;
+        shard.slots[slot] = number;
+        ++shard.size;
+    }
+    shard.isLocked.store(false, std::memory_order_release);
+    return number;
+}
+
+uint32_t LinkFlow::numberOfReferences(const LinkType::References& references)
+{
+    return m_references.numberOf(references, s_laneAtWork ? s_laneAtWork->recentNumbers : m_recentNumbers);
+}
+
+void LinkReferenceTable::growSlots(Shard& shard)
+{
+    Vector<uint32_t> larger;
+    larger.fill(0, std::max<size_t>(32, 2 * shard.slots.size()));
+    size_t mask = larger.size() - 1;
+    for (uint32_t number : shard.slots) {
+        if (!number)
+            continue;
+        size_t slot = hashOf(at(number)) / numberOfShards & mask;
+        while (larger[slot])
+            slot = (slot + 1) & mask;
+        larger[slot] = number;
+    }
+    shard.slots = WTF::move(larger);
 }
 
 FlowNodeID LinkFlow::makeNode()
@@ -1119,6 +1239,18 @@ void LinkFlow::loseFunctionsOfSet(const LinkType& type) const
 
 bool LinkFlow::mayStandInOneSet(std::span<const FunctionID> members) const
 {
+    static constexpr size_t mostMembersThatAreNoSmallLeaves = 4;
+    static constexpr uint32_t weightOfSmallLeaf = 16;
+    auto isSmallLeaf = [&](FunctionID member) {
+        if (!program.at(member).hasBody())
+            return false;
+        const ThinSummary& summary = summaries.at(member);
+        return summary.weightOfOperations <= weightOfSmallLeaf && !summary.has(SummaryTrait::HasLoops) && std::ranges::all_of(summary.calls, [](const SummaryCall& call) {
+            return call.callee == SummaryCall::Callee::Builtin || call.isMadeByProtocol;
+        });
+    };
+    if (members.size() > mostMembersThatAreNoSmallLeaves && !std::ranges::all_of(members, isSmallLeaf))
+        return false;
     for (size_t first = 0; first < members.size(); ++first) {
         LayoutID classOfFirst = classOfConstructor(members[first]);
         for (size_t second = first + 1; classOfFirst && second < members.size(); ++second) {
@@ -2283,7 +2415,7 @@ void LinkFlow::arrive(FlowNodeID node, const LinkType& arriving, PropertyKeyID s
     }
     if (type.isNever())
         return;
-    const LinkType& held = typeAt(node);
+    LinkType held = m_flowIsAtRest || node.index() >= m_nodes.size() ? typeAt(node) : headOfNode(node.index());
     bool namesNothing = type.objects == LinkType::Objects::None && type.functions == LinkType::Functions::None && type.classes == LinkType::Classes::None && !type.builtin
         && (!(type.primitives & LinkType::oneSymbol) || (held.directPrimitives() & Primitive::Symbol && !symbol) || !(type.directPrimitives() & LinkType::oneSymbol));
     if (namesNothing && node != unseen() && bringsNoPrimitiveInLinkFlow(type.primitives, held.primitives) && type.raisesNoFlagOver(held) && (!type.holdsLostBuiltins || held.holdsLostBuiltins || isNodeOfLibrary(node.index())) && bringsNothingToShadowsInLinkFlow(type, held))
@@ -2301,16 +2433,18 @@ ALWAYS_INLINE_INTO_OTHER_FILES void LinkFlow::receive(FlowNodeID node, const Lin
     }
 
     size_t index = node.index();
+    Node& target = m_nodes[index];
+    LinkType held = headHeldBy(target);
     bool namesNothing = type.objects == LinkType::Objects::None && type.functions == LinkType::Functions::None && type.classes == LinkType::Classes::None && !type.builtin
-        && (!type.holdsLostBuiltins || m_nodes[index].type.holdsLostBuiltins || isNodeOfLibrary(index)) && (!(type.primitives & LinkType::oneSymbol) || (m_nodes[index].type.directPrimitives() & Primitive::Symbol && !symbol) || !(type.directPrimitives() & LinkType::oneSymbol));
-    if (namesNothing && bringsNoPrimitiveInLinkFlow(type.primitives, m_nodes[index].type.primitives) && type.raisesNoFlagOver(m_nodes[index].type) && bringsNothingToShadowsInLinkFlow(type, m_nodes[index].type))
+        && (!type.holdsLostBuiltins || held.holdsLostBuiltins || isNodeOfLibrary(index)) && (!(type.primitives & LinkType::oneSymbol) || (held.directPrimitives() & Primitive::Symbol && !symbol) || !(type.directPrimitives() & LinkType::oneSymbol));
+    if (namesNothing && bringsNoPrimitiveInLinkFlow(type.primitives, held.primitives) && type.raisesNoFlagOver(held) && bringsNothingToShadowsInLinkFlow(type, held))
         return;
     if (type.marks & m_marksThatAreUsed) [[unlikely]] {
         receiveWithoutMarksThatAreUsed(node, type, symbol);
         return;
     }
 
-    TypeID bound = m_nodes[index].typeOfPosition;
+    TypeID bound = target.typeOfPosition;
     LinkType arriving = type;
     if (bound == TypeTable::anything)
         arriving.primitives &= LinkType::closed(Primitive::All);
@@ -2324,7 +2458,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void LinkFlow::receive(FlowNodeID node, const Lin
         arriving.escapeOnlyPrimitives |= added;
         arriving.counts = LinkType::Counts::Unknown;
     }
-    LinkType before = m_nodes[index].type;
+    LinkType before = typeHeldBy(target);
     bool heldNothing = !before.primitives && before.objects == LinkType::Objects::None && before.functions == LinkType::Functions::None && before.classes == LinkType::Classes::None && !before.hasUnknownObjects && !before.holdsLostBuiltins && !before.builtin;
     if (heldNothing && !(arriving.hasUnknownObjects && arriving.builtin) && !(arriving.primitives & LinkType::oneSymbol)) {
         arriving.escapeOnlyPrimitives = withoutLiteralsInLinkFlow(arriving.primitives) & ~withoutLiteralsInLinkFlow(arriving.directPrimitives());
@@ -2335,7 +2469,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void LinkFlow::receive(FlowNodeID node, const Lin
             return;
         if (m_breachesOfClosure) [[unlikely]]
             noteBreachOfClosure({ .node = node, .before = before, .after = arriving });
-        m_nodes[index].type = arriving;
+        setTypeHeldBy(target, arriving, before);
         if (!m_isOnWorklist.quickSet(index)) {
             Lane& lane = laneOf(node);
             lane.worklist.append(node);
@@ -2404,7 +2538,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void LinkFlow::receive(FlowNodeID node, const Lin
     if (!after.holdsSameWithShadowsAs(before)) {
         if (m_breachesOfClosure) [[unlikely]]
             noteBreachOfClosure({ .node = node, .before = before, .after = after });
-        m_nodes[index].type = after;
+        setTypeOfNode(index, after, before);
         if (!m_isOnWorklist.quickSet(index)) {
             Lane& lane = laneOf(node);
             lane.worklist.append(node);
@@ -2427,7 +2561,8 @@ NEVER_INLINE void LinkFlow::arriveAtOnce(FlowNodeID node, const LinkType& type, 
 
 ALWAYS_INLINE_INTO_OTHER_FILES bool LinkFlow::layEdge(Lane& lane, FlowNodeID from, FlowNodeID to, TypeID passes)
 {
-    uint32_t head = m_listsOfNodes[from.index()].firstEdge;
+    ListsOfNode& lists = m_listsOfNodes[from.index()];
+    uint32_t head = lists.firstEdge;
     uint32_t numberLookedThrough = 0;
     uint32_t next = head;
     bool isKnownToBeNew = false;
@@ -2437,9 +2572,11 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool LinkFlow::layEdge(Lane& lane, FlowNodeID fro
         isKnownToBeNew = true;
     }
     bool isAskedOfSet = !isKnownToBeNew && m_hasEdgesInSet.quickGet(from.index());
-    for (; !isKnownToBeNew && !isAskedOfSet && next != UINT32_MAX && numberLookedThrough < numberOfEdgesLookedThroughInLinkFlow; next = lane.edges[next].next, ++numberLookedThrough) {
-        if (lane.edges[next].to == to && lane.edges[next].passes == passes)
+    for (; !isKnownToBeNew && !isAskedOfSet && next != UINT32_MAX && numberLookedThrough < numberOfEdgesLookedThroughInLinkFlow; ++numberLookedThrough) {
+        const Edge& edge = lane.edges[next];
+        if (edge.to == to && edge.passes == passes)
             return false;
+        next = edge.next;
     }
     if (isAskedOfSet || numberLookedThrough == numberOfEdgesLookedThroughInLinkFlow) {
         uint32_t numberOfFrom = static_cast<uint32_t>(from.index());
@@ -2452,7 +2589,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool LinkFlow::layEdge(Lane& lane, FlowNodeID fro
     }
     if (head == UINT32_MAX && m_accessorsWaitAt.quickGet(from.index())) [[unlikely]]
         wakeAccessorsThatWaitAt(lane, from);
-    m_listsOfNodes[from.index()].firstEdge = static_cast<uint32_t>(lane.edges.size());
+    lists.firstEdge = static_cast<uint32_t>(lane.edges.size());
     lane.edges.append(Edge { to, passes, head });
     return true;
 }
@@ -2476,7 +2613,7 @@ NEVER_INLINE void LinkFlow::addEdgeAtOnce(FlowNodeID from, FlowNodeID to, TypeID
 {
     if (from == unseen()) {
         UnknownByEscapeAlone ofEscapeAlone(UnknownByEscapeAlone::marksAtWork() == UnknownByEscapeAlone::Marks::OfEscape);
-        const LinkType& held = m_nodes[from.index()].type;
+        LinkType held = typeOfNode(from.index());
         if (passes)
             arrive(to, passedBy(held, passes));
         else
@@ -2484,31 +2621,31 @@ NEVER_INLINE void LinkFlow::addEdgeAtOnce(FlowNodeID from, FlowNodeID to, TypeID
         return;
     }
     UnknownByEscapeAlone keepsItsOwnMarks(false);
-    if (layEdge(laneOf(from), from, to, passes) && !m_nodes[from.index()].type.isNever())
-        arrive(to, passedByTestOfEdge(m_nodes[from.index()].type, passes), symbolSeenAt(from));
+    if (layEdge(laneOf(from), from, to, passes) && !isNeverAt(from.index()))
+        arrive(to, passedByTestOfEdge(typeOfNode(from.index()), passes), symbolSeenAt(from));
 }
 
 NEVER_INLINE void LinkFlow::wakeAccessorsThatWaitAt(Lane& lane, FlowNodeID node)
 {
     m_accessorsWaitAt.quickClear(node.index());
-    for (uint32_t listed = m_listsOfNodes[node.index()].firstObserver; listed != UINT32_MAX; listed = lane.observers[listed].second) {
-        if (lane.observers[listed].first.kind == FlowObserver::Kind::FieldOfAccessorLaid)
-            lane.newObservers.append(std::pair { lane.observers[listed].first, node });
+    for (uint32_t listed = m_listsOfNodes[node.index()].firstObserver; listed != UINT32_MAX; listed = lane.observers[listed].next()) {
+        if (lane.observers[listed].kind() == FlowObserver::Kind::FieldOfAccessorLaid)
+            lane.newObservers.append(std::pair { lane.observers[listed].observer(), node });
     }
 }
 
 bool LinkFlow::isAskedByMoreThanAccessorsThatWait(Lane& lane, FlowNodeID node)
 {
     const ListsOfNode& lists = m_listsOfNodes[node.index()];
-    if (lists.firstEdge != UINT32_MAX || !m_nodes[node.index()].type.isNever())
+    if (lists.firstEdge != UINT32_MAX || !isNeverAt(node.index()))
         return true;
     if (m_accessorsWaitAt.quickGet(node.index()))
         return false;
     if (lane.nodesThatAccessorsFoundAsked.contains(node.index()))
         return true;
     bool isAsked = false;
-    for (uint32_t listed = lists.firstObserver; listed != UINT32_MAX && !isAsked; listed = lane.observers[listed].second)
-        isAsked = lane.observers[listed].first.kind != FlowObserver::Kind::FieldOfAccessorLaid;
+    for (uint32_t listed = lists.firstObserver; listed != UINT32_MAX && !isAsked; listed = lane.observers[listed].next())
+        isAsked = lane.observers[listed].kind() != FlowObserver::Kind::FieldOfAccessorLaid;
     if (isAsked)
         lane.nodesThatAccessorsFoundAsked.add(node.index());
     return isAsked;
@@ -2543,7 +2680,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void LinkFlow::putObserver(Lane& lane, FlowNodeID
         wakeAccessorsThatWaitAt(lane, node);
     ListsOfNode& lists = m_listsOfNodes[node.index()];
     uint32_t index = static_cast<uint32_t>(lane.observers.size());
-    lane.observers.append(std::pair { observer, lists.firstObserver });
+    lane.observers.append(ListedFlowObserver(observer, lists.firstObserver));
     lists.firstObserver = index;
 }
 
@@ -2551,8 +2688,8 @@ NEVER_INLINE bool LinkFlow::isObservedAlready(FlowNodeID node, const FlowObserve
 {
     Lane& lane = laneOf(node);
     bool isThere = false;
-    for (uint32_t listed = m_listsOfNodes[node.index()].firstObserver; listed != UINT32_MAX && !isThere; listed = lane.observers[listed].second)
-        isThere = lane.observers[listed].first == observer;
+    for (uint32_t listed = m_listsOfNodes[node.index()].firstObserver; listed != UINT32_MAX && !isThere; listed = lane.observers[listed].next())
+        isThere = lane.observers[listed].observer() == observer;
     for (auto& holder : m_lanes) {
         for (const ObserverPut& put : holder->observersPut[laneIndexOf(node)])
             isThere |= put.node == node && put.observer == observer;
@@ -2925,6 +3062,11 @@ void LinkFlow::note(Note note, uint32_t number, uint32_t more)
         lane.notes.append({ note, number, more });
 }
 
+BitVector& LinkFlow::layoutsNotedWithBases()
+{
+    return m_severalThreadsTell ? s_laneAtWork->layoutsNotedWithBases : m_layoutsNotedWithBases;
+}
+
 Vector<uint32_t>& LinkFlow::fieldsThatLaneAtWorkHasNotNotedEmpty(LayoutID layout)
 {
     Lane& lane = m_severalThreadsTell ? *s_laneAtWork : *m_firstLane;
@@ -3048,12 +3190,15 @@ void LinkFlow::applyNote(Note note, uint32_t number, uint32_t more)
         possibleChanges[number].add(OptionSet<LayoutChange>::fromRaw(static_cast<uint8_t>(more)));
         if (!(more & changeIsByStoreInSight))
             changesByMoreThanStoresInSight[number].add(OptionSet<LayoutChange>::fromRaw(static_cast<uint8_t>(more)));
+        if (more & static_cast<uint32_t>(LayoutChange::IsFrozen))
+            noteInstancesMayBeLocked(LayoutID(number));
         return;
     case Note::LayoutGainsWhatUnseenCodeGaveSources:
         layoutsThatGainWhatUnseenCodeGaveSources.set(number);
         return;
     case Note::LayoutDefinedOnUnderWrittenKeys:
         layoutsDefinedOnUnderWrittenKeys.set(number);
+        noteInstancesMayBeLocked(LayoutID(number));
         return;
     case Note::LayoutDefinedOnUnderKeyThatIsNotWritten:
         layoutsDefinedOnUnderKeysThatAreNotWritten.set(number);
@@ -3406,7 +3551,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void LinkFlow::send(Lane& sender, FlowNodeID to, 
         noteReachesUnseen(type);
         return;
     }
-    const LinkType& held = m_nodes[to.index()].type;
+    LinkType held = headOfNode(to.index());
     bool namesNothing = type.objects == LinkType::Objects::None && type.functions == LinkType::Functions::None && type.classes == LinkType::Classes::None && !type.builtin
         && (!(type.primitives & LinkType::oneSymbol) || (held.directPrimitives() & Primitive::Symbol && !symbol) || !(type.directPrimitives() & LinkType::oneSymbol));
     if (namesNothing && bringsNoPrimitiveInLinkFlow(type.primitives, held.primitives) && type.raisesNoFlagOver(held) && (!type.holdsLostBuiltins || held.holdsLostBuiltins || isNodeOfLibrary(to.index())) && bringsNothingToShadowsInLinkFlow(type, held))
@@ -3427,20 +3572,23 @@ void LinkFlow::sendFromLane(unsigned index)
         auto [node, before] = takeNode(lane);
         ++lane.numberOfNodesTakenOffWorklist;
         m_isOnWorklist.quickClear(node.index());
-        const LinkType& type = m_nodes[node.index()].type;
+        LinkType type = typeOfNode(node.index());
         PropertyKeyID symbol = LinkType::holdsOneSymbol(type.directPrimitives()) ? symbolNotedAt(node) : PropertyKeyID();
         const ListsOfNode& lists = m_listsOfNodes[node.index()];
         for (uint32_t next = lists.firstEdge; next != UINT32_MAX;) {
-            size_t numberOfEdges = 0;
-            for (; next != UINT32_MAX && numberOfEdges < lengthOfStretch; next = edges[numberOfEdges++].next) {
-                edges[numberOfEdges] = lane.edges[next];
-                __builtin_prefetch(&m_nodes[edges[numberOfEdges].to.index()].type);
+            Edge* endOfEdges = edges.data();
+            Edge* const endOfStretch = endOfEdges + lengthOfStretch;
+            while (next != UINT32_MAX && endOfEdges != endOfStretch) {
+                Edge& edge = *endOfEdges++;
+                edge = lane.edges[next];
+                m_nodes.prefetch(edge.to.index());
+                next = edge.next;
             }
-            for (size_t position = 0; position < numberOfEdges; ++position) {
-                if (edges[position].passes)
-                    send(lane, edges[position].to, passedByTestOfEdge(type, edges[position].passes), symbol);
+            for (const Edge* edge = edges.data(); edge != endOfEdges; ++edge) {
+                if (edge->passes)
+                    send(lane, edge->to, passedByTestOfEdge(type, edge->passes), symbol);
                 else
-                    send(lane, edges[position].to, type, symbol);
+                    send(lane, edge->to, type, symbol);
             }
         }
         if (lists.firstObserver != UINT32_MAX && !m_isToBeTold.quickSet(node.index()))
@@ -3741,12 +3889,12 @@ void LinkFlow::receiveInLane(unsigned index)
         if (!(sender->lanesOfFilledBoxesInThisPass >> index & 1))
             continue;
         Vector<ArrivalHeldBack>& box = sender->boxes[index];
-        static constexpr size_t ahead = 12;
-        for (size_t place = 0; place < box.size(); ++place) {
-            if (place + ahead < box.size())
-                __builtin_prefetch(&m_nodes[box[place + ahead].node.index()]);
-            const ArrivalHeldBack& arrival = box[place];
-            receive(arrival.node, arrival.type, arrival.symbol);
+        static constexpr ptrdiff_t ahead = 12;
+        const ArrivalHeldBack* const endOfBox = box.end();
+        for (const ArrivalHeldBack* arrival = box.begin(); arrival != endOfBox; ++arrival) {
+            if (endOfBox - arrival > ahead)
+                m_nodes.prefetch(arrival[ahead].node.index());
+            receive(arrival->node, arrival->type, arrival->symbol);
         }
         box.shrink(0);
     }
@@ -3781,7 +3929,7 @@ void LinkFlow::receiveInLane(unsigned index)
                 return std::ranges::lexicographical_compare(layoutsOfSet(one), layoutsOfSet(other));
             });
         }
-        LinkType before = m_nodes[node.index()].type;
+        LinkType before = typeOfNode(node.index());
         LinkType after = before;
         if (!objects.isEmpty())
             foldObjects(after, objects.span());
@@ -3806,7 +3954,7 @@ void LinkFlow::receiveInLane(unsigned index)
             continue;
         if (m_breachesOfClosure) [[unlikely]]
             noteBreachOfClosure({ .node = node, .before = before, .after = after });
-        m_nodes[node.index()].type = after;
+        setTypeOfNode(node.index(), after, before);
         if (!m_isOnWorklist.quickSet(node.index())) {
             lane.worklist.append(node);
             lane.typesBeforeClimb.append(before);
@@ -3931,7 +4079,7 @@ void LinkFlow::applyDeferredUpdates(unsigned index)
         Vector<ObserverPut>& puts = holder->observersPut[index];
         for (size_t place = 0; place < puts.size(); ++place) {
             if (place + ahead < puts.size())
-                __builtin_prefetch(&m_listsOfNodes[puts[place + ahead].node.index()]);
+                m_listsOfNodes.prefetch(puts[place + ahead].node.index());
             putObserver(lane, puts[place].node, puts[place].observer);
         }
         puts.shrink(0);
@@ -3943,14 +4091,15 @@ void LinkFlow::applyDeferredUpdates(unsigned index)
         Vector<EdgeLaid>& edgesLaid = holder->edgesLaid[index];
         for (size_t place = 0; place < edgesLaid.size(); ++place) {
             if (place + ahead < edgesLaid.size()) {
-                __builtin_prefetch(&m_listsOfNodes[edgesLaid[place + ahead].from.index()]);
-                __builtin_prefetch(&m_nodes[edgesLaid[place + ahead].from.index()]);
-                __builtin_prefetch(&m_nodes[edgesLaid[place + ahead].to.index()]);
+                const EdgeLaid& next = edgesLaid[place + ahead];
+                m_listsOfNodes.prefetch(next.from.index());
+                m_nodes.prefetch(next.from.index());
+                m_nodes.prefetch(next.to.index());
             }
             const EdgeLaid& laid = edgesLaid[place];
             if (!layEdge(lane, laid.from, laid.to, laid.passes))
                 continue;
-            const LinkType& type = m_nodes[laid.from.index()].type;
+            LinkType type = typeOfNode(laid.from.index());
             if (type.isNever())
                 continue;
             PropertyKeyID symbol = LinkType::holdsOneSymbol(type.directPrimitives()) ? symbolNotedAt(laid.from) : PropertyKeyID();
@@ -4036,8 +4185,9 @@ void LinkFlow::sortTellsOfLane(unsigned index)
     switch (m_order) {
     case OrderOfWorklist::NewestFirst:
         numbers.shrink(0);
-        for (uint32_t place = 0; place < lane.nodesToTell.size(); ++place)
-            numbers.append(static_cast<uint64_t>(lane.nodesToTell[place].first.index()) << 32 | place);
+        numbers.reserveCapacity(lane.nodesToTell.size());
+        for (const auto& [node, before] : lane.nodesToTell)
+            numbers.append(static_cast<uint64_t>(node.index()) << 32 | static_cast<uint32_t>(numbers.size()));
         sortNumbersInLinkFlow(numbers, lane.roomToSort, m_nodes.size());
         break;
     case OrderOfWorklist::OldestFirst:
@@ -4062,8 +4212,12 @@ void LinkFlow::sortTellsOfLane(unsigned index)
         uint32_t place = m_order == OrderOfWorklist::NewestFirst ? static_cast<uint32_t>(numbers[turn]) : turn;
         FlowNodeID node = lane.nodesToTell[place].first;
         m_isToBeTold.quickClear(node.index());
-        for (uint32_t listed = m_listsOfNodes[node.index()].firstObserver; listed != UINT32_MAX; listed = lane.observers[listed].second)
-            hand(lane.observers[listed].first, node, place);
+        for (uint32_t listed = m_listsOfNodes[node.index()].firstObserver; listed != UINT32_MAX;) {
+            FlowObserver observer = lane.observers[listed].observer();
+            uint32_t next = lane.observers[listed].next();
+            hand(observer, node, place);
+            listed = next;
+        }
     }
     for (auto& [observer, node] : lane.newObservers)
         hand(observer, node, UINT32_MAX);
@@ -4077,8 +4231,9 @@ void LinkFlow::tellInLane(unsigned index)
         for (size_t place = 0; place < tells.size(); ++place) {
             if (place + 4 < tells.size()) {
                 FunctionID function = tells[place + 4].observer.function;
-                __builtin_prefetch(&summaries.at(function).calls);
-                __builtin_prefetch(&summaries.at(function).accesses);
+                const ThinSummary& summary = summaries.at(function);
+                __builtin_prefetch(&summary.calls);
+                __builtin_prefetch(&summary.accesses);
                 __builtin_prefetch(&m_nodesOfFunctions[function.index()]);
                 __builtin_prefetch(&firstCallOfFunction[function.index()]);
             }
@@ -4282,12 +4437,12 @@ void LinkFlow::flow()
 
     auto tellObserversOf = [&](FlowNodeID node, const LinkType& before) {
         Lane& lane = laneOf(node);
-        LinkType type = m_nodes[node.index()].type;
+        LinkType type = typeOfNode(node.index());
         for (uint32_t index = m_listsOfNodes[node.index()].firstObserver; index != UINT32_MAX;) {
             size_t numberOfObservers = 0;
             for (; index != UINT32_MAX && numberOfObservers < lengthOfStretch; ++numberOfObservers) {
-                observers[numberOfObservers] = lane.observers[index].first;
-                index = lane.observers[index].second;
+                observers[numberOfObservers] = lane.observers[index].observer();
+                index = lane.observers[index].next();
                 FunctionID function = observers[numberOfObservers].function;
                 __builtin_prefetch(&summaries.at(function).calls);
                 __builtin_prefetch(&summaries.at(function).accesses);
@@ -4359,7 +4514,7 @@ void LinkFlow::flow()
                         tellOnLanes();
                     while (!m_newObservers.isEmpty()) {
                         auto [observer, node] = takeNewObserver();
-                        LinkType type = m_nodes[node.index()].type;
+                        LinkType type = typeOfNode(node.index());
                         tell(observer, type, LinkType { });
                     }
                     flushFirstLaneNotes();
@@ -4450,7 +4605,7 @@ Vector<BreachOfClosure> LinkFlow::findBreachesOfClosure()
     Vector<Edge> edges;
     Vector<FlowObserver> observers;
     for (size_t index = 0; index < numberOfNodes; ++index) {
-        LinkType type = m_nodes[index].type;
+        LinkType type = typeOfNode(index);
         if (type.isNever() || index == unseen().index())
             continue;
         m_nodeGoneOver = FlowNodeID(index);
@@ -4462,8 +4617,8 @@ Vector<BreachOfClosure> LinkFlow::findBreachesOfClosure()
         for (const Edge& edge : edges)
             arrive(edge.to, passedByTestOfEdge(type, edge.passes), symbolSeenAt(FlowNodeID(index)));
         observers.shrink(0);
-        for (uint32_t listed = m_listsOfNodes[index].firstObserver; listed != UINT32_MAX; listed = lane.observers[listed].second)
-            observers.append(lane.observers[listed].first);
+        for (uint32_t listed = m_listsOfNodes[index].firstObserver; listed != UINT32_MAX; listed = lane.observers[listed].next())
+            observers.append(lane.observers[listed].observer());
         for (const FlowObserver& observer : observers) {
             m_observerToldOnceMore = observer;
             tell(observer, type, LinkType { });
@@ -4682,6 +4837,7 @@ bool LinkFlow::tieInWhatGrew()
     hasTied |= tieInLostLayouts();
     hasTied |= tieInLostFunctions();
     hasTied |= openLayoutsThatChanged();
+    hasTied |= leaveFieldsEmptyThatCopiesPassOver();
     hasTied |= tieStoresUnderUnknownNames();
     hasTied |= letMembersOfLostEscape();
     hasTied |= tieAppendedFieldsOfLostLayouts();
@@ -4935,6 +5091,17 @@ TypeID LinkFlow::toTypeID(TypeArena& types, const LinkType& type) const
     };
     std::array<TypeID, 3> contents { seenIn(ContentsSlot::Value), seenIn(ContentsSlot::Key), seenIn(ContentsSlot::Element) };
     return types.unionOf(written, types.builtinClass(type.builtinClass, contents));
+}
+
+const LinkFlow::ReadsBehindInstanceOf* LinkFlow::readsBehindInstanceOf(FunctionID reader)
+{
+    const BodyIndex* index = bodiesLookedAt(looks).find(reader);
+    if (!index || !index->opcodes().contains(Opcode::InstanceOf))
+        return nullptr;
+    auto& known = s_laneAtWork ? s_laneAtWork->readsBehindInstanceOf : m_readsBehindInstanceOf;
+    return known.ensure(reader.index(), [&] {
+        return makeUniqueWithoutFastMallocCheck<ReadsBehindInstanceOf>(findReadsBehindInstanceOf(program, *index, summaries.at(reader)));
+    }).iterator->value.get();
 }
 
 LinkType LinkFlow::passedByTestOfEdgeSlowCase(const LinkType& type, TypeID test)
@@ -6073,7 +6240,7 @@ bool LinkFlow::hasNothingAbove(LayoutID id)
         m_layoutsWithNothingAbove.ensureSize(program.layouts.size());
         for (uint32_t index = 0; index < program.layouts.size(); ++index) {
             const Layout& layout = program.layouts[index];
-            if (keepsValuesInFieldsInLinkFlow(layout.kind) && !layout.base && !m_layoutsBelowConstructorFunctions.get(index) && membersOf(LayoutID(index), ClassSide::Prototype).empty())
+            if (keepsValuesInFieldsInLinkFlow(layout.kind) && !layout.base && !m_layoutsBelowFollowedPrototypes.get(index) && membersOf(LayoutID(index), ClassSide::Prototype).empty())
                 m_layoutsWithNothingAbove.quickSet(index);
         }
     }
@@ -6089,7 +6256,7 @@ LinkFlow::SortedMembersOfFamily& LinkFlow::sortedMembersOf(FamilyID family)
     Vector<LayoutID> withNothingAbove;
     for (LayoutID id : program.types.listOf(families.layoutsOf(family))) {
         if (!hasNothingAbove(id)) {
-            if (program.at(id).kind == LayoutKind::Instance && !program.at(id).has(LayoutFlags::IsOfCreatedObject) && !m_layoutsBelowConstructorFunctions.get(id.index()) && !namesMayBeIncomplete(id, ClassSide::Prototype)) {
+            if (program.at(id).kind == LayoutKind::Instance && !program.at(id).has(LayoutFlags::IsOfCreatedObject) && !m_layoutsBelowFollowedPrototypes.get(id.index()) && !namesMayBeIncomplete(id, ClassSide::Prototype)) {
                 sorted->instancesOfClasses.append(id);
                 sorted->someInstanceOfClassMayHaveAppendedFields |= mayHaveAppendedFieldsInLinkFlow(program.at(id));
                 if (const Layout& layout = program.at(id); layout.has(LayoutFlags::IsNeverAllocated) || layout.has(LayoutFlags::IsWrittenUnderDictionaryType) || layout.writtenBuiltinBase || layout.kind == LayoutKind::BuiltinResult)
@@ -6265,7 +6432,7 @@ bool LinkFlow::tieReadThroughClassesThatDeclare(const SortedMembersOfFamily& sor
         tieRead(aggregate, topmost, key);
     LayoutID last;
     for (const DeclarerOfMember& declarer : declarers) {
-        if (declarer.classLayout != std::exchange(last, declarer.classLayout) && isMemberOf(family, declarer.classLayout) && !m_layoutsBelowConstructorFunctions.get(declarer.classLayout.index()))
+        if (declarer.classLayout != std::exchange(last, declarer.classLayout) && isMemberOf(family, declarer.classLayout) && !m_layoutsBelowFollowedPrototypes.get(declarer.classLayout.index()))
             tieRead(aggregate, declarer.classLayout, key);
     }
     if (auto born = m_fieldsBornBelowClassesByKey.find(key.bits()); born != m_fieldsBornBelowClassesByKey.end()) {
@@ -6320,6 +6487,61 @@ void LinkFlow::tieReadThroughSortedMembers(FlowNodeID aggregate, FamilyID family
         addEdge(foundBesideFieldsUnder(key), aggregate);
     else
         sorted.readsWithoutLostMember.append(ReadThroughFamily { key, aggregate });
+}
+
+std::optional<LinkFlow::FamilyReadBehindInstanceOf> LinkFlow::findFamilyReadBehindInstanceOf(FamilyID family, PropertyKeyID key, LayoutID tested)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    if (!isAbsentFromObjectPrototype(key) || nameClassOf(key) == NameClass::Proto || program.at(key).kind == PropertyKeyKind::PrivateName || mayBeNamedByNumber(key))
+        return std::nullopt;
+    SortedMembersOfFamily& sorted = sortedMembersOf(family);
+    if (!sorted.everyMemberIsOfWrittenClass) {
+        auto isOfWrittenClass = [&](LayoutID id) {
+            const Layout& layout = program.at(id);
+            return layout.constructor && isClassConstructorOf(program.at(layout.constructor).kind) && (!layout.has(LayoutFlags::HasHeritage) || layout.base);
+        };
+        bool isWritten = sorted.tiedOneByOne.isEmpty() && sorted.withNothingAbove.isEmpty() && std::ranges::all_of(sorted.instancesOfClasses, isOfWrittenClass);
+        for (LayoutID topmost : sorted.topmostInstancesOfClasses) {
+            for (LayoutID above = program.at(topmost).base; isWritten && above; above = program.at(above).base)
+                isWritten = isOfWrittenClass(above);
+        }
+        sorted.everyMemberIsOfWrittenClass = isWritten;
+        if (isWritten) {
+            for (LayoutID member : sorted.instancesOfClasses)
+                sorted.placesOfMembers.append(m_stretchesAtAndBelowLayouts[member.index()].first);
+            std::ranges::sort(sorted.placesOfMembers);
+        }
+    }
+    if (!*sorted.everyMemberIsOfWrittenClass)
+        return std::nullopt;
+    auto added = sorted.membersThatListNames.add(key.bits(), SortedMembersOfFamily::MembersThatListName());
+    SortedMembersOfFamily::MembersThatListName& listed = added.iterator->value;
+    if (added.isNewEntry) {
+        auto list = [&](LayoutID id) {
+            listed.places.append(m_stretchesAtAndBelowLayouts[id.index()].first);
+            if (!listed.fields)
+                listed.fields = makeNode();
+            UnknownByEscapeAlone ofEscapeAlone(UnknownByEscapeAlone::marksAtWork() == UnknownByEscapeAlone::Marks::OfEscape);
+            tieRead(listed.fields, id, key);
+        };
+        for (LayoutID listing : program.layoutsWithName(key)) {
+            if (isMemberOf(family, listing))
+                list(listing);
+        }
+        for (LayoutID leftOut : sorted.instancesOfClassesThatIndexOfNamesLeavesOut) {
+            if (findField(program, leftOut, key))
+                list(leftOut);
+        }
+        std::ranges::sort(listed.places);
+    }
+    auto numberBelowTested = [&](const Vector<uint32_t>& places) {
+        const StretchInTreeOfBases& below = m_stretchesAtAndBelowLayouts[tested.index()];
+        return std::ranges::lower_bound(places, below.end) - std::ranges::lower_bound(places, below.first);
+    };
+    auto numberListed = numberBelowTested(listed.places);
+    if (!numberListed || numberListed != numberBelowTested(sorted.placesOfMembers))
+        return std::nullopt;
+    return FamilyReadBehindInstanceOf { listed.fields, sorted.foundBesideTheirFields };
 }
 
 FlowNodeID LinkFlow::fieldReadThrough(FamilyID family, PropertyKeyID key)
@@ -7170,8 +7392,8 @@ Vector<FlowObserver> LinkFlow::observersOf(FlowNodeID node) const
     if (node.index() >= m_listsOfNodes.size())
         return observers;
     const Lane& lane = *m_lanes[laneIndexOf(node)];
-    for (uint32_t listed = m_listsOfNodes[node.index()].firstObserver; listed != UINT32_MAX; listed = lane.observers[listed].second)
-        observers.append(lane.observers[listed].first);
+    for (uint32_t listed = m_listsOfNodes[node.index()].firstObserver; listed != UINT32_MAX; listed = lane.observers[listed].next())
+        observers.append(lane.observers[listed].observer());
     return observers;
 }
 

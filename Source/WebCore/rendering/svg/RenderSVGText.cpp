@@ -119,17 +119,9 @@ static inline void updateFontInAllDescendants(RenderSVGText& text)
     }
 }
 
-AffineTransform RenderSVGText::computeLocalTransform() const
+void RenderSVGText::updateCachedNominalTransform()
 {
-    ASSERT(document().settings().layerBasedSVGEngineEnabled());
-    TransformationMatrix transform;
-    applyTransform(transform, style(), transformReferenceBoxRect(style()), Style::TransformResolver::allTransformOperations);
-    return transform.toAffineTransform();
-}
-
-void RenderSVGText::updateLocalTransform()
-{
-    m_localTransform = computeLocalTransform();
+    m_cachedNominalTransform = computeNominalTransform();
 }
 
 void RenderSVGText::layout()
@@ -153,6 +145,9 @@ void RenderSVGText::layout()
         m_localTransform = protect(textElement())->animatedLocalTransform();
         updateCachedBoundariesInParents = true;
     }
+
+    if (isLayerBasedSVGEngineEnabled())
+        updateTransform();
 
     auto isLayoutSizeChanged = [&] {
         if (auto* legacyRootObject = lineageOfType<LegacyRenderSVGRoot>(*this).first())
@@ -206,12 +201,8 @@ void RenderSVGText::layout()
     computePerCharacterLayoutInformation();
 
     if (isLayerBasedSVGEngineEnabled()) {
-        updateLayerTransform();
-        // Non-layered text caches its transform in m_localTransform (read via localTransform()
-        // by getCTM()/getScreenCTM(), hit-testing and the transform-recursion paint path),
-        // mirroring RenderSVGModelObject::updateLocalTransform(). Layered text uses its RenderLayer.
-        if (!hasLayer())
-            updateLocalTransform();
+        if (previousReferenceBoxRect != transformReferenceBoxRect())
+            updateTransform();
         updateCachedBoundariesInParents = false; // No longer needed for LBSE.
         layoutChanged = false; // No longer needed for LBSE.
     } else {
@@ -273,7 +264,7 @@ bool RenderSVGText::layoutInlineChildrenWithoutLineLayout()
     setLogicalHeight(borderAndPaddingLogicalHeight() + contentLogicalHeight());
 
     // Makes LayoutRepainter issue a full repaint.
-    setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    setNeedsLayout(MarkingBehavior::OnlyThis);
 
     if (cache)
         cache->onLaidOutInlineContent(*this);
@@ -290,7 +281,7 @@ void RenderSVGText::computePerCharacterLayoutInformation()
     auto [boxes, fragmentsForBoxes] = lineLayout->resetSVGTextFragments();
     ASSERT(!boxes.isEmpty() && boxes[0].isRootInlineBox());
 
-    SVGTextLayoutAlgorithm { *layoutBox(), boxes, fragmentsForBoxes }.layout();
+    SVGTextLayoutAlgorithm { layoutBox(), boxes, fragmentsForBoxes }.layout();
     updatePositionAndOverflow(lineLayout->applySVGTextFragments());
 }
 
@@ -618,7 +609,6 @@ float RenderSVGText::strokeInflation(float strokeWidth) const
 
     // vector-effect is not inherited, so a run may or may not use a non scaling stroke. SVGTextBoxPainter
     // decides per run, using the style of the run's parent renderer: do the same, and keep the widest inflation.
-    auto zoomAndDeviceScale = style().usedZoom() * document().deviceScaleFactor();
     std::optional<float> inflation;
     for (const RenderObject* descendant = this; descendant; descendant = descendant->nextInPreOrder(this)) {
         CheckedPtr inlineText = dynamicDowncast<RenderSVGInlineText>(*descendant);
@@ -627,8 +617,8 @@ float RenderSVGText::strokeInflation(float strokeWidth) const
 
         auto runInflation = strokeWidth;
         if (CheckedPtr runRenderer = inlineText->parent(); runRenderer && runRenderer->style().vectorEffect() == VectorEffect::NonScalingStroke) {
-            if (auto scalingFactor = RenderSVGInlineText::computeScalingFactorForRenderer(*runRenderer); scalingFactor > 0)
-                runInflation = strokeWidth * zoomAndDeviceScale / scalingFactor;
+            if (auto nonScalingStrokeScale = RenderSVGInlineText::computeNonScalingStrokeScaleForRenderer(*runRenderer); nonScalingStrokeScale > 0)
+                runInflation = strokeWidth / nonScalingStrokeScale;
         }
 
         inflation = std::max(inflation.value_or(runInflation), runInflation);

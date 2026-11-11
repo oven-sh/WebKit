@@ -82,6 +82,11 @@ inline bool x86TargetAddressAcceptsBase(const Operation& access, const Operation
     return distance >= -x86TargetMaxDistanceFromFrameAddress && distance <= x86TargetMaxDistanceFromFrameAddress;
 }
 
+ALWAYS_INLINE bool comparesConstantInMemory(const Operation& user, unsigned childIndex, const Operation& constant)
+{
+    return childIndex == 1 && (user.opcode() == Equal || user.opcode() == NotEqual) && constant.hasInt() && !isX86TargetImmediate(constant);
+}
+
 ALWAYS_INLINE bool acceptsImmediate(const Operation& user, unsigned childIndex, const Operation& constant)
 {
     if (!constant.hasNoPosition())
@@ -94,8 +99,6 @@ ALWAYS_INLINE bool acceptsImmediate(const Operation& user, unsigned childIndex, 
     case BitAnd:
     case BitOr:
     case BitXor:
-    case Equal:
-    case NotEqual:
     case LessThan:
     case GreaterThan:
     case LessEqual:
@@ -106,6 +109,10 @@ ALWAYS_INLINE bool acceptsImmediate(const Operation& user, unsigned childIndex, 
     case BelowEqual:
     case EqualOrUnordered:
         return childIndex == 1 && isX86TargetImmediate(constant);
+
+    case Equal:
+    case NotEqual:
+        return childIndex == 1 && (constant.opcode() == NumberOf || isX86TargetImmediate(constant));
 
     case Shl:
     case SShr:
@@ -185,10 +192,28 @@ ALWAYS_INLINE bool acceptsImmediate(const Operation& user, unsigned childIndex, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 #else
+constexpr bool comparesConstantInMemory(const Operation&, unsigned, const Operation&) { return false; }
 JS_EXPORT_PRIVATE bool acceptsImmediate(const Operation& user, unsigned childIndex, const Operation& constant);
 #endif
 
 JS_EXPORT_PRIVATE bool isEncodableBitImmediate(Width, int64_t bits);
+
+#if CPU(ARM64)
+struct ConstantComparison {
+    enum Kind : uint8_t {
+        Immediate,
+        Overflow,
+        HighBits,
+    };
+
+    Kind kind;
+    Opcode relation;
+    int64_t constant;
+    unsigned shift { 0 };
+    bool holdsOnOverflow { false };
+};
+std::optional<ConstantComparison> findConstantComparison(Opcode relation, Width, int64_t constant);
+#endif
 
 #if CPU(X86_64)
 ALWAYS_INLINE bool acceptsMemoryOperand(const Operation& user, unsigned childIndex)
@@ -303,6 +328,13 @@ JS_EXPORT_PRIVATE bool isEncodableIndexedAddress(Width accessWidth, unsigned shi
 
 JS_EXPORT_PRIVATE bool isEncodableScaledSum(unsigned shift, IndexExtension);
 JS_EXPORT_PRIVATE bool scaledSumAcceptsBase(const Operation& base);
+
+constexpr bool acceptsShiftedOperand(Opcode opcode)
+{
+    return isARM64() && (opcode == Add || opcode == Sub || opcode == BitAnd || opcode == BitOr || opcode == BitXor);
+}
+
+constexpr bool acceptsExtendedOperand(Opcode opcode) { return isARM64() && (opcode == Add || opcode == Sub || isComparison(opcode)); }
 
 constexpr bool resultPrefersRegisterOfFirstChild() { return isX86_64(); }
 constexpr bool resultOverwritesFirstChild(Opcode opcode)

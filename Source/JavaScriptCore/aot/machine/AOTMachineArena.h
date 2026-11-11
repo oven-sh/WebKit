@@ -176,6 +176,40 @@ private:
 };
 
 template<typename T>
+class UncheckedSpan {
+public:
+    UncheckedSpan() = default;
+    template<typename U>
+    UncheckedSpan(std::span<U> span)
+        : m_data(span.data())
+        , m_size(span.size())
+    {
+    }
+    template<typename U>
+    UncheckedSpan(UncheckedSpan<U> other)
+        : m_data(other.data())
+        , m_size(other.size())
+    {
+    }
+
+    T& operator[](size_t index) const
+    {
+        ASSERT(index < m_size);
+        return m_data[index];
+    }
+    T* data() const { return m_data; }
+    T* begin() const { return m_data; }
+    T* end() const { return m_data + m_size; }
+    std::span<T> span() const { return { m_data, m_size }; }
+    size_t size() const { return m_size; }
+    bool empty() const { return !m_size; }
+
+private:
+    T* m_data { nullptr };
+    size_t m_size { 0 };
+};
+
+template<typename T>
 class ArenaVector {
     static_assert(std::is_trivially_destructible_v<T>);
 public:

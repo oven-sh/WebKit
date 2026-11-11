@@ -33,75 +33,98 @@ namespace JSC {
 enum class MicrotaskIdentifierType { };
 using MicrotaskIdentifier = ObjectIdentifier<MicrotaskIdentifierType>;
 
-enum class InternalMicrotask : uint8_t {
-    None = 0,
-    PromiseResolveThenableJobFast,
-    PromiseResolveThenableJobWithInternalMicrotaskFast,
-
-    PromiseResolveThenableJob,
-    PromiseResolveThenableJobWithInternalMicrotask,
-
-    PromiseResolveWithoutHandlerJob,
-    PromiseFulfillWithoutHandlerJob,
-
-    PromiseRaceResolveJob,
-    PromiseAllResolveJob,
-    PromiseAllSettledResolveJob,
-    PromiseAnyResolveJob,
-    PromiseFinallyReactionJob,
-    PromiseFinallyAwaitJob,
-
-    PromiseReactionJob,
-
-    AsyncFunctionResume,
-#if ENABLE(AOT)
-    CompiledAsyncFunctionResume,
-#endif
-    AsyncFromSyncIteratorContinue,
-    AsyncFromSyncIteratorDone,
-    AsyncGeneratorYieldAwaited,
-    AsyncGeneratorBodyCallNormal,
-    AsyncGeneratorBodyCallReturn,
-    AsyncGeneratorAwaitReturn,
-    AsyncGeneratorDriverResume,
-
-    InvokeFunctionJob,
-    AsyncModuleExecutionResume,
-    AsyncModuleExecutionDone,
-#if ENABLE(AOT)
-    CompiledModuleBodyResume,
-    CompiledModuleImport,
-    CompiledModuleImportSettled,
-    CompiledModuleImportStep,
-#endif
-    ModuleRegistryFetchSettled,
-    ModuleRegistryModuleSettled,
-    ModuleGraphLoadingError,
-    ModuleLoadStep,
-    ModuleLoadTopSettled,
-    ModuleLoadTopRejected,
-    ModuleLoadSpecifierTransform,
-    ModuleLoadCombinedLoadSettled,
-    ModuleLoadCombinedStateSettled,
-    ModuleLoadLinkEvaluateSettled,
-    ModuleLoadReturnRecord,
-    ModuleLoadReturnModuleKey,
-    ModuleLoadStoreError,
-    DynamicImportLoadSettled,
-    DynamicImportEvaluateSettled,
-    DynamicImportDeferLoadSettled,
-    DynamicImportDeferDependencySettled,
-    ImportModuleNamespace,
 #if ENABLE(WEBASSEMBLY)
-    WebAssemblyCompileStreaming,
-    WebAssemblyInstantiateStreaming,
+#define JSC_FOR_EACH_WEBASSEMBLY_INTERNAL_MICROTASK(macro) \
+    macro(WebAssemblyCompileStreaming) \
+    macro(WebAssemblyInstantiateStreaming) \
+
+#else
+#define JSC_FOR_EACH_WEBASSEMBLY_INTERNAL_MICROTASK(macro)
 #endif
-    Opaque, // Dispatch must handle everything.
+
+#if ENABLE(AOT)
+#define JSC_FOR_EACH_COMPILED_ASYNC_FUNCTION_INTERNAL_MICROTASK(macro) \
+    macro(CompiledAsyncFunctionResume) \
+
+#define JSC_FOR_EACH_COMPILED_MODULE_INTERNAL_MICROTASK(macro) \
+    macro(CompiledModuleBodyResume) \
+    macro(CompiledModuleImport) \
+    macro(CompiledModuleImportSettled) \
+    macro(CompiledModuleImportStep) \
+
+#else
+#define JSC_FOR_EACH_COMPILED_ASYNC_FUNCTION_INTERNAL_MICROTASK(macro)
+#define JSC_FOR_EACH_COMPILED_MODULE_INTERNAL_MICROTASK(macro)
+#endif
+
 #if USE(BUN_JSC_ADDITIONS)
-    BunPerformMicrotaskJob, // Bun's performMicrotask function with async context
-    BunInvokeJobWithArguments, // Invoke job function with up to 4 arguments
+#define JSC_FOR_EACH_BUN_INTERNAL_MICROTASK(macro) \
+    macro(BunPerformMicrotaskJob) /* Bun's performMicrotask function with async context */ \
+    macro(BunInvokeJobWithArguments) /* Invoke job function with up to 4 arguments */ \
+
+#else
+#define JSC_FOR_EACH_BUN_INTERNAL_MICROTASK(macro)
 #endif
+
+// runInternalMicrotask dispatches each of these to a function named run<name>. Running None or Opaque
+// there is a bug: Opaque tasks are run entirely by their dispatcher.
+// The order is the value: isModuleLoaderInternalMicrotask() takes a range of it.
+#define JSC_FOR_EACH_INTERNAL_MICROTASK(macro) \
+    macro(None) \
+    macro(PromiseResolveThenableJobFast) \
+    macro(PromiseResolveThenableJobWithInternalMicrotaskFast) \
+    macro(PromiseResolveThenableJob) \
+    macro(PromiseResolveThenableJobWithInternalMicrotask) \
+    macro(PromiseResolveWithoutHandlerJob) \
+    macro(PromiseFulfillWithoutHandlerJob) \
+    macro(PromiseRaceResolveJob) \
+    macro(PromiseAllResolveJob) \
+    macro(PromiseAllSettledResolveJob) \
+    macro(PromiseAnyResolveJob) \
+    macro(PromiseFinallyReactionJob) \
+    macro(PromiseFinallyAwaitJob) \
+    macro(PromiseReactionJob) \
+    macro(AsyncFunctionResume) \
+    JSC_FOR_EACH_COMPILED_ASYNC_FUNCTION_INTERNAL_MICROTASK(macro) \
+    macro(AsyncFromSyncIteratorContinue) \
+    macro(AsyncFromSyncIteratorDone) \
+    macro(AsyncGeneratorYieldAwaited) \
+    macro(AsyncGeneratorBodyCallNormal) \
+    macro(AsyncGeneratorBodyCallReturn) \
+    macro(AsyncGeneratorAwaitReturn) \
+    macro(AsyncGeneratorDriverResume) \
+    macro(InvokeFunctionJob) \
+    macro(AsyncModuleExecutionResume) \
+    macro(AsyncModuleExecutionDone) \
+    JSC_FOR_EACH_COMPILED_MODULE_INTERNAL_MICROTASK(macro) \
+    macro(ModuleRegistryFetchSettled) \
+    macro(ModuleRegistryModuleSettled) \
+    macro(ModuleGraphLoadingError) \
+    macro(ModuleLoadStep) \
+    macro(ModuleLoadTopSettled) \
+    macro(ModuleLoadTopRejected) \
+    macro(ModuleLoadSpecifierTransform) \
+    macro(ModuleLoadCombinedLoadSettled) \
+    macro(ModuleLoadCombinedStateSettled) \
+    macro(ModuleLoadLinkEvaluateSettled) \
+    macro(ModuleLoadReturnRecord) \
+    macro(ModuleLoadReturnModuleKey) \
+    macro(ModuleLoadStoreError) \
+    macro(DynamicImportLoadSettled) \
+    macro(DynamicImportEvaluateSettled) \
+    macro(DynamicImportDeferLoadSettled) \
+    macro(DynamicImportDeferDependencySettled) \
+    macro(ImportModuleNamespace) \
+    JSC_FOR_EACH_WEBASSEMBLY_INTERNAL_MICROTASK(macro) \
+    macro(Opaque) \
+    JSC_FOR_EACH_BUN_INTERNAL_MICROTASK(macro) \
+
+enum class InternalMicrotask : uint8_t {
+#define JSC_DECLARE_INTERNAL_MICROTASK(name) name,
+    JSC_FOR_EACH_INTERNAL_MICROTASK(JSC_DECLARE_INTERNAL_MICROTASK)
+#undef JSC_DECLARE_INTERNAL_MICROTASK
 };
+static_assert(!static_cast<uint8_t>(InternalMicrotask::None));
 
 #if USE(BUN_JSC_ADDITIONS)
 constexpr unsigned maxMicrotaskArguments = 4;

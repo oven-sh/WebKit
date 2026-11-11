@@ -39,7 +39,6 @@ PACKAGES=(
     libseccomp
     libsysprof-capture
     libsystemd
-    libtasn1
     libtool
     libva
     libwebp
@@ -48,6 +47,7 @@ PACKAGES=(
     make
     ninja
     openjpeg2
+    openssl
     openxr
     patch
     perl-file-copy-recursive
@@ -80,14 +80,19 @@ PACKAGES=(
 
     # These are dependencies necessary for building the jhbuild.
     # Note: Could not find libegl-mesa.
+    bison
     expat
+    flex
     git
     gsettings-desktop-schemas
     gyp
+    json-glib
     libfdk-aac
     libproxy
     libpsl
     libxcb
+    meson
+    nasm
     orc
     perl-xml-libxml
     python-setuptools

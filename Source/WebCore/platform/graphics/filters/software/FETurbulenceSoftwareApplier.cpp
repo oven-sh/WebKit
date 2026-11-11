@@ -174,7 +174,7 @@ ColorComponents<float, 4> FETurbulenceSoftwareApplier::noise2D(const PaintingDat
             fraction = position - index;
         }
         
-        void LEGACY_NODELETE stitch(int size, int wrapSize)
+        NODELETE void stitch(int size, int wrapSize)
         {
             // if (bx0 >= pStitchInfo->nWrapX)
             //   bx0 -= pStitchInfo->nWidth;
@@ -380,7 +380,7 @@ bool FETurbulenceSoftwareApplier::apply(const Filter& filter, std::span<const Re
         return false;
 
     IntSize resultSize(result.absoluteImageRect().size());
-    if (resultSize.area().hasOverflowed())
+    if (resultSize.area<RecordOverflow>().hasOverflowed())
         return false;
 
     if (resultSize.isEmpty()) {

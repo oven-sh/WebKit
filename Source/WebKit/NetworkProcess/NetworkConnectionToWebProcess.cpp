@@ -543,10 +543,15 @@ void NetworkConnectionToWebProcess::queryLocalNetworkAccessPermission(std::optio
 void NetworkConnectionToWebProcess::createSocketChannel(const ResourceRequest& request, const String& protocol, WebSocketIdentifier identifier, WebPageProxyIdentifier webPageProxyID, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, const ClientOrigin& clientOrigin, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections, WebCore::StoredCredentialsPolicy storedCredentialsPolicy, WebCore::IsInitiatedByWorker isInitiatedByWorker)
 {
     MESSAGE_CHECK(request.url().isValid());
-    MESSAGE_CHECK(NetworkProcess::singleton().allowsFirstPartyForCookies(m_webProcessIdentifier, request.firstPartyForCookies()) != NetworkProcess::AllowCookieAccess::Terminate);
+    auto allowCookieAccess = NetworkProcess::singleton().allowsFirstPartyForCookies(m_webProcessIdentifier, request.firstPartyForCookies());
+    MESSAGE_CHECK(allowCookieAccess != NetworkProcess::AllowCookieAccess::Terminate);
     if (!NetworkProcess::singleton().allowsWebPageProxyIdentifier(m_webProcessIdentifier, webPageProxyID)) {
         RELEASE_LOG_ERROR(IPC, "createSocketChannel: dropping request from process %" PRIu64 " for pageID not in allow-list", m_webProcessIdentifier.toUInt64());
         return;
+    }
+    if (allowCookieAccess != NetworkProcess::AllowCookieAccess::Allow) {
+        CONNECTION_RELEASE_LOG(Loading, "createSocketChannel: forcing EphemeralStateless because Web process is not allowed to use firstPartyForCookies %" SENSITIVE_LOG_STRING " for url %" SENSITIVE_LOG_STRING, request.firstPartyForCookies().string().utf8(), request.url().string().utf8());
+        storedCredentialsPolicy = WebCore::StoredCredentialsPolicy::EphemeralStateless;
     }
 
     ASSERT(!m_networkSocketChannels.contains(identifier));
@@ -780,10 +785,11 @@ auto NetworkConnectionToWebProcess::localNetworkAccessFrameRecord(FrameIdentifie
 
 void NetworkConnectionToWebProcess::prefetchDNS(const String& hostname)
 {
-    NetworkProcess::singleton().prefetchDNS(hostname);
+    if (CheckedPtr networkSession = this->networkSession(); networkSession && networkSession->canPrefetchDNS())
+        WebCore::prefetchDNS(hostname);
 }
 
-void NetworkConnectionToWebProcess::sendH2Ping(URL&& url, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::FrameIdentifier webFrameID, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, CompletionHandler<void(std::expected<Seconds, ResourceError>&&)>&& completionHandler)
+void NetworkConnectionToWebProcess::sendH2Ping(URL&& url, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::FrameIdentifier webFrameID, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections, CompletionHandler<void(std::expected<Seconds, ResourceError>&&)>&& completionHandler)
 {
 #if ENABLE(SERVER_PRECONNECT)
     CheckedPtr networkSession = this->networkSession();
@@ -797,6 +803,7 @@ void NetworkConnectionToWebProcess::sendH2Ping(URL&& url, WebPageProxyIdentifier
     parameters.parentPID = legacyPresentingApplicationPID();
     parameters.shouldPreconnectOnly = PreconnectOnly::Yes;
     parameters.isNavigatingToAppBoundDomain = isNavigatingToAppBoundDomain;
+    parameters.advancedPrivacyProtections = advancedPrivacyProtections;
     parameters.request = ResourceRequest { WTF::move(url) };
 
     auto pingURL = parameters.request.url();
@@ -806,7 +813,7 @@ void NetworkConnectionToWebProcess::sendH2Ping(URL&& url, WebPageProxyIdentifier
 #else
     ASSERT_NOT_REACHED();
     completionHandler(makeUnexpected(internalError(url)));
-#endif
+#endif // ENABLE(SERVER_PRECONNECT)
 }
 
 void NetworkConnectionToWebProcess::preconnectTo(PreconnectRequest&& preconnectRequest)
@@ -869,12 +876,31 @@ NetworkStorageSession* NetworkConnectionToWebProcess::storageSession()
     return NetworkProcess::singleton().storageSession(m_sessionID);
 }
 
-void NetworkConnectionToWebProcess::startDownload(DownloadID downloadID, const ResourceRequest& request, const std::optional<WebCore::SecurityOriginData>& topOrigin, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, const String& suggestedName, FromDownloadAttribute fromDownloadAttribute, std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::PageIdentifier> pageID)
+bool NetworkConnectionToWebProcess::consumeDownloadAuthorization(DownloadID downloadID)
 {
+    auto authorizedProcess = NetworkProcess::singleton().authorizedProcessForDownload(downloadID);
+
+    if (!authorizedProcess) {
+        CONNECTION_RELEASE_LOG_ERROR(Loading, "consumeDownloadAuthorization: refusing to start download %" PRIu64 " because it is not authorized", downloadID.toUInt64());
+        return false;
+    }
+
+    // FIXME: add runtime feature flag in follow-up.
+    MESSAGE_CHECK_WITH_RETURN_VALUE(*authorizedProcess == m_webProcessIdentifier, false);
+
+    NetworkProcess::singleton().removeAuthorizedDownload(downloadID);
+    return true;
+}
+
+void NetworkConnectionToWebProcess::startDownload(DownloadID downloadID, const ResourceRequest& request, const std::optional<WebCore::SecurityOriginData>& topOrigin, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections, const String& suggestedName, FromDownloadAttribute fromDownloadAttribute, std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::PageIdentifier> pageID)
+{
+    if (!consumeDownloadAuthorization(downloadID))
+        return;
+
     if (!request.firstPartyForCookies().isEmpty())
         MESSAGE_CHECK(NetworkProcess::singleton().allowsFirstPartyForCookies(m_webProcessIdentifier, request.firstPartyForCookies()) == NetworkProcess::AllowCookieAccess::Allow);
 
-    protect(NetworkProcess::singleton().downloadManager())->startDownload(m_sessionID, downloadID, request, topOrigin, isNavigatingToAppBoundDomain, suggestedName, fromDownloadAttribute, frameID, pageID, webProcessIdentifier());
+    protect(NetworkProcess::singleton().downloadManager())->startDownload(m_sessionID, downloadID, request, topOrigin, isNavigatingToAppBoundDomain, advancedPrivacyProtections, suggestedName, fromDownloadAttribute, frameID, pageID, webProcessIdentifier());
 }
 
 void NetworkConnectionToWebProcess::loadCancelledDownloadRedirectRequestInFrame(const WebCore::ResourceRequest& request, const WebCore::FrameIdentifier& frameID, const WebCore::PageIdentifier& pageID)
@@ -886,11 +912,14 @@ void NetworkConnectionToWebProcess::convertMainResourceLoadToDownload(std::optio
 {
     RELEASE_ASSERT(RunLoop::isMain());
 
+    if (!consumeDownloadAuthorization(downloadID))
+        return;
+
     if (!request.firstPartyForCookies().isEmpty())
         MESSAGE_CHECK(NetworkProcess::singleton().allowsFirstPartyForCookies(m_webProcessIdentifier, request.firstPartyForCookies()) == NetworkProcess::AllowCookieAccess::Allow);
 
     if (!mainResourceLoadIdentifier) {
-        protect(NetworkProcess::singleton().downloadManager())->startDownload(m_sessionID, downloadID, request, topOrigin, isNavigatingToAppBoundDomain);
+        protect(NetworkProcess::singleton().downloadManager())->startDownload(m_sessionID, downloadID, request, topOrigin, isNavigatingToAppBoundDomain, { });
         return;
     }
 

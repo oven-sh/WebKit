@@ -140,7 +140,7 @@ static Ref<MutableStyleProperties> copyEditingProperties(StyleDeclarationType* s
     return style->copyProperties(std::span { editingProperties }.first(numInheritableEditingProperties));
 }
 
-static inline bool LEGACY_NODELETE isEditingProperty(CSSPropertyID id)
+NODELETE static inline bool isEditingProperty(CSSPropertyID id)
 {
     for (auto& editingProperty : editingProperties) {
         if (editingProperty == id)
@@ -214,7 +214,7 @@ static RefPtr<CSSValue> backgroundColorInEffect(Node*);
 class HTMLElementEquivalent {
     WTF_MAKE_TZONE_ALLOCATED(HTMLElementEquivalent);
 public:
-    HTMLElementEquivalent(CSSPropertyID, CSSValueID, const QualifiedName&);
+    NODELETE HTMLElementEquivalent(CSSPropertyID, CSSValueID, const QualifiedName&);
     virtual ~HTMLElementEquivalent() = default;
 
     virtual bool matches(const Element& element) const { return !m_tagName || element.hasTagName(*m_tagName); }
@@ -224,8 +224,8 @@ public:
     virtual void addToStyle(Element*, EditingStyle*) const;
 
 protected:
-    HTMLElementEquivalent(CSSPropertyID);
-    HTMLElementEquivalent(CSSPropertyID, const QualifiedName&);
+    NODELETE HTMLElementEquivalent(CSSPropertyID);
+    NODELETE HTMLElementEquivalent(CSSPropertyID, const QualifiedName&);
     const CSSPropertyID m_propertyID;
     const RefPtr<CSSKeywordValue> m_keywordValue;
     const QualifiedName* m_tagName { nullptr }; // We can store a pointer because HTML tag names are const global.
@@ -301,7 +301,7 @@ public:
     }
 
 private:
-    TextDecorationChange LEGACY_NODELETE changeInStyle(const EditingStyle& style) const
+    NODELETE TextDecorationChange changeInStyle(const EditingStyle& style) const
     {
         return m_isUnderline ? style.underlineChange() : style.strikeThroughChange();
     }
@@ -339,15 +339,15 @@ private:
 
 class HTMLAttributeEquivalent : public HTMLElementEquivalent {
 public:
-    HTMLAttributeEquivalent(CSSPropertyID, const QualifiedName& tagName, const QualifiedName& attrName);
-    HTMLAttributeEquivalent(CSSPropertyID, const QualifiedName& attrName);
+    NODELETE HTMLAttributeEquivalent(CSSPropertyID, const QualifiedName& tagName, const QualifiedName& attrName);
+    NODELETE HTMLAttributeEquivalent(CSSPropertyID, const QualifiedName& attrName);
 
     bool matches(const Element& element) const override { return HTMLElementEquivalent::matches(element) && element.hasAttribute(m_attrName); }
     bool hasAttribute() const override { return true; }
     bool valueIsPresentInStyle(Element&, const EditingStyle&) const override;
     void addToStyle(Element*, EditingStyle*) const override;
     virtual RefPtr<CSSValue> attributeValueAsCSSValue(Element*) const;
-    inline const QualifiedName& LEGACY_NODELETE attributeName() const { return m_attrName; }
+    NODELETE inline const QualifiedName& attributeName() const { return m_attrName; }
 
 protected:
     const QualifiedName& m_attrName; // We can store a reference because HTML attribute names are const global.
@@ -394,7 +394,7 @@ RefPtr<CSSValue> HTMLAttributeEquivalent::attributeValueAsCSSValue(Element* elem
 
 class HTMLFontSizeEquivalent : public HTMLAttributeEquivalent {
 public:
-    HTMLFontSizeEquivalent();
+    NODELETE HTMLFontSizeEquivalent();
 
     RefPtr<CSSValue> attributeValueAsCSSValue(Element*) const override;
 };
@@ -525,7 +525,7 @@ static inline Color rgbaBackgroundColorInEffect(Node* node)
     return cssValueToColor(backgroundColorInEffect(node).get());
 }
 
-static CSSValueID LEGACY_NODELETE textAlignResolvingStartAndEnd(CSSValueID textAlign, CSSValueID direction)
+NODELETE static CSSValueID textAlignResolvingStartAndEnd(CSSValueID textAlign, CSSValueID direction)
 {
     switch (textAlign) {
     case CSSValueID::Center:
@@ -1052,7 +1052,7 @@ bool EditingStyle::conflictsWithInlineStyleOfElement(StyledElement& element, Ref
     return conflicts;
 }
 
-static std::span<const HTMLElementEquivalent* const> LEGACY_NODELETE htmlElementEquivalents()
+NODELETE static std::span<const HTMLElementEquivalent* const> htmlElementEquivalents()
 {
     static const auto equivalents = WTF::toArray<const HTMLElementEquivalent*>({
         new HTMLFontWeightEquivalent(HTMLNames::bTag),
@@ -1086,7 +1086,7 @@ bool EditingStyle::conflictsWithImplicitStyleOfElement(HTMLElement& element, Edi
     return false;
 }
 
-static std::span<const HTMLAttributeEquivalent* const> LEGACY_NODELETE htmlAttributeEquivalents()
+NODELETE static std::span<const HTMLAttributeEquivalent* const> htmlAttributeEquivalents()
 {
     static const auto equivalents = WTF::toArray<const HTMLAttributeEquivalent*>({
         // elementIsStyledSpanOrHTMLEquivalent depends on the fact each HTMLAttriuteEquivalent matches exactly one attribute
@@ -1342,7 +1342,7 @@ Ref<EditingStyle> EditingStyle::wrappingStyleForSerialization(Node& context, boo
         // Styles that Mail blockquotes contribute should only be placed on the Mail blockquote,
         // to help us differentiate those styles from ones that the user has applied.
         // This helps us get the color of content pasted into blockquotes right.
-        wrappingStyle->removeStyleAddedByNode(enclosingNodeOfType(firstPositionInOrBeforeNode(&context), isMailBlockquote, CanCrossEditingBoundary).get());
+        wrappingStyle->removeStyleAddedByNode(enclosingNodeOfType(firstPositionInOrBeforeNode(&context), isMailBlockquote, EditingBoundaryCrossingRule::CanCross).get());
 
         // Call collapseTextDecorationProperties first or otherwise it'll copy the value over from in-effect to text-decorations.
         wrappingStyle->collapseTextDecorationProperties();
@@ -2120,7 +2120,7 @@ Ref<MutableStyleProperties> getPropertiesNotIn(StyleProperties& styleWithRedunda
     return extractPropertiesNotIn(styleWithRedundantProperties, baseStyle);
 }
 
-static bool LEGACY_NODELETE isCSSValueLength(CSSPrimitiveValue& value)
+NODELETE static bool isCSSValueLength(CSSPrimitiveValue& value)
 {
     return value.isFontIndependentLength();
 }

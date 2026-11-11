@@ -2597,9 +2597,9 @@ void BytecodeGenerator::prepareLexicalScopeForNextForLoopIteration(VariableEnvir
     ASSERT(loopScope);
 
     struct SymbolTableNoLocks {
-        auto LEGACY_NODELETE begin() const { return symbolTable->begin(NoLockingNecessary); }
-        auto LEGACY_NODELETE end() const { return symbolTable->end(NoLockingNecessary); }
-        size_t LEGACY_NODELETE size() const { return symbolTable->scopeSize(); }
+        NODELETE auto begin() const { return symbolTable->begin(NoLockingNecessary); }
+        NODELETE auto end() const { return symbolTable->end(NoLockingNecessary); }
+        NODELETE size_t size() const { return symbolTable->scopeSize(); }
         SymbolTable* symbolTable;
     } symbolTableWithoutLocks { symbolTable };
 
@@ -3689,15 +3689,14 @@ RegisterID* BytecodeGenerator::emitNewArrayByReversingArguments(RegisterID* dst,
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitNewArrayWithSpread(RegisterID* dst, ElementNode* elements)
+unsigned BytecodeGenerator::emitSpreadElements(ElementNode* elements, Vector<RefPtr<RegisterID>, 16>& argv)
 {
     BitVector bitVector;
-    Vector<RefPtr<RegisterID>, 16> argv;
     for (ElementNode* node = elements; node; node = node->next()) {
         bitVector.set(argv.size(), node->value()->isSpreadExpression());
 
         argv.append(newTemporary());
-        // op_new_array_with_spread requires the initial values to be a sequential range of registers.
+        // The consuming opcodes require the values to be a sequential range of registers.
         RELEASE_ASSERT(argv.size() == 1 || argv[argv.size() - 1]->index() == argv[argv.size() - 2]->index() - 1);
     }
 
@@ -3722,8 +3721,34 @@ RegisterID* BytecodeGenerator::emitNewArrayWithSpread(RegisterID* dst, ElementNo
         }
     }
 
-    unsigned bitVectorIndex = m_codeBlock->addBitVector(WTF::move(bitVector));
+    return m_codeBlock->addBitVector(WTF::move(bitVector));
+}
+
+RegisterID* BytecodeGenerator::emitNewArrayWithSpread(RegisterID* dst, ElementNode* elements)
+{
+    Vector<RefPtr<RegisterID>, 16> argv;
+    unsigned bitVectorIndex = emitSpreadElements(elements, argv);
     OpNewArrayWithSpread::emit(this, dst, argv[0].get(), argv.size(), bitVectorIndex);
+    return dst;
+}
+
+RegisterID* BytecodeGenerator::emitCallVarargsWithSpread(RegisterID* dst, RegisterID* func, RegisterID* thisRegister, ElementNode* elements, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall debuggableCall)
+{
+    Vector<RefPtr<RegisterID>, 16> argv;
+    unsigned bitVectorIndex = emitSpreadElements(elements, argv);
+
+    // firstFree must be below every argv register so that numUsedStackSlots (= -firstFree) covers the
+    // whole argument block and the callee frame is placed beneath it.
+    RefPtr<RegisterID> firstFreeRegister = newTemporary();
+
+    if (shouldEmitDebugHooks() && debuggableCall == DebuggableCall::Yes)
+        emitDebugHook(WillExecuteExpression, divotStart);
+
+    emitExpressionInfo(divot, divotStart, divotEnd);
+
+    ASSERT(dst != ignoredResult());
+    OpCallVarargsWithSpread::emit(this, dst, func, thisRegister, firstFreeRegister.get(), argv[0].get(), argv.size(), bitVectorIndex, nextValueProfileIndex());
+    ASSERT(m_codeBlock->hasCheckpoints());
     return dst;
 }
 
@@ -4046,7 +4071,8 @@ RegisterID* BytecodeGenerator::emitCall(RegisterID* dst, RegisterID* func, Expec
             RELEASE_ASSERT(opcodeID != op_call_direct_eval);
             auto expression = static_cast<SpreadExpressionNode*>(n->m_expr)->expression();
             if (expression->isArrayLiteral()) {
-                auto* elements = static_cast<ArrayNode*>(expression)->elements();
+                auto* arrayNode = static_cast<ArrayNode*>(expression);
+                auto* elements = arrayNode->elements();
                 if (elements && !elements->next() && elements->value()->isSpreadExpression()) {
                     auto* spread = static_cast<SpreadExpressionNode*>(elements->value());
                     ExpressionNode* expression = spread->expression();
@@ -4055,6 +4081,14 @@ RegisterID* BytecodeGenerator::emitCall(RegisterID* dst, RegisterID* func, Expec
                     OpSpread::emit(this, argumentRegister.get(), argumentRegister.get());
 
                     return emitCallVarargs<typename VarArgsOp<CallOp>::type>(dst, func, callArguments.thisRegister(), argumentRegister.get(), newTemporary(), 0, divot, divotStart, divotEnd, debuggableCall);
+                }
+
+                if (VarArgsOp<CallOp>::type::opcodeID == op_call_varargs && elements) {
+                    // This array literal is the one the parser synthesizes for f(a, ...b, c), so it
+                    // never has holes: unlike a user-written literal, its elements come straight from
+                    // the argument list. op_call_varargs_with_spread cannot express holes.
+                    ASSERT(!arrayNode->hasElision());
+                    return emitCallVarargsWithSpread(dst, func, callArguments.thisRegister(), elements, divot, divotStart, divotEnd, debuggableCall);
                 }
             }
             RefPtr<RegisterID> argumentRegister;
@@ -4764,8 +4798,7 @@ void BytecodeGenerator::endSwitch(const Vector<Ref<Label>, 8>& labels, Expressio
         jumpTable.m_min = INT32_MAX;
         jumpTable.m_isList = true;
 
-        Vector<int32_t> branchOffsets;
-        branchOffsets.reserveInitialCapacity(labels.size() * 2);
+        Vector<int32_t> branchOffsets(ReserveCapacityTag { }, labels.size() * 2);
         UncheckedKeyHashSet<GenericHashKey<int32_t>> alreadyHandled;
 
         for (uint32_t i = 0; i < labels.size(); ++i) {

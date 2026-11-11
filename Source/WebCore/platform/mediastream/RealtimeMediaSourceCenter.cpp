@@ -321,11 +321,20 @@ std::expected<RealtimeMediaSourceCenter::ValidDevices, MediaConstraintType> Real
 {
     ASSERT(request.type != MediaStreamRequest::Type::DisplayMedia || request.type != MediaStreamRequest::Type::DisplayMediaWithAudio);
     struct {
-        bool LEGACY_NODELETE operator()(const DeviceInfo& a, const DeviceInfo& b)
+        NODELETE bool operator()(const DeviceInfo& a, const DeviceInfo& b)
         {
             return a.fitnessScore > b.fitnessScore;
         }
     } sortBasedOnFitnessScore;
+
+    auto bestMatchingDeviceCount = [](const Vector<DeviceInfo>& deviceInfo) {
+        ASSERT(!deviceInfo.isEmpty());
+        double bestFitnessScore = deviceInfo[0].fitnessScore;
+        auto worseMatch = std::ranges::find_if(deviceInfo, [&](auto& info) {
+            return info.fitnessScore != bestFitnessScore;
+        });
+        return static_cast<unsigned>(worseMatch - deviceInfo.begin());
+    };
 
     Vector<DeviceInfo> audioDeviceInfo;
     Vector<DeviceInfo> videoDeviceInfo;
@@ -352,22 +361,26 @@ std::expected<RealtimeMediaSourceCenter::ValidDevices, MediaConstraintType> Real
     }
 
     Vector<CaptureDevice> audioDevices;
+    unsigned bestMatchingAudioDeviceCount = 0;
     if (!audioDeviceInfo.isEmpty()) {
         std::ranges::stable_sort(audioDeviceInfo, sortBasedOnFitnessScore);
+        bestMatchingAudioDeviceCount = bestMatchingDeviceCount(audioDeviceInfo);
         audioDevices = WTF::map(audioDeviceInfo, [] (auto& info) {
             return info.device;
         });
     }
 
     Vector<CaptureDevice> videoDevices;
+    unsigned bestMatchingVideoDeviceCount = 0;
     if (!videoDeviceInfo.isEmpty()) {
         std::ranges::stable_sort(videoDeviceInfo, sortBasedOnFitnessScore);
+        bestMatchingVideoDeviceCount = bestMatchingDeviceCount(videoDeviceInfo);
         videoDevices = WTF::map(videoDeviceInfo, [] (auto& info) {
             return info.device;
         });
     }
 
-    return ValidDevices { WTF::move(audioDevices), WTF::move(videoDevices) };
+    return ValidDevices { WTF::move(audioDevices), WTF::move(videoDevices), bestMatchingAudioDeviceCount, bestMatchingVideoDeviceCount };
 }
 
 void RealtimeMediaSourceCenter::setAudioCaptureFactory(AudioCaptureFactory& factory)

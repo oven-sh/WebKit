@@ -15,8 +15,10 @@
 #include "AOTRepresentation.h"
 #include "AOTResultRules.h"
 #include "AOTStubsArrays.h"
+#include "AOTStubsElements.h"
 #include "AOTTypeTestEmitter.h"
 #include "ArrayConventions.h"
+#include "JSArray.h"
 #include "JSType.h"
 #include <algorithm>
 
@@ -57,7 +59,7 @@ TypeID ArrayBuiltinEmitter::elementTypeOf(const InlineCall& call, TypeLevel leve
 ArrayStorageFormList ArrayBuiltinEmitter::candidateFormsOf(const InlineCall& call)
 {
     TypeID contents = elementTypeOf(call, TypeLevel::Expected);
-    const ArrayStorageForm& expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(call.receiver()));
+    const ArrayStorageForm& expected = elements().expectedFormOf(call.receiver());
     bool expectsContents = !isNeverType(contents);
     ArrayStorageFormList forms { &expected };
     for (const ArrayStorageForm& form : arrayStorageForms) {
@@ -160,6 +162,20 @@ Operand ArrayBuiltinEmitter::removeFirstElement(const InlineCall& call, const Ar
     return first;
 }
 
+Operand ArrayBuiltinEmitter::shiftLongArray(const InlineCall& call, const ArrayStorageForm& form, const ArrayElements& storage, Integer length)
+{
+    Integer last = sub(length, integer(1));
+    missUnless(call, below(last, integer(JSArray::shiftThreshold)));
+    Operand first = elements().loadRawElement(form, storage, integer(0));
+    missUnless(call, logicalNot(elements().isHole(form, first)));
+    if (form.holdsCells)
+        missUnless(call, logicalNot(Condition(m_out.load8ZeroExt32(instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))))));
+    callStub(call.context(), moveElementsDown(), { storage.butterfly.value(), last.value() });
+    elements().storeRawElement(form, storage, last, elements().rawHole(form));
+    elements().setPublicLength(storage, last);
+    return first;
+}
+
 void ArrayBuiltinEmitter::removeElementAtEnd(const InlineCall& call, bool removesFirst)
 {
     if (!checkChosenForm(call, call.canMiss()))
@@ -175,7 +191,17 @@ void ArrayBuiltinEmitter::removeElementAtEnd(const InlineCall& call, bool remove
         if (mayHaveNoElements)
             branchUnless(isNotZero(length), hasNoElements);
         if (removesFirst) {
-            missUnless(call, belowOrEqual(length, integer(maxLengthForElementwiseMove)));
+            Condition areFew = belowOrEqual(length, integer(maxLengthForElementwiseMove));
+            if (!generator().paysForCodeInLine(call.context().block()))
+                missUnless(call, areFew);
+            else {
+                LBasicBlock few = newBlock();
+                LBasicBlock many = newBlock();
+                branch(areFew, { normalEdge(few), normalEdge(many) });
+                m_out.appendTo(many);
+                join.add(resultFromRawElement(call, form, shiftLongArray(call, form, storage, length)));
+                m_out.appendTo(few);
+            }
             join.add(resultFromRawElement(call, form, removeFirstElement(call, form, storage, missBlockOf(call))));
             return;
         }
@@ -304,7 +330,7 @@ Integer ArrayBuiltinEmitter::indexOfNumber(const InlineCall& call, CellPointer a
     auto searchIntegers = [&] {
         LBasicBlock isInt32 = newBlock();
         LBasicBlock isNoInt32 = newBlock();
-        Word32 truncated = low32(emitter<ConversionEmitter>().toInteger(searched));
+        Word32 truncated = emitter<ConversionEmitter>().truncateToWord(searched);
         branch(equal(toNumber(truncated), searched), { normalEdge(isInt32), normalEdge(isNoInt32) });
 
         m_out.appendTo(isInt32);

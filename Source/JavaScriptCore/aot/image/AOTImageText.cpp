@@ -8,11 +8,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCodedTexts.h"
 #include "AOTImage.h"
 #include "AOTState.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <array>
 #include <bit>
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/MathExtras.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
@@ -38,17 +42,40 @@ static_assert(ImageString::hashMask == StringHasher::maskHash && ImageIdentifier
 
 static_assert(!(imageSectionAlignment % alignof(ImageStringRecord)) && !(imageSectionAlignment % alignof(ImageStringHeader)));
 
+struct ImageText::DecodedTexts {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(DecodedTexts);
+
+    static constexpr size_t numberOfRecentTexts = 512;
+
+    struct RecentText {
+        uint32_t numberPlusOne;
+        uint8_t length;
+        std::array<uint8_t, 59> characters;
+    };
+
+    Lock lock;
+    Vector<RecentText> recentTexts WTF_GUARDED_BY_LOCK(lock);
+    HashMap<uint32_t, String, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> viewedTexts WTF_GUARDED_BY_LOCK(lock);
+};
+
 ImageText::ImageText(const Image& image)
-    : m_strings(image.section<ImageStringWord>(ImageSection::Strings))
+    : m_endOfIdentifiers(image.header().numbers.endOfIdentifiers)
+    , m_strings(image.section<ImageStringWord>(ImageSection::Strings).first(image.header().numbers.numberOfStringWords))
+    , m_codedTexts(image.section<uint8_t>(ImageSection::Strings).subspan(m_strings.size_bytes()))
+    , m_numberOfCodedTexts(image.header().numbers.numberOfCodedTexts)
+    , m_decodedTexts(makeUnique<DecodedTexts>())
     , m_listedStrings(image.section<uint32_t>(ImageSection::LongStrings))
     , m_text(image.section<uint8_t>(ImageSection::Text))
-    , m_identifiers(image.section<ImageIdentifierWord>(ImageSection::Identifiers))
+    , m_identifiers(image.section<uint8_t>(ImageSection::Identifiers).first(image.header().numbers.endOfIdentifiers))
+    , m_otherIdentifiers(spanReinterpretCast<const ImageOtherIdentifier>(image.section<uint8_t>(ImageSection::Identifiers).subspan(ImageOtherIdentifier::offsetFor(m_identifiers.size()))))
     , m_stringConstants(image.section<uint32_t>(ImageSection::StringConstants))
 #if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     , m_stringHeaders(image.section<ImageStringHeader>(ImageSection::StringHeaders).first(image.header().numbers.endOfStringHeaders))
     , m_addressOfText(image.header().address + image.header().sections[static_cast<unsigned>(ImageSection::Text)].offset)
 {
 }
+
+ImageText::~ImageText() = default;
 #else
     , m_stringRecords(image.section<ImageStringRecord>(ImageSection::StringHeaders))
 {
@@ -136,8 +163,44 @@ StringImpl* ImageText::headerOf(ImageStringWord word) const
 #endif
 }
 
+uint32_t ImageText::textOfListedIdentifier(uint32_t number) const
+{
+    auto other = std::ranges::lower_bound(m_otherIdentifiers, number, { }, &ImageOtherIdentifier::number);
+    return other != m_otherIdentifiers.end() && other->number == number ? other->textPlusOne : 0;
+}
+
+String ImageText::createStringOfCodedText(ImageStringWord word) const
+{
+    DecodedTexts& decoded = *m_decodedTexts;
+    Locker locker { decoded.lock };
+    if (decoded.recentTexts.isEmpty())
+        decoded.recentTexts.fill(DecodedTexts::RecentText { }, DecodedTexts::numberOfRecentTexts);
+    DecodedTexts::RecentText& recent = decoded.recentTexts[word.number() % DecodedTexts::numberOfRecentTexts];
+    if (recent.numberPlusOne != word.number() + 1) {
+        Vector<uint8_t, 64> text = CodedTexts(m_codedTexts, m_numberOfCodedTexts).at(word.number());
+        if (text.size() > recent.characters.size())
+            return String(byteCast<Latin1Character>(text.span()));
+        recent.numberPlusOne = word.number() + 1;
+        recent.length = static_cast<uint8_t>(text.size());
+        std::ranges::copy(text, recent.characters.begin());
+    }
+    return String(byteCast<Latin1Character>(std::span<const uint8_t>(recent.characters).first(recent.length)));
+}
+
+NEVER_INLINE StringView ImageText::viewOfCodedText(ImageStringWord word) const
+{
+    DecodedTexts& decoded = *m_decodedTexts;
+    Locker locker { decoded.lock };
+    return decoded.viewedTexts.ensure(word.number(), [&] {
+        Vector<uint8_t, 64> text = CodedTexts(m_codedTexts, m_numberOfCodedTexts).at(word.number());
+        return String(byteCast<Latin1Character>(text.span()));
+    }).iterator->value;
+}
+
 String ImageText::createStringWithoutHeader(ImageStringWord word) const
 {
+    if (word.isCoded())
+        return createStringOfCodedText(word);
     StringView characters = view(word);
     if (characters.isEmpty())
         return emptyString();
@@ -150,16 +213,25 @@ StringView ImageText::view(ImageStringWord word) const
 {
     RELEASE_ASSERT_WITH_MESSAGE(word.hasText(), "AOT: the image has no text for this string because nothing referenced it at build time");
     ImageLongString range { 0, 0 };
-    if (!word.hasHeader())
+    bool is16Bit = word.is16Bit();
+    if (!word.hasHeader()) {
+        if (word.isCoded()) [[unlikely]]
+            return viewOfCodedText(word);
         range = ImageListedString::read(m_listedStrings.subspan(word.number()));
+    }
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    else
-        range = rangeFor(m_stringRecords[word.number()]);
+    else {
+        const ImageStringRecord& record = m_stringRecords[word.number()];
+        range = rangeFor(record);
+        is16Bit = record.is16Bit();
+    }
 #else
-    else if (const ImageStringHeader& header = headerAt(word.number()); header.length)
+    else if (const ImageStringHeader& header = headerAt(word.number()); header.length) {
         range = { static_cast<uint32_t>(header.characters - m_addressOfText), header.length };
+        is16Bit = !header.is8Bit();
+    }
 #endif
-    if (word.is16Bit())
+    if (is16Bit)
         return StringView(spanReinterpretCast<const char16_t>(m_text.subspan(range.offset, range.length * sizeof(char16_t))));
     return StringView(byteCast<Latin1Character>(m_text.subspan(range.offset, range.length)));
 }

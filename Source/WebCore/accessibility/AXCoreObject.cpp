@@ -310,7 +310,7 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::tabChildren()
 }
 
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
-static bool LEGACY_NODELETE isValidChildForTable(AXCoreObject& object)
+NODELETE static bool isValidChildForTable(AXCoreObject& object)
 {
     auto role = object.role();
     // Tables can only have these roles as exposed-to-AT children.
@@ -524,8 +524,7 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::crossFrameUnignoredChild
         if (RefPtr crossFrameChild = crossFrameChildObject())
             appendCrossFrameContent(result, *crossFrameChild);
     } else {
-        AccessibilityChildrenVector splicedResult;
-        splicedResult.reserveInitialCapacity(result.size());
+        AccessibilityChildrenVector splicedResult(ReserveCapacityTag { }, result.size());
         for (size_t i = 0; i < result.size(); i++) {
             if (RefPtr crossFrameChild = protect(result[i])->crossFrameChildObject())
                 appendCrossFrameContent(splicedResult, *crossFrameChild);
@@ -1836,7 +1835,7 @@ String AXCoreObject::languageIncludingAncestors() const
 }
 
 #if PLATFORM(COCOA)
-static bool LEGACY_NODELETE isVisibleText(AccessibilityTextSource textSource)
+NODELETE static bool isVisibleText(AccessibilityTextSource textSource)
 {
     switch (textSource) {
     case AccessibilityTextSource::Visible:
@@ -1856,7 +1855,7 @@ static bool LEGACY_NODELETE isVisibleText(AccessibilityTextSource textSource)
     }
 }
 
-static bool LEGACY_NODELETE isDescriptiveText(AccessibilityTextSource textSource)
+NODELETE static bool isDescriptiveText(AccessibilityTextSource textSource)
 {
     switch (textSource) {
     case AccessibilityTextSource::Alternative:

@@ -43,7 +43,6 @@
 #include "RenderBlockFlow.h"
 #include "RenderChildIterator.h"
 #include "RenderElementInlines.h"
-#include "RenderListBox.h"
 #include "RenderObjectDocument.h"
 #include "RenderSVGModelObject.h"
 #include "RenderTheme.h"
@@ -60,7 +59,7 @@ template<typename> struct NinePieceImageSizingKind;
 template<> struct NinePieceImageSizingKind<Style::BorderImage> { using type = Style::BorderImageSizing; };
 template<> struct NinePieceImageSizingKind<Style::MaskBorder> { using type = Style::MaskBorderSizing; };
 
-static bool LEGACY_NODELETE borderStyleFillsBorderArea(BorderStyle style)
+NODELETE static bool borderStyleFillsBorderArea(BorderStyle style)
 {
     switch (style) {
     case BorderStyle::None:
@@ -79,7 +78,7 @@ static bool LEGACY_NODELETE borderStyleFillsBorderArea(BorderStyle style)
     return true;
 }
 
-static bool LEGACY_NODELETE styleRequiresClipPolygon(BorderStyle style)
+NODELETE static bool styleRequiresClipPolygon(BorderStyle style)
 {
     switch (style) {
     case BorderStyle::None:
@@ -100,7 +99,7 @@ static bool LEGACY_NODELETE styleRequiresClipPolygon(BorderStyle style)
     return false;
 }
 
-static bool LEGACY_NODELETE borderStyleHasInnerDetail(BorderStyle style)
+NODELETE static bool borderStyleHasInnerDetail(BorderStyle style)
 {
     switch (style) {
     case BorderStyle::None:
@@ -121,12 +120,12 @@ static bool LEGACY_NODELETE borderStyleHasInnerDetail(BorderStyle style)
     return false;
 }
 
-static bool LEGACY_NODELETE borderStyleIsDottedOrDashed(BorderStyle style)
+NODELETE static bool borderStyleIsDottedOrDashed(BorderStyle style)
 {
     return style == BorderStyle::Dotted || style == BorderStyle::Dashed;
 }
 
-static bool LEGACY_NODELETE decorationHasAllSimpleEdges(const RectEdges<BorderEdge>& edges)
+NODELETE static bool decorationHasAllSimpleEdges(const RectEdges<BorderEdge>& edges)
 {
     for (auto side : allBoxSides) {
         auto& currEdge = edges.at(side);
@@ -156,7 +155,7 @@ std::optional<Path> BorderPainter::pathForBorderArea(const LayoutRect& rect, con
     return borderShape.pathForBorderArea(deviceScaleFactor);
 }
 
-static LayoutRect LEGACY_NODELETE calculateSideRect(const LayoutRect& outerBorderRect, const BorderEdges& edges, BoxSide side)
+NODELETE static LayoutRect calculateSideRect(const LayoutRect& outerBorderRect, const BorderEdges& edges, BoxSide side)
 {
     auto sideRect = outerBorderRect;
     float width = edges.at(side).widthForPainting();
@@ -449,13 +448,6 @@ bool BorderPainter::paintNinePieceImageImpl(const LayoutRect& rect, const UsedSt
     if (!modelObject)
         return false;
 
-    ImageDrawingOptions options = {
-        op,
-        m_renderer->imageOrientation(),
-        m_paintInfo.paintBehavior.contains(PaintBehavior::DrawsHDRContent) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
-        style.dynamicRangeLimit().toPlatformDynamicRangeLimit()
-    };
-
     // FIXME: border-image is broken with full page zooming when tiling has to happen, since the tiling function
     // doesn't have any understanding of the zoom that is in effect on the tile.
     float deviceScaleFactor = document().deviceScaleFactor();
@@ -468,7 +460,15 @@ bool BorderPainter::paintNinePieceImageImpl(const LayoutRect& rect, const UsedSt
 
     auto source = modelObject->calculateImageIntrinsicDimensions(*image, Sizing { destination.size() }, RenderBoxModelObject::ScaleByUsedZoom::No);
 
-    NinePieceImagePainter::paint(ninePieceImage, m_paintInfo.context(), m_renderer, usedStyle, destination, source, deviceScaleFactor, options);
+    ImageDrawDescriptor descriptor {
+        ConcreteObjectSize::fixed(FloatSize(source)),
+        op,
+        m_renderer->imageOrientation(),
+        m_paintInfo.paintBehavior.contains(PaintBehavior::DrawsHDRContent) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
+        style.dynamicRangeLimit().toPlatformDynamicRangeLimit()
+    };
+
+    NinePieceImagePainter::paint(ninePieceImage, m_paintInfo.context(), m_renderer, usedStyle, destination, source, deviceScaleFactor, descriptor);
     return true;
 }
 
@@ -572,7 +572,7 @@ static inline bool colorNeedsAntiAliasAtCorner(BoxSide side, BoxSide adjacentSid
 }
 
 // This assumes that we draw in order: top, bottom, left, right.
-static inline bool LEGACY_NODELETE willBeOverdrawn(BoxSide side, BoxSide adjacentSide, const BorderEdges& edges)
+NODELETE static inline bool willBeOverdrawn(BoxSide side, BoxSide adjacentSide, const BorderEdges& edges)
 {
     switch (side) {
     case BoxSide::Top:

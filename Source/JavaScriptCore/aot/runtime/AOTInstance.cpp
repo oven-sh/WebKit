@@ -41,6 +41,7 @@
 #include "AOTObjectModel.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
+#include "AOTPrefixCode.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTProgramStrings.h"
@@ -76,6 +77,7 @@
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSCJSValueInlines.h"
+#include "JSCustomGetterFunction.h"
 #include "JSFunction.h"
 #include "JSModuleLoader.h"
 #include "JSPromise.h"
@@ -239,7 +241,8 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image, Progr
     words.closureFunctionKinds = image.programTables().closureFunctionKinds().data();
     words.regExps = image.section<ImageRegExp>(ImageSection::RegExps).data();
     words.regExpCode = image.regExpCode().data();
-    words.functionStarts = image.section<uint32_t>(ImageSection::FunctionStarts).data();
+    words.functionSteps = image.functionStarts().steps();
+    words.functionStartGroups = image.functionStarts().groups();
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     words.stringRecords = image.text().stringRecords().data();
     words.lazyStringHeaderOffsets = image.text().lazyHeaderOffsets();
@@ -249,7 +252,8 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image, Progr
     words.sizeOfProgramIdentifiers = static_cast<uint64_t>(vm.aotState().identifiers->count()) * sizeof(UniquedStringImpl);
 #endif
     static_assert(sizeof(ImageStringWord) == sizeof(uint32_t));
-    words.stringWords = image.section<uint32_t>(ImageSection::Strings).data();
+    words.endOfIdentifiers = image.header().numbers.endOfIdentifiers;
+    words.stringWords = std::bit_cast<const uint32_t*>(std::bit_cast<uintptr_t>(image.section<uint32_t>(ImageSection::Strings).data()) - words.endOfIdentifiers * sizeof(uint32_t));
     words.stringConstants = image.section<uint32_t>(ImageSection::StringConstants).data();
     static_assert(!(InstanceLayout::largestPageSize % InstanceLayout::sizeOfIndexOfSiteAnswers) && !(InstanceLayout::distanceToPageEdge % InstanceLayout::sizeOfIndexOfSiteAnswers));
     static_assert(sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers);
@@ -349,7 +353,7 @@ static void fillInstanceClassInfos(Instance& instance)
 
 CONCURRENT_SAFE void setPollsEnabled(Instance& instance, bool enabled)
 {
-    WTF::atomicStore(&instance.pollIsDue, static_cast<uintptr_t>(enabled), std::memory_order_relaxed);
+    WTF::atomicStore<MemoryOrder::Relaxed>(&instance.pollIsDue, static_cast<uintptr_t>(enabled));
     if constexpr (hasFaultingLoopPolls)
         OSAllocator::protect(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage(), WTF::pageSize(), !enabled, !enabled);
 }
@@ -511,6 +515,8 @@ Instance* Instance::create(JSGlobalObject* realm)
         instance->effectsNet.exercised = makeEffectsNetExercised().data();
 
     State::create(*instance);
+    instance->state->caches->addClearedEachCollection("growing flat text"_s, asMutableByteSpan(instance->state->growingFlatText));
+    instance->state->caches->addClearedEachCollection("wide character strings"_s, asMutableByteSpan(instance->state->wideCharacterStrings));
     instance->state->caches->addClearedEachCollection("chains above lists without names"_s, asMutableByteSpan(instance->arrays.chainsAboveListsWithoutNames));
     instance->state->caches->addClearedEachCollection("structures of lists without names"_s, asMutableByteSpan(instance->arrays.structuresOfListsWithoutNames));
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
@@ -849,6 +855,7 @@ static void fillThunkAndPointers(void** entries, const Image& image)
     set(Entry::NonConstructorHostFunction, std::bit_cast<void*>(&callHostFunctionAsConstructor));
     set(Entry::ErrorConstructorClassInfo, const_cast<ClassInfo*>(ErrorConstructor::info()));
     set(Entry::BooleanConstructorClassInfo, const_cast<ClassInfo*>(BooleanConstructor::info()));
+    set(Entry::CustomGetterClassInfo, const_cast<ClassInfo*>(JSCustomGetterFunction::info()));
     set(Entry::NumberConstructorClassInfo, const_cast<ClassInfo*>(NumberConstructor::info()));
     set(Entry::StringConstructorClassInfo, const_cast<ClassInfo*>(StringConstructor::info()));
     set(Entry::GeneratorClassInfo, const_cast<ClassInfo*>(Generator::info()));
@@ -1040,6 +1047,7 @@ void VMState::willShutDownHeap()
     if (propertyCaches)
         propertyCaches->front().clear();
     formatPatternState = nullptr;
+    computedFunctionNames.clear();
 }
 
 void VMState::countWithoutImage(VM& vm)
@@ -1066,6 +1074,7 @@ void VMState::releaseImage(VM& vm)
     propertyCaches = nullptr;
     functionTables = nullptr;
     cyclesOfImports = nullptr;
+    importersOfModules = nullptr;
     reexportedNames = nullptr;
     callSiteCache = nullptr;
     runtimeTable = nullptr;
@@ -1644,7 +1653,7 @@ void ProgramStatics::willAnalyzeHeap(VM& vm)
     m_scopesOfClosures.variablesShown.clear();
     if (m_firstNamedVariablesOfModules.isEmpty()) {
         m_placesOfModulesOfClosureNumbers.fill(UINT32_MAX, m_tables.closureFunctions.end - m_tables.closureFunctions.first);
-        bool endsWhereModuleEnds = forEachNamedVariable(m_tables.namedVariables(), [&](uint32_t module, size_t) {
+        bool endsWhereModuleEnds = forEachNamedVariable(decodeVarintBytes(m_tables.namedVariables()).span(), [&](uint32_t module, size_t) {
             m_modulesInHeapSnapshots.append(module);
             m_firstNamedVariablesOfModules.append(static_cast<uint32_t>(m_namedVariables.size()));
         }, [&](const VariableData& variable) {

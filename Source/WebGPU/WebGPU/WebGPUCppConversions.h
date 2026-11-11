@@ -81,6 +81,10 @@ template<> struct ChainedStructSType<WGPUTextureComponentSwizzleDescriptor> {
     static constexpr WGPUSType value = WGPUSType_TextureComponentSwizzleDescriptor;
 };
 
+template<> struct ChainedStructSType<WGPUSurfaceSourceMetalLayer> {
+    static constexpr WGPUSType value = WGPUSType_SurfaceSourceMetalLayer;
+};
+
 template<> struct ChainedStructSType<WGPURenderPassMaxDrawCount> {
     static constexpr WGPUSType value = WGPUSType_RenderPassMaxDrawCount;
 };
@@ -162,6 +166,14 @@ constexpr std::optional<WebGPU::BlendFactor> fromAPI(WGPUBlendFactor value)
         return WebGPU::BlendFactor::Constant;
     case WGPUBlendFactor_OneMinusConstant:
         return WebGPU::BlendFactor::OneMinusConstant;
+    case WGPUBlendFactor_Src1:
+        return WebGPU::BlendFactor::Src1;
+    case WGPUBlendFactor_OneMinusSrc1:
+        return WebGPU::BlendFactor::OneMinusSrc1;
+    case WGPUBlendFactor_Src1Alpha:
+        return WebGPU::BlendFactor::Src1Alpha;
+    case WGPUBlendFactor_OneMinusSrc1Alpha:
+        return WebGPU::BlendFactor::OneMinusSrc1Alpha;
     default:
         return std::nullopt;
     }
@@ -196,6 +208,14 @@ constexpr WGPUBlendFactor toAPI(WebGPU::BlendFactor value)
         return WGPUBlendFactor_Constant;
     case WebGPU::BlendFactor::OneMinusConstant:
         return WGPUBlendFactor_OneMinusConstant;
+    case WebGPU::BlendFactor::Src1:
+        return WGPUBlendFactor_Src1;
+    case WebGPU::BlendFactor::OneMinusSrc1:
+        return WGPUBlendFactor_OneMinusSrc1;
+    case WebGPU::BlendFactor::Src1Alpha:
+        return WGPUBlendFactor_Src1Alpha;
+    case WebGPU::BlendFactor::OneMinusSrc1Alpha:
+        return WGPUBlendFactor_OneMinusSrc1Alpha;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -469,6 +489,61 @@ constexpr std::optional<WebGPU::FeatureName> fromAPI(WGPUFeatureName value)
     default:
         return std::nullopt;
     }
+}
+
+// Float16Renderable and Float32Renderable have no C API equivalent.
+constexpr std::optional<WGPUFeatureName> toAPI(WebGPU::FeatureName value)
+{
+    switch (value) {
+    case WebGPU::FeatureName::DepthClipControl:
+        return WGPUFeatureName_DepthClipControl;
+    case WebGPU::FeatureName::Depth32floatStencil8:
+        return WGPUFeatureName_Depth32FloatStencil8;
+    case WebGPU::FeatureName::TextureCompressionBc:
+        return WGPUFeatureName_TextureCompressionBC;
+    case WebGPU::FeatureName::TextureCompressionBcSliced3d:
+        return WGPUFeatureName_TextureCompressionBCSliced3D;
+    case WebGPU::FeatureName::TextureCompressionEtc2:
+        return WGPUFeatureName_TextureCompressionETC2;
+    case WebGPU::FeatureName::TextureCompressionAstc:
+        return WGPUFeatureName_TextureCompressionASTC;
+    case WebGPU::FeatureName::TextureCompressionAstcSliced3d:
+        return WGPUFeatureName_TextureCompressionASTCSliced3D;
+    case WebGPU::FeatureName::TimestampQuery:
+        return WGPUFeatureName_TimestampQuery;
+    case WebGPU::FeatureName::IndirectFirstInstance:
+        return WGPUFeatureName_IndirectFirstInstance;
+    case WebGPU::FeatureName::ShaderF16:
+        return WGPUFeatureName_ShaderF16;
+    case WebGPU::FeatureName::Rg11b10ufloatRenderable:
+        return WGPUFeatureName_RG11B10UfloatRenderable;
+    case WebGPU::FeatureName::Bgra8unormStorage:
+        return WGPUFeatureName_BGRA8UnormStorage;
+    case WebGPU::FeatureName::Float32Filterable:
+        return WGPUFeatureName_Float32Filterable;
+    case WebGPU::FeatureName::Float32Blendable:
+        return WGPUFeatureName_Float32Blendable;
+    case WebGPU::FeatureName::ClipDistances:
+        return WGPUFeatureName_ClipDistances;
+    case WebGPU::FeatureName::DualSourceBlending:
+        return WGPUFeatureName_DualSourceBlending;
+    case WebGPU::FeatureName::Float16Renderable:
+    case WebGPU::FeatureName::Float32Renderable:
+        return std::nullopt;
+    case WebGPU::FeatureName::CoreFeaturesAndLimits:
+        return WGPUFeatureName_CoreFeaturesAndLimits;
+    case WebGPU::FeatureName::TextureFormatsTier1:
+        return WGPUFeatureName_TextureFormatsTier1;
+    case WebGPU::FeatureName::TextureFormatsTier2:
+        return WGPUFeatureName_TextureFormatsTier2;
+    case WebGPU::FeatureName::PrimitiveIndex:
+        return WGPUFeatureName_PrimitiveIndex;
+    case WebGPU::FeatureName::Subgroups:
+        return WGPUFeatureName_Subgroups;
+    case WebGPU::FeatureName::TextureComponentSwizzle:
+        return WGPUFeatureName_TextureComponentSwizzle;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 constexpr std::optional<WebGPU::FilterMode> fromAPI(WGPUFilterMode value)
@@ -2120,8 +2195,7 @@ inline Vector<WGPUCompilationMessage> toAPI(const WebGPU::CompilationInfo& compi
     messageStorage.clear();
     for (auto& message : compilationInfo.messages)
         messageStorage.append(message.message.utf8());
-    Vector<WGPUCompilationMessage> result;
-    result.reserveInitialCapacity(compilationInfo.messages.size());
+    Vector<WGPUCompilationMessage> result(ReserveCapacityTag { }, compilationInfo.messages.size());
     for (auto [i, message] : indexedRange(compilationInfo.messages)) {
         auto utf8 = byteCast<char>(messageStorage[i].span());
         result.append(WGPUCompilationMessage {

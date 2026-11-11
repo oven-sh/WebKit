@@ -1009,8 +1009,10 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
         return asked.isJavaScriptValue() && !asked.hasObjects() && asked.primitives == Primitive::LiteralString && asked.stringLiterals;
     };
     Type type = m_types.at(proven);
+    if (!(type.primitives & Primitive::AnyString))
+        return KeyOfAccess::IsAnyValue;
     bool textsAreOnlyExpected = false;
-    if (!holdsWrittenTextsAlone(type) && (written.opcode() == Opcode::ElemGet || written.opcode() == Opcode::ElemSet) && isInLoop() && m_opensGuesses && has(Mechanism::Guesses)) {
+    if (!holdsWrittenTextsAlone(type) && (written.opcode() == Opcode::ElemGet || written.opcode() == Opcode::ElemSet) && isInRepeatedCode() && m_opensGuesses && has(Mechanism::Guesses)) {
         TypeID expected = findExpectation(*this, written.propertyOperand()).type;
         if (!expected || m_types.withoutNullish(expected) == TypeID(TypeTable::string))
             expected = textsThatNamesOfHolderSayOfKey(*this, written);
@@ -1058,7 +1060,7 @@ Walker::KeyOfAccess Walker::tellKeyOfAccessApartByItsTexts(const BodyValue& writ
                 end = place + 1;
         }
     }
-    if (!key.isValue() || !has(Mechanism::Guesses) || !m_opensGuesses || !isInLoop() || end > endOfStretchBeingWalked())
+    if (!key.isValue() || !has(Mechanism::Guesses) || !m_opensGuesses || !isInRepeatedCode() || end > endOfStretchBeingWalked())
         return KeyOfAccess::IsAnyValue;
 
     auto typeOfInput = [&](ValueID input) {

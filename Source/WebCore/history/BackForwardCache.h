@@ -69,19 +69,20 @@ public:
     WEBCORE_EXPORT std::unique_ptr<CachedPage> take(BackForwardFrameItemIdentifier, Page*);
 
     WEBCORE_EXPORT void removeAllItemsForPage(Page&);
+    WEBCORE_EXPORT void removeAllItemsForMainFrame(LocalFrame&);
 
     WEBCORE_EXPORT void clearEntriesForOrigins(const HashSet<Ref<SecurityOrigin>>&);
 
     unsigned pageCount() const { return m_items.size(); }
-    WEBCORE_EXPORT unsigned LEGACY_NODELETE frameCount() const;
+    NODELETE WEBCORE_EXPORT unsigned frameCount() const;
 
     void markPagesForDeviceOrPageScaleChanged(Page&);
     void markPagesForContentsSizeChanged(Page&);
 #if ENABLE(VIDEO)
-    void LEGACY_NODELETE markPagesForCaptionPreferencesChanged();
+    NODELETE void markPagesForCaptionPreferencesChanged();
 #endif
 
-    WEBCORE_EXPORT bool LEGACY_NODELETE isInBackForwardCache(BackForwardFrameItemIdentifier) const;
+    NODELETE WEBCORE_EXPORT bool isInBackForwardCache(BackForwardFrameItemIdentifier) const;
     bool hasCachedPageExpired(BackForwardFrameItemIdentifier) const;
 
 private:

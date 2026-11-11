@@ -40,6 +40,8 @@ const InstancePromiseAllocator = constexpr AOT::Interpreter::offsetOfPromiseAllo
 const InstancePromiseHeader = constexpr AOT::Interpreter::offsetOfPromiseHeader
 const InstanceArrayAllocator = constexpr (AOT_INSTANCE_PREFIX_OFFSET(arrayAllocator))
 const InstanceNewArrayWithContiguousHeader = constexpr (AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader))
+const InstanceNewArrayWithInt32Header = constexpr (AOT_INSTANCE_PREFIX_OFFSET(newArrayWithInt32Header))
+const InstanceEmptyArrayAllocator = constexpr (AOT_INSTANCE_OFFSET(shortArrays.allocators) + AOT::ShortArrayWords::indexOfAllocator(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY) * sizeof(void*))
 const InstanceRopeStringAllocator = constexpr (AOT_INSTANCE_PREFIX_OFFSET(ropeStringAllocator))
 const InstanceStringHeader = constexpr (AOT_INSTANCE_PREFIX_OFFSET(stringHeader))
 const InstanceClosureEntrypoint = constexpr (AOT_INSTANCE_OFFSET(stubs.closureEntrypoint))
@@ -1588,6 +1590,41 @@ aotOp(op_new_array, OpNewArray, macro (size, get, dispatch, metadata, return)
     getu(size, OpNewArray, m_argc, t1)
     btinz t1, .hasElements
     bia t2, constexpr ArrayWithContiguous, .slow
+    bieq t2, constexpr ArrayWithContiguous, .emptyInlineButterfly
+    bieq t2, constexpr ArrayWithInt32, .emptyInlineButterfly
+    bineq t2, constexpr ArrayWithUndecided, .emptySeparateButterfly
+
+    # Like the NewEmptyArray stub: the butterfly is in the cell of the array, and an undecided array gets Int32 storage.
+.emptyInlineButterfly:
+    loadp InstanceEmptyArrayAllocator[t5], t0
+    allocateCell(t0, t1, t3, .hasNoCell)
+    bineq t2, constexpr ArrayWithContiguous, .holdsInt32
+    loadq InstanceNewArrayWithContiguousHeader[t5], t2
+    jmp .hasHeader
+.holdsInt32:
+    loadq InstanceNewArrayWithInt32Header[t5], t2
+.hasHeader:
+    storeq t2, [t1]
+    move constexpr BASE_CONTIGUOUS_VECTOR_LEN_EMPTY, t0
+    lshiftq 32, t0
+    storeq t0, (constexpr (sizeof(JSArray)))[t1]
+    move ValueEmpty, t0
+    # BASE_CONTIGUOUS_VECTOR_LEN_EMPTY words.
+    storeq t0, (constexpr (sizeof(JSArray) + sizeof(IndexingHeader)))[t1]
+    storeq t0, (constexpr (sizeof(JSArray) + sizeof(IndexingHeader) + 8))[t1]
+    storeq t0, (constexpr (sizeof(JSArray) + sizeof(IndexingHeader) + 16))[t1]
+    storeq t0, (constexpr (sizeof(JSArray) + sizeof(IndexingHeader) + 24))[t1]
+    storeq t0, (constexpr (sizeof(JSArray) + sizeof(IndexingHeader) + 32))[t1]
+    leap (constexpr (sizeof(JSArray) + sizeof(IndexingHeader)))[t1], t0
+    storep t0, JSObjectWithButterfly::m_butterfly[t1]
+    fenceAfterAllocation(t0)
+    jmp .updateProfile
+
+.hasNoCell:
+    callSlowPath(_llint_slow_path_aot_new_empty_array)
+    dispatch()
+
+.emptySeparateButterfly:
     move constexpr BASE_CONTIGUOUS_VECTOR_LEN_EMPTY, t3
     jmp .elementsFit
 .hasElements:
@@ -1668,6 +1705,7 @@ aotOp(op_new_array, OpNewArray, macro (size, get, dispatch, metadata, return)
     storep t7, JSObjectWithButterfly::m_butterfly[t1]
     fenceAfterAllocation(t0)
 
+.updateProfile:
     # ArrayAllocationProfile::updateLastAllocation().
     loadq OpNewArray::Metadata::m_arrayAllocationProfile[t6], t0
     urshiftq constexpr AOT::arrayAllocationProfilePointerBits, t0

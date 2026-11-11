@@ -103,6 +103,20 @@ static bool bodyStoresValueForStringPieces(Walker& walker, const BodyIndex& inde
     return stored.get(value.index());
 }
 
+static Reference buildPositionForStringPieces(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
+{
+    Reference result = buildOperatorForStrings(walker, opcode, left, right, origin);
+    return buildOperatorForStrings(walker, Opcode::BitAnd, result, integerForStrings(walker, std::numeric_limits<int32_t>::max()), origin);
+}
+
+static void noteThatBoundsAreInOrderForStringPieces(Walker& walker, Reference start, Reference end)
+{
+    start = rootForStrings(walker, start);
+    end = rootForStrings(walker, end);
+    if (start.isValue() && end.isValue())
+        noteKnown(walker, KnownNote::BoundsOfPieceAreInOrder, start, end, 0, LocationMasks(), 1);
+}
+
 bool buildPieceByMethod(Walker& walker, const CallByOneRow& call)
 {
     if (!call.receiver || call.arguments.size() > 2 || !isProvenString(walker, walker.typeOf(call.receiver)))
@@ -133,7 +147,8 @@ bool buildPieceByMethod(Walker& walker, const CallByOneRow& call)
 
     Origin origin = call.origin;
     Reference string = call.receiver;
-    Reference length = buildLengthOfString(walker, string, origin);
+    std::optional<PieceOfString> outer = pieceReadInLoop(walker, string, origin);
+    Reference length = outer ? buildLengthOfPiece(walker, *outer, origin) : buildLengthOfString(walker, string, origin);
     if (!length)
         return true;
     Reference zero = integerForStrings(walker, 0);
@@ -189,6 +204,12 @@ bool buildPieceByMethod(Walker& walker, const CallByOneRow& call)
     else if (rootForStrings(walker, start) == rootForStrings(walker, end))
         piece = walker.constant(PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
     else {
+        if (outer) {
+            string = outer->string;
+            start = buildPositionForStringPieces(walker, Opcode::Add, outer->start, start, origin);
+            end = buildPositionForStringPieces(walker, Opcode::Add, outer->start, end, origin);
+            noteThatBoundsAreInOrderForStringPieces(walker, start, end);
+        }
         piece = buildPieceOfString(walker, string, start, end, origin);
         if (piece && piece.isValue() && bodyStoresValueForStringPieces(walker, walker.currentBodyIndex(), call.call.id()))
             noteKnown(walker, KnownNote::PieceIsStoredByBodyThatCutIt, piece, { }, 0, LocationMasks(), 1);
@@ -258,6 +279,10 @@ static bool endIsSumWithStartForStringPieces(const Walker& walker, const PieceOf
 
 bool isRangeOfPieceInOrder(Walker& walker, const PieceOfString& piece)
 {
+    Reference rootOfStart = rootForStrings(walker, piece.start);
+    Reference rootOfEnd = rootForStrings(walker, piece.end);
+    if (rootOfStart.isValue() && rootOfEnd.isValue() && findKnown(walker, KnownNote::BoundsOfPieceAreInOrder, rootOfStart, rootOfEnd))
+        return true;
     if (Reference range = rangeGivingBoundForStringPieces(walker, piece.start, startOfStringRange)) {
         if (range == rangeGivingBoundForStringPieces(walker, piece.end, endOfStringRange))
             return true;
@@ -268,6 +293,44 @@ bool isRangeOfPieceInOrder(Walker& walker, const PieceOfString& piece)
     if (endIsSumWithStartForStringPieces(walker, piece))
         return true;
     return relationDecidedForStrings(walker, Opcode::LessEq, piece.start, piece.end).value_or(false) || boundsAreOfOnePart(walker, piece.start, piece.end) || (piece.end.isRecord() && boundIsShownBySumsForStringPieces(walker, piece.start, piece.end, walker.code().at(piece.end.id()).origin()));
+}
+
+Reference buildLengthOfPiece(Walker& walker, const PieceOfString& piece, Origin origin)
+{
+    return buildPositionForStringPieces(walker, Opcode::Sub, piece.end, piece.start, origin);
+}
+
+static std::optional<PieceOfString> orderedPieceForStringPieces(Walker& walker, Reference text)
+{
+    Reference root = rootForStrings(walker, text);
+    if (!root.isValue() || walker.isUnreachable())
+        return std::nullopt;
+    Opcode opcode = walker.code().at(root.id()).opcode;
+    if (opcode != Opcode::Substring && opcode != Opcode::SubstringOrUndefined)
+        return std::nullopt;
+    std::optional<PieceOfString> piece = pieceInSight(walker, text);
+    if (!piece || !walker.types().at(walker.typeOf(piece->start)).isInteger() || !walker.types().at(walker.typeOf(piece->end)).isInteger() || !isRangeOfPieceInOrder(walker, *piece))
+        return std::nullopt;
+    return piece;
+}
+
+std::optional<PieceOfString> pieceReadInLoop(Walker& walker, Reference text, Origin origin)
+{
+    if (walker.isUnreachable() || !walker.isInLoop() || isOrCanBeFlattenedBeforeLoop(walker, text))
+        return std::nullopt;
+    std::optional<PieceOfString> piece = orderedPieceForStringPieces(walker, text);
+    while (piece && !isOrCanBeFlattenedBeforeLoop(walker, piece->string)) {
+        std::optional<PieceOfString> outer = orderedPieceForStringPieces(walker, piece->string);
+        if (!outer)
+            break;
+        Reference start = buildPositionForStringPieces(walker, Opcode::Add, outer->start, piece->start, origin);
+        Reference end = start ? buildPositionForStringPieces(walker, Opcode::Add, outer->start, piece->end, origin) : Reference();
+        if (!end)
+            break;
+        noteThatBoundsAreInOrderForStringPieces(walker, start, end);
+        piece = PieceOfString { outer->string, start, end };
+    }
+    return piece;
 }
 
 bool buildLengthOfPieceInSight(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
@@ -282,17 +345,18 @@ bool buildLengthOfPieceInSight(Walker& walker, const BodyValue& value, const Inp
     std::optional<PieceOfString> piece = pieceInSight(walker, text);
     if (!piece || !isRangeOfPieceInOrder(walker, *piece))
         return false;
-    Reference difference = buildOperatorForStrings(walker, Opcode::Sub, piece->end, piece->start, origin);
-    Reference length = buildOperatorForStrings(walker, Opcode::BitAnd, difference, integerForStrings(walker, std::numeric_limits<int32_t>::max()), origin);
+    Reference length = buildLengthOfPiece(walker, *piece, origin);
     if (length)
         bindForStrings(walker, value.id(), length, origin);
     return true;
 }
 
-static std::optional<PieceOfString> pieceToReadNumberOffForStringPieces(Walker& walker, Reference text)
+static std::optional<PieceOfString> pieceToReadNumberOffForStringPieces(Walker& walker, Reference text, Origin origin)
 {
     if (!text || !isProvenString(walker, walker.typeOf(text)))
         return std::nullopt;
+    if (std::optional<PieceOfString> piece = pieceReadInLoop(walker, text, origin))
+        return piece;
     std::optional<PieceOfString> piece = pieceInSight(walker, text);
     if (!piece || !isRangeOfPieceInOrder(walker, *piece))
         return std::nullopt;
@@ -303,10 +367,10 @@ bool buildNumberOfPiece(Walker& walker, const BodyValue& value, const InputsOfTy
 {
     if (inputs.areOnlyTypes() || walker.isUnreachable())
         return false;
-    std::optional<PieceOfString> piece = pieceToReadNumberOffForStringPieces(walker, walker.referenceOf(value.operand(0)));
+    Origin origin = walker.originOf(value);
+    std::optional<PieceOfString> piece = pieceToReadNumberOffForStringPieces(walker, walker.referenceOf(value.operand(0)), origin);
     if (!piece)
         return false;
-    Origin origin = walker.originOf(value);
     Reference number = buildNumberOfRange(walker, *piece, origin);
     if (!number)
         return false;
@@ -318,7 +382,7 @@ bool buildNumberOfPieceByCall(Walker& walker, const CallByOneRow& call)
 {
     if (call.arguments.empty() || call.arguments.size() > 2)
         return false;
-    std::optional<PieceOfString> piece = pieceToReadNumberOffForStringPieces(walker, call.arguments[0]);
+    std::optional<PieceOfString> piece = pieceToReadNumberOffForStringPieces(walker, call.arguments[0], call.origin);
     if (!piece)
         return false;
 
@@ -391,7 +455,7 @@ static std::optional<PieceOfString> pieceThatIsKeyForStringPieces(Walker& walker
 {
     if (!walker.opensGuesses() || !walker.has(Mechanism::Folding) || call.isForwarded || !call.receiver || call.arguments.size() != numberOfArguments || call.writtenArguments().size() != numberOfArguments)
         return std::nullopt;
-    std::optional<PieceOfString> piece = pieceToReadNumberOffForStringPieces(walker, call.arguments[0]);
+    std::optional<PieceOfString> piece = pieceToReadNumberOffForStringPieces(walker, call.arguments[0], call.origin);
     if (!piece || !walker.types().at(walker.typeOf(piece->start)).isInteger() || !walker.types().at(walker.typeOf(piece->end)).isInteger())
         return std::nullopt;
     return piece;

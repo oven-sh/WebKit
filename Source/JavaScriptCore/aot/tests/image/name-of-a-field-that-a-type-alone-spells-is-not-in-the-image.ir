@@ -7,6 +7,7 @@
 # KEPT: 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a
 # RUN(GONE): image Text
 # GONE-NOT: 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71
+# GONE-NOT: coded qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 # RUN: run-in-shell globalThis.hold = o => { const name = "q".repeat(32); const keys = () => { const all = Object.keys(o); let text = ""; for (let i = 0; i < all.length; i++) text += all[i][0]; return text; }; print(name in o, o[name], keys()); o[name] = 2; print(name in o, o[name], keys()); delete o[name]; print(name in o, keys()); };
 # CHECK: false undefined z
 # CHECK-NEXT: true 2 zq

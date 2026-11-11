@@ -104,8 +104,8 @@ protected:
     JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
     JS_EXPORT_PRIVATE static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
 #endif
-    JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getConstructData(JSCell*);
-    JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getCallData(JSCell*);
+    NODELETE JS_EXPORT_PRIVATE static CallData getConstructData(JSCell*);
+    NODELETE JS_EXPORT_PRIVATE static CallData getCallData(JSCell*);
 
     TaggedNativeFunction m_functionForCall;
     TaggedNativeFunction m_functionForConstruct;

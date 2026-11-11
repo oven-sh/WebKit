@@ -3,7 +3,6 @@ StyleChangedAnimatablePropertiesGenerated.cpp
 css/CSSStyleProperties.cpp
 dom/Attr.cpp
 dom/ComposedTreeIterator.h
-dom/ContainerNode.cpp
 dom/Document.cpp
 dom/Element.cpp
 dom/EventPath.cpp
@@ -12,13 +11,7 @@ dom/MutationObserver.cpp
 [ iOS ] dom/Node.cpp
 dom/ShadowRoot.cpp
 dom/ViewTransition.cpp
-[ iOS ] loader/ios/LegacyPreviewLoader.mm
-[ iOS ] page/Quirks.cpp
-[ iOS ] page/WebKitNamespace.cpp
-[ iOS ] page/cocoa/ContentChangeObserver.cpp
-[ iOS ] platform/PreviewConverter.cpp
 rendering/BackgroundPainter.cpp
-rendering/HitTestResult.cpp
 rendering/LayerAncestorClippingStack.cpp
 rendering/MarkedText.cpp
 rendering/RenderBlock.cpp
@@ -45,7 +38,6 @@ rendering/RenderWidget.cpp
 [ macOS ] rendering/cocoa/RenderThemeCocoa.mm
 rendering/shapes/ShapeOutsideInfo.h
 rendering/style/BorderData.cpp
-rendering/svg/RenderSVGTextPath.cpp
 rendering/svg/legacy/LegacyRenderSVGImage.cpp
 rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp
 rendering/svg/legacy/LegacyRenderSVGRoot.cpp

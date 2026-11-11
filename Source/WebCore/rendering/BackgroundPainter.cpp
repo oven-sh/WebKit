@@ -566,14 +566,17 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
             auto invertContent = [&] {
                 if (bgImage->drawsSVGImage())
-                    return AXCustomColorModeController::shouldInvertSVGImage(clientForBackgroundImage, *bgImage);
+                    return AXCustomColorModeController::shouldInvertSVGImage(clientForBackgroundImage, *bgImage) ? InvertContent::Yes : InvertContent::No;
                 if constexpr (std::is_same_v<Layer, Style::MaskLayer>)
-                    return false;
-                return AXCustomColorModeController::shouldInvertBackgroundImage(clientForBackgroundImage, *bgImage, geometry.destinationRect.size(), geometry.tileSize);
+                    return InvertContent::No;
+                if (AXCustomColorModeController::shouldForceInvertBitmapImage(clientForBackgroundImage, *bgImage))
+                    return InvertContent::Forced;
+                return AXCustomColorModeController::shouldInvertBackgroundImage(clientForBackgroundImage, *bgImage, geometry.destinationRect.size(), geometry.tileSize) ? InvertContent::Yes : InvertContent::No;
             };
 #endif
 
-            ImageDrawingOptions options = {
+            ImageDrawDescriptor descriptor {
+                concreteObjectSize,
                 op == CompositeOperator::SourceOver ? layer.layer.compositeForPainting(layer.isLast) : op,
                 layerBlendMode,
                 bgImage->decodingModeForImageDraw(m_renderer, m_paintInfo),
@@ -582,7 +585,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
                 layer.layer.maskMode() == Style::MaskMode::Luminance ? DrawLuminanceMask::Yes : DrawLuminanceMask::No,
                 document().settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-                invertContent() ? InvertContent::Yes : InvertContent::No,
+                invertContent(),
 #endif
                 document().settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No,
                 document().settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No,
@@ -590,7 +593,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
                 style.dynamicRangeLimit().toPlatformDynamicRangeLimit()
             };
 
-            auto drawResult = bgImage->drawTiled(context, clientForBackgroundImage, concreteObjectSize, geometry.destinationRect, toLayoutPoint(geometry.relativePhase()), geometry.tileSize, geometry.spaceSize, options, isFirstLine);
+            auto drawResult = bgImage->drawTiled(context, clientForBackgroundImage, descriptor, geometry.destinationRect, toLayoutPoint(geometry.relativePhase()), geometry.tileSize, geometry.spaceSize, isFirstLine);
             if (drawResult == ImageDrawResult::DidRequestDecoding) {
                 ASSERT(bgImage->hasCachedImage());
                 protect(bgImage->cachedImage())->addClientWaitingForAsyncDecoding(protect(m_renderer)->cachedImageClient());
@@ -621,7 +624,7 @@ void BackgroundPainter::clipRoundedInnerRect(GraphicsContext& context, const Flo
     context.clipRoundedRect(clipRect);
 }
 
-static inline std::optional<LayoutUnit> LEGACY_NODELETE getSpace(LayoutUnit areaSize, LayoutUnit tileSize)
+NODELETE static inline std::optional<LayoutUnit> getSpace(LayoutUnit areaSize, LayoutUnit tileSize)
 {
     if (int numberOfTiles = areaSize / tileSize; numberOfTiles > 1)
         return (areaSize - numberOfTiles * tileSize) / (numberOfTiles - 1);
@@ -852,7 +855,8 @@ template<typename Layer> LayoutSize BackgroundPainter::calculateFillTileSize(con
     LayoutSize imageIntrinsicSize;
     if (image) {
         imageIntrinsicSize = renderer.calculateImageIntrinsicDimensions(*image, layerSizing, RenderBoxModelObject::ScaleByUsedZoom::Yes);
-        imageIntrinsicSize.scale(1 / image->imageScaleFactor(), 1 / image->imageScaleFactor());
+        auto inverseResolution = narrowPrecisionToFloat(1 / image->imageResolution().value);
+        imageIntrinsicSize.scale(inverseResolution, inverseResolution);
     } else
         imageIntrinsicSize = positioningAreaSize;
 

@@ -483,10 +483,29 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* inst
     OPERATION_RETURN(scope, instanceOfAndCache(instance, JSValue::decode(encodedValue), JSValue::decode(encodedConstructor)));
 }
 
+static bool isAcceptedBinaryData(Instance* instance, JSValue value, JSValue prototype)
+{
+    if (!instance->state->acceptsForeignBinaryData || !value.isCell() || !prototype.isObject())
+        return false;
+    JSGlobalObject* realm = instance->globalObject;
+    JSType type = value.asCell()->type();
+    JSObject* constructor = nullptr;
+    if (isTypedArrayType(type))
+        constructor = realm->typedArrayConstructor(typedArrayType(type));
+    else if (type == ArrayBufferType && !uncheckedDowncast<JSArrayBuffer>(value.asCell())->isShared())
+        constructor = realm->arrayBufferConstructor(ArrayBufferSharingMode::Default);
+    VM& vm = *instance->vm;
+    return constructor && constructor->getDirect(vm, vm.propertyNames->prototype) == prototype && constructor->getDirect(vm, vm.propertyNames->hasInstanceSymbol);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTDefaultHasInstance, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedPrototype))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDefaultHasInstance);
-    OPERATION_RETURN(scope, JSObject::defaultHasInstance(globalObject, JSValue::decode(encodedValue), JSValue::decode(encodedPrototype)));
+    JSValue value = JSValue::decode(encodedValue);
+    JSValue prototype = JSValue::decode(encodedPrototype);
+    bool isInstance = JSObject::defaultHasInstance(globalObject, value, prototype);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    OPERATION_RETURN(scope, isInstance || isAcceptedBinaryData(instance, value, prototype));
 }
 
 static bool isPlainObjectBelowNoIndexedProperties(Structure* structure)
@@ -863,6 +882,10 @@ static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& 
     bool shouldFile = (isIn || object->type() != ProxyObjectType) && caches.shouldFile(object->structureID(), name.uid, SlotAccess::Read);
     bool starsWait = hasStarsThatWait(object);
     shouldFile &= !starsWait;
+    if (shouldFile) {
+        std::optional<Slot> known = caches.tables().find(object->structureID(), name, SlotAccess::Read);
+        shouldFile = !known || known->kind != Slot::Kind::Uncacheable;
+    }
     if (shouldFile) {
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
         createClassObjectsOnChain(vm, object);

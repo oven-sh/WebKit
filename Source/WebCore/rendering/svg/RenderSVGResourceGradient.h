@@ -51,10 +51,10 @@ protected:
 
     virtual AffineTransform gradientTransform() const = 0;
 
-    bool buildGradientIfNeeded(const RenderLayerModelObject&, const Style::ComputedStyle&, AffineTransform& userspaceTransform);
+    bool buildGradientIfNeeded(const RenderLayerModelObject&, const Style::ComputedStyle&, AffineTransform& gradientToUserSpaceTransform);
     GradientColorStops stopsByApplyingColorFilter(const GradientColorStops&, const Style::ComputedStyle&) const;
-    GradientSpreadMethod LEGACY_NODELETE platformSpreadMethodFromSVGType(SVGSpreadMethodType) const;
-    ColorInterpolationMethod LEGACY_NODELETE gradientColorInterpolationMethod() const;
+    NODELETE GradientSpreadMethod platformSpreadMethodFromSVGType(SVGSpreadMethodType) const;
+    NODELETE ColorInterpolationMethod gradientColorInterpolationMethod() const;
 
     RefPtr<Gradient> m_gradient;
 

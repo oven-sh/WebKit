@@ -67,9 +67,9 @@ public:
     // rather than list-style-image/type.
     bool hasContentProperty() const;
 
-    RenderBlockFlow* LEGACY_NODELETE contentContainer() const;
+    NODELETE RenderBlockFlow* contentContainer() const;
 
-    RenderListItem* LEGACY_NODELETE listItem() const;
+    NODELETE RenderListItem* listItem() const;
 
     std::pair<float, float> layoutBounds() const { return m_layoutBounds; }
 
@@ -86,13 +86,14 @@ public:
 private:
     void willBeDestroyed() final;
     ASCIILiteral renderName() const final { return "RenderListMarker"_s; }
-    void computeIntrinsicLogicalWidthContributions() final;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() final;
     bool canHaveChildren() const final { return true; }
     bool canHaveGeneratedChildren() const final { return true; }
     void paint(PaintInfo&, const LayoutPoint&) final;
     void layout() final;
     void imageChanged(WrappedImagePtr, const IntRect*) final;
-    LayoutRect LEGACY_NODELETE selectionRectForRepaint(const RenderLayerModelObject* repaintContainer, bool clipToVisibleContent) final;
+    void forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>&) override final;
+    NODELETE LayoutRect selectionRectForRepaint(const RenderLayerModelObject* repaintContainer, bool clipToVisibleContent) final;
     bool canBeSelectionLeaf() const final { return true; }
     void styleWillChange(Style::Difference, const Style::ComputedStyle& newStyle) final;
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
@@ -103,13 +104,14 @@ private:
     void element() const = delete;
 
     void updateInlineMargins();
+    void updateInlineMargins(LayoutUnit logicalWidth);
     void updateContent();
     LayoutSize markerImageSize(const Style::Image&) const;
     void updateContentContainerText(const ListMarkerTextContent&);
     void setContentContainerImageSize(LayoutSize);
     void layoutContentContainer(RenderBlockFlow&);
 
-    LayoutRect LEGACY_NODELETE localSelectionRect();
+    NODELETE LayoutRect localSelectionRect();
 
 private:
     SingleThreadWeakPtr<RenderListItem> m_listItem;
@@ -120,7 +122,7 @@ private:
 // The room an image marker keeps between itself and the content it labels.
 constexpr int listMarkerImagePadding = 7;
 ListMarkerTextContent listMarkerTextContent(const Style::ComputedStyle& markerStyle, RenderListItem&);
-bool LEGACY_NODELETE listMarkerHasContent(const Style::ComputedStyle& markerStyle, Document&);
+NODELETE bool listMarkerHasContent(const Style::ComputedStyle& markerStyle, Document&);
 bool listMarkerSynthesizesGlyph(const Style::ComputedStyle& markerStyle, Document&);
 RefPtr<Style::Image> listMarkerImage(const Style::ComputedStyle& markerStyle);
 bool listMarkerIsDisclosure(const Style::ComputedStyle& markerStyle, Document&);

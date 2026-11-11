@@ -28,6 +28,7 @@
 #include "config.h"
 #include "SVGRenderSupport.h"
 
+#include "ContainerNodeInlines.h"
 #include "DashArray.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "LegacyRenderSVGForeignObject.h"
@@ -60,6 +61,7 @@
 #include "SVGGeometryElement.h"
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
+#include "SVGSVGElement.h"
 #include "Settings.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "TransformOperationData.h"
@@ -268,7 +270,7 @@ static inline void invalidateResourcesOfChildren(RenderElement& renderer)
         invalidateResourcesOfChildren(child);
 }
 
-static inline bool LEGACY_NODELETE layoutSizeOfNearestViewportChanged(const RenderElement& renderer)
+NODELETE static inline bool layoutSizeOfNearestViewportChanged(const RenderElement& renderer)
 {
     for (auto* start = &renderer; start; start = start->parent()) {
         if (auto* svgRoot = dynamicDowncast<LegacyRenderSVGRoot>(*start))
@@ -332,7 +334,7 @@ void SVGRenderSupport::layoutChildren(RenderElement& start, bool selfNeedsLayout
         }
 
         if (needsLayout)
-            child.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            child.setNeedsLayout(MarkingBehavior::OnlyThis);
 
         if (child.needsLayout()) {
             CheckedRef childElement = downcast<RenderElement>(child);
@@ -526,6 +528,46 @@ bool SVGRenderSupport::pointInClippingArea(const RenderElement& renderer, const 
     return true;
 }
 
+AffineTransform SVGRenderSupport::legacyNonScalingStrokeTransform(const SVGElement& element)
+{
+    // We intentionally do NOT use getScreenCTM() here. getScreenCTM() now returns
+    // the full accumulated CSS transform matrix (including transforms from HTML
+    // ancestors like a scaled <body>). However, the legacy SVG paint context only
+    // includes SVG-internal transforms plus position offsets — HTML ancestor CSS
+    // transforms are applied at the compositing/layer level. Using the full
+    // getScreenCTM() would cause non-scaling-stroke to over-compensate for
+    // transforms that are already handled by the layer system.
+    //
+    // Instead, walk the SVG ancestor chain accumulating SVG-internal transforms,
+    // and at the outermost <svg>, use localToAbsolute (point-mapping only) which
+    // correctly discards the rotation/scale components of HTML ancestor CSS transforms.
+    AffineTransform ctm;
+    RefPtr<const SVGSVGElement> outermostSVG;
+    for (RefPtr<const Element> current = &element; current; current = current->parentOrShadowHostElement()) {
+        RefPtr svgElement = dynamicDowncast<SVGElement>(*current);
+        if (!svgElement)
+            break;
+        ctm = svgElement->localCoordinateSpaceTransform(CTMScope::NearestViewportScope).multiply(ctm);
+        if (RefPtr svgSVGElement = dynamicDowncast<SVGSVGElement>(*svgElement))
+            outermostSVG = WTF::move(svgSVGElement);
+    }
+
+    // Now add the outermost SVG's screen position as a translation.
+    if (outermostSVG) {
+        if (CheckedPtr renderer = outermostSVG->renderer()) {
+            if (CheckedPtr legacyRoot = dynamicDowncast<LegacyRenderSVGRoot>(*renderer)) {
+                FloatPoint location = legacyRoot->localToBorderBoxTransform().mapPoint(FloatPoint());
+                float zoomFactor = 1 / renderer->style().usedZoom();
+                location = renderer->localToAbsolute(location, MapCoordinatesMode::UseTransforms);
+                location.scale(zoomFactor);
+                ctm = AffineTransform::makeTranslation(toFloatSize(location)) * ctm;
+            }
+        }
+    }
+
+    return ctm;
+}
+
 void SVGRenderSupport::applyStrokeStyleToContext(GraphicsContext& context, const Style::ComputedStyle& style, const RenderElement& renderer)
 {
     auto element = dynamicDowncast<SVGElement>(protect(renderer.element()));
@@ -707,7 +749,7 @@ FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderEl
         ASSERT(renderer.hasNonScalingStroke());
 
         auto strokeBoundingBox = fillBoundingBox;
-        auto nonScalingTransform = renderer.nonScalingStrokeTransform();
+        auto nonScalingTransform = renderer.computeNonScalingStrokeTransform();
         if (auto inverse = nonScalingTransform.inverse()) {
             auto* usePath = renderer.nonScalingStrokePath(&renderer.path(), nonScalingTransform);
             auto strokeBoundingRect = calculateApproximateScalingStrokeBoundingBox(renderer, usePath->fastBoundingRect());

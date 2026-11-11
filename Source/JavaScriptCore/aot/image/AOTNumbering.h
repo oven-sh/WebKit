@@ -462,6 +462,34 @@ struct NumberedKeys {
     Vector<uint32_t> hashSlots;
 };
 
+class StringNumbers {
+public:
+    StringNumbers() = default;
+    JS_EXPORT_PRIVATE StringNumbers(const BitVector& named, Vector<StringID>&& sortedCodedStrings, size_t numberOfStrings, const IdentifierNumbering* = nullptr);
+
+    uint32_t numberOfWords() const { return m_numberOfWords; }
+    std::span<const StringID> coded() const { return m_coded.span(); }
+    std::optional<uint32_t> numberOf(StringID id) const
+    {
+        if (id.index() >= m_numbers.size() || m_numbers[id.index()] == noNumber)
+            return std::nullopt;
+        return m_numbers[id.index()];
+    }
+    uint32_t requiredNumberOf(StringID id) const
+    {
+        std::optional<uint32_t> number = numberOf(id);
+        RELEASE_ASSERT(number);
+        return *number;
+    }
+
+private:
+    static constexpr uint32_t noNumber = UINT32_MAX;
+
+    Vector<uint32_t> m_numbers;
+    uint32_t m_numberOfWords { 0 };
+    Vector<StringID> m_coded;
+};
+
 class ImageNumbers {
     WTF_MAKE_NONCOPYABLE(ImageNumbers);
 public:
@@ -479,6 +507,7 @@ public:
     InstanceSizes instanceSizes() const { return m_instanceSizes; }
 
     const BitVector& namedStrings() const { return m_namedStrings; }
+    const StringNumbers& stringNumbers() const { return m_stringNumbers; }
     const BitVector& textsOfNames() const { return m_textsOfNames; }
     const BitVector& otherStringsWithText() const { return m_otherStringsWithText; }
     std::span<const StringID> stringsInOrderOfText() const { return m_stringsInOrderOfText.span(); }
@@ -551,6 +580,7 @@ private:
     PlacedStatics m_statics;
     InstanceSizes m_instanceSizes { };
     BitVector m_namedStrings;
+    StringNumbers m_stringNumbers;
     BitVector m_textsOfNames;
     BitVector m_otherStringsWithText;
     Vector<StringID> m_stringsInOrderOfText;
@@ -682,6 +712,7 @@ struct NamesOfTables {
     BitVector textsNamedAsKeys;
     BitVector strings;
     BitVector stringsWithOtherUsesThanShowing;
+    BitVector modulePathStrings;
     BitVector stringConstants;
     BitVector bigInts;
     Vector<uint32_t> allocations;

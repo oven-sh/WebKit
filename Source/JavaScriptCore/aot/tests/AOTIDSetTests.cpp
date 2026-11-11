@@ -908,6 +908,25 @@ static void unionsOfTypesWithEarlierStatesAreTheUnions()
     told.forgetEarlierStates();
 }
 
+static void rememberedAnswersDoNotShareNumbers()
+{
+    TypeTable table(BuiltinTable::singleton());
+    table.setObjects(makeUniqueWithoutFastMallocCheck<ObjectTable>(BuiltinTable::singleton(), std::span<const FunctionInOrderOfObjects>()));
+    table.freeze();
+    TypeArena types(table, ArenaKeeps::UntilReset);
+
+    constexpr auto records = static_cast<uint8_t>(AnswerKeptInArena::RecordsThatFileWrites);
+    constexpr auto mention = static_cast<uint8_t>(AnswerKeptInArena::UnitMayMentionFunctions);
+    const uint32_t word = TypeID(TypeTable::string).bits();
+    TypeArena::SetOfRound round { word, false };
+    types.rememberRound(records, 2, 0, round, 0, { 5, 2 });
+    AOT_TEST_CHECK(!types.rememberedAnswer(mention, word, 0));
+    types.rememberAnswer(mention, word, 0, 1);
+    std::optional<TypeArena::WordsOfRound> kept = types.rememberedRound(records, 2, round, 0);
+    AOT_TEST_CHECK(kept && (*kept)[0] == 5 && (*kept)[1] == 2);
+    AOT_TEST_CHECK(types.rememberedAnswer(mention, word, 0) == 1u);
+}
+
 static void freezingTypeTableFreesOutgrownSlots()
 {
     constexpr uint32_t numberMade = 64 * InternedRecords<Type>::numberOfShards;
@@ -1291,6 +1310,7 @@ std::span<const NativeTest> idSetTests()
         { "id-sets/unions-of-types-with-earlier-states"_s, unionsOfTypesWithEarlierStatesAreTheUnions },
         { "id-sets/compare-by-content"_s, idSetsCompareByContent },
         { "id-sets/typed-sets"_s, typedIDSetsAnswerLikeUntypedOnes },
+        { "id-sets/remembered-answers-do-not-share-numbers"_s, rememberedAnswersDoNotShareNumbers },
         { "id-sets/freezing-type-table-frees-outgrown-slots"_s, freezingTypeTableFreesOutgrownSlots },
         { "id-sets/list-memo"_s, idListMemoKeepsWhatIsAskedFor },
         { "id-sets/shared-answers-eight-threads-number-lists"_s, eightThreadsGetOneNumberForEachSharedList },

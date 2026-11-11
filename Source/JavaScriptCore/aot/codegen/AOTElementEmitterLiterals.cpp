@@ -53,6 +53,10 @@ void GuardEmitter::generateHasArrayStorage(const ValueContext& value)
     }
     if (value->admitsInt32Storage()) {
         CellPointer list = in<CellPointer>(value->arrayOperand());
+        if (value->isWritable()) {
+            defineTest(value, kind == ArrayStorage::Contiguous ? emitter<ElementAccessEmitter>().holdsWritableBoxedElements(list) : emitter<ElementAccessEmitter>().hasWritableNumericStorage(list));
+            return;
+        }
         defineTest(value, kind == ArrayStorage::Contiguous ? emitter<ElementAccessEmitter>().holdsBoxedElements(list) : emitter<ElementAccessEmitter>().hasDoubleOrInt32Storage(list));
         return;
     }
@@ -69,7 +73,7 @@ void GuardEmitter::generateIsElementPresent(const ValueContext& value)
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
     emitter<ElementAccessEmitter>().holdKindOfList(value);
     defineTestByBranching(value, [&](BranchTargets targets) {
-        if (form && value->admitsInt32Storage())
+        if (form && form->kind == ArrayStorage::Double && value->admitsInt32Storage())
             emitter<ElementAccessEmitter>().branchOnPresentElementInDoubleOrInt32Storage(value, targets);
         else if (form)
             emitter<ElementAccessEmitter>().branchOnPresentElement(value, *form, targets);

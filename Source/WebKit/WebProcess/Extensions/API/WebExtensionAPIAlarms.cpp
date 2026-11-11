@@ -33,6 +33,7 @@
 #include "Logging.h"
 #include "MessageSenderInlines.h"
 #include "WebExtensionAPINamespace.h"
+#include "WebExtensionAlarmParameters.h"
 #include "WebExtensionConstants.h"
 #include "WebExtensionContextMessages.h"
 #include "WebExtensionContextProxy.h"
@@ -117,7 +118,12 @@ void WebExtensionAPIAlarms::createAlarm(const String& name, RefPtr<JSON::Value> 
 
     String alarmName = !name.isEmpty() ? name : infoName;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::AlarmsCreate(!alarmName.isEmpty() ? alarmName : emptyAlarmName, initialInterval, repeatInterval), [protectedThis = Ref { *this }, callback = WTF::move(callback)]() {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::AlarmsCreate(!alarmName.isEmpty() ? alarmName : emptyAlarmName, initialInterval, repeatInterval), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
+        if (!result) {
+            callback->reportError(result.error());
+            return;
+        }
+
         callback->call();
     }, extensionContext().identifier());
 }
@@ -173,7 +179,7 @@ void WebExtensionContextProxy::dispatchAlarmsEvent(const WebExtensionAlarmParame
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/alarms/onAlarm
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.alarms().onAlarm().invokeListenersWithParametersArgument(alarm);
+        protect(protect(namespaceObject.alarms())->onAlarm())->invokeListenersWithParametersArgument(alarm);
     });
 }
 

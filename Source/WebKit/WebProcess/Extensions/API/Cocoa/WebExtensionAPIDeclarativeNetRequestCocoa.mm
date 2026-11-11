@@ -35,7 +35,6 @@
 #import "JSWebExtensionWrapper.h"
 #import "MessageSenderInlines.h"
 #import "WKContentRuleListPrivate.h"
-#import "WebExtensionContext.h"
 #import "WebExtensionContextMessages.h"
 #import "WebExtensionMatchedRuleParameters.h"
 #import "WebExtensionUtilities.h"
@@ -95,6 +94,38 @@ bool WebExtensionAPIDeclarativeNetRequest::isPropertyAllowed(const ASCIILiteral&
     return false;
 }
 #endif
+
+SUPPRESS_NODELETE NSDictionary *WebExtensionAPIDeclarativeNetRequest::resourceType()
+{
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/declarativeNetRequest/ResourceType
+
+    static NSDictionary *types = @{
+        @"MAIN_FRAME": mainFrameKey,
+        @"SUB_FRAME": subFrameKey,
+        @"STYLESHEET": stylesheetKey,
+        @"SCRIPT": scriptKey,
+        @"IMAGE": imageKey,
+        @"FONT": fontKey,
+        @"XMLHTTPREQUEST": xmlhttprequestKey,
+        @"PING": pingKey,
+        @"MEDIA": mediaKey,
+        @"WEBSOCKET": websocketKey,
+        @"OTHER": otherKey,
+    };
+
+    return types;
+}
+
+SUPPRESS_NODELETE NSDictionary *WebExtensionAPIDeclarativeNetRequest::unsupportedRegexReason()
+{
+    // Documentation: https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest#type-UnsupportedRegexReason
+
+    static NSDictionary *reasons = @{
+        @"SYNTAX_ERROR": syntaxErrorKey,
+    };
+
+    return reasons;
+}
 
 void WebExtensionAPIDeclarativeNetRequest::updateEnabledRulesets(NSDictionary *options, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
 {
@@ -390,7 +421,13 @@ void WebExtensionAPIDeclarativeNetRequest::setExtensionActionOptions(NSDictionar
         return;
     }
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestDisplayActionCountAsBadgeText(objectForKey<NSNumber>(options, actionCountDisplayActionCountAsBadgeTextKey).boolValue), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
+    auto *displayActionCountAsBadgeText = objectForKey<NSNumber>(options, actionCountDisplayActionCountAsBadgeTextKey);
+    if (!displayActionCountAsBadgeText) {
+        callback->call();
+        return;
+    }
+
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::DeclarativeNetRequestDisplayActionCountAsBadgeText(displayActionCountAsBadgeText.boolValue), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;

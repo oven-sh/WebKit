@@ -38,6 +38,7 @@
 #include "JSPropertyNameEnumeratorInlines.h"
 #include "JSSetIterator.h"
 #include "JSStringIteratorInlines.h"
+#include <array>
 #include <span>
 
 namespace JSC { namespace AOT {
@@ -148,6 +149,7 @@ public:
     bool open(JSValue iterable, WordingOfIteration);
     bool tryOpenUnseen(JSValue iterable);
     bool step(JSValue&);
+    bool tryStepToEndUnseen(MarkedArgumentBuffer& values);
     void close();
 
 private:
@@ -302,6 +304,31 @@ bool IterationInRunTime::step(JSValue& value)
     return true;
 }
 
+bool IterationInRunTime::tryStepToEndUnseen(MarkedArgumentBuffer& values)
+{
+    if (m_stepper != Stepper::ArrayIterator)
+        return false;
+    auto* iterator = uncheckedDowncast<JSArrayIterator>(m_iterator.asCell());
+    auto* array = uncheckedDowncast<JSArray>(iterator->iteratedObject());
+    IterationKind kind = iterator->kind();
+    int64_t first = iterator->index();
+    uint32_t end = array->length();
+    if (kind == IterationKind::Entries || first == JSArrayIterator::doneIndex || first >= end)
+        return false;
+    if (kind == IterationKind::Values) {
+        for (uint32_t index = first; index < end; ++index) {
+            if (!array->canGetIndexQuickly(index))
+                return false;
+        }
+    }
+    iterator->setIndex(JSArrayIterator::doneIndex);
+    values.fill(m_vm, end - first, [&](JSValue* place) {
+        for (uint32_t index = first; index < end; ++index)
+            *place++ = kind == IterationKind::Keys ? jsNumber(index) : array->getIndexQuickly(index);
+    });
+    return true;
+}
+
 void IterationInRunTime::close()
 {
     auto scope = DECLARE_THROW_SCOPE(m_vm);
@@ -393,6 +420,28 @@ static bool tryTakeOutOfTable(JSGlobalObject* globalObject, Collection* collecti
     return true;
 }
 
+static void takeCharacters(Instance& instance, JSString* string, std::span<EncodedJSValue> elements)
+{
+    JSGlobalObject* globalObject = instance.globalObject;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    StringView characters = view;
+    unsigned at = 0;
+    for (EncodedJSValue& element : elements) {
+        if (at >= characters.length())
+            break;
+        char16_t unit = characters[at++];
+        if (U16_IS_LEAD(unit) && at < characters.length() && U16_IS_TRAIL(characters[at])) {
+            std::array<char16_t, 2> pair { unit, characters[at++] };
+            element = JSValue::encode(jsNontrivialString(vm, String(std::span<const char16_t> { pair })));
+        } else
+            element = JSValue::encode(stringOfCharacter(instance, unit));
+    }
+    ensureStillAliveHere(string);
+}
+
 static void destructureIterable(Instance& instance, JSGlobalObject* globalObject, JSValue iterable, std::span<EncodedJSValue> elements)
 {
     VM& vm = globalObject->vm();
@@ -422,6 +471,10 @@ static void destructureIterable(Instance& instance, JSGlobalObject* globalObject
             isTaken = tryTakeOutOfTable(globalObject, uncheckedDowncast<JSSet>(cell), elements);
         else if (cell->type() == JSMapType)
             isTaken = tryTakeOutOfTable(globalObject, uncheckedDowncast<JSMap>(cell), elements);
+        else if (cell->isString() && globalObject->isStringPrototypeIteratorProtocolFastAndNonObservable()) {
+            takeCharacters(instance, asString(cell), elements);
+            isTaken = true;
+        }
         RETURN_IF_EXCEPTION(scope, void());
         if (isTaken)
             return;
@@ -566,7 +619,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTEnumeratorGetByVal, EncodedJSValue, (Instan
     OPERATION_RETURN(scope, JSValue::encode(objectArgument(object, entry)->get(globalObject, identifier)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTDestructureIterable, void, (Instance* instance, EncodedJSValue iterable, uint32_t count, EncodedJSValue* results))
+static NEVER_INLINE OperationReturnType<void> JIT_OPERATION_ATTRIBUTES destructureAnyIterable(Instance* instance, EncodedJSValue iterable, uint32_t count, EncodedJSValue* results)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDestructureIterable);
     if (JSValue::decode(iterable).isUndefinedOrNull()) [[unlikely]] {
@@ -575,6 +628,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDestructureIterable, void, (Instance* insta
     }
     destructureIterable(*instance, globalObject, JSValue::decode(iterable), unsafeMakeSpan(results, count));
     OPERATION_RETURN(scope);
+}
+
+static ALWAYS_INLINE bool tryTakeLatin1Characters(Instance& instance, JSValue iterable, std::span<EncodedJSValue> elements)
+{
+    if (!iterable.isString() || !instance.globalObject->isStringPrototypeIteratorProtocolFastAndNonObservable())
+        return false;
+    const StringImpl* impl = asString(iterable)->tryGetValueImpl();
+    if (!impl || !impl->is8Bit())
+        return false;
+    std::span<const Latin1Character> characters = impl->span8();
+    for (size_t index = 0; index < elements.size(); ++index)
+        elements[index] = JSValue::encode(index < characters.size() ? JSValue(jsSingleCharacterString(*instance.vm, characters[index])) : jsUndefined());
+    return true;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTDestructureIterable, void, (Instance* instance, EncodedJSValue iterable, uint32_t count, EncodedJSValue* results))
+{
+    if (tryTakeLatin1Characters(*instance, JSValue::decode(iterable), unsafeMakeSpan(results, count)))
+        return { nullptr };
+    AOT_MUST_TAIL_CALL return destructureAnyIterable(instance, iterable, count, results);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCreateAsyncFromSyncIterator, JSCell*, (Instance* instance, JSCell* iterator, EncodedJSValue next))
@@ -673,6 +746,20 @@ static JSFunction* makeFunctionOfLibrary(JSGlobalObject* globalObject, BuiltinID
 }
 
 
+static std::optional<IndexingType> findIndexingTypeOfValues(JSArray* target, std::span<const EncodedJSValue> values)
+{
+    bool holdsInt32Alone = true;
+    bool holdsNumbersAlone = true;
+    for (EncodedJSValue encoded : values) {
+        if (!encoded)
+            return std::nullopt;
+        JSValue value = JSValue::decode(encoded);
+        holdsInt32Alone &= value.isInt32();
+        holdsNumbersAlone &= value.isNumber() && value.asNumber() == value.asNumber();
+    }
+    return holdsNumbersAlone && hasDouble(target->indexingType()) ? ArrayWithDouble : holdsInt32Alone ? ArrayWithInt32 : ArrayWithContiguous;
+}
+
 static bool tryAppendElementsOfArguments(JSGlobalObject* globalObject, JSArray* target, ClonedArguments* arguments)
 {
     if (!arguments->isIteratorProtocolFastAndNonObservable() || !hasContiguous(arguments->indexingType()))
@@ -682,17 +769,63 @@ static bool tryAppendElementsOfArguments(JSGlobalObject* globalObject, JSArray* 
     if (length > butterfly->publicLength() || static_cast<uint64_t>(target->length()) + length > MAX_STORAGE_VECTOR_LENGTH)
         return false;
     std::span<const EncodedJSValue> elements(std::bit_cast<const EncodedJSValue*>(butterfly->contiguous().data()), length);
-    bool holdsInt32Alone = true;
-    bool holdsNumbersAlone = true;
-    for (EncodedJSValue element : elements) {
-        if (!element)
-            return false;
-        JSValue value = JSValue::decode(element);
-        holdsInt32Alone &= value.isInt32();
-        holdsNumbersAlone &= value.isNumber() && value.asNumber() == value.asNumber();
+    std::optional<IndexingType> kind = findIndexingTypeOfValues(target, elements);
+    return kind && (!length || target->appendMemcpy(globalObject, globalObject->vm(), target->length(), *kind, elements));
+}
+
+template<typename View>
+static bool tryListElementsOfView(JSArrayBufferView* view, Vector<EncodedJSValue, 64>& values)
+{
+    size_t length = view->length();
+    if (!values.tryReserveInitialCapacity(length))
+        return false;
+    values.grow(length);
+    const auto* __restrict elements = uncheckedDowncast<View>(view)->typedVector();
+    EncodedJSValue* __restrict numbers = values.mutableSpan().data();
+    for (size_t index = 0; index < length; ++index)
+        numbers[index] = JSValue::encode(View::Adaptor::toJSValue(nullptr, elements[index]));
+    return true;
+}
+
+static bool tryListNumbersOfView(JSArrayBufferView* view, Vector<EncodedJSValue, 64>& values)
+{
+    switch (view->type()) {
+    case Int8ArrayType:
+        return tryListElementsOfView<JSInt8Array>(view, values);
+    case Uint8ArrayType:
+        return tryListElementsOfView<JSUint8Array>(view, values);
+    case Uint8ClampedArrayType:
+        return tryListElementsOfView<JSUint8ClampedArray>(view, values);
+    case Int16ArrayType:
+        return tryListElementsOfView<JSInt16Array>(view, values);
+    case Uint16ArrayType:
+        return tryListElementsOfView<JSUint16Array>(view, values);
+    case Int32ArrayType:
+        return tryListElementsOfView<JSInt32Array>(view, values);
+    case Uint32ArrayType:
+        return tryListElementsOfView<JSUint32Array>(view, values);
+    case Float16ArrayType:
+        return tryListElementsOfView<JSFloat16Array>(view, values);
+    case Float32ArrayType:
+        return tryListElementsOfView<JSFloat32Array>(view, values);
+    case Float64ArrayType:
+        return tryListElementsOfView<JSFloat64Array>(view, values);
+    default:
+        return false;
     }
-    IndexingType kind = holdsNumbersAlone && hasDouble(target->indexingType()) ? ArrayWithDouble : holdsInt32Alone ? ArrayWithInt32 : ArrayWithContiguous;
-    return !length || target->appendMemcpy(globalObject, globalObject->vm(), target->length(), kind, elements);
+}
+
+static bool tryAppendNumbersOfView(JSGlobalObject* globalObject, JSArray* target, JSArrayBufferView* view)
+{
+    if (view->isOutOfBounds() || !view->isIteratorProtocolFastAndNonObservable() || static_cast<uint64_t>(target->length()) + view->length() > MAX_STORAGE_VECTOR_LENGTH)
+        return false;
+    Vector<EncodedJSValue, 64> values;
+    if (!tryListNumbersOfView(view, values))
+        return false;
+    bool holdsInt32Alone = view->type() >= Int8ArrayType && view->type() <= Int32ArrayType;
+    std::optional<IndexingType> kind = holdsInt32Alone ? hasDouble(target->indexingType()) ? ArrayWithDouble : ArrayWithInt32 : findIndexingTypeOfValues(target, values.span());
+    RELEASE_ASSERT(kind);
+    return values.isEmpty() || target->appendMemcpy(globalObject, globalObject->vm(), target->length(), *kind, values.span());
 }
 
 static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSArray* target, JSValue iterable)
@@ -709,6 +842,18 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
         if (isReadByIndexUnseen(iterable))
             RELEASE_AND_RETURN(scope, appendElementsOfList(globalObject, target, asArray(iterable)));
         if (cell->isString() || isTypedArrayType(cell->type())) {
+            if (cell->isString() && globalObject->isStringPrototypeIteratorProtocolFastAndNonObservable()) {
+                bool isAppended = tryAppendCharacters(instance, target, asString(cell));
+                RETURN_IF_EXCEPTION(scope, void());
+                if (isAppended)
+                    return;
+            }
+            if (isTypedArrayType(cell->type())) {
+                bool isAppended = tryAppendNumbersOfView(globalObject, target, uncheckedDowncast<JSArrayBufferView>(cell));
+                RETURN_IF_EXCEPTION(scope, void());
+                if (isAppended)
+                    return;
+            }
             throwIfTooLongForList(globalObject, cell);
             RETURN_IF_EXCEPTION(scope, void());
             JSCellButterfly* listed = CommonSlowPaths::trySpreadFast(globalObject, cell);
@@ -763,13 +908,12 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
     if (!isOpen)
         return;
     MarkedArgumentBuffer values;
-    while (true) {
+    for (bool hasMore = !iteration.tryStepToEndUnseen(values); hasMore;) {
         JSValue value;
-        bool hasValue = iteration.step(value);
+        hasMore = iteration.step(value);
         RETURN_IF_EXCEPTION(scope, void());
-        if (!hasValue)
-            break;
-        values.append(value);
+        if (hasMore)
+            values.append(value);
     }
     if (values.hasOverflowed() || static_cast<uint64_t>(target->length()) + values.size() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -778,7 +922,10 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
     if (values.isEmpty())
         return;
     ArgList listed(values);
-    bool isAppended = target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, std::span<const EncodedJSValue>(listed.data(), listed.size()));
+    std::span<const EncodedJSValue> elements(listed.data(), listed.size());
+    std::optional<IndexingType> kind = findIndexingTypeOfValues(target, elements);
+    RELEASE_ASSERT(kind);
+    bool isAppended = target->appendMemcpy(globalObject, vm, target->length(), *kind, elements);
     RETURN_IF_EXCEPTION(scope, void());
     if (isAppended)
         return;

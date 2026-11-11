@@ -147,6 +147,7 @@ Modules::Modules(State& state)
     , m_loadsModulesByName(state.instance.vm->aotState().image->loadsModulesByName())
     , m_refusesOriginalsBesideMocks(state.instance.vm->aotState().image->refusesOriginalsBesideMocks())
     , m_showsEntriesOfRequireCache(state.instance.vm->aotState().image->showsEntriesOfRequireCache())
+    , m_placesSeenByPlans(state.instance.vm->aotState().placesSeenByPlans)
     , m_mockOperations(host().mockOperations ? host().mockOperations() : nullptr)
 {
     m_instance.modules.status = state.tableArena.allocate<uint8_t>(m_table.size());
@@ -493,7 +494,7 @@ void Modules::resetFailedEvaluations()
 {
     Vector<ModuleID, 4> failed;
     for (ModuleID module : m_records.keys()) {
-        if (hasResettablePackageFailure(module))
+        if (hasResettablePackageFailure(module) && !(isMocked(module) && hasFailedWithoutMock(module)))
             failed.append(module);
     }
     for (ModuleID module : failed)
@@ -790,6 +791,7 @@ bool Modules::isRequiredModulePatchPending(ModuleID module)
 
 bool Modules::delegatesToHost(ModuleID module)
 {
+    resetModulesThatHaveRun();
     if (m_evictedFiles.isEmpty() && !m_table.hasSourceStamps())
         return false;
     if (data(module).isUncompiledCode())
@@ -1018,6 +1020,8 @@ void Modules::setFailed(ModuleID module, JSValue error)
     record->retain();
     record->setEvaluationError(*m_instance.vm, error);
     record->setStatus(CyclicModuleRecord::Status::Evaluated);
+    if (m_mainCommonJSModule == fileOf(module))
+        forgetFailedMainModule();
 }
 
 void Modules::throwEvaluationError(ModuleID module)
@@ -1746,6 +1750,40 @@ auto Modules::starExportProviders(ModuleID module) const -> const Vector<Vector<
     }).iterator->value;
 }
 
+auto Modules::starTargetsByName(ModuleID module) const -> const StarTargetsByName&
+{
+    std::unique_ptr<StarTargetsByName>& kept = m_starTargetsByName.add(module, nullptr).iterator->value;
+    if (kept)
+        return *kept;
+    auto stars = makeUnique<StarTargetsByName>();
+    std::span<const StarAsWrittenData> asWritten = m_table.starsAsWritten(module);
+    for (const StarAsWrittenData& star : asWritten)
+        stars->targets.append(StarTarget { ModuleID(star.target), !!star.isFollowed });
+    if (asWritten.empty()) {
+        for (ModuleRequestData request : m_table.dynamicStars(module))
+            stars->targets.append(StarTarget { request.targetModule() });
+    }
+    for (unsigned place = 0; place < stars->targets.size(); ++place) {
+        StarTarget star = stars->targets[place];
+        bool hasTable = data(star.module).hasExportTable();
+        bool listsItsNames = hasTable && data(star.module).isESModuleOfProgram() && !data(star.module).capturesExports() && !data(star.module).hasDynamicStarExport() && !data(star.module).mayBeMocked() && m_table.ambiguousExports(star.module).empty()
+            && std::ranges::none_of(m_table.requiredNames(star.module), [&](const RequiredNameData& requiredName) {
+                   return !!m_table.findExportStatement(requiredName);
+               });
+        if (star.isFollowed && !listsItsNames)
+            stars->targetsWithUnlistedNames.append(place);
+        if (!hasTable)
+            continue;
+        for (const ModuleExportData& entry : m_table.exports(star.module)) {
+            Vector<unsigned, 1>& places = stars->targetsListingName.add(identifier(entry.name).impl(), Vector<unsigned, 1>()).iterator->value;
+            if (places.isEmpty() || places.last() != place)
+                places.append(place);
+        }
+    }
+    kept = WTF::move(stars);
+    return *kept;
+}
+
 std::span<const uint32_t> Modules::requiredNamesOfStatementsThatExport(ModuleID module, const String& exportName) const
 {
     auto& byExportName = m_requiredNamesOfStatementsByExportName.ensure(module, [&] {
@@ -1761,9 +1799,91 @@ std::span<const uint32_t> Modules::requiredNamesOfStatementsThatExport(ModuleID 
     return found == byExportName.end() ? std::span<const uint32_t>() : found->value.span();
 }
 
+auto Modules::modulesOnReexportWay(ModuleID reexportingModule, unsigned indexOfReexport) const -> const Vector<ModuleID, 4>&
+{
+    return m_reexportWays.ensure(static_cast<uint64_t>(reexportingModule.index()) << 32 | indexOfReexport, [&] {
+        const ModuleExportData& reexport = m_table.exports(reexportingModule)[indexOfReexport];
+        Vector<ModuleID, 4> asked;
+        auto indexOfExport = [&](ModuleID module, uint32_t name) -> std::optional<unsigned> {
+            return data(module).hasExportTable() ? m_table.findExport(module, identifier(name).impl()) : std::nullopt;
+        };
+        if (reexport.kind() == ModuleExportKind::Indirect && !reexport.isFromStarExport) {
+            for (uint32_t place : requiredNamesOfStatementsThatExport(reexportingModule, identifier(reexport.name).string()))
+                asked.append(m_table.requiredNames(reexportingModule)[place].exporterModule());
+            return asked;
+        }
+        if (reexport.kind() == ModuleExportKind::Indirect) {
+            std::optional<unsigned> first = indexOfExport(reexportingModule, reexport.name);
+            if (!first)
+                return asked;
+            BitVector isSeen(m_table.size());
+            isSeen.quickSet(reexportingModule.index());
+            Vector<PlaceOfExport, 4> toFollow;
+            auto follow = [&](ModuleID holder, unsigned index) {
+                const Vector<PlaceOfExport, 1>& providers = starExportProviders(holder)[index];
+                for (size_t next = providers.size(); next--;)
+                    toFollow.append(providers[next]);
+            };
+            follow(reexportingModule, *first);
+            while (!toFollow.isEmpty()) {
+                PlaceOfExport next = toFollow.takeLast();
+                asked.append(next.module);
+                if (isSeen.quickSet(next.module.index()))
+                    continue;
+                if (!m_table.exports(next.module)[next.index].isFromStarExport)
+                    break;
+                follow(next.module, next.index);
+            }
+            return asked;
+        }
+        UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> seen;
+        struct RequestedName {
+            ModuleID module;
+            uint32_t name;
+        };
+        Vector<RequestedName, 8> toAsk;
+        toAsk.append(RequestedName { reexportingModule, reexport.name });
+        while (!toAsk.isEmpty()) {
+            RequestedName next = toAsk.takeLast();
+            if (!seen.add(static_cast<uint64_t>(next.module.index()) << 32 | next.name).isNewEntry)
+                continue;
+            asked.append(next.module);
+            std::span<const RequiredNameData> requiredNames = m_table.requiredNames(next.module);
+            for (uint32_t place : requiredNamesOfStatementsThatExport(next.module, identifier(next.name).string()))
+                toAsk.append(RequestedName { requiredNames[place].exporterModule(), requiredNames[place].name });
+        }
+        if (reexport.kind() != ModuleExportKind::Variable)
+            return asked;
+        if (!m_modulesWithSyntheticExport) {
+            m_modulesWithSyntheticExport.emplace();
+            for (uint32_t index = 0; index < m_table.size(); ++index) {
+                for (const SyntheticExportData& entry : m_table.syntheticExports(ModuleID(index))) {
+                    if (entry.hasVariable)
+                        m_modulesWithSyntheticExport->add(std::bit_cast<uint32_t>(entry.variable), Vector<ModuleID, 1>()).iterator->value.append(ModuleID(index));
+                }
+            }
+        }
+        if (auto found = m_modulesWithSyntheticExport->find(std::bit_cast<uint32_t>(reexport.variable)); found != m_modulesWithSyntheticExport->end())
+            asked.appendVector(found->value);
+        return asked;
+    }).iterator->value;
+}
+
+bool Modules::mayMockAnswerReexport(ModuleID reexportingModule, const ModuleExportData& reexportEntry) const
+{
+    if (!m_removedMocksInUse.isEmpty())
+        return true;
+    std::span<const ModuleExportData> entries = m_table.exports(reexportingModule);
+    if (&reexportEntry < entries.data() || &reexportEntry >= entries.data() + entries.size())
+        return true;
+    return std::ranges::any_of(modulesOnReexportWay(reexportingModule, static_cast<unsigned>(&reexportEntry - entries.data())), [&](ModuleID module) {
+        return m_modulesWithActiveMock.get(module.index()) || m_modulesWithActiveMock.get(fileOf(module).index());
+    });
+}
+
 auto Modules::findMockForReexportSlow(ModuleID reexportingModule, const ModuleExportData& reexportEntry, MockMode reexportingModuleMockMode) const -> std::optional<MockedReexport>
 {
-    if (!someMockIsSeen())
+    if (!someMockIsSeen() || !mayMockAnswerReexport(reexportingModule, reexportEntry))
         return std::nullopt;
     BitVector modulesWithMock = m_modulesWithActiveMock;
     for (ModuleID mocked : m_removedMocksInUse.keys())
@@ -2314,6 +2434,8 @@ LoadedBy Modules::evaluatedBy(ModuleID module)
 
 LoadedBy Modules::fetchedBy(ModuleID module)
 {
+    if (m_refetchedFailures.get(module.index()) && isFailedESModule(module))
+        return LoadedBy::ThisTestFile;
     LoadedBy loadedBy = evaluatedBy(module);
     if (loadedBy != LoadedBy::Nobody || !m_hasBegunTestFile || isEvicted(module) || m_momentsOfLoads.isEmpty() || !m_momentsOfLoads[module.index()])
         return loadedBy;
@@ -2641,7 +2763,14 @@ bool Modules::setMockWithIntactOriginal(ModuleID module, JSObject* mock, JSValue
             if (auto* filed = dynamicDowncast<ModuleNamespace>(object))
                 filed->leaveStructureThatCachesKnow(*m_instance.vm);
         }
-        if (!made || !data(each).hasDynamicStarExport() || !reaching.quickGet(index))
+        if (!data(each).hasDynamicStarExport() || !reaching.quickGet(index))
+            continue;
+        if (JSObject* unfilled = other ? other->namespaceToRestore.get() : nullptr) {
+            other->namespaceToRestore.set(*this, nullptr);
+            if (!made && !setAside && !activeMock(each))
+                other->namespaceBeforeMockInPlace.set(*this, unfilled);
+        }
+        if (!made)
             continue;
         LoadedModule& behindStars = ensureLoaded(each);
         if (!behindStars.namespaceBeforeMockInPlace && !activeMock(each))
@@ -2688,6 +2817,32 @@ bool Modules::setMockWithIntactOriginal(ModuleID module, JSObject* mock, JSValue
     }
     answerRequire();
     return true;
+}
+
+bool Modules::reachesStarCycle(ModuleID root) const
+{
+    BitVector isFinished(m_table.size());
+    BitVector isOnPath(m_table.size());
+    Vector<std::pair<ModuleID, unsigned>, 8> path { { root, 0 } };
+    isOnPath.quickSet(root.index());
+    while (!path.isEmpty()) {
+        auto [module, place] = path.last();
+        DynamicStars stars = m_table.dynamicStars(module);
+        if (place == stars.numberOfPlaces()) {
+            isOnPath.quickClear(module.index());
+            isFinished.quickSet(module.index());
+            path.removeLast();
+            continue;
+        }
+        ++path.last().second;
+        std::optional<ModuleRequestData> request = stars.at(place);
+        if (!request || isFinished.quickGet(request->target()))
+            continue;
+        if (isOnPath.quickSet(request->target()))
+            return true;
+        path.append({ request->targetModule(), 0 });
+    }
+    return false;
 }
 
 void Modules::removeMockWithIntactOriginal(ModuleID module)
@@ -2788,7 +2943,8 @@ void Modules::removeMockWithIntactOriginal(ModuleID module)
         LoadedModule* behindStars = loadedIfExists(each);
         if (JSObject* before = behindStars ? behindStars->namespaceBeforeMockInPlace.get() : nullptr) {
             behindStars->namespaceBeforeMockInPlace.set(*this, nullptr);
-            setNamespace(each, ModulePhase::Evaluation, before);
+            if (!reachesStarCycle(each))
+                behindStars->namespaceToRestore.set(*this, before);
         }
     }
     if (JSObject* own = exporting.namespaceBeforeMockInPlace.get()) {
@@ -2952,6 +3108,7 @@ JSValue Modules::capturedValue(ModuleID module, const Identifier& name)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    SetForScope isBypassingMocks(m_isBypassingMocks, false);
     captureExports(module);
     RETURN_IF_EXCEPTION(scope, { });
     LoadedModule& loaded = ensureLoaded(module);
@@ -3023,11 +3180,14 @@ JSObject* Modules::namespaceIfCreated(ModuleID module, ModulePhase phase) const
 
 void Modules::discardNamespace(ModuleID module)
 {
+    LoadedModule* loaded = loadedIfExists(module);
+    if (loaded && loaded->namespaceToRestore)
+        loaded->namespaceToRestore.set(*this, nullptr);
     JSObject* made = namespaceIfCreated(module, ModulePhase::Evaluation);
     if (!made)
         return;
     setNamespace(module, ModulePhase::Evaluation, nullptr);
-    LoadedModule* loaded = loadedIfExists(module);
+    loaded = loadedIfExists(module);
     if (!loaded || loaded->requiredValue.get() != JSValue(made))
         return;
     loaded->requiredValue.set(*this, JSValue());
@@ -3038,7 +3198,7 @@ void Modules::discardNamespace(ModuleID module)
 void Modules::setNamespace(ModuleID module, ModulePhase phase, JSObject* namespaceObject)
 {
     if (phase == ModulePhase::Evaluation && data(module).holdsNamespaceInValue() && !m_modulesWithEarlierNamespaceInValue.get(module.index()))
-        setValue(module, namespaceObject);
+        ProgramStatics::writeNamespace(m_instance, data(module).value, namespaceObject);
     else
         ensureLoaded(module).namespaceObjectFor(phase).set(*this, namespaceObject);
 }
@@ -3084,7 +3244,15 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shou
     bool isRequired = phase == ModulePhase::Evaluation && m_modulesMarkedAsRequired.get(module.index());
     if (phase == ModulePhase::Evaluation && m_modulesWithExtensibleNamespace.get(module.index()))
         shouldPreventExtensions = false;
-    ModuleNamespace* namespaceObject = ModuleNamespace::create(vm, namespaceStructure(shouldPreventExtensions), module, phase, { });
+    LoadedModule* loadedBeforeMock = phase == ModulePhase::Evaluation ? loadedIfExists(module) : nullptr;
+    auto* restored = loadedBeforeMock ? dynamicDowncast<ModuleNamespace>(loadedBeforeMock->namespaceToRestore.get()) : nullptr;
+    ModuleNamespace::DynamicExports exportsBefore;
+    if (restored) [[unlikely]] {
+        loadedBeforeMock->namespaceToRestore.set(*this, nullptr);
+        exportsBefore = restored->dynamicExports();
+        restored->replaceDynamicExports(vm, { });
+    }
+    ModuleNamespace* namespaceObject = restored ? restored : ModuleNamespace::create(vm, namespaceStructure(shouldPreventExtensions), module, phase, { });
     size_t place = m_namespacesBeingMade.size();
     size_t outermostReadBefore = std::exchange(m_outermostNamespaceReadWhileBeingMade, notFound);
     auto forgetsNamespacesThatLackNames = makeScopeExit([&] {
@@ -3107,7 +3275,13 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shou
     size_t outermostRead = m_outermostNamespaceReadWhileBeingMade;
     bool lacksNames = phase == ModulePhase::Evaluation && outermostRead < place;
     m_outermostNamespaceReadWhileBeingMade = std::min(outermostReadBefore, outermostRead);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (scope.exception()) [[unlikely]] {
+        if (restored) {
+            restored->replaceDynamicExports(vm, exportsBefore);
+            ensureLoaded(module).namespaceToRestore.set(*this, restored);
+        }
+        return nullptr;
+    }
     namespaceObject->replaceDynamicExports(vm, exportObjects);
     if (isRequired && !namespaceObject->hasExport(vm.propertyNames->__esModule.impl())) {
         if (m_modulesWithDeferredMark.get(module.index()))
@@ -4373,7 +4547,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     if (isNewCallAfterTests && shouldLeaveImportPending(module)) [[unlikely]]
         return promiseForCaller();
     if (m_loadsModulesIndividually) [[unlikely]]
-        m_importCallRoots.set(module.index());
+        m_loadRoots.set(module.index());
     if (m_loadsModulesIndividually) [[unlikely]]
         recordVariantRequest(module);
     if (m_mocks) [[unlikely]]
@@ -5085,7 +5259,7 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     VM& vm = *m_instance.vm;
     auto askLoader = [&] {
-        SetForScope frameOfImportThatAsksLoader(vm.aotState().frameOfImportThatAsksLoader, vm.topCallFrame);
+        SetForScope importFrameInLoader(vm.aotState().importFrameInLoader, vm.topCallFrame);
         return loader()->requestImportModuleForKey(realm, key, moduleKey(referrer), WTF::move(fetchParameters), nullptr, false, asyncEvaluationOrder(referrer).value_or(-1));
     };
     std::optional<ModuleID> found = fetchParameters ? std::nullopt : m_table.findByPath(key.string());
@@ -5283,6 +5457,8 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
         std::unique_ptr<LevelOfLoad> level = m_levelsOfLoads.take(module);
         if (!level)
             return false;
+        if (level->plan)
+            level->plan->levelsRequested = std::max(level->plan->levelsRequested, level->depth + 1);
         if (level->next && level->plan && (!m_levelsOfLoads.contains(*level->next) || !isStillToBeLoaded(*level->next)))
             layWayOfLoadAgain(*level);
         if (level->next && level->plan && !m_instance.vm->synchronousModuleQueue())
@@ -5291,20 +5467,28 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
             for (const PlanOfLoad::Found& found : level->plan->level(level->depth + 1))
                 noteRequestByLoader(found.module);
         }
-        auto append = [&](ModuleID target) {
+        PlanOfLoad& plan = *level->plan;
+        auto append = [&](ModuleID target, bool isFetchedByHost) {
             Identifier key = keyOfRequest(target);
             record->appendRequestedModule(key, nullptr, ModulePhase::Evaluation);
-            record->didRequestCompiledModule(key, target);
+            if (!isFetchedByHost)
+                record->didRequestCompiledModule(key, target);
         };
         bool isNextLeft = level->next.has_value();
         auto appendNext = [&] {
             isNextLeft = false;
-            if (auto asked = m_levelsOfLoads.find(*level->next); asked != m_levelsOfLoads.end())
+            bool isFetchedByHost = false;
+            if (auto asked = m_levelsOfLoads.find(*level->next); asked != m_levelsOfLoads.end()) {
                 asked->value->isAskedFor = true;
-            append(*level->next);
+                isFetchedByHost = asked->value->plan == &plan && plan.found[asked->value->place].isFetchedByHost;
+            }
+            append(*level->next, isFetchedByHost);
         };
-        PlanOfLoad& plan = *level->plan;
-        Vector<ModuleID, 8> listed;
+        struct Listed {
+            ModuleID module;
+            bool isFetchedByHost;
+        };
+        Vector<Listed, 8> listed;
         if (level->depth + 1 < plan.levels.size()) {
             std::span<PlanOfLoad::Found> below = plan.level(level->depth + 1);
             for (PlanOfLoad::Found& imported : below.subspan(std::ranges::lower_bound(below, level->place, { }, &PlanOfLoad::Found::importer) - below.begin())) {
@@ -5312,7 +5496,12 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
                     break;
                 if (level->next != imported.module && (!imported.leadsToFile || !isLeftToLoad(plan, imported)))
                     continue;
-                listed.append(imported.module);
+                listed.append({ imported.module, static_cast<bool>(imported.isFetchedByHost) });
+                if (imported.isBehindName && isCommonJSModuleOrFacade(imported.module)) {
+                    noteRequestByLoader(imported.module);
+                    if (!m_isMainCommonJSModuleDecided)
+                        m_firstFilesOfLoads.append(fileOf(imported.module));
+                }
                 if (imported.isFile || level->next == imported.module)
                     continue;
                 ModuleRecord* known = recordIfExists(imported.module);
@@ -5327,19 +5516,23 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
                 }).iterator->value->isAskedFor = true;
             }
         }
-        for (ModuleID imported : listed) {
+        for (auto [imported, isFetchedByHost] : listed) {
+            if (isFetchedByHost && isCommonJSModuleOrFacade(imported)) {
+                noteLoadOfFile(imported, loader()->registryEntry(keyOfRequest(imported)) ? LoadOfFile::HasComeToFile : LoadOfFile::IsRequested);
+                RETURN_IF_EXCEPTION(scope, true);
+            }
             if (level->next == imported) {
                 appendNext();
                 continue;
             }
-            if (isCommonJSModuleOrFacade(imported)) {
+            if (isCommonJSModuleOrFacade(imported) && !isFetchedByHost) {
                 m_filesLoadedWithoutLoader.set(imported.index());
                 if (status(imported) == ModuleStatus::Evaluated)
                     continue;
                 noteLoadOfFile(imported);
                 RETURN_IF_EXCEPTION(scope, true);
             }
-            append(imported);
+            append(imported, isFetchedByHost);
         }
         if (isNextLeft)
             appendNext();
@@ -5348,9 +5541,25 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
     if (!m_levelsOfLoads.isEmpty() && appendNextOnWay())
         return;
     if (!record->isRequestedByWalkedModule()) {
+        if (m_table.hasLoadFailures()) [[unlikely]] {
+            if (std::optional<ModuleFailureID> failure = findUnmockedFileFailure(module))
+                RELEASE_AND_RETURN(scope, appendUnresolvableRequest(*failure, record));
+        }
         bool mustWaitForFile = importsFileBeingEvaluated(module);
         bool endsAtStatement = statementThatEndsLoad(module).has_value();
         bool isWalked = mustWaitForFile || endsAtStatement || canTellHowGraphIsLoaded(module);
+        bool isPlanned = !isWalked && data(module).reachesUncompiledCode() && !isInTransferredSynchronousLoad() && planLevelsOfLoad(module);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (isPlanned) {
+            if (!m_instance.vm->synchronousModuleQueue() && !m_loadsInFlight.hasRoot(module))
+                didStartLoad(load.promise(), module, SettlingOfLoad::IsLookedFor);
+            m_loadsInFlight.forEachOfRoot(module, [](LoadInFlight& load) {
+                load.isWalked = true;
+                load.hasMarksBelowRoot = true;
+            });
+            appendNextOnWay();
+            return;
+        }
         if (!isWalked) {
             evaluateImportedCommonJSModules(module, EagerLoadJobPolicy::DeferJobs, ErrorOfImportedFile::IsLeftToLoader, &load);
             RETURN_IF_EXCEPTION(scope, void());
@@ -5368,7 +5577,9 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
         m_loadsInFlight.forEachOfRoot(module, [](LoadInFlight& load) {
             load.isWalked = true;
         });
-        if (!data(module).isLoadedByLoader() && m_rootAwaitingLoader != module && !mustWaitForFile && !endsAtStatement && !isInTransferredSynchronousLoad() && planLevelsOfLoad(module)) {
+        isPlanned = !data(module).isLoadedByLoader() && m_rootAwaitingLoader != module && !mustWaitForFile && !endsAtStatement && !isInTransferredSynchronousLoad() && planLevelsOfLoad(module);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (isPlanned) {
             appendNextOnWay();
             return;
         }
@@ -5425,6 +5636,33 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
     }
     if (std::optional<ModuleFailureID> statement = statementThatEndsLoad(module); statement && m_table.failure(*statement).importerModule() == module) [[unlikely]]
         RELEASE_AND_RETURN(scope, appendUnresolvableRequest(*statement, record));
+}
+
+std::optional<ModuleFailureID> Modules::findUnmockedFileFailure(ModuleID root) const
+{
+    std::optional<ModuleFailureID> failureOfRoot = loadFailure(root);
+    BitVector seen(m_table.size());
+    Vector<ModuleID, 16> work { root };
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        if (seen.quickSet(module.index()) || !data(module).isESModuleOfProgram())
+            continue;
+        if (module != root) {
+            bool hasBegun = status(module) >= ModuleStatus::Evaluating && status(module) <= ModuleStatus::Evaluated;
+            if (hasBegun || isMocked(module) || activeMock(module))
+                continue;
+            std::optional<ModuleFailureID> failure = loadFailure(module);
+            if (failure && failure != failureOfRoot && data(module).mayBeMocked() && m_table.failure(*failure).importerModule() == module && !m_table.failure(*failure).isAbsentExport() && !statementThatEndsLoad(module))
+                return failure;
+        }
+        size_t firstBelow = work.size();
+        for (const ModuleRequestData& request : m_table.imports(module)) {
+            if (!request.isHoisted && !request.isDeferred)
+                work.append(request.targetModule());
+        }
+        std::ranges::reverse(work.mutableSpan().subspan(firstBelow));
+    }
+    return std::nullopt;
 }
 
 std::optional<ModuleFailureID> Modules::statementThatEndsLoad(ModuleID module) const
@@ -5612,9 +5850,9 @@ JSObject* Modules::uncompiledNamespace(ModuleID external, ModulePhase phase, Nam
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (phase != ModulePhase::Evaluation)
         return namespaceObject;
-    bool wasAskedFor = m_uncompiledNamespacesAskedFor.set(external.index());
+    bool wasRequested = m_uncompiledNamespacesAskedFor.set(external.index());
     if (!isShown) {
-        if (!wasAskedFor)
+        if (!wasRequested)
             m_uncompiledNamespacesNotShownYet.set(external.index());
         return namespaceObject;
     }
@@ -5703,6 +5941,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instanc
     Modules& modules = modulesOf(*instance);
     if (!modules.hasBeenImported(ModuleID(module)) || isLoadedWithoutType(modules, ModuleID(module)))
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+    if (modules.isUnevaluatedTextForm(ModuleID(module))) [[unlikely]] {
+        String path = modules.table().fullPath(ModuleID(module));
+        if (std::optional<ModuleID> file = modules.table().findByPath(StringView(path).left(path.reverseFind('?'))); file && modules.data(*file).kind == ModuleKind::Data && modules.data(*file).requireResult == RequireResult::NamespaceIfImported) {
+            modules.moduleNamespace(*file, Modules::ModulePhase::Evaluation);
+            OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+        }
+    }
     OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer))));
 }
 
@@ -5979,6 +6224,7 @@ bool isExternalSpecifier(StringView specifier, StringView importerDirectory)
 struct PathOfModule {
     StringImpl* path;
     StringImpl* pathOfFile;
+    StringImpl* displayPath;
     bool isEvaluatedText;
 };
 
@@ -6022,7 +6268,12 @@ static PathOfModule pathOfModule(ModuleID module)
         };
         StringImpl* kept = keep(path);
         String pathOfFile = evaluator || table->data(module).registryID() ? path : withoutQuery(*table, module, path);
-        return PathOfModule { kept, pathOfFile.length() == path.length() ? kept : keep(pathOfFile), !!evaluator };
+        StringImpl* keptPathOfFile = pathOfFile.length() == path.length() ? kept : keep(pathOfFile);
+        String displayPath = evaluator ? String() : table->displayPathText(module);
+        bool isRelativeToFolderOfBuild = !displayPath.isEmpty() && displayPath != pathOfFile;
+        if (isRelativeToFolderOfBuild && !displayPath.startsWith("../"_s))
+            displayPath = makeString(AOT_BUILD_FOLDER_PREFIX ""_s, displayPath);
+        return PathOfModule { kept, keptPathOfFile, isRelativeToFolderOfBuild ? keep(displayPath) : keptPathOfFile, !!evaluator };
     }).iterator->value;
 }
 
@@ -6034,6 +6285,11 @@ String modulePath(ModuleID module)
 String moduleFilePath(ModuleID module)
 {
     return pathOfModule(module).pathOfFile;
+}
+
+String moduleDisplayPath(ModuleID module)
+{
+    return pathOfModule(module).displayPath;
 }
 
 String sourceProviderURL(ModuleID module)
@@ -6399,7 +6655,8 @@ void Modules::followImportsOfModulesThatHaveRun()
     for (size_t index : m_recordsNotSeenToHaveRun) {
         ++numberLookedAt;
         lookAt(ModuleID(index));
-        if (now[index] != inRecord || m_modulesSeenToHaveRun.quickGet(index) || !m_records.contains(ModuleID(index)))
+        ModuleRecord* record = recordIfExists(ModuleID(index));
+        if (now[index] != inRecord || m_modulesSeenToHaveRun.quickGet(index) || !record || record->status() < CyclicModuleRecord::Status::Evaluating)
             settled.append(index);
     }
     for (size_t index : settled)
@@ -6468,19 +6725,23 @@ bool hasPendingMock(JSGlobalObject* realm, ModuleID file)
     return modules && modules->hasPendingMock(file);
 }
 
-bool hasRequireCacheEntry(JSGlobalObject* realm, ModuleID module)
+static bool hasRequireCacheEntry(Modules* modules, ModuleID module, bool& importsAreFollowed)
 {
-    Modules* modules = modulesOf(realm);
-    if (!modules)
-        return false;
     const ModuleData& data = modules->data(module);
     if (data.isOfLibrary())
         return modules->isLibraryModuleInRequireCache(module);
     if (data.isFacade() || !modules->table().hasFilePath(module) || modules->isEvicted(module) || modules->hasNoEntryBehindMock(module))
         return false;
-    if (!modules->hasRun(module) && !modules->isListedBeforeItHasRun(module))
+    if (!modules->hasRun(module, importsAreFollowed) && !modules->isListedBeforeItHasRun(module))
         return false;
     return !isNamedByNumber(modules->table().fullPath(module), module);
+}
+
+bool hasRequireCacheEntry(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    bool importsAreFollowed = false;
+    return modules && hasRequireCacheEntry(modules, module, importsAreFollowed);
 }
 
 JSObject* requireCacheEntry(JSGlobalObject* realm, ModuleID module)
@@ -6510,6 +6771,81 @@ void forEachEvaluatingAsyncModule(JSGlobalObject* realm, const WTF::Function<voi
     }
 }
 
+BitVector Modules::modulesBelowEvaluatingOnes(Vector<ModuleID>& topmost) const
+{
+    BitVector below(m_table.size());
+    BitVector imported(m_table.size());
+    Vector<ModuleID, 32> evaluating;
+    for (unsigned index = 0; index < m_table.size(); ++index) {
+        if (status(ModuleID(index)) == ModuleStatus::Evaluating)
+            evaluating.append(ModuleID(index));
+    }
+    Vector<ModuleID, 32> work = evaluating;
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        if (below.quickSet(module.index()) || data(module).isOfLibrary())
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(module)) {
+            if (request.isDeferred)
+                continue;
+            ModuleID target = moduleLoadedUnder(request.targetModule());
+            imported.quickSet(target.index());
+            work.append(target);
+        }
+    }
+    topmost.shrink(0);
+    for (ModuleID module : evaluating) {
+        if (!imported.quickGet(module.index()))
+            topmost.append(module);
+    }
+    if (topmost.isEmpty())
+        topmost.append(evaluating.span());
+    return below;
+}
+
+void Modules::resetModulesAfterEvaluation(const WTF::Function<bool(const String&)>& isKept)
+{
+    BitVector listed(m_table.size());
+    for (ModuleID file : m_modulesToResetOnceRun)
+        listed.quickSet(file.index());
+    for (size_t index : modulesBelowEvaluatingOnes(m_modulesThatResetWaitsFor)) {
+        ModuleID module(index);
+        ModuleStatus current = status(module);
+        if (current != ModuleStatus::Evaluating && current != ModuleStatus::Linked)
+            continue;
+        ModuleID file = fileOf(module);
+        if (data(file).isOfLibrary() || !m_table.hasFilePath(file) || isEvicted(file) || !mayBeEvicted(file) || listed.quickSet(file.index()))
+            continue;
+        if (!isKept(m_table.fullPath(file)))
+            m_modulesToResetOnceRun.append(file);
+    }
+}
+
+void Modules::resetModulesOnceRun()
+{
+    bool hasOneEnded = m_modulesThatResetWaitsFor.isEmpty() || std::ranges::any_of(m_modulesThatResetWaitsFor, [&](ModuleID module) {
+        return status(module) != ModuleStatus::Evaluating;
+    });
+    if (!hasOneEnded)
+        return;
+    BitVector below = modulesBelowEvaluatingOnes(m_modulesThatResetWaitsFor);
+    Vector<ModuleID> haveRun;
+    m_modulesToResetOnceRun.removeAllMatching([&](ModuleID file) {
+        if (below.get(file.index()) || below.get(moduleWithExportsOf(file).index()))
+            return false;
+        haveRun.append(file);
+        return true;
+    });
+    for (ModuleID file : haveRun)
+        didResetModule(m_instance.globalObject, file);
+}
+
+void resetModulesAfterEvaluation(JSGlobalObject* realm, const WTF::Function<bool(const String&)>& isKept)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->resetModulesAfterEvaluation(isKept);
+}
+
 void forEachModuleWithProgramEntry(JSGlobalObject* realm, const WTF::Function<void(const String&)>& functor)
 {
     Modules* modules = modulesOf(realm);
@@ -6536,10 +6872,11 @@ void forEachRequireCacheKey(JSGlobalObject* realm, const WTF::Function<void(cons
     const ModuleTable& table = modules->table();
     BitVector isSeen(table.size());
     Vector<ModuleID, 64> inOrder;
+    bool importsAreFollowed = false;
     auto askFor = [&](ModuleID module) {
         if (isSeen.quickSet(module.index()))
             return false;
-        if (!table.data(module).isOfLibrary() && hasRequireCacheEntry(realm, module))
+        if (!table.data(module).isOfLibrary() && hasRequireCacheEntry(modules, module, importsAreFollowed))
             inOrder.append(module);
         return true;
     };
@@ -6911,6 +7248,26 @@ BitVector modulesInLoadGraph(JSGlobalObject* realm, ModuleID root, LoadGraphMode
     return modules ? modules->modulesInLoadGraph(root, graphMode) : BitVector();
 }
 
+BitVector unfinishedModulesInLoadGraph(JSGlobalObject* realm, ModuleID root, LoadGraphMode graphMode, const BitVector& unsettledMocks)
+{
+    Modules* modules = modulesOf(realm);
+    if (!modules)
+        return { };
+    BitVector result = modules->modulesInLoadGraph(root, graphMode);
+    result.set(root.index());
+    bool importsAreFollowed = false;
+    Vector<size_t, 64> finished;
+    for (size_t index : result) {
+        ModuleID module(index);
+        ModuleID file = modules->table().moduleBehindFacade(module).value_or(module);
+        if (!unsettledMocks.get(file.index()) && !modules->isBeingEvaluated(module) && hasRequireCacheEntry(modules, module, importsAreFollowed))
+            finished.append(index);
+    }
+    for (size_t index : finished)
+        result.quickClear(index);
+    return result;
+}
+
 bool isRetainedByInFlightLoads(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -7022,7 +7379,7 @@ AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID module)
     modules->releaseRemovedMock(module);
     RETURN_IF_EXCEPTION(scope, nullptr);
     VMState& state = realm->vm().aotState();
-    bool isFirstAskedForByImport = state.frameOfImportThatAsksLoader && (!state.stackPointerOfImport || state.stackPointerOfImport > static_cast<void*>(state.frameOfImportThatAsksLoader));
+    bool isFirstAskedForByImport = state.importFrameInLoader && (!state.stackPointerOfImport || state.stackPointerOfImport > static_cast<void*>(state.importFrameInLoader));
     SetForScope stackPointerOfImport(state.stackPointerOfImport, isFirstAskedForByImport ? currentStackPointer() : state.stackPointerOfImport);
     if (!modules->isInHostRequest()) {
         if (std::optional<ModuleFailureID> failure = modules->loadFailure(module); failure && !modules->statementThatEndsLoad(module)) [[unlikely]] {
@@ -7280,6 +7637,18 @@ void didCreateModuleObject(JSGlobalObject* realm, ModuleID module, JSObject* mod
         modules->retainModuleObjectFromRequire(module, moduleObject);
 }
 
+JSObject* Modules::childModuleObject(ModuleID module)
+{
+    bool isShown = (isFileOfProgram(module) || data(module).kind == ModuleKind::Data) && !hidesModuleObject(module);
+    return isShown ? moduleObjectMadeByRequire(module) : nullptr;
+}
+
+JSObject* childModuleObject(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesThatShowWaysBetweenModuleObjects(realm);
+    return modules ? modules->childModuleObject(module) : nullptr;
+}
+
 void willRequireFromUncompiledCode(JSGlobalObject* realm, ModuleID module, JSObject* requirerModuleObject)
 {
     if (Modules* modules = modulesOf(realm))
@@ -7325,12 +7694,10 @@ void willSetExtensionLoader(JSGlobalObject* realm, StringView extension)
     if (!modules)
         return;
     const ModuleTable& table = modules->table();
+    bool hasQueryInDirectory = table.hasQueryInDirectory();
     for (unsigned index = 0; index < table.size(); ++index) {
         ModuleID module(index);
-        if (!table.hasFilePath(module) || modules->data(module).isOfLibrary())
-            continue;
-        String path = table.fullPath(module);
-        if (!StringView(path).left(path.reverseFind('?')).endsWith(extension))
+        if (!table.hasFilePath(module) || modules->data(module).isOfLibrary() || !table.pathWithoutQueryEndsWith(module, extension, hasQueryInDirectory))
             continue;
         if (!modules->mayBeEvicted(module)) {
             throwLoaderChangeError(realm, LoaderChange::ReplaceLoaderFunction, "a loader in Module._extensions"_s);
@@ -7422,12 +7789,12 @@ bool hasUnevaluatedActiveMockImporter(JSGlobalObject* realm, ModuleID module, st
     return modules->isGraphRunning() && modules->hasUnevaluatedLinkedImporter(module, asking);
 }
 
-bool tryKeepActiveMock(JSGlobalObject* realm, ModuleID module, bool staysTheOriginal, bool keepsCurrentTestFileLoads)
+bool tryKeepActiveMock(JSGlobalObject* realm, ModuleID module, bool remainsOriginal, bool keepsCurrentTestFileLoads)
 {
     if (!hasActiveMock(realm, module))
         return false;
     Modules* modules = modulesOf(realm);
-    if (staysTheOriginal || (keepsCurrentTestFileLoads && modules->wasLoadedUnderMockInPlaceByThisTestFile(module))) {
+    if (remainsOriginal || (keepsCurrentTestFileLoads && modules->wasLoadedUnderMockInPlaceByThisTestFile(module))) {
         modules->noteCallOfMock(module, true);
         modules->releaseImportersOf(module, Modules::ReleasedImporters::AllButThoseThatThisTestFileLinkedToModule);
         return true;
@@ -7536,6 +7903,12 @@ bool wasLinkedByFailedGraph(JSGlobalObject* realm, ModuleID module, bool byEarli
     return modules && modules->wasLinkedByFailedGraph(module, byEarlierTestFile);
 }
 
+bool isLinkedForPendingImporter(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> asking)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isLinkedForPendingImporter(module, asking);
+}
+
 bool wasLinkedBeforeLinkFailure(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -7548,10 +7921,10 @@ bool wasDisplacedAfterFailure(JSGlobalObject* realm, ModuleID module)
     return modules && modules->wasDisplacedAfterFailure(module);
 }
 
-bool isFailedImportRoot(JSGlobalObject* realm, ModuleID module)
+bool isFailedLoadRoot(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
-    return modules && modules->isFailedImportRoot(module);
+    return modules && modules->isFailedLoadRoot(module);
 }
 
 void clearLoadedBeforeTestFile(JSGlobalObject* realm, ModuleID module)
@@ -7973,7 +8346,7 @@ void didChangePlugins(JSGlobalObject* realm)
         modules->forgetWhatNamesResolvedTo();
 }
 
-void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue requireReturnValue, bool hasCommonJSExports)
+void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue requireReturnValue, bool hasCommonJSExports, bool hasFactory)
 {
     Modules* found = modulesOf(realm);
     if (!found)
@@ -7983,6 +8356,7 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue requireRetur
     modules.leaveImportersAbove(module);
     JSObject* exports = requireReturnValue.isObject() ? asObject(requireReturnValue) : constructEmptyObject(realm);
     modules.setMockHasCommonJSExports(module, hasCommonJSExports);
+    modules.setMockHasFactory(module, hasFactory);
     if (modules.data(module).isOfLibrary() || !modules.table().hasFilePath(module)) {
         auto scope = DECLARE_THROW_SCOPE(realm->vm());
         modules.releaseRemovedMock(module);
@@ -8576,6 +8950,24 @@ void ModuleRecord::appendDynamicStarTargets(StarExportTargets& targets)
     }
 }
 
+void ModuleRecord::appendDynamicStarTargets(const Identifier& exportName, StarExportTargets& targets)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm());
+    Modules& modules = this->modules();
+    if (!modules.data(m_module).hasDynamicStarExport() || (modules.standsForWholeModule(m_module) && !keepsToModule()))
+        return;
+    const Modules::StarTargetsByName& stars = modules.starTargetsByName(m_module);
+    stars.visitCandidates(exportName.impl(), [&](unsigned place) {
+        if (!stars.targets[place].isFollowed)
+            return true;
+        AbstractModuleRecord* target = recordBehindStar(stars.targets[place].module);
+        if (scope.exception()) [[unlikely]]
+            return false;
+        targets.append(target);
+        return true;
+    });
+}
+
 AbstractModuleRecord* ModuleRecord::recordBehindStar(ModuleID asked)
 {
     Modules& modules = this->modules();
@@ -8608,35 +9000,25 @@ bool ModuleRecord::appendStarsThatMayProvide(const Identifier& exportName, unsig
         std::optional<unsigned> targetIndex = modules.data(asked).hasExportTable() ? modules.table().findExport(asked, exportName.impl()) : std::nullopt;
         return targetIndex && exportSameBinding(modules.table(), entry, modules.table().exports(asked)[*targetIndex]);
     };
-    std::span<const StarAsWrittenData> asWritten = modules.table().starsAsWritten(m_module);
-    auto someStar = [&](auto&& holds) {
-        for (const StarAsWrittenData& star : asWritten) {
-            if (holds(ModuleID(star.target)))
-                return true;
-        }
-        if (!asWritten.empty())
+    const Modules::StarTargetsByName& stars = modules.starTargetsByName(m_module);
+    bool someStarProvidesBinding = false;
+    stars.visitCandidates(exportName.impl(), [&](unsigned place) {
+        someStarProvidesBinding = providesBinding(stars.targets[place].module);
+        return !someStarProvidesBinding;
+    });
+    if (!someStarProvidesBinding)
+        return false;
+    stars.visitCandidates(exportName.impl(), [&](unsigned place) {
+        Modules::StarTarget star = stars.targets[place];
+        if (!star.isFollowed && !providesBinding(star.module))
+            return true;
+        AbstractModuleRecord* target = recordBehindStar(star.module);
+        if (scope.exception()) [[unlikely]]
             return false;
-        for (const ModuleRequestData& request : modules.table().requests(m_module)) {
-            if (request.isDynamicStarExport && holds(request.targetModule()))
-                return true;
-        }
-        return false;
-    };
-    if (!someStar(isFirstProvider) && !someStar(providesBinding))
-        return false;
-    if (asWritten.empty()) {
-        appendDynamicStarTargets(targets);
-        RETURN_IF_EXCEPTION(scope, false);
-        return true;
-    }
-    for (const StarAsWrittenData& star : asWritten) {
-        ModuleID asked(star.target);
-        if (!star.isFollowed && !providesBinding(asked))
-            continue;
-        AbstractModuleRecord* target = recordBehindStar(asked);
-        RETURN_IF_EXCEPTION(scope, false);
         targets.append(target);
-    }
+        return true;
+    });
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -8861,7 +9243,7 @@ auto ModuleRecord::resolveOwnExport(JSGlobalObject* globalObject, const Identifi
             return absent;
     }
     if (!isDefault && (!entry || entry->isFromStarExport || modules.leavesNameToStars(m_module, *index))) {
-        appendDynamicStarTargets(starTargets);
+        appendDynamicStarTargets(exportName, starTargets);
         RETURN_IF_EXCEPTION(scope, Resolution::error());
     }
     bool isSeenAsEndedMock = entry && reexporter && modules.endedMockSeenBy(m_module, reexporter->m_module);
@@ -9290,8 +9672,15 @@ AbstractModuleRecord* ModuleNamespace::recordForResolution()
     return modules().recordForResolution(m_module);
 }
 
+bool ModuleNamespace::keepsToModule() const
+{
+    return m_keepsToModule || modules().isBypassingMocks();
+}
+
 JSObject* ModuleNamespace::activeMock() const
 {
+    if (modules().isBypassingMocks()) [[unlikely]]
+        return nullptr;
     if (JSObject* ofView = m_mockOfView.get()) [[unlikely]]
         return ofView;
     return keepsToModule() ? nullptr : modules().activeMock(m_module);
@@ -9393,14 +9782,14 @@ JSValue Modules::readOffNamespaceThatListsName(ModuleID reader, JSObject* namesp
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     std::pair<JSObject*, UniquedStringImpl*> read { namespaceOfReader, name.impl() };
-    if (m_namesBeingReadOffListers.contains(read) && !m_mocks && m_removedMocksInUse.isEmpty()) [[unlikely]] {
-        AbstractModuleRecord* record = recordForResolution(reader);
+    if (m_namesBeingReadOffListers.contains(read) && (m_isBypassingMocks || (!m_mocks && m_removedMocksInUse.isEmpty()))) [[unlikely]] {
+        AbstractModuleRecord* record = m_isBypassingMocks && activeMock(reader) ? ensureDisplacedRecord(reader) : recordForResolution(reader);
         RETURN_IF_EXCEPTION(scope, { });
         AbstractModuleRecord::Resolution resolution = record->resolveExport(realm, name);
         RETURN_IF_EXCEPTION(scope, { });
         auto* provider = resolution.type == AbstractModuleRecord::Resolution::Type::Resolved ? dynamicDowncast<ModuleRecord>(resolution.moduleRecord) : nullptr;
         if (provider && provider->module() != reader && resolution.localName != m_instance.vm->propertyNames->starNamespacePrivateName) {
-            JSObject* namespaceOfProvider = moduleNamespace(provider->module(), ModulePhase::Evaluation);
+            JSObject* namespaceOfProvider = m_isBypassingMocks ? originalNamespace(provider->module()) : moduleNamespace(provider->module(), ModulePhase::Evaluation);
             RETURN_IF_EXCEPTION(scope, { });
             RELEASE_AND_RETURN(scope, namespaceOfProvider->get(realm, resolution.localName));
         }
@@ -9409,6 +9798,10 @@ JSValue Modules::readOffNamespaceThatListsName(ModuleID reader, JSObject* namesp
     auto endRead = makeScopeExit([&] {
         m_namesBeingReadOffListers.removeLast();
     });
+    auto* readingNamespace = dynamicDowncast<ModuleNamespace>(namespaceOfReader);
+    auto* listingNamespace = dynamicDowncast<ModuleNamespace>(lister);
+    bool shouldBypassMocks = listingNamespace && (m_isBypassingMocks || (readingNamespace && readingNamespace->keepsToModule()) || (listingNamespace->activeMock() && importsOriginalDespiteMock(listingNamespace->module(), reader)));
+    SetForScope isBypassingMocks(m_isBypassingMocks, shouldBypassMocks);
     RELEASE_AND_RETURN(scope, lister->get(realm, name));
 }
 
