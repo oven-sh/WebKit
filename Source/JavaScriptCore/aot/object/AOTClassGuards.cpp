@@ -396,13 +396,17 @@ private:
     bool m_countsNames { true };
 };
 
-static void storeSideGuards(State& state, const LayoutData& classLayout, ClassSide side, bool holds, const Invocable<bool(uint32_t)> auto& isStored)
+static void storeGuards(State& state, const LayoutData& classLayout, ClassSide side, uint32_t sideBit, bool holds, const Invocable<bool(uint32_t)> auto& isStored)
 {
-    uint32_t sideBit = classLayout.classData().guardBit[static_cast<size_t>(side)];
     auto guards = guardsOfNamesInClassRecord(state.tables, classLayout, side);
     ClassGuardWriter writer(state, classLayout, side, findClassGuardRows(state, guards, sideBit));
     writer.storeSideGuard(sideBit, holds);
     writer.storeNameGuards(guards, holds, isStored);
+}
+
+static void storeSideGuards(State& state, const LayoutData& classLayout, ClassSide side, bool holds, const Invocable<bool(uint32_t)> auto& isStored)
+{
+    storeGuards(state, classLayout, side, classLayout.classData().guardBit[static_cast<size_t>(side)], holds, isStored);
 }
 
 static bool bitOfClassGuardSaysThatItHolds(const LayoutData& classLayout, ClassSide side, BitOfClassGuard bit)
@@ -447,9 +451,18 @@ void ClassTable::countGuardsOfNamesThatDoNotHold(const LayoutData& classLayout)
     countChangeOfClassGuards(m_state, rows.counts, endedGuards, false);
 }
 
+bool ClassTable::standsBelowOtherParent(const LayoutData& classLayout, ClassSide side) const
+{
+    for (const LayoutData* current = &classLayout; current; current = assumedBaseOf(*current)) {
+        if (hasOtherParent(*current, side))
+            return true;
+    }
+    return false;
+}
+
 static bool classGuardOfSideHolds(const State& state, const LayoutData& classLayout, ClassSide side)
 {
-    if (state.objects->classes.guardHasEnded(classLayout, side))
+    if (state.objects->classes.guardHasEnded(classLayout, side) || state.objects->classes.hasOtherParent(classLayout, side))
         return false;
     BitOfClassGuard bit = bitOfClassGuard(state, classLayout, side);
     return !bit.byte || bitOfClassGuardSaysThatItHolds(classLayout, side, bit);
@@ -511,17 +524,56 @@ void endClassGuard(State& state, const LayoutData& classLayout, ClassSide side)
         return;
     classes.m_endedGuards.ensureSize(static_cast<size_t>(state.tables.numberOfClasses()) * numberOfClassSides);
     ClassTable::MethodTableUpdate update(classes);
+    classes.m_endedGuards.set(classes.indexOfGuard(classLayout, side));
+    if (!classLayout.classData().hasGuardsHereOrBelow(side))
+        return;
+    storeSideGuards(state, classLayout, side, false, [](uint32_t) {
+        return true;
+    });
+    for (const AssignedMemberData& member : assignedMembersOf(state.tables, classLayout, side))
+        storeAssignedMember(state, member, jsUndefined());
+    for (uint32_t subclass : subclassesInClassRecord(state.tables, classLayout)) {
+        const LayoutData* below = classes.classWithIndex(subclass);
+        RELEASE_ASSERT(below);
+        endGuardsOfInheritedMembers(state, *below, side);
+    }
+}
+
+void endGuardsOfInheritedMembers(State& state, const LayoutData& classLayout, ClassSide side)
+{
+    ClassTable& classes = state.objects->classes;
+    if (classes.hasNoGuardLeft(classLayout, side) || classes.hasOtherParent(classLayout, side))
+        return;
+    classes.m_sidesWithOtherParent.ensureSize(static_cast<size_t>(state.tables.numberOfClasses()) * numberOfClassSides);
+    classes.m_sidesWithOtherParent.set(classes.indexOfGuard(classLayout, side));
+    classes.m_sidesWhereNamesEnded.set(classes.indexOfGuard(classLayout, side));
+    std::optional<uint32_t> constructorKey = side == ClassSide::Prototype ? identifiersOf(state.instance).numberOf(state.instance.vm->propertyNames->constructor.impl()) : std::nullopt;
+    ClassTable::MethodTableUpdate update(classes);
     Vector<uint32_t, 16> classesToEnd { classLayout.index };
     while (!classesToEnd.isEmpty()) {
         const LayoutData* current = classes.classWithIndex(classesToEnd.takeLast());
         RELEASE_ASSERT(current);
-        if (classes.m_endedGuards.set(classes.indexOfGuard(*current, side)) || !current->classData().hasGuardsHereOrBelow(side))
+        if (classes.hasNoGuardLeft(*current, side) || (current->index != classLayout.index && classes.hasOtherParent(*current, side)))
             continue;
-        storeSideGuards(state, *current, side, false, [](uint32_t) {
-            return true;
+        auto isInherited = [&](uint32_t name) {
+            for (const LayoutData* declaring = current;; declaring = classes.assumedBaseOf(*declaring)) {
+                RELEASE_ASSERT(declaring);
+                if (declaresMember(*declaring, side, name) || (name == constructorKey && classes.isDefinedByClass(*declaring)))
+                    return false;
+                if (declaring->index == classLayout.index)
+                    return true;
+            }
+        };
+        auto guards = guardsOfNamesInClassRecord(state.tables, *current, side);
+        for (const NamedClassGuardData& guard : guards) {
+            if (isInherited(guard.name))
+                classes.m_endedGuardsOfNames.add(byteOffsetOfClassGuardBit(guard.numberOfBit()));
+        }
+        storeSideGuards(state, *current, side, false, [&](uint32_t numberOfBit) {
+            return classes.m_endedGuardsOfNames.contains(byteOffsetOfClassGuardBit(numberOfBit));
         });
         for (const AssignedMemberData& member : assignedMembersOf(state.tables, *current, side))
-            storeAssignedMember(state, member, jsUndefined());
+            classes.updateAssignedMember(member);
         classesToEnd.append(subclassesInClassRecord(state.tables, *current));
     }
 }
@@ -744,7 +796,7 @@ JSValue ClassTable::findAssignedMember(const AssignedMemberData& member) const
                 return !holdsAssignedMember(m_state, value, attributes, member) ? jsUndefined() : FunctionID(member.getter) ? JSValue(uncheckedDowncast<GetterSetter>(value.asCell())->getter()) : value;
         } else if (!baseOf(*current) && !prototypeAwaitsFirstTouch(*current))
             return jsUndefined();
-        if (declaresMember(*current, member.side(), member.name))
+        if (declaresMember(*current, member.side(), member.name) || hasOtherParent(*current, member.side()))
             return jsUndefined();
         below = holder;
     }
@@ -1101,20 +1153,25 @@ static bool hasParentNamedByClassRecord(VM& vm, State& state, const LayoutData& 
         const LayoutData* classOfParent = parent ? classWithHolder(classes, parent) : nullptr;
         return !classOfParent || isClassOfLibrary(*classOfParent);
     }
-    if (!parent || parent != registeredHolderOf(vm, state, *above, side))
+    if (!parent || parent != registeredHolderOf(vm, state, *above, side) || classes.guardHasEnded(*above, side))
         return false;
-    if (!classGuardOfSideHolds(state, *above, side))
-        return false;
-    if (above->classData().guardsHoldWhileClear)
-        return true;
+    bool otherParentStandsAbove = classes.standsBelowOtherParent(*above, side);
+    if (!otherParentStandsAbove) {
+        if (!classGuardOfSideHolds(state, *above, side))
+            return false;
+        if (above->classData().guardsHoldWhileClear)
+            return true;
+    }
     ClassSide sideOfParent;
     if (classes.classHeldBy(parent, sideOfParent) != above || sideOfParent != side)
         return false;
-    if (bitOfClassGuard(state, *above, side).byte)
+    if (!otherParentStandsAbove && bitOfClassGuard(state, *above, side).byte)
         return true;
     NamesThatDifferOnClassHolders namesFurtherUp;
     NamesThatDifferOnClassHolders namesOfParent;
-    if (!hasParentNamedByClassRecord(vm, state, *above, side, parent, namesFurtherUp) || !isParentAsDeclared(vm, state, *above, side, parent, namesOfParent))
+    if (!classes.hasOtherParent(*above, side) && !hasParentNamedByClassRecord(vm, state, *above, side, parent, namesFurtherUp))
+        return false;
+    if (!isParentAsDeclared(vm, state, *above, side, parent, namesOfParent))
         return false;
     addNamesThatLookupsComeToAbove(*above, side, namesFurtherUp, namesOfParent);
     namesThatDifferAbove.numbers.appendVector(namesOfParent.numbers);
@@ -1231,13 +1288,15 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
     }
 #endif
     NamesThatDifferOnClassHolders namesThatDiffer;
-    StateOfClassHolder stateOfHolder = StateOfClassHolder::Differs;
-    NamesThatDifferOnClassHolders namesThatDifferAbove;
-    if (hasParentNamedByClassRecord(vm, m_state, layout, side, holder, namesThatDifferAbove))
-        stateOfHolder = isMadeAsDeclared ? StateOfClassHolder::AsDeclared : stateOfClassHolder(vm, m_state, layout, side, holder, namesThatDiffer);
+    StateOfClassHolder stateOfHolder = isMadeAsDeclared ? StateOfClassHolder::AsDeclared : stateOfClassHolder(vm, m_state, layout, side, holder, namesThatDiffer);
     if (stateOfHolder == StateOfClassHolder::Differs) {
         endClassGuard(m_state, layout, side);
         return;
+    }
+    NamesThatDifferOnClassHolders namesThatDifferAbove;
+    if (!hasOtherParent(layout, side) && !hasParentNamedByClassRecord(vm, m_state, layout, side, holder, namesThatDifferAbove)) {
+        endGuardsOfInheritedMembers(m_state, layout, side);
+        namesThatDifferAbove = { };
     }
 
     if (std::optional<uint32_t> constructorKey = identifiersOf(m_state.instance).numberOf(vm.propertyNames->constructor.impl()); constructorKey && side == ClassSide::Prototype && !isMadeAsDeclared && !isDefinedByClass(layout) && !holdsClassObjectUnderConstructor(vm, m_state, layout, holder))
@@ -1261,7 +1320,7 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
         return;
 
     updateAssignedMembers(layout, side);
-    storeSideGuards(m_state, layout, side, true, [&](uint32_t numberOfBit) {
+    storeGuards(m_state, layout, side, standsBelowOtherParent(layout, side) ? noClassGuardBit : layout.classData().guardBit[static_cast<size_t>(side)], true, [&](uint32_t numberOfBit) {
         return !m_endedGuardsOfNames.contains(byteOffsetOfClassGuardBit(numberOfBit));
     });
 }
@@ -1833,14 +1892,14 @@ void ClassTable::didChangePrototypeLink(const LayoutData& layout, ClassSide side
 {
     if (!hasNoGuardLeft(layout, side))
         forgetWhatCreatedFieldsHide();
-    endClassGuard(m_state, layout, side);
+    endGuardsOfInheritedMembers(m_state, layout, side);
 }
 
 void ClassTable::didDefineWithOtherParent(const LayoutData& layout, ClassSide side)
 {
     if (!hasNoGuardLeft(layout, side))
         forgetWhatCreatedFieldsHide();
-    endClassGuard(m_state, layout, side);
+    endGuardsOfInheritedMembers(m_state, layout, side);
 }
 
 bool ClassTable::endGuardsOfShadowedMember(const LayoutData& instanceLayout, UniquedStringImpl* uid)

@@ -974,7 +974,7 @@ Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits)
         return Word32(truncation);
     static_assert(!static_cast<uint32_t>(JSValue::ValueEmpty));
     if (LValue element = m_int32ElementsBehindNumbersOrNaN.get(value.value()))
-        return unboxInt32Element(Boxed(element));
+        return unboxInt32(Boxed(element));
     if (value.value()->opcode() == Machine::Neg)
         return neg(toInt32(Number(value.value()->child(0)), bits));
     if (bits == BitsOfInt32::All && m_lastTruncation.number == value.value() && m_lastTruncation.block == m_out.m_block)

@@ -172,6 +172,8 @@ public:
         return true;
     }
     bool guardHasEnded(const LayoutData& classLayout, ClassSide side) const { return m_endedGuards.get(indexOfGuard(classLayout, side)); }
+    bool hasOtherParent(const LayoutData& classLayout, ClassSide side) const { return m_sidesWithOtherParent.get(indexOfGuard(classLayout, side)); }
+    bool standsBelowOtherParent(const LayoutData&, ClassSide) const;
     struct CheckedHolder {
         JSObject* holder;
         StructureID structure;
@@ -334,6 +336,7 @@ private:
     friend bool classGuardOfNameHolds(const State&, const LayoutData&, ClassSide, uint32_t key);
     friend void endClassGuard(State&, const LayoutData&, ClassSide);
     friend void endClassGuardsOfName(State&, const LayoutData&, ClassSide, std::optional<uint32_t> key, GuardsOfNameToEnd);
+    friend void endGuardsOfInheritedMembers(State&, const LayoutData&, ClassSide);
 
     using ByIndex = UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     static constexpr unsigned declaredMembersPerHolder = 62;
@@ -457,6 +460,7 @@ private:
     BitVector m_classesThatCountGuardsOfNamesBehindArming;
     BitVector m_classesWhosePrototypeAwaitsFirstTouch;
     BitVector m_sidesWhereNamesEnded;
+    BitVector m_sidesWithOtherParent;
     JSValue findAssignedMember(const AssignedMemberData&) const;
     void updateAssignedMember(const AssignedMemberData&);
     UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_assignedMemberNames;

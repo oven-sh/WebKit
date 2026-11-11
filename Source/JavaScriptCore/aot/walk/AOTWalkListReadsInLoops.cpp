@@ -3561,6 +3561,21 @@ static bool isFilledWithDoubles(const Walker& walker, const BodyIndex& index, Va
     return filledArray && index.value(callee).as<Opcode::Builtin>().builtin() == filledArray;
 }
 
+static Reference steppedArrayBeforeLoop(Walker& walker, const BodyIndex& index, const BodyValue& step, Reference stepped, uint32_t firstValueOfLoop)
+{
+    ValueID open = step.operand(0);
+    if (open.index() < firstValueOfLoop)
+        return stepped;
+    ValueID iterable = index.stripCasts(index.value(open).as<Opcode::IteratorOpen>().iterableOperand());
+    if (iterable && iterable.index() >= firstValueOfLoop && !index.isParameter(iterable) && index.opcodeOf(iterable) == Opcode::Call) {
+        ValueID receiver = index.value(iterable).thisValueOperand();
+        iterable = receiver ? index.stripCasts(receiver) : ValueID();
+    }
+    Reference array = iterable ? nameThatEntersLoopInListReadsInLoops(walker, index, iterable, firstValueOfLoop) : Reference();
+    bool isStepped = array && array.isValue() && underlyingCellOf(walker.code(), array.id()) == underlyingCellOf(walker.code(), stepped.id());
+    return isStepped ? array : Reference();
+}
+
 static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering, Vector<HoistedSpeculation, 4>& guesses, bool keysOfReadsTakeNotes, bool& someReadHasNotedKey, std::optional<BitVector>& namesOfCountersAskedInFront)
 {
     ListsReadInLoop found;
@@ -4279,7 +4294,9 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
             if (surelyEndsWhatIsShownOfListsInListReadsInLoops(walker, operation, firstValueOfLoop, typeInLook, member != inputHead ? walker.canUseIterationGuards(inputHead) && index.loopOf(member) == loop : walker.canUseIterationGuards(inputHead)))
                 return { };
             if (const Walker::IndexedIteration* stepped = findIndexedArrayIteration(walker, index, operation, true); stepped && stepped->kind != JSC::IterationKind::Values && stepped->isDeadAfterLoop && stepped->list.isValue()) {
-                Reference name = stepped->list;
+                Reference name = steppedArrayBeforeLoop(walker, index, operation, stepped->list, firstValueOfLoop);
+                if (!name)
+                    continue;
                 if (dominatesBackEdges)
                     markUsedEveryIteration(name);
                 if (tryReuseForElementAccess(name) || isFreshAllocation(walker, name) || isAlreadyGuardedForReads(name))
@@ -4294,7 +4311,9 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
                 continue;
             }
             if (const Walker::IndexedIteration* stepped = findIndexedArrayIteration(walker, index, operation); stepped && stepped->isDeadAfterLoop && stepped->list.isValue()) {
-                Reference name = stepped->list;
+                Reference name = steppedArrayBeforeLoop(walker, index, operation, stepped->list, firstValueOfLoop);
+                if (!name)
+                    continue;
                 if (dominatesBackEdges)
                     markUsedEveryIteration(name);
                 if (tryReuseForElementAccess(name) || isFreshAllocation(walker, name) || (isAlreadyGuardedForReads(name) && !mayNarrowGuard(findStepValue(index, operation), name)))

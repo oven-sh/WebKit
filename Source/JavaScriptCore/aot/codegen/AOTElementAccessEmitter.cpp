@@ -1354,7 +1354,7 @@ void ElementAccessEmitter::readTruncatedNumber(const ValueContext& value, const 
 Operand ElementAccessEmitter::numberOfInt32Element(const ValueContext& value, Boxed element)
 {
     if (endsInCutToInt32(m_code, value.id())) {
-        Number chosen = select(isEmpty(element), this->number(PNaN), toNumber(unboxInt32Element(element)));
+        Number chosen = select(isEmpty(element), this->number(PNaN), toNumber(unboxInt32(element)));
         emitter<ConversionEmitter>().noteInt32ElementBehindNumberOrNaN(chosen, element);
         return convertElementThatHasBeenAsked(value, arrayStorageFormOf(ArrayStorage::Double), chosen, value.representation(), typeIDOf(value.id()));
     }

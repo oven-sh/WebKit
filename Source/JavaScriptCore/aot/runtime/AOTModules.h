@@ -1770,6 +1770,7 @@ public:
     bool hasMockImportsAwaitingSource() { return hasUnstartedActualKeyLoad() || hasLateImportAwaitingSource() || m_importsAwaitingSource.containsIf([&](const ImportAwaitingSource& each) { return each.isMockImport && !hasOriginalGraphStartedEvaluating(fileOf(each.module)); }); }
     bool hasDeferredFetchOf(ModuleID file);
     bool hasDeferredFetchToEvict();
+    void willRunTestFileAgain(ModuleID file);
     BitVector m_filesToEvictOnceFetched;
     bool isSomeCallHeldForItsText() const { return m_fulfilledBatchedFetchCount < m_batchedFetches.size() || !m_callsToMakeAgain.isEmpty() || !m_queuedFetches.isEmpty(); }
     void didSettleImportBehindFactories(ModuleID root);

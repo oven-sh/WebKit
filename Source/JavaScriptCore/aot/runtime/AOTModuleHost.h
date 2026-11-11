@@ -359,6 +359,7 @@ JS_EXPORT_PRIVATE bool hasMockImportsAwaitingSource(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasInFlightOriginalRequest(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didFinishTests(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasDeferredFetchToEvict(JSGlobalObject*);
+JS_EXPORT_PRIVATE void willRunTestFileAgain(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE void markFactoryAbandoned(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void markMockPassthrough(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void deferMockAfterAsyncFailure(JSGlobalObject*, ModuleID);

@@ -5885,6 +5885,8 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
     if (!found)
         found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : findByName(key);
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
+    if (found && !*fetchParameters)
+        found = moduleFormOf(*found).value_or(*found);
     if (!found && !*fetchParameters)
         found = originalThatOwnFactoryAsksFor(key);
     if (found) {
@@ -8998,6 +9000,12 @@ void didFinishTests(JSGlobalObject* realm)
 {
     if (Modules* modules = modulesOf(realm))
         modules->didFinishTests();
+}
+
+void willRunTestFileAgain(JSGlobalObject* realm, ModuleID file)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->willRunTestFileAgain(file);
 }
 
 bool hasDeferredFetchToEvict(JSGlobalObject* realm)

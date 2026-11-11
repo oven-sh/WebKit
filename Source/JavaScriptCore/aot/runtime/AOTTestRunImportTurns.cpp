@@ -167,6 +167,15 @@ bool Modules::hasDeferredFetchToEvict()
     return false;
 }
 
+void Modules::willRunTestFileAgain(ModuleID file)
+{
+    if (m_filesToEvictOnceFetched.isEmpty()) [[likely]]
+        return;
+    bool hasReleasedImport = std::ranges::any_of(m_table.imports(file), [&](const ModuleRequestData& request) { return m_modulesReleasedByLoader.get(moduleLoadedBy(request).index()); });
+    if (!hasReleasedImport && !hasImportsToFetch(file))
+        m_filesToEvictOnceFetched.clearAll();
+}
+
 void Modules::putCallsThatWaitApartInLine()
 {
     if (m_batchedFetches.isEmpty()) [[likely]]

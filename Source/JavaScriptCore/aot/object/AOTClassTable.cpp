@@ -157,6 +157,9 @@ JSArray* ClassTable::tryCreateRememberedHeir(VM& vm, JSCell* parent, JSCell* new
     const StructureWithBrandOfHeirs& last = m_structuresWithBrandsOfHeirs[indexOfStructureWithBrandOfHeirs(newTarget)];
     if (last.newTarget != newTarget || last.parent != parent || last.withBrand == last.withoutBrand || !last.learnedShape)
         return nullptr;
+    FunctionRareData* rareData = uncheckedDowncast<JSFunction>(newTarget)->rareData();
+    if (!rareData || rareData->internalFunctionAllocationStructure() != last.withoutBrand)
+        return nullptr;
     return tryCreateArrayOfHeir(vm, newTarget, last.withBrand, length);
 }
 
