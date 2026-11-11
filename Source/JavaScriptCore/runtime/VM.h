@@ -1290,7 +1290,11 @@ public:
     ALWAYS_INLINE VMTraps& traps() { return m_threadContext.traps(); }
     ALWAYS_INLINE const VMTraps& traps() const { return m_threadContext.traps(); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE NEVER_INLINE bool hasExceptionsAfterHandlingTraps();
+#else
     JS_EXPORT_PRIVATE bool hasExceptionsAfterHandlingTraps();
+#endif
 
     CONCURRENT_SAFE void notifyNeedDebuggerBreak() { traps().fireTrap(VMTraps::NeedDebuggerBreak); }
     CONCURRENT_SAFE void notifyNeedShellTimeoutCheck() { traps().fireTrap(VMTraps::NeedShellTimeoutCheck); }
@@ -1439,8 +1443,13 @@ private:
     JS_EXPORT_PRIVATE void setException(Exception*);
 
     JS_EXPORT_PRIVATE Exception* throwException(JSGlobalObject*, Exception*);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE NEVER_INLINE Exception* throwException(JSGlobalObject*, JSValue);
+    JS_EXPORT_PRIVATE NEVER_INLINE Exception* throwException(JSGlobalObject*, JSObject*);
+#else
     JS_EXPORT_PRIVATE Exception* throwException(JSGlobalObject*, JSValue);
     JS_EXPORT_PRIVATE Exception* throwException(JSGlobalObject*, JSObject*);
+#endif
 
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
     void verifyExceptionCheckNeedIsSatisfied(unsigned depth, ExceptionEventLocation&);

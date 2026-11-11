@@ -79,10 +79,27 @@ ALWAYS_INLINE std::optional<uint32_t> parseIndex(std::span<const CharType> chara
     return value;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// A property name made of digits is 8-bit unless something widened it.
+NEVER_INLINE inline std::optional<uint32_t> parseIndex16StartingWithDigit(const StringImpl& impl)
+{
+    return parseIndex(impl.span16());
+}
+
+ALWAYS_INLINE std::optional<uint32_t> parseIndex(const StringImpl& impl)
+{
+    if (impl.is8Bit()) [[likely]]
+        return parseIndex(impl.span8());
+    if (!impl.length() || static_cast<unsigned>(impl.span16().data()[0]) - '0' > 9)
+        return std::nullopt;
+    return parseIndex16StartingWithDigit(impl);
+}
+#else
 ALWAYS_INLINE std::optional<uint32_t> parseIndex(const StringImpl& impl)
 {
     return impl.is8Bit() ? parseIndex(impl.span8()) : parseIndex(impl.span16());
 }
+#endif
 
 class Identifier {
     friend class Structure;
