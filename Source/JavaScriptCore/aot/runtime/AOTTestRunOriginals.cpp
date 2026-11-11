@@ -894,6 +894,8 @@ JSValue Modules::requireOriginalUnderMock(ModuleID module)
             evaluateModulesOwedBelow(moduleLoadedBy(request));
             RETURN_IF_EXCEPTION(scope, { });
         }
+        if (m_importedOriginals.get(fileOf(module).index()) && m_table.hasFilePath(module) && host().didRunOriginal) [[unlikely]]
+            host().didRunOriginal(m_instance.globalObject, m_table.fullPath(module), OriginalRun::RunsAmongLoads);
         noteSecondInstanceOfOriginal(module);
         markOriginalDue(module);
         evaluateSynchronously(module, SynchronousEvaluationReason::Require);
@@ -1666,6 +1668,7 @@ void Modules::noteOriginalsWithLoadedImporter(ModuleID imported, ModuleID referr
 
 void Modules::willReplaceMock(ModuleID mocked)
 {
+    m_importedOriginals.clear(mocked.index());
     m_requiresRejectedAgain.removeIf([&](uint64_t pair) {
         if (static_cast<uint32_t>(pair) != mocked.index())
             return false;
@@ -1715,6 +1718,8 @@ void Modules::willImportOriginal(ModuleID file)
         if (!wasOriginalEvaluated(file) || m_evictedDataOriginals.clear(file.index()))
             m_originalsEvaluatedByRequire.clear(file.index());
     }
+    if (data(file).isESModuleOfProgram())
+        m_importedOriginals.set(file.index());
     if (m_originalsUnderEndedBuiltinMocks.get(file.index()))
         noteCompiledOriginal(file, OriginalRun::BuiltinMockChanged);
 }

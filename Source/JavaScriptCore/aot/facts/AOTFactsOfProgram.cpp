@@ -3977,6 +3977,7 @@ private:
     BitVector m_isFoundByWhatCodeWrote;
     BitVector m_isCalledByCodeInSight;
     BitVector m_isSpelledInTexts;
+    BitVector m_modulesImportedByProgram;
     bool m_eventsAreWithheld { true };
     bool m_defersRuntimeNames { false };
     bool m_hasDeferredMembers { false };
@@ -4076,6 +4077,7 @@ BuilderOfProgramFacts::BuilderOfProgramFacts(const InputsOfProgramFacts& inputs,
     , m_isFoundByWhatCodeWrote(m_builtins.builtinCount())
     , m_isCalledByCodeInSight(m_builtins.builtinCount())
     , m_isSpelledInTexts(m_builtins.builtinCount())
+    , m_modulesImportedByProgram(m_builtins.builtinCount())
     , m_writes(inputs.program, m_refused, inputs.linked.lookups)
     , m_namesOfProtocols(m_builtins.nameCount())
     , m_keysReadOnlyByRowsThatNameThem(m_builtins.nameCount())
@@ -4867,6 +4869,8 @@ void BuilderOfProgramFacts::evaluate(ModuleID id, const Witness& witness)
         return !!entry.variable;
     });
     if (object && fillsVariables) {
+        if (standsInTextOfProgram(witness))
+            m_modulesImportedByProgram.quickSet(m_builtins.canonicalID(object).index());
         auto memberUnder = [&](const SyntheticExport& entry) {
             std::optional<PropertyKeyID> key = m_source.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = entry.name });
             return key ? findOwnMember(m_source, m_builtins.canonicalID(object), *key) : BuiltinID();
@@ -5328,7 +5332,7 @@ Vector<BuiltinUseRecord> BuilderOfProgramFacts::usesWithWhatNobodyNamesAsEscaped
             record.uses = BuiltinUse::Tested;
             continue;
         }
-        if (m_isSpelledInTexts.quickGet(canonical))
+        if (m_isSpelledInTexts.quickGet(canonical) || m_modulesImportedByProgram.quickGet(canonical))
             uses.add(BuiltinUse::Read);
         else if (!isNamed.quickGet(canonical)) {
             uses = (uses & usesThatNameNothing) | OptionSet<BuiltinUse> { BuiltinUse::Escaped };

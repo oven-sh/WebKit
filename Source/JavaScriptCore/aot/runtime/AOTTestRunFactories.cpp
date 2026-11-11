@@ -2268,6 +2268,8 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
                 if (!m_modulesWithPendingMock.get(module.index()))
                     continue;
             }
+            if (!isCalledByRequire) [[likely]]
+                didCallFactoryOfLoad(fileOf(module));
             SetForScope innermostFactoryCaller(m_innermostFactoryCaller, isCalledByRequire ? m_innermostFactoryCaller : &caller);
             SetForScope loadCallingFactory(m_loadCallingFactory, module != root && module != fileOfRoot ? std::optional(root) : std::nullopt);
             bool factoryHasNotSettled = runPendingMock(module);

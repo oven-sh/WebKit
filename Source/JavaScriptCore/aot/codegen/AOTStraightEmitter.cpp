@@ -1061,7 +1061,8 @@ void StraightEmitter::takeParameters(const ArgumentLocations& locations)
             case ArgumentLocation::Kind::None:
                 break;
             case ArgumentLocation::Kind::GPR:
-                boxInForm(location.representation, location.reg.gpr());
+                if (location.representation != Representation::Int64)
+                    boxInForm(location.representation, location.reg.gpr());
                 m_jit->store64(location.reg.gpr(), addressOfSlot(parameter));
                 break;
             case ArgumentLocation::Kind::FPR:
@@ -1106,10 +1107,18 @@ void StraightEmitter::takeParameters(const ArgumentLocations& locations)
             isNoCell.link(m_jit);
     }
     for (uint32_t index = 0; index < entry.numberOfParameters(); ++index) {
+        const ArgumentLocation& location = locations.parameters[index];
         ValueID parameter = entry.parameter(index);
-        if (locations.parameters[index].kind != ArgumentLocation::Kind::FPR || m_index.isUnused(parameter))
+        bool isInt64 = location.kind == ArgumentLocation::Kind::GPR && location.representation == Representation::Int64;
+        if ((location.kind != ArgumentLocation::Kind::FPR && !isInt64) || m_index.isUnused(parameter))
             continue;
         GPRReg result = takeResultRegister();
+        if (isInt64) {
+            m_jit->load64(addressOfSlot(parameter), result);
+            boxInForm(Representation::Int64, result);
+            m_jit->store64(result, addressOfSlot(parameter));
+            continue;
+        }
         FPRReg number = takeResultFPR();
         m_jit->loadDouble(addressOfSlot(parameter), number);
         boxDouble(number, result);

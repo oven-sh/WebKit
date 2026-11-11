@@ -1471,9 +1471,13 @@ static bool isInLongLoop(Walker& walker, const BodyValue& access)
     const BodyIndex& index = walker.currentBodyIndex();
     LoopID loop = index.loopOf(index.blockOf(access.id()));
     uint32_t numberOfOperations = 0;
-    for (BlockID member : loop ? index.membersOf(loop) : std::span<const BlockID>())
-        numberOfOperations += std::ranges::count_if(index.block(member).values(), [&](BodyValue operation) { return !uncounted.contains(operation.opcode()); });
-    return numberOfOperations > maxShortLoopSize;
+    for (BlockID member : loop ? index.membersOf(loop) : std::span<const BlockID>()) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (!uncounted.contains(operation.opcode()) && ++numberOfOperations > maxShortLoopSize)
+                return true;
+        }
+    }
+    return false;
 }
 
 static Reference buildTruncatedRead(const AccessOfTypedElements& access, const HoistedArrayGuard& tested, std::optional<PassedTest> inside)

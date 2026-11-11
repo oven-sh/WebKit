@@ -234,10 +234,14 @@ static Operation* foldRotationIntoTerms(Builder& builder, Opcode opcode, Type ty
 Operation* foldMachineRotationOutOfShifts(Builder& builder, Opcode opcode, Type type, Operation* left, Operation* right)
 {
     ASSERT(opcode == BitOr || opcode == BitXor);
-    if (!right->child(1)->hasInt32())
-        return nullptr;
     unsigned termsLeft = maxRotationTerms;
-    return foldRotationIntoTerms(builder, opcode, type, left, right, termsLeft);
+    if (mayBeHalfOfRotation(right) && right->child(1)->hasInt32()) {
+        if (Operation* folded = foldRotationIntoTerms(builder, opcode, type, left, right, termsLeft))
+            return folded;
+    }
+    if (mayBeHalfOfRotation(left) && left->child(1)->hasInt32())
+        return foldRotationIntoTerms(builder, opcode, type, right, left, termsLeft);
+    return nullptr;
 }
 
 static Operation* foldMachineRotation(Builder& builder, Type type, Operation* value, Operation* amountOperand)

@@ -461,8 +461,13 @@ public:
             });
             return;
         }
+        if (bitsDecide(kindsComparedBy(value))) {
+            m_out.noteForm(Form::Open, StateOfKnowledge::Bits);
+            defineTest(value, equal(x, y));
+            return;
+        }
         bool isOpen = generator().takesOpenForm(value, StateOfKnowledge::Generic) || generator().isInRecursion(value.block());
-        if (asksForInt32sFirst(value) && !bitsDecide(kindsComparedBy(value)) && !isOpen) {
+        if (asksForInt32sFirst(value) && !isOpen) {
             m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
             defineTestByBranching(value, [&](BranchTargets targets) {
                 LBasicBlock areInt32s = newBlock();
@@ -478,7 +483,7 @@ public:
         }
         ValueID expectedObject = value->expectsObjectOnLeft() ? value->leftOperand() : value->expectsObjectOnRight() ? value->rightOperand() : ValueID();
         bool asksKindInLine = expectedObject && !mayBeEmpty(expectedObject) && generator().code().at(value.block()).frequency != BlockFrequency::Rare;
-        if (asksKindInLine && !bitsDecide(kindsComparedBy(value)) && isOpen) {
+        if (asksKindInLine && isOpen) {
             Boxed tested = expectedObject == value->leftOperand() ? x : y;
             defineTestByBranching(value, [&](BranchTargets targets) {
                 LBasicBlock isCellOfSomeKind = newBlock();
@@ -495,7 +500,7 @@ public:
             });
             return;
         }
-        if (!bitsDecide(kindsComparedBy(value)) && !isOpen) {
+        if (!isOpen) {
             if (value.isBranchCondition()) {
                 LValue operands[] = { x.value(), y.value() };
                 emitter<RuntimeCallEmitter>().callStubAndBranch(value, strictEqualInFlags(), operands, { }, value.branchTargets());
@@ -628,12 +633,6 @@ private:
         auto mayBeComparedByIdentity = [&, typesAreExhaustive = typesAreExhaustive](const Type& type) {
             return !typesAreExhaustive || type.hasObjects() || type.primitives & Primitive::AnySymbol;
         };
-        if (bitsDecide(kinds)) {
-            m_out.noteForm(Form::Open, StateOfKnowledge::Bits);
-            branch(equal(x, y), targets);
-            return;
-        }
-
         bool areInt32sDecided = mayBothBeNumbers && asksForInt32sFirst(value);
         if (areInt32sDecided) {
             LBasicBlock areInt32s = newBlock();

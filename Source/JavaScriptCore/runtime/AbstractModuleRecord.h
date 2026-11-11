@@ -400,6 +400,8 @@ public:
     JS_EXPORT_PRIVATE void convertPrelinkedToEager();
     // The record a pre-resolved binding's module index names, or null if index-based resolution must not be used for it.
     AbstractModuleRecord* prelinkedRecordForResolution(JSGlobalObject*, uint32_t moduleIndex) const;
+#else
+    const Identifier& bindingName(const ExportEntry& entry) const { return entry.localName; }
 #endif
 
     void setModuleEnvironment(JSGlobalObject*, JSModuleEnvironment*);

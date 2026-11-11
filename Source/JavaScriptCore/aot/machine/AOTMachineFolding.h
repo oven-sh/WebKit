@@ -219,12 +219,17 @@ ALWAYS_INLINE Operation* foldMachineBitAnd(Builder& builder, Type type, Operatio
     return foldMachineBitAndOfBoundedValue(builder, type, left, right);
 }
 
+inline bool mayBeHalfOfRotation(const Operation* value)
+{
+    return value->opcode() == Shl || value->opcode() == ZShr;
+}
+
 ALWAYS_INLINE Operation* foldMachineBitOr(Builder& builder, Type type, Operation* left, Operation* right)
 {
     if (left == right)
         return left;
     if (!right->hasInt())
-        return right->opcode() == Shl || right->opcode() == ZShr ? foldMachineRotationOutOfShifts(builder, BitOr, type, left, right) : nullptr;
+        return mayBeHalfOfRotation(left) || mayBeHalfOfRotation(right) ? foldMachineRotationOutOfShifts(builder, BitOr, type, left, right) : nullptr;
 
     int64_t bits = right->asInt();
     if (left->hasInt())
@@ -243,7 +248,7 @@ ALWAYS_INLINE Operation* foldMachineBitXor(Builder& builder, Type type, Operatio
     if (left == right)
         return builder.constantOfType(type, 0);
     if (!right->hasInt())
-        return right->opcode() == Shl || right->opcode() == ZShr ? foldMachineRotationOutOfShifts(builder, BitXor, type, left, right) : nullptr;
+        return mayBeHalfOfRotation(left) || mayBeHalfOfRotation(right) ? foldMachineRotationOutOfShifts(builder, BitXor, type, left, right) : nullptr;
 
     int64_t bits = right->asInt();
     if (left->hasInt())

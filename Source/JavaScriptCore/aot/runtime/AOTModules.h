@@ -242,6 +242,7 @@ public:
         noteLoadsOfEndedTestFile();
         m_modulesWithOrphanedFetch.clearAll();
         m_mocksCalledInTestFile.clearAll();
+        m_factoriesCalledWhenNamed.clear();
         if (!std::exchange(m_hasBegunTestFile, true)) {
             m_filesThatRanInPreload = m_filesThatRanBeforeTestFile;
             recordVariantsRegisteredByPreload();
@@ -1511,6 +1512,8 @@ public:
     BitVector m_modulesWithPrivateCopy;
     BitVector m_modulesSharedWithFactories;
     BitVector m_mocksCalledInTestFile;
+    UncheckedKeyHashMap<ModuleID, uint32_t> m_factoriesCalledWhenNamed;
+    uint32_t m_factoriesCalledByLoads { 0 };
     BitVector m_mocksCalledAgain;
     bool runsBesideMockFor(ModuleID mocked, std::optional<ModuleID> importer) const;
     void setAsideErrorOfModuleThatRanBesideMock(ModuleID);
@@ -2508,6 +2511,9 @@ private:
     };
     Vector<ImportAwaitingSource, 2> m_importsAwaitingSource;
     bool shouldRunMocksAfterSource(ModuleID);
+    std::optional<ModuleID> requestedMockAheadOfCommonJS(ModuleID root) const;
+    bool isNamedByImport(ModuleID file) const;
+    void didCallFactoryOfLoad(ModuleID file);
     bool shouldRunMocksAtFetch(ModuleID);
     BitVector m_statementFetchesDelayedByTick;
     struct FactoryCaller {
@@ -3153,6 +3159,7 @@ private:
     UncheckedKeyHashMap<ModuleID, uint32_t> m_refusedOriginals;
     ModuleIndexMap<ModuleIndexSet> m_originalsByRequirer;
     BitVector m_requirersUnderPendingMocks;
+    BitVector m_importedOriginals;
     std::optional<ModuleID> m_loadCallingFactory;
     BitVector m_mocksImportedByFactories;
     ModuleIndexMap<ModuleIndexSet> m_displacedRunImporters;

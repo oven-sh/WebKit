@@ -11223,6 +11223,15 @@ static Reference exitReadArmUnless(Walker& walker, Reference value, TypeID teste
     return walker.build(WTF::move(proof));
 }
 
+static void nameInReadArm(Walker& walker, Reference value, Reference proven)
+{
+    Reference last = value;
+    while (Reference checked = walker.state().checkedNameOf(last))
+        last = checked;
+    if (last != proven)
+        walker.state().noteCheckedName(last, proven);
+}
+
 static bool isNameOfWrittenClass(Walker& walker, const BodyValue& read)
 {
     return walker.plan().slots().someLayoutWrittenInHasField(walker.program().at(walker.unit().function).module, read.key());
@@ -11377,10 +11386,7 @@ ReadInArm tryReadInArm(Walker& walker, const BodyValue& read)
             if (isAskedHere)
                 walker.state().recordCellFacts(proof, CellFact::BearsNoMark);
             walker.recordSpeculation();
-            ValueID operand = read.objectOperand();
-            if (operand < walker.readArm()->first || index.blockOf(operand) != walker.readArm()->inputBlock)
-                walker.readArm()->boundBefore.append({ operand, object });
-            walker.bind(operand, proof);
+            nameInReadArm(walker, object, proof);
             return ReadInArm::No;
         }
         Draft lookup(Opcode::GetValueAtSiteOrAbsent, origin);
@@ -11447,8 +11453,6 @@ ReadInArm tryReadInArm(Walker& walker, const BodyValue& read)
             begin = end;
         }
         walker.listArm(stretch, arms);
-        for (auto& [operand, before] : arm.boundBefore)
-            walker.bind(operand, before);
     }
     if (walker.hasFailed())
         return ReadInArm::WalkedStretch;
@@ -11499,7 +11503,6 @@ void askOperandsInArm(Walker& walker, const BodyValue& operation)
 {
     if (!standsInReadArm(walker, operation) || walker.isUnreachable())
         return;
-    const BodyIndex& index = walker.currentBodyIndex();
     TypeArena& types = walker.types();
     bool someOperandIsNumber = false;
     operation.forEachOperand([&](ValueID operand, uint32_t) {
@@ -11517,9 +11520,7 @@ void askOperandsInArm(Walker& walker, const BodyValue& operation)
         Reference number = exitReadArmUnless(walker, built, TypeTable::number, true, origin);
         if (!number)
             return;
-        if (operand < walker.readArm()->first || index.blockOf(operand) != walker.readArm()->inputBlock)
-            walker.readArm()->boundBefore.append({ operand, built });
-        walker.bind(operand, number);
+        nameInReadArm(walker, built, number);
     });
 }
 

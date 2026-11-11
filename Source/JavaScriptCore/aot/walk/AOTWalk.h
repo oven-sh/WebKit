@@ -1353,7 +1353,6 @@ public:
         uint32_t end { 0 };
         uint32_t firstUnseen { 0 };
         bool isLeft { false };
-        Vector<std::pair<ValueID, Reference>, 8> boundBefore { };
     };
     ReadArm*& readArm() { return m_readArm; }
     struct LoopCheckedForStores {

@@ -114,6 +114,7 @@ struct LastEnteredByAdapter {
     SavedFrame* frame;
     JSCell* asyncGenerator;
     JSCell* promiseOfHandler;
+    bool handlerReturnsFulfillment;
 };
 
 static LastEnteredByAdapter didLeaveAdapter(Instance& instance, const AdapterEntry& entry)
@@ -121,7 +122,15 @@ static LastEnteredByAdapter didLeaveAdapter(Instance& instance, const AdapterEnt
     CoroutineWords& coroutines = instance.coroutines;
     coroutines.asyncContextIsPutBack = entry.outerAsyncContextIsPutBack;
     coroutines.resumableFrame = entry.resumableOuterFrame;
-    return { static_cast<SavedFrame*>(std::exchange(coroutines.enteredFrame, entry.outerFrame)), std::exchange(coroutines.enteredAsyncGenerator, entry.outerAsyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, entry.outerPromiseOfHandler) };
+    return { static_cast<SavedFrame*>(std::exchange(coroutines.enteredFrame, entry.outerFrame)), std::exchange(coroutines.enteredAsyncGenerator, entry.outerAsyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, entry.outerPromiseOfHandler), !!std::exchange(coroutines.handlerReturnsFulfillment, 0) };
+}
+
+static JSValue promiseReturnedByHandler(Instance& instance, JSValue fulfillment)
+{
+    VM& vm = *instance.vm;
+    JSPromise* promise = JSPromise::create(vm, instance.globalObject->promiseStructure());
+    promise->fulfillPromise(vm, fulfillment);
+    return promise;
 }
 
 static void reportErrorOfFunctionOfJob(Instance& instance, JSValue exceptionOrValue)
@@ -364,14 +373,14 @@ JSAsyncGenerator* didReturnFromAsyncGeneratorBody(const AsyncGeneratorBodyEntry&
     if (!entry.instance)
         return entered;
     Instance& instance = *entry.instance;
-    auto [lastFrame, lastAsyncGenerator, promiseOfHandler] = didLeaveAdapter(instance, entry.adapterEntry);
+    auto [lastFrame, lastAsyncGenerator, promiseOfHandler, handlerReturnsFulfillment] = didLeaveAdapter(instance, entry.adapterEntry);
     if (lastFrame && lastFrame->kind() == CoroutineKind::AsyncGenerator)
         return uncheckedDowncast<JSAsyncGenerator>(lastAsyncGenerator);
     if (isTerminated)
         return nullptr;
     if (!lastFrame) {
         if (promiseOfHandler)
-            settlePromiseOfHandler(*instance.vm, promiseOfHandler, returned, error);
+            settlePromiseOfHandler(*instance.vm, promiseOfHandler, handlerReturnsFulfillment ? promiseReturnedByHandler(instance, returned) : returned, error);
         else if (error) [[unlikely]]
             reportErrorOfFunctionOfJob(instance, error);
     } else if (error) [[unlikely]] {
@@ -650,7 +659,7 @@ void settlePromiseOfHandler(VM& vm, JSCell* cell, JSValue returned, JSValue erro
 
 static void finishAdapterEntry(VM& vm, Instance& instance, const AdapterEntry& entry, TopExceptionScope& scope, JSValue returned)
 {
-    auto [lastFrame, lastAsyncGenerator, promiseOfHandler] = didLeaveAdapter(instance, entry);
+    auto [lastFrame, lastAsyncGenerator, promiseOfHandler, handlerReturnsFulfillment] = didLeaveAdapter(instance, entry);
     JSValue error;
     Exception* exception = scope.exception();
     if (exception) [[unlikely]] {
@@ -659,7 +668,7 @@ static void finishAdapterEntry(VM& vm, Instance& instance, const AdapterEntry& e
             return;
     }
     if (promiseOfHandler) {
-        settlePromiseOfHandler(vm, promiseOfHandler, returned, error);
+        settlePromiseOfHandler(vm, promiseOfHandler, handlerReturnsFulfillment ? promiseReturnedByHandler(instance, returned) : returned, error);
         return;
     }
     if (!lastFrame) {

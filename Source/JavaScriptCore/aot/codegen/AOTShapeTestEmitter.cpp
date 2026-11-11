@@ -155,7 +155,7 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
     m_lastTestIsHeldAgainstEveryShape = true;
     bool shouldIgnoreMark = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::IgnoreMarksInShapeChecks);
     WordOfTest word = (m_lastTestRejectsMarks && !shouldIgnoreMark) || !mayBearMark(tested) ? WordOfTest::AsItLies : WordOfTest::WithoutMark;
-    if (marked == MarkedObjects::PassAlone && word == WordOfTest::WithoutMark && !shouldIgnoreMark)
+    if (isX86_64() && marked == MarkedObjects::PassAlone && word == WordOfTest::WithoutMark && !shouldIgnoreMark)
         word = WordOfTest::WithMark;
     if (marked == MarkedObjects::AreRefused || marked == MarkedObjects::AreAskedAgain || marked == MarkedObjects::PassAlone || !known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
         return passes(cell, tested, testOf(tested), word);

@@ -6947,13 +6947,16 @@ void ScanOfBody::returnValue(ValueID operand, uint32_t block)
     if (definition && definition.opcode() == Opcode::Results) {
         uint32_t result = 0;
         for (ValueID value : definition.variadicOperands()) {
-            if (value)
-                flowInto(listOf(value), resultNode(result));
+            if (value) {
+                ListInScan returned = listOf(value);
+                flowInto(returned, resultNode(result));
+            }
             ++result;
         }
         return;
     }
-    flowInto(listOf(operand), resultNode(0));
+    ListInScan returned = listOf(operand);
+    flowInto(returned, resultNode(0));
     readNamesThatLoaderTakesOff(operand);
     readWhatHostLooksFor(operand);
     if (!definition || effectRuleOf(definition.opcode()) != EffectRule::Call)

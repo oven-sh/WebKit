@@ -347,7 +347,6 @@ void generateEnterSavedFrame(StubAssembler& jit)
         const GPRReg result = GPRInfo::returnValueGPR;
 #if CPU(X86_64)
         Jump returnsFulfillment;
-        Label hasResult;
 #endif
         auto callHandler = [&](bool hasArgument, JumpList& doesNotGoOn) {
             jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
@@ -365,7 +364,6 @@ void generateEnterSavedFrame(StubAssembler& jit)
             if (hasArgument) {
                 jit.bindEntry(handlerOfJobReturn());
                 returnsFulfillment = jit.branchTest8(CCallHelpers::NonZero, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.handlerReturnsFulfillment)));
-                hasResult = jit.label();
             }
 #endif
             jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
@@ -393,21 +391,12 @@ void generateEnterSavedFrame(StubAssembler& jit)
 
 #if CPU(X86_64)
         returnsFulfillment.link(&jit);
-        JumpList needsPromise;
-        jit.store8(TrustedImm32(0), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.handlerReturnsFulfillment)));
-        needsPromise.append(jit.branchPtr(CCallHelpers::Below, sp, trapAwareSoftStackLimit()));
-        needsPromise.append(jit.branchTest64(CCallHelpers::Zero, endsJob));
+        leave.append(jit.branchPtr(CCallHelpers::Below, sp, trapAwareSoftStackLimit()));
+        leave.append(jit.branchTest64(CCallHelpers::Zero, endsJob));
         jit.load64(generatorArgument, promise);
-        emitQueueResolutionWithFulfillment(jit, promise, result, slot, { mode, value, next, scratch }, needsPromise);
+        emitQueueResolutionWithFulfillment(jit, promise, result, slot, { mode, value, next, scratch }, leave);
+        jit.store8(TrustedImm32(0), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.handlerReturnsFulfillment)));
         jit.jump().linkTo(hasSettledPromise, &jit);
-
-        needsPromise.link(&jit);
-        jit.move(result, value);
-        jit.callStub(newPromise());
-        jit.store64(value, Address(result, JSPromise::offsetOfSlot()));
-        jit.move(TrustedImm64(static_cast<int64_t>(fulfilledPromiseBits)), scratch);
-        jit.store64(scratch, Address(result, JSPromise::offsetOfPacked()));
-        jit.jump().linkTo(hasResult, &jit);
 #else
         UNUSED_VARIABLE(hasSettledPromise);
 #endif

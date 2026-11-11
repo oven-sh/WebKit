@@ -801,6 +801,10 @@ bool Modules::evaluateModuleOwed(ModuleID module)
         tellOfKeptRun(fileOf(module));
     if (ModuleID file = fileOf(module); m_modulesWithPendingMock.get(file.index())) {
         scope.release();
+        if (hasIntactOriginal(file) && status(module) == ModuleStatus::Evaluated) {
+            m_modulesOwedToImportersThatRan.clear(module.index());
+            return false;
+        }
         bool factoryHasNotSettled = runMocksInGraph(file, LoadRootKind::ImportStatement);
         m_isDueModuleBlocked |= factoryHasNotSettled;
         return factoryHasNotSettled;

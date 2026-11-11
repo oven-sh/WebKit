@@ -250,12 +250,14 @@ static JSArray* tryListElementsAndFields(JSGlobalObject* globalObject, const Obj
     std::span<const FieldData> fields = compiled.layout().fields();
     MarkedArgumentBuffer keys;
     MarkedArgumentBuffer values;
-    extra->forEachOwnElement<JSObject::SortMode::Ascending>([&](unsigned index, JSValue value) {
-        if (listsKeys)
-            keys.append(jsString(vm, String::number(index)));
-        values.append(value);
-        return IterationStatus::Continue;
-    });
+    if (extra->canHaveExistingOwnIndexedProperties()) {
+        extra->forEachOwnElement<JSObject::SortMode::Ascending>([&](unsigned index, JSValue value) {
+            if (listsKeys)
+                keys.append(jsString(vm, String::number(index)));
+            values.append(value);
+            return IterationStatus::Continue;
+        });
+    }
     bool isListed = true;
     compiled.forEachFieldInKeyOrder(state, [&](uint16_t index) {
         const FieldData& field = fields[index];

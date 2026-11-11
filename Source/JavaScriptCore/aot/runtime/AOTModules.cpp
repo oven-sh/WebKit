@@ -4415,6 +4415,8 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         clearCachedMockError(module);
         m_originalsDueUnderMock.clear(module.index());
     }
+    if (m_hasBegunTestFile && (!m_timesMocked.isEmpty() || !m_modulesWithPendingMock.isEmpty())) [[unlikely]]
+        m_factoriesCalledWhenNamed.set(fileOf(module), m_factoriesCalledByLoads);
     bool isNestedInBlockedImport = wasDelayed && referrer && lastFactoryBlockedImport(module) && importsStatically(module, fileOf(referrer));
     SetForScope importDeferringMocks(m_importDeferringMocks, !isNestedInBlockedImport && shouldRunMocksAfterSource(module) ? std::optional(module) : std::nullopt);
     if (!m_importDeferringMocks && !shouldLeaveImportPending(module) && !shouldRunMocksAtFetch(module) && !hasPermanentFailureInPackage(module) && !hasPermanentFailureInProject(module)) {
@@ -4587,7 +4589,60 @@ bool Modules::shouldRunMocksAfterSource(ModuleID module)
             return false;
         comesToMock = true;
     }
+    if (comesToMock) {
+        if (std::optional<ModuleID> mocked = requestedMockAheadOfCommonJS(module); mocked && host().didRunOriginal && m_table.hasFilePath(*mocked))
+            host().didRunOriginal(m_instance.globalObject, m_table.fullPath(*mocked), OriginalRun::RunsAmongLoads);
+    }
     return comesToMock;
+}
+
+std::optional<ModuleID> Modules::requestedMockAheadOfCommonJS(ModuleID root) const
+{
+    if (m_factoriesCalledWhenNamed.isEmpty()) [[likely]]
+        return std::nullopt;
+    BitVector reached(m_table.size());
+    Deque<ModuleID, 32> work { root };
+    std::optional<ModuleID> ahead;
+    bool hasReachedCommonJS = false;
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeFirst();
+        if (reached.quickSet(module.index()))
+            continue;
+        ModuleID file = fileOf(module);
+        if (data(file).kind == ModuleKind::CommonJs && status(file) != ModuleStatus::Evaluated) {
+            hasReachedCommonJS = true;
+            continue;
+        }
+        for (const ModuleRequestData& request : m_table.requests(module)) {
+            if (request.isHoisted || request.isDeferred || request.isRequire)
+                continue;
+            ModuleID imported = moduleLoadedBy(request);
+            ModuleID fileOfImported = fileOf(imported);
+            if (!m_modulesWithPendingMock.get(imported.index()) && !m_modulesWithPendingMock.get(fileOfImported.index())) {
+                work.append(imported);
+                continue;
+            }
+            if (hasReachedCommonJS || !isNamedByImport(fileOfImported) || m_mocksRetriedAfterFailure.get(imported.index()))
+                return std::nullopt;
+            ahead = fileOfImported;
+        }
+    }
+    return hasReachedCommonJS ? ahead : std::nullopt;
+}
+
+bool Modules::isNamedByImport(ModuleID file) const
+{
+    auto named = m_factoriesCalledWhenNamed.find(file);
+    return named != m_factoriesCalledWhenNamed.end() && named->value == m_factoriesCalledByLoads;
+}
+
+void Modules::didCallFactoryOfLoad(ModuleID file)
+{
+    if (m_factoriesCalledWhenNamed.isEmpty()) [[likely]]
+        return;
+    ++m_factoriesCalledByLoads;
+    if (auto named = m_factoriesCalledWhenNamed.find(file); named != m_factoriesCalledWhenNamed.end())
+        named->value = m_factoriesCalledByLoads;
 }
 
 bool Modules::isReplacedByHost(ModuleID module, LoadKind way)

@@ -905,6 +905,21 @@ static bool variableHoldsListInChoices(Walker& walker, DataID data)
     return function.isModuleBody() || (body && walker.facts().summaries().at(body).holdsWrittenList(data));
 }
 
+static bool someLoopPushesOntoInChoices(Walker& walker, ValueID literal)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    for (uint32_t number = 0; literal && number < index.numberOfLoops(); ++number) {
+        LoopID loop(number);
+        if (index.loop(loop).parent)
+            continue;
+        for (uint32_t push : walker.pushesOntoLiteralsOf(loop)) {
+            if (index.stripCasts(index.value(ValueID(push)).as<Opcode::Call>().thisValueOperand()) == literal)
+                return true;
+        }
+    }
+    return false;
+}
+
 static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
 {
     RootOfConstant whereRootEnds = walker.constantEndsWhereItLeaves(data.inputValueGiven, data.data()) ? RootOfConstant::EndsWhereItLeaves : RootOfConstant::IsAsked;
@@ -922,7 +937,7 @@ static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
         bool isStoredInto = ((data.inputValueGiven && walker.facts().summaries().at(walker.currentFunction()).constantListIsStoredIntoInLoop(data.inputValueGiven)) || walker.facts().summaries().storesElementInto(data.data())) && surveyDataInChoices(walker, data.data()).tableOfImageHoldsIt;
         if (isStoredInto)
             walker.count(StatisticID::ArrayLiteralsWithOwnStorage);
-        if (isStoredInto && array->elements.size() <= maxNodesOfExpandedData && walker.runsInIterations()) {
+        if (isStoredInto && array->elements.size() <= maxNodesOfExpandedData && walker.runsInIterations() && someLoopPushesOntoInChoices(walker, data.inputValueGiven)) {
             becomeNodeOfDataInChoices(walker, data, root);
             return;
         }
