@@ -1393,6 +1393,9 @@ bool VMPropertyCaches::keepChainDependent(VM& vm, uint32_t structureIDBits, Uniq
 {
     ASSERT(uid);
     ASSERT(vm.heap.isDeferred());
+    // Only a slot keeps the name alive: the dependent of an evicted one can name a destroyed string.
+    if (!hasChainDependent(vm, structureIDBits, uid))
+        return false;
     unsigned attributes = 0;
     PropertyOffset offset = created.prototype->structure()->get(vm, uid, attributes);
     if (!isValidOffset(offset))

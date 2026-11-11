@@ -531,6 +531,23 @@ static void testEvictedDependentsAreDroppedWhenTheTableHasDoubled(LoadedProgram&
     AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == numberStillFiled);
 }
 
+static void testEvictedDependentsAreDroppedWhenMembersAreCreated(LoadedProgram& program)
+{
+    ObjectBelowPrototype fixture(program);
+    ChainDependents& dependents = *program.state().chainDependents;
+    fixture.file(fixture.label);
+    StructureID id = fixture.object->structure()->id();
+    constexpr unsigned numberOfNames = 100;
+    for (unsigned index = 0; index < numberOfNames; ++index) {
+        Identifier name = Identifier::fromString(program.vm(), makeString("evicted"_s, index));
+        fixture.file(name);
+        fixture.caches.tables().remove(id, fixture.caches.nameOf(name.impl()), SlotAccess::Read);
+    }
+    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == numberOfNames + 1);
+    dependents.didCreateMembers({ fixture.prototype, nullptr });
+    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == 1 && fixture.isFiledAsAbsent(fixture.label));
+}
+
 static void testNamedChangesOfAnObjectWithManyDependents(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -881,6 +898,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/symbol-of-one-realm-is-filed-in-front"_s, withProgramCreatingSymbol<testSymbolOfOneRealmIsFiledInFront> },
         { "property-lookup/symbol-of-each-realm-is-never-filed-in-front"_s, runSymbolOfEachRealmIsNeverFiledInFront },
         { "property-lookup/evicted-dependents-are-dropped-when-the-table-has-doubled"_s, withProgram<testEvictedDependentsAreDroppedWhenTheTableHasDoubled> },
+        { "property-lookup/evicted-dependents-are-dropped-when-members-are-created"_s, withProgram<testEvictedDependentsAreDroppedWhenMembersAreCreated> },
         { "property-lookup/named-changes-of-an-object-with-many-dependents"_s, withProgram<testNamedChangesOfAnObjectWithManyDependents> },
         { "property-lookup/reads-below-empty-slots-ask-the-first-object-that-has-one"_s, withProgram<testReadsBelowEmptySlotsAskTheFirstObjectThatHasOne> },
         { "property-lookup/empty-slot-of-receiver-defers-to-unboxed-field-of-compiled-prototype"_s, withProgramReadingCount<testEmptySlotOfReceiverDefersToUnboxedFieldOfCompiledPrototype> },
