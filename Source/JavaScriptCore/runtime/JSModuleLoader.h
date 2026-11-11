@@ -287,7 +287,6 @@ private:
     void finishCreation(JSGlobalObject*, VM&);
 
 #if USE(BUN_JSC_ADDITIONS)
-    bool importsModuleBeingMade(AbstractModuleRecord*);
     void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
     void pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget);
 
@@ -318,6 +317,7 @@ private:
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
 #if USE(BUN_JSC_ADDITIONS)
     UniquedStringImpl* m_rootBeingReloaded { nullptr };
+    unsigned m_modulesBeingMade { 0 };
 #endif
 #if ENABLE(AOT)
     bool m_hasAliasedLoadedModules { false };

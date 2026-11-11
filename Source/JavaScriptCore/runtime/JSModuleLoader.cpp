@@ -965,7 +965,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 #if ENABLE(AOT)
                     SetForScope moduleBeingMadeInline(m_moduleBeingMadeInline, resolved.impl());
 #endif
-                    JSPromise* makePromise = mapEntry->makeModule(globalObject, resolved, fetchPromise->result());
+                    JSPromise* makePromise = makeModule(globalObject, resolved, fetchPromise->result());
                     RETURN_IF_EXCEPTION(scope, nullptr);
                     if (makePromise->status() == JSPromise::Status::Fulfilled) {
 #if ENABLE(AOT)
@@ -1709,30 +1709,6 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
     tasks.shrink(0);
 }
 
-bool JSModuleLoader::importsModuleBeingMade(AbstractModuleRecord* root)
-{
-    UncheckedKeyHashSet<AbstractModuleRecord*> seen;
-    Vector<AbstractModuleRecord*, 16> pending { root };
-    while (!pending.isEmpty()) {
-        AbstractModuleRecord* record = pending.takeLast();
-        if (!seen.add(record).isNewEntry)
-            continue;
-        ModuleRegistryEntry* entry = registryEntry(record->moduleKey());
-        if (entry && entry->isBeingMade())
-            return true;
-        for (const ModuleRequest& request : record->requestedModules()) {
-            AbstractModuleRecord* requested = record->prelinkedRequestedModule(request);
-            if (!requested) {
-                if (auto iter = record->loadedModules().find(ModuleMapKey { request.m_specifier.impl(), request.type() }); iter != record->loadedModules().end())
-                    requested = iter->value.m_module.get();
-            }
-            if (requested)
-                pending.append(requested);
-        }
-    }
-    return false;
-}
-
 JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&& parameters, RefPtr<ScriptFetcher>&& scriptFetcher)
 {
     VM& vm = globalObject->vm();
@@ -1747,9 +1723,9 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
         ModuleRegistryEntry* entry = getRegisteredMayBeNull(moduleName, type);
         if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetched || !entry->loadPromise() || entry->loadPromise()->status() != JSPromise::Status::Pending)
             return false;
-        // An outer synchronous load that started the root's load also finishes it. A graph that imports a CommonJS module that is still running finishes loading when that module finishes.
+        // An outer synchronous load that started the root's load also finishes it. Below a CommonJS module that the loader is running, the load may lead back to that module.
         if (!vm.hasCompiledCode())
-            return !entry->wasLoadStartedSynchronously() && !importsModuleBeingMade(entry->record());
+            return !entry->wasLoadStartedSynchronously() && !m_modulesBeingMade;
 #if ENABLE(AOT)
         // A graph that imports a CommonJS module that is still evaluating finishes loading when that module finishes.
         if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(entry->record()); compiled && compiled->importsEvaluatingCommonJSModule())
@@ -1801,6 +1777,10 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if USE(BUN_JSC_ADDITIONS)
+    // Making the record of a CommonJS module runs the module.
+    SetForScope modulesBeingMade(m_modulesBeingMade, m_modulesBeingMade + 1);
+#endif
 
     if (auto* record = dynamicDowncast<AbstractModuleRecord>(moduleData)) {
         JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());

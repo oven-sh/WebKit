@@ -105,9 +105,6 @@ public:
     void replaceRecord(JSGlobalObject*, AbstractModuleRecord*);
     // loadPromise() is of a load that JSModuleLoader::loadModuleSync() ran.
     bool wasLoadStartedSynchronously() const { return m_wasLoadStartedSynchronously; }
-    // JSModuleLoader::makeModule() for this entry is on the stack. For a CommonJS module it runs the module.
-    bool isBeingMade() const { return m_isBeingMade; }
-    JSPromise* makeModule(JSGlobalObject*, const Identifier& key, JSValue moduleData);
 #endif
 
 private:
@@ -130,7 +127,6 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isLoaded { false };
     bool m_wasLoadStartedSynchronously { false };
-    bool m_isBeingMade { false };
 #endif
 };
 

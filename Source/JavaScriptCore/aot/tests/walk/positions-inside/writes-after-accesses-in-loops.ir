@@ -1,6 +1,6 @@
 # The length is read before the loop, the access in it rests on that length, and the list is written after the access in the same block. The loop comes back to the access behind the write.
 # RUN: verify-grounds access=v12 view=v0 position=v11 length=v7 from-zero-up=v8 passed=v8
-# CHECK: v12 (GetArrayElement): the storage or the length of a list is written between a ground of an access and the access: v13 (ConvertToDoubleStorage)
+# CHECK: v12 (GetArrayElement): the storage or the length of a list is written between a ground of an access and the access: v13 (SetArrayLength)
 # -- code
 # code f1:Body {
 #   constants:
@@ -18,7 +18,7 @@
 #     v10 @Void = LoopHint traits=[mayThrow, mayCollect, mayBeTerminated, mayTouchMemory]
 #     v11: int[-1, 4294967294] @Int64 = Sub v7, v5 form=Integers
 #     v12: anything @JSValue = GetArrayElement v0, v11 level=Proven [keyIsIntegral, isInBounds] traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
-#     v13 @Void = ConvertToDoubleStorage v0 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v13 @Void = SetArrayLength v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b2(v6)
 #   b3():
 #     Return v3

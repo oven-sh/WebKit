@@ -1228,11 +1228,7 @@ static void runModuleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, 
             }
         }
 #endif
-#if USE(BUN_JSC_ADDITIONS)
-        JSPromise* makeModulePromise = entry->makeModule(globalObject, entry->key(), moduleData);
-#else
         JSPromise* makeModulePromise = entry->loader()->makeModule(globalObject, entry->key(), moduleData);
-#endif
         if (scope.exception()) {
             modulePromise->rejectWithCaughtException(vm, scope);
             return;

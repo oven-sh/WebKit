@@ -31,7 +31,6 @@
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
 #include "Microtask.h"
-#include <wtf/SetForScope.h>
 
 namespace JSC {
 
@@ -264,12 +263,6 @@ void ModuleRegistryEntry::provideModule(VM& vm, AbstractModuleRecord* record)
         m_fetchPromise->fulfillPromise(vm, record);
     if (m_modulePromise && m_modulePromise->status() == JSPromise::Status::Pending)
         m_modulePromise->fulfill(vm, record);
-}
-
-JSPromise* ModuleRegistryEntry::makeModule(JSGlobalObject* globalObject, const Identifier& key, JSValue moduleData)
-{
-    SetForScope isBeingMade(m_isBeingMade, true);
-    return m_loader->makeModule(globalObject, key, moduleData);
 }
 
 bool ModuleRegistryEntry::isLoaded() const
