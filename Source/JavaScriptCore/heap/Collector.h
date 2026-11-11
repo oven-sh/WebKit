@@ -304,6 +304,11 @@ private:
     MonotonicTime m_beforeGC;
     MonotonicTime m_afterGC;
     MonotonicTime m_stopTime;
+#if USE(BUN_JSC_ADDITIONS)
+    // For how long the collection in progress had the mutators stopped, up to its last resume. runEndPhase adds the
+    // last stop. Written only while the mutators are stopped.
+    Seconds m_pauseBeforeLastStop;
+#endif
 
     // Re-marks every heap of the collection, from the same constraints, to check that the collection marked
     // everything it should have. Created at Begin, run in End, kept afterwards only if asked.

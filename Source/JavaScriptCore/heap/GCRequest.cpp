@@ -37,6 +37,9 @@ bool GCRequest::subsumedBy(const GCRequest& other) const
     // An idle request must run as one; a pending ordinary collection does not stand in for it.
     if (isIdle && !other.isIdle)
         return false;
+    // The collection that serves a forced request is reported as forced, so it is a collection of its own.
+    if (isForced && !other.isForced)
+        return false;
 #endif
     
     if (other.scope == CollectionScope::Full)
@@ -62,6 +65,8 @@ void GCRequest::dump(PrintStream& out) const
 #if USE(BUN_JSC_ADDITIONS)
     if (isIdle)
         out.print(", idle");
+    if (isForced)
+        out.print(", forced");
 #endif
     out.print("}");
 }

@@ -442,6 +442,9 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
     dataLogIf(Options::logGC(), "[GC<", *this, ">: START ", gcConductorShortName(conn), " ", capacity() / 1024, "kb ");
 
     m_beforeGC = MonotonicTime::now();
+#if USE(BUN_JSC_ADDITIONS)
+    m_pauseBeforeLastStop = Seconds();
+#endif
     CollectionScope scope = decideCollectionScope();
 
     beginSignpost(scope, conn);
@@ -673,8 +676,17 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
 
     m_scheduler->willResume();
 
+#if USE(BUN_JSC_ADDITIONS)
+    // One reading for the sum and for the log, so that the two agree.
+    MonotonicTime resumeTime = MonotonicTime::now();
+    m_pauseBeforeLastStop += resumeTime - m_stopTime;
+#endif
     if (Options::logGC()) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+        double thisPauseMS = (resumeTime - m_stopTime).milliseconds();
+#else
         double thisPauseMS = (MonotonicTime::now() - m_stopTime).milliseconds();
+#endif
         dataLog("p=", thisPauseMS, "ms (max ", maxPauseMS(thisPauseMS), ")...]\n");
     }
 
@@ -795,6 +807,20 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
     forEachHeap([&](Heap& heap) {
         heap.setNeedCollectionEpilogue();
         heap.recordCollectionTime(m_afterGC - m_beforeGC);
+#if USE(BUN_JSC_ADDITIONS)
+        // The last stop ends where the cycle does, as the pause that logGC prints above. A mutator that waits here
+        // counts as stopped from the start of its wait: the stops of this cycle that ended before the wait, and then
+        // all of the cycle. A wait that ended before this point has left only the stops.
+        Seconds pauseBeforeLastStop = m_pauseBeforeLastStop;
+        MonotonicTime lastStopBegan = m_stopTime;
+        if (MonotonicTime waitingSince = heap.m_waitingForCollectorSince) {
+            bool waitBeganInThisCycle = waitingSince > m_beforeGC;
+            pauseBeforeLastStop = waitBeganInThisCycle ? heap.m_pauseWhenWaitBegan : Seconds();
+            lastStopBegan = waitBeganInThisCycle ? waitingSince : m_beforeGC;
+        }
+        heap.m_lastCollectionPause = pauseBeforeLastStop + (m_afterGC - lastStopBegan);
+        heap.m_lastCollectionWasForced = m_currentRequest.isForced;
+#endif
     });
     return changePhase(conn, CollectorPhase::NotRunning);
 }

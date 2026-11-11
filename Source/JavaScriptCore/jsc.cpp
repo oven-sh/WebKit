@@ -503,6 +503,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionGCAndSweep);
 static JSC_DECLARE_HOST_FUNCTION(functionFullGC);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionIdleFullGC);
+static JSC_DECLARE_HOST_FUNCTION(functionForcedFullGC);
+static JSC_DECLARE_HOST_FUNCTION(functionLastCollectionWasForced);
+static JSC_DECLARE_HOST_FUNCTION(functionLastCollectionPause);
+static JSC_DECLARE_HOST_FUNCTION(functionLastCollectionLength);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapSize);
@@ -872,6 +876,10 @@ private:
         addFunction(vm, "fullGC"_s, functionFullGC, 0);
 #if USE(BUN_JSC_ADDITIONS)
         addFunction(vm, "idleFullGC"_s, functionIdleFullGC, 0);
+        addFunction(vm, "forcedFullGC"_s, functionForcedFullGC, 0);
+        addFunction(vm, "lastCollectionWasForced"_s, functionLastCollectionWasForced, 0);
+        addFunction(vm, "lastCollectionPause"_s, functionLastCollectionPause, 0);
+        addFunction(vm, "lastCollectionLength"_s, functionLastCollectionLength, 0);
 #endif
         addFunction(vm, "edenGC"_s, functionEdenGC, 0);
         addFunction(vm, "gcHeapSize"_s, functionHeapSize, 0);
@@ -2477,6 +2485,40 @@ JSC_DEFINE_HOST_FUNCTION(functionIdleFullGC, (JSGlobalObject* globalObject, Call
     request.isIdle = true;
     vm.heap.collectSync(request);
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
+}
+
+// A full collection tagged the way an embedder tags one that the program asked for by name (GCRequest::isForced).
+JSC_DEFINE_HOST_FUNCTION(functionForcedFullGC, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    GCRequest request(CollectionScope::Full);
+    request.isForced = true;
+    vm.heap.collectSync(request);
+    return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
+}
+
+// What the heap keeps about the last collection that ended: Heap::lastCollectionWasForced(), and in milliseconds Heap::lastCollectionPause() and the length of its cycle.
+JSC_DEFINE_HOST_FUNCTION(functionLastCollectionWasForced, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    return JSValue::encode(jsBoolean(vm.heap.lastCollectionWasForced()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionLastCollectionPause, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    return JSValue::encode(jsNumber(vm.heap.lastCollectionPause().milliseconds()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionLastCollectionLength, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    Seconds length = vm.heap.lastCollectionScope() == CollectionScope::Full ? vm.heap.lastFullGCLength() : vm.heap.lastEdenGCLength();
+    return JSValue::encode(jsNumber(length.milliseconds()));
 }
 #endif
 

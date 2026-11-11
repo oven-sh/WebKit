@@ -61,6 +61,10 @@ struct GCRequest {
     // allocation, forced by the program, or by memory pressure). Only such a collection may let optimized code that has
     // no execution counter of its own age out (CodeBlock::shouldJettisonDueToOldAge).
     bool isIdle { false };
+    // Set by an embedder on a collection that the program asked for by name (Bun.gc(true), gc()). The heap keeps it for the
+    // collection that serves the request (Heap::lastCollectionWasForced()), so that what the embedder reports about
+    // collections can tell this one from the collections that the collector paces itself.
+    bool isForced { false };
 #endif
 };
 
