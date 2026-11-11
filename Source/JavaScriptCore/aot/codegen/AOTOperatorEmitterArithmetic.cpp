@@ -586,12 +586,10 @@ private:
         if (!type.isInteger() || type.integers.minimum < 0)
             return std::nullopt;
         Integer whole;
-        if (number.value()->opcode() != Machine::IToD)
-            whole = emitter<ConversionEmitter>().truncateUnchecked(number);
-        else if (LValue converted = number.value()->child(0); converted->type() == Machine::Int32)
+        if (LValue converted = number.value()->opcode() == Machine::IToD ? number.value()->child(0) : nullptr; converted && converted->type() == Machine::Int32)
             whole = zeroExtended(Word32(converted));
         else
-            whole = Integer(converted);
+            whole = emitter<ConversionEmitter>().toInteger(number, type.integers, value.block() && generator().isInLoop(value.block()));
         if (checksProofs()) {
             Condition isInRange = logicalAnd(greaterThanOrEqual(whole, integer(0)), lessThanOrEqual(whole, integer(type.integers.maximum)));
             emitter<ThrowEmitter>().requireOrCrash(value, logicalAnd(equal(toNumber(whole), number), isInRange), std::nullopt, ProofSource::OtherOperation);

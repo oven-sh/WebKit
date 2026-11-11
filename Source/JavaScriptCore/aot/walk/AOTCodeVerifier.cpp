@@ -1791,8 +1791,11 @@ void CodeVerifier::verifyTestsPassed()
                 const Operation& test = m_code.at(side.test);
                 if (!writtenBy)
                     writtenBy = findArrayWriteAfter(side.test);
-                for (uint32_t operand = 0; !writtenBy && operand < test.numberOfOperands(); ++operand)
-                    writtenBy = findArrayWriteAfter(test.operand(operand));
+                ValueID position = valueBeforeConversions(underlyingCell(access.operand(1)));
+                for (uint32_t operand = 0; !writtenBy && operand < test.numberOfOperands(); ++operand) {
+                    if (test.operand(operand) && valueBeforeConversions(underlyingCell(test.operand(operand))) != position)
+                        writtenBy = findArrayWriteAfter(test.operand(operand));
+                }
             }
             if (writtenBy)
                 return fail(block, id, "the storage or the length of a list is written between a ground of an access and the access"_s, writtenBy);
