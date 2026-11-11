@@ -144,9 +144,11 @@ public:
     JS_EXPORT_PRIVATE static void willAddSymbol(VM&);
     // The same for the heap's list of array buffers. No collection runs here: the caller's cell is not finished.
     void willAddArrayBuffer(VM&);
-    // Called on the VM's thread before each block is made. With limited address space, grows the heap's set of blocks early, and the directory's list of blocks
-    // when it is full, with requests for memory that may fail. A growth that fails owes nothing: it is tried again before the next block.
-    // Returns false when the set or the list has no room for the block. The block is not made then, as where the cage has none.
+    // Called on the VM's thread before each block is made. With limited address space, grows the heap's set of blocks and the directory's list of blocks
+    // where the block needs the room, with requests for memory that may fail. A growth that fails owes nothing: it is tried again before the next block.
+    // Returns false when the set or the list has no room for the block. The block is not made then, and the caller collects as where the cage has none.
+    // The set grows no earlier than add() would grow it: a table that is emptier is nearer to where remove() shrinks it, with a request that may not fail.
+    // A collection gives the set room only if it gives malloc the memory for a table: a block that goes leaves a deleted slot, which counts as a full one.
     bool willAddBlock(VM&, BlockDirectory&);
     // The same before a directory takes a block from another directory. The set holds that block already.
     static bool willStealBlock(BlockDirectory&);

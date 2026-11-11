@@ -144,8 +144,8 @@ MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allo
 MarkedBlock::Handle* BlockDirectory::tryAllocateBlock(JSC::Heap& heap)
 {
     bool hasBlocks = m_blocks.size() > m_freeBlockIndices.size();
-    // With limited address space the heap's set of blocks and this list grow in willAddBlock(), where the request for memory may fail, and not in
-    // didAddBlock() and addBlock(), where it may not. A block that they have no room for is not made.
+    // Where the cage is required, with limited address space the heap's set of blocks and this list grow in willAddBlock(), where the request for memory
+    // may fail, and not in didAddBlock() and addBlock(), where it may not. A block that they have no room for is not made.
     bool hasRoomForBlock = !MarkedBlockCage::isRequired() || heap.cage().willAddBlock(heap.vm(), *this);
     MarkedBlock::Handle* handle = nullptr;
     if (hasRoomForBlock) [[likely]]
