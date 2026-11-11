@@ -556,8 +556,13 @@ void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
     } retire { callback };
 
     JSGlobalObject* globalObject = callback->globalObject();
+    if (globalObject->microtaskRunnability() == QueuedTaskResult::Discard) [[unlikely]]
+        return;
+
     VM& vm = globalObject->vm();
-    JSLockHolder locker(vm);
+    std::optional<JSLockHolder> locker;
+    if (!vm.currentThreadIsHoldingAPILock()) [[unlikely]]
+        locker.emplace(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Signature& signature = callback->signature();

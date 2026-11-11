@@ -42,8 +42,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadsafeInvocation);
 
 FFIContext::ThreadsafeDispatchFunction FFIContext::s_threadsafeDispatch { nullptr };
 
-FFIContext::FFIContext(VM& vm)
+FFIContext::FFIContext(VM& vm, JSGlobalObject& owner)
     : m_vm(vm)
+    , m_owner(owner)
 {
     m_vm.heap.addObserver(this);
 }
@@ -119,6 +120,24 @@ const UTF8CString& FFIContext::cacheUTF8(StringImpl& impl, UTF8CString&& utf8)
 void StringArena::enter()
 {
     ++m_depth;
+}
+
+void FFIContext::didGarbageCollect(CollectionScope)
+{
+    m_arena.shrinkWhenIdle();
+    // The callbacks can be swept before the owner, with which this goes.
+    if (!m_liveCallbacks.isEmpty() && !m_vm.heap.isMarked(&m_owner))
+        m_liveCallbacks.clear();
+}
+
+// A call that a threadsafe callback has accepted is made, though nothing else may refer to its global object any more.
+void FFIContext::visitRoots(AbstractSlotVisitor& visitor)
+{
+    Locker locker { m_owner.cellLock() };
+    for (auto& callback : m_liveCallbacks) {
+        if (callback->hasPendingInvocations())
+            visitor.append(callback);
+    }
 }
 
 void StringArena::reset()

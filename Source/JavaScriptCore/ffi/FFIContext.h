@@ -44,6 +44,7 @@
 #include <wtf/text/StringImpl.h>
 
 namespace JSC {
+class AbstractSlotVisitor;
 class JSFFICallback;
 class VM;
 } // namespace JSC
@@ -138,11 +139,12 @@ class FFIContext final : public HeapObserver {
     WTF_MAKE_TZONE_ALLOCATED(FFIContext);
     WTF_MAKE_NONCOPYABLE(FFIContext);
 public:
-    JS_EXPORT_PRIVATE explicit FFIContext(VM&);
+    JS_EXPORT_PRIVATE FFIContext(VM&, JSGlobalObject& owner);
     JS_EXPORT_PRIVATE ~FFIContext();
 
     void willGarbageCollect() final { }
-    void didGarbageCollect(CollectionScope) final { m_arena.shrinkWhenIdle(); }
+    void didGarbageCollect(CollectionScope) final;
+    void visitRoots(AbstractSlotVisitor&) final;
 
     StringArena& stringArena() { return m_arena; }
     StringArena& arena() { return m_arena; }
@@ -170,6 +172,7 @@ private:
     };
 
     VM& m_vm;
+    JSGlobalObject& m_owner;
     StringArena m_arena;
     Vector<UTF8CacheEntry, utf8CacheCapacity> m_utf8Cache;
     uint64_t m_utf8CacheClock { 0 };

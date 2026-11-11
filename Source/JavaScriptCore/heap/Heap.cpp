@@ -3298,6 +3298,11 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
                     visitor.appendUnbarriered(pair.key);
             }
             
+            for (auto* observer : m_observers) {
+                SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
+                observer->visitRoots(visitor);
+            }
+
             if (m_storedCellLog) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::ExternalRememberedSet);
                 m_storedCellLog->visitAndReset(visitor);

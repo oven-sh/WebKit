@@ -90,6 +90,7 @@ public:
         unsigned state = m_threadsafeState.fetch_sub(1, std::memory_order_acq_rel) - 1;
         return (state & closedBit) && !(state & countMask);
     }
+    bool hasPendingInvocations() const { return m_threadsafeState.load(std::memory_order_relaxed) & countMask; }
     bool markClosedAndReportPending() { return m_threadsafeState.fetch_or(closedBit, std::memory_order_acq_rel) & countMask; }
     void unroot();
 
