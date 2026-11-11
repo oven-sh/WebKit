@@ -1001,6 +1001,7 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     request.thisValue = object;
     request.typeOfThisToBeMade = { };
     noteFreshObject(walker, object, 0);
+    notePrototypeOfConstruction(walker, object, constructed);
     if (guardOfPrototype || isPrototypeProven) {
         checkPrototypeOfCellMadeBehindGuard(walker, object, request.closure, constructed, origin);
         walker.state().recordCellFacts(object, CellFact::HasLayoutPrototype);

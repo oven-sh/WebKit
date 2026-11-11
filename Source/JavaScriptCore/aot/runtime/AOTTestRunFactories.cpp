@@ -641,7 +641,8 @@ void Modules::tellIfMockedBelowImport(ModuleID file, std::optional<ModuleID> cal
     bool isOver = !m_loadsInFlight.isEmpty() && status(file) == ModuleStatus::Evaluated && !isMocked(file) && !activeMock(file);
     bool isBesideHostImport = !(m_hostImportCalls.isEmpty() && m_importsInFlight.isEmpty()) && (isLoaded || isMocked(file)) && !isGraphRunning();
     bool ranDuringOwnFetch = status(file) == ModuleStatus::Evaluated && !isMocked(file) && !activeMock(file) && std::ranges::any_of(batchedFetches(), [&](const BatchedFetch& fetch) { return fileOf(fetch.module) == file; });
-    if ((!isOver && !isBesideHostImport && !ranDuringOwnFetch) || !host().didRunOriginal) [[likely]]
+    bool isOriginalAwaited = needsOriginalBeforeFactory(file) && data(moduleWithExportsOf(file)).isImportedByModule() && m_importsAwaitingSource.containsIf([&](const ImportAwaitingSource& waiting) { return waiting.isMockImport && fileOf(waiting.module) == file; });
+    if ((!isOver && !isBesideHostImport && !ranDuringOwnFetch && !isOriginalAwaited) || !host().didRunOriginal) [[likely]]
         return;
     auto leadsToFile = [&](ModuleID root) {
         bool found = false;
@@ -676,7 +677,7 @@ void Modules::tellIfMockedBelowImport(ModuleID file, std::optional<ModuleID> cal
         }
         return false;
     };
-    if (ranDuringOwnFetch || isBelowImport())
+    if (ranDuringOwnFetch || isOriginalAwaited || isBelowImport())
         host().didRunOriginal(m_instance.globalObject, m_table.fullPath(file), OriginalRun::MockedDuringImport);
 }
 

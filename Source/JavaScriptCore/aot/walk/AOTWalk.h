@@ -3775,6 +3775,11 @@ private:
         ValueID read;
         Reference value;
     };
+    struct SavedModuleVariable {
+        VariableID variable;
+        Reference value;
+        uint16_t initialPrimitive { 0 };
+    };
     struct VersionedLoop {
         size_t frameIndex { 0 };
         BlockID inputHead;
@@ -3838,7 +3843,7 @@ private:
         BlockID lastBackEdgeDominator { };
         bool mayRestartUnderHandler { false };
         bool restartsAtCaughtThrows { false };
-        Vector<std::pair<VariableID, Reference>, 1> moduleVariablesAtHeader { };
+        Vector<SavedModuleVariable, 1> moduleVariablesAtHeader { };
         Vector<std::pair<uint32_t, BlockID>, 4> undoBlocks { };
         BlockID startOfCopyWithoutSomeIterationGuesses { };
         bool guessOfSomeTurnsIsAskedInFront { false };
@@ -3864,6 +3869,8 @@ private:
     const LoopReentry* findReentry(size_t frameIndex, BlockID inputHead) const;
     bool passesOnEveryIteration(const VersionedLoop&, UnrolledIterations = UnrolledIterations::AsPassed) const;
     void saveModuleVariablesAtHeader(BlockID inputHead);
+    bool isUsedAfterFirstStore(VariableID) const;
+    Reference narrowToFilled(Reference held, uint16_t empty, BlockID& behind);
     bool askLesserBoundAt(const BodyValue& relation);
     void claimThatCounterNeverLiesBelowItsStart();
     bool counterComesRoundNotBelowItself(BlockID head, std::span<const Reference> arguments);

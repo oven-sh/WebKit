@@ -1672,6 +1672,17 @@ bool Modules::isReloadedLibraryModule(ModuleID module) const
     return m_momentOfModuleReset > m_instance.vm->aotState().momentOfTestFile && wasLoadedBeforeReset(module);
 }
 
+bool Modules::isLinkedToLibraryModuleBeforeReset(ModuleID importer, ModuleID target) const
+{
+    if (!m_momentOfModuleReset || !data(target).isOfLibrary() || momentLinked(importer) >= m_momentOfModuleReset)
+        return false;
+    if (m_momentOfModuleReset <= m_instance.vm->aotState().momentOfTestFile && m_libraryModulesAskedForInPreload.get(target.index()))
+        return false;
+    Environment* instance = m_linkedInstances.get(importer.index()) ? currentInstance(importer) : nullptr;
+    const ModuleLinkData* link = instance ? findModuleLink(importer, target) : nullptr;
+    return !link || !mockWord(*link, instance);
+}
+
 void Modules::separateReloadedNamespace(ModuleID module)
 {
     if (!isReloadedLibraryModule(module) || isLibraryOriginalDisplaced(module))
@@ -3058,7 +3069,7 @@ bool Modules::hasUnevaluatedLinkedImporter(ModuleID module, std::optional<Module
         bool keepsStatus = keepsStatusOfRunBeforeLoadThatRuns(importer);
         if (status(importer) > ModuleStatus::Evaluating && !keepsStatus)
             continue;
-        if (hasInstances(importer) && !m_linkedInstances.get(index) && status(importer) == ModuleStatus::Unlinked)
+        if (isEvicted(importer) || (hasInstances(importer) && !m_linkedInstances.get(index) && status(importer) == ModuleStatus::Unlinked))
             continue;
         if (asking && importer == *asking)
             continue;
@@ -7173,6 +7184,7 @@ static void evictModule(JSGlobalObject* realm, ModuleID module, TakenOutBy taken
     if (isDeleted) {
         modules->answerRequireWithExportsOfFile(module);
         modules->forgetFirstLoad(module);
+        modules->forgetLoadByPreloadHook(module);
         modules->clearMockLoadError(module);
         modules->forgetImportFailedUnderMock(module);
         modules->forgetRequestByLoader(module);

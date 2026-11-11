@@ -497,6 +497,30 @@ void Walker::markIterationRestartPoint(BlockID inputHead, const Effects& ofTurns
         saveModuleVariablesAtHeader(inputHead);
 }
 
+static ValueID findReadBeforeStores(const BodyIndex& index, BlockID inputHead, VariableID variable)
+{
+    LoopID loop = index.loopOf(inputHead);
+    BackEdgeDominators executed(index, loop);
+    Vector<BlockID, 8> blocks;
+    for (BlockID block = executed.lastOf(loop); blocks.isEmpty() || blocks.last() != inputHead; block = index.immediateDominator(block))
+        blocks.append(block);
+    for (BlockID block : blocks | std::views::reverse) {
+        for (BodyValue operation : index.block(block).values()) {
+            if (operation.opcode() == Opcode::GetModuleVariable && operation.variable() == variable)
+                return operation.id();
+            if (operation.opcode() == Opcode::PutModuleVariable && operation.variable() == variable)
+                return { };
+        }
+    }
+    return { };
+}
+
+bool Walker::isUsedAfterFirstStore(VariableID variable) const
+{
+    FunctionID function = currentFunction();
+    return m_frames.size() == 1 && program().at(function).module == program().at(variable).module && !program().at(function).isModuleBody() && !isBodyOfWrappedModule(program(), function);
+}
+
 void Walker::saveModuleVariablesAtHeader(BlockID inputHead)
 {
     const BodyIndex& index = currentBodyIndex();
@@ -512,35 +536,47 @@ void Walker::saveModuleVariablesAtHeader(BlockID inputHead)
             if (operation.opcode() != Opcode::PutModuleVariable)
                 continue;
             VariableID variable = operation.variable();
-            bool isHeld = m_versionedLoops.last().moduleVariablesAtHeader.containsIf([&](const auto& held) {
-                return held.first == variable;
+            bool isHeld = m_versionedLoops.last().moduleVariablesAtHeader.containsIf([&](const SavedModuleVariable& saved) {
+                return saved.variable == variable;
             });
             if (isHeld || plan().deferredDefinitions().findDeferred(variable) || plan().variable(variable).function)
                 continue;
             Reference held = has(Mechanism::Folding) ? m_state.variable(variable) : Reference();
+            uint16_t initialPrimitive = 0;
             if (!held) {
                 Draft read(Opcode::GetModuleVariable, m_origin);
                 read.setVariable(variable);
                 chooseConservativeFields(read);
                 if (has(Mechanism::Folding) && m_state.isPastDeadZone(variable))
                     read.setIsKnownInitialized(true);
+                else if (!shouldAssumeVariablesInitialized() && excludesInitialPrimitive(read, resultTypeOf(read)) && !isUsedAfterFirstStore(variable)) {
+                    if (ValueID anticipated = findReadBeforeStores(index, inputHead, variable)) {
+                        read.setOrigin(originOf(index.value(anticipated)));
+                        read.inputValueGiven = anticipated;
+                    } else
+                        read.setReturnsRawSlot(true);
+                }
+                if (read.returnsRawSlot())
+                    initialPrimitive = initialPrimitiveOf(program(), variable);
                 held = build(WTF::move(read));
                 if (m_hasFailed || isUnreachable())
                     return;
-                if (held)
+                if (held && !initialPrimitive)
                     m_state.noteVariable(variable, held);
             }
-            TypeID type = held ? typeOf(held) : TypeID();
-            if (type && !(m_types.at(type).primitives & Primitive::Absent))
-                m_versionedLoops.last().moduleVariablesAtHeader.append({ variable, held });
+            if (initialPrimitive & Primitive::Absent && !leavesDeadZoneForGood(program(), variable))
+                continue;
+            TypeID type = held ? m_types.withoutPrimitives(typeOf(held), initialPrimitive) : TypeID();
+            if (type && !isNeverType(type) && !(m_types.at(type).primitives & Primitive::Absent))
+                m_versionedLoops.last().moduleVariablesAtHeader.append({ variable, held, initialPrimitive });
         }
     }
 }
 
 bool Walker::isVariableStoreUndoable(VariableID variable) const
 {
-    return canRestartIteration() && m_versionedLoops.last().moduleVariablesAtHeader.containsIf([&](const auto& held) {
-        return held.first == variable;
+    return canRestartIteration() && m_versionedLoops.last().moduleVariablesAtHeader.containsIf([&](const SavedModuleVariable& saved) {
+        return saved.variable == variable;
     });
 }
 
@@ -2314,6 +2350,26 @@ void Walker::restartIterationAtThrow()
     m_versionedLoops[place].entry = genericEntry;
 }
 
+Reference Walker::narrowToFilled(Reference held, uint16_t empty, BlockID& behind)
+{
+    Draft test(Opcode::TypeTest, m_origin);
+    test.setValueOperand(held);
+    test.setTestedType(TypeArena::fromPrimitives(empty));
+    Reference isEmpty = build(WTF::move(test));
+    if (m_hasFailed || isUnreachable())
+        return { };
+    behind = addBlock(BlockFrequency::Rare);
+    BlockID filled = addBlock(BlockFrequency::Rare);
+    branch(isEmpty, behind, filled);
+    continueIn(filled);
+    Draft narrowed(Opcode::Narrowed, m_origin);
+    narrowed.setValueOperand(held);
+    narrowed.setTestOperand(isEmpty);
+    narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+    narrowed.setIsOnTakenEdge(false);
+    return build(WTF::move(narrowed));
+}
+
 void Walker::restartIteration()
 {
     if (!m_hasFailed && !isUnreachable() && !m_inputs.options.checksEffects && !m_state.canRestartFrom(m_versionedLoops.last().restartPoint)) {
@@ -2322,15 +2378,25 @@ void Walker::restartIteration()
     }
     if (m_state.restartMark() & WalkState::undoableStoresBit) {
         for (size_t place = 0; place < m_versionedLoops.last().moduleVariablesAtHeader.size(); ++place) {
-            auto [variable, held] = m_versionedLoops.last().moduleVariablesAtHeader[place];
+            SavedModuleVariable saved = m_versionedLoops.last().moduleVariablesAtHeader[place];
+            BlockID restored;
+            Reference held = saved.initialPrimitive ? narrowToFilled(saved.value, saved.initialPrimitive, restored) : saved.value;
+            if (m_hasFailed || isUnreachable())
+                return;
             Draft store(Opcode::PutModuleVariable, m_origin);
-            store.setVariable(variable);
+            store.setVariable(saved.variable);
             store.setValueOperand(held);
             chooseConservativeFields(store);
             build(WTF::move(store));
             if (m_hasFailed || isUnreachable())
                 return;
             ++m_undoneStoreCount;
+            if (restored) {
+                jumpTo(restored, { });
+                if (m_hasFailed)
+                    return;
+                continueIn(restored);
+            }
         }
     }
     if (uint32_t newest = m_state.newestUndoableStore()) {
@@ -2462,23 +2528,9 @@ void Walker::restartIteration()
             }
             if (store.isIntoIterationObject)
                 continue;
-            BlockID behindStore = store.mayHoldNothing ? addBlock(BlockFrequency::Rare) : BlockID();
+            BlockID behindStore;
             if (store.mayHoldNothing) {
-                Draft test(Opcode::TypeTest, m_origin);
-                test.setValueOperand(store.held);
-                test.setTestedType(TypeArena::fromPrimitives(Primitive::Absent));
-                Reference holdsNothing = build(WTF::move(test));
-                if (m_hasFailed || isUnreachable())
-                    return;
-                BlockID hasStored = addBlock(BlockFrequency::Rare);
-                branch(holdsNothing, behindStore, hasStored);
-                continueIn(hasStored);
-                Draft narrowed(Opcode::Narrowed, m_origin);
-                narrowed.setValueOperand(store.held);
-                narrowed.setTestOperand(holdsNothing);
-                narrowed.setOperandIndex(OperandIndex::TypeTest::value);
-                narrowed.setIsOnTakenEdge(false);
-                store.held = build(WTF::move(narrowed));
+                store.held = narrowToFilled(store.held, Primitive::Absent, behindStore);
                 if (m_hasFailed || isUnreachable())
                     return;
             }

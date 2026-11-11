@@ -609,9 +609,11 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
         m_linkMoments.fill(0, m_table.size());
         m_linkTestFiles.fill(0, m_table.size());
     }
-    bool isInPreloadHook = m_hasBegunTestFile && host().isInPreload && !holdsCodeThatMayBeEvicted() && host().isInPreload(m_instance.globalObject).value_or(false);
+    bool isInPreloadHook = m_hasBegunTestFile && host().isInPreload && host().isInPreload(m_instance.globalObject).value_or(false);
     for (ModuleID module : modules) {
         m_loadedByPreloadHooks.set(module.index(), isInPreloadHook && !m_linkTestFiles[module.index()]);
+        if (m_releasedLoadsOfPreloadHooks.clear(module.index())) [[unlikely]]
+            tellOfKeptRun(fileOf(module));
         m_linkedInstances.set(module.index());
         m_linkMoments[module.index()] = m_numberOfReleases;
         m_linkTestFiles[module.index()] = m_instance.vm->aotState().momentOfTestFile;
@@ -3058,7 +3060,7 @@ void Modules::releaseLoadedModule(ModuleID module)
         last = std::max(last, momentLinked(module));
     }
     if (m_loadedByPreloadHooks.clear(module.index())) [[unlikely]]
-        tellOfKeptRun(fileOf(module));
+        m_releasedLoadsOfPreloadHooks.set(module.index());
     LoadedModule& loaded = ensureLoaded(module);
     if (loaded.instanceBesideMock.get())
         m_modulesThatRanBesideMockAlone.set(module.index());

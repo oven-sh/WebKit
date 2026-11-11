@@ -62,6 +62,7 @@ enum class KnownNote : uint8_t {
     AnswerOfReadOfSlotThatMayBeEmpty,
     PieceIsStoredByBodyThatCutIt,
     AssignedMemberClosure,
+    PrototypeOfConstruction,
     ListedOwnKeys,
     FieldArrayInPreheader,
     HoistedUnknownField,

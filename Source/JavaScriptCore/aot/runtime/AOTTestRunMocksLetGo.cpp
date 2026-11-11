@@ -213,6 +213,11 @@ bool Modules::releaseImportersOf(ModuleID mocked, ReleasedImporters which, std::
             ModuleID importer(index);
             if (importer == m_replacedTestFile || m_modulesWithoutTestFile.get(index) || (asImported.quickGet(imported) && keepsImportersOfTestFile && wasLoadedByTestFile(importer)))
                 continue;
+            if (asImported.quickGet(imported) && isLinkedToLibraryModuleBeforeReset(importer, ModuleID(imported))) [[unlikely]] {
+                if (keepsImportersOfTestFile && hasBeenImportedSinceReset(mocked))
+                    tellThatFileDidNotRunAgain(importer);
+                continue;
+            }
             bool keepsImporter = keepsPackages && asImported.quickGet(imported) && isExternalizedPackage(importer);
             if (Environment* original = keepsImporter ? nullptr : originalBesideMock(importer); original && isLinkedToCurrentEntry(importer, ModuleID(imported), original).value_or(false)) [[unlikely]]
                 releaseOriginal(importer, original);

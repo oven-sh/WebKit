@@ -402,19 +402,6 @@ std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfFreshObject(Walker& 
     return properties;
 }
 
-static bool hasPrototypeOfConstruction(const Walker& walker, LayoutID layout)
-{
-    const Program& program = walker.program();
-    LayoutID declared = declaredLayoutOf(program, layout);
-    if (!declared || !program.at(declared).has(LayoutFlags::IsConstructorFunction))
-        return true;
-    FunctionID constructor = program.at(declared).constructor;
-    if (constructor && isPrototypeAtConstructionProven(walker, constructor))
-        return true;
-    const WalkState& state = walker.state();
-    return state.guardOfReadsHolds(declared, program.keyOf(BuiltinNames::prototype), ClassSide::Static) || (state.guardsHaveBegun(declared) && state.someGuardHoldsOf(declared));
-}
-
 Reference allocateFilledObject(Walker& walker, Reference returned, Origin origin)
 {
     if (!returned || !returned.isValue() || walker.isUnreachable() || !walker.has(Mechanism::EscapeAnalysis) || !walker.has(Mechanism::TypedOperations))
@@ -436,7 +423,7 @@ Reference allocateFilledObject(Walker& walker, Reference returned, Origin origin
     ValueID prototype = made.prototypeOperand();
     if (!state.isFresh(object) || (prototype && program.prototypeMaySelectOtherClass(layout)) || made.storage() != AllocationStorage::Heap || !walker.fillersOfAllocation(object).empty())
         return returned;
-    if (!prototype && !hasPrototypeOfConstruction(walker, layout))
+    if (!hasPrototypeOfConstruction(walker, object, layout))
         return returned;
     std::optional<uint32_t> orderWord = state.orderWordOf(object);
     OptionSet<CellFact> known = state.cellFacts(object);
@@ -481,6 +468,7 @@ Reference allocateFilledObject(Walker& walker, Reference returned, Origin origin
     if (!filled)
         return returned;
     noteFreshObject(walker, filled, fields->size());
+    notePrototypeOfConstruction(walker, filled, layout);
     if (bearsNoMark)
         walker.state().recordCellFacts(filled, CellFact::BearsNoMark);
     if (hasLayoutPrototype)

@@ -4640,7 +4640,7 @@ JSValue Modules::require(ModuleID target, ModuleID referrer, RequiredBy required
     m_prerecordedRequirer = ModuleID();
     SetForScope currentRequirer(m_currentRequirer, referrer ? referrer : prerecordedRequirer);
     bool isFirstRequire = !m_modulesWithKnownParent.get(target.index()) && noteEntryParent(target, referrer);
-    bool wasMockPending = isFirstRequire && m_hasReloadableModules && data(target).kind == ModuleKind::CommonJs && isMockPending(target);
+    bool wasMockPending = isFirstRequire && m_hasReloadableModules && (data(target).kind == ModuleKind::CommonJs || hasIntactOriginal(target)) && isMockPending(target);
     auto recordCompletedRequire = makeScopeExit([&] {
         if (m_hasBegunTestFile && referrer && !m_instance.vm->exceptionForInspection() && isRequireUnderPendingMock(target, referrer)) [[unlikely]]
             m_requirersUnderPendingMocks.set(fileOf(referrer).index());

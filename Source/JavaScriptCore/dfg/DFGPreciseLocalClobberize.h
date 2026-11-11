@@ -215,7 +215,7 @@ private:
                 break;
             }
 
-            if (isPhantomNode && m_graph.m_plan.isFTL())
+            if (isPhantomNode && m_graph.m_plan.isFTL() && m_node->origin.semantic.inlineCallFrame())
                 break;
 
             if (mayReadArguments)

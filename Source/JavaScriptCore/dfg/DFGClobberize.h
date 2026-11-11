@@ -677,8 +677,9 @@ void clobberize(Graph& graph, Node* node, NOESCAPE const ReadFunctor& read, NOES
     case PhantomDirectArguments:
     case PhantomClonedArguments:
         // DFG backend requires that the locals that this reads are flushed. FTL backend can handle those
-        // locals being promoted.
-        if (!graph.m_plan.isFTL())
+        // locals being promoted, but not the arguments of the machine frame: OSR exit copies those from
+        // their stack slots, which a recursive tail call that became a jump writes.
+        if (!graph.m_plan.isFTL() || !node->origin.semantic.inlineCallFrame())
             read(Stack);
         
         // Even though it's phantom, it still has the property that one can't be replaced with another.

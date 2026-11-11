@@ -3029,7 +3029,7 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
             if (operation.opcode() == Opcode::Call) {
                 auto call = operation.as<Opcode::Call>();
                 ValueID input = listWhosePushIsRead(index.stripCasts(call.calleeOperand()));
-                if (!dominatesBackEdges || !input || index.stripCasts(call.thisValueOperand()) != input || call.argumentsOperands().size() != 1) {
+                if (!dominatesBackEdges || !input || !call.thisValueOperand() || index.stripCasts(call.thisValueOperand()) != input || call.argumentsOperands().size() != 1) {
                     hasExactTripCount = false;
                     continue;
                 }

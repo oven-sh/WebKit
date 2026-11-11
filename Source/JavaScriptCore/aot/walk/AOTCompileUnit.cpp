@@ -707,7 +707,7 @@ static bool hasDominatingAccess(const Code& code, ValueID read)
 static bool isDominatedByFirstStore(const WalkInputs& inputs, FunctionID unit, VariableID variable)
 {
     ModuleID module = inputs.program.at(variable).module;
-    if (inputs.program.at(unit).isModuleBody() || inputs.program.at(unit).module != module)
+    if (inputs.program.at(unit).isModuleBody() || isBodyOfWrappedModule(inputs.program, unit) || inputs.program.at(unit).module != module)
         return false;
     BitVector seen;
     Vector<FunctionID, 16> toVisit { unit };

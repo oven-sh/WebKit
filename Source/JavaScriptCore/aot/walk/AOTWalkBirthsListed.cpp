@@ -644,6 +644,28 @@ bool isPrototypeAtConstructionProven(const Walker& walker, FunctionID constructo
     return isConstructorPrototypeGuarded(context, classLayout);
 }
 
+static bool mayReplacePrototype(const Walker& walker, LayoutID layout)
+{
+    const Program& program = walker.program();
+    LayoutID declared = declaredLayoutOf(program, layout);
+    if (!declared || !program.at(declared).has(LayoutFlags::IsConstructorFunction))
+        return false;
+    FunctionID constructor = program.at(declared).constructor;
+    return !constructor || !isPrototypeAtConstructionProven(walker, constructor);
+}
+
+void notePrototypeOfConstruction(Walker& walker, Reference object, LayoutID layout)
+{
+    if (!mayReplacePrototype(walker, layout))
+        return;
+    noteKnown(walker, KnownNote::PrototypeOfConstruction, { }, object, 0, LocationMasks(AbstractHeapSet { AbstractHeap::NamedProperties }), 1);
+}
+
+bool hasPrototypeOfConstruction(const Walker& walker, Reference object, LayoutID layout)
+{
+    return !mayReplacePrototype(walker, layout) || findKnown(walker, KnownNote::PrototypeOfConstruction, { }, object);
+}
+
 std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction(Walker& walker, ValueID construction, FunctionID constructor, bool newCellIsLookedAt, bool guardsAreAskedAtBirth, Origin origin)
 {
     const Program& program = walker.program();
@@ -895,6 +917,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     if (!object)
         return true;
     noteFreshObject(walker, object, listed.fields.size());
+    notePrototypeOfConstruction(walker, object, constructed);
     if (program.at(declaredLayoutOf(program, constructed)).has(LayoutFlags::IsConstructorFunction))
         walker.noteBirthInTries(declaredLayoutOf(program, constructed));
     walker.count(StatisticID::ConstructorFieldsFoldedIntoAllocations, listed.fields.size());

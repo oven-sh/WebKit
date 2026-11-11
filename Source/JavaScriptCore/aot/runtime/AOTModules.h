@@ -795,6 +795,11 @@ public:
     bool isMockLoadedInPreload(ModuleID module) const { return m_preloadedMocks.get(fileOf(module).index()); }
     bool wasLoadedInPreload(ModuleID module) const { return m_loadedInPreload.get(module.index()); }
     bool wasLoadedByPreloadHook(ModuleID module) const { return m_loadedByPreloadHooks.get(module.index()); }
+    void forgetLoadByPreloadHook(ModuleID module)
+    {
+        m_loadedByPreloadHooks.clear(module.index());
+        m_releasedLoadsOfPreloadHooks.clear(module.index());
+    }
     bool takeFailureBeforeMock(ModuleID);
     bool isReplacedByHost(ModuleID, LoadKind);
     bool isKeptInRequireCache(ModuleID) const;
@@ -830,6 +835,7 @@ public:
     enum class LibraryMock : bool { Replaces, Patches };
     void displaceLibraryOriginal(ModuleID, LibraryMock);
     bool isReloadedLibraryModule(ModuleID) const;
+    bool isLinkedToLibraryModuleBeforeReset(ModuleID importer, ModuleID target) const;
     bool isReloadedLibraryModuleRead(ModuleID) const;
     ModuleNamespace* reloadedLibraryWord(ModuleID);
     void showPatchToReloadedImporters(ModuleID);
@@ -2968,6 +2974,7 @@ private:
     Vector<uint32_t> m_momentsOfLoads;
     BitVector m_loadedInPreload;
     BitVector m_loadedByPreloadHooks;
+    BitVector m_releasedLoadsOfPreloadHooks;
     BitVector m_modulesLoadedAsMocksAlone;
     BitVector m_libraryModulesAskedForInPreload;
     bool m_hasBegunTestFile { false };

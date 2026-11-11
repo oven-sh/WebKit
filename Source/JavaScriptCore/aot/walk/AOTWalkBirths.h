@@ -49,6 +49,8 @@ struct GuardOfPrototypeAtConstruction {
     bool isKnownToHold { false };
 };
 bool isPrototypeAtConstructionProven(const Walker&, FunctionID constructor);
+void notePrototypeOfConstruction(Walker&, Reference object, LayoutID);
+bool hasPrototypeOfConstruction(const Walker&, Reference object, LayoutID);
 std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction(Walker&, ValueID construction, FunctionID constructor, bool newCellIsLookedAt, bool guardsAreAskedAtBirth, Origin);
 void checkPrototypeOfCellMadeBehindGuard(Walker&, Reference object, Reference constructor, LayoutID constructed, Origin);
 

@@ -205,16 +205,10 @@ static uint32_t linksAsStringWord(const FusedChain& chain)
 static FunctionID findTextOfFusedChain(const Walker& walker, const FusedChain& chain)
 {
     const Program& program = walker.program();
-    ASCIILiteral name = chain.end == EndOfFusedChain::Reduce ? "ArrayPrototypeChainToValue"_s : "ArrayPrototypeChainToList"_s;
-    std::span<const RuntimeFunctionData> functions = program.builtins().runtimeFunctions();
-    for (size_t place = 0; place < functions.size(); ++place) {
-        std::span<const char> token = builtinTableRuntimeFunctionTokens[place];
-        if (!std::ranges::equal(token, std::span<const char>(name.characters(), name.length())))
-            continue;
-        const RuntimeFunctionEntry* held = findRuntimeFunction(program, functions[place].id);
-        return held && held->function && program.at(held->function).hasBody() ? held->function : FunctionID();
-    }
-    return { };
+    const BuiltinTable& table = program.builtins();
+    std::span<const BuiltinCalledFunction> copied = table.calledFunctionsOf(table.canonicalID(chain.end == EndOfFusedChain::Reduce ? Builtins::ArrayPrototypeReduce : Builtins::ArrayPrototypeFilter));
+    const RuntimeFunctionEntry* held = copied.size() == 1 ? findRuntimeFunction(program, copied[0].function) : nullptr;
+    return held && held->function && program.at(held->function).hasBody() ? held->function : FunctionID();
 }
 
 static bool mayStandInsideFusedChain(const BodyIndex& index, ValueID value)

@@ -1814,7 +1814,6 @@ static void testResumptionCostsWhatWasKeptHoweverLargeFrameIs()
     constexpr unsigned numberOfClosures = 2000;
     std::optional<uint64_t> smaller = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(numberOfClosures, numberOfClosures));
     std::optional<uint64_t> large = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(4 * numberOfClosures, 4 * numberOfClosures));
-    AOT_TEST_CHECK(smaller && large);
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
