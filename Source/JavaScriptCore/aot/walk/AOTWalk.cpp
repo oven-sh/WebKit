@@ -8745,6 +8745,12 @@ void Walker::holdReadToRecordMadeForIt(size_t frameIndex, ValueID read)
         record = m_code.at(record).operand(0);
     if (m_code.at(record).opcode != Opcode::GetArrayElement || !m_code.at(record).readsHoleAsNaN())
         return;
+    for (ValueID value = bound.id();; value = m_code.at(value).operand(0)) {
+        if (std::ranges::contains(m_code.valuesThatFoldedArithmeticGives(), value))
+            return;
+        if (value == record)
+            break;
+    }
     auto found = std::ranges::lower_bound(noted, record.index(), { }, [](const Code::InputOfHoleReadAsNaN& input) { return input.read.index(); });
     if (found != noted.end() && found->read == record && found->written == read && found->function == m_frames[frameIndex].function)
         return;

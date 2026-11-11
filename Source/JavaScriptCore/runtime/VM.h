@@ -1551,8 +1551,6 @@ public:
         JSValue arg1;
         JSValue arg2;
         JSValue arg3 { };
-        // An inner synchronous load has run it.
-        bool isTaken { false };
     };
     // While non-null, internal-microtask reactions for already-settled promises
     // are appended here instead of the global microtask queue.
@@ -1568,7 +1566,6 @@ public:
     struct SynchronousModuleQueue {
         Vector<SynchronousModuleTask> tasks;
         SynchronousModuleQueue* prev { nullptr };
-        size_t next { 0 };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
 #if ENABLE(AOT)

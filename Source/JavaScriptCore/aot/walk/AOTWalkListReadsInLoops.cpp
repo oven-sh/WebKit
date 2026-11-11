@@ -321,6 +321,41 @@ static Reference nameThatEntersLoopInListReadsInLoops(Walker& walker, const Body
     return valueThatStateHoldsOfVariableInListReadsInLoops(walker, index, index.value(read), firstValueOfLoop);
 }
 
+void forgetStorageOfStoredLists(Walker& walker, BlockID inputHead)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+    auto listBeforeLoop = [&](ValueID stored) -> Reference {
+        ValueID enters = valueThatEntersLoopInListReadsInLoops(index, stored, firstValueOfLoop);
+        while (enters && enters.index() >= firstValueOfLoop && index.isParameter(enters) && index.valueNarrowedInto(enters))
+            enters = valueThatEntersLoopInListReadsInLoops(index, index.valueNarrowedInto(enters), firstValueOfLoop);
+        if (!enters || enters.index() < firstValueOfLoop)
+            return enters ? walker.referenceOf(enters) : Reference();
+        ValueID read = readOfVariableInLoopInListReadsInLoops(walker.program(), index, enters, firstValueOfLoop);
+        return read ? valueThatStateHoldsOfVariableInListReadsInLoops(walker, index, index.value(read), firstValueOfLoop) : Reference();
+    };
+    Effects effects = declaredBoundOf(Opcode::ConvertToDoubleStorage);
+    effects.merge(declaredBoundOf(Opcode::ReserveArrayCapacity));
+    uint32_t restartMark = walker.state().restartMark();
+    Vector<Reference, 4> lists;
+    for (BlockID member : index.membersOf(index.loopOf(inputHead))) {
+        for (BodyValue operation : index.block(member).values()) {
+            bool isCall = operation.opcode() == Opcode::Call;
+            ValueID stored = operation.opcode() == Opcode::ElemSet ? operation.objectOperand() : isCall ? operation.thisValueOperand() : ValueID();
+            Reference list = stored ? listBeforeLoop(stored) : Reference();
+            if (!list || !list.isValue() || lists.contains(list))
+                continue;
+            lists.append(list);
+            Draft convert(Opcode::ConvertToDoubleStorage, walker.originOf(operation));
+            walker.chooseConservativeFields(convert);
+            convert.setArrayOperand(list);
+            endWhatOperationWritesOrRuns(walker, convert, effects);
+        }
+    }
+    if (!lists.isEmpty())
+        walker.state().restoreRestartMark(restartMark);
+}
+
 Vector<ChosenArray, 3> findChosenArrays(Walker& walker, const BodyIndex& index, ValueID array, uint32_t firstValueOfLoop)
 {
     static constexpr size_t maxChosenArrays = 4;

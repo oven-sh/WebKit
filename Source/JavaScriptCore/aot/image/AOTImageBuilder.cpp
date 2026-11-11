@@ -221,6 +221,29 @@ OptionSet<ImageFlag> imageFlagsAdmittedBy(Wire::UnseenCodeCause cause)
     return { };
 }
 
+static bool holdsCodeOfEscapedBuiltins(const Typed::Facts& facts)
+{
+    const Typed::Program& program = facts.program();
+    const BuiltinTable& builtins = program.builtins();
+    auto isHeld = [&](RuntimeFunctionID function) {
+        if (!function || !builtins.contains(function) || !builtins.at(function).platforms.contains(targetOfThisBuild().platform))
+            return true;
+        const Typed::RuntimeFunctionEntry* entry = Typed::findRuntimeFunction(program, function);
+        return entry && entry->function;
+    };
+    return std::ranges::all_of(facts.builtinUses(), [&](const auto& use) {
+        BuiltinID builtin(use.builtin);
+        if (!facts.isLetGo(builtin))
+            return true;
+        bool holdsCalled = std::ranges::all_of(builtins.calledFunctionsOf(builtin), [&](const BuiltinCalledFunction& called) {
+            return called.condition || isHeld(called.function);
+        });
+        return holdsCalled && std::ranges::all_of(builtins.overloadsOf(builtin), [&](const BuiltinOverload& overload) {
+            return isHeld(overload.code.implementation.function);
+        });
+    });
+}
+
 OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts& facts, const CompileOptions& options)
 {
     OptionSet<ImageFlag> flags;
@@ -235,7 +258,7 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts& facts, const Compile
     if (facts.setsMainModulePath())
         flags.add(ImageFlag::SetsMainModulePath);
     const Typed::Program& program = facts.program();
-    if (facts.isLetGo(program.builtins().canonicalID(Builtins::GlobalThis)))
+    if (facts.isLetGo(program.builtins().canonicalID(Builtins::GlobalThis)) && (!options.excludesLibraryText() || holdsCodeOfEscapedBuiltins(facts)))
         flags.add(ImageFlag::LetsGlobalObjectGo);
     bool holdsMockOfFile = false;
     bool originalMayRun = false;

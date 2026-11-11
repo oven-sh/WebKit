@@ -297,15 +297,12 @@ static void emitFulfillPromiseWithoutBarrier(StubAssembler& jit, GPRReg promise,
     constexpr auto flagsOfReaction = [](JSPromise::InlineReactionKind kind) {
         return static_cast<int32_t>(JSPromise::isHandledFlag | static_cast<uint16_t>(kind) << JSPromise::inlineReactionKindShift);
     };
-    constexpr uint64_t fulfilledBit = static_cast<uint64_t>(JSPromise::Status::Fulfilled) << promiseFlagsShift;
-    constexpr uint64_t firstFunctionIsCalledBit = static_cast<uint64_t>(JSPromise::isFirstResolvingFunctionCalledFlag) << promiseFlagsShift;
+    constexpr uint64_t fulfilledBits = static_cast<uint64_t>(static_cast<uint16_t>(JSPromise::Status::Fulfilled) | JSPromise::isFirstResolvingFunctionCalledFlag) << promiseFlagsShift;
     static_assert(static_cast<uint64_t>(JSPromise::inlineReactionAsyncContextFlag) << promiseFlagsShift == 1ull << 62);
     RELEASE_ASSERT(noOverlap(promise, value, other, job.queue, job.slot, job.next, job.scratch, instanceGPR));
 
     auto settle = [&] {
-        jit.move(TrustedImm64(static_cast<int64_t>(firstFunctionIsCalledBit)), other);
-        jit.and64(other, word);
-        jit.or64(TrustedImm64(static_cast<int64_t>(promiseIsHandledBits | fulfilledBit)), word);
+        jit.move(TrustedImm64(static_cast<int64_t>(promiseIsHandledBits | fulfilledBits)), word);
         jit.store64(value, Address(promise, JSPromise::offsetOfSlot()));
         jit.store64(word, Address(promise, JSPromise::offsetOfPacked()));
     };
@@ -314,7 +311,7 @@ static void emitFulfillPromiseWithoutBarrier(StubAssembler& jit, GPRReg promise,
     jit.load64(Address(promise, JSPromise::offsetOfPacked()), word);
     jit.move(TrustedImm64(static_cast<int64_t>(~pendingPromiseWithoutReactionBits)), other);
     Jump hasReaction = jit.branchTest64(CCallHelpers::NonZero, word, other);
-    jit.or64(TrustedImm64(static_cast<int64_t>(fulfilledBit)), word);
+    jit.or64(TrustedImm64(static_cast<int64_t>(fulfilledBits)), word);
     jit.store64(value, Address(promise, JSPromise::offsetOfSlot()));
     jit.store64(word, Address(promise, JSPromise::offsetOfPacked()));
     JumpList isFulfilled;

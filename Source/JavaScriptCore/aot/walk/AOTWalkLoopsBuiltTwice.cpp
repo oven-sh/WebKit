@@ -3560,6 +3560,7 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         carriedInFrontOfLoop = carriedValuesInFrame(frameIndex);
 
     forgetAllButFreshObjectsAndFieldsThatBlockTakes(genericVersionEntry);
+    forgetStorageOfStoredLists(*this, inputHead);
     WalkState stateBeforeGenericVersion;
     if (startOfRest)
         stateBeforeGenericVersion = m_state;
@@ -3607,6 +3608,8 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         } else {
             m_block = start.block;
             m_state = WTF::move(start.state);
+            if (&start != starts.begin())
+                forgetStorageOfStoredLists(*this, inputHead);
         }
         WalkState atEndOfTestsForCopy;
         BlockID firstBlockOfCopyForWhatIsNoBuiltin;

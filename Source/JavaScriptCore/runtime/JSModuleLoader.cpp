@@ -1685,9 +1685,6 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
     size_t i = 0;
     while (i < tasks.size()) {
         auto t = tasks[i++];
-        queue->next = i;
-        if (t.isTaken)
-            continue;
 #if ENABLE(AOT)
         // A graph counts as loaded only after every CommonJS module it imports has finished evaluating, or a load has re-entered that module. Compiled code may settle such a module's entry before the module runs, so the runtime defers the step that links the graph until then.
         if (vm.hasCompiledCode() && AOT::ModuleRecord::tryDeferLinkStep(globalObject, t)) [[unlikely]]
@@ -1703,17 +1700,16 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
             // the exception. They run on the next normal microtask drain.
             while (i < tasks.size()) {
                 auto rest = tasks[i++];
-                if (!rest.isTaken)
-                    globalObject->queueMicrotask(vm, rest.task, rest.payload, rest.arg0, rest.arg1, rest.arg2, rest.arg3);
+                globalObject->queueMicrotask(vm, rest.task, rest.payload, rest.arg0, rest.arg1, rest.arg2, rest.arg3);
             }
-            break;
+            tasks.shrink(0);
+            return;
         }
     }
     tasks.shrink(0);
-    queue->next = 0;
 }
 
-template<typename Functor> bool JSModuleLoader::anyEntryInGraph(AbstractModuleRecord* root, const Functor& functor)
+bool JSModuleLoader::importsModuleBeingMade(AbstractModuleRecord* root)
 {
     UncheckedKeyHashSet<AbstractModuleRecord*> seen;
     Vector<AbstractModuleRecord*, 16> pending { root };
@@ -1722,7 +1718,7 @@ template<typename Functor> bool JSModuleLoader::anyEntryInGraph(AbstractModuleRe
         if (!seen.add(record).isNewEntry)
             continue;
         ModuleRegistryEntry* entry = registryEntry(record->moduleKey());
-        if (entry && functor(*entry))
+        if (entry && entry->isBeingMade())
             return true;
         for (const ModuleRequest& request : record->requestedModules()) {
             AbstractModuleRecord* requested = record->prelinkedRequestedModule(request);
@@ -1732,35 +1728,6 @@ template<typename Functor> bool JSModuleLoader::anyEntryInGraph(AbstractModuleRe
             }
             if (requested)
                 pending.append(requested);
-        }
-    }
-    return false;
-}
-
-bool JSModuleLoader::importsModuleBeingMade(AbstractModuleRecord* root)
-{
-    return anyEntryInGraph(root, [](ModuleRegistryEntry& entry) { return entry.isBeingMade(); });
-}
-
-// The step that goes on with the load of the root, or of a module below it, may wait in the queue of an outer synchronous load, which goes on only once this one returns.
-bool JSModuleLoader::takeOuterLoadStep(VM& vm, AbstractModuleRecord* root)
-{
-    UncheckedKeyHashSet<JSPromise*> pendingLoads;
-    bool importsModuleBeingMade = anyEntryInGraph(root, [&](ModuleRegistryEntry& entry) {
-        if (JSPromise* load = entry.loadPromise(); load && load->status() == JSPromise::Status::Pending)
-            pendingLoads.add(load);
-        return entry.isBeingMade();
-    });
-    if (importsModuleBeingMade || pendingLoads.isEmpty())
-        return false;
-    for (auto* outer = vm.m_synchronousModuleQueue->prev; outer; outer = outer->prev) {
-        for (size_t i = outer->next; i < outer->tasks.size(); ++i) {
-            auto& step = outer->tasks[i];
-            if (step.isTaken || step.task != InternalMicrotask::ModuleLoadStep || !pendingLoads.contains(uncheckedDowncast<JSPromise>(step.arg0)))
-                continue;
-            vm.m_synchronousModuleQueue->tasks.append(step);
-            step.isTaken = true;
-            return true;
         }
     }
     return false;
@@ -1806,13 +1773,6 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
     RETURN_IF_EXCEPTION(scope, result);
     drainSynchronousModuleQueue(globalObject);
     RETURN_IF_EXCEPTION(scope, result);
-    while (result->status() == JSPromise::Status::Pending && wasLoadAlreadyPending && !vm.hasCompiledCode()) {
-        ModuleRegistryEntry* entry = getRegisteredMayBeNull(moduleName, parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript);
-        if (!entry || !entry->record() || !takeOuterLoadStep(vm, entry->record()))
-            break;
-        drainSynchronousModuleQueue(globalObject);
-        RETURN_IF_EXCEPTION(scope, result);
-    }
     if (result->status() != JSPromise::Status::Pending || !wasLoadAlreadyPending || !isBlockedOnAnotherLoad())
         return result;
     // Load the root again. This time the load queues its own steps, starting from the module promise.

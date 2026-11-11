@@ -287,9 +287,7 @@ private:
     void finishCreation(JSGlobalObject*, VM&);
 
 #if USE(BUN_JSC_ADDITIONS)
-    template<typename Functor> bool anyEntryInGraph(AbstractModuleRecord* root, const Functor&);
     bool importsModuleBeingMade(AbstractModuleRecord*);
-    bool takeOuterLoadStep(VM&, AbstractModuleRecord* root);
     void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
     void pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget);
 

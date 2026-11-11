@@ -41,6 +41,8 @@ inline bool isConvertedInPreheader(const HoistedArrayGuard& list)
     return (list.storage == ArrayStorage::Double || !hasArrayStorageForm(list.storage)) && list.isWritable && !list.admitsInt32Storage && !list.hasAlternateStorage;
 }
 
+void forgetStorageOfStoredLists(Walker&, BlockID inputHead);
+
 BuiltinClassID classOfViewBesideInstancesBelowIt(const Walker&, TypeID);
 bool loopTakesInstancesBelowViewForItsLength(Walker&, BlockID inputHead, Reference view);
 bool lengthOfViewTakesInstancesBelow(Walker&, TypeID typeOfView);

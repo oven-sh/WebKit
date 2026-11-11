@@ -633,6 +633,7 @@ public:
     void clearRestartMark() { m_marks.restartMark = 0; }
     uint32_t restartMark() const { return m_marks.restartMark; }
     void setRestartMarkForTesting(uint32_t mark) { m_marks.restartMark = mark; }
+    void restoreRestartMark(uint32_t mark) { m_marks.restartMark = mark; }
     bool isInlineeEffectFree(uint32_t inlineeRestartPoint) const { return m_marks.restartMark && m_marks.restartMark <= inlineeRestartPoint; }
     void setInlineeRestartPoint(uint32_t inlineeRestartPoint)
     {
