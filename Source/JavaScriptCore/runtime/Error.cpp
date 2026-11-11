@@ -303,6 +303,8 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
 
         if (!sourceURL.isEmpty()) {
             errorInstance->setSourceURL(sourceURL);
+            // Before the host is asked: this is how its formatter knows that the fields hold the parser's position.
+            errorInstance->setHasParseLocation();
         }
 
         if (hostComputes) {
