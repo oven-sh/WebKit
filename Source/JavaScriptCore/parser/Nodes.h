@@ -2634,10 +2634,16 @@ namespace JSC {
         }
         ALWAYS_INLINE bool isSimpleParameterList() const { return m_isSimpleParameterList; }
 
+        // True when a parameter expression has a direct eval call. It can also be true for an eval in an arrow
+        // function or a class that is nested in the parameter expressions (see Parser::parseInner).
+        ALWAYS_INLINE bool usesEval() const { return m_usesEval; }
+        ALWAYS_INLINE void setUsesEval() { m_usesEval = true; }
+
     private:
 
         Vector<std::pair<DestructuringPatternNode*, ExpressionNode*>, 3> m_patterns;
         bool m_isSimpleParameterList { true };
+        bool m_usesEval { false };
     };
 
     class FuncDeclNode final : public StatementNode {
