@@ -802,6 +802,7 @@ public:
     Vector<FieldBornOnMember> fieldsBornOnMembersUnder(FamilyID, PropertyKeyID);
     void letKeeperWatch(const FlowObserver& keeper, FlowNodeID);
     bool tellPorterThatMemberIsLost(FamilyID, LayoutID);
+    bool hasMembersToResolve() const;
     void wakeEverySleeperToSeeThatNothingGrows();
     String describeSleeperThatMayFindSomething();
     std::span<const LayoutID> instancesOfClassesIn(FamilyID);

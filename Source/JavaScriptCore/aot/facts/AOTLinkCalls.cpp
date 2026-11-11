@@ -7213,6 +7213,11 @@ bool LinkFlow::tellPorterThatMemberIsLost(FamilyID family, LayoutID lost)
     return true;
 }
 
+bool LinkFlow::hasMembersToResolve() const
+{
+    return m_stateOfLinkCalls && !m_stateOfLinkCalls->membersObservedToResolve.isEmpty();
+}
+
 void LinkFlow::callObserved(const FlowObserver& observer, const LinkType& told)
 {
     StateOfLinkCalls& state = stateOfLinkCalls();

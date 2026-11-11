@@ -299,7 +299,8 @@ static bool isAllocationOfUnitForEffectsAgainstLink(const Code& code, ValueID va
 static String findPartThatLinkHasNotCounted(const Code& code, const Operation& operation, const Effects& counted)
 {
     EffectTraits traits = operation.traits();
-    if (traits.mayThrowByRule() && !counted.mayThrowByRule() && effectRuleOf(operation.opcode) != EffectRule::Operator && !code.at(operation.block()).handler)
+    bool isOperator = effectRuleOf(operation.opcode) == EffectRule::Operator || operation.opcode == Opcode::Strcat;
+    if (traits.mayThrowByRule() && !counted.mayThrowByRule() && !isOperator && !code.at(operation.block()).handler)
         return "may throw"_s;
     if (traits.mayCollect() && !counted.mayCollect)
         return "may collect"_s;

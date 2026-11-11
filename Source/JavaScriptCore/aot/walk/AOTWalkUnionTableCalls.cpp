@@ -332,9 +332,11 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     auto written = call.as<Opcode::Call>();
-    if (index.isParameter(written.calleeOperand()) || index.opcodeOf(written.calleeOperand()) != Opcode::PropGet)
+    if (index.isParameter(written.calleeOperand()))
         return false;
-    BodyValue read = index.value(written.calleeOperand());
+    BodyValue read = walker.asWalked(index.value(written.calleeOperand()));
+    if (read.opcode() != Opcode::PropGet)
+        return false;
     if (index.onlyUsingValue(read.id()) != call.id() || !isCallOfMethodReadInUnionTableCalls(index, read, call.id()))
         return false;
 

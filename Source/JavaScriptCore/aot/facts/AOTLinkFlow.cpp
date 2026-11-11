@@ -4471,7 +4471,7 @@ void LinkFlow::flow()
             applyDeferredUpdates();
             continue;
         }
-        if (numberOfNodesToTell || numberOfNewObservers() || !m_symbolsNotedBesideOtherKeys.isEmpty() || !m_symbolsNotedWithoutTheirNames.isEmpty() || !m_preparationsNoted.isEmpty() || m_unknownSymbolWasNotedWithPreparation) {
+        if (numberOfNodesToTell || numberOfNewObservers() || hasMembersToResolve() || !m_symbolsNotedBesideOtherKeys.isEmpty() || !m_symbolsNotedWithoutTheirNames.isEmpty() || !m_preparationsNoted.isEmpty() || m_unknownSymbolWasNotedWithPreparation) {
             ++m_numberOfRounds;
             m_isDeferringUpdates = true;
             m_tellsObservers = true;
