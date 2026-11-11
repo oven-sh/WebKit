@@ -278,7 +278,7 @@ public:
     Number settleNaNOf(const ValueContext&, Number);
     void noteThatNumberIsNoNaN(const ValueContext&);
     bool takesNothingForNaN(const ValueContext&);
-    void define(const ValueContext& value, Operand result)
+    ALWAYS_INLINE void define(const ValueContext& value, Operand result)
     {
         RELEASE_ASSERT(!value.isBranchCondition());
         defineValue(value.id(), value.representation(), result);
@@ -512,7 +512,7 @@ private:
     void dispatch(const TerminatorContext& terminator) { m_terminatorDispatchers[static_cast<size_t>(terminator.kind())](*this, terminator); }
     template<TerminatorKind> void dispatchTerminator(const TerminatorContext&);
 
-    const Edge* handlerOf(BlockID block) const
+    ALWAYS_INLINE const Edge* handlerOf(BlockID block) const
     {
         // What is made in a landing pad for the parameters of the handler must not lead back to the pad.
         if (m_isPassingHandlerArguments || m_isAheadOfWhatMayThrow)
@@ -528,7 +528,7 @@ private:
         EdgeID handler = code().handlerOf(id);
         return handler ? &code().at(handler) : nullptr;
     }
-    Operand get(ValueID id, const Operation& operation)
+    ALWAYS_INLINE Operand get(ValueID id, const Operation& operation)
     {
         Representation representation = operation.representation;
         BlockID home = operation.block();

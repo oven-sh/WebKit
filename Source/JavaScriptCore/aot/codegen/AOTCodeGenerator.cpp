@@ -4544,6 +4544,7 @@ void CodeGenerator::jumpTo(const TerminatorContext& terminator, uint32_t targetI
 
 void CodeGenerator::findBoxesLeftToHandlers()
 {
+    static constexpr uint8_t usesAreNotCounted = std::numeric_limits<uint8_t>::max();
     m_boxesLeftToHandlers.clearAll();
     UncheckedKeyHashMap<uint32_t, uint32_t> numberOfReads;
     for (BlockID id : m_order) {
@@ -4560,7 +4561,7 @@ void CodeGenerator::findBoxesLeftToHandlers()
             if (box.opcode != Opcode::Box || box.representation != Representation::JSValue || !box.block() || !code().at(box.block()).isInLoop || sumBoxedBy(box))
                 continue;
             Representation boxed = representationOf(box.valueOperand());
-            if (numberRepresentations.contains(boxed) && !code().isConstant(box.valueOperand()) && ++numberOfReads.add(argument.index(), 0).iterator->value == code().useCountOf(argument)) {
+            if (numberRepresentations.contains(boxed) && !code().isConstant(box.valueOperand()) && code().useCountOf(argument) != usesAreNotCounted && ++numberOfReads.add(argument.index(), 0).iterator->value == code().useCountOf(argument)) {
                 m_boxesLeftToHandlers.set(argument.index());
                 m_leavesBoxesToHandlers = true;
             }

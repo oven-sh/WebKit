@@ -379,7 +379,7 @@ bool Walker::hasOpenTrialVisit(size_t frameIndex, BlockID inputHead) const
 
 #define FOR_EACH_FIELD_OF_FRAME_IN_TRY_THAT_STANDING_BESIDE_PLAIN_WALK_LEAVES(macro) \
     macro(returnDominator) macro(exitDominator) macro(walkedUpTo) macro(endOfStretch) macro(numberOfStretchesBeingWalked) macro(currentBlockEndCount) macro(placeTakenByEndOfBlockAskedLast) \
-    macro(numberOfFramesUpToHandlerBelow) macro(firstOperationToWalk) macro(hasPassedByWhatFeedsThrow) macro(beginOfStretch) macro(loopsBeingVersioned) macro(fullyUnrolledHeader) \
+    macro(numberOfFramesUpToHandlerBelow) macro(firstOperationToWalk) macro(hasPassedByWhatFeedsThrow) macro(beginOfStretch) macro(accessorsDefinedByNext) macro(loopsBeingVersioned) macro(fullyUnrolledHeader) \
     macro(turnsOfForIn) macro(valuesListedForTurnsWrittenOut) macro(stepWhosePositionEdgesBring) macro(placeOfForInWhosePositionEdgesBring) \
     macro(whereCopyLeavesForCall) macro(whereHeadEnds)
 

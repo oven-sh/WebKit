@@ -407,7 +407,7 @@ static bool fillsArrayWithDoubles(Walker& walker, const BodyValue& call)
     Reference length = walker.referenceOf(arguments[0]);
     if (!element || index.isParameter(element) || index.opcodeOf(element) != Opcode::Integer || !length || !length.isRecord() || !walker.types().at(walker.typeOf(length)).isInteger())
         return false;
-    if (findBuiltinCalledForKnownRows(walker, call) != walker.program().builtins().builtinFromToken("CompilerHelpersFilledArray"_s))
+    if (findBuiltinCalledForKnownRows(walker, call) != walker.program().builtins().makerOfFilledArrays())
         return false;
     const LinkedContentsAtOperation* stored = walker.facts().linked().contentsAtOperation(walker.currentFunction(), call.id());
     return stored && !isNeverType(stored->value) && arrayStorageHolding(walker.types(), stored->value) == ArrayStorage::Double && (walker.types().at(stored->value).primitives & Primitive::FractionalNumber);

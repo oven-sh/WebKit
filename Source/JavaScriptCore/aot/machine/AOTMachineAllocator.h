@@ -442,7 +442,7 @@ public:
         m_isOutsideFramedPart = isOutsideFramedPart(block);
     }
     bool isOutsideFramedPart(const Block* block) const { return m_allocation.hasFramedPart() && !m_allocation.isInFramedPart(block); }
-    bool startsOutsideFramedPart(const Block* block) const { return m_allocation.hasFramedPart() && (!m_allocation.isInFramedPart(block) || m_allocation.isHeadOfFramedPart(block)); }
+    ALWAYS_INLINE bool startsOutsideFramedPart(const Block* block) const { return m_allocation.hasFramedPart() && (!m_allocation.isInFramedPart(block) || m_allocation.isHeadOfFramedPart(block)); }
     bool isStoredAtHeadsOfFramedPart(const Operation* value) const
     {
         if (!m_allocation.hasFramedPart() || m_allocation.needsFrameAheadOfFramedPart() || value->hasNoPosition() || m_liveness.isSunk(value))

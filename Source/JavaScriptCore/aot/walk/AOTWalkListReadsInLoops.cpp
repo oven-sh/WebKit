@@ -3573,7 +3573,7 @@ static bool isFilledWithDoubles(const Walker& walker, const BodyIndex& index, Va
     double number = index.value(element).as<Opcode::Double>().number();
     if (!canStoreWithoutConversion(ArrayStorage::Double, number) || canStoreWithoutConversion(ArrayStorage::Int32, number))
         return false;
-    BuiltinID filledArray = walker.program().builtins().builtinFromToken("CompilerHelpersFilledArray"_s);
+    BuiltinID filledArray = walker.program().builtins().makerOfFilledArrays();
     return filledArray && index.value(callee).as<Opcode::Builtin>().builtin() == filledArray;
 }
 

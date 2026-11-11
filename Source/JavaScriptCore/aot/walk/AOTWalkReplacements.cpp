@@ -932,11 +932,14 @@ static bool layAccessorsOfLiteralTogether(Walker& walker, const BodyValue& value
         }
         return { };
     };
-    if (neighbor(value.id(), 1))
+    ValueID next = neighbor(value.id(), 1);
+    bool isDefinedByNext = next && next.index() - block.firstValue().index() < walker.endOfStretchBeingWalked();
+    walker.noteAccessorDefinedByNext(value.id(), isDefinedByNext);
+    if (isDefinedByNext)
         return true;
 
     Vector<ValueID, valuesInRowOfAccessors> group { value.id() };
-    while (ValueID earlier = neighbor(group.last(), -1))
+    for (ValueID earlier = neighbor(value.id(), -1); earlier && walker.isAccessorDefinedByNext(earlier); earlier = neighbor(earlier, -1))
         group.append(earlier);
     group.reverse();
 

@@ -1473,6 +1473,13 @@ public:
     bool armsTakeBranchForProofOf(BlockID inputBlock, uint32_t begin, uint32_t end, Reference value, const BitVector& placesThatTypedRunKnowsBetter);
     uint32_t endOfStretchBeingWalked() const { return m_frames.last().endOfStretch; }
     uint32_t beginOfStretchBeingWalked() const { return m_frames.last().beginOfStretch; }
+    bool isAccessorDefinedByNext(ValueID definition) const { return m_frames.last().accessorsDefinedByNext.get(definition.index()); }
+    void noteAccessorDefinedByNext(ValueID definition, bool isDefinedByNext)
+    {
+        BitVector& definitions = m_frames.last().accessorsDefinedByNext;
+        if (isDefinedByNext || definitions.get(definition.index()))
+            definitions.set(definition.index(), isDefinedByNext);
+    }
     bool armHoldsKeyOf(ValueID access) const;
     bool isWalkingForThisWay(BlockID inputBlock) const { return m_frames.last().block == inputBlock && isTailDuplicatingBlock(m_frames.size() - 1); }
     BlockID unrolledLoopHeader() const { return m_frames.last().fullyUnrolledHeader; }
@@ -2495,6 +2502,7 @@ private:
         uint32_t walkedUpTo { 0 };
         uint32_t endOfStretch { 0 };
         uint32_t beginOfStretch { 0 };
+        BitVector accessorsDefinedByNext;
         uint32_t numberOfStretchesBeingWalked { 0 };
         uint32_t currentBlockEndCount { 0 };
         PlaceTakenByEndOfBlock placeTakenByEndOfBlockAskedLast;

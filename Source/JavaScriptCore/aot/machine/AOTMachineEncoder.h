@@ -203,7 +203,7 @@ public:
     void storeSpilledValuesDefinedAtHead(Block*, const BlockPlace&);
     void setUpFrame(const Block*);
     void leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWords = { });
-    void noteFrameState(bool isSetUp)
+    ALWAYS_INLINE void noteFrameState(bool isSetUp)
     {
         m_frameIsSetUp = isSetUp;
         if (m_frameRangeIsOpen != isSetUp) [[unlikely]]

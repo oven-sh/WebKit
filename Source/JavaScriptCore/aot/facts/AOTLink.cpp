@@ -2294,7 +2294,7 @@ void WriterOfLink::writeContentsAtOperations()
         return receiver.builtinClass == BuiltinClasses::Map || receiver.builtinClass == BuiltinClasses::WeakMap;
     };
     PropertyKeyID onlyNameAskedOfWhatIsExpected = writesWhatIsExpected() ? m_program.keyOf(BuiltinNames::get) : PropertyKeyID();
-    BuiltinID arrayFiller = m_program.builtins().builtinFromToken("CompilerHelpersFilledArray"_s);
+    BuiltinID arrayFiller = m_program.builtins().makerOfFilledArrays();
     PropertyKeyID nameOfReadByIndex = m_program.keyOf(BuiltinNames::at);
     Vector<Operation> found = collectInParallel<Operation>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<Operation>& operationsOfChunk) {
         if (!m_flow.reached.get(index))

@@ -610,7 +610,13 @@ const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cur
         enterFrame(cursor, *site);
         if (!site->isStubReturnSite()) [[likely]]
             return site;
-        if (const Instance* instance = m_instance ? m_instance : tryFindInstance())
+        const Instance* instance = m_instance;
+        if (!instance) [[unlikely]] {
+            instance = tryFindInstance();
+            site = findReturnSiteInRun(*m_cache, *m_image, cursor);
+            RELEASE_ASSERT(site && site->isStubReturnSite());
+        }
+        if (instance)
             cursor.isAmongFramesThatWait |= cursor.callFrame == std::bit_cast<const CallFrame*>(frameWithAwaitingCallers(*instance));
         switch (site->stubFrameKind) {
         case StubFrameKind::InHostCallFrame:

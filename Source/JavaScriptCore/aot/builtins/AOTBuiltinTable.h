@@ -1093,6 +1093,7 @@ public:
     StringView tokenOf(RuntimeModuleID) const;
     String tokenOf(BuiltinOverloadID) const;
     BuiltinID builtinFromToken(StringView) const;
+    BuiltinID makerOfFilledArrays() const;
     BuiltinClassID classFromToken(StringView) const;
     BuiltinSlotID slotFromToken(StringView) const;
     BuiltinLayoutID layoutFromToken(StringView) const;
