@@ -1714,7 +1714,8 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     Origin origin = options.origin.value_or(context.origin());
     const Operation* operation = context.valueID() ? static_cast<const Operation*>(&context.instruction()) : nullptr;
     BuiltinID calledBuiltin = options.calledBuiltin;
-    if (!calledBuiltin && operation && Operation::opcodesWithCalledBuiltin.contains(operation->opcode))
+    bool isStepOfLoop = operation && operation->opcode == Opcode::StepAsyncGenerator && operation->goesByDriverOperand();
+    if (!calledBuiltin && operation && !isStepOfLoop && Operation::opcodesWithCalledBuiltin.contains(operation->opcode))
         calledBuiltin = operation->calledBuiltin();
     if (BuiltinID builtinOfFrame = origin.inlineFrame ? m_code.inlineFrames()[origin.inlineFrame].calledBuiltin : BuiltinID()) {
         const InlineFrame& frame = m_code.inlineFrames()[origin.inlineFrame];

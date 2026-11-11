@@ -4305,8 +4305,12 @@ static bool buildPushAtLength(Walker& walker, const BodyValue& call, Reference l
     if (!pushed || !walker.typeOf(pushed) || !walker.typeOf(list) || !findListTestedForStoresInFrontOfLoop(walker, list) || !callsArrayPush(walker, call, list))
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
-    for (LoopID loop = index.loopOf(index.blockOf(call.id())); loop; loop = index.loop(loop).parent) {
-        if (findKnown(walker, KnownNote::LengthEqualsInitialCounter, list, { }, index.loop(loop).head.index()))
+    LoopID innermost = index.loopOf(index.blockOf(call.id()));
+    for (LoopID loop = innermost; loop; loop = index.loop(loop).parent) {
+        BlockID head = index.loop(loop).head;
+        std::optional<uint64_t> filling = loop == innermost ? findKnown(walker, KnownNote::PushAppendsToLiteral, list, { }, head.index()) : std::nullopt;
+        bool isFillingPush = filling && *filling == (call.id().index() | static_cast<uint64_t>(walker.currentFunction().index()) << 32);
+        if (!isFillingPush && findKnown(walker, KnownNote::LengthEqualsInitialCounter, list, { }, head.index()))
             return false;
     }
     Draft read(Opcode::GetArrayLength, walker.originOf(call));

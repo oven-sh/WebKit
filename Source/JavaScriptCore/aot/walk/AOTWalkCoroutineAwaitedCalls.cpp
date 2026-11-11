@@ -88,9 +88,11 @@ void finishWaitOfCall(Walker& walker, BodyBlock block, const WaitOfCallInCorouti
     walker.walkStretch(block.id(), wait.endOfWait + 1, wait.endOfWait + 1);
 }
 
-static Reference buildAwaitCallInAwaitedCalls(Walker& walker, const BodyValue& call, FunctionID callee, std::span<const Reference> operands, Reference driver, std::span<const Reference> held, ValueID await)
+static Reference buildAwaitCallInAwaitedCalls(Walker& walker, const BodyValue& call, FunctionID callee, std::span<const Reference> operands, Reference driver, std::span<const Reference> held, ValueID await, bool isTailCallOfCopy = false)
 {
-    Draft fused = draftOfCoroutineCalls(walker, Opcode::AwaitCallBySavingFrame, walker.originOf(call));
+    Origin origin = walker.originOf(call);
+    origin.isTailCall = isTailCallOfCopy;
+    Draft fused = draftOfCoroutineCalls(walker, Opcode::AwaitCallBySavingFrame, origin);
     fused.setFunction(callee);
     fused.setRole(CodeRole::CoroutineBody);
     fused.setNumberOfBoundArguments(0);
@@ -297,7 +299,7 @@ static bool buildCallOfCopyInAwaitedCalls(Walker& walker, const BodyValue& call)
 
     KeptByCallsOfCoroutines::AwaitOfCallThatMayBeCopied note = WTF::move(*kept->awaitOfCallThatMayBeCopied);
     kept->awaitOfCallThatMayBeCopied = std::nullopt;
-    Reference given = buildAwaitCallInAwaitedCalls(walker, call, callee, operands->span(), note.driver, note.held.span(), { });
+    Reference given = buildAwaitCallInAwaitedCalls(walker, call, callee, operands->span(), note.driver, note.held.span(), { }, walker.draftOf(call).isTailCall);
     if (!given)
         return true;
     walker.bind(call.id(), given);

@@ -38,6 +38,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Reference> held, Origin);
+Reference buildAwaitOfElement(Walker&, Reference element, std::span<const Reference> held, Origin);
 bool canWaitForStepOfAsyncGenerator(Walker&);
 std::optional<Reference> buildAwaitOfProtocolCall(Walker&, const BodyValue& site, FunctionID callee, Reference thisValue, Reference closure, std::span<const Reference> held, Origin);
 bool canCallCompilerHelper(Walker&, FunctionID helper);
@@ -820,7 +821,7 @@ public:
         stepByIndex(iteration, iteration.list, lengthOf(iteration, iteration.list), false, stepped);
         continueIn(stepped);
         storeWord(WordOfIteration::PositionInList, position);
-        Reference settled = await(value);
+        Reference settled = m_walker.isUnreachable() ? Reference() : buildAwaitOfElement(m_walker, value, m_held, m_origin);
         BlockID handler = std::exchange(m_handler, BlockID());
         jumpTo(addBlock());
         await(undefined());

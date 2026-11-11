@@ -319,6 +319,7 @@ private:
 
     bool passOverStubFrame(StubFrameKind kind)
     {
+        m_hidesFrames |= m_callFrame == m_frameWithAwaitingCallers;
         switch (kind) {
         case StubFrameKind::Plain:
         case StubFrameKind::ReturnsAfterOperation:

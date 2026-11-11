@@ -946,13 +946,14 @@ BitVector StateOfLinkReach::findFilesThatHaveRunToTheirEndWhereOthersNameThem() 
 {
     static constexpr OptionSet<ModuleFlags> flagsOfModulesThatOthersMayFindUnfinished {
         ModuleFlags::IsFoundByName, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted, ModuleFlags::MayBeReevaluated, ModuleFlags::IsImportedAsNamespace, ModuleFlags::LoaderReturnsNamespace,
-        ModuleFlags::IsListedInCache, ModuleFlags::IsExposedByRequireCache, ModuleFlags::IsExposedByTestRunner, ModuleFlags::IsImportableDuringEvaluation, ModuleFlags::HasTopLevelAwait,
+        ModuleFlags::IsExposedByRequireCache, ModuleFlags::IsExposedByTestRunner, ModuleFlags::IsImportableDuringEvaluation, ModuleFlags::HasTopLevelAwait,
     };
     uint32_t numberOfModules = static_cast<uint32_t>(m_program.modules.size());
     BitVector found(numberOfModules);
     for (uint32_t index = 0; index < numberOfModules; ++index) {
         const Module& module = m_program.modules[index];
-        if (module.kind == ModuleKind::CommonJs && module.body && module.flags.contains(ModuleFlags::CachesEvaluationError) && !module.flags.containsAny(flagsOfModulesThatOthersMayFindUnfinished))
+        bool isFoundInCache = module.flags.contains(ModuleFlags::IsListedInCache) && !module.requests.isEmpty();
+        if (module.kind == ModuleKind::CommonJs && module.body && module.flags.contains(ModuleFlags::CachesEvaluationError) && !isFoundInCache && !module.flags.containsAny(flagsOfModulesThatOthersMayFindUnfinished))
             found.quickSet(index);
     }
     for (const Module& module : m_program.modules) {

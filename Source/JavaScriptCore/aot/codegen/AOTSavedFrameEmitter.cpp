@@ -276,7 +276,7 @@ void SavedFrameEmitter::generateAwaitBySavingFrame(const ValueContext& value)
         bool isResumedByJobOfLoader = m_plan.moduleEvaluation().isBodyResumedByJobOfLoader(function());
         RELEASE_ASSERT(!value->awaitsResolution() || !isResumedByJobOfLoader);
         AwaitedOperand form = isResumedByJobOfLoader ? AwaitedOperand::ValueInModuleBody : value->awaitsResolution() ? AwaitedOperand::Resolution : AwaitedOperand::Value;
-        define(value, Boxed(suspend(value, awaitBySavingFrame(form), { in<Boxed>(awaited).value() }, driver, RunsCodeOfAwaited::BehindFunction).first));
+        define(value, Boxed(suspend(value, awaitBySavingFrame(form), { in<Boxed>(awaited).value() }, driver, value->readsThenInFrame() ? RunsCodeOfAwaited::InFrameOfFunction : RunsCodeOfAwaited::BehindFunction).first));
         return;
     }
     case CoroutineKind::AsyncGenerator:

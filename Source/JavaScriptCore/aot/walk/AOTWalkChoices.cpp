@@ -920,6 +920,52 @@ static bool someLoopPushesOntoInChoices(Walker& walker, ValueID literal)
     return false;
 }
 
+static bool loopsFillWithNumbersOfCounterInChoices(Walker& walker, ValueID literal)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (!literal || !index.hasLoops())
+        return false;
+    auto isNumberOfCounter = [&](auto& self, ValueID value, BlockID head, unsigned stepsLeft) -> bool {
+        value = index.stripCasts(value);
+        if (index.isParameter(value))
+            return index.blockOf(value) == head;
+        if (static constexpr OpcodeSet constants { Opcode::Double, Opcode::Integer }; constants.contains(index.opcodeOf(value)))
+            return true;
+        if (!stepsLeft || (!allBitwiseOperators.contains(index.opcodeOf(value)) && !numberProducingOperators.contains(index.opcodeOf(value)) && index.opcodeOf(value) != Opcode::Add))
+            return false;
+        bool isNumber = true;
+        index.value(value).forEachOperand([&](ValueID operand, uint32_t) { isNumber = isNumber && self(self, operand, head, stepsLeft - 1); });
+        return isNumber;
+    };
+    static constexpr unsigned mostSteps = 3;
+    bool isFilled = false;
+    for (uint32_t number = 0; number < index.numberOfLoops(); ++number) {
+        LoopID loop(number);
+        BlockID head = index.loop(loop).head;
+        for (BlockID member : index.membersOf(loop)) {
+            for (BodyValue operation : index.block(member).values()) {
+                bool stores = operation.opcode() == Opcode::ElemSet;
+                bool storesIntoLiteral = stores && index.stripCasts(operation.objectOperand()) == literal;
+                if ((stores && !storesIntoLiteral) || (storesIntoLiteral && (index.loopOf(member) != loop || !isNumberOfCounter(isNumberOfCounter, operation.valueOperand(), head, mostSteps))))
+                    return false;
+                isFilled |= storesIntoLiteral;
+                bool usesLiteral = false;
+                if (!storesIntoLiteral && !opcodesThatStateTypes.contains(operation.opcode()))
+                    operation.forEachOperand([&](ValueID operand, uint32_t) { usesLiteral |= operand && index.stripCasts(operand) == literal; });
+                if (usesLiteral)
+                    return false;
+            }
+        }
+    }
+    return isFilled;
+}
+
+static bool isBornInLoopInChoices(Walker& walker, ValueID literal)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    return literal && index.hasLoops() && !!index.loopOf(index.blockOf(literal));
+}
+
 static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
 {
     RootOfConstant whereRootEnds = walker.constantEndsWhereItLeaves(data.inputValueGiven, data.data()) ? RootOfConstant::EndsWhereItLeaves : RootOfConstant::IsAsked;
@@ -937,7 +983,7 @@ static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
         bool isStoredInto = ((data.inputValueGiven && walker.facts().summaries().at(walker.currentFunction()).constantListIsStoredIntoInLoop(data.inputValueGiven)) || walker.facts().summaries().storesElementInto(data.data())) && surveyDataInChoices(walker, data.data()).tableOfImageHoldsIt;
         if (isStoredInto)
             walker.count(StatisticID::ArrayLiteralsWithOwnStorage);
-        if (isStoredInto && array->elements.size() <= maxNodesOfExpandedData && walker.runsInIterations() && someLoopPushesOntoInChoices(walker, data.inputValueGiven)) {
+        if (isStoredInto && array->elements.size() <= maxNodesOfExpandedData && walker.runsInIterations() && (someLoopPushesOntoInChoices(walker, data.inputValueGiven) || loopsFillWithNumbersOfCounterInChoices(walker, data.inputValueGiven) || isBornInLoopInChoices(walker, data.inputValueGiven))) {
             becomeNodeOfDataInChoices(walker, data, root);
             return;
         }

@@ -402,6 +402,23 @@ std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfFreshObject(Walker& 
     return properties;
 }
 
+static void checkWhatFilledObjectRestsOn(Walker& walker, Reference object, LayoutID layout, std::span<const FieldIndex> fields, std::span<const Reference> values, Origin origin)
+{
+    walker.checkFactsRememberedOfCell(object, origin);
+    for (size_t place = 0; place < fields.size() && !walker.isUnreachable(); ++place) {
+        const auto& declared = walker.program().at(layout).fields;
+        bool isBrand = fields[place] < declared.size() && declared[fields[place]].flags.contains(FieldFlags::IsBrand);
+        if (isBrand || !walker.types().at(walker.typeOf(values[place])).isJavaScriptValue())
+            continue;
+        Draft read(Opcode::GetSlot, origin);
+        read.setObjectOperand(object);
+        read.setKey(walker.plan().slots().keyOf(walker.program(), { layout, fields[place] }));
+        read.setReceivers(walker.types().at(walker.types().forLayout(layout)).layouts);
+        read.setLevel(KnowledgeLevel::Proven);
+        walker.checkThatMemoryAnswersAsBelieved(values[place], WTF::move(read));
+    }
+}
+
 Reference allocateFilledObject(Walker& walker, Reference returned, Origin origin)
 {
     if (!returned || !returned.isValue() || walker.isUnreachable() || !walker.has(Mechanism::EscapeAnalysis) || !walker.has(Mechanism::TypedOperations))
@@ -453,6 +470,10 @@ Reference allocateFilledObject(Walker& walker, Reference returned, Origin origin
     bool hasLayoutPrototype = known.contains(CellFact::HasLayoutPrototype);
 
     origin.isTailCall = false;
+    if (walker.checksProofsOf(ProofSource::Lifetime)) {
+        checkWhatFilledObjectRestsOn(walker, object, layout, *fields, values.span(), origin);
+        return returned;
+    }
     Draft allocation(Opcode::NewObject, origin);
     allocation.standsForNoValueOfInput = true;
     allocation.setLayout(layout);

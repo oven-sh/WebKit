@@ -530,6 +530,12 @@ void Modules::listImportersAndRequirers()
     }
 }
 
+bool Modules::isImportedByStatement(ModuleID module)
+{
+    listImportersAndRequirers();
+    return !m_importersByStatement[module.index()].isEmpty();
+}
+
 void Modules::noteMockEnd(ModuleID mocked)
 {
     if (m_hasBegunTestFile && (activeMock(mocked) || isPatchedByMock(mocked) || hasMockOfLibraryModule(mocked)))

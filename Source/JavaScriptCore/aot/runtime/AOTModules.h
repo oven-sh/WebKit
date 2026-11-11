@@ -563,6 +563,7 @@ public:
     Vector<std::pair<ModuleID, ModuleID>> m_factoryLoadedImporters;
     BitVector m_retainedFactoryImporters;
     void tellThatFileDidNotRunAgain(ModuleID);
+    bool isImportedByStatement(ModuleID);
     void reportRetainedFailure(ModuleID);
     bool wasDisplacedAfterFailure(ModuleID module) const
     {

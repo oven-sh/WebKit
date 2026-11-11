@@ -610,6 +610,8 @@ const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cur
         enterFrame(cursor, *site);
         if (!site->isStubReturnSite()) [[likely]]
             return site;
+        if (const Instance* instance = m_instance ? m_instance : tryFindInstance())
+            cursor.isAmongFramesThatWait |= cursor.callFrame == std::bit_cast<const CallFrame*>(frameWithAwaitingCallers(*instance));
         switch (site->stubFrameKind) {
         case StubFrameKind::InHostCallFrame:
             RELEASE_ASSERT_NOT_REACHED();

@@ -30,6 +30,7 @@ bool walkRampOfCoroutine(Walker&);
 Reference addDriverParameterOfCoroutine(Walker&, BlockID entry);
 Reference convertReturnedValueOfCoroutine(Walker&, Reference returned, Origin);
 Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Reference> held, Origin);
+Reference buildAwaitOfElement(Walker&, Reference awaited, std::span<const Reference> held, Origin);
 Reference buildAwaitOfResolution(Walker&, Reference resolution, std::span<const Reference> held, Origin);
 bool canWaitForStepOfAsyncGenerator(Walker&);
 Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Reference goesByDriver, Origin);
@@ -115,7 +116,7 @@ Reference buildSuspensionInCoroutine(Walker& walker, Draft&& suspension)
     return buildSuspensionOfCoroutine(walker, WTF::move(suspension));
 }
 
-Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<const Reference> held, Origin origin)
+static Reference buildAwaitInCoroutine(Walker& walker, Reference awaited, std::span<const Reference> held, Origin origin, bool readsThenInFrame)
 {
     std::optional<SuspendingBodyOfCoroutine> body = findSuspendingBodyOfCoroutine(walker);
     if (!body || body->kind == CoroutineKind::Generator) {
@@ -130,7 +131,18 @@ Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<c
     await.setAwaitedOperand(awaited);
     await.setPromiseOperand(body->driver);
     await.setHeldOperands(held);
+    await.setReadsThenInFrame(readsThenInFrame);
     return buildSuspensionOfCoroutine(walker, WTF::move(await));
+}
+
+Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<const Reference> held, Origin origin)
+{
+    return buildAwaitInCoroutine(walker, awaited, held, origin, false);
+}
+
+Reference buildAwaitOfElement(Walker& walker, Reference element, std::span<const Reference> held, Origin origin)
+{
+    return buildAwaitInCoroutine(walker, element, held, origin, true);
 }
 
 Reference buildAwaitOfResolution(Walker& walker, Reference resolution, std::span<const Reference> held, Origin origin)

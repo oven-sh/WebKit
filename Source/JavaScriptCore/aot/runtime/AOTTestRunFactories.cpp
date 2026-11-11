@@ -2626,6 +2626,12 @@ bool wasLoadedByPreloadHook(JSGlobalObject* realm, ModuleID module)
     return modules && modules->wasLoadedByPreloadHook(module);
 }
 
+bool isImportedByStatement(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isImportedByStatement(module);
+}
+
 void setNeedsMockReinstall(JSGlobalObject* realm, ModuleID module, bool waits)
 {
     Modules* modules = modulesOf(realm);
