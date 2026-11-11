@@ -2397,6 +2397,9 @@ void Heap::sweepAndClearCachesInEpilogue()
     m_stringsFoundOnStack.clear();
 
     vm().immutableButterflyToStringCache.clear();
+
+    for (auto* observer : m_observers)
+        observer->clearCachesInEpilogue();
 }
 
 void Heap::runCollectionEpilogue()

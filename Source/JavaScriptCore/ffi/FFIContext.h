@@ -162,6 +162,7 @@ public:
     void willGarbageCollect() final { }
     void didGarbageCollect(CollectionScope) final;
     void visitRoots(AbstractSlotVisitor&) final;
+    void clearCachesInEpilogue() final;
 
     StringArena& stringArena() { return m_arena; }
     StringArena& arena() { return m_arena; }
@@ -193,6 +194,7 @@ private:
     StringArena m_arena;
     Vector<UTF8CacheEntry, utf8CacheCapacity> m_utf8Cache;
     uint64_t m_utf8CacheClock { 0 };
+    uint64_t m_utf8CacheClockAtLastCollection { 0 };
 };
 
 inline StringArena::Scope::Scope(FFIContext& context)

@@ -165,6 +165,15 @@ void FFIContext::visitRoots(AbstractSlotVisitor& visitor)
     }
 }
 
+// Not in didGarbageCollect(): the collector's thread may not drop the last reference to a string.
+void FFIContext::clearCachesInEpilogue()
+{
+    m_utf8Cache.removeAllMatching([&](auto& entry) {
+        return entry.lastUse <= m_utf8CacheClockAtLastCollection;
+    });
+    m_utf8CacheClockAtLastCollection = m_utf8CacheClock;
+}
+
 void StringArena::reset()
 {
     ASSERT(!m_depth);

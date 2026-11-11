@@ -38,6 +38,8 @@ public:
     virtual void didGarbageCollect(CollectionScope) = 0;
     // With the mutator stopped.
     virtual void visitRoots(AbstractSlotVisitor&) { }
+    // On the mutator's thread, after each collection.
+    virtual void clearCachesInEpilogue() { }
 };
 
 } // namespace JSC
