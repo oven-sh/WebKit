@@ -35,6 +35,8 @@ using ThreadMessage = ScopedLambda<void(PlatformRegisters&)>;
 enum class MessageStatus {
     MessageRan,
     ThreadExited,
+    TemporarilyUnavailable,
+    SuspensionFailed,
 };
 
 // Suspends targetThread, snapshots its register state, and runs func on the calling thread with
@@ -44,6 +46,18 @@ enum class MessageStatus {
 // block on any resource (e.g. a lock) that the suspended thread might currently hold, or it will
 // deadlock. Returns ThreadExited if targetThread had already exited.
 WTF_EXPORT_PRIVATE MessageStatus sendMessageScoped(const ThreadSuspendLocker&, Thread&, NOESCAPE const ThreadMessage&);
+
+// Like sendMessageScoped, but a foreign-stack refusal leaves the thread running
+// and returns TemporarilyUnavailable without invoking the message. This is for
+// optional sampling, never for deciding whether a thread has GC roots.
+// Platform errors return SuspensionFailed; they do not establish thread exit.
+WTF_EXPORT_PRIVATE MessageStatus trySendMessageScoped(const ThreadSuspendLocker&, Thread&, NOESCAPE const ThreadMessage&);
+
+template<typename Functor>
+MessageStatus trySendMessage(const ThreadSuspendLocker& locker, Thread& targetThread, NOESCAPE const Functor& func)
+{
+    return trySendMessageScoped(locker, targetThread, func);
+}
 
 template<typename Functor>
 MessageStatus sendMessage(const ThreadSuspendLocker& locker, Thread& targetThread, NOESCAPE const Functor& func)
