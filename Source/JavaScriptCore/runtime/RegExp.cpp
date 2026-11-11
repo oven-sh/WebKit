@@ -36,6 +36,7 @@
 #include <wtf/Assertions.h>
 #include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 #include "AOTRegExpInProcessLoader.h"
@@ -45,6 +46,14 @@
 namespace JSC {
 
 const ClassInfo RegExp::s_info = { "RegExp"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(RegExp) };
+
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(RegExp::LazyData);
+
+#if !ENABLE(REGEXP_TRACING)
+// The cell's size classes are 16 bytes apart, so one more word costs every RegExp 16 bytes. What only some RegExps
+// need goes behind m_rareData or m_lazyData.
+static_assert(sizeof(RegExp) <= 80);
+#endif
 
 #if REGEXP_FUNC_TEST_DATA_GEN
 const char* const RegExpFunctionalTestCollector::s_fileName = "/tmp/RegExpTestsData";
@@ -318,8 +327,11 @@ size_t RegExp::estimatedSize(JSCell* cell, VM& vm)
         regexDataSize += jitCode->size();
 #endif
     regexDataSize += thisObject->m_ovector.byteSize();
-    if (thisObject->m_firstCharacterBitmap.get())
-        regexDataSize += sizeof(WTF::BitSet<256>);
+    if (LazyData* lazyData = thisObject->m_lazyData.get()) {
+        regexDataSize += sizeof(LazyData);
+        if (lazyData->m_firstCharacterBitmap.get())
+            regexDataSize += sizeof(WTF::BitSet<256>);
+    }
     return Base::estimatedSize(cell, vm) + regexDataSize;
 }
 
@@ -333,6 +345,8 @@ void RegExp::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (thisObject->m_rareData)
         visitor.append(thisObject->m_rareData->m_cachedGroupsStructureID);
 #endif
+    if (LazyData* lazyData = thisObject->m_lazyData.get())
+        visitor.append(lazyData->m_sourceString);
 }
 
 DEFINE_VISIT_CHILDREN(RegExp);
@@ -686,7 +700,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
 const WTF::BitSet<256>* RegExp::firstCharacterBitmap(FirstCharacterFilterPosition position)
 {
     ASSERT_UNUSED(position, position == FirstCharacterFilterPosition::AtStart ? !globalOrSticky() : sticky());
-    const auto& result = m_firstCharacterBitmap.ensure([&] {
+    const auto& result = ensureLazyData().m_firstCharacterBitmap.ensure([&] {
         auto bitmap = Yarr::computeFirstCharacterBitmap(m_patternString, m_flags);
         if (!bitmap || bitmap->isFull()) {
             WTF::BitSet<256> full;
@@ -1176,6 +1190,20 @@ String RegExp::escapedPattern() const
         return m_patternString;
 #endif
     return escapedPattern(m_patternString);
+}
+
+RegExp::LazyData& RegExp::ensureLazyData() const
+{
+    return m_lazyData.ensure([] {
+        return makeUnique<LazyData>();
+    });
+}
+
+JSString* RegExp::sourceStringSlow(VM& vm)
+{
+    JSString* string = jsString(vm, escapedPattern());
+    ensureLazyData().m_sourceString.set(vm, this, string);
+    return string;
 }
 
 String RegExp::toSourceString() const
