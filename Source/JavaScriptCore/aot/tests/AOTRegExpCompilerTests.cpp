@@ -7,9 +7,10 @@
 
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 
-#include "AOTIRTestSupport.h"
+#include "AOTCompileOptionWords.h"
 #include "AOTRegExpCompiler.h"
 #include "AOTRegExpTestSupport.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "YarrClassTable.h"
@@ -17,7 +18,6 @@
 #include "YarrPattern.h"
 #include "YarrSyntaxChecker.h"
 #include <algorithm>
-#include <array>
 #include <memory>
 #include <span>
 #include <wtf/Threading.h>
@@ -28,42 +28,34 @@ namespace JSC::AOT {
 
 using namespace RegExpTests;
 
-static RegExpRequest makeRequest(Typed::Program& program, const Source& source, RegExpRequestOrigin origin)
+static RegExpRequest makeRequest(Typed::Program& program, const Source& source)
 {
     return {
         .pattern = program.strings.intern(StringView(source.pattern)),
         .flags = source.flags,
-        .origin = origin,
-        .sites = { RegExpSite { FunctionID(0u), ValueID(0u) } },
     };
 }
 
-namespace {
-
-struct FoundText {
-    Source source;
-    RegExpRequestOrigin origin { RegExpRequestOrigin::Candidate };
-};
-
-} // anonymous namespace
-
-static CompiledRegExps compileRequests(std::span<const Source> literals, std::span<const FoundText> foundTexts, BuildContext& context)
+static CompiledRegExps compileRequests(std::span<const Source> sources, BuildContext& context)
 {
-    Typed::TestProgram program;
-    auto append = [&](Vector<RegExpRequest>& requests, const Source& source, RegExpRequestOrigin origin) {
-        requests.append(makeRequest(program.program, source, origin));
-        AOT_TEST_CHECK(requests.size() == 1 || requests[requests.size() - 2].pattern.index() < requests.last().pattern.index());
-    };
-    Vector<RegExpRequest> requestsForFoundTexts;
-    for (const FoundText& text : foundTexts)
-        append(requestsForFoundTexts, text.source, text.origin);
-    Vector<RegExpRequest> requestsForLiterals;
-    for (const Source& literal : literals)
-        append(requestsForLiterals, literal, RegExpRequestOrigin::Literal);
-    RegExpRequests requests(WTF::move(requestsForLiterals), WTF::move(requestsForFoundTexts));
-    CompiledRegExps compiled = compileRegExps(program.program, requests, context);
-    AOT_TEST_CHECK(compiled.results.size() == literals.size() + foundTexts.size());
+    std::unique_ptr<Typed::Program> program = Typed::createEmptyProgram(context);
+    AOT_TEST_CHECK(program);
+    Vector<RegExpRequest> ascendingRequests;
+    for (const Source& source : sources) {
+        ascendingRequests.append(makeRequest(*program, source));
+        AOT_TEST_CHECK(ascendingRequests.size() == 1 || ascendingRequests[ascendingRequests.size() - 2].pattern.index() < ascendingRequests.last().pattern.index());
+    }
+    RegExpRequests requests(WTF::move(ascendingRequests));
+    CompiledRegExps compiled = compileRegExps(*program, requests, context);
+    AOT_TEST_CHECK(compiled.results.size() == sources.size());
     return compiled;
+}
+
+static CompiledRegExp compileRegExpWithNestingLimit(const Source& source, unsigned limit)
+{
+    AssemblerPolicy policy = policyFor(nullptr);
+    RegExpSummary summary = summarizeRegExp(source.pattern, source.flags, limit);
+    return compileRegExp({ source.pattern, source.flags, summary, policy, nullptr });
 }
 
 static bool isDeclined(const CompiledRegExp& regExp, Form form, RegExpDeclineReason reason)
@@ -71,63 +63,22 @@ static bool isDeclined(const CompiledRegExp& regExp, Form form, RegExpDeclineRea
     return regExp.form == form && regExp.reason == reason && !regExp.code[0] && !regExp.code[1];
 }
 
-static void testRequestPastSectionSizeLimitLosesCode()
-{
-    std::array<Source, 3> sources { Source { "ab+c"_s, { } }, Source { "\\w+\\s"_s, { } }, Source { "x[yz]+"_s, { } } };
-    uint64_t codeSize = 0;
-    {
-        BuildContext context(makeDefaultCompileOptions());
-        CompiledRegExps compiled = compileRequests(sources, { }, context);
-        for (const CompiledRegExp& regExp : compiled.results) {
-            AOT_TEST_CHECK(regExp.form == Form::Code);
-            codeSize += regExp.codeSize();
-        }
-    }
-    {
-        BuildContext context(makeOptions(makeString("limit=RegExpSectionSize:"_s, 2 * codeSize)));
-        AOT_TEST_CHECK(compileRequests(sources, { }, context).numberWithForm(Form::Code) == 3);
-        AOT_TEST_CHECK(!limitHits(context, LimitID::RegExpSectionSize));
-    }
-
-    BuildContext context(makeOptions(makeString("limit=RegExpSectionSize:"_s, 2 * codeSize - 2)));
-    CompiledRegExps compiled = compileRequests(sources, { }, context);
-    AOT_TEST_CHECK(compiled.results[0].form == Form::Code && compiled.results[1].form == Form::Code);
-    AOT_TEST_CHECK(isDeclined(compiled.results[2], Form::NoCode, RegExpDeclineReason::SectionFull));
-    AOT_TEST_CHECK(limitHits(context, LimitID::RegExpSectionSize) == 1);
-    AOT_TEST_CHECK(!context.diagnostics().hasErrors());
-}
-
-static void testCandidateBudget()
+static void testEveryRequestGetsItsCode()
 {
     Source large { "(\\w+)@[a-z\\xe0-\\xff]+\\.(com|org)"_s, { } };
-    Source evaluated { makeString(large.pattern, '-', large.pattern, '-', large.pattern), { } };
-    std::array<FoundText, 4> foundTexts {
-        FoundText { { "ab+c"_s, { } }, RegExpRequestOrigin::Candidate },
-        FoundText { large, RegExpRequestOrigin::Candidate },
-        FoundText { { "de+f"_s, { } }, RegExpRequestOrigin::Candidate },
-        FoundText { evaluated, RegExpRequestOrigin::Evaluated },
-    };
-    std::array<uint64_t, 4> sizes;
-    {
-        BuildContext context(makeDefaultCompileOptions());
-        CompiledRegExps compiled = compileRequests({ }, foundTexts, context);
-        for (size_t index = 0; index < sizes.size(); ++index) {
-            AOT_TEST_CHECK(compiled.results[index].form == Form::Code);
-            sizes[index] = compiled.results[index].codeSize();
-        }
+    Vector<Source> sources;
+    for (unsigned index = 0; index < 400; ++index)
+        sources.append(Source { makeString(large.pattern, '-', index, '-', large.pattern), { } });
+    BuildContext context(makeDefaultCompileOptions());
+    CompiledRegExps compiled = compileRequests(sources.span(), context);
+    uint64_t bytes = 0;
+    for (const CompiledRegExp& result : compiled.results) {
+        AOT_TEST_CHECK(result.form == Form::Code);
+        bytes += result.codeSize();
     }
-    uint64_t budget = sizes[0] + sizes[2];
-    AOT_TEST_CHECK(sizes[1] > sizes[2] && sizes[3] > budget);
-
-    // A text that the build evaluated counts as a literal does: the budget of a site is for what flow names.
-    BuildContext context(makeOptions(makeString("limit=RegExpCandidateCodeBytesPerSite:"_s, budget)));
-    CompiledRegExps compiled = compileRequests(singleElementSpan(large), foundTexts, context);
-    AOT_TEST_CHECK(compiled.results[0].form == Form::Code);
-    AOT_TEST_CHECK(compiled.results[1].form == Form::Code);
-    AOT_TEST_CHECK(isDeclined(compiled.results[2], Form::NoCode, RegExpDeclineReason::CandidateBudgetExhausted));
-    AOT_TEST_CHECK(compiled.results[3].form == Form::Code);
-    AOT_TEST_CHECK(compiled.results[4].form == Form::Code && compiled.results[4].codeSize() == sizes[3]);
-    AOT_TEST_CHECK(limitHits(context, LimitID::RegExpCandidateCodeBytesPerSite) == 1);
+    AOT_TEST_CHECK(compiled.results.size() == 400 && bytes > 256 * KB);
+    AOT_TEST_CHECK(compiled.numberWithForm(Form::Code) == 400);
+    AOT_TEST_CHECK(!context.diagnostics().hasErrors());
 }
 
 static void testCompiledForms()
@@ -140,25 +91,6 @@ static void testCompiledForms()
     CompiledRegExp atom = compile({ "abc"_s, { } });
     AOT_TEST_CHECK(atom.form == Form::Atom && !atom.reason);
     AOT_TEST_CHECK(!atom.code[0] && !atom.code[1]);
-}
-
-static void checkWithShortPatternLimit(ASCIILiteral pattern, bool isTooLong)
-{
-    Source source { pattern, { } };
-    BuildContext context(makeOptions("limit=RegExpPatternLengthWithCode:4"_s));
-    CompiledRegExps compiled = compileRequests(singleElementSpan(source), { }, context);
-    if (isTooLong)
-        AOT_TEST_CHECK(isDeclined(compiled.results[0], Form::NoCode, RegExpDeclineReason::PatternTooLong));
-    else
-        AOT_TEST_CHECK(compiled.results[0].form == Form::Code && !compiled.results[0].reason);
-    AOT_TEST_CHECK(limitHits(context, LimitID::RegExpPatternLengthWithCode) == (isTooLong ? 1u : 0u));
-}
-
-static void testPatternLengthLimit()
-{
-    checkWithShortPatternLimit("abcdef+"_s, true);
-    checkWithShortPatternLimit("(?<n>abcdef+)"_s, true);
-    checkWithShortPatternLimit("ab+"_s, false);
 }
 
 static String makeNestedGroups(uint64_t depth)
@@ -204,11 +136,10 @@ static void checkNestingAnswers()
     AOT_TEST_CHECK(isDeclined(compile({ wrapped, { } }), Form::NoMetadata, RegExpDeclineReason::NestedTooDeep));
     AOT_TEST_CHECK(compile({ makeWideAlternation(makeNestedGroups(limit - 1)), { } }).form == Form::Code);
 
-    BuildContext context(makeOptions("limit=RegExpNestingDepthWithCode:8"_s));
     String prefixChain = makePrefixChain(40);
     AOT_TEST_CHECK(!Yarr::checkSyntax(prefixChain, OptionSet<Yarr::Flags> { }).maxParenthesesDepth);
-    AOT_TEST_CHECK(isDeclined(compile({ prefixChain, { } }, &context), Form::NoMetadata, RegExpDeclineReason::NestedTooDeep));
-    AOT_TEST_CHECK(compile({ makePrefixChain(8), { } }, &context).form == Form::Code);
+    AOT_TEST_CHECK(isDeclined(compileRegExpWithNestingLimit({ prefixChain, { } }, 8), Form::NoMetadata, RegExpDeclineReason::NestedTooDeep));
+    AOT_TEST_CHECK(compileRegExpWithNestingLimit({ makePrefixChain(8), { } }, 8).form == Form::Code);
 
     RegExpSummary deep = summarizeRegExp(makeNestedGroups(limit + 1), { });
     AOT_TEST_CHECK(deep.isValid() && !deep.canBeCreated() && !Yarr::hasError(deep.constructionError));
@@ -287,28 +218,68 @@ static void testOnePatternServesBothWidthsAndRetries()
     checkPatternServesBothWidthsAndRetries("[a-c]xyz"_s);
     AOT_TEST_CHECK(compileToCode({ "a*e"_s, { } }).code[0]->hasElidedFrame);
     checkPatternServesBothWidthsAndRetries("a*e"_s);
-    // Where the b that every match holds was last found lies in the frame.
     AOT_TEST_CHECK(!compileToCode({ "a*b"_s, { } }).code[0]->hasElidedFrame);
     checkPatternServesBothWidthsAndRetries("a*b"_s);
+    for (ASCIILiteral pattern : { "T\\d\\d:\\d\\d:\\d\\d\\+\\d\\d:\\d\\d"_s, "T\\d\\d:\\d\\d:\\d\\d\\.00Z"_s, "abcd[xy]e[xy][xy]fghi"_s, "abcd[xy]ef[xy]ghij"_s })
+        checkPatternServesBothWidthsAndRetries(pattern);
 }
 
-// In the code for 16-bit subjects, where every CPU calls the routine. For 8-bit subjects ARM64 has the search in line.
 static bool searchesForOneOfAClass(ASCIILiteral patternString)
 {
     CompiledRegExp regExp = compileToCode({ patternString, { } });
     return std::ranges::any_of(regExp.code[1]->symbols, [](const RegExpSymbol& symbol) {
         auto* routine = std::get_if<Yarr::SharedRoutine>(&symbol);
-        return routine && routine->kind() == Yarr::SharedRoutine::Kind::FindFirstOfClass;
+        return routine && (routine->kind() == Yarr::SharedRoutine::Kind::FindFirstOfClass || routine->kind() == Yarr::SharedRoutine::Kind::FindFirstOfTwoUnits);
     });
 }
 
-// A search for the place where a match can begin stops at once where most characters of a subject can begin one.
 static void testOnlyARareFirstCharacterIsSearchedFor()
 {
     AOT_TEST_CHECK(searchesForOneOfAClass("[#%&~]+"_s));
     AOT_TEST_CHECK(searchesForOneOfAClass("\\b[0-9]+"_s));
     AOT_TEST_CHECK(!searchesForOneOfAClass("[a-z]+"_s));
     AOT_TEST_CHECK(!searchesForOneOfAClass("\\b[a-z0-9-]+"_s));
+    AOT_TEST_CHECK(searchesForOneOfAClass("\\u001b\\[[0-9;]*m"_s));
+    AOT_TEST_CHECK(searchesForOneOfAClass("~~[a-z]+"_s));
+    AOT_TEST_CHECK(!searchesForOneOfAClass("needle[0-9]"_s));
+    AOT_TEST_CHECK(!searchesForOneOfAClass("//+"_s));
+}
+
+static std::optional<Yarr::SharedRoutine::FindFirstPairOfUnits> pairSearchedFor(ASCIILiteral patternString, OptionSet<Yarr::Flags> flags, size_t width)
+{
+    CompiledRegExp regExp = compileToCode({ patternString, flags });
+    for (const RegExpSymbol& symbol : regExp.code[width]->symbols) {
+        auto* routine = std::get_if<Yarr::SharedRoutine>(&symbol);
+        if (routine && routine->kind() == Yarr::SharedRoutine::Kind::FindFirstPairOfUnits)
+            return std::get<Yarr::SharedRoutine::FindFirstPairOfUnits>(routine->payload);
+    }
+    return std::nullopt;
+}
+
+static void testTwoPlacesOfOneUnitEachAreSearchedForAtOnce()
+{
+    using Pair = Yarr::SharedRoutine::FindFirstPairOfUnits;
+    using enum Yarr::PositionUnits;
+    AOT_TEST_CHECK((pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 6, One, One }));
+    AOT_TEST_CHECK((pairSearchedFor("ab+c"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 1, One, One }));
+    AOT_TEST_CHECK((pairSearchedFor("k[0-9]s[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 1) == Pair { Yarr::CharSize::Char16, 2, IgnoreCase, IgnoreCase }));
+    AOT_TEST_CHECK((pairSearchedFor("x-[a-z]{2}:[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 1) == Pair { Yarr::CharSize::Char16, 3, One, One }));
+    AOT_TEST_CHECK((pairSearchedFor("\"(?:_|\\\\u005[Ff])(?:_|\\\\u005[Ff])p"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 1, One, Two }));
+    AOT_TEST_CHECK((pairSearchedFor("[cd]:[a-z]+e"_s, { }, 1) == Pair { Yarr::CharSize::Char16, 1, Two, One }));
+#if CPU(X86_64)
+    AOT_TEST_CHECK((pairSearchedFor("\"(?:c|\\\\u0063)(?:o|\\\\u006[Ff])\"\\s*:"_s, { }, 0) == Pair { Yarr::CharSize::Char8, 1, One, Two }));
+    AOT_TEST_CHECK((pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { }, 0) == Pair { Yarr::CharSize::Char8, 6, One, One }));
+    AOT_TEST_CHECK((pairSearchedFor("k[0-9]s[0-9]+"_s, { Yarr::Flags::IgnoreCase }, 0) == Pair { Yarr::CharSize::Char8, 2, IgnoreCase, IgnoreCase }));
+#endif
+    AOT_TEST_CHECK((!pairSearchedFor("[a-z]bz?.7"_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("[a-z]:#?[^=]+"_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("\\w(?:@|.)=[0-9]"_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("[a-z]#=|[a-z].="_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("[a-z](?:#|[\\u0100-\\u0fff])="_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("[ab][cd]+e"_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("aaa+[bc]"_s, { }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { Yarr::Flags::Unicode }, 1)));
+    AOT_TEST_CHECK((!pairSearchedFor("e[a-z]{2}[0-9]{3}-[a-z]+"_s, { Yarr::Flags::Sticky }, 1)));
 }
 
 static void testUnicodePropertyLookup()
@@ -333,7 +304,6 @@ static size_t numberOfClassesMadeFor(ASCIILiteral patternString, OptionSet<Yarr:
     return pattern.m_userCharacterClasses.size();
 }
 
-// Where the text of the class parsed last follows once more, the parser reads none of it and the pattern gets no second class. The flags in force are part of what a class holds.
 static void testARepeatedClassIsParsedOnce()
 {
     AOT_TEST_CHECK(numberOfClassesMadeFor("[ab]"_s) == 1);
@@ -370,13 +340,12 @@ std::span<const NativeTest> regExpCompilerTests()
     static constexpr NativeTest tests[] = {
         { "regexp-compiler/compiled-forms"_s, testCompiledForms },
         { "regexp-compiler/a-repeated-class-is-parsed-once"_s, testARepeatedClassIsParsedOnce },
-        { "regexp-compiler/pattern-length-limit"_s, testPatternLengthLimit },
         { "regexp-compiler/deep-nesting-declines"_s, testDeepNestingDeclines },
-        { "regexp-compiler/request-past-section-size-limit-loses-code"_s, testRequestPastSectionSizeLimitLosesCode },
-        { "regexp-compiler/candidate-budget"_s, testCandidateBudget },
+        { "regexp-compiler/every-request-gets-its-code"_s, testEveryRequestGetsItsCode },
         { "regexp-compiler/compilation-is-thread-independent"_s, testCompilationIsThreadIndependent },
         { "regexp-compiler/one-pattern-serves-both-widths-and-retries"_s, testOnePatternServesBothWidthsAndRetries },
         { "regexp-compiler/only-a-rare-first-character-is-searched-for"_s, testOnlyARareFirstCharacterIsSearchedFor },
+        { "regexp-compiler/two-places-of-one-unit-each-are-searched-for-at-once"_s, testTwoPlacesOfOneUnitEachAreSearchedForAtOnce },
         { "regexp-compiler/unicode-property-lookup"_s, testUnicodePropertyLookup },
         { "regexp-compiler/class-table-limits-are-counted"_s, testClassTableLimitsAreCounted },
     };

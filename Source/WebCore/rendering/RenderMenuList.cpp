@@ -64,7 +64,7 @@ RenderMenuList::RenderMenuList(HTMLSelectElement& element, Style::ComputedStyle&
 
 RenderMenuList::~RenderMenuList() = default;
 
-HTMLSelectElement& LEGACY_NODELETE RenderMenuList::selectElement() const
+NODELETE HTMLSelectElement& RenderMenuList::selectElement() const
 {
     return downcast<HTMLSelectElement>(nodeForNonAnonymous());
 }
@@ -82,7 +82,7 @@ void RenderMenuList::styleDidChange(Style::Difference diff, const Style::Compute
 
 static bool hasSelectedContent(ContainerNode& button)
 {
-    for (RefPtr<Node> node = button.firstChild(); node; node = NodeTraversal::next(*node, &button)) {
+    for (Node* node = button.firstChild(); node; node = NodeTraversal::next(*node, &button)) {
         if (is<HTMLSelectedContentElement>(*node))
             return true;
     }
@@ -219,35 +219,27 @@ std::pair<LayoutUnit, LayoutUnit> RenderMenuList::computeIntrinsicLogicalWidths(
     return { minLogicalWidth, maxLogicalWidth };
 }
 
-void RenderMenuList::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderMenuList::computeIntrinsicLogicalWidthContributions()
 {
-    if (style().fieldSizing() == FieldSizing::Content) {
-        RenderFlexibleBox::computeIntrinsicLogicalWidthContributions();
-        return;
-    }
+    if (style().fieldSizing() == FieldSizing::Content)
+        return RenderFlexibleBox::computeIntrinsicLogicalWidthContributions();
 
-    m_minContentLogicalWidthContribution = 0_lu;
-    m_maxContentLogicalWidthContribution = 0_lu;
-    
     if (auto fixedLogicalWidth = style().logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive()) {
-        m_maxContentLogicalWidthContribution = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
-        m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-    } else {
-        std::tie(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution) = computeIntrinsicLogicalWidths();
-
-        auto& logicalWidth = style().logicalWidth();
-        if (logicalWidth.isCalcSize() && (logicalWidth.isMinContent() || logicalWidth.isMaxContent())) {
-            // A calc-size() contributes the result of its calculation, not the size of its basis.
-            auto keywordLogicalWidth = logicalWidth.isMaxContent() ? m_maxContentLogicalWidthContribution : m_minContentLogicalWidthContribution;
-            m_minContentLogicalWidthContribution = resolveCalcSizeLogicalWidth(logicalWidth.calcSize(), keywordLogicalWidth, 0_lu);
-            m_maxContentLogicalWidthContribution = m_minContentLogicalWidthContribution;
-        }
+        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
+        return { logicalWidth, logicalWidth };
     }
 
-    constrainIntrinsicLogicalWidthsByMinMax(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
-
-    clearContentLogicalWidthsInvalidation();
+    auto [minContentLogicalWidth, maxContentLogicalWidth] = computeIntrinsicLogicalWidths();
+    auto& logicalWidth = style().logicalWidth();
+    if (logicalWidth.isCalcSize() && (logicalWidth.isMinContent() || logicalWidth.isMaxContent())) {
+        // A calc-size() contributes the result of its calculation, not the size of its basis.
+        auto keywordLogicalWidth = logicalWidth.isMaxContent() ? maxContentLogicalWidth : minContentLogicalWidth;
+        auto calcSizeLogicalWidth = resolveCalcSizeLogicalWidth(logicalWidth.calcSize(), keywordLogicalWidth, 0_lu);
+        return { calcSizeLogicalWidth, calcSizeLogicalWidth };
+    }
+    return { minContentLogicalWidth, maxContentLogicalWidth };
 }
+
 
 void RenderMenuList::getItemBackgroundColor(unsigned listIndex, Color& itemBackgroundColor, bool& itemHasCustomBackgroundColor) const
 {

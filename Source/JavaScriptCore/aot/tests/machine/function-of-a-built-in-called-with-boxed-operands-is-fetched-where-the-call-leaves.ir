@@ -1,0 +1,94 @@
+# function starts(text: string, prefix: string) { return text.startsWith(prefix); }
+# function ends(text: string, suffix: string) { return text.endsWith(suffix); }
+# function finds(text: string, sought: string, from: number) { return <String.prototype.indexOf>.call(text, sought, from); }      sink(starts, ends, finds);
+# The receiver is asked whether it is a text; of the other operands nothing is known, so the built-in is called with boxed operands: the stub looks at them and answers.
+# The function itself is needed only where the stub cannot answer and leaves for the host's function. So the site hands over the number of the function's cell, one move,
+# and the way out to the host reads the cell by that number. It was: a call of the stub BuiltinCell in front of every such call (TypeScript 6: 1.26 M entries).
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = CallBuiltin {{*}}overload=StringPrototypeStartsWith{{*}}builtinCallForm=AnyReceiver
+# RUN(STARTS): bytes f1:Body mechanisms=all
+# STARTS-LABEL: unit f1:Body
+# STARTS-NOT: Call Stub BuiltinCell
+# STARTS: Number32 Number BuiltinCell Object StringPrototypeStartsWith
+# STARTS: Call Stub CallBoxedBuiltin.StringStartsWith count 1
+# RUN(ENDS): bytes f2:Body mechanisms=all
+# ENDS-LABEL: unit f2:Body
+# ENDS-NOT: Call Stub BuiltinCell
+# ENDS: Number32 Number BuiltinCell Object StringPrototypeEndsWith
+# ENDS: Call Stub CallBoxedBuiltin.StringEndsWith count 1
+# RUN(FINDS): bytes f3:Body mechanisms=all
+# FINDS-LABEL: unit f3:Body
+# FINDS-NOT: Call Stub BuiltinCell
+# FINDS: Number32 Number BuiltinCell Object StringPrototypeIndexOf
+# FINDS: Call Stub CallBoxedBuiltin.StringIndexOf count 2
+# RUN(SHELL): run-in-shell const says = f => { try { print(String(f())); } catch (e) { print(e.name); } }; const spelled = { toString() { return "b"; } }; globalThis.sink = (starts, ends, finds) => { for (let turn = 0; turn < 2; turn++) { says(() => starts("abc", "ab")); says(() => starts("abc", "b")); says(() => starts("12", 1)); says(() => starts("undefined!", undefined)); says(() => starts("bc", spelled)); says(() => starts("a", /a/)); says(() => starts("a", Symbol())); says(() => ends("abc", "bc")); says(() => ends("abc", "b")); says(() => ends("12", 2)); says(() => ends("ab", spelled)); says(() => ends("a", /a/)); says(() => ends("ЖЗ", "З")); says(() => finds("abcabc", "c", 3)); says(() => finds("abcabc", "c", "3")); says(() => finds("abcabc", spelled, 2)); says(() => finds("a1", 1, undefined)); says(() => finds("abc", "c", 1.5)); says(() => finds("abc", "c", { valueOf() { throw new RangeError(); } })); } };
+# SHELL: true
+# SHELL: false
+# SHELL: true
+# SHELL: true
+# SHELL: true
+# SHELL: TypeError
+# SHELL: TypeError
+# SHELL: true
+# SHELL: false
+# SHELL: true
+# SHELL: true
+# SHELL: TypeError
+# SHELL: true
+# SHELL: 5
+# SHELL: 5
+# SHELL: 4
+# SHELL: 1
+# SHELL: 2
+# SHELL: RangeError
+# SHELL: true
+# SHELL: false
+# SHELL: true
+# SHELL: true
+# SHELL: true
+# SHELL: TypeError
+# SHELL: TypeError
+# SHELL: true
+# SHELL: false
+# SHELL: true
+# SHELL: true
+# SHELL: TypeError
+# SHELL: true
+# SHELL: 5
+# SHELL: 5
+# SHELL: 4
+# SHELL: 1
+# SHELL: 2
+# SHELL: RangeError
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="starts" module=m0 length=2 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}, {type=string flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = PropGet v0 key="startsWith"
+    v3 = Call v2, v0, v1 calleeKey="startsWith" calleeName="text.startsWith"
+    Return v3
+}
+function f2 name="ends" module=m0 length=2 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}, {type=string flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = PropGet v0 key="endsWith"
+    v3 = Call v2, v0, v1 calleeKey="endsWith" calleeName="text.endsWith"
+    Return v3
+}
+function f3 name="finds" module=m0 length=3 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}, {type=string flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: string, v1: string, v2: number):
+    v3 = Builtin builtin=StringPrototypeIndexOf [isNotReadFromHolder]
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}

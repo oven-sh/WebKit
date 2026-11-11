@@ -7,6 +7,7 @@
 // WebGLCompatibilityTest.cpp : Tests of the GL_ANGLE_webgl_compatibility extension.
 
 #include <array>
+#include <functional>
 
 #include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
@@ -357,7 +358,14 @@ class WebGL1CompatibilityTest : public WebGLCompatibilityTest
 {};
 
 class WebGL2CompatibilityTest : public WebGLCompatibilityTest
-{};
+{
+  protected:
+    // Draws in-bounds indices stored past 4GiB into an element array buffer, calls |overwrite| with
+    // the draw's byte offset and an out-of-bounds index to write over them, then checks the same
+    // draw is rejected.
+    void testOverwrittenIndicesPast4GiB(
+        const std::function<void(GLintptr offset, const std::vector<GLuint> &indices)> &overwrite);
+};
 
 class HardenedContextTest : public ANGLETest<>
 {
@@ -4623,8 +4631,7 @@ void main() {
     drawBuffersFeedbackLoop(program, {{GL_COLOR_ATTACHMENT0, GL_NONE}}, GL_INVALID_OPERATION);
 }
 
-// WebGL requires that all framebuffer attachments are unique
-TEST_P(WebGL2CompatibilityTest, UniqueFramebufferAttachments)
+void TestUniqueFramebufferAttachments()
 {
     GLTexture tex0;
     FillTexture2D(tex0, 8, 8, GLColor::red, 0, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE);
@@ -4637,20 +4644,125 @@ TEST_P(WebGL2CompatibilityTest, UniqueFramebufferAttachments)
     EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_UNSUPPORTED, glCheckFramebufferStatus(GL_FRAMEBUFFER));
 }
 
+// WebGL requires that all framebuffer attachments are unique
+TEST_P(WebGL2CompatibilityTest, UniqueFramebufferAttachments)
+{
+    TestUniqueFramebufferAttachments();
+}
+
 // Hardened contexts also require that all framebuffer color attachments are unique
 TEST_P(HardenedContextTest, UniqueFramebufferAttachments)
 {
-    ANGLE_SKIP_TEST_IF(getClientMajorVersion() < 3);
+    TestUniqueFramebufferAttachments();
+}
 
-    GLTexture tex0;
-    FillTexture2D(tex0, 8, 8, GLColor::red, 0, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE);
-    ASSERT_GL_NO_ERROR();
+// Shared helper for WebGL2CompatibilityTest and HardenedContextTest. Takes drawQuadFn as a
+// callback because ANGLETestBase::drawQuad is protected and the two fixtures are separate
+// subclasses of ANGLETest<>.
+template <typename DrawQuadFn>
+void TestUniqueFramebufferAttachmentsMultiview(DrawQuadFn drawQuadFn)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_OVR_multiview2"));
+
+    constexpr char kVS[] = R"(#version 300 es
+#extension GL_OVR_multiview2 : require
+layout(num_views = 2) in;
+in vec4 a_position;
+void main()
+{
+    gl_Position = a_position;
+})";
+    constexpr char kFS[] = R"(#version 300 es
+#extension GL_OVR_multiview2 : require
+precision mediump float;
+layout(location = 0) out vec4 out0;
+layout(location = 1) out vec4 out1;
+void main()
+{
+    out0 = (gl_ViewID_OVR == 0u) ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 1.0, 0.0, 1.0);
+    out1 = (gl_ViewID_OVR == 0u) ? vec4(0.0, 0.0, 1.0, 1.0) : vec4(1.0, 1.0, 0.0, 1.0);
+})";
+    ANGLE_GL_PROGRAM(multiviewProgram, kVS, kFS);
+
+    GLTexture texArray;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, texArray);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, 8, 8, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
     GLFramebuffer fbo;
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex0, 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, tex0, 0);
+    const GLenum drawBuffers[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(2, drawBuffers);
+    glViewport(0, 0, 8, 8);
+
+    GLFramebuffer readFbo;
+    auto expectLayerColors = [&](const GLColor &layer0, const GLColor &layer1,
+                                 const GLColor &layer2, const GLColor &layer3) {
+        const std::array<GLColor, 4> expected = {layer0, layer1, layer2, layer3};
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
+        for (GLint layer = 0; layer < 4; ++layer)
+        {
+            glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texArray, 0,
+                                      layer);
+            ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_READ_FRAMEBUFFER);
+            EXPECT_PIXEL_COLOR_EQ(0, 0, expected[layer]);
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    };
+
+    // Note: GL_OVR_multiview2 requires all attachments on a framebuffer to have the same
+    // numViews (otherwise glCheckFramebufferStatus returns
+    // GL_FRAMEBUFFER_INCOMPLETE_VIEW_TARGETS_OVR before attachment uniqueness is checked).
+    // Test both interval orderings ([0, 2) + [2, 4) and [2, 4) + [0, 2)).
+    glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texArray, 0, 0, 2);
+    glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, texArray, 0, 2, 2);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    drawQuadFn(multiviewProgram);
+    EXPECT_GL_NO_ERROR();
+    expectLayerColors(GLColor::red, GLColor::green, GLColor::blue, GLColor::yellow);
+
+    // Attaching overlapping layer ranges [0, 2) and [1, 3) (or [1, 3) and [0, 2)) violates
+    // attachment uniqueness (layer 1 is shared) and must return GL_FRAMEBUFFER_UNSUPPORTED.
+    glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, texArray, 0, 1, 2);
     EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_UNSUPPORTED, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    drawQuadFn(multiviewProgram);
+    EXPECT_GL_ERROR(GL_INVALID_FRAMEBUFFER_OPERATION);
+    expectLayerColors(GLColor::red, GLColor::green, GLColor::blue, GLColor::yellow);
+
+    glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texArray, 0, 1, 2);
+    glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, texArray, 0, 0, 2);
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_UNSUPPORTED, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    drawQuadFn(multiviewProgram);
+    EXPECT_GL_ERROR(GL_INVALID_FRAMEBUFFER_OPERATION);
+    expectLayerColors(GLColor::red, GLColor::green, GLColor::blue, GLColor::yellow);
+
+    // Reversed non-overlapping layer ranges [2, 4) and [0, 2) are also complete and render to
+    // their respective layers.
+    glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texArray, 0, 2, 2);
+    glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, texArray, 0, 0, 2);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    drawQuadFn(multiviewProgram);
+    EXPECT_GL_NO_ERROR();
+    expectLayerColors(GLColor::blue, GLColor::yellow, GLColor::red, GLColor::green);
+}
+
+// Verify that non-overlapping multiview layer ranges of the same 2D array texture are allowed and
+// render to their respective layers, whereas overlapping multiview layer ranges are rejected in
+// WebGL contexts.
+TEST_P(WebGL2CompatibilityTest, UniqueFramebufferAttachmentsMultiview)
+{
+    TestUniqueFramebufferAttachmentsMultiview([this](GLuint program) {
+        drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f, 1.0f, true);
+    });
+}
+
+// Verify that non-overlapping multiview layer ranges of the same 2D array texture are allowed and
+// render to their respective layers, whereas overlapping multiview layer ranges are rejected in
+// hardened contexts.
+TEST_P(HardenedContextTest, UniqueFramebufferAttachmentsMultiview)
+{
+    TestUniqueFramebufferAttachmentsMultiview([this](GLuint program) {
+        drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f, 1.0f, true);
+    });
 }
 
 // This tests that texture base level for immutable textures is clamped to the valid range, unlike
@@ -8566,6 +8678,121 @@ TEST_P(WebGL2CompatibilityTest, DrawLargeIndexOOB)
     {
         EXPECT_GL_NO_ERROR();
     }
+}
+
+void WebGL2CompatibilityTest::testOverwrittenIndicesPast4GiB(
+    const std::function<void(GLintptr offset, const std::vector<GLuint> &indices)> &overwrite)
+{
+    ANGLE_SKIP_TEST_IF(sizeof(GLintptr) < sizeof(uint64_t));
+    // Out-of-bounds indices are only rejected when the backend can't clamp them.
+    ANGLE_SKIP_TEST_IF(IsGLExtensionEnabled("GL_KHR_robust_buffer_access_behavior"));
+
+    constexpr char kVS[] =
+        R"(attribute float a_pos;
+void main()
+{
+    gl_Position = vec4(a_pos, a_pos, a_pos, 1.0);
+    gl_PointSize = 1.0;
+})";
+
+    ANGLE_GL_PROGRAM(program, kVS, essl1_shaders::fs::Red());
+    GLint posLocation = glGetAttribLocation(program, "a_pos");
+    ASSERT_NE(-1, posLocation);
+    glUseProgram(program);
+
+    constexpr GLuint kVertexCount = 3;
+    GLBuffer vertexBuffer;
+    glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
+    glBufferData(GL_ARRAY_BUFFER, kVertexCount * sizeof(GLfloat), nullptr, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(posLocation);
+    glVertexAttribPointer(posLocation, 1, GL_FLOAT, GL_FALSE, 0, nullptr);
+
+    constexpr GLintptr kOffset        = (GLintptr{1} << 32) + 0x10000;
+    constexpr GLintptr kControlOffset = kOffset + 0x8000;
+    constexpr GLsizeiptr kBufferSize  = kOffset + 0x10000;
+    constexpr GLsizei kIndexCount     = 16;
+
+    std::vector<GLuint> inBoundsIndices(kIndexCount);
+    for (GLsizei i = 0; i < kIndexCount; ++i)
+    {
+        inBoundsIndices[i] = i % kVertexCount;
+    }
+    // Just past the end of the vertex buffer, so a wrongly admitted draw stays near it.
+    const std::vector<GLuint> outOfBoundsIndices(kIndexCount, kVertexCount);
+    const GLsizeiptr indicesSize = kIndexCount * sizeof(GLuint);
+
+    GLBuffer indexBuffer;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, kBufferSize, nullptr, GL_STATIC_DRAW);
+    const GLenum allocationError = glGetError();
+    // Skip, rather than pass, where the device can't allocate a buffer this large.
+    ANGLE_SKIP_TEST_IF(allocationError == GL_OUT_OF_MEMORY);
+    ASSERT_GLENUM_EQ(GL_NO_ERROR, allocationError);
+
+    // Check that out-of-bounds indices this far into the buffer are rejected at all.
+    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, kControlOffset, indicesSize,
+                    outOfBoundsIndices.data());
+    glDrawElements(GL_POINTS, kIndexCount, GL_UNSIGNED_INT,
+                   reinterpret_cast<const void *>(kControlOffset));
+    ASSERT_GL_ERROR(GL_INVALID_OPERATION);
+
+    // Cache the index range of in-bounds indices, then overwrite them.
+    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, kOffset, indicesSize, inBoundsIndices.data());
+    glDrawElements(GL_POINTS, kIndexCount, GL_UNSIGNED_INT,
+                   reinterpret_cast<const void *>(kOffset));
+    ASSERT_GL_NO_ERROR();
+
+    overwrite(kOffset, outOfBoundsIndices);
+    ASSERT_GL_NO_ERROR();
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+    glDrawElements(GL_POINTS, kIndexCount, GL_UNSIGNED_INT,
+                   reinterpret_cast<const void *>(kOffset));
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+}
+
+// Test that bufferSubData past 4GiB invalidates the cached index range of the indices it
+// overwrites.
+TEST_P(WebGL2CompatibilityTest, BufferSubDataPast4GiBInvalidatesIndexRange)
+{
+    testOverwrittenIndicesPast4GiB([](GLintptr offset, const std::vector<GLuint> &indices) {
+        glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, offset, indices.size() * sizeof(GLuint),
+                        indices.data());
+    });
+}
+
+// Test that copyBufferSubData past 4GiB invalidates the cached index range of the indices it
+// overwrites.
+TEST_P(WebGL2CompatibilityTest, CopyBufferSubDataPast4GiBInvalidatesIndexRange)
+{
+    GLBuffer sourceBuffer;
+    testOverwrittenIndicesPast4GiB(
+        [&sourceBuffer](GLintptr offset, const std::vector<GLuint> &indices) {
+            const GLsizeiptr size = indices.size() * sizeof(GLuint);
+            GLint indexBuffer     = 0;
+            glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &indexBuffer);
+
+            // WebGL only allows copies between buffers first bound as element array buffers.
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sourceBuffer);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, size, indices.data(), GL_STATIC_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+
+            glBindBuffer(GL_COPY_READ_BUFFER, sourceBuffer);
+            glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_ELEMENT_ARRAY_BUFFER, 0, offset, size);
+        });
+}
+
+// Test that mapBufferRange for writing past 4GiB invalidates the cached index range of the indices
+// it overwrites.
+TEST_P(WebGL2CompatibilityTest, MapBufferRangePast4GiBInvalidatesIndexRange)
+{
+    testOverwrittenIndicesPast4GiB([](GLintptr offset, const std::vector<GLuint> &indices) {
+        const GLsizeiptr size = indices.size() * sizeof(GLuint);
+        void *mapped = glMapBufferRange(GL_ELEMENT_ARRAY_BUFFER, offset, size, GL_MAP_WRITE_BIT);
+        ASSERT_NE(nullptr, mapped);
+        ANGLE_UNSAFE_TODO(memcpy(mapped, indices.data(), size));
+        EXPECT_GL_TRUE(glUnmapBuffer(GL_ELEMENT_ARRAY_BUFFER));
+    });
 }
 
 // Tests that calling draw with a uniform buffer bound range that exceeds the buffer size

@@ -7,18 +7,27 @@
 
 #if ENABLE(AOT)
 
-#include "AOTJSONKeyOrder.h"
 #include "AOTJSONSource.h"
 #include "AOTJSONValueParser.h"
-#include "AOTThreshold.h"
+#include "AOTJSONWords.h"
+#include "AOTLayoutData.h"
+#include "AOTState.h"
 #include "AOTVector.h"
+#include "Allocator.h"
 #include "JSCJSValue.h"
 #include "Structure.h"
+#include "WeakGCMap.h"
+#include <algorithm>
 #include <array>
+#include <limits>
 #include <memory>
+#include <utility>
 #include <wtf/FastMalloc.h>
+#include <wtf/HashMap.h>
+#include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {
@@ -32,45 +41,22 @@ class JSONRuntime {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSONRuntime);
     WTF_MAKE_NONCOPYABLE(JSONRuntime);
 public:
-    JSONRuntime(Instance&, CacheRegistry&);
+    JSONRuntime(Instance&, CacheRegistry&, ZeroedTableArena&);
     ~JSONRuntime();
 
-    bool open(JSValue textOrBytes, void* stackPointer);
     bool open(StringView text, void* stackPointer);
-    bool open(std::span<const uint8_t> utf8, void* stackPointer);
-    bool close(const uint8_t* cursor);
     void abandon();
-    void dropSourcesBelow(void* stackPointer);
 
     void clear();
 
-    Instance& instance() const { return m_instance; }
     const StringImpl* wideText() const { return m_wideText.get(); }
-    JSONKeyOrderLists& keyOrderLists() { return m_keyOrderLists; }
-    size_t numberOfSuspendedSources() const { return m_suspendedSources.size(); }
-    size_t sourceCapacity() const { return m_sourceCapacity; }
+
+    JSONValueParser::LearnedNames& learnedNames();
 
     struct RecordPlan {
         const ObjectBuilderPlan* plan { nullptr };
         Structure* structure { nullptr };
     };
-
-    JSONValueParser::LearnedNames& learnedNames();
-
-    // How an object with members that its type does not declare was finished: the next one that is born alike, with the same names in the same places, is finished the same way.
-    struct FinishedObject {
-        Structure* structureAtBirth { nullptr };
-        Structure* extraStructure { nullptr };
-        uint64_t order { 0 };
-        uint32_t orderWordAtBirth { 0 };
-        uint32_t orderAndCount { 0 };
-        CompiledStructure* structure { nullptr };
-    };
-    FinishedObject& finishedObjectFor(Structure* structureAtBirth, Structure* extraStructure)
-    {
-        return m_finishedObjects[((structureAtBirth->id().bits() ^ extraStructure->id().bits()) >> 4) % m_finishedObjects.size()];
-    }
-
     bool hasParsedRecords() const { return m_hasParsedRecords; }
     ALWAYS_INLINE RecordPlan recordPlanFor(VM& vm, Structure* ordinaryStructure)
     {
@@ -82,31 +68,49 @@ public:
         }
         return findRecordPlan(vm, ordinaryStructure);
     }
+    struct RecordBesideNames {
+        const ObjectBuilderPlan* plan { nullptr };
+        Structure* structure { nullptr };
+        unsigned numberOfNamesInRecord { 0 };
+        Structure* structureOfNamesBeyondRecord { nullptr };
+        CompiledStructure* structureWithNamesBeyondRecord { nullptr };
+    };
+    RecordBesideNames* recordBesideNamesFor(Structure* ordinaryStructure)
+    {
+        uint32_t id = ordinaryStructure->id().bits();
+        CachedRecordPlan& cached = (*m_recordPlanCache)[recordPlanCacheIndex(id)];
+        return cached.ordinaryStructureID == id && cached.besideNames.plan ? &cached.besideNames : nullptr;
+    }
 
 private:
     struct CachedRecordPlan {
         uint32_t ordinaryStructureID { 0 };
         RecordPlan recordPlan;
+        RecordBesideNames besideNames;
     };
     struct RecordPlanForNames {
         Vector<RefPtr<UniquedStringImpl>, 8> names;
         std::unique_ptr<ObjectBuilderPlan> plan;
+        uint32_t numberOfCollectionsWhenLastFound { 0 };
+        uint64_t numberOfTimesAskedWhenLastFound { 0 };
     };
     static constexpr size_t recordPlanCacheSize = 128;
-    AOT_CLASS_THRESHOLD(size_t, maxRecordPlans, 256);
+    static constexpr uint32_t fewestRecordPlansLookedThrough = 256;
     using RecordPlanCache = std::array<CachedRecordPlan, recordPlanCacheSize>;
     static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> 4) % recordPlanCacheSize; }
 
     RecordPlan findRecordPlan(VM&, Structure*);
-    const ObjectBuilderPlan* findOrCreateRecordPlan(VM&, Structure*);
-    std::unique_ptr<ObjectBuilderPlan> createRecordPlan(VM&, std::span<UniquedStringImpl* const> names);
+    struct RecordPlanFound {
+        const ObjectBuilderPlan* plan { nullptr };
+        unsigned numberOfNamesInRecord { 0 };
+        bool hasNamesBeyondRecord { false };
+    };
+    RecordPlanFound findOrCreateRecordPlan(VM&, Structure*);
+    void forgetRecordPlansNotFoundLately(VM&);
 
     uint8_t* begin(void* stackPointer, size_t length);
-    uint8_t* beginBesideOpenSource(void* stackPointer, size_t length);
-    uint8_t* beginIn(uint8_t* start, void* stackPointer, size_t length, bool isNested);
+    uint8_t* beginIn(uint8_t* start, void* stackPointer, size_t length);
     void end();
-    void suspend();
-    void resume();
     uint8_t* reserve(size_t size);
     uint8_t* replace(size_t size);
     void freeCurrent();
@@ -116,14 +120,17 @@ private:
 
     Instance& m_instance;
     bool m_hasParsedRecords { false };
-    std::unique_ptr<RecordPlanCache> m_recordPlanCache;
-    std::unique_ptr<JSONValueParser::LearnedNames> m_learnedNames;
-    Vector<RecordPlanForNames> m_recordPlans;
-    Vector<JSONSource, 2> m_suspendedSources;
+    MadeInArena<RecordPlanCache> m_recordPlanCache;
+    MadeInArena<JSONValueParser::LearnedNames> m_learnedNames;
+    HashMap<uint32_t, Vector<RecordPlanForNames, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_recordPlans;
+    uint64_t m_numberOfTimesAskedForRecordPlan { 0 };
+    uint64_t m_numberOfTimesAskedWhenPlansWereForgotten { 0 };
+    uint32_t m_numberOfCollections { 0 };
+    uint32_t m_numberOfRecordPlans { 0 };
+    uint32_t m_mostRecordPlansHeld { 0 };
+    std::unique_ptr<WeakGCMap<Structure*, Structure>> m_structuresThatNoPlanFits;
     RefPtr<StringImpl> m_wideText;
     size_t m_sourceCapacity { 0 };
-    JSONKeyOrderLists m_keyOrderLists;
-    std::array<FinishedObject, 16> m_finishedObjects;
 };
 
 } } // namespace JSC::AOT

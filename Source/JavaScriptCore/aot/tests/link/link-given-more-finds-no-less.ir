@@ -1,0 +1,49 @@
+# Under the testing word WidenFlowNodes one result of a call or a read in four is given anything, as a larger program might give it. Under the checking word FlowMonotonicity Link runs on the program as it is as well,
+# and the build stops by name (FlowNotMonotonic) where the tables from more say more than those: a rule that took something back when more arrived.
+# function size(text) { return text.length; }  function note(value) { return typeof value === "string" ? size(value) : -1; }  function compute(n: number) { return n + 1; }  note(compute(1));  // forty times
+# A TEST THAT CUTS EVERY ARRIVAL. As it is a number comes to note(), nothing passes the test, and NOTHING arrives at size(): its tables write no type, as they do where anything arrives. Given more, a text arrives there and is proven.
+# That is no answer taken back: nothing lies within every type. The check asks the flow of the program as it is which of the two it was (ProgramAsItIsInLink) and asks nothing of a place that nothing arrives at.
+# It stopped here with "f1: a parameter" until it did. The line `proven=string` holds only if one of the forty results of compute() was drawn, so the run is never the comparison of Link with itself.
+# OPTIONS: testing=WidenFlowNodes:16 check=FlowMonotonicity
+# STATISTIC: FactNodesWidened >= 1
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=string
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f2
+# REPEAT: i = 0..39
+    v%(i*2+3) = Call v1, -, v0 calleeName="compute"
+    v%(i*2+4) = Call v2, -, v%(i*2+3) calleeName="note"
+# END REPEAT
+    v83 = Undefined
+    Return v83
+}
+function f1 name="size" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+function f2 name="note" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v2 calleeName="size"
+    Return v4
+  b2():
+    v5 = Integer integer=-1
+    Return v5
+}
+function f3 name="compute" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}

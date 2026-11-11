@@ -68,6 +68,7 @@ static bool mayHaveOwnRange(Value* value)
     case SExt32:
     case ZExt32:
     case Trunc:
+    case Select:
     case Load8Z:
     case Load8S:
     case Load16Z:
@@ -155,6 +156,14 @@ static IntRange computedRangeFor(const Procedure& proc, Value* value, uint64_t t
             IntRange range = rangeFor(proc, value->child(0), timeToLive - 1);
             if (range.isSubsetOf(IntRange::top<int32_t>()))
                 DUMP_INT_RANGE_AND_RETURN(range);
+        }
+        break;
+
+    case Select:
+        if (value->type().isInt()) {
+            IntRange whenTrue = rangeFor(proc, value->child(1), timeToLive - 1);
+            IntRange whenFalse = rangeFor(proc, value->child(2), timeToLive - 1);
+            DUMP_INT_RANGE_AND_RETURN(IntRange(std::min(whenTrue.min(), whenFalse.min()), std::max(whenTrue.max(), whenFalse.max())));
         }
         break;
 

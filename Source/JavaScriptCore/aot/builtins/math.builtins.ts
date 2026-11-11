@@ -18,11 +18,13 @@ const unaryWithRange = (inlineBuiltin: string, rule: b.RangeRule) =>
 
 const rounding = (inlineBuiltin: string) => unaryWithRange(inlineBuiltin, "IntegerPart");
 
-const extremum = (inlineBuiltin: string, listForm: string, rule: b.RangeRule) =>
+const extremum = (inlineBuiltin: string, rule: b.RangeRule, nativeSymbol: string) =>
   ({
     ...pure({ values: number.rest }, b.f64, b.inline(inlineBuiltin)),
     range: { rule },
-    listForm,
+    length: 2,
+    boxedCallStub: inlineBuiltin,
+    nativeSymbols: [nativeSymbol],
   }) satisfies b.FunctionField;
 
 export default b.declarations(
@@ -62,14 +64,14 @@ export default b.declarations(
       log10: libraryFunction("Log10"),
       log1p: libraryFunction("Log1p"),
       log2: libraryFunction("Log2"),
-      max: extremum("MathMax", "MathMaxOfArray", "MaximumOfArguments"),
-      min: extremum("MathMin", "MathMinOfArray", "MinimumOfArguments"),
+      max: extremum("MathMax", "MaximumOfArguments", "mathProtoFuncMax"),
+      min: extremum("MathMin", "MinimumOfArguments", "mathProtoFuncMin"),
       pow: pure({ base: number, exponent: number }, b.f64, b.inline("MathPow")),
       random: {
         returns: b.f64,
         capability: "none",
-        reads: ["RuntimeState"],
-        writes: ["RuntimeState"],
+        reads: ["RuntimeState", "ExternalState"],
+        writes: ["RuntimeState", "ExternalState"],
         implementation: b.inline("MathRandom"),
       },
       round: rounding("MathRound"),
@@ -95,7 +97,5 @@ export default b.declarations(
     { locksMembers: true, mutability: "AlwaysLocked" },
   ),
 
-  // Libraries for seeded random numbers and tests replace Math.random. sylvester, below natural, needs a Math.sign that answers 1
-  // for 0. core-js 2 replaces Math.sinh after a test that never passes, and `import "core-js"` Math.sumPrecise from 3.37 to 3.39.
   b.replacedByPackages("Math.random", "Math.sign", "Math.sinh", "Math.sumPrecise"),
 );

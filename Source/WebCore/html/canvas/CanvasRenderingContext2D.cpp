@@ -107,8 +107,7 @@ std::optional<Style::Filter> CanvasRenderingContext2D::setFilterStringWithoutUpd
         return std::nullopt;
 
     auto parserContext = CSSParserContext(strictToCSSParserMode(!usesCSSCompatibilityParseMode()));
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return CSSPropertyParserHelpers::parseFilterValueListOrNoneRaw(filterString, parserContext, document, const_cast<Style::ComputedStyle&>(*style));
+    return CSSPropertyParserHelpers::parseFilterValueListOrNoneRaw(filterString, parserContext, document, const_cast<Style::ComputedStyle&>(*style));
 }
 
 RefPtr<Filter> CanvasRenderingContext2D::createFilter(const FloatRect& bounds) const
@@ -177,7 +176,9 @@ void CanvasRenderingContext2D::drawFocusIfNeededInternal(const Path& path, Eleme
     auto zoomFactor = canvasStyle ? canvasStyle->usedZoom() : 1.f;
     willUpdateEntireContents();
     Ref document = element.document();
-    context->drawFocusRing(path, 1, RenderTheme::singleton().focusRingColor(document->styleColorOptions(canvasStyle, StyleColorOptionsPurpose::Rendering)), zoomFactor);
+    // FIXME: <rdar://190977456> If AXCustomColorMode is forcing a dark appearance due to dark active custom colors,
+    // this focus ring will still be light.
+    context->drawFocusRing(path, 1, RenderTheme::singleton().focusRingColor(document->styleColorOptions(canvasStyle, StyleColorOptionsPurpose::ComputedStyle)), zoomFactor);
 
     if (CheckedPtr cache = document->existingAXObjectCache()) {
         auto pathBounds = path.boundingRect();
@@ -241,7 +242,15 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
         fontDescription.setUsedSize(DefaultFontSize);
     }
 
-    if (newFont == state().unparsedFont && state().font.realized() && fontDescription == state().fontResolutionBase)
+    // Root font relative values ('rem', 'rex', ...) additionally depend on the root element's font.
+    // When there is no root font, they resolve against `fontDescription` and are covered by it.
+    // See https://github.com/whatwg/html/issues/10893 for the open question of how non-absolute
+    // <length> values should behave here.
+    CheckedPtr rootFontCascade = Style::rootFontCascadeForRootFontUnits(document.get());
+
+    if (newFont == state().unparsedFont && protect(state().font)->realized()
+        && fontDescription == state().fontResolutionBase
+        && (!rootFontCascade || rootFontCascade->fontDescription() == state().rootFontResolutionBase))
         return;
 
     // According to http://lists.w3.org/Archives/Public/public-html/2009Jul/0947.html,
@@ -254,6 +263,7 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
     // relative to the canvas.
     FontCascadeDescription resolutionDescription { fontDescription };
     carryOverKerningAndTextRendering(resolutionDescription);
+    resolutionDescription.setComputedLocale(effectiveLanguage());
     auto fontCascade = Style::resolveForUnresolvedFont(*unresolvedFont, WTF::move(resolutionDescription), document.get());
     if (!fontCascade)
         return;
@@ -262,10 +272,11 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
     realizeSaves();
     modifiableState().unparsedFont = newFontSafeCopy;
     modifiableState().fontResolutionBase = WTF::move(fontDescription);
+    modifiableState().rootFontResolutionBase = rootFontCascade ? rootFontCascade->fontDescription() : FontCascadeDescription { };
 
-    modifiableState().font.initialize(protect(document->fontSelector()), protect(*fontCascade));
-    ASSERT(state().font.realized());
-    ASSERT(state().font.isPopulated());
+    protect(modifiableState().font)->initialize(protect(document->fontSelector()), protect(*fontCascade));
+    ASSERT(protect(state().font)->realized());
+    ASSERT(protect(state().font)->isPopulated());
 
     // Recompute the word and the letter spacing for the new font.
     String letterSpacing;
@@ -291,11 +302,9 @@ inline TextDirection CanvasRenderingContext2D::toTextDirection(Direction directi
     return TextDirection::LTR;
 }
 
-CanvasDirection CanvasRenderingContext2D::direction() const
+AtomString CanvasRenderingContext2D::inheritedLanguage() const
 {
-    if (state().direction == Direction::Inherit)
-        protect(canvas().document())->updateStyleIfNeeded();
-    return toTextDirection(state().direction) == TextDirection::RTL ? CanvasDirection::Rtl : CanvasDirection::Ltr;
+    return protect(canvas())->effectiveLang();
 }
 
 void CanvasRenderingContext2D::fillText(const String& text, double x, double y, std::optional<double> maxWidth)
@@ -337,9 +346,16 @@ auto CanvasRenderingContext2D::fontProxy() -> const FontProxy*
     // This means that the style may end up being stale here, but that's at least better than running arbitrary JS in the middle of processing.
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
-    if (!state().font.realized())
+    if (!protect(state().font)->realized())
         setFontWithoutUpdatingStyle(state().unparsedFont);
-    return &state().font;
+    else if (state().lang == "inherit"_s && protect(state().font)->fontDescription().computedLocale() != inheritedLanguage()) {
+        realizeSaves();
+        protect(modifiableState().font)->update([language = effectiveLanguage()](FontCascadeDescription& description) {
+            description.setComputedLocale(language);
+        });
+    }
+
+    return state().font.ptr();
 }
 
 void CanvasRenderingContext2D::drawTextInternal(const String& text, double x, double y, bool fill, std::optional<double> maxWidth)

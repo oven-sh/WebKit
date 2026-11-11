@@ -42,10 +42,9 @@ public:
     static LayoutPoint containerLayoutLocation(const RenderLayerModelObject& container);
 
     static void verifyLayoutLocationConsistency(const RenderLayerModelObject&);
-    static bool LEGACY_NODELETE transformToRootChanged(const RenderObject* ancestor);
 
 private:
-    bool LEGACY_NODELETE layoutSizeOfNearestViewportChanged() const;
+    NODELETE bool layoutSizeOfNearestViewportChanged() const;
 
     SingleThreadWeakRef<RenderLayerModelObject> m_container;
     Vector<std::reference_wrapper<RenderLayerModelObject>> m_positionedChildren;

@@ -147,9 +147,9 @@ using LocalNetworkAccessPromptIdentifier = ObjectIdentifier<LocalNetworkAccessPr
 class WebsiteDataStore : public API::ObjectImpl<API::Object::Type::WebsiteDataStore>, public CanMakeWeakPtr<WebsiteDataStore> {
 public:
     static WebsiteDataStore& defaultDataStore();
-    static bool LEGACY_NODELETE defaultDataStoreExists();
+    NODELETE static bool defaultDataStoreExists();
     static void deleteDefaultDataStoreForTesting();
-    static RefPtr<WebsiteDataStore> LEGACY_NODELETE existingDataStoreForIdentifier(const WTF::UUID&);
+    NODELETE static RefPtr<WebsiteDataStore> existingDataStoreForIdentifier(const WTF::UUID&);
     
     static Ref<WebsiteDataStore> createNonPersistent();
     static Ref<WebsiteDataStore> create(Ref<WebsiteDataStoreConfiguration>&&, PAL::SessionID);
@@ -166,13 +166,13 @@ public:
     NetworkProcessProxy* networkProcessIfExists() { return m_networkProcess.get(); }
     void setNetworkProcess(NetworkProcessProxy&);
     
-    static WebsiteDataStore* LEGACY_NODELETE existingDataStoreForSessionID(PAL::SessionID);
+    NODELETE static WebsiteDataStore* existingDataStoreForSessionID(PAL::SessionID);
 
     bool isPersistent() const { return !m_sessionID.isEphemeral(); }
     PAL::SessionID sessionID() const { return m_sessionID; }
 
     enum class ProcessAccessType : uint8_t { None, OnlyIfLaunched, Launch };
-    static ProcessAccessType LEGACY_NODELETE computeWebProcessAccessTypeForDataRemoval(OptionSet<WebsiteDataType> dataTypes, bool /* isNonPersistentStore */);
+    NODELETE static ProcessAccessType computeWebProcessAccessTypeForDataRemoval(OptionSet<WebsiteDataType> dataTypes, bool /* isNonPersistentStore */);
     
     void registerProcess(WebProcessProxy&);
     void unregisterProcess(WebProcessProxy&);
@@ -186,12 +186,12 @@ public:
     void sendNetworkProcessWillSuspendImminentlyForTesting();
     void sendNetworkProcessDidResume();
     void networkProcessDidTerminate(NetworkProcessProxy&);
-    static void LEGACY_NODELETE makeNextNetworkProcessLaunchFailForTesting();
-    static bool LEGACY_NODELETE shouldMakeNextNetworkProcessLaunchFailForTesting();
+    NODELETE static void makeNextNetworkProcessLaunchFailForTesting();
+    NODELETE static bool shouldMakeNextNetworkProcessLaunchFailForTesting();
 
     bool trackingPreventionEnabled() const;
     void setTrackingPreventionEnabled(bool);
-    bool LEGACY_NODELETE resourceLoadStatisticsDebugMode() const;
+    NODELETE bool resourceLoadStatisticsDebugMode() const;
     void setResourceLoadStatisticsDebugMode(bool);
     void setResourceLoadStatisticsDebugMode(bool, CompletionHandler<void()>&&);
     void isResourceLoadStatisticsEphemeral(CompletionHandler<void(bool)>&&);
@@ -226,6 +226,7 @@ public:
 
     void clearResourceLoadStatisticsInWebProcesses(CompletionHandler<void()>&&);
     void setUserAgentStringQuirkForTesting(const String& domain, const String& userAgentString, CompletionHandler<void()>&&);
+    void setLinkDecorationFilteringDataForTesting(Vector<String>&& queryParameters, CompletionHandler<void()>&&);
     void setPrivateTokenIPCForTesting(bool enabled);
     void requestLocalNetworkAccessPermission(WebPageProxyIdentifier, WebCore::ClientOrigin&&, WebCore::IPAddressSpace, CompletionHandler<void(WebCore::PermissionState)>&&);
     void queryLocalNetworkAccessPermission(std::optional<WebPageProxyIdentifier>, const WebCore::ClientOrigin&, WebCore::IPAddressSpace, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&&);
@@ -244,6 +245,7 @@ public:
     void clearCrossOriginPreflightResultCacheForTesting();
     bool hasServiceWorkerBackgroundActivityForTesting() const;
     void runningOrTerminatingServiceWorkerCountForTesting(CompletionHandler<void(unsigned)>&&);
+    void loadersAwaitingWebProcessTransferCountForTesting(CompletionHandler<void(uint64_t)>&&);
 
     void fetchDataForRegistrableDomains(OptionSet<WebsiteDataType>, OptionSet<WebsiteDataFetchOption>, Vector<WebCore::RegistrableDomain>&&, CompletionHandler<void(Vector<WebsiteDataRecord>&&, HashSet<WebCore::RegistrableDomain>&&)>&&);
     void clearPrevalentResource(const URL&, CompletionHandler<void()>&&);
@@ -326,7 +328,7 @@ public:
     void removeScreenTimeDataWithInterval(WallTime);
 #endif
 
-    static void LEGACY_NODELETE setCachedProcessSuspensionDelayForTesting(Seconds);
+    NODELETE static void setCachedProcessSuspensionDelayForTesting(Seconds);
 
 #if !PLATFORM(COCOA)
     void allowSpecificHTTPSCertificateForHost(const WebCore::CertificateInfo&, const String& host);
@@ -362,7 +364,7 @@ public:
     void setHTTPCookieAcceptPolicy(WebCore::HTTPCookieAcceptPolicy);
 #endif
 
-    static void LEGACY_NODELETE allowWebsiteDataRecordsForAllOrigins();
+    NODELETE static void allowWebsiteDataRecordsForAllOrigins();
 
 #if HAVE(SEC_KEY_PROXY)
     void addSecKeyProxyStore(Ref<SecKeyProxyStore>&&);
@@ -440,7 +442,7 @@ public:
     }
     static std::optional<double> defaultOriginQuotaRatio();
     static std::optional<double> defaultTotalQuotaRatio();
-    static UnifiedOriginStorageLevel LEGACY_NODELETE defaultUnifiedOriginStorageLevel();
+    NODELETE static UnifiedOriginStorageLevel defaultUnifiedOriginStorageLevel();
 
 #if USE(GLIB)
     static const String& defaultBaseCacheDirectory();
@@ -545,6 +547,8 @@ public:
     void setStorageAccessPermissionForTesting(bool, WebPageProxyIdentifier, const String& topFrameDomain, const String& subFrameDomain, CompletionHandler<void()>&&);
     void clearStorageAccessForTesting(CompletionHandler<void()>&&);
     void isStorageSuspendedForTesting(CompletionHandler<void(bool)>&&);
+    void canPrefetchDNSForTesting(CompletionHandler<void(bool)>&&);
+    void prefetchedDNSHostnameCountForTesting(CompletionHandler<void(uint64_t)>&&);
 
 #if HAVE(WEBCONTENTRESTRICTIONS)
     void installMockParentalControlsURLFilterForTesting(Vector<URL>&& blockedURLs, std::span<const uint8_t> replacementData, CompletionHandler<void()>&&);
@@ -567,7 +571,7 @@ private:
     void fetchDataAndApply(OptionSet<WebsiteDataType>, OptionSet<WebsiteDataFetchOption>, Ref<WorkQueue>&&, Function<void(Vector<WebsiteDataRecord>)>&& apply);
 
     void platformInitialize();
-    void LEGACY_NODELETE platformDestroy();
+    NODELETE void platformDestroy();
     void platformSetNetworkParameters(WebsiteDataStoreParameters&);
     void removeRecentSearches(WallTime, CompletionHandler<void()>&&);
 
@@ -601,7 +605,7 @@ private:
 #endif
 
 #if ENABLE(MANAGED_DOMAINS)
-    static const HashSet<WebCore::RegistrableDomain>* LEGACY_NODELETE managedDomainsIfInitialized();
+    NODELETE static const HashSet<WebCore::RegistrableDomain>* managedDomainsIfInitialized();
     static void forwardManagedDomainsToITPIfInitialized(CompletionHandler<void()>&&);
     void setManagedDomainsForITP(const HashSet<WebCore::RegistrableDomain>&, CompletionHandler<void()>&&);
 #endif

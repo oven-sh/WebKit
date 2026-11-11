@@ -1,5 +1,4 @@
 # An iterator operand is the IteratorOpen itself, never a block parameter
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: OperandMustBeDefinition 2
 

@@ -1,0 +1,62 @@
+# type Line = { line: number };  let seen = 0;  const reader = (kept: Line) => () => { seen++; return kept.line; };  as the front end lowers it: the entry block holds nothing but its parameters.
+# RUN(ANSWER): run-in-shell globalThis.report = value => print(String(value));
+# ANSWER: 1
+# ANSWER-NEXT: undefined
+# ANSWER-NEXT: undefined
+# ANSWER-NEXT: undefined
+# ANSWER-NEXT: 4
+# ANSWER-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="line" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="other" declared={type=number} flags=[IsRequired]}, {key="more" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="seen" module=m0 declared={type=number|absent}
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Integer integer=2
+    v6 = Integer integer=3
+    v7 = NewObject -, v5, v6 layout=L1 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = String string="text"
+    v10 = Integer integer=5
+    v11 = Integer
+    PutModuleVariable v11 variable=g0
+    v13 = Convert v4 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v14 = NewClosure v13 function=f1
+    v15 = Call v14 calleeName="line"
+    v16 = Call v1, -, v15 calleeName="report"
+    v17 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v18 = NewClosure v17 function=f1
+    v19 = Call v18 calleeName="line"
+    v20 = Call v1, -, v19 calleeName="report"
+    v21 = Convert v9 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v22 = NewClosure v21 function=f1
+    v23 = Call v22 calleeName="line"
+    v24 = Call v1, -, v23 calleeName="report"
+    v25 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v26 = NewClosure v25 function=f1
+    v27 = Call v26 calleeName="line"
+    v28 = Call v1, -, v27 calleeName="report"
+    v29 = GetModuleVariable variable=g0
+    v30 = CheckInitialized v29 name="seen"
+    v31 = Call v1, -, v30 calleeName="report"
+    Return v31
+}
+function f1 name="line" module=m0 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined] variableName="kept"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="seen"
+    v3 = Increment v2
+    v4 = Convert v3 declared={type=number}
+    PutModuleVariable v4 variable=g0
+    v6 = PropGet v0 key="line"
+    Return v6
+}

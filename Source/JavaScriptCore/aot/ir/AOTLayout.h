@@ -12,33 +12,50 @@
 #include "AOTSchemaEnums.h"
 #include "AOTSchemaRecords.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <optional>
+#include <span>
 #include <wtf/BitVector.h>
+#include <wtf/MathExtras.h>
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT {
 
 class BuildContext;
+class BuiltinTable;
+class ParallelLoops;
 
 namespace Typed {
 
 class Program;
-struct Value;
+class TypeArena;
 
 constexpr bool isEnvironmentKind(LayoutKind kind) { return isEnvironmentKindOf(kind); }
 
-inline constexpr uint32_t maxFieldsAlwaysInline = 14;
+enum class InheritedFields : uint8_t {
+    NotTaken,
+    SomeOfRow,
+    AllOfRow,
+};
 
 struct Layout : LayoutRecord {
     bool has(LayoutFlags flag) const { return flags.contains(flag); }
     bool isEnvironment() const { return isEnvironmentKind(kind); }
     bool isDerived() const { return has(LayoutFlags::IsDerived); }
-    bool mayKeepFieldsOutOfLine() const { return fields.size() > maxFieldsAlwaysInline; }
 
     std::optional<uint32_t> findField(PropertyKeyID) const;
+    std::optional<uint32_t> findStaticField(PropertyKeyID) const;
+    template<typename Functor> void forEachStaticFieldThatMayMatch(PropertyKeyID, const Functor&) const;
     void indexFields();
 
     uint32_t appendField(Field&&);
+    void appendCopiesOfAllFieldsOf(LayoutID, const Layout&);
+
+    bool mayBeOrdinaryObject { false };
+    InheritedFields inheritedFields { InheritedFields::NotTaken };
+    bool copiesWholeFieldListOfBase { false };
+    bool fieldsChangedAfterLayoutsBelowTookThem { false };
+    bool holdsOrdinaryObjects { false };
 
 private:
     struct IndexedField {
@@ -52,10 +69,15 @@ private:
         return hash ^ (hash >> 15);
     }
     void addToIndex(uint32_t field);
+    uint32_t staticFieldTableSize() const { return WTF::roundUpToPowerOfTwo(2 * static_cast<uint32_t>(staticFields.size())); }
+    std::span<const IndexedField> staticFieldsOutsideTable() const { return m_staticFieldsByKey.span().subspan(staticFieldTableSize()); }
+    Vector<uint32_t, 4> indexedStaticFieldsThatMayMatch(PropertyKeyID) const;
 
     Vector<IndexedField> m_fieldsByKey;
+    Vector<IndexedField> m_staticFieldsByKey;
     uint64_t m_keysByHash { 0 };
     uint32_t m_indexedFieldCount { 0 };
+    uint32_t m_indexedStaticFieldCount { 0 };
 };
 
 inline std::optional<uint32_t> Layout::findField(PropertyKeyID key) const
@@ -73,14 +95,30 @@ inline std::optional<uint32_t> Layout::findField(PropertyKeyID key) const
         }
         return std::nullopt;
     }
-    uint32_t mask = static_cast<uint32_t>(m_fieldsByKey.size()) - 1;
+    std::span<const IndexedField> fieldsByKey = m_fieldsByKey.span();
+    uint32_t mask = static_cast<uint32_t>(fieldsByKey.size()) - 1;
     for (uint32_t place = (hash >> 6) & mask;; place = (place + 1) & mask) {
-        const IndexedField& indexed = m_fieldsByKey[place];
+        const IndexedField& indexed = fieldsByKey[place];
         if (indexed.key == key)
             return indexed.field;
         if (!indexed.key)
             return std::nullopt;
     }
+}
+
+template<typename Functor>
+void Layout::forEachStaticFieldThatMayMatch(PropertyKeyID key, const Functor& functor) const
+{
+    RELEASE_ASSERT(m_indexedStaticFieldCount == staticFields.size());
+    if (m_staticFieldsByKey.isEmpty()) {
+        for (const StaticField& field : staticFields) {
+            if (field.key == key)
+                functor(field);
+        }
+        return;
+    }
+    for (uint32_t field : indexedStaticFieldsThatMayMatch(key))
+        functor(staticFields[field]);
 }
 
 struct FieldReference {
@@ -91,44 +129,44 @@ struct FieldReference {
     friend auto operator<=>(const FieldReference&, const FieldReference&) = default;
 };
 
-enum class BaseChain : uint8_t { Proven, Predicted };
+inline const Field& fieldAt(const Program&, FieldReference);
+inline FieldReference declarationOf(const Program&, FieldReference);
+inline std::optional<FieldReference> findField(const Program&, LayoutID, PropertyKeyID);
+std::optional<FieldReference> findFieldAboveInRow(const Program&, LayoutID, PropertyKeyID);
+inline LayoutID writtenBaseOf(const Layout& layout) { return layout.base; }
+inline bool isDefinedByClass(const Layout& layout) { return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction); }
+inline bool isFoundByShapeTest(const Layout& layout)
+{
+    return (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance || layout.kind == LayoutKind::Container) && !layout.writtenBuiltinBase && !layout.mayBeOrdinaryObject && !layout.holdsOrdinaryObjects;
+}
+ALWAYS_INLINE bool isKnownByStructureOfClass(const Layout& layout)
+{
+    constexpr OptionSet<FieldFlags> flagsOfWhatIsNoPlainProperty { FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods, FieldFlags::IsHidden };
+    if (layout.kind != LayoutKind::Instance || !layout.writtenBuiltinBase || layout.base || !isDefinedByClass(layout) || layout.isDerived())
+        return false;
+    return std::ranges::all_of(layout.fields, [&](const Field& field) {
+        return field.key && !field.form.contains(FieldForm::IsAccessor) && !field.flags.containsAny(flagsOfWhatIsNoPlainProperty);
+    });
+}
 
-const Field& fieldAt(const Program&, FieldReference);
-FieldReference declarationOf(const Program&, FieldReference);
-const FieldFlow& flowOf(const Program&, FieldReference);
-bool isNeverRedefined(const Program&, FieldReference);
-bool isNeverDeleted(const Program&, FieldReference);
-bool isNeverMovedOutByStore(const Program&, FieldReference);
-bool slotTakesEveryValue(const Program&, const Field&);
-bool staysInSlot(const Program&, FieldReference);
-bool staysFilled(const Program&, FieldReference);
-bool isFilledAtBirth(const Program&, FieldReference);
-bool keepsStateOfBirth(const Program&, FieldReference);
-bool isFilledWithValueAtBirth(const Program&, FieldReference);
-bool hasFieldsFilledAtBirth(const Program&, LayoutID);
-bool isNeverStored(const Program&, FieldReference);
-std::optional<FieldReference> findField(const Program&, LayoutID, PropertyKeyID, BaseChain);
-LayoutID expectedBaseOf(const Layout&);
-LayoutID predictedHeritageOf(const Layout&);
-BuiltinClassID builtinBaseClassOf(const Program&, LayoutID);
-bool hasOnlyCompiledBases(const Program&, LayoutID);
-bool isEvaluatedOnce(const Program&, const Layout&);
-bool guardsAreNeverSet(const Program&, const Layout&);
-bool prototypePropertyMayEndGuards(const Program&, FunctionID);
-bool hasSingletonClosure(const Program&, FunctionID);
-bool namesClosureOfTable(const Program&, const Value& closure);
+struct ClassBelowBuiltinClass {
+    LayoutID layout;
+    BuiltinClassID builtinClass;
+
+    friend constexpr auto operator<=>(const ClassBelowBuiltinClass&, const ClassBelowBuiltinClass&) = default;
+};
+BuiltinClassID classMadeByHeritage(const BuiltinTable&, BuiltinID heritage);
+void noteSubclassesOfBuiltinClasses(Program&, std::span<const ClassBelowBuiltinClass> sortedWithoutRepeats);
+
+void noteLayoutsOfDictionaries(Program&, const BitVector& layoutsOfDictionaries);
+
+TypeID enforceableTypeOf(TypeArena&, const DeclaredType&);
 
 Layout createDerivedLayout(const Program&, LayoutID base);
-LayoutID declaredLayoutOf(const Program&, LayoutID);
-
-Vector<LayoutSetID, 2> declaredFamiliesOf(const Program&, LayoutID);
-Vector<Vector<LayoutID>> declaredViewsOf(const Program&, const BitVector& declaredLayouts);
+inline LayoutID declaredLayoutOf(const Program&, LayoutID);
 
 void initializeLayouts(Program&, BuildContext&);
-void initializeAddedLayout(Program&, LayoutID);
 void appendInheritedFields(Program&, LayoutID);
-
-void markUnallocatedLayouts(Program&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed
 

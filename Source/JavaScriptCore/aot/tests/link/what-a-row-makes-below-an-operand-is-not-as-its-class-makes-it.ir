@@ -1,0 +1,34 @@
+# If what Object.create(above) makes were taken to stand below Object.prototype, as its class has it for every instance, a store on it would only lay a property on it. It may run a setter of `above`, which is handed what is stored and may do anything to it.
+# const created = Object.create({ own: 0 });  function store(o, v) { o.slot = v; }  store(created, { from: "here" });
+# The row says that the operand becomes the prototype of the result. Nobody follows what stands above such an object, so it escapes where it is made, and what is stored on it goes with it.
+# RUN: link functions layouts mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK: parameter 1 {{*}}proven=object?UnseenCode
+# CHECK: layout L1 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+
+layout L0 module=m0 fields=[{key="own" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="from" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectCreate
+    v5 = Call v4, v3, v2 calleeName="Object.create"
+    v6 = String string="here"
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v5, v8 calleeName="store"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="store" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="slot"
+    v3 = Undefined
+    Return v3
+}

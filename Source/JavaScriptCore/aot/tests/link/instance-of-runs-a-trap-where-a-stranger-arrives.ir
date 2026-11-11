@@ -1,0 +1,37 @@
+# If a walk up a chain counted as no code whatever arrives, `p instanceof P` on a proxy, whose getPrototypeOf trap stores into a variable, would leave the callers of is() with what they knew of that variable in front of the call
+# class P { }  function is(p) { return p instanceof P; }  is(new P());  is(unknown);
+# The twin of instance-of-runs-no-code-on-objects-of-the-program.ir. What nobody knows may be a proxy, or stand below one.
+# RUN: link functions mechanisms=all
+# CHECK: function f2 {{*}}mayCallUnknownCode
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1
+variable g0 name="P" module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = FinishClass v1 layout=L0
+    v4 = Construct v3
+    v5 = NewClosure function=f2
+    v6 = Call v5, -, v4 calleeName="is"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="unknown" [isFreeName]
+    v9 = Call v5, -, v8 calleeName="is"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="P" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="is" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = InstanceOf v0, v1
+    Return v2
+}

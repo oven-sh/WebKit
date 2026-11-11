@@ -1,0 +1,108 @@
+# function owned(rows: object[], count: number) { const n = count | 0; let found = 0; for (let at = 0; at < n; at++) if (Object.hasOwn(rows[at % 2]!, at & 1 ? "name" : "none")) found++; return found; }
+# if (hidden()) { Object.hasOwn = hidden; globalThis.Object = hidden; } print(owned([{ name: 1 }, { none: 2 }], 8)); replace(); print(owned([{ name: 1 }, { none: 2 }], 8));
+# records of c3871ae47f233b34
+# The bytes of members are asked where a stretch of operations in one block takes what was read. Here the arguments branch between the read and the call: nothing in the block of the read takes it:
+# no byte is asked, the look at the loop counts on none, and the read and the call stay as they are written.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell globalThis.hidden = () => false; globalThis.replace = () => { Object.hasOwn = () => true; };
+# CHECK: 0
+# CHECK-NEXT: 8
+# CHECK-NEXT: exited with 0
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK-NOT: = IsMemberAsBuilt
+# WALK: = PropGet {{*}}key="hasOwn"
+# WALK-NOT: = IsMemberAsBuilt
+
+module m0 path="a-static-whose-call-stands-behind-a-branch-is-read-as-it-is-written.ts" displayPath="a-static-whose-call-stands-behind-a-branch-is-read-as-it-is-written.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=283 fields=[{key="name" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=296 fields=[{key="none" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=undefined|null|object elements=[Object{layout=L0 members=[{key="name" value=Number{value=1}}]}, Object{layout=L1 members=[{key="none" value=Number{value=2}}]}]} module=m0
+data d1 root=Array{contents=undefined|null|object elements=[Object{layout=L0 members=[{key="name" value=Number{value=1}}]}, Object{layout=L1 members=[{key="none" value=Number{value=2}}]}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @204
+    v3 = PropGet v2 key="hidden" [isFreeName] @204
+    v4 = Call v3 calleeName="hidden" @204
+    v5 = ToBoolean v4 @204
+    Branch v5 -> taken b1(| 0), notTaken b2() @204
+  b1(v6):
+    v7 = Builtin builtin=Object @216
+    v8 = Builtin builtin=GlobalThis @232
+    v9 = PropGet v8 key="hidden" [isFreeName] @232
+    PropSet v7, v9 key="hasOwn" @216
+    v11 = Builtin builtin=GlobalThis @240
+    v12 = PropGet v11 key="globalThis" [isFreeName] @240
+    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]} @240
+    v14 = Builtin builtin=GlobalThis @260
+    v15 = PropGet v14 key="hidden" [isFreeName] @260
+    PropSet v13, v15 key="Object" @240
+    Jump -> next b2() @240
+  b2():
+    v17 = Builtin builtin=GlobalThis @270
+    v18 = PropGet v17 key="print" [isFreeName] @270
+    v19 = Data data=d0 @282
+    v20 = Integer integer=8 @310
+    v21 = Call v1, -, v19, v20 calleeName="owned" @276
+    v22 = Call v18, -, v21 calleeName="print" @270
+    v23 = Builtin builtin=GlobalThis @315
+    v24 = PropGet v23 key="replace" [isFreeName] @315
+    v25 = Call v24 calleeName="replace" @315
+    v26 = Builtin builtin=GlobalThis @326
+    v27 = PropGet v26 key="print" [isFreeName] @326
+    v28 = Data data=d1 @338
+    v29 = Integer integer=8 @366
+    v30 = Call v1, -, v28, v29 calleeName="owned" @332
+    v31 = Call v27, -, v30 calleeName="print" @326
+    v32 = Undefined @326
+    Return v32 @326
+}
+function f1 name="owned" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|object> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|object>, v1: number):
+    v2 = Integer @66
+    v3 = BitOr v1, v2 @66
+    v4 = Integer @81
+    v5 = Convert v4 declared={type=number} @81
+    v6 = Integer @98
+    v7 = Convert v6 declared={type=number} @98
+    Jump -> next b1(v5, v7) @93
+  b1(v8: number, v9: number):
+    LoopHint @93
+    v11 = Less v9, v3 @106
+    Branch v11 -> taken b2(), notTaken b8() @106
+  b2():
+    v12 = Builtin builtin=GlobalThis @119
+    v13 = PropGet v12 key="Object" [isFreeName] @119
+    v14 = PropGet v13 key="hasOwn" @119
+    v15 = Integer integer=2 @143
+    v16 = Mod v9, v15 @143
+    v17 = ElemGet v0, v16 @133
+    v18 = Integer integer=1 @153
+    v19 = BitAnd v9, v18 @153
+    v20 = ToBoolean v19 @148
+    Branch v20 -> taken b3(| 0), notTaken b4(| 0) @148
+  b3(v21):
+    v22 = String string="name" @157
+    Jump -> next b5(v22) @157
+  b4(v23):
+    v24 = String string="none" @166
+    Jump -> next b5(v24) @166
+  b5(v25):
+    v26 = Call v14, v13, v17, v25 calleeKey="hasOwn" calleeName="Object.hasOwn" @126
+    v27 = Convert v26 declared={type=boolean} illTypedCause=DeclarationWithoutBody @119
+    v28 = ToBoolean v27 @119
+    Branch v28 -> taken b6(| 0), notTaken b7(v8) @119
+  b6(v29):
+    v30 = Increment v8 @175
+    v31 = Convert v30 declared={type=number} @175
+    Jump -> next b7(v31) @175
+  b7(v32: number):
+    v33 = Increment v9 @109
+    v34 = Convert v33 declared={type=number} @109
+    Jump -> next b1(v32, v34) @109
+  b8():
+    Return v8 @191
+}

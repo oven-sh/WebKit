@@ -1,0 +1,64 @@
+# function callIt(object, a) { return object.m(a); }   function readIt(object) { return object.m; }
+# A place of the program that reads or calls under a name is handed to its stub as one number: the distance from the instance to the sixteen bits that say where, in one table for all places, the place remembers what it found last.
+# The shell fills each place, by coming by often enough, in front of every change that ends what a place remembers: of the receiver, of an object above it, of the Structures that a collection ends.
+# It begins with cells that are no compiled objects and have zero where those have the word of their shape: an empty place, which holds zeros, answers for none of them.
+# The shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN: bytes f1:Body f2:Body
+# CHECK-LABEL: unit f1:Body
+# CHECK: Number32 Number SiteCache "main.js" 20 "m" 9
+# CHECK-NEXT: Call Stub CallMethodAtSite.UnderAnyName count 1
+# CHECK-NOT: Stub GetById
+# CHECK-LABEL: unit f2:Body
+# CHECK: Number32 Number SiteCache "main.js" 30 "m" 8
+# CHECK-NEXT: Call Stub ReadAtSiteAskingStructureFirst.OfAnyValue
+# RUN(SHELL): run-in-shell globalThis.publish = (callIt, readIt) => { const tell = (...answers) => print(answers.join()); const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } }; const warm = (f, make) => { let last; for (let i = 0; i < 200; i++) last = f(make(i)); return last; }; const root = { m: () => "root" }; const middle = Object.create(root); const wide = Object.create(middle); for (let i = 0; i < 40; i++) wide["p" + i] = i; const make = () => Object.create(wide); const call = object => attempt(() => callIt(object, 1)); const read = object => { const found = readIt(object); return typeof found === "function" ? found() : found; }; const both = () => tell(warm(call, make), warm(read, make)); tell(read(new Map()), read(Object.create(null)), read(/a/), read([]), read("text"), read(5), call(new Set())); both(); tell(read(new Map()), read(Object.create(null)), read(/a/), read([]), read("text"), read(5), call(new Set())); root.m = () => "replaced"; tell(call(make()), read(make())); middle.m = () => "in between"; tell(call(make()), read(make())); both(); delete middle.m; tell(call(make()), read(make())); both(); wide.m = () => "out of line"; tell(call(make()), read(make())); both(); wide.m = () => "out of line, replaced"; tell(call(make()), read(make())); delete wide.m; tell(call(make()), read(make())); both(); Object.defineProperty(root, "m", { get() { return () => "getter"; }, configurable: true }); tell(call(make()), read(make())); both(); delete root.m; tell(call(make()), read(make())); both(); root.m = () => "back"; tell(call(make()), read(make())); both(); const own = make(); own.m = () => "own"; tell(call(own), read(own), call(make()), read(make())); tell(warm(call, () => own), warm(read, () => own)); own.m = () => "own, replaced"; tell(call(own), read(own)); delete own.m; tell(call(own), read(own)); Object.setPrototypeOf(middle, { m: () => "other root" }); tell(call(make()), read(make())); both(); Object.setPrototypeOf(middle, root); both(); let wrong = 0; for (let round = 0; round < 30; round++) { const shaped = i => { const object = { }; object["a" + round] = 1; object.m = () => round; return object; }; if (warm(call, shaped) !== round || warm(read, shaped) !== round) wrong++; gc(); } tell(wrong); tell(warm(call, i => i % 2 ? make() : own), warm(call, i => ({ m: i % 3 ? () => i : 5 }))); };
+# SHELL: ,,,,,,TypeError
+# SHELL-NEXT: root,root
+# SHELL-NEXT: ,,,,,,TypeError
+# SHELL-NEXT: replaced,replaced
+# SHELL-NEXT: in between,in between
+# SHELL-NEXT: in between,in between
+# SHELL-NEXT: replaced,replaced
+# SHELL-NEXT: replaced,replaced
+# SHELL-NEXT: out of line,out of line
+# SHELL-NEXT: out of line,out of line
+# SHELL-NEXT: out of line, replaced,out of line, replaced
+# SHELL-NEXT: replaced,replaced
+# SHELL-NEXT: replaced,replaced
+# SHELL-NEXT: getter,getter
+# SHELL-NEXT: getter,getter
+# SHELL-NEXT: TypeError,
+# SHELL-NEXT: TypeError,
+# SHELL-NEXT: back,back
+# SHELL-NEXT: back,back
+# SHELL-NEXT: own,own,back,back
+# SHELL-NEXT: own,own
+# SHELL-NEXT: own, replaced,own, replaced
+# SHELL-NEXT: back,back
+# SHELL-NEXT: other root,other root
+# SHELL-NEXT: other root,other root
+# SHELL-NEXT: back,back
+# SHELL-NEXT: 0
+# SHELL-NEXT: back,199
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="callIt" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="m" @10
+    v3 = Call v2, v0, v1 calleeKey="m" calleeName="object.m" @20
+    Return v3
+}
+function f2 name="readIt" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m" @30
+    Return v1
+}

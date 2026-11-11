@@ -28,7 +28,6 @@
 #include "config.h"
 #include "ImageBuffer.h"
 
-#include "BitmapImage.h"
 #include "Filter.h"
 #include "FilterImage.h"
 #include "FilterResults.h"
@@ -41,15 +40,10 @@
 #include "MIMETypeRegistry.h"
 #include "NullImageBufferBackend.h"
 #include "ProcessCapabilities.h"
-#include "TransparencyLayerContextSwitcher.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/MakeString.h>
-
-#if USE(CG)
-#include "ImageBufferCGPDFDocumentBackend.h"
-#endif
 
 #if USE(SKIA)
 #include "GLContext.h"
@@ -109,15 +103,12 @@ RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingMode ren
     case RenderingMode::Unaccelerated:
         return create<ImageBufferPlatformBitmapBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
 
-    case RenderingMode::PDFDocument:
-#if USE(CG)
-        return ImageBuffer::create<ImageBufferCGPDFDocumentBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
-#else
-        return nullptr;
-#endif
-
     case RenderingMode::DisplayList:
         return ImageBuffer::create<ImageBufferDisplayListBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
+
+    case RenderingMode::PDFDocument:
+        // FIXME: PDFDocument is only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that it cannot be passed here.
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     ASSERT_NOT_REACHED();
@@ -269,26 +260,9 @@ static RefPtr<ImageBuffer> copyImageBuffer(Ref<ImageBuffer> source, PreserveReso
     return copyBuffer;
 }
 
-static RefPtr<NativeImage> copyImageBufferToNativeImage(Ref<ImageBuffer> source, BackingStoreCopy copyBehavior, PreserveResolution preserveResolution)
-{
-    if (source->resolutionScale() == 1 || preserveResolution == PreserveResolution::Yes) {
-        if (source->hasOneRef())
-            return ImageBuffer::sinkIntoNativeImage(WTF::move(source));
-        if (copyBehavior == CopyBackingStore)
-            return source->copyNativeImage();
-        return source->createNativeImageReference();
-    }
-    auto copyBuffer = copyImageBuffer(WTF::move(source), preserveResolution);
-    if (!copyBuffer)
-        return nullptr;
-    return ImageBuffer::sinkIntoNativeImage(WTF::move(copyBuffer));
-}
-
-
 RefPtr<ImageBuffer> ImageBuffer::clone() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return copyImageBuffer(const_cast<ImageBuffer&>(*this), PreserveResolution::Yes);
+    return copyImageBuffer(const_cast<ImageBuffer&>(*this), PreserveResolution::Yes);
 }
 
 GraphicsContext& ImageBuffer::context() const
@@ -333,7 +307,6 @@ void ImageBuffer::setBackend(std::unique_ptr<ImageBufferBackend>&& backend)
         return;
 
     m_backend = WTF::move(backend);
-    ++m_backendGeneration;
 }
 
 IntSize ImageBuffer::backendSize() const
@@ -386,46 +359,6 @@ RefPtr<ImageBuffer> ImageBuffer::sinkIntoBufferForDifferentThread()
 {
     ASSERT(hasOneRef());
     return this;
-}
-
-RefPtr<NativeImage> ImageBuffer::filteredNativeImage(Filter& filter)
-{
-    ASSERT(!filter.filterRenderingModes().contains(FilterRenderingMode::GraphicsContext));
-
-    auto* backend = m_backend.get();
-    if (!backend)
-        return nullptr;
-
-    FilterResults results;
-    auto result = filter.apply(this, { { }, logicalSize() }, results);
-    if (!result)
-        return nullptr;
-
-    RefPtr imageBuffer = result->imageBuffer();
-    if (!imageBuffer)
-        return nullptr;
-
-    return copyImageBufferToNativeImage(*imageBuffer, CopyBackingStore, PreserveResolution::No);
-}
-
-RefPtr<NativeImage> ImageBuffer::filteredNativeImage(Filter& filter, Function<void(GraphicsContext&)> drawCallback)
-{
-    std::unique_ptr<GraphicsContextSwitcher> targetSwitcher;
-
-    if (filter.filterRenderingModes().contains(FilterRenderingMode::GraphicsContext)) {
-        targetSwitcher = makeUnique<TransparencyLayerContextSwitcher>(context(), FloatRect { { }, logicalSize() }, &filter);
-        targetSwitcher->beginDrawSourceImage(context());
-    }
-
-    drawCallback(context());
-
-    if (filter.filterRenderingModes().contains(FilterRenderingMode::GraphicsContext)) {
-        ASSERT(targetSwitcher);
-        targetSwitcher->endDrawSourceImage(context(), colorSpace());
-        return copyImageBufferToNativeImage(*this, CopyBackingStore, PreserveResolution::No);
-    }
-
-    return filteredNativeImage(filter);
 }
 
 #if HAVE(IOSURFACE)
@@ -542,20 +475,6 @@ void ImageBuffer::putPixelBuffer(const PixelBufferSourceView& pixelBuffer, const
     backend->putPixelBuffer(pixelBuffer, sourceRectScaled, destinationPointScaled, destinationFormat);
 }
 
-RefPtr<SharedBuffer> ImageBuffer::sinkIntoPDFDocument()
-{
-    if (auto* backend = m_backend.get())
-        return backend->sinkIntoPDFDocument();
-    return nullptr;
-}
-
-RefPtr<SharedBuffer> ImageBuffer::sinkIntoPDFDocument(RefPtr<ImageBuffer> source)
-{
-    if (!source)
-        return nullptr;
-    return source->sinkIntoPDFDocument();
-}
-
 bool ImageBuffer::isInUse() const
 {
     if (auto* backend = m_backend.get())
@@ -618,11 +537,6 @@ std::unique_ptr<ThreadSafeImageBufferFlusher> ImageBuffer::createFlusher()
     if (auto* backend = m_backend.get())
         return backend->createFlusher();
     return nullptr;
-}
-
-unsigned ImageBuffer::backendGeneration() const
-{
-    return m_backendGeneration;
 }
 
 std::optional<ImageBufferTransferHandle> SerializedImageBuffer::sinkIntoTransferHandle(std::unique_ptr<SerializedImageBuffer> buffer)

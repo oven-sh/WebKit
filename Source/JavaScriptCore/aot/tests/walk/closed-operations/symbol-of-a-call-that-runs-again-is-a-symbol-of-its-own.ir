@@ -1,0 +1,80 @@
+# main.ts: function make() { const tag = Symbol("tag"); return { [tag]: 1 } } make(); make(); for (;;) { const turn = Symbol("turn"); if (stop({ [turn]: 1 })) break }
+# again.ts, which the host may start once more: const again = Symbol("again"); keep({ [again]: 1 })
+# Each run makes a symbol, and the key of the field stands for them all. One symbol of the image in their place would make two names one: the calls stay.
+# RUN: walk f0 f1 f2 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK-NOT: KeyConstant
+# CHECK: overload=Symbol
+# CHECK-NOT: KeyConstant
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: KeyConstant
+# CHECK: overload=Symbol
+# CHECK-NOT: KeyConstant
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: KeyConstant
+# CHECK: overload=Symbol
+# CHECK-NOT: KeyConstant
+# RUN(NONE): walk f0 f1 f2 mechanisms=none
+# NONE-NOT: KeyConstant
+# RUN(STAYS): walk f0 f1 f2 mechanisms=none
+# STAYS-COUNT-3: calleeName="Symbol"
+
+layout L0 module=m0 fields=[{key=symbol("tag")@m0:0 declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key=symbol("turn")@m0:1 declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m1 fields=[{key=symbol("again")@m1:0 declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="again.ts" displayPath="again.ts" flags=[MayBeReevaluated] body=f2 namespaceLayout=L(m1)
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="make" [isNeverInlined]
+    v2 = Call v0 calleeName="make" [isNeverInlined]
+    v3 = Builtin builtin=GlobalThis
+    PropSet v3, v1 key="first" mode=Strict
+    PropSet v3, v2 key="second" mode=Strict
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = Builtin builtin=Symbol
+    v8 = String string="turn"
+    v9 = Call v7, -, v8 calleeName="Symbol" callNumber=1
+    v10 = NewObject layout=L1
+    v11 = Integer integer=1
+    ElemDefine v10, v9, v11
+    v13 = FinishObject v10
+    v14 = PropGet v3 key="stop" [isFreeName]
+    v15 = Call v14, -, v13 calleeName="stop"
+    v16 = ToBoolean v15
+    Branch v16 -> taken b2(), notTaken b1()
+  b2():
+    v17 = Undefined
+    Return v17
+}
+function f1 name="make" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="tag"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    v3 = NewObject layout=L0
+    v4 = Integer integer=1
+    ElemDefine v3, v2, v4
+    v6 = FinishObject v3
+    Return v6
+}
+function f2 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="again"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    v3 = NewObject layout=L2
+    v4 = Integer integer=1
+    ElemDefine v3, v2, v4
+    v6 = FinishObject v3
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v6 calleeName="keep"
+    v10 = Undefined
+    Return v10
+}
+entry module=m0
+entry module=m1

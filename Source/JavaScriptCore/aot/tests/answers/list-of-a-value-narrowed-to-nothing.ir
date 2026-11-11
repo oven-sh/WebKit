@@ -1,0 +1,70 @@
+# type Meta = { sign: string[] }
+# function normalize(meta: Meta) { if (typeof meta.sign === "string") meta.sign = [meta.sign]; return JSON.stringify(meta); }
+# function wrap(text: string, twice: boolean) { const meta: Meta = { sign: [text] }; if (twice) meta.sign = [meta.sign]; return JSON.stringify(meta); }
+# RUN(ANSWER): run-in-shell
+# ANSWER: {"sign":["own"]}
+# ANSWER: {"sign":["x"]}
+# ANSWER: {"sign":[{{*}}["x"]]}
+
+layout L0 module=m0 fields=[{key="sign" declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="sign" declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}]
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="own"
+    v1 = NewArray v0 contents=undefined|null|string
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3 calleeName="normalize"
+    v6 = NewClosure function=f2
+    v7 = String string="x"
+    v8 = Boolean
+    v9 = Call v6, -, v7, v8 calleeName="wrap"
+    v10 = Boolean boolean=true
+    v11 = Call v6, -, v7, v10 calleeName="wrap"
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="console" [isFreeName]
+    v14 = PropGet v13 key="log"
+    v15 = Call v14, v13, v5 calleeKey="log" calleeName="console.log"
+    v16 = Call v14, v13, v9 calleeKey="log" calleeName="console.log"
+    v17 = Call v14, v13, v11 calleeKey="log" calleeName="console.log"
+    v18 = Undefined
+    Return v18
+}
+function f1 name="normalize" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="sign"
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="sign"
+    v4 = NewArray v3 contents=anything
+    PropSet v0, v4 key="sign"
+    Jump -> next b2()
+  b2():
+    v6 = Builtin builtin=JSON
+    v7 = PropGet v6 key="stringify"
+    v8 = Convert v7 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v9 = Call v8, v6, v0 calleeKey="stringify" calleeName="JSON.stringify"
+    Return v9
+}
+function f2 name="wrap" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=boolean}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: string, v1: boolean):
+    v2 = NewArray v0 contents=undefined|null|string
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = PropGet v4 key="sign"
+    v6 = NewArray v5 contents=anything
+    PropSet v4, v6 key="sign"
+    Jump -> next b2()
+  b2():
+    v8 = Builtin builtin=JSON
+    v9 = PropGet v8 key="stringify"
+    v10 = Convert v9 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v11 = Call v10, v8, v4 calleeKey="stringify" calleeName="JSON.stringify"
+    Return v11
+}

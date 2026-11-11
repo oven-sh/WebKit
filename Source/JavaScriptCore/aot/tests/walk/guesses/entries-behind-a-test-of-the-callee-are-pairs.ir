@@ -1,0 +1,127 @@
+# const entries = given.entries, other = given.other;
+# function clone(object, made) { for (const [property, value] of entries(object)) made[property] = value; return made; }   function cloneByOther(object, made) { .. of other(object) .. }
+# DOMPurify's clone(), in a module that may run again. What is called is only expected to be Object.entries, so the call stands behind a test of the callee, and the arm as written brings a list of pairs.
+# The typed arm once made the flat list of keys and values that only the loop behind it can read, the two met in front of the loop, and the loop read what had met as flat:
+# the walk stopped ("GetArrayLength, operand 0: it is anything?ResultOfUnknownCallee, and Array is taken"); had the types fitted, the pairs would have been read as keys and values.
+# OPTIONS: check=Validate
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=builtin(ObjectEntries)
+# CHECK: Branch [[test]] -> taken [[typed]](), notTaken [[closed]]()
+# CHECK: overload=ObjectEntries/
+# RUN(PAIRS): walk f1:Body f2:Body mechanisms=all
+# PAIRS-NOT: OwnEntriesFlat
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.given = { entries: Object.entries, other(object) { return [["x", 1], ["y", object]]; } }; globalThis.sink = (clone, cloneByOther) => { print(JSON.stringify(clone({ a: 1, b: "two" }, {})), JSON.stringify(clone([7, 8], {})), JSON.stringify(cloneByOther(5, {}))); };
+# SHELL: {"a":1,"b":"two"} {"0":7,"1":8} {"x":1,"y":5}
+# SHELL-NEXT: exited with 0
+
+variable g0 name="entries" module=m0 declared={type=builtin(ObjectEntries) flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+variable g1 name="other" module=m0 declared={type=builtin(ObjectEntries) flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = PropGet v1 key="entries"
+    PutModuleVariable v2 variable=g0
+    v4 = PropGet v1 key="other"
+    PutModuleVariable v4 variable=g1
+    v6 = PropGet v0 key="sink" [isFreeName]
+    v7 = NewClosure function=f1
+    v8 = NewClosure function=f2
+    v9 = Call v6, -, v7, v8
+    Return v9
+}
+function f1 name="clone" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v0 calleeName="entries"
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    Return v1
+  b3():
+    Jump -> next b4()
+  b4() handler=b11():
+    v9 = IteratorOpen v8 elementCount=2 [isDestructuring]
+    Jump -> next b5()
+  b5() handler=b10():
+    v10 = IteratorResume v9 stepIndex=0
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Jump -> next b6()
+  b6() handler=b10():
+    v13 = IteratorResume v9 stepIndex=1
+    v14 = ResultAt v13
+    v15 = ResultAt v13 index=1
+    Jump -> next b7()
+  b7() handler=b10():
+    Jump -> next b8()
+  b8() handler=b11():
+    IteratorClose v9
+    Jump -> next b9()
+  b9() handler=b11():
+    ElemSet v1, v12, v15
+    Jump -> next b1()
+  b10() role=IterationCleanup subject=v9 handler=b11():
+    v18 = CatchException
+    IteratorClose v9 completion=Throw
+    Rethrow v18
+  b11() role=IterationCleanup subject=v4:
+    v20 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v20
+}
+function f2 name="cloneByOther" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v2, -, v0 calleeName="other"
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    Return v1
+  b3():
+    Jump -> next b4()
+  b4() handler=b11():
+    v9 = IteratorOpen v8 elementCount=2 [isDestructuring]
+    Jump -> next b5()
+  b5() handler=b10():
+    v10 = IteratorResume v9 stepIndex=0
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Jump -> next b6()
+  b6() handler=b10():
+    v13 = IteratorResume v9 stepIndex=1
+    v14 = ResultAt v13
+    v15 = ResultAt v13 index=1
+    Jump -> next b7()
+  b7() handler=b10():
+    Jump -> next b8()
+  b8() handler=b11():
+    IteratorClose v9
+    Jump -> next b9()
+  b9() handler=b11():
+    ElemSet v1, v12, v15
+    Jump -> next b1()
+  b10() role=IterationCleanup subject=v9 handler=b11():
+    v18 = CatchException
+    IteratorClose v9 completion=Throw
+    Rethrow v18
+  b11() role=IterationCleanup subject=v4:
+    v20 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v20
+}

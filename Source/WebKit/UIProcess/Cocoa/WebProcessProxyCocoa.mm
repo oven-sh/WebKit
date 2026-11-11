@@ -89,6 +89,10 @@
 #import "TCCSoftLink.h"
 #endif
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebProcessProxyCocoaAdditionsBefore.mm>)
+#import <WebKitAdditions/WebProcessProxyCocoaAdditionsBefore.mm>
+#endif
+
 #define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, connection())
 #define MESSAGE_CHECK_URL(url) MESSAGE_CHECK_BASE(checkURLReceivedFromWebProcess(url), connection())
 
@@ -112,7 +116,7 @@ const MemoryCompactLookupOnlyRobinHoodHashSet<String>& WebProcessProxy::platform
     return platformPathsWithAssumedReadAccess;
 }
 
-static Vector<String>& LEGACY_NODELETE mediaTypeCache()
+NODELETE static Vector<String>& mediaTypeCache()
 {
     ASSERT(RunLoop::isMain());
     static NeverDestroyed<Vector<String>> typeCache;
@@ -219,14 +223,47 @@ void WebProcessProxy::unblockAccessibilityServerIfNeeded()
 }
 
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
-void WebProcessProxy::isAXAuthenticated(CoreIPCAuditToken&& auditToken, CompletionHandler<void(bool)>&& completionHandler)
+// The decision is opaque to WebKit: web content processes hand it to HIServices, so WebKitAdditions defines its values.
+static uint32_t axAuthenticationDecision(bool allowed)
 {
-    if (processPool().allowAXAuthenticationForTesting()) {
-        completionHandler(true);
+#if ENABLE(AX_ENHANCED_AUTHENTICATION)
+    return axAuthenticationDecisionForAllowedAdditions(allowed);
+#else
+    return allowed;
+#endif
+}
+
+void WebProcessProxy::requestAXAuthenticationDecision(CoreIPCAuditToken&& requester, CompletionHandler<void(uint32_t)>&& completionHandler)
+{
+    switch (processPool().axAuthenticationTestingMode()) {
+    case WebProcessPool::AXAuthenticationTestingMode::Default:
+        break;
+    case WebProcessPool::AXAuthenticationTestingMode::Allow:
+        completionHandler(axAuthenticationDecision(true));
+        return;
+    case WebProcessPool::AXAuthenticationTestingMode::Deny:
+        completionHandler(axAuthenticationDecision(false));
         return;
     }
-    auto authenticated = TCCAccessCheckAuditToken(get_TCC_kTCCServiceAccessibilitySingleton(), auditToken.auditToken(), nullptr);
-    completionHandler(authenticated);
+
+    // The requester's audit token comes from the web content process, which mustn't be able to grant itself access.
+    auto requesterPID = pidFromAuditToken(requester.auditToken());
+    if (!requesterPID || requesterPID == processID()) {
+        completionHandler(axAuthenticationDecision(false));
+        return;
+    }
+
+#if ENABLE(AX_ENHANCED_AUTHENTICATION)
+    if (auto server = auditToken()) {
+        if (auto decision = axAuthenticationDecisionForRequesterAdditions(requester.auditToken(), *server)) {
+            completionHandler(*decision);
+            return;
+        }
+    }
+#endif
+
+    bool authenticated = TCCAccessCheckAuditToken(get_TCC_kTCCServiceAccessibilitySingleton(), requester.auditToken(), nullptr);
+    completionHandler(axAuthenticationDecision(authenticated));
 }
 #endif
 
@@ -302,15 +339,6 @@ std::optional<Vector<SandboxExtension::Handle>> WebProcessProxy::fontdMachExtens
     return SandboxExtension::createHandlesForMachLookup({ "com.apple.fonts"_s }, auditToken(), SandboxExtension::MachBootstrapOptions::EnableMachBootstrap);
 }
 #endif // !ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)
-
-#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebProcessProxyCocoaAdditions.mm>)
-#import <WebKitAdditions/WebProcessProxyCocoaAdditions.mm>
-#else
-bool WebProcessProxy::shouldDisableJITCage() const
-{
-    return false;
-}
-#endif
 
 #if ENABLE(REMOTE_INSPECTOR)
 void WebProcessProxy::createServiceWorkerDebuggable(WebCore::ServiceWorkerIdentifier identifier, URL&& url, WebCore::ServiceWorkerIsInspectable isInspectable, CompletionHandler<void(bool shouldWaitForAutoInspection)>&& completionHandler)

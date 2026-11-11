@@ -1,0 +1,80 @@
+# a CommonJS file that a function requires has a start that begins in its body, and whoever requires it calls the start. One that only the body of its facade evaluates has no state: the facade calls its body
+# main.js: import one from "./file.cjs"; require("./answers.cjs"); function late() { require("./late.cjs") }  late();
+# RUN: plan module-starts units
+# CHECK: module-start m4 body=f4: AbandonOnThrow m4, CallBody f4
+# CHECK: bare-site f2 v0: CallBody f1
+# CHECK: module m1 called-where-required starts-itself evaluated-by-code-alone
+# CHECK: module m4 called-where-required starts-itself
+# CHECK: unit f1:GenericCallEntry -> f1:Body
+# CHECK: unit f3:GenericCallEntry -> f3:Body
+# CHECK: unit f4:GenericCallEntry -> f4:ModuleStart
+# RUN(WALK): walk f2 f5 f4 f0 mechanisms=none
+# WALK-LABEL: code f2:Body
+# WALK: CallDirect function=f1 [isNeverInlined]
+# WALK-LABEL: code f5:Body
+# WALK: CallDirect function=f4 {{*}}role=ModuleStart [isNeverInlined]
+# WALK-LABEL: code f4:Body
+# WALK: [[begins]]: boolean @Boolean = BeginModuleEvaluation module=m4
+# WALK: Branch [[begins]]
+# WALK: FinishModuleEvaluation module=m4
+# A start returns undefined. The loader is asked for a file whose body returns anything else
+# WALK-LABEL: code f0:Body
+# WALK: EvaluateRequiredModule module=m3 referrer=m0
+# RUN(FACADE): walk f2 mechanisms=none
+# FACADE-NOT: EvaluateRequiredModule
+# RUN(RUNS): run-in-shell mechanisms=none
+# RUNS: the file runs
+# RUNS-NEXT: the late file runs
+# RUNS-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: the file runs
+# ALL-NEXT: the late file runs
+# ALL-NEXT: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 completes=true}, {target=m3 kind=Require completes=true}, {target=m4 kind=Require completes=true}]
+module m1 path="/file.cjs" displayPath="file.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
+module m2 path="#2" displayPath="file.cjs" exportRule=CommonJs body=f2 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+module m3 path="/answers.cjs" displayPath="answers.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2
+module m4 path="/late.cjs" displayPath="late.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g3
+entry module=m0
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="default" module=m2 declared={type=anything}
+variable g2 name="exports" module=m3 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m4 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    EvaluateModule module=m3 referrer=m0
+    v1 = NewClosure function=f5
+    v2 = Call v1, - calleeName="late"
+    v3 = Call v1, - calleeName="late"
+    Return
+}
+function f1 name="file" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="the file runs"
+    v3 = Call v1, -, v2
+    v4 = NewDictionary
+    PutModuleVariable v4 variable=g0
+    Return
+}
+function f2 name="facadeOfFile" module=m1 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m2 [isBare]
+    Return
+}
+function f3 name="answers" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f4 name="lateFile" module=m4 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="the late file runs"
+    v3 = Call v1, -, v2
+    v4 = NewDictionary
+    PutModuleVariable v4 variable=g3
+    Return
+}
+function f5 name="late" results=[{type=anything}] {
+    EvaluateModule module=m4 referrer=m0 [isCallOfRequire]
+    Return
+}

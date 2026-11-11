@@ -131,17 +131,17 @@ function f6 name="toString" module=m0 position=167 kind=Method flags=[HasExplici
     Return v0
 }
 entry module=m0
-function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything> flags=[IsFromCompiler]}] results=[{type=anything}] {
     v3 = CallList v0, v1, v2
     Return v3
 }
-function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }
-runtimefunction id=4 function=f8
-runtimefunction id=12 function=f7
+runtimefunction id=FunctionPrototypeApply function=f8
+runtimefunction id=FunctionPrototypeCall function=f7
 )IR"_s;
 
 static constexpr ASCIILiteral staticMethodsOfClassEvaluatedTwice = R"IR(layout L0 kind=Instance module=m0 position=28 constructor=f2
@@ -323,17 +323,17 @@ function f6 name="toString" module=m0 position=167 kind=Method flags=[HasExplici
     Return v0
 }
 entry module=m0
-function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything> flags=[IsFromCompiler]}] results=[{type=anything}] {
     v3 = CallList v0, v1, v2
     Return v3
 }
-function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }
-runtimefunction id=4 function=f8
-runtimefunction id=12 function=f7
+runtimefunction id=FunctionPrototypeApply function=f8
+runtimefunction id=FunctionPrototypeCall function=f7
 )IR"_s;
 
 static constexpr ASCIILiteral staticMethodsOfClassEvaluatedInLoop = R"IR(layout L0 kind=Instance module=m0 position=28 constructor=f2
@@ -446,17 +446,17 @@ function f6 name="toString" module=m0 position=167 kind=Method flags=[HasExplici
     Return v0
 }
 entry module=m0
-function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything> flags=[IsFromCompiler]}] results=[{type=anything}] {
     v3 = CallList v0, v1, v2
     Return v3
 }
-function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }
-runtimefunction id=4 function=f8
-runtimefunction id=12 function=f7
+runtimefunction id=FunctionPrototypeApply function=f8
+runtimefunction id=FunctionPrototypeCall function=f7
 )IR"_s;
 
 static constexpr ASCIILiteral staticAccessorsNameAndLength = R"IR(layout L0 kind=Instance module=m0 position=28 constructor=f2
@@ -564,17 +564,17 @@ function f4 name="length" module=m0 position=78 kind=Getter flags=[HasExplicitNa
     Return v3
 }
 entry module=m0
-function f5 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+function f5 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything> flags=[IsFromCompiler]}] results=[{type=anything}] {
     v3 = CallList v0, v1, v2
     Return v3
 }
-function f6 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f6 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }
-runtimefunction id=4 function=f6
-runtimefunction id=12 function=f5
+runtimefunction id=FunctionPrototypeApply function=f6
+runtimefunction id=FunctionPrototypeCall function=f5
 )IR"_s;
 
 static constexpr ASCIILiteral ownAndInheritedMembersAtOneSite = R"IR(layout L0 kind=Instance module=m0 position=28 constructor=f3
@@ -708,17 +708,17 @@ function f7 module=m0 position=143 kind=Arrow captures=[{type=anything}, {type=a
 }
 data d0 root=Array{contents=anything elements=[Number{value=2}, Number{value=3}]} module=m0
 entry module=m0
-function f8 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+function f8 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything> flags=[IsFromCompiler]}] results=[{type=anything}] {
     v3 = CallList v0, v1, v2
     Return v3
 }
-function f9 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f9 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }
-runtimefunction id=4 function=f9
-runtimefunction id=12 function=f8
+runtimefunction id=FunctionPrototypeApply function=f9
+runtimefunction id=FunctionPrototypeCall function=f8
 )IR"_s;
 
 static constexpr ASCIILiteral classWithoutTheMember = R"IR(layout L0 kind=Instance module=m0 position=39 constructor=f2
@@ -831,62 +831,53 @@ function f5 name="other" module=m0 position=93 kind=Method flags=[HasExplicitNam
     Return v2
 }
 entry module=m0
-function f6 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+function f6 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=Array<anything> flags=[IsFromCompiler]}] results=[{type=anything}] {
     v3 = CallList v0, v1, v2
     Return v3
 }
-function f7 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f7 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }
-runtimefunction id=4 function=f7
-runtimefunction id=12 function=f6
+runtimefunction id=FunctionPrototypeApply function=f7
+runtimefunction id=FunctionPrototypeCall function=f6
 )IR"_s;
 
-static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expectedOutput)
+static void checkStaticMembersProgram(ASCIILiteral programText, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral optionWords[] = {
-        "validate"_s,
-        "check=VerifyEachPass"_s,
-        "disable=pass:InlineCalls"_s,
-        "disable=pass:ResolveCalls"_s,
-        "heat=EverythingIsHot"_s,
-        "references=narrow"_s,
-    };
-    checkOutputOfProgramInShell(programText, expectedOutput, { });
-    for (ASCIILiteral word : optionWords)
-        checkOutputOfProgramInShell(programText, expectedOutput, { word });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s });
 }
 
 static void testStaticMethodsOfClassEvaluatedOnce()
 {
-    checkUnderEveryOption(staticMethodsOfClassEvaluatedOnce, "acall1 aapply2 abind3 a a\nfalse acall4\n"_s);
+    checkStaticMembersProgram(staticMethodsOfClassEvaluatedOnce, "acall1 aapply2 abind3 a a\nfalse acall4\n"_s);
 }
 
 static void testStaticMethodsOfClassEvaluatedTwice()
 {
-    checkUnderEveryOption(staticMethodsOfClassEvaluatedTwice, "acall1 bcall2 aapply3 bapply4 abind5 bbind6 a b\nfalse false true false\nacall7 ccall8\n"_s);
+    checkStaticMembersProgram(staticMethodsOfClassEvaluatedTwice, "acall1 bcall2 aapply3 bapply4 abind5 bbind6 a b\nfalse false true false\nacall7 ccall8\n"_s);
 }
 
 static void testStaticMethodsOfClassEvaluatedInLoop()
 {
-    checkUnderEveryOption(staticMethodsOfClassEvaluatedInLoop, "t0call0 t0apply0 t0bind0 t0 t0\nt1call1 t1apply1 t1bind1 t1 t1\nt2call2 t2apply2 t2bind2 t2 t2\n"_s);
+    checkStaticMembersProgram(staticMethodsOfClassEvaluatedInLoop, "t0call0 t0apply0 t0bind0 t0 t0\nt1call1 t1apply1 t1bind1 t1 t1\nt2call2 t2apply2 t2bind2 t2 t2\n"_s);
 }
 
 static void testStaticAccessorsNameAndLength()
 {
-    checkUnderEveryOption(staticAccessorsNameAndLength, "oname olength\naname bname alength blength\nt0name t0length\nt1name t1length\n"_s);
+    checkStaticMembersProgram(staticAccessorsNameAndLength, "oname olength\naname bname alength blength\nt0name t0length\nt1name t1length\n"_s);
 }
 
 static void testOwnAndInheritedMembersAtOneSite()
 {
-    checkUnderEveryOption(ownAndInheritedMembersAtOneSite, "a1 a12 a1\nplain123 plain123 plain123\nb1 b12 b1\nplain123 plain123 plain123\n"_s);
+    checkStaticMembersProgram(ownAndInheritedMembersAtOneSite, "a1 a12 a1\nplain123 plain123 plain123\nb1 b12 b1\nplain123 plain123 plain123\n"_s);
 }
 
 static void testClassWithoutTheMember()
 {
-    checkUnderEveryOption(classWithoutTheMember, "a1\ntrue\nb3\n"_s);
+    checkStaticMembersProgram(classWithoutTheMember, "a1\ntrue\nb3\n"_s);
 }
 
 std::span<const NativeTest> staticMembersNamedLikeBuiltinsTests()

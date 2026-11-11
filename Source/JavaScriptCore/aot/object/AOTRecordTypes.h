@@ -32,9 +32,6 @@ using Typed::ExternalKind;
 using Typed::GeneratorStepCheck;
 using Typed::GeneratorStepStatus;
 using Typed::ImportPhase;
-using Typed::JSONMemberSearch;
-using Typed::JSONOutcome;
-using Typed::JSONPosition;
 using Typed::LayoutKind;
 using Typed::MethodKind;
 using Typed::ModuleExportKind;
@@ -57,7 +54,6 @@ using Typed::TypeSiteKind;
 template<typename T>
 inline constexpr bool isImageRecord = std::is_trivially_copyable_v<T> && std::is_standard_layout_v<T> && std::has_unique_object_representations_v<T>;
 
-// A number under 2^24 in a table of the image.
 struct Number24 {
     static constexpr uint32_t max = (1u << 24) - 1;
 
@@ -75,6 +71,20 @@ struct Number24 {
 static_assert(sizeof(Number24) == 3 && alignof(Number24) == 1 && isImageRecord<Number24>);
 static_assert(Number24(0xabcdef) == 0xabcdefu && Number24(Number24::max) == Number24::max && !Number24());
 
+struct Number32 {
+    constexpr Number32() = default;
+    explicit constexpr Number32(uint32_t number)
+        : bytes { static_cast<uint8_t>(number), static_cast<uint8_t>(number >> 8), static_cast<uint8_t>(number >> 16), static_cast<uint8_t>(number >> 24) }
+    {
+    }
+
+    constexpr operator uint32_t() const { return bytes[0] | bytes[1] << 8 | bytes[2] << 16 | static_cast<uint32_t>(bytes[3]) << 24; }
+
+    uint8_t bytes[4] { };
+};
+static_assert(sizeof(Number32) == 4 && alignof(Number32) == 1 && isImageRecord<Number32>);
+static_assert(Number32(0x89abcdef) == 0x89abcdefu && !Number32());
+
 static_assert(sizeof(FunctionID) == sizeof(uint32_t));
 static_assert(sizeof(StringID) == sizeof(uint32_t));
 static_assert(sizeof(ModuleID) == sizeof(uint32_t));
@@ -83,7 +93,7 @@ static_assert(sizeof(SlotRepresentation) == sizeof(uint8_t));
 static_assert(sizeof(MethodKind) == sizeof(uint8_t));
 static_assert(sizeof(CellTestKind) == sizeof(uint8_t));
 static_assert(sizeof(PrimitiveSet) == sizeof(uint16_t));
-static_assert(sizeof(ObjectMutation) == sizeof(uint16_t));
+static_assert(sizeof(ObjectMutation) == sizeof(uint8_t));
 static_assert(EvaluationState { } == EvaluationState::SeenTwice);
 
 } } // namespace JSC::AOT

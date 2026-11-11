@@ -8,12 +8,15 @@
 
 #if ENABLE(AOT)
 
-#include "AOTEdgeResults.h"
+#include "AOTCode.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstdlib>
 #include <limits>
+#include <mutex>
 #include <wtf/CheckedArithmetic.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -22,68 +25,243 @@ namespace {
 
 enum class NegativeZero : uint8_t { Impossible, Possible };
 
-using OperandTypes = std::span<const Type* const>;
+struct NaturalOperand {
+    uint16_t primitives { 0 };
+    Range integers;
+    bool isMadeOfPrimitives { true };
+    Range boundsOfFractions;
+
+    bool hasOnlyPrimitives(uint16_t allowed) const { return isMadeOfPrimitives && !(primitives & ~allowed); }
+    bool isNever() const { return isMadeOfPrimitives && !primitives; }
+    bool isInteger() const { return !isNever() && hasOnlyPrimitives(Primitive::Integer); }
+    bool isInt32() const { return isInteger() && integers.isSubsetOf(Range::int32()); }
+    bool isBoolean() const { return !isNever() && hasOnlyPrimitives(Primitive::Boolean); }
+    bool becomesNumberWithoutFraction() const { return !isNever() && hasOnlyPrimitives(Primitive::NumberLike & ~Primitive::FractionalNumber); }
+    bool isNumberWithinBounds() const
+    {
+        bool holdsFractionsWithoutBounds = primitives & Primitive::FractionalNumber && boundsOfFractions.isEmpty();
+        return !isNever() && hasOnlyPrimitives(Primitive::Integer | Primitive::FractionalNumber) && !holdsFractionsWithoutBounds;
+    }
+    Range boundsOfNumbers() const { return integers.unionWith(boundsOfFractions); }
+};
+
+using NaturalOperands = std::span<const NaturalOperand>;
 
 constexpr OpcodeSet fractionFreeOperators {
     Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Mod, Opcode::Negate, Opcode::Increment, Opcode::Decrement, Opcode::ToNumber, Opcode::ToNumeric
 };
 
+constexpr OpcodeSet shiftOperators { Opcode::LShift, Opcode::RShift, Opcode::URShift };
+
+struct NaturalPrimitives {
+    uint16_t primitives { 0 };
+    Range integers;
+};
+
 } // anonymous namespace
 
-Type naturalTypeFrom(const NaturalType& natural)
+static NaturalPrimitives primitivesOf(const NaturalType& natural)
 {
-    Type type = Type::fromPrimitives(fromWire(natural.primitives));
+    NaturalPrimitives written;
+    written.primitives = fromWire(natural.primitives);
+    if (written.primitives & Primitive::Integer)
+        written.integers = Range::full();
     if (natural.integers) {
-        type.primitives |= Primitive::Integer;
-        type.integers = type.integers.unionWith({ natural.integers->minimum, natural.integers->maximum });
+        written.primitives |= Primitive::Integer;
+        written.integers = written.integers.unionWith({ natural.integers->minimum, natural.integers->maximum });
     }
-    type.anyObject = natural.isObject;
-    type.anyFunction = natural.isObject || natural.isFunction;
-    type.opaque = natural.opaque;
-    if (natural.builtinClass)
-        type.classes = Type::builtinClass(natural.builtinClass).classes;
-    type.canonicalize();
-    return type;
+    return written;
 }
 
-static OperandClass classOf(const Type& type)
+static TypeParts primitivePartsOf(const NaturalType& natural)
 {
-    if (type.isNever() || type.isNumberLike())
+    NaturalPrimitives written = primitivesOf(natural);
+    TypeParts parts;
+    parts.primitives = written.primitives;
+    parts.integers = written.integers;
+    return parts;
+}
+
+static bool describesPrimitivesAlone(const NaturalType& natural)
+{
+    return !natural.isObject && !natural.isFunction && !natural.opaque && !natural.builtinClass;
+}
+
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID naturalTypeFrom(TypeArena& types, const NaturalType& natural)
+{
+    if (describesPrimitivesAlone(natural)) {
+        NaturalPrimitives written = primitivesOf(natural);
+        if (std::optional<TypeID> type = tryMakeTypeOfPrimitives(written.primitives, written.integers))
+            return *type;
+    }
+    TypeParts parts = primitivePartsOf(natural);
+    parts.anyObject = natural.isObject;
+    parts.anyFunction = natural.isObject || natural.isFunction;
+    if (parts.anyFunction)
+        parts.seeds.add(UnknownSeed::ObjectWithoutLayout);
+    parts.opaque = natural.opaque;
+    if (natural.builtinClass)
+        parts.unnamedClasses = TypeArena::partsOf(natural.builtinClass);
+    return types.intern(parts);
+}
+
+static TypeID widestTypeOfPrimitivesIn(const NaturalType& natural)
+{
+    if (!describesPrimitivesAlone(natural))
+        return { };
+    TypeParts parts = primitivePartsOf(natural);
+    RELEASE_ASSERT(!(parts.primitives & primitivesWithLists));
+    if (!parts.primitives)
+        return { };
+    if (std::optional<TypeID> type = tryMakeTypeOfPrimitives(parts.primitives, parts.integers))
+        return *type;
+    std::optional<TypeID> widened = tryMakeTypeOfPrimitives(parts.primitives, { widenedMinimum(parts.integers.minimum), widenedMaximum(parts.integers.maximum) });
+    RELEASE_ASSERT(widened);
+    return *widened;
+}
+
+namespace {
+
+struct WidestPrimitiveResultRules {
+    using Result = TypeID;
+
+    Result natural(const Draft&, const NaturalType& written) { return widestTypeOfPrimitivesIn(written); }
+    Result natural(const Draft&, NaturalTable table)
+    {
+        Vector<OperandClass, 2> classes;
+        classes.fill(OperandClass::Any, numberOfOperandsOf(table));
+        return widestTypeOfPrimitivesIn(naturalTypeOf(table, classes.span()));
+    }
+    Result none(auto&&...) { return { }; }
+    Result constant(auto&&...) { return { }; }
+    Result sameAs(auto&&...) { return { }; }
+    Result allocation(auto&&...) { return { }; }
+    Result declared(auto&&...) { return { }; }
+    Result declaredContents(auto&&...) { return { }; }
+    Result declaredResult(auto&&...) { return { }; }
+    Result declaredParameter(auto&&...) { return { }; }
+    Result unknown(auto&&...) { return { }; }
+    Result cast(auto&&...) { return { }; }
+    Result resultOperand(auto&&...) { return { }; }
+};
+
+} // anonymous namespace
+
+static TypeID widestPrimitiveResultByRuleOf(Opcode opcode)
+{
+    if (resultRuleOf(opcode) != ResultRule::Natural)
+        return { };
+    std::optional<Opcode> generic = genericOperationOf(opcode);
+    if (generic && resultRuleOf(*generic) == ResultRule::Unknown)
+        return { };
+    WidestPrimitiveResultRules rules;
+    return applyResultRule(rules, Draft(opcode), 0, ResultSide::Unproven);
+}
+
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID widestPrimitiveResultOf(Opcode opcode)
+{
+    static const std::array<TypeID, numberOfEnumerators<Opcode>> results = [] {
+        std::array<TypeID, numberOfEnumerators<Opcode>> byRule;
+        for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index)
+            byRule[index] = widestPrimitiveResultByRuleOf(static_cast<Opcode>(index));
+        return byRule;
+    }();
+    return results[static_cast<unsigned>(opcode)];
+}
+
+namespace {
+
+struct WidestPrimitiveResultRulesWithArena : WidestPrimitiveResultRules {
+    explicit WidestPrimitiveResultRulesWithArena(TypeArena& types)
+        : types(types)
+    {
+    }
+
+    Result natural(const Draft&, const NaturalType& written)
+    {
+        if (!describesPrimitivesAlone(written) || !primitivePartsOf(written).primitives)
+            return { };
+        return naturalTypeFrom(types, written);
+    }
+    Result natural(const Draft& draft, NaturalTable table) { return WidestPrimitiveResultRules::natural(draft, table); }
+
+    TypeArena& types;
+};
+
+} // anonymous namespace
+
+TypeID widestPrimitiveResultOf(TypeArena& types, Opcode producer, uint32_t resultIndex)
+{
+    if (resultRuleOf(producer) != ResultRule::Results)
+        return { };
+    std::optional<uint32_t> numberOfResults = numberOfDeclaredResultsOf(producer);
+    if (!numberOfResults || resultIndex >= *numberOfResults)
+        return { };
+    WidestPrimitiveResultRulesWithArena rules(types);
+    return applyResultRule(rules, Draft(producer), resultIndex, ResultSide::Unproven);
+}
+
+static ALWAYS_INLINE NaturalOperand naturalOperandOf(const TypeArena& types, TypeID id)
+{
+    RELEASE_ASSERT(id);
+    if (holdsOnlyPrimitives(id))
+        return { primitivesInID(id), integersInID(id), true, Range::empty() };
+    const Type& type = types.recordOf(id);
+    return { type.primitives, type.integers, !type.hasObjects() && type.isJavaScriptValue(), type.boundsOfFractions };
+}
+
+static ALWAYS_INLINE Vector<NaturalOperand, 2> naturalOperandsOf(const TypeArena& types, OperandTypes operandTypes, uint32_t numberOfOperands)
+{
+    RELEASE_ASSERT(numberOfOperands <= operandTypes.size());
+    return Vector<NaturalOperand, 2>(numberOfOperands, [&](size_t index) {
+        return naturalOperandOf(types, operandTypes.types[index]);
+    });
+}
+
+static OperandClass classOf(const NaturalOperand& operand)
+{
+    if (operand.hasOnlyPrimitives(Primitive::NumberLike))
         return OperandClass::NumberLike;
-    if (type.hasOnlyPrimitives(Primitive::BigInt))
+    if (operand.hasOnlyPrimitives(Primitive::BigInt))
         return OperandClass::BigInt;
-    if (type.isAnyString())
+    if (operand.hasOnlyPrimitives(Primitive::AnyString))
         return OperandClass::String;
     return OperandClass::Any;
 }
 
-static Vector<const Type*, 2> operandTypesOf(const TypingContext& context, const Value& value, uint32_t numberOfOperands)
+static ALWAYS_INLINE bool hasNever(NaturalOperands operands)
 {
-    Vector<const Type*, 2> types;
-    for (uint32_t index = 0; index < numberOfOperands; ++index)
-        types.append(&context.typeOf(value.operand(index)));
-    return types;
+    for (const NaturalOperand& operand : operands) {
+        if (operand.isNever())
+            return true;
+    }
+    return false;
 }
 
-static bool hasNever(OperandTypes operands)
+static TypeID naturalTypeOfIntegers(TypeArena& types, Range integers, uint16_t otherPrimitives = 0)
 {
-    return std::ranges::any_of(operands, [](const Type* type) {
-        return type->isNever();
-    });
+    TypeParts parts;
+    parts.primitives = otherPrimitives;
+    if (!integers.isEmpty()) {
+        parts.primitives |= Primitive::Integer;
+        parts.integers = integers;
+    }
+    if (std::optional<TypeID> type = tryMakeTypeOfPrimitives(parts.primitives, parts.integers))
+        return *type;
+    return types.intern(parts);
 }
 
-static Type exactIntegerType(CheckedInt64 minimum, CheckedInt64 maximum, NegativeZero negativeZero = NegativeZero::Impossible)
+static TypeID exactIntegerType(TypeArena& types, CheckedInt64 minimum, CheckedInt64 maximum, NegativeZero negativeZero = NegativeZero::Impossible)
 {
     if (minimum.hasOverflowed() || maximum.hasOverflowed())
-        return Type::fromPrimitives(Primitive::NumberWithoutFraction);
+        return TypeArena::fromPrimitives(Primitive::NumberWithoutFraction);
     Range range { minimum.value(), maximum.value() };
     if (!range.isSubsetOf(Range::exact()))
-        return Type::fromPrimitives(Primitive::NumberWithoutFraction);
-    Type type = Type::integer(range);
-    return negativeZero == NegativeZero::Possible ? type.withPrimitives(Primitive::WholeNumber) : type;
+        return TypeArena::fromPrimitives(Primitive::NumberWithoutFraction);
+    return naturalTypeOfIntegers(types, range, negativeZero == NegativeZero::Possible ? Primitive::WholeNumber : 0);
 }
 
-static Type integerProductType(Range a, Range b)
+static TypeID integerProductType(TypeArena& types, Range a, Range b)
 {
     int64_t minimum = std::numeric_limits<int64_t>::max();
     int64_t maximum = std::numeric_limits<int64_t>::min();
@@ -91,435 +269,435 @@ static Type integerProductType(Range a, Range b)
         for (int64_t right : { b.minimum, b.maximum }) {
             CheckedInt64 product = CheckedInt64(left) * right;
             if (product.hasOverflowed())
-                return Type::fromPrimitives(Primitive::NumberWithoutFraction);
+                return TypeArena::fromPrimitives(Primitive::NumberWithoutFraction);
             minimum = std::min(minimum, product.value());
             maximum = std::max(maximum, product.value());
         }
     }
     bool mayBeNegativeZero = (a.minimum < 0 && b.contains(0)) || (b.minimum < 0 && a.contains(0));
-    return exactIntegerType(minimum, maximum, mayBeNegativeZero ? NegativeZero::Possible : NegativeZero::Impossible);
+    return exactIntegerType(types, minimum, maximum, mayBeNegativeZero ? NegativeZero::Possible : NegativeZero::Impossible);
 }
 
-static Type integerRemainderType(Range dividends, Range divisors)
+static Range integerRemaindersOf(Range dividends, Range divisors)
 {
     int64_t largestDivisor = std::max(std::abs(divisors.minimum), std::abs(divisors.maximum));
-    Range remainders {
+    return {
         std::max(std::min<int64_t>(dividends.minimum, 0), -(largestDivisor - 1)),
         std::min(std::max<int64_t>(dividends.maximum, 0), largestDivisor - 1)
     };
-    bool mayBeNegativeZero = dividends.minimum < 0;
-    bool mayBeNaN = divisors.contains(0);
-    Type type = Type::integer(remainders);
-    return mayBeNegativeZero || mayBeNaN ? type.withPrimitives(Primitive::WholeNumber) : type;
 }
 
-static std::optional<Type> integerQuotientType(Range dividends, Range divisors, QuotientRounding rounding)
+static TypeID integerRemainderType(TypeArena& types, Range dividends, Range divisors)
+{
+    bool mayBeNegativeZero = dividends.minimum < 0;
+    bool mayBeNaN = divisors.contains(0);
+    return naturalTypeOfIntegers(types, integerRemaindersOf(dividends, divisors), mayBeNegativeZero || mayBeNaN ? Primitive::WholeNumber : 0);
+}
+
+TypeID wholeRemainderType(TypeArena& types, Range dividends, Range divisors)
+{
+    Range remainders = integerRemaindersOf(dividends, divisors);
+    return naturalTypeOfIntegers(types, remainders.isEmpty() ? Range::one(0) : remainders);
+}
+
+static int64_t floorOfIntegerQuotient(int64_t dividend, int64_t divisor)
+{
+    int64_t quotient = dividend / divisor;
+    bool isRoundedUp = dividend % divisor && (dividend < 0) != (divisor < 0);
+    return isRoundedUp ? quotient - 1 : quotient;
+}
+
+Range quotientsRoundedEitherWay(Range dividends, Range divisors)
+{
+    RELEASE_ASSERT(!dividends.isEmpty() && !divisors.isEmpty() && !divisors.contains(0));
+    Range quotients = Range::empty();
+    for (int64_t dividend : { dividends.minimum, dividends.maximum }) {
+        for (int64_t divisor : { divisors.minimum, divisors.maximum })
+            quotients = quotients.unionWith({ floorOfIntegerQuotient(dividend, divisor), -floorOfIntegerQuotient(-dividend, divisor) });
+    }
+    return quotients;
+}
+
+static Range quotientsConvertedToInt32WhereDivisorMayBeZero(Range dividends, Range divisors)
+{
+    int64_t magnitude = std::max(std::abs(dividends.minimum), std::abs(dividends.maximum));
+    return { dividends.minimum >= 0 && divisors.minimum >= 0 ? 0 : -magnitude, magnitude };
+}
+
+TypeID integerQuotientType(TypeArena& types, Range dividends, Range divisors, QuotientRounding rounding)
 {
     bool convertsToInt32 = rounding == QuotientRounding::ToInt32;
     if (divisors.contains(0) && !convertsToInt32)
-        return std::nullopt;
-    int64_t magnitude = std::max(std::abs(dividends.minimum), std::abs(dividends.maximum));
-    Range quotients { dividends.minimum >= 0 && divisors.minimum > 0 ? 0 : -magnitude, magnitude };
+        return { };
+    Range quotients = divisors.contains(0) ? quotientsConvertedToInt32WhereDivisorMayBeZero(dividends, divisors) : quotientsRoundedEitherWay(dividends, divisors);
     if (convertsToInt32 && !quotients.isSubsetOf(Range::int32()))
-        return Type::integer(Range::int32());
+        return TypeTable::int32;
     if (!quotients.isSubsetOf(Range::exact()))
-        return std::nullopt;
-    return Type::integer(quotients);
+        return { };
+    return naturalTypeOfIntegers(types, quotients);
 }
 
-static std::optional<Type> bitwiseResultType(Opcode opcode, Range a, Range b)
+static TypeID bitwiseResultType(TypeArena& types, Opcode opcode, Range a, Range b)
 {
     if (!a.isSubsetOf(Range::int32()) || !b.isSubsetOf(Range::int32()))
-        return std::nullopt;
+        return { };
     switch (opcode) {
     case Opcode::BitAnd:
         if (a.minimum >= 0 && b.minimum >= 0)
-            return Type::integer({ 0, std::min(a.maximum, b.maximum) });
+            return naturalTypeOfIntegers(types, { 0, std::min(a.maximum, b.maximum) });
         if (a.minimum >= 0)
-            return Type::integer({ 0, a.maximum });
+            return naturalTypeOfIntegers(types, { 0, a.maximum });
         if (b.minimum >= 0)
-            return Type::integer({ 0, b.maximum });
-        return Type::integer(Range::int32());
+            return naturalTypeOfIntegers(types, { 0, b.maximum });
+        return TypeTable::int32;
     case Opcode::BitOr:
     case Opcode::BitXor: {
         bool mayBeNegative = a.minimum < 0 || b.minimum < 0;
         if (mayBeNegative && opcode == Opcode::BitXor)
-            return Type::integer(Range::int32());
+            return TypeTable::int32;
         if (a.maximum < 0 || b.maximum < 0)
-            return Type::integer({ std::min(a.minimum, b.minimum), -1 });
-        return Type::integer({ mayBeNegative ? std::min(a.minimum, b.minimum) : 0, (int64_t { 1 } << std::bit_width(static_cast<uint64_t>(std::max(a.maximum, b.maximum)))) - 1 });
-    }
-    case Opcode::LShift:
-        return Type::integer(Range::int32());
-    case Opcode::RShift: {
-        if (b.minimum != b.maximum)
-            return Type::integer({ std::min<int64_t>(a.minimum, 0), std::max<int64_t>(a.maximum, -1) });
-        int64_t shift = b.minimum & 31;
-        return Type::integer({ a.minimum >> shift, a.maximum >> shift });
-    }
-    case Opcode::URShift: {
-        int64_t shift = b.isSingleValue() ? b.minimum & 31 : 0;
-        return Type::integer({ 0, (a.minimum >= 0 ? a.maximum : Range::uint32().maximum) >> shift });
+            return naturalTypeOfIntegers(types, { std::min(a.minimum, b.minimum), -1 });
+        return naturalTypeOfIntegers(types, { mayBeNegative ? std::min(a.minimum, b.minimum) : 0, (int64_t { 1 } << std::bit_width(static_cast<uint64_t>(std::max(a.maximum, b.maximum)))) - 1 });
     }
     default:
-        return std::nullopt;
+        return { };
     }
 }
 
-static std::optional<Type> bitwiseResultBoundedByOneOperand(Opcode opcode, OperandTypes operands)
+static Range shiftCountsOf(const NaturalOperand& count)
+{
+    constexpr Range everyCount { 0, 31 };
+    if (!count.isInteger() || count.integers.maximum - count.integers.minimum >= everyCount.maximum)
+        return everyCount;
+    Range counts { count.integers.minimum & everyCount.maximum, count.integers.maximum & everyCount.maximum };
+    return counts.minimum <= counts.maximum ? counts : everyCount;
+}
+
+static Range rangeAsInt32(const NaturalOperand& operand)
+{
+    return operand.isInt32() ? operand.integers : Range::int32();
+}
+
+static Range rangeAsUint32(const NaturalOperand& operand)
+{
+    constexpr int64_t modulus = Range::uint32().maximum + 1;
+    if (!operand.isInteger())
+        return Range::uint32();
+    if (operand.integers.isSubsetOf(Range::uint32()))
+        return operand.integers;
+    if (operand.integers.isSubsetOf({ -modulus, -1 }))
+        return { operand.integers.minimum + modulus, operand.integers.maximum + modulus };
+    return Range::uint32();
+}
+
+static TypeID shiftResultType(TypeArena& types, Opcode opcode, const NaturalOperand& shifted, const NaturalOperand& count)
+{
+    Range counts = shiftCountsOf(count);
+    switch (opcode) {
+    case Opcode::URShift: {
+        Range bits = rangeAsUint32(shifted);
+        return naturalTypeOfIntegers(types, { bits.minimum >> counts.maximum, bits.maximum >> counts.minimum });
+    }
+    case Opcode::RShift: {
+        Range bits = rangeAsInt32(shifted);
+        return naturalTypeOfIntegers(types, { bits.minimum >> (bits.minimum < 0 ? counts.minimum : counts.maximum), bits.maximum >> (bits.maximum < 0 ? counts.maximum : counts.minimum) });
+    }
+    case Opcode::LShift: {
+        Range bits = rangeAsInt32(shifted);
+        Range products {
+            bits.minimum * (int64_t { 1 } << (bits.minimum < 0 ? counts.maximum : counts.minimum)),
+            bits.maximum * (int64_t { 1 } << (bits.maximum < 0 ? counts.minimum : counts.maximum))
+        };
+        return products.isSubsetOf(Range::int32()) ? naturalTypeOfIntegers(types, products) : TypeTable::int32;
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+static TypeID bitwiseResultBoundedByOneOperand(TypeArena& types, Opcode opcode, NaturalOperands operands)
 {
     switch (opcode) {
     case Opcode::BitAnd: {
         std::optional<int64_t> largest;
-        for (const Type* operand : operands) {
-            if (operand->isInteger() && operand->integers.isSubsetOf(Range::length()))
-                largest = std::min(largest.value_or(operand->integers.maximum), operand->integers.maximum);
+        for (const NaturalOperand& operand : operands) {
+            if (operand.isInteger() && operand.integers.isSubsetOf(Range::length()))
+                largest = std::min(largest.value_or(operand.integers.maximum), operand.integers.maximum);
         }
         if (!largest)
-            return std::nullopt;
-        return Type::integer({ 0, *largest });
-    }
-    case Opcode::URShift: {
-        const Type& count = *operands[1];
-        if (!count.isInteger() || !count.integers.isSingleValue())
-            return std::nullopt;
-        return Type::integer({ 0, Range::uint32().maximum >> (count.integers.minimum & 31) });
+            return { };
+        return naturalTypeOfIntegers(types, { 0, *largest });
     }
     default:
-        return std::nullopt;
+        return { };
     }
 }
 
-static std::optional<Type> unaryIntegerResult(Opcode opcode, Range a)
+static TypeID unaryIntegerResult(TypeArena& types, Opcode opcode, Range a)
 {
     switch (opcode) {
     case Opcode::ToNumber:
     case Opcode::ToNumeric:
-        return Type::integer(a);
+        return naturalTypeOfIntegers(types, a);
     case Opcode::Increment:
-        return exactIntegerType(CheckedInt64(a.minimum) + 1, CheckedInt64(a.maximum) + 1);
+        return exactIntegerType(types, CheckedInt64(a.minimum) + 1, CheckedInt64(a.maximum) + 1);
     case Opcode::Decrement:
-        return exactIntegerType(CheckedInt64(a.minimum) - 1, CheckedInt64(a.maximum) - 1);
+        return exactIntegerType(types, CheckedInt64(a.minimum) - 1, CheckedInt64(a.maximum) - 1);
     case Opcode::Negate:
-        return exactIntegerType(-a.maximum, -a.minimum, a.contains(0) ? NegativeZero::Possible : NegativeZero::Impossible);
+        return exactIntegerType(types, -a.maximum, -a.minimum, a.contains(0) ? NegativeZero::Possible : NegativeZero::Impossible);
     case Opcode::BitNot:
         if (!a.isSubsetOf(Range::int32()))
-            return std::nullopt;
-        return Type::integer({ -a.maximum - 1, -a.minimum - 1 });
+            return { };
+        return naturalTypeOfIntegers(types, { -a.maximum - 1, -a.minimum - 1 });
     default:
-        return std::nullopt;
+        return { };
     }
 }
 
-static std::optional<Type> binaryIntegerResult(Opcode opcode, Range a, Range b)
+static TypeID binaryIntegerResult(TypeArena& types, Opcode opcode, Range a, Range b)
 {
     switch (opcode) {
     case Opcode::Add:
-        return exactIntegerType(CheckedInt64(a.minimum) + b.minimum, CheckedInt64(a.maximum) + b.maximum);
+        return exactIntegerType(types, CheckedInt64(a.minimum) + b.minimum, CheckedInt64(a.maximum) + b.maximum);
     case Opcode::Sub:
-        return exactIntegerType(CheckedInt64(a.minimum) - b.maximum, CheckedInt64(a.maximum) - b.minimum);
+        return exactIntegerType(types, CheckedInt64(a.minimum) - b.maximum, CheckedInt64(a.maximum) - b.minimum);
     case Opcode::Mul:
-        return integerProductType(a, b);
+        return integerProductType(types, a, b);
     case Opcode::Mod:
-        return integerRemainderType(a, b);
+        return integerRemainderType(types, a, b);
     case Opcode::BitAnd:
     case Opcode::BitOr:
     case Opcode::BitXor:
-    case Opcode::LShift:
-    case Opcode::RShift:
-    case Opcode::URShift:
-        return bitwiseResultType(opcode, a, b);
+        return bitwiseResultType(types, opcode, a, b);
     default:
-        return std::nullopt;
+        return { };
     }
 }
 
-static std::optional<Type> integerResultOf(Opcode opcode, OperandTypes operands)
+static TypeID integerResultOf(TypeArena& types, Opcode opcode, NaturalOperands operands)
 {
     if (operands.size() == 1)
-        return unaryIntegerResult(opcode, operands[0]->integers);
+        return unaryIntegerResult(types, opcode, operands[0].integers);
     if (operands.size() == 2)
-        return binaryIntegerResult(opcode, operands[0]->integers, operands[1]->integers);
-    return std::nullopt;
+        return binaryIntegerResult(types, opcode, operands[0].integers, operands[1].integers);
+    return { };
 }
 
-static std::optional<Type> numberResultOf(Opcode opcode, OperandTypes operands)
+static TypeID numbersWithinExactBounds(TypeArena& types, CheckedInt64 minimum, CheckedInt64 maximum)
 {
-    // false is 0 and true is 1.
-    if ((opcode == Opcode::ToNumber || opcode == Opcode::ToNumeric) && operands[0]->isBoolean())
-        return Type::integer({ operands[0]->primitives & Primitive::False ? 0 : 1, operands[0]->primitives & Primitive::True ? 1 : 0 });
-    bool areAllIntegers = std::ranges::all_of(operands, [](const Type* type) {
-        return type->isInteger();
-    });
-    if (areAllIntegers) {
-        if (std::optional<Type> result = integerResultOf(opcode, operands))
+    if (minimum.hasOverflowed() || maximum.hasOverflowed())
+        return { };
+    Range bounds { minimum.value(), maximum.value() };
+    if (!bounds.isSubsetOf(Range::exact()))
+        return { };
+    return types.numbersWithin(bounds);
+}
+
+static TypeID quotientOfIntegersWithinBounds(TypeArena& types, const NaturalOperand& dividend, const NaturalOperand& divisor)
+{
+    if (!dividend.isInteger() || !divisor.isInteger())
+        return { };
+    Range dividends = dividend.integers;
+    Range divisors = divisor.integers;
+    if (divisors.contains(0) || (dividends.contains(0) && divisors.maximum < 0))
+        return { };
+    if (!dividends.isSubsetOf(Range::exact()) || !divisors.isSubsetOf(Range::exact()))
+        return { };
+    return types.numbersWithin(quotientsRoundedEitherWay(dividends, divisors));
+}
+
+static TypeID numberResultWithinBounds(TypeArena& types, Opcode opcode, NaturalOperands operands)
+{
+    Range a = operands[0].boundsOfNumbers();
+    switch (opcode) {
+    case Opcode::Div:
+        return quotientOfIntegersWithinBounds(types, operands[0], operands[1]);
+    case Opcode::Add: {
+        Range b = operands[1].boundsOfNumbers();
+        return numbersWithinExactBounds(types, CheckedInt64(a.minimum) + b.minimum, CheckedInt64(a.maximum) + b.maximum);
+    }
+    case Opcode::Sub: {
+        Range b = operands[1].boundsOfNumbers();
+        return numbersWithinExactBounds(types, CheckedInt64(a.minimum) - b.maximum, CheckedInt64(a.maximum) - b.minimum);
+    }
+    case Opcode::Increment:
+        return numbersWithinExactBounds(types, CheckedInt64(a.minimum) + 1, CheckedInt64(a.maximum) + 1);
+    case Opcode::Decrement:
+        return numbersWithinExactBounds(types, CheckedInt64(a.minimum) - 1, CheckedInt64(a.maximum) - 1);
+    case Opcode::Negate:
+        if (a.contains(0))
+            return { };
+        return types.numbersWithin({ -a.maximum, -a.minimum });
+    case Opcode::ToNumber:
+    case Opcode::ToNumeric:
+        return types.numbersWithin(a);
+    default:
+        return { };
+    }
+}
+
+static bool isIntegerOrNullish(const NaturalOperand& operand)
+{
+    return operand.isMadeOfPrimitives && operand.primitives & Primitive::UndefinedOrNull && operand.hasOnlyPrimitives(Primitive::Integer | Primitive::UndefinedOrNull);
+}
+
+static TypeID numberResultOf(TypeArena& types, Opcode opcode, NaturalOperands operands)
+{
+    if (allBitwiseOperators.contains(opcode) && std::ranges::any_of(operands, isIntegerOrNullish)) {
+        Vector<NaturalOperand, 2> converted;
+        for (const NaturalOperand& operand : operands) {
+            converted.append(operand);
+            if (!isIntegerOrNullish(operand))
+                continue;
+            converted.last().primitives = Primitive::Integer;
+            converted.last().integers = operand.integers.unionWith(Range::one(0));
+        }
+        return numberResultOf(types, opcode, converted.span());
+    }
+    if ((opcode == Opcode::ToNumber || opcode == Opcode::ToNumeric) && operands[0].isBoolean())
+        return naturalTypeOfIntegers(types, { operands[0].primitives & Primitive::False ? 0 : 1, operands[0].primitives & Primitive::True ? 1 : 0 });
+    if (shiftOperators.contains(opcode))
+        return shiftResultType(types, opcode, operands[0], operands[1]);
+    if (std::ranges::all_of(operands, &NaturalOperand::isInteger)) {
+        if (TypeID result = integerResultOf(types, opcode, operands))
+            return result;
+    }
+    if (std::ranges::all_of(operands, &NaturalOperand::isNumberWithinBounds)) {
+        if (TypeID result = numberResultWithinBounds(types, opcode, operands))
             return result;
     }
     if (!fractionFreeOperators.contains(opcode))
-        return bitwiseResultBoundedByOneOperand(opcode, operands);
-    bool areAllWithoutFraction = std::ranges::all_of(operands, [](const Type* type) {
-        return type->isNumberWithoutFraction();
-    });
-    if (areAllWithoutFraction)
-        return Type::fromPrimitives(Primitive::NumberWithoutFraction);
-    return std::nullopt;
+        return bitwiseResultBoundedByOneOperand(types, opcode, operands);
+    if (std::ranges::all_of(operands, &NaturalOperand::becomesNumberWithoutFraction))
+        return TypeArena::fromPrimitives(Primitive::NumberWithoutFraction);
+    return { };
 }
 
-static Type naturalTypeOfOperands(const TypingContext& context, Opcode opcode, NaturalTable table, OperandTypes operands)
+TypeID numberResultOf(TypeArena& types, Opcode opcode, OperandTypes operandTypes)
 {
-    RELEASE_ASSERT(operands.size() == numberOfOperandsOf(table));
-    if (hasNever(operands))
-        return Type::never();
+    Vector<NaturalOperand, 2> operands = naturalOperandsOf(types, operandTypes, numberOfNamedOperandsOf(opcode));
+    if (hasNever(operands.span()))
+        return TypeTable::never;
+    return numberResultOf(types, opcode, operands.span());
+}
+
+ALWAYS_INLINE_INTO_OTHER_FILES TypeID typeAfterStepOfOne(TypeArena& types, Opcode opcode, std::span<const TypeID> operandTypes)
+{
+    auto stepIn = [](TypeID type) -> int64_t {
+        if (!isIntegerType(type))
+            return 0;
+        Range integers = integersInID(type);
+        bool isStep = integers.isSingleValue() && std::abs(integers.minimum) == 1;
+        return isStep ? integers.minimum : 0;
+    };
+    TypeID stepped = operandTypes[0];
+    int64_t step = 0;
+    if (opcode == Opcode::Increment)
+        step = 1;
+    if (opcode == Opcode::Decrement)
+        step = -1;
+    if (opcode == Opcode::Sub)
+        step = -stepIn(operandTypes[1]);
+    if (opcode == Opcode::Add) {
+        step = stepIn(operandTypes[1]);
+        if (!step) {
+            step = stepIn(operandTypes[0]);
+            stepped = operandTypes[1];
+        }
+    }
+    if (!step)
+        return { };
+    NaturalOperand counter = naturalOperandOf(types, stepped);
+    if (!counter.isInteger() || !counter.integers.isSubsetOf(Range::exact()))
+        return { };
+    auto afterStep = [&](int64_t integer) {
+        return std::clamp(integer + step, -maxExactInteger, maxExactInteger);
+    };
+    return naturalTypeOfIntegers(types, { afterStep(counter.integers.minimum), afterStep(counter.integers.maximum) });
+}
+
+TypeID naturalTypeOfOperands(const TypingContext& context, Opcode opcode, NaturalTable table, OperandTypes operandTypes)
+{
+    Vector<NaturalOperand, 2> operands = naturalOperandsOf(context.types, operandTypes, numberOfOperandsOf(table));
+    if (hasNever(operands.span()))
+        return TypeTable::never;
+    if (opcode == Opcode::ToNumeric && operands[0].hasOnlyPrimitives(Primitive::Number | Primitive::BigInt))
+        return operandTypes[0];
+    if (allSums.contains(opcode) && operandTypes.size() == numberOfNamedOperandsOf(opcode)) {
+        if (TypeID stepped = typeAfterStepOfOne(context.types, opcode, operandTypes.types))
+            return stepped;
+    }
+    for (size_t index = 0; operands.size() == 2 && index < 2; ++index) {
+        NaturalOperand& other = operands[1 - index];
+        if (classOf(operands[index]) == OperandClass::NumberLike && classOf(other) == OperandClass::Any && other.hasOnlyPrimitives(Primitive::NumberLike | Primitive::BigInt))
+            other.primitives &= ~Primitive::BigInt;
+    }
     Vector<OperandClass, 2> classes;
-    for (const Type* type : operands)
-        classes.append(classOf(*type));
-    Type upperBound = naturalTypeFrom(naturalTypeOf(table, classes.span()));
-    if (!upperBound.isNumber())
+    for (const NaturalOperand& operand : operands)
+        classes.append(classOf(operand));
+    TypeID upperBound = naturalTypeFrom(context.types, naturalTypeOf(table, classes.span()));
+    bool mayGiveText = std::ranges::any_of(operands, [](const NaturalOperand& operand) {
+        return !operand.hasOnlyPrimitives(Primitive::NumberLike | Primitive::BigInt);
+    });
+    bool mayGiveBigInt = std::ranges::all_of(operands, [](const NaturalOperand& operand) {
+        return !operand.isMadeOfPrimitives || operand.primitives & (Primitive::BigInt | Primitive::Unspecified | Primitive::Absent);
+    });
+    if (!mayGiveText || !mayGiveBigInt)
+        upperBound = context.types.withoutPrimitives(upperBound, (mayGiveText ? 0 : Primitive::AnyString) | (mayGiveBigInt ? 0 : Primitive::BigInt));
+    if (isNeverType(upperBound))
+        return TypeTable::never;
+    if (!isNumberType(upperBound))
         return upperBound;
-    std::optional<Type> refined = numberResultOf(opcode, operands);
+    TypeID refined = numberResultOf(context.types, opcode, operands.span());
     if (!refined)
         return upperBound;
-    ASSERT_UNUSED(context, refined->isSubsetOf(upperBound, context.program));
-    return WTF::move(*refined);
-}
-
-Type naturalTypeOfValue(const TypingContext& context, const Value& value, NaturalTable table)
-{
-    Vector<const Type*, 2> operands = operandTypesOf(context, value, numberOfOperandsOf(table));
-    return naturalTypeOfOperands(context, value.opcode, table, operands.span());
-}
-
-static Type toBooleanResultType(const TypingContext& context, const Type& operand, const Type& upperBound)
-{
-    if (truthyPartOf(operand, context.types).isNever())
-        return Type::fromPrimitives(Primitive::False);
-    if (falsyPartOf(operand, context.types).isNever())
-        return Type::fromPrimitives(Primitive::True);
-    return upperBound;
-}
-
-static bool mayBeZero(const Type& type)
-{
-    return type.primitives & Primitive::WholeNumber || type.integers.contains(0);
-}
-
-static Type strictEqualityResultType(const TypingContext& context, const Type& left, const Type& right, const Type& upperBound)
-{
-    bool mayBeEqual = left.overlaps(right, context.program) || (mayBeZero(left) && mayBeZero(right));
-    if (!mayBeEqual)
-        return Type::fromPrimitives(Primitive::False);
-    if (left == right && left.isSingleValue() && !left.isNumber())
-        return Type::fromPrimitives(Primitive::True);
-    return upperBound;
-}
-
-static Type refineOperator(const TypingContext& context, Opcode opcode, OperandTypes operands, const Type& upperBound)
-{
-    if (hasNever(operands))
-        return Type::never();
-    switch (opcode) {
-    case Opcode::URShift:
-    case Opcode::ToNumber:
-        return numberResultOf(opcode, operands).value_or(upperBound);
-    case Opcode::ToBoolean:
-        return toBooleanResultType(context, *operands[0], upperBound);
-    case Opcode::StrictEq:
-        return strictEqualityResultType(context, *operands[0], *operands[1], upperBound);
-    default:
-        return upperBound;
-    }
-}
-
-static Type typeTestResultType(const TypingContext& context, const Type& operand, const Type& tested, const Type& upperBound)
-{
-    if (operand.isNever())
-        return Type::never();
-    if (operand.isSubsetOf(tested, context.program))
-        return Type::fromPrimitives(Primitive::True);
-    if (!operand.overlaps(tested, context.program))
-        return Type::fromPrimitives(Primitive::False);
-    return upperBound;
-}
-
-static Type quotientResultType(const Type& dividend, const Type& divisor, QuotientRounding rounding, const Type& upperBound)
-{
-    if (dividend.isNever() || divisor.isNever())
-        return Type::never();
-    if (!dividend.isInteger() || !divisor.isInteger())
-        return upperBound;
-    return integerQuotientType(dividend.integers, divisor.integers, rounding).value_or(upperBound);
-}
-
-static Type refineConversion(Opcode opcode, const Type& operand, const Type& upperBound)
-{
-    if (operand.isNever())
-        return Type::never();
-    switch (opcode) {
-    case Opcode::ToInt32:
-        return operand.isInt32() ? operand : upperBound;
-    case Opcode::ToUint32:
-        return operand.isInteger() && operand.integers.isSubsetOf(Range::uint32()) ? operand : upperBound;
-    case Opcode::ToIntegerOrInfinity:
-        return operand.isInteger() ? operand : Type::fromPrimitives(Primitive::NumberWithoutFraction);
-    case Opcode::ToLength: {
-        constexpr Range lengths { 0, maxExactInteger - 1 };
-        if (!operand.isInteger())
-            return Type::integer(lengths);
-        return Type::integer({ std::clamp(operand.integers.minimum, lengths.minimum, lengths.maximum), std::clamp(operand.integers.maximum, lengths.minimum, lengths.maximum) });
-    }
-    case Opcode::LogicalNot:
-        if (operand.hasOnlyPrimitives(Primitive::True))
-            return Type::fromPrimitives(Primitive::False);
-        if (operand.hasOnlyPrimitives(Primitive::False))
-            return Type::fromPrimitives(Primitive::True);
-        return upperBound;
-    case Opcode::ToObject:
-        return operand.primitives & ~Primitive::UndefinedOrNull ? upperBound : operand.withOnlyObjects();
-    case Opcode::ToThis:
-        return operand.isObject() ? operand : upperBound;
-    default:
-        return upperBound;
-    }
-}
-
-static Type refinedTypeOf(const TypingContext& context, const Value& value, const Type& upperBound)
-{
-    if (!opcodesWithNaturalTypeRefinedByValue.contains(value.opcode))
-        return upperBound;
-    if (Value::opcodesWithForm.contains(value.opcode)) {
-        Vector<const Type*, 2> operands = operandTypesOf(context, value, value.numberOfOperands());
-        return refineOperator(context, value.opcode, operands.span(), upperBound);
-    }
-
-    switch (value.opcode) {
-    case Opcode::GetTypedArrayElement: {
-        if (!isTypedView(value.typedArrayType()))
-            return upperBound;
-        Type element = elementTypeOf(value.typedArrayType());
-        return value.isInsideView() ? element : element.withPrimitives(Primitive::Undefined);
-    }
-    case Opcode::DivideIntegers:
-        return quotientResultType(context.typeOf(value.dividendOperand()), context.typeOf(value.divisorOperand()), value.rounding(), upperBound);
-    case Opcode::TypeTest:
-        return typeTestResultType(context, context.typeOf(value.valueOperand()), context.types.at(value.testedType()), upperBound);
-    case Opcode::ToInt32:
-    case Opcode::ToUint32:
-    case Opcode::ToIntegerOrInfinity:
-    case Opcode::ToLength:
-    case Opcode::LogicalNot:
-    case Opcode::ToObject:
-    case Opcode::ToThis:
-        return refineConversion(value.opcode, context.typeOf(value.valueOperand()), upperBound);
-    default:
-        return upperBound;
-    }
-}
-
-Type refineFixedNatural(const TypingContext& context, const Value& value, const Type& upperBound)
-{
-    Type refined = refinedTypeOf(context, value, upperBound);
-    ASSERT(refined.isSubsetOf(upperBound, context.program));
+    ASSERT(context.types.isSubset(refined, upperBound));
     return refined;
 }
 
-namespace {
-
-struct OperatorRules {
-    using Result = Type;
-
-    const TypingContext& context;
-    OperandTypes operands;
-
-    Type natural(const Value& value, NaturalTable table) { return naturalTypeOfOperands(context, value.opcode, table, operands); }
-    Type natural(const Value& value, const NaturalType& upperBound) { return refineOperator(context, value.opcode, operands, naturalTypeFrom(upperBound)); }
-
-    template<typename... Arguments> Type none(Arguments&&...) { RELEASE_ASSERT_NOT_REACHED(); }
-    template<typename... Arguments> Type constant(Arguments&&...) { RELEASE_ASSERT_NOT_REACHED(); }
-    template<typename... Arguments> Type sameAs(Arguments&&...) { RELEASE_ASSERT_NOT_REACHED(); }
-    template<typename... Arguments> Type allocation(Arguments&&...) { RELEASE_ASSERT_NOT_REACHED(); }
-    template<typename... Arguments> Type declared(Arguments&&...) { RELEASE_ASSERT_NOT_REACHED(); }
-    template<typename... Arguments> Type declaredContents(Arguments&&...) { RELEASE_ASSERT_NOT_REACHED(); }
-    template<typename... Arguments> Type declaredResult(Arguments&&...) { RELEASE_ASSERT_NOT_REACHED(); }
-    template<typename... Arguments> Type declaredParameter(Arguments&&...) { RELEASE_ASSERT_NOT_REACHED(); }
-    template<typename... Arguments> Type unknown(Arguments&&...) { RELEASE_ASSERT_NOT_REACHED(); }
-    template<typename... Arguments> Type cast(Arguments&&...) { RELEASE_ASSERT_NOT_REACHED(); }
-    template<typename... Arguments> Type resultOperand(Arguments&&...) { RELEASE_ASSERT_NOT_REACHED(); }
-};
-
-} // anonymous namespace
-
-Type computeOperatorResultType(const TypingContext& context, Opcode opcode, std::span<const Type> operandTypes)
+TypeID resultTypeOfOperator(const TypingContext& context, Opcode opcode, std::span<const TypeID> operandTypes)
 {
-    RELEASE_ASSERT(Value::opcodesWithForm.contains(opcode));
+    RELEASE_ASSERT(PayloadWord::form(opcode) && resultRuleOf(opcode) == ResultRule::Natural);
     RELEASE_ASSERT(operandTypes.size() == numberOfNamedOperandsOf(opcode));
-    Vector<const Type*, 2> operands;
-    for (const Type& type : operandTypes)
-        operands.append(&type);
-    OperatorRules rules { context, operands.span() };
-    return applyResultRule(rules, Value(opcode), 0, ResultSide::Proven);
+    return resultTypeOf(context, Draft(opcode), OperandTypes { operandTypes });
 }
 
-Type elementTypeOf(TypedArrayType type)
+static consteval TypeID typeOfIntegerElements(Range elements)
+{
+    return *tryMakeTypeOfPrimitives(Primitive::Integer, elements);
+}
+
+static_assert(!tryMakeTypeOfPrimitives(Primitive::Integer, { INT16_MIN, INT16_MAX }));
+static_assert(!tryMakeTypeOfPrimitives(Primitive::Integer, { 0, UINT16_MAX }));
+
+TypeID elementTypeOf(TypedArrayType type)
 {
     switch (type) {
     case TypeInt8:
-        return Type::integer({ -128, 127 });
+        return typeOfIntegerElements({ INT8_MIN, INT8_MAX });
     case TypeUint8:
     case TypeUint8Clamped:
-        return Type::integer({ 0, 255 });
+        return typeOfIntegerElements({ 0, UINT8_MAX });
     case TypeInt16:
-        return Type::integer({ -32768, 32767 });
+        return TypeTable::int16;
     case TypeUint16:
-        return Type::integer({ 0, 65535 });
+        return TypeTable::uint16;
     case TypeInt32:
-        return Type::integer(Range::int32());
+        return TypeTable::int32;
     case TypeUint32:
-        return Type::integer(Range::uint32());
+        return TypeTable::uint32;
     case TypeFloat16:
     case TypeFloat32:
     case TypeFloat64:
-        return Type::fromPrimitives(Primitive::Number);
+        return TypeTable::number;
     case TypeBigInt64:
     case TypeBigUint64:
-        return Type::fromPrimitives(Primitive::BigInt);
+        return TypeTable::bigInt;
     case NotTypedArray:
     case TypeDataView:
-        return Type::anything();
+        return TypeTable::anything;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-namespace {
-
-struct WidestNaturalRules {
-    using Result = std::optional<Type>;
-
-    Result natural(const Value&, const NaturalType& type) { return naturalTypeFrom(type); }
-    Result natural(const Value&, NaturalTable table)
-    {
-        Vector<OperandClass, 2> operands;
-        operands.fill(OperandClass::Any, numberOfOperandsOf(table));
-        return naturalTypeFrom(naturalTypeOf(table, operands.span()));
-    }
-    Result none(auto&&...) { return std::nullopt; }
-    Result constant(auto&&...) { return std::nullopt; }
-    Result sameAs(auto&&...) { return std::nullopt; }
-    Result allocation(auto&&...) { return std::nullopt; }
-    Result declared(auto&&...) { return std::nullopt; }
-    Result declaredContents(auto&&...) { return std::nullopt; }
-    Result declaredResult(auto&&...) { return std::nullopt; }
-    Result declaredParameter(auto&&...) { return std::nullopt; }
-    Result unknown(auto&&...) { return std::nullopt; }
-    Result cast(auto&&...) { return std::nullopt; }
-    Result resultOperand(auto&&...) { return std::nullopt; }
-};
-
-} // namespace
-
-std::optional<Type> tryWidestNaturalTypeOf(const Value& value)
-{
-    WidestNaturalRules rules;
-    return applyResultRule(rules, value, 0, ResultSide::Proven);
 }
 
 } } } // namespace JSC::AOT::Typed

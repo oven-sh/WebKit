@@ -30,6 +30,7 @@
 #if __MAC_OS_X_VERSION_MIN_REQUIRED >= 270000
 #import <AppKit/NSRefreshController.h>
 #endif
+#import <Metal/Metal.h>
 #import <PDFKit/PDFDocument.h>
 #import <QuartzCore/CATextLayer.h>
 #import <SecurityInterface/SFCertificateTrustPanel.h>
@@ -56,6 +57,7 @@
 #import <WebKit/_WKFindOptions.h>
 #import <WebKit/_WKIconLoadingDelegate.h>
 #import <WebKit/_WKInspector.h>
+#import <WebKit/_WKInspectorDelegate.h>
 #import <WebKit/_WKLinkIconParameters.h>
 #import <WebKit/_WKUserInitiatedAction.h>
 #import <objc/runtime.h>
@@ -101,7 +103,36 @@ static const int testFooterBannerHeight = 58;
 
 @end
 
-@interface WK2BrowserWindowController () <NSTextFinderBarContainer, _WKFindDelegate, NSSearchFieldDelegate, WKDownloadDelegate, WKNavigationDelegate, WKNavigationDelegatePrivate, WKUIDelegate, WKUIDelegatePrivate, _WKIconLoadingDelegate>
+// A JavaScript dialog, shown as a sheet. WebDriver answers it through the same sheet.
+@interface JavaScriptDialog : NSObject
+- (instancetype)initWithType:(_WKAutomationSessionJavaScriptDialogType)type message:(NSString *)message defaultText:(NSString *)defaultText completionHandler:(void (^)(BOOL accepted, NSString *text))completionHandler;
+@property (readonly) _WKAutomationSessionJavaScriptDialogType type;
+@property (readonly) NSString *message;
+@property (readonly) NSString *defaultText;
+@property (readonly) NSAlert *alert;
+// The text field of a prompt.
+@property (strong) NSTextField *input;
+// Nil once the dialog is complete.
+@property (copy) void (^completionHandler)(BOOL accepted, NSString *text);
+@end
+
+@implementation JavaScriptDialog
+
+- (instancetype)initWithType:(_WKAutomationSessionJavaScriptDialogType)type message:(NSString *)message defaultText:(NSString *)defaultText completionHandler:(void (^)(BOOL accepted, NSString *text))completionHandler
+{
+    if (!(self = [super init]))
+        return nil;
+    _type = type;
+    _message = [message copy];
+    _defaultText = [defaultText copy];
+    _alert = [[NSAlert alloc] init];
+    _completionHandler = [completionHandler copy];
+    return self;
+}
+
+@end
+
+@interface WK2BrowserWindowController () <NSTextFinderBarContainer, _WKFindDelegate, NSSearchFieldDelegate, WKDownloadDelegate, WKNavigationDelegate, WKNavigationDelegatePrivate, WKUIDelegate, WKUIDelegatePrivate, _WKIconLoadingDelegate, _WKInspectorDelegate>
 @end
 
 @implementation WK2BrowserWindowController {
@@ -126,6 +157,14 @@ static const int testFooterBannerHeight = 58;
     BOOL _usingFindDelegate;
 
     CATextLayer *_pointerLockBanner;
+
+    // WebKit runs one JavaScript dialog per page at a time.
+    JavaScriptDialog *_currentJavaScriptDialog;
+
+    _WKSessionState *_sessionStateToRestoreWhenInspectorLoads;
+
+    // The window whose page opened this one with an opener, i.e. this page has JavaScript access back to it.
+    __weak WK2BrowserWindowController *_openerController;
 
 #if __MAC_OS_X_VERSION_MIN_REQUIRED >= 270000
     NSRefreshController *_refreshController;
@@ -155,6 +194,7 @@ static const int testFooterBannerHeight = 58;
 
     _webView.navigationDelegate = self;
     _webView.UIDelegate = self;
+    _webView._inspector.delegate = self;
 
     SettingsController *settingsController = [[NSApplication sharedApplication] browserAppDelegate].settingsController;
     // This setting installs the new WK2 Icon Loading Delegate and tests that mechanism by
@@ -220,10 +260,11 @@ static const int testFooterBannerHeight = 58;
 
 - (void)dealloc
 {
+    [self _completeAllJavaScriptDialogs];
+
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     if (_findBarClickMonitor)
         [NSEvent removeMonitor:_findBarClickMonitor];
-    _webView._findDelegate = nil;
     _textFinder.client = nil;
     _textFinder.findBarContainer = nil;
     [_webView removeObserver:self forKeyPath:@"title"];
@@ -298,6 +339,12 @@ static NSRect frameForWindowFeatures(WKWindowFeatures *features, NSWindow *windo
 {
     [urlText setStringValue:[self addProtocolIfNecessary:urlText.stringValue]];
     NSURL *url = [NSURL _webkit_URLWithUserTypedString:urlText.stringValue];
+
+    // WebKit puts a page that the app navigates to another site in a new browsing context group, which cuts its
+    // opener. Comparing hosts is close enough to comparing sites here.
+    if (![url.host isEqualToString:_webView.URL.host])
+        _openerController = nil;
+
     [_webView loadURL:url];
 }
 
@@ -333,7 +380,7 @@ static NSRect frameForWindowFeatures(WKWindowFeatures *features, NSWindow *windo
 
 - (void)_webView:(WKWebView *)webView requestNotificationPermissionForSecurityOrigin:(WKSecurityOrigin *)securityOrigin decisionHandler:(void (^)(BOOL))decisionHandler
 {
-    NSDictionary *permissions = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"NotificationPermissions"];
+    NSDictionary *permissions = [MiniBrowserUserDefaults() dictionaryForKey:@"NotificationPermissions"];
     NSString *originString = [NSString stringWithFormat:@"%@://%@", securityOrigin.protocol, securityOrigin.host];
     id value = [permissions valueForKey:originString];
     if (value) {
@@ -350,11 +397,11 @@ static NSRect frameForWindowFeatures(WKWindowFeatures *features, NSWindow *windo
     [alert beginSheetModalForWindow:self.window completionHandler:^void (NSModalResponse response) {
         BOOL granted = response == NSAlertSecondButtonReturn;
 
-        NSMutableDictionary *permissions = [[[NSUserDefaults standardUserDefaults] dictionaryForKey:@"NotificationPermissions"] mutableCopy];
+        NSMutableDictionary *permissions = [[MiniBrowserUserDefaults() dictionaryForKey:@"NotificationPermissions"] mutableCopy];
         if (!permissions)
             permissions = [NSMutableDictionary dictionaryWithCapacity:1];
         [permissions setValue:@(granted) forKey:originString];
-        [[NSUserDefaults standardUserDefaults] setObject:permissions forKey:@"NotificationPermissions"];
+        [MiniBrowserUserDefaults() setObject:permissions forKey:@"NotificationPermissions"];
 
         decisionHandler(granted);
     }];
@@ -626,6 +673,7 @@ static BOOL areEssentiallyEqual(double a, double b)
 
 - (void)windowWillClose:(NSNotification *)notification
 {
+    [self _completeAllJavaScriptDialogs];
     [[[NSApplication sharedApplication] browserAppDelegate] browserWindowWillClose:self.window];
 }
 
@@ -735,6 +783,8 @@ static BOOL areEssentiallyEqual(double a, double b)
         visibleOverlayRegions |= _WKInteractionRegion;
     if (settings.enhancedSecurityOverlayVisible)
         visibleOverlayRegions |= _WKEnhancedSecurityRegion;
+    if (settings.touchActionRegionOverlayVisible)
+        visibleOverlayRegions |= _WKTouchActionRegion;
 
     preferences._visibleDebugOverlayRegions = visibleOverlayRegions;
 
@@ -831,6 +881,8 @@ static BOOL areEssentiallyEqual(double a, double b)
 - (nullable WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)navigationAction windowFeatures:(WKWindowFeatures *)windowFeatures
 {
     WK2BrowserWindowController *controller = [[WK2BrowserWindowController alloc] initWithConfiguration:configuration windowFeatures:windowFeatures];
+    if (navigationAction._hasOpener)
+        controller->_openerController = self;
     [controller.window makeKeyAndOrderFront:self];
 
     [[[NSApplication sharedApplication] browserAppDelegate] didCreateBrowserWindowController:controller];
@@ -838,52 +890,132 @@ static BOOL areEssentiallyEqual(double a, double b)
     return controller->_webView;
 }
 
+- (void)webViewDidClose:(WKWebView *)webView
+{
+    // WebKit asks to close the web view, for example for window.close() or WebDriver's Close Window.
+    // Unlike Cmd-W, this doesn't ask windowShouldClose:, because closing has already been decided:
+    // window.close() runs beforeunload handlers first, and WebDriver's Close Window doesn't run them
+    // at all.
+    [self.window close];
+
+    // Close the web view now, too, rather than when it's deallocated, which can be much later, for
+    // example after the animation that closes a tab. WebDriver replies to Close Window after this
+    // returns, and by then, the web view must be gone from its list of windows.
+    [webView _close];
+}
+
+- (_WKAutomationSessionJavaScriptDialogType)automationDialogType
+{
+    return _currentJavaScriptDialog ? _currentJavaScriptDialog.type : _WKAutomationSessionJavaScriptDialogTypeNone;
+}
+
+- (NSString *)automationDialogMessage
+{
+    return _currentJavaScriptDialog.message;
+}
+
+- (NSString *)automationDialogDefaultText
+{
+    return _currentJavaScriptDialog.defaultText;
+}
+
+- (NSString *)automationDialogUserInput
+{
+    return _currentJavaScriptDialog.input.stringValue;
+}
+
+- (void)setAutomationDialogUserInput:(NSString *)userInput
+{
+    _currentJavaScriptDialog.input.stringValue = userInput ?: @"";
+}
+
+- (void)completeAutomationDialogAccepting:(BOOL)accepted
+{
+    JavaScriptDialog *dialog = _currentJavaScriptDialog;
+    if (!dialog)
+        return;
+
+    // End the sheet as its buttons do, so that WebDriver and the user go through the same code. An alert only has OK.
+    BOOL pressesFirstButton = accepted || dialog.type == _WKAutomationSessionJavaScriptDialogTypeAlert;
+    [self.window endSheet:dialog.alert.window returnCode:pressesFirstButton ? NSAlertFirstButtonReturn : NSAlertSecondButtonReturn];
+    // In case the sheet wasn't showing.
+    [self _completeJavaScriptDialog:dialog accepted:accepted];
+}
+
+- (void)_completeJavaScriptDialog:(JavaScriptDialog *)dialog accepted:(BOOL)accepted
+{
+    void (^completionHandler)(BOOL accepted, NSString *text) = dialog.completionHandler;
+    if (!completionHandler)
+        return;
+
+    dialog.completionHandler = nil;
+    [dialog.input validateEditing];
+    // WebKit can show the next dialog before the completion handler returns.
+    _currentJavaScriptDialog = nil;
+    completionHandler(accepted, dialog.input.stringValue);
+}
+
+- (void)_completeAllJavaScriptDialogs
+{
+    // WebKit requires every dialog to be completed, including the ones it had queued.
+    while (_currentJavaScriptDialog)
+        [self _completeJavaScriptDialog:_currentJavaScriptDialog accepted:NO];
+}
+
+- (void)_showJavaScriptDialog:(JavaScriptDialog *)dialog
+{
+    // WebAutomationSession checks for a dialog on the next run loop iteration, so it has to be recorded now.
+    _currentJavaScriptDialog = dialog;
+
+    __weak WK2BrowserWindowController *weakSelf = self;
+    [dialog.alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        [weakSelf _completeJavaScriptDialog:dialog accepted:response == NSAlertFirstButtonReturn];
+    }];
+}
+
 - (void)webView:(WKWebView *)webView runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(void))completionHandler
 {
-    NSAlert* alert = [[NSAlert alloc] init];
-
-    [alert setMessageText:[NSString stringWithFormat:@"JavaScript alert dialog from %@.", [frame.request.URL absoluteString]]];
-    [alert setInformativeText:message];
-    [alert addButtonWithTitle:@"OK"];
-
-    [alert beginSheetModalForWindow:self.window completionHandler:^void (NSModalResponse response) {
+    JavaScriptDialog *dialog = [[JavaScriptDialog alloc] initWithType:_WKAutomationSessionJavaScriptDialogTypeAlert message:message defaultText:nil completionHandler:^(BOOL accepted, NSString *text) {
         completionHandler();
     }];
+
+    [dialog.alert setMessageText:[NSString stringWithFormat:@"JavaScript alert dialog from %@.", [frame.request.URL absoluteString]]];
+    [dialog.alert setInformativeText:message];
+    [dialog.alert addButtonWithTitle:@"OK"];
+
+    [self _showJavaScriptDialog:dialog];
 }
 
 - (void)webView:(WKWebView *)webView runJavaScriptConfirmPanelWithMessage:(NSString *)message initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(BOOL result))completionHandler
 {
-    NSAlert* alert = [[NSAlert alloc] init];
-
-    [alert setMessageText:[NSString stringWithFormat:@"JavaScript confirm dialog from %@.", [frame.request.URL  absoluteString]]];
-    [alert setInformativeText:message];
-    
-    [alert addButtonWithTitle:@"OK"];
-    [alert addButtonWithTitle:@"Cancel"];
-
-    [alert beginSheetModalForWindow:self.window completionHandler:^void (NSModalResponse response) {
-        completionHandler(response == NSAlertFirstButtonReturn);
+    JavaScriptDialog *dialog = [[JavaScriptDialog alloc] initWithType:_WKAutomationSessionJavaScriptDialogTypeConfirm message:message defaultText:nil completionHandler:^(BOOL accepted, NSString *text) {
+        completionHandler(accepted);
     }];
+
+    [dialog.alert setMessageText:[NSString stringWithFormat:@"JavaScript confirm dialog from %@.", [frame.request.URL  absoluteString]]];
+    [dialog.alert setInformativeText:message];
+    [dialog.alert addButtonWithTitle:@"OK"];
+    [dialog.alert addButtonWithTitle:@"Cancel"];
+
+    [self _showJavaScriptDialog:dialog];
 }
 
 - (void)webView:(WKWebView *)webView runJavaScriptTextInputPanelWithPrompt:(NSString *)prompt defaultText:(NSString *)defaultText initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSString *result))completionHandler
 {
-    NSAlert* alert = [[NSAlert alloc] init];
-
-    [alert setMessageText:[NSString stringWithFormat:@"JavaScript prompt dialog from %@.", [frame.request.URL absoluteString]]];
-    [alert setInformativeText:prompt];
-    
-    [alert addButtonWithTitle:@"OK"];
-    [alert addButtonWithTitle:@"Cancel"];
-    
-    NSTextField* input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 200, 24)];
-    [input setStringValue:defaultText];
-    [alert setAccessoryView:input];
-    
-    [alert beginSheetModalForWindow:self.window completionHandler:^void (NSModalResponse response) {
-        [input validateEditing];
-        completionHandler(response == NSAlertFirstButtonReturn ? [input stringValue] : nil);
+    JavaScriptDialog *dialog = [[JavaScriptDialog alloc] initWithType:_WKAutomationSessionJavaScriptDialogTypePrompt message:prompt defaultText:defaultText completionHandler:^(BOOL accepted, NSString *text) {
+        completionHandler(accepted ? text : nil);
     }];
+
+    [dialog.alert setMessageText:[NSString stringWithFormat:@"JavaScript prompt dialog from %@.", [frame.request.URL absoluteString]]];
+    [dialog.alert setInformativeText:prompt];
+    [dialog.alert addButtonWithTitle:@"OK"];
+    [dialog.alert addButtonWithTitle:@"Cancel"];
+
+    dialog.input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 200, 24)];
+    [dialog.input setStringValue:defaultText];
+    [dialog.alert setAccessoryView:dialog.input];
+
+    [self _showJavaScriptDialog:dialog];
 }
 
 - (void)webView:(WKWebView *)webView runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSArray<NSURL *> * URLs))completionHandler
@@ -1123,7 +1255,8 @@ static BOOL responseIsAttachment(NSURLResponse *response)
         }];
         return;
     } else if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
-        if ([[NSApplication sharedApplication] browserAppDelegate].settingsController.acceptAllTLSCertificates) {
+        BrowserAppDelegate *appDelegate = [[NSApplication sharedApplication] browserAppDelegate];
+        if (appDelegate.settingsController.acceptAllTLSCertificates || (webView.configuration._isControlledByAutomation && appDelegate.automationAcceptsInsecureCertificates)) {
             completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
             return;
         }
@@ -1183,6 +1316,79 @@ static BOOL responseIsAttachment(NSURLResponse *response)
     completionHandler(^void (NSData *data) {
         LOG(@"Icon URL %@ received icon data of length %u", parameters.url, (unsigned)data.length);
     });
+}
+
+#pragma mark _WKInspectorDelegate
+
+- (void)inspectorDidRequestDisablingSiteIsolation:(_WKInspector *)inspector
+{
+    if (!_webView.configuration.preferences._siteIsolationEnabled)
+        return;
+
+    // Site Isolation can't be toggled on a live page, so reopen the page in a new window without it.
+    WKWebViewConfiguration *configuration = [_webView.configuration copy];
+    configuration.preferences = [configuration.preferences copy];
+    configuration.preferences._siteIsolationEnabled = NO;
+
+    // A page that another page opened has that page as its related web view, which would put the new window in the
+    // opener's browsing context group and process, where Site Isolation is on.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    configuration._relatedWebView = nil;
+#pragma clang diagnostic pop
+
+    WK2BrowserWindowController *controller = [[WK2BrowserWindowController alloc] initWithConfiguration:configuration];
+    [[[NSApplication sharedApplication] browserAppDelegate] didCreateBrowserWindowController:controller];
+    [controller.window makeKeyAndOrderFront:nil];
+
+    // Load the page only once the new inspector can record the load.
+    controller->_sessionStateToRestoreWhenInspectorLoads = [_webView _sessionState];
+    [controller->_webView._inspector show];
+
+    // The windows that this page opened can't reach the new window, so close them rather than leave them looking
+    // connected to it.
+    for (WK2BrowserWindowController *openedController in self._browserWindowControllersOpenedWithOpener)
+        [openedController.window close];
+
+    // Avoid closing this window, and with it this inspector, from inside one of the inspector's own callbacks.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self.window close];
+    });
+}
+
+- (NSArray<WK2BrowserWindowController *> *)_browserWindowControllersOpenedWithOpener
+{
+    NSSet<BrowserWindowController *> *browserWindowControllers = [[NSApplication sharedApplication] browserAppDelegate].browserWindowControllers;
+    NSMutableArray<WK2BrowserWindowController *> *openedControllers = [NSMutableArray array];
+    NSMutableArray<WK2BrowserWindowController *> *openersToVisit = [NSMutableArray arrayWithObject:self];
+    while (openersToVisit.count) {
+        WK2BrowserWindowController *opener = openersToVisit.lastObject;
+        [openersToVisit removeLastObject];
+
+        for (BrowserWindowController *browserWindowController in browserWindowControllers) {
+            if (![browserWindowController isKindOfClass:WK2BrowserWindowController.class])
+                continue;
+
+            WK2BrowserWindowController *controller = (WK2BrowserWindowController *)browserWindowController;
+            if (controller->_openerController != opener)
+                continue;
+
+            [openedControllers addObject:controller];
+            [openersToVisit addObject:controller];
+        }
+    }
+
+    return openedControllers;
+}
+
+- (void)inspectorFrontendLoaded:(_WKInspector *)inspector
+{
+    _WKSessionState *sessionState = _sessionStateToRestoreWhenInspectorLoads;
+    if (!sessionState)
+        return;
+
+    _sessionStateToRestoreWhenInspectorLoads = nil;
+    [_webView _restoreSessionState:sessionState andNavigate:YES];
 }
 
 #pragma mark WKDownloadDelegate
@@ -1660,6 +1866,13 @@ static const NSUInteger findMaxMatchCount = 1000;
 - (void)_webViewDidLosePointerLock:(WKWebView *)webView
 {
     [webView _setHeaderBannerLayer:nil];
+}
+
+#pragma mark WebXR
+
+- (void)_webView:(WKWebView *)webView requestPermissionForXRSessionOrigin:(NSString *)originString mode:(_WKXRSessionMode)mode grantedFeatures:(_WKXRSessionFeatureFlags)grantedFeatures consentRequiredFeatures:(_WKXRSessionFeatureFlags)consentRequiredFeatures consentOptionalFeatures:(_WKXRSessionFeatureFlags)consentOptionalFeatures requiredFeaturesRequested:(_WKXRSessionFeatureFlags)requiredFeaturesRequested optionalFeaturesRequested:(_WKXRSessionFeatureFlags)optionalFeaturesRequested completionHandler:(void (^)(_WKXRSessionFeatureFlags))completionHandler
+{
+    completionHandler(grantedFeatures | consentRequiredFeatures | consentOptionalFeatures);
 }
 
 - (NSImage *)windowSnapshotInRect:(CGRect)rect

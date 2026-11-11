@@ -30,17 +30,10 @@ public:
     SVGTransformLayoutScope(RenderLayerModelObject& renderer)
         : m_renderer(renderer)
     {
-        bool hasLayer = m_renderer->hasLayer();
-        if (hasLayer || m_renderer->transformReferenceBoxIsSVGViewport())
+        if (m_renderer->hasLayer() || m_renderer->transformReferenceBoxIsSVGViewport())
             m_transformReferenceBox = m_renderer->transformReferenceBoxRect();
 
-        if (hasLayer)
-            m_layerTransform = m_renderer->layerTransform();
-
-        // Always call updateLayerTransform(), even without a layer. SVG renderers
-        // (e.g. RenderSVGViewportContainer) compute supplemental transforms (viewBox,
-        // zoom, pan) in their override, which are needed by applyTransform() during painting.
-        m_renderer->updateLayerTransform();
+        m_renderer->updateTransform();
     }
 
     ~SVGTransformLayoutScope()
@@ -48,27 +41,12 @@ public:
         if (m_renderer->transformReferenceBoxRect() == m_transformReferenceBox)
             return;
 
-        m_renderer->updateLayerTransform();
-    }
-
-    // FIXME: m_layerTransform points at the layer's own matrix, which updateLayerTransform() rewrites
-    // in place, so this never sees a change unless the layer gains or loses its transform.
-    bool layerTransformChanged() const
-    {
-        auto* layerTransform = m_renderer->layerTransform();
-
-        bool hasTransform = !!layerTransform;
-        bool hadTransform = !!m_layerTransform;
-        if (hasTransform != hadTransform)
-            return true;
-
-        return hasTransform && (*layerTransform != *m_layerTransform);
+        m_renderer->updateTransform();
     }
 
 private:
     const CheckedRef<RenderLayerModelObject> m_renderer;
     std::optional<FloatRect> m_transformReferenceBox;
-    TransformationMatrix* m_layerTransform { nullptr };
 };
 
 } // namespace WebCore

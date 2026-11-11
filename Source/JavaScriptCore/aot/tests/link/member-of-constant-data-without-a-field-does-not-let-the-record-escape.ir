@@ -1,0 +1,27 @@
+# If a member of constant data that its layout does not list let the record escape, `{ a: "x", 1: "one" }` would open every field of the layout: `a` would hold anything, and every read of it would stay closed
+# type R = { a: string }  function get(o: R) { return o.a; }  get({ a: "x", 1: "one" });
+# The member is a definition under its name, which Link follows beside the fields.
+# RUN: summary f0
+# CHECK: access a0 v0 Define Allocation L0
+# RUN(KEPT): summary f0
+# KEPT-NOT: edge Allocation L0 -> Unknown
+# RUN(LINK): link functions fields mechanisms=all
+# LINK: function f1 {{*}}result=string
+# LINK: field L0.0 "a" proven=string
+
+layout L0 name="R" module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="a" value=String{value="x"}}, {key="1" value=String{value="one"}}]} module=m0
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0 calleeName="get"
+    Return v2
+}
+function f1 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    Return v1
+}

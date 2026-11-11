@@ -1,0 +1,43 @@
+# function giveName(named, text) { Object.defineProperty(named, "label", { value: text }) } ..
+# A control of functions-that-a-helper-only-gives-a-name-are-not-reached.ir: names that are laid on closures are followed, closure by closure: the rule says nothing of them.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+layout L0 fields=[{key="value" declared={type=anything}}]
+layout L1 fields=[{key="get" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = String string="one"
+    v4 = Call v0, -, v1, v3 calleeName="giveName"
+    v5 = String string="two"
+    v6 = Call v0, -, v2, v5 calleeName="giveName"
+    v7 = PropGet v1 key="label"
+    Return v7
+}
+function f1 name="giveName" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = String string="label"
+    v5 = NewObject layout=L0
+    PropDefine v5, v1 key="value"
+    v7 = FinishObject v5
+    v8 = Call v3, v2, v0, v4, v7 calleeName="Object.defineProperty"
+    v9 = Undefined
+    Return v9
+}
+function f2 name="first" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="second" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

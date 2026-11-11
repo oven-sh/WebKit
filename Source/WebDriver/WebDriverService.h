@@ -158,6 +158,7 @@ private:
     void connectToBrowser(Vector<Capabilities>&&, Function<void (CommandResult&&)>&&);
     void createSession(Vector<Capabilities>&&, Ref<SessionHost>&&, Function<void (CommandResult&&)>&&);
     bool findSessionOrCompleteWithError(JSON::Object&, Function<void (CommandResult&&)>&);
+    void discardSessionIfDisconnected();
 
     void handleRequest(HTTPRequestHandler::Request&&, Function<void (HTTPRequestHandler::Response&&)>&& replyHandler) override;
     void sendResponse(Function<void (HTTPRequestHandler::Response&&)>&& replyHandler, CommandResult&&) const;
@@ -166,6 +167,7 @@ private:
     void flushRequestQueueWithResult(CommandResult&&);
 
 #if ENABLE(WEBDRIVER_BIDI)
+    std::expected<void, String> validateHandshakeHeaders(const String& hostHeader, const String& originHeader) const override { return validateRequestHeaders(hostHeader, originHeader); }
     bool acceptHandshake(HTTPRequestHandler::Request&&) override;
     void handleMessage(WebSocketMessageHandler::Message&&, Function<void (WebSocketMessageHandler::Message&&)>&& replyHandler) override;
     void clientDisconnected(const WebSocketMessageHandler::Connection&) override;
@@ -174,7 +176,7 @@ private:
 
     typedef void (WebDriverService::*BidiCommandHandler)(unsigned id, RefPtr<JSON::Object>&&, Function<void (WebSocketMessageHandler::Message&&)>&&);
     struct BidiCommand {
-        String method;
+        ASCIILiteral method;
         BidiCommandHandler handler;
     };
     static const BidiCommand s_bidiCommands[];

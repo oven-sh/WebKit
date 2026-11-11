@@ -280,17 +280,20 @@ WasmToJSCallee::WasmToJSCallee()
     NativeCalleeRegistry::singleton().registerCallee(this);
 }
 
+EncodedJSValue g_wasmToJSCalleeBoxed { };
+
 WasmToJSCallee& WasmToJSCallee::singleton()
 {
     static LazyNeverDestroyed<Ref<WasmToJSCallee>> callee;
     static std::once_flag onceKey;
     std::call_once(onceKey, [&]() {
         callee.construct(adoptRef(*new WasmToJSCallee));
+        g_wasmToJSCalleeBoxed = CalleeBits::encodeNativeCallee(&callee.get().get());
     });
     return callee.get().get();
 }
 
-EncodedJSValue g_restoreFrameCalleeBoxed { };
+REFERENCED_FROM_ASM EncodedJSValue g_restoreFrameCalleeBoxed { };
 
 RestoreFrameCallee::RestoreFrameCallee()
     : Callee(Wasm::CompilationMode::RestoreFrameMode)
@@ -489,7 +492,7 @@ std::optional<CallSiteIndex> OptimizingJITCallee::tryGetCallSiteIndex(const void
     constexpr bool verbose = false;
     if (m_callSiteIndexMap) {
         dataLogLnIf(verbose, "Querying ", RawPointer(pc));
-        if (std::optional<CodeOrigin> codeOrigin = m_callSiteIndexMap->findPC(removeCodePtrTag<void*>(pc))) {
+        if (std::optional<CodeOrigin> codeOrigin = m_callSiteIndexMap->findPC(removeReturnAddressSignature<void*>(pc))) {
             dataLogLnIf(verbose, "Found ", *codeOrigin);
             return CallSiteIndex { codeOrigin->bytecodeIndex().offset() };
         }
@@ -586,6 +589,18 @@ const RegisterAtOffsetList* JSToWasmCallee::calleeSaveRegistersImpl()
 }
 
 #if ENABLE(WEBASSEMBLY_BBQJIT) || ENABLE(WEBASSEMBLY_OMGJIT)
+
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+Ref<OMGCallee> OMGCallee::createWithoutSavedRegisters(const OMGCallee& callee)
+{
+    Ref result = adoptRef(*new OMGCallee(callee.index(), { }, Ref { callee.profiledCallee() }));
+    result->setIndexOrName(callee.indexOrName());
+    auto [start, end] = callee.range();
+    result->setCodeInImage(std::span { static_cast<const uint8_t*>(start), static_cast<const uint8_t*>(end) }, { });
+    NativeCalleeRegistry::singleton().registerCallee(result.ptr());
+    return result;
+}
+#endif
 
 void OptimizingJITCallee::linkExceptionHandlers(Vector<UnlinkedHandlerInfo> unlinkedExceptionHandlers, Vector<CodeLocationLabel<ExceptionHandlerPtrTag>> exceptionHandlerLocations)
 {

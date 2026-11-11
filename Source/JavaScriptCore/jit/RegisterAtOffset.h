@@ -46,7 +46,7 @@ public:
         , m_offsetBits((offset >> 2) & 0xFFFFFFFFFFFFFF)
     {
         ASSERT(!(offset & 0b11));
-        ASSERT(width == conservativeWidthWithoutVectors(reg) || Options::useWasmSIMD());
+        // Bun: no ASSERT on Options::useWasmSIMD(). A compile may use SIMD where WebAssembly may not: B3::UpstreamPolicy::allowsSIMD.
         ASSERT(reg.index() < (1 << 6));
         ASSERT(Reg::last().index() < (1 << 6));
         ASSERT(this->reg() == reg);

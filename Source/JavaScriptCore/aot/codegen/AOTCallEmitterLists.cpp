@@ -8,39 +8,33 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAccessEmitter.h"
-#include "AOTBuiltinCalls.h"
 #include "AOTConvention.h"
+#include "AOTEntryEmitter.h"
 #include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
 #include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-Boxed CallEmitter::callWithList(const OperationContext& context, Boxed callee, Boxed thisValue, Word32 count, Pointer list, const CallOptions& options)
-{
-    return Boxed(callStub(context, AOT::callWithList(), { callee.value(), thisValue.value(), zeroExtended(count).value(), list.value() }, options).first);
-}
-
 void CallEmitter::generateCallList(const ValueContext& value)
 {
     Boxed callee = in<Boxed>(value->calleeOperand());
-    emitter<AccessEmitter>().recordArrival(value, callee);
     Boxed thisValue = thisOrUndefined(value->thisValueOperand());
     LValue list = in<CellPointer>(value->listOperand()).value();
     ConventionCall call {
-        .stub = callWithArray(),
+        .stub = callWithArray(positionOf(value)),
         .stubOperands = singleElementSpan(list),
         .callee = callee.value(),
         .thisValue = thisValue.value(),
     };
     if (!value.returnCall()) {
-        define(value, callByConvention(value, call, { .throwSite = siteThatNamesCallee(value) }));
+        if (mayForwardCallToReceiver(value.value()))
+            requireForwardedCallCanBeMade(value, callee, thisValue, value->isTailCall);
+        defineResultOfCallByValue(value, callByConvention(value, call, { .throwSite = siteThatNamesCallee(value) }));
         return;
     }
 
-    if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        requireCallableBeforeTailCall(value, callee, siteThatNamesCallee(value));
+    requireCallableBeforeTailCall(value, callee, thisValue, boxCell(in<CellPointer>(value->listOperand())));
     tailCallByConvention(value, call);
 }
 
@@ -61,28 +55,56 @@ Boxed CallEmitter::constructValue(const OperationContext& context, ConstructSynt
     return callByConvention(context, call, { .throwSite = siteThatNamesCallee, .constructs = true });
 }
 
-Boxed CallEmitter::superConstructWithList(const OperationContext& context, Boxed parent, Boxed newTarget, Word32 count, Pointer list)
+Boxed CallEmitter::superConstructWithArray(const OperationContext& context, Boxed parent, Boxed newTarget, CellPointer list)
 {
-    return Boxed(callStub(context, AOT::superConstructWithList(), { parent.value(), newTarget.value(), zeroExtended(count).value(), list.value() }, { .constructs = true }).first);
+    return Boxed(callStub(context, AOT::superConstructWithArray(), { parent.value(), newTarget.value(), list.value() }, { .constructs = true }).first);
 }
 
 void CallEmitter::generateConstruct(const ValueContext& value)
 {
     RELEASE_ASSERT(!value.returnCall());
     Boxed callee = in<Boxed>(value->calleeOperand());
-    emitter<AccessEmitter>().recordArrival(value, callee);
+
+    Type typeOfCallee = typeOf(value->calleeOperand());
+    FunctionID constructor = typeOfCallee.isObject() && !value->newTargetOperand() ? singleFunctionOf(types(), typeOfCallee) : FunctionID();
+    CodeUnit entry { constructor, CodeRole::AllocatingConstructEntry };
+    bool unitTestsStackInOwnFrame = m_code.holdsCallThatPlanHasNotCounted() || conventions().stackCheckOf(m_unit) == StackCheck::Required;
+    if (constructor && unitTestsStackInOwnFrame && conventions().exists(entry)) {
+        Vector<LValue, 8> arguments { callee.value() };
+        for (ValueID argument : value->argumentsOperands())
+            arguments.append(in<Boxed>(argument).value());
+        size_t numberOfArguments = arguments.size();
+        size_t numberOfParameters = describeEntry(inputs(), entry).numberOfParameters;
+        while (arguments.size() < numberOfParameters)
+            arguments.append(undefined().value());
+
+        PlacedArguments placed;
+        placed.inRegisters.append(Machine::ConstrainedValue(callee.value(), Machine::ValueRep::reg(calleeGPR)));
+        placed.inRegisters.append(Machine::ConstrainedValue(undefined().value(), Machine::ValueRep::reg(thisGPR)));
+        placed.inRegisters.append(Machine::ConstrainedValue(m_out.constInt64(static_cast<int64_t>(numberOfArguments)), Machine::ValueRep::reg(countGPR)));
+        for (size_t index = 0; index < arguments.size(); ++index) {
+            if (index < numberOfArgumentGPRs)
+                placed.inRegisters.append(Machine::ConstrainedValue(arguments[index], Machine::ValueRep::reg(argumentGPR(static_cast<unsigned>(index)))));
+            else
+                placed.onStack.append(arguments[index]);
+        }
+        placed.stackWordsToReserve = static_cast<uint32_t>(placed.onStack.size());
+        const ArgumentLocation boxedResult { ArgumentLocation::Kind::GPR, GPRInfo::returnValueGPR, 0, Representation::JSValue };
+        define(value, Boxed(emitCall(value, CallTarget::unit(entry, primaryEntry), placed, { &boxedResult, 1 }, { .constructs = true })));
+        return;
+    }
+
     Boxed newTarget = inOptional<Boxed>(value->newTargetOperand()).value_or(callee);
-    define(value, constructValue(value, ConstructSyntax::NewExpression, callee, newTarget, value->argumentsOperands(), siteThatNamesCallee(value)));
+    defineResultOfCallByValue(value, constructValue(value, ConstructSyntax::NewExpression, callee, newTarget, value->argumentsOperands(), siteThatNamesCallee(value)));
 }
 
 void CallEmitter::generateConstructList(const ValueContext& value)
 {
     RELEASE_ASSERT(!value.returnCall());
     Boxed callee = in<Boxed>(value->calleeOperand());
-    emitter<AccessEmitter>().recordArrival(value, callee);
     Boxed newTarget = inOptional<Boxed>(value->newTargetOperand()).value_or(callee);
     Boxed list = boxCell(in<CellPointer>(value->listOperand()));
-    define(value, callOperation<Boxed>(value, RuntimeOperation::ConstructWithArray, { callee, newTarget, list }, { .constructs = true }));
+    defineResultOfCallByValue(value, callOperation<Boxed>(value, RuntimeOperation::ConstructWithArray, { callee, newTarget, list }, { .constructs = true }));
 }
 
 } } } // namespace JSC::AOT::Typed

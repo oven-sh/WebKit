@@ -10,7 +10,7 @@
 
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
-#include "AOTLiteralStringDigest.h"
+#include "AOTPrefixCode.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTState.h"
 #include "AOTVector.h"
@@ -59,48 +59,42 @@ ProgramStrings::ProgramStrings(State& state)
     constants.cardsOfStringCells = m_constantCells.cards();
     static std::atomic<bool> hasFirstInstance;
     if (size_t numberOfListedWords = m_image.section<uint32_t>(ImageSection::LongStrings).size(); numberOfListedWords && !hasFirstInstance.exchange(true)) {
-        // A site makes at most one header: the cell of a numbered constant is kept, and a site without a number runs at most once. A listed string has a word or more.
-        constants.sizeOfStringHeaders = roundUpToMultipleOf(pageSize(), numberOfListedWords * sizeof(ImageStringHeader));
-        constants.startOfStringHeaders = static_cast<uint8_t*>(reserveGuardedPages(constants.sizeOfStringHeaders, OSAllocator::UnknownUsage));
-        constants.nextStringHeader = constants.startOfStringHeaders;
-        constants.endOfStringHeaders = constants.startOfStringHeaders + constants.sizeOfStringHeaders;
+        size_t sizeOfStringHeaders = roundUpToMultipleOf(pageSize(), numberOfListedWords * sizeof(ImageStringHeader));
+        constants.nextStringHeader = static_cast<uint8_t*>(reserveGuardedPages(sizeOfStringHeaders, OSAllocator::UnknownUsage));
+        constants.endOfStringHeaders = constants.nextStringHeader + sizeOfStringHeaders;
     }
     m_constantCells.setCardsAreWrittenWithoutRecord();
-    if (m_usesWideReferences) {
-        constants.wideLiteralStrings = state.tableArena.allocate<JSCell*>(m_tables.literalStrings().size());
+    if (m_usesWideReferences)
         constants.wideKeyCells = state.tableArena.allocate<JSCell*>(m_tables.keyCellIdentifiers().size());
-    } else {
-        constants.literalStrings = state.tableArena.allocate<uint32_t>(m_tables.literalStrings().size());
+    else {
         constants.keyCells = state.tableArena.allocate<uint32_t>(m_tables.keyCellIdentifiers().size());
         constants.functionNameCache = state.tableArena.allocate<uint64_t>(ConstantCellWords::numberOfCachedFunctionNames);
         state.caches->addClearedEachCollection("names of functions"_s, asWritableBytes(std::span { constants.functionNameCache, ConstantCellWords::numberOfCachedFunctionNames }));
     }
-    const ImageText& text = m_image.text();
-    bool nameWithoutEntryIsEmpty = m_image.isObfuscated() || !text.numberOfStrings() || !text.hasText(StringID(0u)) || text.view(StringID(0u)).isEmpty();
-    constants.nameOfFunctionsWithoutEntry = nameWithoutEntryIsEmpty ? state.instance.vm->smallStrings.emptyString() : nullptr;
-    constants.literalStringCache = state.tableArena.allocate<uint64_t>(1 << literalStringCacheIndexBits);
     constants.bigIntCells = state.tableArena.allocate<JSCell*>(m_tables.bigIntConstants().size());
     state.caches->add(CacheKind::StrongRoots, "string constants"_s, *this, RootVolatility::GreyedByExecution);
 }
 
-JSString* ProgramStrings::string(VM& vm, StringID string, Made made) const
+JSString* ProgramStrings::string(VM& vm, ImageStringWord word, Made made) const
 {
     DeferGCForAWhile deferGC(vm);
     const ImageText& text = m_image.text();
-    if (StringImpl* header = text.tryGetHeader(string))
+    if (word.isCoded())
+        return jsString(vm, text.createString(word));
+    if (StringImpl* header = text.tryGetHeader(word))
         return jsOwnedString(vm, String { *header });
-    StringView characters = text.view(string);
+    StringView characters = text.view(word);
     if (characters.isEmpty())
         return jsEmptyString(vm);
     if (characters.length() == 1) {
         if (char16_t character = characters.codeUnitAt(0); character <= maxSingleCharacterString)
             return vm.smallStrings.singleCharacterString(character);
     }
-    if (made == Made::Once && text.hasListedHash(string)) {
-        if (StringImpl* header = tryCreateHeader(characters, text.hash(string)))
+    if (made == Made::Once && word.hasListedHash()) {
+        if (StringImpl* header = tryCreateHeader(characters, text.hash(word)))
             return jsOwnedString(vm, String { *header });
     }
-    String value = text.isAtom(string) ? text.createAtom(string) : text.createString(string);
+    String value = word.isAtom() ? text.createAtom(word) : text.createString(word);
     if (Image::isBackedByStaticData(*value.impl()))
         return jsOwnedString(vm, value);
     return jsString(vm, value);
@@ -142,167 +136,30 @@ JSString* ProgramStrings::constant(VM& vm, uint32_t number)
     return cell;
 }
 
-JSString* ProgramStrings::createConstant(VM& vm, uint32_t stringIndex)
-{
-    RELEASE_ASSERT(stringIndex < m_image.text().numberOfStrings());
-    return string(vm, StringID(stringIndex), Made::Once);
-}
-
-// ProgramTables::nameOfFunction(). Nothing for a function without a name, and for one that the compiler made: stretches of those share a name.
-static std::optional<uint32_t> positionOfFunctionName(const ProgramTables& tables, FunctionID function)
-{
-    uint32_t source = tables.sourceFunctionOf(function.index());
-    if (source >= tables.numberOfFunctions() - tables.functionSources().size())
-        return std::nullopt;
-    const uint32_t* group = tables.functionNameGroups().data() + source / 32 * 2;
-    if (!(group[0] >> source % 32 & 1))
-        return std::nullopt;
-    return group[1] + std::popcount(group[0] & ((1u << source % 32) - 1));
-}
 
 JSString* ProgramStrings::writtenNameOfFunction(VM& vm, FunctionID function)
 {
-    StringID name(m_tables.nameOfFunction(function.index()));
-    if (m_image.isObfuscated() || !m_image.text().hasText(name))
-        return jsEmptyString(vm);
-    std::optional<uint32_t> position = m_usesWideReferences ? std::nullopt : positionOfFunctionName(m_tables, function);
-    return position ? functionNameAt(vm, *position) : string(vm, name);
-}
-
-JSString* ProgramStrings::functionNameAt(VM& vm, uint32_t position)
-{
-    RELEASE_ASSERT(!m_usesWideReferences && position < m_tables.functionNames().size());
-    uint64_t& cached = m_instance.runtime.constants.functionNameCache[position % ConstantCellWords::numberOfCachedFunctionNames];
-    if (static_cast<uint32_t>(cached) == position + 1)
-        return uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_instance.cellCageBase, static_cast<uint32_t>(cached >> 32)));
-    JSString* created = string(vm, StringID(m_tables.functionNames()[position]));
-    cached = static_cast<uint64_t>(MarkedBlockCage::encode(m_instance.cellCageBase, created)) << 32 | (position + 1);
-    return created;
-}
-
-JSCell* ProgramStrings::immortalCellAt(const uint32_t* narrowCells, JSCell* const* wideCells, uint32_t number) const
-{
-    if (m_usesWideReferences)
-        return wideCells[number];
-    uint32_t word = narrowCells[number];
-    if (!word)
-        return nullptr;
-    return MarkedBlockCage::decode(m_instance.cellCageBase, word);
-}
-
-// The collector does not read these tables, so the cell has its root before compiled code can find it.
-void ProgramStrings::setImmortalCellAt(uint32_t* narrowCells, JSCell** wideCells, uint32_t number, JSCell* cell) const
-{
-    m_state.immortalCells->add(cell);
-    if (m_usesWideReferences) {
-        wideCells[number] = cell;
-        return;
-    }
-    narrowCells[number] = MarkedBlockCage::encode(m_instance.cellCageBase, cell);
-}
-
-JSString* ProgramStrings::literalStringIfCreated(uint32_t number) const
-{
-    RELEASE_ASSERT(number < m_tables.literalStrings().size());
-    const ConstantCellWords& constants = m_instance.runtime.constants;
-    return uncheckedDowncast<JSString>(immortalCellAt(constants.literalStrings, constants.wideLiteralStrings, number));
-}
-
-JSString* ProgramStrings::stringForLiteralStringWord(uint64_t word) const
-{
-    ASSERT(isLiteralStringWord(word));
-    uint32_t number = literalStringIndex(static_cast<uint32_t>(word));
-    if (JSString* cell = literalStringIfCreated(number))
-        return cell;
-    RELEASE_ASSERT_WITH_MESSAGE(m_image.text().hasText(StringID(m_tables.literalStrings()[number])), "AOT: a value is a literal string that the program spells nowhere, and no string from outside was that string");
-    JSString* created = string(*m_instance.vm, StringID(m_tables.literalStrings()[number]));
-    const ConstantCellWords& constants = m_instance.runtime.constants;
-    setImmortalCellAt(constants.literalStrings, constants.wideLiteralStrings, number, created);
-    return created;
-}
-
-// The first string from outside that has the digest lends its text to the instance. No value is the literal string before that, so nobody asks for the text earlier.
-bool ProgramStrings::isTextOfLiteralStringWithoutText(uint32_t number, StringView text) const
-{
-    if (JSString* lent = literalStringIfCreated(number))
-        return text == StringView(*lent->tryGetValueImpl());
-    std::span<const LiteralStringDigest> digests = m_tables.literalStringDigests();
-    auto found = std::ranges::lower_bound(digests, number, { }, &LiteralStringDigest::number);
-    RELEASE_ASSERT(found != digests.end() && found->number == number);
-    if (found->length != text.length() || found->digest != digestOfLiteralString(text))
-        return false;
-    VM& vm = *m_instance.vm;
-    DeferGCForAWhile deferGC(vm);
-    const ConstantCellWords& constants = m_instance.runtime.constants;
-    setImmortalCellAt(constants.literalStrings, constants.wideLiteralStrings, number, jsString(vm, text.toString()));
-    return true;
-}
-
-std::optional<uint32_t> ProgramStrings::findLiteralString(unsigned hash, StringView text) const
-{
-    std::span<const uint32_t> table = m_tables.literalStringTable();
-    if (table.empty())
-        return std::nullopt;
-    uint32_t numberOfSlots = static_cast<uint32_t>(table.size());
-    static_assert(StringHasher::maskHash == (1u << LiteralStringTable::hashBits) - 1);
-    for (uint32_t position = LiteralStringTable::firstSlot(hash, numberOfSlots);; position = position + 1 == numberOfSlots ? 0 : position + 1) {
-        uint32_t entry = table[position];
-        if (!entry)
-            return std::nullopt;
-        uint32_t number = LiteralStringTable::numberOf(entry);
-        if (entry != LiteralStringTable::entryFor(number, hash))
-            continue;
-        StringID string(m_tables.literalStrings()[number]);
-        if (m_image.text().hasText(string) ? m_image.text().equals(string, text) : isTextOfLiteralStringWithoutText(number, text))
-            return number;
-    }
-}
-
-std::optional<uint32_t> ProgramStrings::findLiteralString(JSString* string)
-{
-    unsigned length = string->length();
-    std::span<const LiteralStringLimits> limits = m_tables.literalStringLimits();
-    if (limits.empty() || length > limits[0].maxLength)
-        return std::nullopt;
-    if (StringImpl* impl = string->tryGetValueImpl()) {
-        if (std::optional<uint32_t> word = m_image.text().literalStringWordOfHeader(*impl))
-            return *word ? std::optional<uint32_t>(literalStringIndex(*word)) : std::nullopt;
-        // The literal strings have their headers in the image.
-        const ConstantCellWords& constants = m_instance.runtime.constants;
-        if (std::bit_cast<uintptr_t>(impl) - std::bit_cast<uintptr_t>(constants.startOfStringHeaders) < constants.sizeOfStringHeaders)
-            return std::nullopt;
-        static_assert(sizeof(StringImpl) >= 1u << literalStringCacheImplShift);
-        uintptr_t address = std::bit_cast<uintptr_t>(impl);
-        uint64_t cacheIndex = literalStringCacheIndex(address);
-        uint64_t& cached = m_instance.runtime.constants.literalStringCache[cacheIndex];
-        if (cached >> literalStringCacheWordBits == address >> literalStringCacheImplShift) {
-            uint32_t word = static_cast<uint32_t>(cached & ((1u << literalStringCacheWordBits) - 1)) << literalStringCacheWordShift;
-            return word ? std::optional<uint32_t>(literalStringIndex(word)) : std::nullopt;
-        }
-        std::optional<uint32_t> number = findLiteralString(impl->hash(), StringView(*impl));
-        m_literalStringCacheKeys[cacheIndex] = impl;
-        cached = literalStringCacheEntry(address, number ? literalStringWord(*number) : 0);
-        return number;
-    }
-    return withCharactersOf(string, [&](StringView text) {
-        return findLiteralString(text.hash(), text);
-    });
-}
-
-uint64_t ProgramStrings::literalStringWordFor(JSString* string)
-{
-    if (!string->length())
-        return emptyLiteralStringWord;
-    if (std::optional<uint32_t> number = findLiteralString(string))
-        return literalStringWord(*number);
-    return std::bit_cast<uint64_t>(string);
+    uint32_t number = function.index() - m_tables.closureFunctions.first;
+    uint64_t* cached = !m_usesWideReferences && m_tables.hasClosureNumber(number) ? &m_instance.runtime.constants.functionNameCache[number % ConstantCellWords::numberOfCachedFunctionNames] : nullptr;
+    if (cached && static_cast<uint32_t>(*cached) == number + 1)
+        return uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_instance.cellCageBase, static_cast<uint32_t>(*cached >> 32)));
+    std::optional<uint32_t> name = m_tables.nameOfFunction(function.index());
+    JSString* result = !name || !m_image.text().hasText(StringID(*name)) ? jsEmptyString(vm) : string(vm, StringID(*name));
+    if (cached && MarkedBlockCage::baseOf(result) == m_instance.cellCageBase)
+        *cached = static_cast<uint64_t>(MarkedBlockCage::encode(m_instance.cellCageBase, result)) << 32 | (number + 1);
+    return result;
 }
 
 JSCell* ProgramStrings::keyCellIfCreated(uint32_t number) const
 {
     RELEASE_ASSERT(number < m_tables.keyCellIdentifiers().size());
     const ConstantCellWords& constants = m_instance.runtime.constants;
-    return immortalCellAt(constants.keyCells, constants.wideKeyCells, number);
+    if (m_usesWideReferences)
+        return constants.wideKeyCells[number];
+    uint32_t word = constants.keyCells[number];
+    if (!word)
+        return nullptr;
+    return MarkedBlockCage::decode(m_instance.cellCageBase, word);
 }
 
 JSCell* ProgramStrings::keyCell(VM& vm, uint32_t number)
@@ -310,15 +167,19 @@ JSCell* ProgramStrings::keyCell(VM& vm, uint32_t number)
     if (JSCell* cell = keyCellIfCreated(number))
         return cell;
     DeferGCForAWhile deferGC(vm);
-    const Identifier& name = vm.aotState().identifiers->identifier(m_tables.keyCellIdentifiers()[number]);
+    const Identifier& name = identifiersOf(m_instance).identifier(m_tables.keyCellIdentifiers()[number]);
     RELEASE_ASSERT(!name.isNull());
     JSCell* created;
     if (auto* symbol = dynamicDowncast<SymbolImpl>(name.impl()))
         created = Symbol::create(vm, *symbol);
     else
         created = jsOwnedString(vm, name.string());
+    m_state.immortalCells->add(created);
     const ConstantCellWords& constants = m_instance.runtime.constants;
-    setImmortalCellAt(constants.keyCells, constants.wideKeyCells, number, created);
+    if (m_usesWideReferences)
+        constants.wideKeyCells[number] = created;
+    else
+        constants.keyCells[number] = MarkedBlockCage::encode(m_instance.cellCageBase, created);
     return created;
 }
 
@@ -348,19 +209,28 @@ void ProgramStrings::willAnalyzeHeap(VM& vm)
     ProgramIdentifiers& identifiers = *vm.aotState().identifiers;
     auto ensureName = [&](uint32_t name, SlotData slot) {
         if (name && traitsOf(slot.representation()).holdsCell)
-            identifiers.identifier(name);
+            identifiersOf(m_instance).identifier(name);
     };
     for (uint32_t shape = 1; shape <= m_tables.numberOfShapes; ++shape) {
         if (!m_tables.layouts()[shape])
             continue;
         if (shape >= m_tables.firstEnvironmentShape) {
-            for (const VariableData& variable : m_tables.environmentForShape(shape).describedVariables())
-                ensureName(variable.name, variable.slot);
+            for (const VariableData& variable : m_tables.environmentForShape(shape).describedVariables()) {
+                if (!m_hasNamedVariablesForHeapSnapshots && variable.name != VariableData::noName)
+                    identifiers.nameForHeapSnapshots(&variable, AtomString(text(m_tables, StringID(variable.string()))));
+            }
             continue;
         }
         for (const FieldData& field : m_tables.layoutForShape(shape).fields())
             ensureName(field.name, field.slot);
     }
+    if (!m_hasNamedVariablesForHeapSnapshots) {
+        bool endsWhereClosureNumberEnds = forEachNamedCapture(decodeVarintBytes(m_tables.namedCaptures()).span(), [&](const NamedCaptureData& capture) {
+            identifiers.nameForHeapSnapshots(capture.closureNumber, capture.slot, AtomString(text(m_tables, StringID(capture.name))), capture.isVariableOfModule);
+        });
+        RELEASE_ASSERT(endsWhereClosureNumberEnds);
+    }
+    m_hasNamedVariablesForHeapSnapshots = true;
 }
 
 template<typename Appender>

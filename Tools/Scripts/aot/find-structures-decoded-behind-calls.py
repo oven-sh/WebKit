@@ -7,6 +7,7 @@
 #
 # This reads the machine code of a finished binary, x86-64 or arm64, ELF or Mach-O, with llvm-nm and llvm-objdump, and lists every add of structureIDBase whose ID crossed a call: from the
 # add it walks the function's own branches back, through copies and masks, to the instruction that gave the ID its value. Calls named in calls-that-never-collect.txt do not count.
+# The register that is taken for the base is walked back the same way: an add counts only if some way to it loads structureIDBase into that register.
 # The offset of structureIDBase in g_config differs between platforms: without --offset it is the offset that is added to a register most often.
 #
 # A function that is listed in --expected (one name a line, '#' starts a comment that says why it is harmless) is not reported. Exit status 1 if anything else is found.
@@ -102,9 +103,9 @@ target = config + offset
 for ad, sz, n in wanted:
     ins = code.get(n, [])
     if not ins: continue
-    # which registers hold the base, by address order
-    decodes = []   # (index, id register)
-    pages = {}; base = set()
+    # which registers hold the base, by address order: a first guess, which holds_base() below checks along the branches
+    decodes = []   # (index, id register, base register or None where the add names the base in memory)
+    pages = {}; base = set(); base_loads = {}   # index of a load of the base -> its register
     for k, (pc, op, rest) in enumerate(ins):
         ops = operands(rest)
         if arm:
@@ -115,12 +116,12 @@ for ad, sz, n in wanted:
             if op == 'ldr' and len(ops) >= 2:
                 m = re.match(r'^\[(x\d+)(?:, #(0x[0-9a-f]+|\d+))?\]$', ','.join(ops[1:]).replace(' ', '').replace(',#', ', #'))
                 d = canon(ops[0])
-                if m and m.group(1) in pages and pages[m.group(1)] + int(m.group(2) or '0', 0) == target: base.add(d); pages.pop(d, None); continue
+                if m and m.group(1) in pages and pages[m.group(1)] + int(m.group(2) or '0', 0) == target: base.add(d); base_loads[k] = d; pages.pop(d, None); continue
                 base.discard(d); pages.pop(d, None); continue
             if op == 'add' and len(ops) >= 3:
                 x, y = canon(ops[1]), canon(ops[2])
-                if x in base and re.match(r'^x\d+$', y): decodes.append((k, y))
-                elif y in base and re.match(r'^x\d+$', x): decodes.append((k, x))
+                if x in base and re.match(r'^x\d+$', y): decodes.append((k, y, x))
+                elif y in base and re.match(r'^x\d+$', x): decodes.append((k, x, y))
                 d = canon(ops[0]); base.discard(d); pages.pop(d, None); continue
             if is_call(op):
                 for r in list(base):
@@ -131,14 +132,14 @@ for ad, sz, n in wanted:
             if ops and re.match(r'^[wx]\d+$', ops[0]) and not op.startswith(('st', 'cmp', 'tst', 'cb', 'tb', 'b.')): base.discard(canon(ops[0])); pages.pop(canon(ops[0]), None)
         else:
             names_target = follow_address_of_config(op, rest, ops, pages) == target
-            if names_target and op == 'add': decodes.append((k, canon(ops[0]))); base.discard(canon(ops[0])); continue
-            if names_target and op == 'mov' and canon(ops[0]) in X64.values(): base.add(canon(ops[0])); continue
-            if op == 'add' and len(ops) == 2 and canon(ops[1]) in base and canon(ops[0]) in X64.values(): decodes.append((k, canon(ops[0]))); continue
-            if op == 'add' and len(ops) == 2 and canon(ops[0]) in base and canon(ops[1]) in X64.values(): decodes.append((k, canon(ops[1]))); base.discard(canon(ops[0])); continue
+            if names_target and op == 'add': decodes.append((k, canon(ops[0]), None)); base.discard(canon(ops[0])); continue
+            if names_target and op == 'mov' and canon(ops[0]) in X64.values(): base.add(canon(ops[0])); base_loads[k] = canon(ops[0]); continue
+            if op == 'add' and len(ops) == 2 and canon(ops[1]) in base and canon(ops[0]) in X64.values(): decodes.append((k, canon(ops[0]), canon(ops[1]))); continue
+            if op == 'add' and len(ops) == 2 and canon(ops[0]) in base and canon(ops[1]) in X64.values(): decodes.append((k, canon(ops[1]), canon(ops[0]))); base.discard(canon(ops[0])); continue
             if op == 'lea':
                 m = re.match(r'^\[(\w+) \+ (\w+)\]$', ops[1]) if len(ops) > 1 else None
-                if m and canon(m.group(1)) in base: decodes.append((k, canon(m.group(2))))
-                elif m and canon(m.group(2)) in base: decodes.append((k, canon(m.group(1))))
+                if m and canon(m.group(1)) in base: decodes.append((k, canon(m.group(2)), canon(m.group(1))))
+                elif m and canon(m.group(2)) in base: decodes.append((k, canon(m.group(1)), canon(m.group(2))))
                 base.discard(canon(ops[0])); continue
             if is_call(op):
                 for r in list(base):
@@ -155,7 +156,31 @@ for ad, sz, n in wanted:
             m = re.findall(r'0x([0-9a-f]+)', rest.split('<')[0])
             if m and int(m[-1], 16) in index: preds[index[int(m[-1], 16)]].append(q)
     def saved(r): return (int(r[1:]) >= 19) if arm and re.match(r'^x\d+$', r) else (not arm and r in ('rbx', 'rbp', 'r12', 'r13', 'r14', 'r15'))
-    for k, reg in decodes:
+    def writes_register(op, ops, r):
+        d = canon(ops[0]) if ops and ops[0] else None
+        if arm and op == 'ldp' and len(ops) > 1 and canon(ops[1]) == r: return True
+        if not arm and op == 'pop' and d == r: return True
+        return d == r and not op.startswith(('st', 'cmp', 'tst', 'test', 'cb', 'tb', 'b.', 'j', 'push')) and op not in ('b', 'ret')
+    def holds_base(k, b):
+        # Address order says little: the block above may end in a jump and lead elsewhere.
+        work = [(q, b) for q in preds[k]]; visited = set()
+        while work and len(visited) < 60000:
+            j, r = work.pop()
+            if (j, r) in visited: continue
+            visited.add((j, r))
+            if base_loads.get(j) == r: return True
+            pc, op, rest = ins[j]; ops = operands(rest)
+            if is_call(op):
+                if not saved(r): continue
+            elif writes_register(op, ops, r):
+                src = canon(ops[-1]) if len(ops) >= 2 else None
+                isreg = src is not None and (src in X64.values() if not arm else bool(re.match(r'^x\d+$', src)))
+                if not (op in ('mov', 'orr') and isreg and len(ops) <= 3 and (not arm or len(ops) == 2 or canon(ops[1]) in ('xzr', 'wzr'))): continue
+                r = src
+            for q in preds[j]: work.append((q, r))
+        return len(visited) >= 60000
+    for k, reg, b in decodes:
+        if b is not None and not holds_base(k, b): continue
         found = {}   # (where the ID got its value, why) -> calls crossed
         work = [(q, reg, ()) for q in preds[k]]; visited = set()
         while work and len(visited) < 60000:

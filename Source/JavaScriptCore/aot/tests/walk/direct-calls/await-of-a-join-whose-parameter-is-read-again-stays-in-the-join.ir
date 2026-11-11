@@ -1,0 +1,45 @@
+# the parameter of the join is taken by the await and by the list behind it: behind the join it must still be what the ways brought, so the await stays in the join
+# async function run(hit, k) { const p = hit === undefined ? cached(k) : load(k); return [p, await p]; }
+# RUN: walk f3:CoroutineBody mechanisms=none+DirectCalls
+# CHECK-LABEL: code f3:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# CHECK-NOT: = AwaitBySavingFrame
+# RUN(NEVER): walk f3:CoroutineBody mechanisms=none+DirectCalls
+# NEVER-NOT: = AwaitCallBySavingFrame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="load" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v0
+}
+function f2 name="cached" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="run" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=undefined
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewClosure function=f2
+    v4 = Call v3, -, v1 calleeName="cached"
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v1 calleeName="load"
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = Await v7
+    v9 = NewArray v7, v8 contents=anything
+    Return v9
+}

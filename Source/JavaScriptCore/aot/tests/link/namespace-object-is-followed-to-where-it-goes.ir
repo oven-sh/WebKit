@@ -1,0 +1,58 @@
+# If naming the namespace object of a module let every export escape, one `Barrel.run()` would keep all that the barrel shows in the executable: also what only code that the build has folded away would have called
+# library.js: export function called() { return 1 } export function read() { return 2 } export function idle() { return 3 }
+# main.js: import * as ns from "./library.js"; ns.called(); const f = ns.read; f()
+# `ns.called()` hands the object to the callee as `this`, which the callee does not take. `ns.read` is a read by name of the variable behind the export. Nothing comes to `idle`.
+# A name that code which runs reads off the object is shown by the object to whoever gets hold of it, so what lies under it has escaped: `read`. `called` is read by its binding, and the object is only its `this`.
+# Every name that is not shown stays in: the run time hands its value to nobody.
+# RUN: summary f0
+# CHECK: summary f0
+# CHECK-NOT: hands-out
+# RUN(REACH): link functions mechanisms=all
+# REACH: function f2 callers-known
+# REACH-NOT: function f3 {{*}}callers-known
+# REACH: function f4 unreached
+# RUN(NONE): link functions mechanisms=none
+# NONE: function f4 unreached
+# RUN(RUNS): run-in-shell mechanisms=all
+# RUNS: 1
+# RUNS-NEXT: 2
+# RUNS-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell mechanisms=none
+# CLOSED: 1
+# CLOSED-NEXT: 2
+# CLOSED-NEXT: exited with 0
+
+module m0 path="/library.js" displayPath="library.js" body=f1 exports=[{name="called" variable=g0}, {name="idle" variable=g2}, {name="read" variable=g1}]
+module m1 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}]
+entry module=m1
+variable g0 name="called" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="read" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+variable g2 name="idle" module=m0 declared={type=function} initialization=Function function=f4 flags=[IsImmutable]
+function f0 name="main" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = ModuleNamespace module=m0
+    v4 = Call v2, v3 calleeName="ns.called"
+    v5 = Call v1, -, v4
+    v6 = ModuleNamespace module=m0
+    v7 = PropGet v6 key="read"
+    v8 = Call v7
+    v9 = Call v1, -, v8
+    Return
+}
+function f1 name="library" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="called" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="read" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f4 name="idle" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=3
+    Return v0
+}

@@ -8,6 +8,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3EliminateRedundantPhiCycles.h"
 #include "B3LoopVersionPlan.h"
 
 template<typename Functor>
@@ -157,7 +158,8 @@ static void testVersionLoopsVersionsLoopWithCall()
 
     CHECK(versionLoopsAndValidate(proc));
     CHECK(hasRemark(proc, RemarkKind::LoopVersioned, GaveUpReason::None));
-    checkValueCountInEachLoop(proc, Load, { 1, 2 });
+    // The call writes, so the original loop ends in front of the guards of the fast version: the loop around both holds the hoisted load as well.
+    checkValueCountInEachLoop(proc, Load, { 1, 3 });
     checkValueCountInEachLoop(proc, Patchpoint, { 1, 1 });
     auto code = compileProc(proc);
     for (int64_t bound : { -1, 0, 1, 2, 9 }) {
@@ -290,6 +292,184 @@ static void testVersionLoopsOnlyInnermostLoops()
     CHECK_EQ(run(*compileProc(proc), 3, memory, 2), 30);
 }
 
+// Around a call that writes, an iteration that left the fast version ends in front of its guards: the load is hoisted again and the fast version goes on.
+static void testVersionLoopsReturnsToFastVersionAroundCallThatWrites()
+{
+    Procedure proc(remarkPolicy());
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    BasicBlock* special = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    Value* increment = graph.make(loop.body, Add, graph.load(loop.body, Int64, loop.pointer, 0, firstHeap), graph.int64(loop.body, 1));
+    appendIncrementingCall(graph, loop.body, loop.pointer, 8, secondHeap);
+    Value* isSpecial = graph.make(loop.body, Equal, graph.make(loop.body, BitAnd, graph.get(loop.body, loop.index), graph.int64(loop.body, 3)), loop.extra);
+    graph.branch(loop.body, isSpecial, rarely(special), FrequentedBlock(hot));
+    graph.increase(special, loop.sum, 1000);
+    appendIncrementingCall(graph, special, loop.pointer, 0, firstHeap);
+    graph.jump(special, hot);
+    graph.increase(hot, loop.sum, increment);
+    loop.endBody(hot);
+    loop.rotate();
+
+    CHECK(versionLoopsAndValidate(proc));
+    CHECK(hasRemark(proc, RemarkKind::LoopVersioned, GaveUpReason::None));
+    B3::NaturalLoops& loops = proc.naturalLoops();
+    CHECK_EQ(loops.numLoops(), 2u);
+    unsigned numberOfLoopsInsideAnother = 0;
+    for (unsigned i = 0; i < loops.numLoops(); ++i)
+        numberOfLoopsInsideAnother += !!loops.innerMostOuterLoop(loops.loop(i));
+    CHECK_EQ(numberOfLoopsInsideAnother, 1u);
+    checkValueCountInEachLoop(proc, Load, { 0, 1 });
+    auto code = compileProc(proc);
+    for (int64_t bound : { 0, 1, 4, 5, 23 }) {
+        for (int64_t specialRemainder : { -1, 0, 1, 3 }) {
+            int64_t expectedWord = 5;
+            int64_t expectedSum = 0;
+            for (int64_t i = 0; i < bound; ++i) {
+                expectedSum += expectedWord + 1;
+                if ((i & 3) != specialRemainder)
+                    continue;
+                expectedSum += 1000;
+                ++expectedWord;
+            }
+            int64_t memory[2] = { 5, 0 };
+            CHECK_EQ(run(*code, bound, memory, specialRemainder), expectedSum);
+            CHECK_EQ(memory[0], expectedWord);
+            CHECK_EQ(memory[1], bound);
+        }
+    }
+}
+
+// The likely path gives the variable a hoisted value. A rare path that is copied into the fast version gives it another, which the next iteration must see.
+static void testVersionLoopsIdentityInHeaderIsNoPhi()
+{
+    // if (flag) do { sum += changing word + each of the fixed words, times a factor, + (flag ? that word : 5); if (index == 5) changing word = 9; } while (++index <= bound);
+    // On that path the Select is an Identity of its load. With this many loads some are left in the loop for versioning to hoist.
+    enum class Form : uint8_t { WholePipeline, PhaseAlone, WholePipelineWithFault };
+    for (Form form : { Form::WholePipeline, Form::PhaseAlone, Form::WholePipelineWithFault }) {
+        bool runsWholePipeline = form != Form::PhaseAlone;
+        for (unsigned numberOfLoads : { 1u, 12u, 16u }) {
+            Policy policy = optimizingPolicy();
+            policy.validation.takesIdentitiesInHeadersForPhis = form == Form::WholePipelineWithFault;
+            Procedure proc(policy);
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            BasicBlock* guarded = proc.addBlock();
+            BasicBlock* other = proc.addBlock();
+            BasicBlock* header = proc.addBlock();
+            BasicBlock* rare = proc.addBlock();
+            BasicBlock* next = proc.addBlock();
+            BasicBlock* exit = proc.addBlock();
+            auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
+            Value* pointer = arguments[1];
+            Value* flag = arguments[2];
+            Variable* index = proc.addVariable(Int64);
+            Variable* sum = proc.addVariable(Int64);
+            graph.set(root, index, graph.int64(root, 0));
+            graph.set(root, sum, graph.int64(root, 0));
+            graph.branch(root, flag, FrequentedBlock(guarded), FrequentedBlock(other));
+            graph.ret(other, graph.int64(other, -5));
+            graph.jump(guarded, header);
+            Vector<Value*> loads;
+            Vector<Value*> chosen;
+            for (unsigned i = 0; i < numberOfLoads; ++i) {
+                MemoryValue* load = graph.load(header, Int64, pointer, 8 * (i + 1), secondHeap);
+                load->setReadsMutability(Mutability::Immutable);
+                loads.append(load);
+                chosen.append(runsWholePipeline ? graph.select(header, flag, load, graph.int64(header, 5)) : graph.make(header, Identity, load));
+            }
+            Value* changing = graph.load(header, Int64, pointer, 0, firstHeap);
+            graph.branch(header, graph.make(header, Equal, graph.get(header, index), graph.int64(header, 5)), rarely(rare), FrequentedBlock(next));
+            graph.store(rare, graph.int64(rare, 9), pointer, 0, firstHeap);
+            graph.jump(rare, next);
+            graph.increase(next, sum, changing);
+            for (unsigned i = 0; i < numberOfLoads; ++i) {
+                graph.increase(next, sum, graph.make(next, Mul, loads[i], graph.int64(next, i + 3)));
+                graph.increase(next, sum, chosen[i]);
+            }
+            graph.increase(next, index, 1);
+            graph.branch(next, graph.make(next, GreaterEqual, arguments[0], graph.get(next, index)), header, exit);
+            graph.ret(exit, graph.get(exit, sum));
+            proc.resetReachability();
+            validate(proc);
+            if (!runsWholePipeline) {
+                fixSSA(proc);
+                CHECK(versionLoopsAndValidate(proc));
+            }
+
+            if (form == Form::WholePipelineWithFault && numberOfLoads > 1) {
+                // The variable that stands for a load is read in front of the fast loop, where nothing has set it.
+                proc.setOptLevel(2);
+                prepareForGeneration(proc);
+                CHECK(proc.report().failure && proc.report().failure->kind == FailureKind::VariableReadBeforeSet);
+                continue;
+            }
+
+            auto code = compileProc(proc, runsWholePipeline ? 2 : 0);
+            int64_t memory[17];
+            int64_t expected = 0;
+            constexpr int64_t bound = 10;
+            for (int64_t i = 0; i < 17; ++i)
+                memory[i] = 1000 + 7 * i;
+            for (int64_t turn = 0; turn <= bound; ++turn) {
+                expected += turn <= 5 ? memory[0] : 9;
+                for (unsigned i = 0; i < numberOfLoads; ++i)
+                    expected += memory[i + 1] * (i + 4);
+            }
+            CHECK_EQ(invoke<int64_t>(*code, bound, memory, static_cast<int64_t>(3)), expected);
+        }
+    }
+}
+
+static void testVersionLoopsKeepsHeaderPhiThatCopiedRarePathChanges()
+{
+    Procedure proc(remarkPolicy());
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    Variable* last = proc.addVariable(Int64);
+    Value* first = proc.add<Const64Value>(Origin(), 5);
+    loop.root->values().insert(loop.root->size() - 1, first);
+    loop.root->values().insert(loop.root->size() - 1, proc.add<VariableValue>(B3::Set, Origin(), last, first));
+    BasicBlock* special = proc.addBlock();
+    BasicBlock* ordinary = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    BasicBlock* unexpected = proc.addBlock();
+    BasicBlock* expected = proc.addBlock();
+    Value* loaded = graph.load(loop.body, Int64, loop.pointer, 0, firstHeap);
+    graph.branch(loop.body, graph.make(loop.body, Below, loaded, graph.int64(loop.body, 100)), FrequentedBlock(expected), rarely(unexpected));
+    graph.callLikePatchpoint(unexpected);
+    graph.jump(unexpected, expected);
+    graph.increase(expected, loop.sum, graph.get(expected, last));
+    appendIncrementingCall(graph, expected, loop.pointer, 8, secondHeap);
+    Value* isSpecial = graph.make(expected, Equal, graph.make(expected, BitAnd, graph.get(expected, loop.index), graph.int64(expected, 3)), loop.extra);
+    graph.branch(expected, isSpecial, rarely(special), FrequentedBlock(ordinary));
+    graph.set(special, last, graph.int64(special, 1000));
+    graph.jump(special, hot);
+    graph.set(ordinary, last, loaded);
+    graph.jump(ordinary, hot);
+    loop.endBody(hot);
+    loop.rotate();
+
+    CHECK(versionLoopsAndValidate(proc));
+    CHECK(hasRemark(proc, RemarkKind::LoopVersioned, GaveUpReason::None));
+    auto code = compileProc(proc);
+    for (int64_t bound : { 0, 1, 2, 5, 23 }) {
+        for (int64_t specialRemainder : { -1, 0, 1, 3 }) {
+            for (int64_t word : { 5, 6 }) {
+                int64_t expectedSum = 0;
+                int64_t expectedLast = 5;
+                for (int64_t i = 0; i < bound; ++i) {
+                    expectedSum += expectedLast;
+                    expectedLast = (i & 3) == specialRemainder ? 1000 : word;
+                }
+                int64_t memory[2] = { word, 0 };
+                CHECK_EQ(run(*code, bound, memory, specialRemainder), expectedSum);
+                CHECK_EQ(memory[1], bound);
+            }
+        }
+    }
+}
+
 static void testVersionLoopsUncloneableRareEdgeContinuesInOriginalLoop()
 {
     enum class RarePath : uint8_t { HasUncloneableValue, StoresToHoistedLocation, CallWritesHoistedLocation };
@@ -320,9 +500,11 @@ static void testVersionLoopsUncloneableRareEdgeContinuesInOriginalLoop()
 
         CHECK(versionLoopsAndValidate(proc));
         CHECK_EQ(valueCountInEachLoop(proc, Load).first(), 0u);
-        CHECK_EQ(numberOfValues(proc, Load), 2u);
-        CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), 1u);
-        CHECK_EQ(special->numPredecessors(), 2u);
+        CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->opcode() == Load && value->lastChild()->opcode() != SlotBase; }), 2u);
+        // What can be copied ends its turn in a copy, and the fast loop is entered again behind it.
+        bool endsTurnInCopy = rarePath != RarePath::HasUncloneableValue;
+        CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), endsTurnInCopy ? 2u : 1u);
+        CHECK_EQ(special->numPredecessors(), endsTurnInCopy ? 1u : 2u);
         for (BasicBlock* predecessor : special->predecessors())
             CHECK_EQ(predecessor->numSuccessors(), 1u);
         auto code = compileProc(proc);
@@ -405,6 +587,53 @@ static void testVersionLoopsCloneableRarePathReturnsToFastVersion()
                 }
                 CHECK_EQ(run(*code, bound, memory, special), sum);
                 CHECK_EQ(memory[1], numberOfCalls);
+            }
+        }
+    }
+}
+
+static void testVersionLoopsSidePathOfLoopThatCalls(FrequencyClass frequencyOfSidePath)
+{
+    Procedure proc(remarkPolicy());
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    BasicBlock* unexpected = proc.addBlock();
+    BasicBlock* expected = proc.addBlock();
+    BasicBlock* special = proc.addBlock();
+    BasicBlock* hot = proc.addBlock();
+    Value* loaded = graph.load(loop.body, Int64, loop.pointer, 0, secondHeap);
+    graph.branch(loop.body, graph.make(loop.body, Below, loaded, graph.int64(loop.body, 100)), FrequentedBlock(expected), rarely(unexpected));
+    graph.callLikePatchpoint(unexpected);
+    graph.jump(unexpected, expected);
+    Value* maskedIndex = graph.make(expected, BitAnd, graph.get(expected, loop.index), graph.int64(expected, 3));
+    graph.branch(expected, graph.make(expected, Equal, maskedIndex, loop.extra), FrequentedBlock(special, frequencyOfSidePath), FrequentedBlock(hot));
+    graph.increase(special, loop.sum, 1000);
+    graph.jump(special, hot);
+    appendIncrementingCall(graph, hot, loop.pointer, 8, proc.heapSets().unite(firstHeap, thirdHeap));
+    graph.increase(hot, loop.sum, graph.make(hot, Mul, loaded, graph.get(hot, loop.index)));
+    loop.endBody(hot);
+    loop.rotate();
+    checkValueCountInEachLoop(proc, Mul, { 1 });
+    checkValueCountInEachLoop(proc, Patchpoint, { 2 });
+
+    CHECK(versionLoopsAndValidate(proc));
+    // A loop with a call is never unrolled, so an unlikely path jumps back into the fast loop instead of getting its own copy of the call and the product.
+    // A rare path still gets that copy: it is cold code.
+    unsigned copiesForSidePath = frequencyOfSidePath == FrequencyClass::Rare ? 1 : 0;
+    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), 2u);
+    CHECK_EQ(numberOfValues(proc, Mul), 2u + copiesForSidePath);
+    CHECK_EQ(numberOfValues(proc, Patchpoint), 3u + copiesForSidePath);
+
+    auto code = compileProc(proc);
+    for (int64_t bound : { -1, 0, 1, 2, 5, 40 }) {
+        for (int64_t special : { -1, 0, 1, 3, 4 }) {
+            for (int64_t factor : { 7, 200 }) {
+                int64_t memory[2] = { factor, 0 };
+                int64_t sum = 0;
+                for (int64_t i = 0; i < bound; ++i)
+                    sum += ((i & 3) == special ? 1000 : 0) + factor * i;
+                CHECK_EQ(run(*code, bound, memory, special), sum);
+                CHECK_EQ(memory[1], std::max<int64_t>(bound, 0));
             }
         }
     }
@@ -537,6 +766,57 @@ static void testVersionLoopsHoistsLoadRepeatingLoadBeforeLoop()
         CHECK_EQ(run(*code, 10, memory, 4), 1040);
         CHECK_EQ(run(*code, 10, memory, 5), 2040);
         CHECK_EQ(run(*code, 3, memory, 4), 12);
+        CHECK_EQ(run(*code, 0, memory, 4), 0);
+    }
+}
+
+static void testVersionLoopsPhiThatFollowsItsUpsilonInHeaderIsNotLoopCarried()
+{
+    for (bool runsPrecedingPhase : { true, false }) {
+        Procedure proc(optimizingPolicy());
+        Graph graph { proc };
+        TopTestedLoop loop(graph);
+        BasicBlock* special = proc.addBlock();
+        BasicBlock* guarded = proc.addBlock();
+        BasicBlock* unexpected = proc.addBlock();
+        BasicBlock* hot = proc.addBlock();
+        MemoryValue* earlierLoad = proc.add<MemoryValue>(Load, Int64, Origin(), loop.pointer, 0, firstHeap);
+        loop.root->appendNonTerminal(earlierLoad);
+        loop.root->appendNonTerminal(proc.add<MemoryValue>(Store, Origin(), earlierLoad, loop.pointer, 0, firstHeap));
+        UpsilonValue* given = loop.body->appendNew<UpsilonValue>(proc, Origin(), loop.extra);
+        Value* phi = graph.phi(loop.body, Int64);
+        given->setPhi(phi);
+        UpsilonValue* leftOver = proc.add<UpsilonValue>(Origin(), proc.add<Const64Value>(Origin(), 3));
+        loop.exit->values().insert(0, leftOver->child(0));
+        loop.exit->values().insert(1, leftOver);
+        leftOver->setPhi(phi);
+        graph.branch(loop.body, graph.make(loop.body, Equal, graph.make(loop.body, Add, graph.get(loop.body, loop.index), phi), earlierLoad), rarely(special), FrequentedBlock(guarded));
+        graph.increase(special, loop.sum, 1000);
+        graph.jump(special, guarded);
+        Value* loaded = graph.load(guarded, Int64, loop.pointer, 0, firstHeap);
+        graph.branch(guarded, graph.make(guarded, Equal, loaded, graph.int64(guarded, 4)), FrequentedBlock(hot), rarely(unexpected));
+        graph.increase(unexpected, loop.sum, 100);
+        graph.jump(unexpected, hot);
+        graph.increase(hot, loop.sum, loaded);
+        loop.endBody(hot);
+        loop.rotate();
+        CHECK_EQ(numberOfValues(proc, [&](Value* value) { return value == phi && value->opcode() == Phi; }), 1u);
+
+        if (runsPrecedingPhase)
+            CHECK(eliminateRedundantPhiCycles(proc));
+        CHECK(versionLoopsAndValidate(proc));
+        fixSSA(proc);
+        if (!runsPrecedingPhase) {
+            CHECK(proc.report().failure && proc.report().failure->kind == FailureKind::VariableReadBeforeSet);
+            continue;
+        }
+        CHECK(!proc.report().failure);
+        auto code = compileProc(proc);
+        int64_t memory[1] = { 4 };
+        CHECK_EQ(run(*code, 10, memory, 0), 1040);
+        CHECK_EQ(run(*code, 10, memory, 4), 1040);
+        CHECK_EQ(run(*code, 10, memory, 5), 40);
+        CHECK_EQ(run(*code, 3, memory, 3), 1012);
         CHECK_EQ(run(*code, 0, memory, 4), 0);
     }
 }
@@ -723,6 +1003,63 @@ static void testVersionLoopsStoreInExcursionToResolvedHeaderPhi()
     }
 }
 
+// The count is read ahead of the loop and again at the end of each turn, and each turn stores under another address into the heap that it is read from.
+// Told to overlook that store, the fast version lets the first read stand for all of them. What each turn reads is held against it.
+static void testVersionLoopsTellsLogWhatStandsForVariableReadAgain()
+{
+    constexpr int64_t reported = -7;
+    for (bool ignoresWrites : { false, true }) {
+        Policy policy = remarkPolicy();
+        policy.validation.logsDecidedComparisons = true;
+        policy.validation.ignoresWritesToLocationsReloadedInLoops = ignoresWrites;
+        Procedure proc(policy);
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* header = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Variable* index = proc.addVariable(Int64);
+        Variable* sum = proc.addVariable(Int64);
+        Variable* count = proc.addVariable(Int64);
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root);
+        Value* pointer = arguments[1];
+        Value* other = arguments[2];
+        graph.set(root, index, graph.int64(root, 0));
+        graph.set(root, sum, graph.int64(root, 0));
+        graph.jump(root, header);
+        graph.set(header, count, graph.load(header, Int64, pointer, 0, firstHeap));
+        graph.branch(header, graph.make(header, LessThan, graph.get(header, index), graph.get(header, count)), body, exit);
+        Value* current = graph.get(body, count);
+        graph.increase(body, sum, graph.make(body, Add, graph.make(body, Mul, current, current), current));
+        graph.store(body, graph.make(body, Sub, current, graph.int64(body, 1)), other, 0, firstHeap);
+        graph.increase(body, index, 1);
+        graph.jump(body, header);
+        graph.ret(exit, graph.get(exit, sum));
+        proc.resetReachability();
+        fixSSA(proc);
+        validate(proc);
+        CHECK(rotateLoops(proc));
+        fixSSA(proc);
+        validate(proc);
+
+        CHECK_EQ(versionLoopsAndValidate(proc), ignoresWrites);
+        bool isChecked = proc.movedLoadLog().insertChecks(proc, nullptr, createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
+            jit.move(CCallHelpers::TrustedImm64(reported), GPRInfo::returnValueGPR);
+            jit.emitFunctionEpilogue();
+            jit.ret();
+        }));
+        CHECK_EQ(isChecked, ignoresWrites);
+        auto code = compileProc(proc, 1);
+        int64_t memory[2] = { 10, 0 };
+        CHECK_EQ(run(*code, 0, memory, std::bit_cast<int64_t>(&memory[1])), 1100);
+        CHECK_EQ(memory[1], 9);
+        int64_t expected = 0;
+        for (int64_t i = 0, left = 10; i < left; ++i, --left)
+            expected += left * left + left;
+        CHECK_EQ(run(*code, 0, memory, std::bit_cast<int64_t>(&memory[0])), ignoresWrites ? reported : expected);
+    }
+}
+
 static void testVersionLoopsKeepsTerminalPatchpointReadingLoopWrites()
 {
     Procedure proc(remarkPolicy());
@@ -866,8 +1203,12 @@ void addBunLoopVersioningTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsKeepsDeepChainTargetInFastVersion());
     RUN(testVersionLoopsSkipsLoopWithNothingToHoist());
     RUN(testVersionLoopsOnlyInnermostLoops());
+    RUN(testVersionLoopsReturnsToFastVersionAroundCallThatWrites());
+    RUN(testVersionLoopsKeepsHeaderPhiThatCopiedRarePathChanges());
     RUN(testVersionLoopsUncloneableRareEdgeContinuesInOriginalLoop());
     RUN(testVersionLoopsCloneableRarePathReturnsToFastVersion());
+    RUN(testVersionLoopsSidePathOfLoopThatCalls(FrequencyClass::Unlikely));
+    RUN(testVersionLoopsSidePathOfLoopThatCalls(FrequencyClass::Rare));
     RUN(testVersionLoopsSkipsLoopWithInvariantBackEdgeTest());
     RUN(testVersionLoopsReloadsSingleInputPhiInExcursion());
     RUN(testVersionLoopsHoistsLoadRepeatingLoadBeforeLoop());
@@ -875,8 +1216,11 @@ void addBunLoopVersioningTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsUnswitchesInvariantBranch());
     RUN(testVersionLoopsKeepsVariantBranch());
     RUN(testVersionLoopsStoreInExcursionToResolvedHeaderPhi());
+    RUN(testVersionLoopsTellsLogWhatStandsForVariableReadAgain());
     RUN(testVersionLoopsKeepsTerminalPatchpointReadingLoopWrites());
     RUN(testVersionLoopsTestsSlotBeforeReadingThroughIt());
+    RUN(testVersionLoopsIdentityInHeaderIsNoPhi());
+    RUN(testVersionLoopsPhiThatFollowsItsUpsilonInHeaderIsNotLoopCarried());
 }
 
 #endif // ENABLE(B3_JIT)

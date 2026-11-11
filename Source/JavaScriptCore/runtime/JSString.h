@@ -255,7 +255,7 @@ public:
     StringImpl* tryGetValueImpl() const;
     ALWAYS_INLINE unsigned length() const;
 
-    JSValue LEGACY_NODELETE toPrimitive(JSGlobalObject*, PreferredPrimitiveType) const;
+    NODELETE JSValue toPrimitive(JSGlobalObject*, PreferredPrimitiveType) const;
     bool toBoolean() const { return !!length(); }
     JSObject* toObject(JSGlobalObject*) const;
     double toNumber(JSGlobalObject*) const;
@@ -684,7 +684,9 @@ public:
     }
 
 #if ENABLE(AOT)
-    void resolveSubstringBySharing(StringImpl&) const;
+    void resolveBySharing(StringImpl&) const;
+    bool tryResolveFlatLatin1Parts(VM&) const;
+    template<typename CharactersOf> bool tryResolveLatin1Parts(VM&, NOESCAPE const CharactersOf&) const;
 #endif
 
     class LeafIterator {

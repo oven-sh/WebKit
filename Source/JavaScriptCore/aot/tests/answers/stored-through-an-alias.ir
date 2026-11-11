@@ -1,0 +1,35 @@
+# function store(o) { o.sink = taken => 2; } store(globalThis); sink(() => 3);
+# RUN(SHELL): run-in-shell
+# SHELL: 2
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0
+    v3 = PropGet v0 key="sink" [isFreeName]
+    v4 = NewClosure function=f3
+    v5 = Call v3, -, v4
+    v6 = PropGet v0 key="print" [isFreeName]
+    v7 = Call v6, -, v5
+    Return
+}
+function f1 name="store" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    PropSet v0, v1 key="sink"
+    Return
+}
+function f2 name="stored" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}
+function f3 name="handed" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    Return v0
+}

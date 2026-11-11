@@ -1,0 +1,42 @@
+# a star hands on whatever names the module below has, and the names of a mock are those that its factory gives: so a barrel above a mock may have a name that its records lack
+# lib.js, which a test mocks: export const text = "real"   barrel.js: export * from "./lib.js"   plain.js: export const own = "own"
+# main.test.js: mock.module("./lib.js", () => ({ text: "mock", more: 1 })); import * as barrel from "./barrel.js"; barrel.more
+# the control: plain.js leads to no mock, so a name that it lacks is not there
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: test-run
+# CHECK: any-other-name m1
+# CHECK: any-other-name m2
+# CHECK-NOT: any-other-name m3
+
+module m0 path="/main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}, {target=m3 completes=true}]
+module m1 path="/barrel.js" displayPath="barrel.js" body=f1 requests=[{target=m2 completes=true}] exports=[{name="text" variable=g0 isFromStarExport=true}]
+module m2 path="/lib.js" displayPath="lib.js" flags=[MayBeMocked] body=f2 exports=[{name="text" variable=g0}]
+module m3 path="/plain.js" displayPath="plain.js" body=f3 exports=[{name="own" variable=g1}]
+entry module=m0
+variable g0 name="text" module=m2 declared={type=anything} flags=[IsReplaceable]
+variable g1 name="own" module=m3 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="more"
+    Return v1
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="real"
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f3 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="own"
+    PutModuleVariable v0 variable=g1
+    v2 = Undefined
+    Return v2
+}

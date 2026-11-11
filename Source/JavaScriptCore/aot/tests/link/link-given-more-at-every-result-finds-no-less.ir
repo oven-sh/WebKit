@@ -1,0 +1,7 @@
+# A seed of WidenFlowNodes with bit 30 set gives anything to every result of a call or a read: Link at its weakest. All 42 of this program are given more; seed 16 draws 10 of them.
+# OPTIONS: testing=WidenFlowNodes:1073741824 check=FlowMonotonicity
+# STATISTIC: FactNodesWidened = 42
+# PROGRAM-OF: link-given-more-finds-no-less.ir
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=string

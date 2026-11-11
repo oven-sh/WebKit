@@ -1,0 +1,33 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTHostFunctionSources.h"
+#include "JSExportMacros.h"
+#include <span>
+#include <wtf/Vector.h>
+
+namespace JSC { namespace AOT {
+
+enum class VerdictOnStoredStrings : uint8_t {
+    NothingLiesBesideStrings,
+    BytesBesideStringsAreNotZero,
+    CannotBeRead,
+};
+
+struct StoredStrings {
+    VerdictOnStoredStrings verdict { VerdictOnStoredStrings::CannotBeRead };
+    Vector<uint8_t> strings;
+    Vector<uint8_t> report;
+};
+
+JS_EXPORT_PRIVATE StoredStrings readStoredStrings(std::span<const uint8_t> file, DecompressSourceFunction = nullptr);
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

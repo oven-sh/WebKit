@@ -1,0 +1,45 @@
+# `then` lies under a name in an object that unseen code has, so it is in the queue from the start and whoever finds it needs no place in the order. That holds because every unit of it that may name ANOTHER function is among the seeds.
+# Its guard is such a unit: it tests whether `resolve` is the one closure that was seen to arrive, and a test for a closure mentions the function. Outside the cycles the guard could be made when the cycle of `then` was done,
+# and that of the closure behind it: the build ended there, in some runs and not in others. A unit that stands outside the cycles and names another function ends the build whenever it is made.
+# const thenable = { then(resolve) { resolve(11); resolve(12); } };  thenable.then(function () {});  sink(thenable);
+# RUN: units-with-code f1:Body f1:ParameterGuard f1:SlowBody f2:Body mechanisms=all
+# CHECK: unit f1:Body {{*}} bytes
+# CHECK: unit f1:SlowBody {{*}} bytes
+# CHECK: unit f1:ParameterGuard {{*}} bytes
+# CHECK: unit f2:Body {{*}} bytes
+# RUN(GUARD): walk f1:ParameterGuard mechanisms=all
+# GUARD: = TypeTest {{*}}testedType=f2
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}} in-queue-from-start
+# LINK: function f2
+# LINK: referrers f0, f1
+
+layout L0 module=m0 fields=[{key="then" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f2
+    v4 = PropGet v2 key="then"
+    v5 = Call v4, v2, v3 calleeKey="then"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="sink" [isFreeName]
+    v8 = Call v7, -, v2
+    Return v8
+}
+function f1 name="then" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=11
+    v2 = Call v0, -, v1 calleeName="resolve"
+    v3 = Integer integer=12
+    v4 = Call v0, -, v3 calleeName="resolve"
+    Return v4
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

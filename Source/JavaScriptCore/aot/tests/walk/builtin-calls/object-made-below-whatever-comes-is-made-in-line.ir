@@ -1,0 +1,51 @@
+# `Object.create(holder.above)`: nothing is proven of the operand. The code in line looks at it itself: below null and below an object it makes the object, and whatever else comes it leaves to the function,
+# which stands behind its miss and refuses the operand in its own words.
+# function below(above) { return Object.create(above); }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: TryCallInline {{*}}inlineBuiltin=ObjectCreate overload=ObjectCreate/0
+# CHECK: = CallBuiltin {{*}}overload=ObjectCreate/0 builtinCallForm=AnyReceiver
+# With a second operand of which nothing is proven the function is called: function described(above, properties) { return Object.create(above, properties); }
+# RUN(DESCRIBED): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# DESCRIBED-LABEL: code f2:Body
+# DESCRIBED-NOT: TryCallInline
+# What can be neither an object nor null is left to the function: function refused(n) { return Object.create(n | 0); }
+# RUN(REFUSED): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# REFUSED-LABEL: code f3:Body
+# REFUSED-NOT: TryCallInline
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="below" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = PropGet v1 key="create"
+    v3 = Call v2, v1, v0 calleeKey="create" calleeName="Object.create"
+    Return v3
+}
+function f2 name="described" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Object
+    v3 = PropGet v2 key="create"
+    v4 = Call v3, v2, v0, v1 calleeKey="create" calleeName="Object.create"
+    Return v4
+}
+function f3 name="refused" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = PropGet v1 key="create"
+    v3 = Integer
+    v4 = BitOr v0, v3
+    v5 = Call v2, v1, v4 calleeKey="create" calleeName="Object.create"
+    Return v5
+}

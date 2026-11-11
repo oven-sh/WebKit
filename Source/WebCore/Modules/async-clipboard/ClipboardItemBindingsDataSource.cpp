@@ -57,7 +57,7 @@
 
 namespace WebCore {
 
-static Document* LEGACY_NODELETE documentFromClipboard(const Clipboard* clipboard)
+NODELETE static Document* documentFromClipboard(const Clipboard* clipboard)
 {
     if (!clipboard)
         return nullptr;
@@ -69,7 +69,7 @@ static Document* LEGACY_NODELETE documentFromClipboard(const Clipboard* clipboar
 static FileReaderLoader::ReadType readTypeForMIMEType(const String& type)
 {
     if (type == "text/uri-list"_s || type == textPlainContentTypeAtom() || type == textHTMLContentTypeAtom())
-        return FileReaderLoader::ReadAsText;
+        return FileReaderLoader::ReadAsUTF8Text;
     return FileReaderLoader::ReadAsArrayBuffer;
 }
 
@@ -267,7 +267,7 @@ void ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::didFinishLoading(
     ASSERT(m_blobLoader);
 
     Ref blobLoader = *m_blobLoader;
-    auto stringResult = readTypeForMIMEType(m_type) == FileReaderLoader::ReadAsText ? blobLoader->stringResult() : nullString();
+    auto stringResult = readTypeForMIMEType(m_type) == FileReaderLoader::ReadAsUTF8Text ? blobLoader->stringResult() : nullString();
     if (!stringResult.isNull())
         m_data = { stringResult };
     else if (auto arrayBuffer = blobLoader->arrayBufferResult())
@@ -351,7 +351,7 @@ void ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::sanitizeDataIfNee
             return;
         }
 
-        imageBuffer->context().drawBitmapImage(bitmapImage.get(), FloatPoint::zero());
+        bitmapImage->draw(imageBuffer->context());
         m_data = { SharedBuffer::create(encodeData(WTF::move(imageBuffer), "image/png"_s)) };
     }
 }

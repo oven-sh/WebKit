@@ -101,12 +101,18 @@ Decoder::Decoder(std::span<const uint8_t> buffer, BufferDeallocator&& bufferDeal
         return;
     }
     m_destinationID = WTF::move(*destinationID);
-    if (messageIsSync(m_messageName)) {
+    if (messageIsAsyncWithReply(m_messageName)) {
+        auto asyncReplyID = decode<AsyncReplyID>();
+        if (!asyncReplyID) [[unlikely]]
+            return;
+        m_replyID = asyncReplyID->toUInt64();
+    } else if (messageIsSync(m_messageName)) {
         auto syncRequestID = decode<SyncRequestID>();
         if (!syncRequestID) [[unlikely]]
             return;
-        m_syncRequestID = syncRequestID;
+        m_replyID = syncRequestID->toUInt64();
     }
+    m_argumentsOffset = currentBufferOffset();
 }
 
 Decoder::Decoder(std::span<const uint8_t> stream, uint64_t destinationID)
@@ -125,12 +131,18 @@ Decoder::Decoder(std::span<const uint8_t> stream, uint64_t destinationID)
     if (!messageName) [[unlikely]]
         return;
     m_messageName = WTF::move(*messageName);
-    if (messageIsSync(m_messageName)) {
+    if (messageIsAsyncWithReply(m_messageName)) {
+        auto asyncReplyID = decode<AsyncReplyID>();
+        if (!asyncReplyID) [[unlikely]]
+            return;
+        m_replyID = asyncReplyID->toUInt64();
+    } else if (messageIsSync(m_messageName)) {
         auto syncRequestID = decode<SyncRequestID>();
         if (!syncRequestID) [[unlikely]]
             return;
-        m_syncRequestID = syncRequestID;
+        m_replyID = syncRequestID->toUInt64();
     }
+    m_argumentsOffset = currentBufferOffset();
 }
 
 Decoder::~Decoder()
@@ -189,6 +201,13 @@ std::optional<Attachment> Decoder::takeLastAttachment()
         return std::nullopt;
     }
     return m_attachments.takeLast();
+}
+
+void Decoder::rewindToArguments()
+{
+    ASSERT(isValid());
+    m_bufferPosition = m_buffer.begin() + m_argumentsOffset;
+    m_indicesOfObjectsFailingDecoding.clear();
 }
 
 } // namespace IPC

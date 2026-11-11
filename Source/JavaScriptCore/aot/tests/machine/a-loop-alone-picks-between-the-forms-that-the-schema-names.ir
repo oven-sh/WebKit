@@ -1,0 +1,12 @@
+# CodeGenerator::takesOpenForm() goes by the row of the operation in the schema. Of where the operation stands it hears one thing, whether a loop of the unit lies around it, and that counts for a row that lists Loop alone.
+# A read by name is the call of its stub, and in a loop it asks its site in line. A dictionary is made by its stub in a loop too.
+# The cell of a string is asked of its stub, and in a loop it is read in line. The other places that its row lists are no loops, so they are differences from the design, and the question does not know them.
+# RUN: named-forms PropGet NewDictionary String
+# CHECK: PropGet Always Closed, in a loop Open by the loop
+# CHECK: PropGet in Loop Open
+# CHECK: NewDictionary Always Closed, in a loop Closed
+# CHECK-NOT: by the loop
+# CHECK: String Always Closed, in a loop Open by the loop
+# CHECK: String in RareBlock Closed, which takesOpenForm() does not ask
+# RUN(UNKNOWN): named-forms NoSuchOperation
+# UNKNOWN: bad argument NoSuchOperation

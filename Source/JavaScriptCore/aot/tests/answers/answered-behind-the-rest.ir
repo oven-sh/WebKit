@@ -1,0 +1,33 @@
+# sink(() => { globalThis.sink = () => 2; return 1; }); print(sink());
+# RUN(SHELL): run-in-shell globalThis.sink = handed => { print(handed()); };
+# SHELL: 1
+# SHELL-NEXT: 2
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="sink" [isFreeName]
+    v5 = Call v4
+    v6 = PropGet v0 key="print" [isFreeName]
+    v7 = Call v6, -, v5
+    Return
+}
+function f1 name="handed" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f2
+    PropSet v0, v1 key="sink"
+    v3 = Integer integer=1
+    Return v3
+}
+function f2 name="stored" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

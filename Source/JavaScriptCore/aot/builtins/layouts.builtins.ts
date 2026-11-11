@@ -14,4 +14,8 @@ export default b.declarations(
   }),
   b.tuple("EntriesPair", [b.any, b.any]),
   b.layout("ReadAndWrittenCounts", { read: bufferLength, written: bufferLength }),
+  b.layout("WebAssemblyInstantiatedSource", {
+    module: b.instance("WebAssembly.Module"),
+    instance: b.instance("WebAssembly.Instance"),
+  }),
 );

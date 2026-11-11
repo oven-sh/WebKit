@@ -11,9 +11,9 @@
 
 namespace JSC { namespace AOT {
 
-constexpr StubKey pollAtPrologue() { return StubKey(StubFamily::PollAtPrologue); }
+constexpr StubKey pollAtPrologue(bool functionMayCollect) { return StubKey(functionMayCollect ? StubFamily::PollAtPrologue : StubFamily::PollAtPrologueWithoutCollecting); }
+constexpr bool isPollAtPrologue(StubKey key) { return key.family() == StubFamily::PollAtPrologue || key.family() == StubFamily::PollAtPrologueWithoutCollecting; }
 constexpr StubKey pollAtLoop(CallerFrame callerFrame) { return StubKey(StubFamily::PollAtLoop).withCallerFrame(callerFrame); }
-// FunctionObject: the stub that polls jumps into the code of the function object in calleeGPR next, with the stack as it is.
 enum class PollBeforeEnteringForm : uint8_t { Plain, FunctionObject };
 constexpr StubKey pollBeforeEntering(PollBeforeEnteringForm form) { return StubKey(StubFamily::PollBeforeEntering).withForm(static_cast<uint8_t>(form)); }
 

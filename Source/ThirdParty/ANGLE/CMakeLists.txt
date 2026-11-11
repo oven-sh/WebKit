@@ -2,7 +2,7 @@ set_property(DIRECTORY . PROPERTY FOLDER "ANGLE")
 
 if (APPLE)
     set(is_apple TRUE)
-    if (WEBKIT_SDK_IS_IOS_FAMILY)
+    if (WEBKIT_SDK_IS_IOS_FAMILY AND NOT WEBKIT_SDK_IS_MACCATALYST)
         set(is_ios TRUE)
     else ()
         set(is_mac TRUE)
@@ -85,7 +85,7 @@ set(ANGLE_PRIVATE_INCLUDE_DIRECTORIES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/KHR"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/common/base"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/common/third_party/xxhash"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/common/third_party/xxhash/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib/google"
     "${CMAKE_CURRENT_BINARY_DIR}/include"
 )
@@ -177,6 +177,10 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
     )
     target_compile_definitions(ANGLE PUBLIC ${ANGLE_DEFINITIONS})
     target_link_libraries(ANGLE PRIVATE ZLIB::ZLIB ${CMAKE_DL_LIBS})
+    if (ENABLE_WEBGL_WEBGPU)
+        # The default proc table of the wgpu backend (DawnNativeWebGPUFramework.cpp) is the one of WebGPU.framework.
+        target_link_libraries(ANGLE PRIVATE WebGPU)
+    endif ()
 
     target_compile_definitions(ANGLEFramework INTERFACE ${gl_prototypes})
 
@@ -262,6 +266,9 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
         if (WEBKIT_SDK_IS_MACOS)
             list(APPEND _angle_shared_libraries "-framework IOKit")
         endif ()
+        if (ENABLE_WEBGL_WEBGPU)
+            list(APPEND _angle_shared_libraries WebGPU)
+        endif ()
         target_link_libraries(ANGLE-shared PRIVATE ${_angle_shared_libraries})
 
         # FIXME: Only correct for iOS-family platforms. On macOS the Xcode build
@@ -271,7 +278,7 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
             LINKER_LANGUAGE CXX
             MACOSX_RPATH OFF
             BUILD_WITH_INSTALL_NAME_DIR ON
-            INSTALL_NAME_DIR "/System/Library/PrivateFrameworks/WebCore.framework/${WEBKIT_FRAMEWORK_VERSION_PATH}Frameworks"
+            INSTALL_NAME_DIR "${WEBKIT_SDK_SYSTEM_PREFIX}/System/Library/PrivateFrameworks/WebCore.framework/${WEBKIT_FRAMEWORK_VERSION_PATH}Frameworks"
         )
 
         set_property(TARGET GLESv2Framework PROPERTY INTERFACE_LINK_LIBRARIES ANGLE-shared)

@@ -1,0 +1,36 @@
+# whom a call enters is decided by binding, which no suspension changes: the calls in front of the await and behind it are both direct
+# function one(v) { return v.x; }  async function caller(v, p) { const a = one(v); await p; return one(a); }
+# RUN: walk f2:CoroutineBody mechanisms=none+DirectCalls
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK: = AwaitBySavingFrame
+# CHECK: = CallDirect {{*}}function=f1
+# RUN(NEVER): walk f2:CoroutineBody mechanisms=none+DirectCalls
+# NEVER-NOT: = Call v
+
+variable g0 name="one" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="one" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="caller" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v0 calleeName="one"
+    v4 = Await v1
+    v5 = GetModuleVariable variable=g0
+    v6 = Call v5, -, v3 calleeName="one"
+    v7 = Add v6, v6
+    Return v7
+}

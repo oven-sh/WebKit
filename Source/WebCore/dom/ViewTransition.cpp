@@ -501,7 +501,7 @@ LayoutRect ViewTransition::captureOverflowRect(RenderLayerModelObject& renderer)
         return containingBlockRect();
 
     CheckedPtr layer = renderer.layer();
-    auto bounds = layer->calculateLayerBounds(layer, LayoutSize(), { RenderLayer::IncludeFilterOutsets, RenderLayer::ExcludeHiddenDescendants, RenderLayer::IncludeCompositedDescendants, RenderLayer::PreserveAncestorFlags, RenderLayer::ExcludeViewTransitionCapturedDescendants });
+    auto bounds = layer->calculateLayerBounds(layer, LayoutSize(), { RenderLayer::IncludeFilterOutsets, RenderLayer::ExcludeHiddenDescendants, RenderLayer::IncludeCompositedDescendants, RenderLayer::PreserveAncestorFlags, RenderLayer::IncludeDescendantTransforms, RenderLayer::ExcludeViewTransitionCapturedDescendants });
     return LayoutRect(encloseRectToDevicePixels(bounds, renderer.document().deviceScaleFactor()));
 }
 
@@ -1007,7 +1007,10 @@ void ViewTransition::activateViewTransition()
     // Don't read pseudo-element styles, since that happened
     // as part of captureNewState.
     updatePseudoElementStylesWrite();
-    updatePseudoElementRenderers();
+    if (auto checkRenderers = updatePseudoElementRenderers(); checkRenderers.hasException()) {
+        skipViewTransition(checkRenderers.releaseException());
+        return;
+    }
 
     protect(m_ready.second)->resolve();
 }
@@ -1068,7 +1071,8 @@ void ViewTransition::handleTransitionFrame()
     }
 
     updatePseudoElementStylesWrite();
-    updatePseudoElementRenderers();
+    if (auto checkRenderers = updatePseudoElementRenderers(); checkRenderers.hasException())
+        skipViewTransition(checkRenderers.releaseException());
 }
 
 // https://drafts.csswg.org/css-view-transitions/#clear-view-transition-algorithm

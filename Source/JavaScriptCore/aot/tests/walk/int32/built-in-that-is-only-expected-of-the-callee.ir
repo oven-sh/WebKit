@@ -1,0 +1,44 @@
+# a run of tests may put another object in the place of `Math`. The front end then reads `Math.min` out of the global object and says which built-in the callee is declared to be, as what is expected
+# of the read. That is what is written of the callee, and the proof of an int32 goes by it as by the name of a member that is locked. A callee of which nothing is written proves nothing
+# class Cursor { line: int32 }  function least(c: Cursor): int32 { return Math.min(c.line, 2); }  function asked(c: Cursor): int32 { return (Math as any).min(c.line, 2); }
+# DIAGNOSTIC: UnprovenInt32 1
+# The build has an error, so no unit is printed
+# RUN: walk f2 mechanisms=all
+# CHECK: the walk of f2:Body failed
+
+layout L0 module=m0 fields=[{key="line" declared={type=i32} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @1
+    v1 = PropGet v0 key="sink" [isFreeName] @1
+    v2 = NewClosure function=f1 @1
+    v3 = NewClosure function=f2 @1
+    v4 = Call v1, -, v2, v3 @1
+    Return v4 @1
+}
+function f1 name="least" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=number}] {
+  b0(v0: L0):
+    v1 = Builtin builtin=GlobalThis @2
+    v2 = PropGet v1 key="Math" [isFreeName] @2
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]} @2
+    v4 = PropGet v3 key="min" @2
+    v5 = Convert v4 declared={type=builtin(MathMin) flags=[IsExpected]} @2
+    v6 = PropGet v0 key="line" @2
+    v7 = Integer integer=2 @2
+    v8 = Call v5, v3, v6, v7 calleeName="Math.min" @2
+    v9 = Convert v8 declared={type=i32 flags=[IsInt32Promise]} @2
+    Return v9 @2
+}
+function f2 name="asked" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=number}] {
+  b0(v0: L0):
+    v1 = Builtin builtin=GlobalThis @3
+    v2 = PropGet v1 key="Math" [isFreeName] @3
+    v3 = PropGet v2 key="min" @3
+    v4 = PropGet v0 key="line" @3
+    v5 = Integer integer=2 @3
+    v6 = Call v3, v2, v4, v5 calleeName="Math.min" @3
+    v7 = Convert v6 declared={type=i32 flags=[IsInt32Promise]} @3
+    Return v7 @3
+}

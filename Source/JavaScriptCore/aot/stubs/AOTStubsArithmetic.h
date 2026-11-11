@@ -19,7 +19,6 @@ constexpr bool isOnBits(BinaryOperator operation) { return operation >= BinaryOp
 constexpr bool hasDoubleCase(BinaryOperator operation) { return !isOnBits(operation); }
 constexpr bool hasFormAfterInt32Check(BinaryOperator operation) { return operation != BinaryOperator::Div && operation != BinaryOperator::Mod; }
 
-// Every operator, then in the same order every operator that has a form after the check.
 constexpr uint8_t binaryOperationForm(BinaryOperator operation, bool isAfterInt32Check)
 {
     if (!isAfterInt32Check)
@@ -57,7 +56,7 @@ constexpr BinaryWithDoubleForm binaryWithDoubleForm(BinaryOperator operation, bo
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-enum class UnaryOperationForm : uint8_t { Negate, Increment, Decrement, BitNot, ToNumeric };
+enum class UnaryOperationForm : uint8_t { Negate, Increment, Decrement, BitNot, ToNumeric, AddToEmptyString, ToString };
 enum class BoxedNumberForm : uint8_t { Double, OptionalDouble, Integer, OptionalInteger };
 
 constexpr StubKey binaryOperation(BinaryOperator operation, bool isAfterInt32Check) { return StubKey(StubFamily::BinaryOperation).withForm(binaryOperationForm(operation, isAfterInt32Check)); }

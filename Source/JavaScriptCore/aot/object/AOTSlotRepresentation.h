@@ -46,7 +46,6 @@ static constexpr uint64_t nullDouble = 0x7ffbull << 48;
 static constexpr uint64_t absentDouble = 0x7ffcull << 48;
 static_assert(maxSlotInteger < undefinedInteger);
 
-// A NaN keeps the sign that arithmetic gave it and none of its other bits: it is no marker, and boxed it is a number.
 constexpr uint64_t quietNaNWithSignOf(uint64_t bits) { return (bits >> 51 | 1) << 51; }
 ALWAYS_INLINE double withoutPayload(double number)
 {
@@ -61,7 +60,6 @@ static constexpr int32_t undefinedInt32 = INT32_MIN + 2;
 static constexpr int32_t nullInt32 = INT32_MIN + 3;
 static constexpr int32_t minInlineInt32 = INT32_MIN + 5;
 
-// What a field holds that is added to. The sum of two of them is exact. A sum that leaves them carries out of its low word or borrows from the high one.
 static constexpr int64_t maxIntegerAddedTo = (1ll << 52) - 1;
 static constexpr int64_t minIntegerAddedTo = -maxIntegerAddedTo - 1;
 
@@ -70,6 +68,9 @@ static constexpr uint32_t minCell32 = MarkedBlockCage::minIndex;
 static constexpr uint32_t absentCell32 = 0;
 static constexpr uint32_t nullCell32 = 2;
 static constexpr uint32_t undefinedCell32 = 10;
+static constexpr int64_t placeOfAbsentKeyInMap = -1;
+static constexpr int64_t placeInMapThatIsNotTold = -2;
+static constexpr int64_t placeInMapHoldsNarrowValue = 1;
 static_assert(nullCell32 == JSValue::ValueNull && undefinedCell32 == JSValue::ValueUndefined && absentCell32 == JSValue::ValueEmpty);
 
 static constexpr uint32_t uncreatedDeferredClosure = 0;
@@ -77,39 +78,12 @@ static constexpr uint32_t absentDeferredClosure = 1;
 static_assert(absentDeferredClosure != uncreatedDeferredClosure && absentDeferredClosure < minCell32);
 static_assert(absentDeferredClosure != nullCell32 && absentDeferredClosure != undefinedCell32);
 
-static constexpr uint32_t emptyLiteralStringWord = 14;
-static constexpr unsigned literalStringShift = 2;
-static constexpr uint32_t maxLiteralStrings = 1 << 18;
-static constexpr uint32_t literalStringWord(uint32_t number) { return emptyLiteralStringWord + (number << literalStringShift); }
-static constexpr uint32_t literalStringIndex(uint32_t word) { return (word - emptyLiteralStringWord) >> literalStringShift; }
-static_assert(literalStringWord(maxLiteralStrings) <= minCell32 && absentDeferredClosure < emptyLiteralStringWord);
-inline bool isLiteralStringWord(uint64_t word) { return word - emptyLiteralStringWord < minCell32 - emptyLiteralStringWord; }
+struct NarrowCharactersOfString {
+    static constexpr uint32_t lengthOfNoNarrowText = UINT32_MAX;
 
-static constexpr size_t maxShortStringLength = 7;
-static constexpr unsigned shortStringLengthBits = 3;
-static_assert(maxShortStringLength < 1u << shortStringLengthBits && 8 * maxShortStringLength + shortStringLengthBits <= 64);
-static constexpr uint64_t noShortString = UINT64_MAX;
-
-template<typename CharacterType>
-inline uint64_t shortStringWord(std::span<const CharacterType> text)
-{
-    uint64_t characters = 0;
-    for (size_t i = 0; i < text.size(); ++i)
-        characters |= static_cast<uint64_t>(text[i]) << (8 * i);
-    return characters << shortStringLengthBits | text.size();
-}
-
-static constexpr unsigned literalStringCacheIndexBits = 8;
-static constexpr unsigned literalStringCacheIndexShift = 5;
-static constexpr unsigned literalStringCacheWordBits = 20;
-// The cache keeps its keys alive, and no other StringImpl starts within 16 bytes of a live one.
-static constexpr unsigned literalStringCacheImplShift = 4;
-static constexpr unsigned literalStringCacheWordShift = 1;
-static constexpr unsigned widestUserAddress = 48;
-static_assert(literalStringWord(maxLiteralStrings) >> literalStringCacheWordShift < 1u << literalStringCacheWordBits);
-static_assert(widestUserAddress - literalStringCacheImplShift + literalStringCacheWordBits <= 64);
-static constexpr uint64_t literalStringCacheIndex(uintptr_t impl) { return impl >> literalStringCacheIndexShift & ((1 << literalStringCacheIndexBits) - 1); }
-static constexpr uint64_t literalStringCacheEntry(uintptr_t impl, uint32_t wordOrZero) { return static_cast<uint64_t>(impl >> literalStringCacheImplShift) << literalStringCacheWordBits | wordOrZero >> literalStringCacheWordShift; }
+    uint32_t length;
+    alignas(8) std::array<uint8_t, 128> characters;
+};
 
 enum class SlotValueKind : uint8_t {
     SignedInteger,
@@ -119,7 +93,6 @@ enum class SlotValueKind : uint8_t {
     Boolean,
     Boxed,
     Cell,
-    LiteralString,
     DeferredClosure,
 };
 
@@ -205,8 +178,6 @@ constexpr SlotTraits traitsOf(SlotRepresentation representation)
         return SlotTraits::of(4, SlotValueKind::Cell).holdingNarrowReference().withAbsent(absentCell32);
     case SlotRepresentation::OptionalCell32:
         return SlotTraits::of(4, SlotValueKind::Cell).holdingNarrowReference().withMarkers(cell32Markers);
-    case SlotRepresentation::LiteralString32:
-        return SlotTraits::of(4, SlotValueKind::LiteralString).holdingNarrowReference().withMarkers(cell32Markers);
     case SlotRepresentation::DeferredClosure:
         return SlotTraits::of(4, SlotValueKind::DeferredClosure).holdingNarrowReference().withAbsent(absentDeferredClosure);
     case SlotRepresentation::Int64:
@@ -221,8 +192,6 @@ constexpr SlotTraits traitsOf(SlotRepresentation representation)
         return SlotTraits::of(8, SlotValueKind::Cell).holdingCell().withAbsent(JSValue::ValueEmpty);
     case SlotRepresentation::JSValue:
         return SlotTraits::of(8, SlotValueKind::Boxed).holdingCell().withMarkers(boxedMarkers);
-    case SlotRepresentation::LiteralString:
-        return SlotTraits::of(8, SlotValueKind::LiteralString).holdingCell().withMarkers(boxedMarkers);
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }

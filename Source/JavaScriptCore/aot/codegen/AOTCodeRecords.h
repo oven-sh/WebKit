@@ -8,22 +8,21 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeSites.h"
-#include "AOTCodeUnits.h"
 #include "AOTCompiledCode.h"
+#include "AOTFormsSaid.h"
 #include "AOTFrameMaps.h"
 #include "AOTID.h"
+#include "AOTMachine.h"
+#include "AOTNumbering.h"
 #include "AOTOperationData.h"
 #include "AOTRelocation.h"
 #include "AOTSchemaRecords.h"
-#include "AOTClaimChecks.h"
 #include "AOTStubCalls.h"
-#include "AOTVector.h"
-#include "AirInstObserver.h"
 #include "CCallHelpers.h"
 #include "HandlerInfo.h"
+#include <algorithm>
 #include <optional>
-#include <wtf/BitVector.h>
-#include <wtf/Box.h>
+#include <span>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -48,8 +47,7 @@ struct RecordedSite {
     Origin origin;
     CallSiteKind kind { CallSiteKind::Plain };
     BuiltinID calledBuiltin { };
-    // The function has made the function object that it calls here itself and has handed it to nobody.
-    bool callsOwnFunctionObject { false };
+    FunctionID constructedCallee { };
 };
 
 struct SiteRecords {
@@ -59,7 +57,13 @@ struct SiteRecords {
 
     uint32_t addSite(const RecordedSite& site)
     {
-        positions.append(site);
+        if (positions.size() == positions.capacity()) [[unlikely]] {
+            RecordedSite added = site;
+            positions.reserveCapacity(std::max<size_t>(16, 2 * positions.capacity()));
+            positions.unsafeAppendWithoutCapacityCheck(added);
+            return positions.size();
+        }
+        positions.unsafeAppendWithoutCapacityCheck(site);
         return positions.size();
     }
 };
@@ -71,7 +75,7 @@ struct SiteLandingPad {
 };
 
 struct ExceptionRecords {
-    WTF::Vector<Box<CCallHelpers::Label>> landingPads;
+    Vector<MacroAssembler::Label*> landingPads;
     Vector<SiteLandingPad> sites;
 };
 
@@ -81,6 +85,11 @@ struct ThrowSite {
     ThrowKind kind;
     uint32_t a;
     std::optional<uint32_t> b;
+    bool calleeIsReadFromReceiver { false };
+    bool aIsMention { false };
+    bool bIsMention { false };
+    std::optional<ProofSource> sourceOfFalseProof { };
+    uint32_t expectedProofType { 0 };
 };
 
 struct TrapSite {
@@ -90,16 +99,10 @@ struct TrapSite {
     uint32_t callSite;
 };
 
-struct TrappingAccess {
-    MacroAssembler::Label instruction;
-    ValueID value;
-    GPRReg reference;
-    bool referenceIsNarrow;
-};
-
 struct CallThrowSite {
     uint32_t returnSite;
     Vector<uint32_t, 3> words;
+    uint8_t wordsThatAreMentions { 0 };
 };
 
 struct StackCheckLabels {
@@ -109,53 +112,32 @@ struct StackCheckLabels {
 
 struct TrapRecords {
     Vector<TrapSite> trapSites;
-    Vector<TrappingAccess> trappingAccesses;
     Vector<CallThrowSite> callThrowSites;
     Vector<PollSite> pollSites;
     Vector<StackCheckLabels, 1> stackChecks;
 };
 
-class InstructionObserver final : public B3::Air::InstObserver {
-    WTF_MAKE_NONCOPYABLE(InstructionObserver);
-public:
-    InstructionObserver(CodeUnitRecorder&, TrapRecords&);
-
-    void willGenerate(const B3::Air::BasicBlock&) final;
-    void didGenerate(const B3::Air::Inst&, MacroAssembler::Label begin, MacroAssembler::Label end) final;
-
-private:
-    CodeUnitRecorder& m_units;
-    TrapRecords& m_traps;
-};
-
 struct CodeRecords {
     WTF_MAKE_NONCOPYABLE(CodeRecords);
 
-    CodeRecords(const StubCatalog& catalog, RelocationRecorder& relocations, CodeGenerationTotals& totals)
+    CodeRecords(const StubCatalog& catalog, RelocationRecorder& relocations, CodeGenerationTotals& totals, RememberedStubKeys* rememberedStubKeys = nullptr)
         : relocations(relocations)
-        , stubCalls(catalog, relocations, units)
-        , observer(units, traps)
+        , stubCalls(catalog, relocations, rememberedStubKeys)
         , totals(totals)
     {
     }
 
-    CodeUnitRecorder units;
     RelocationRecorder& relocations;
     StubCalls stubCalls;
+    MentionList mentions;
     Vector<RecordedEntry, 1> entries;
     FrameRequirements frame;
     SiteRecords sites;
     ExceptionRecords exceptions;
     FrameMapRecords frameMaps;
     TrapRecords traps;
-    InstructionObserver observer;
+    FormsSaid formsSaid;
     CodeGenerationTotals& totals;
-    // By the index of the operation: the code generator has compressed an operand in front of it, so the narrow reference has the origin of the operation.
-    BitVector operationsWithCompressedOperand;
-    SlotsOfCells slotsOfFrameCells;
-    // Only with --aot-check=MovedLoads.
-    GuardTests guardTests;
-    bool hasBirthsOfFrameCells { false };
 };
 
 } } } // namespace JSC::AOT::Typed

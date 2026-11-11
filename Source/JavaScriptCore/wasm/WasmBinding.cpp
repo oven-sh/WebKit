@@ -30,6 +30,7 @@
 
 #if ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)
 
+#include "AOTWasmInterface.h"
 #include "CCallHelpers.h"
 #include "DisallowMacroScratchRegisterUsage.h"
 #include "JSWebAssemblyInstance.h"
@@ -39,6 +40,69 @@
 namespace JSC { namespace Wasm {
 
 using JIT = CCallHelpers;
+
+bool isForImage(const CCallHelpers& jit)
+{
+    return jit.policy().recordsProcessAddresses;
+}
+
+void loadImagePointer(CCallHelpers& jit, GPRReg instance, uint32_t slot, GPRReg dest)
+{
+    jit.loadPtr(CCallHelpers::Address(instance, JSWebAssemblyInstance::offsetOfImageCodePointers()), dest);
+    jit.loadPtr(CCallHelpers::Address(dest, safeCast<int32_t>(slot * sizeof(void*))), dest);
+}
+
+void callOperation(CCallHelpers& jit, CodePtr<OperationPtrTag> operation)
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (isForImage(jit)) {
+        if (std::optional<uint32_t> slot = ImagePointerTable::slotOfOperation(operation.taggedPtr())) {
+            GPRReg scratch = jit.scratchRegister();
+            jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfImageCodePointers()), scratch);
+            jit.call(CCallHelpers::Address(scratch, safeCast<int32_t>(*slot * sizeof(void*))), OperationPtrTag);
+            return;
+        }
+    }
+#endif
+    jit.callOperation<OperationPtrTag>(operation);
+}
+
+void emitPrepareToCageMemoryBase(CCallHelpers& jit, GPRReg instance, GPRReg scratch)
+{
+#if GIGACAGE_ENABLED
+    if (!isForImage(jit))
+        return;
+    auto loadPointer = [&](uint32_t slot) {
+        loadImagePointer(jit, instance, slot, scratch);
+    };
+    loadPointer(ImagePointerTable::primitiveGigacageDisableRequest);
+    auto isDisabled = jit.branchTest8(CCallHelpers::NonZero, CCallHelpers::Address(scratch));
+    loadPointer(ImagePointerTable::primitiveGigacageBase);
+    jit.loadPtr(CCallHelpers::Address(scratch), scratch);
+    auto hasBase = jit.jump();
+    isDisabled.link(&jit);
+    jit.move(CCallHelpers::TrustedImm32(0), scratch);
+    hasBase.link(&jit);
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(instance);
+    UNUSED_PARAM(scratch);
+#endif
+}
+
+void emitCageMemoryBase(CCallHelpers& jit, GPRReg scratch)
+{
+#if GIGACAGE_ENABLED
+    if (jit.policy().recordsProcessAddresses) {
+        auto isNotCaged = jit.branchTestPtr(CCallHelpers::Zero, scratch);
+        jit.and64(CCallHelpers::TrustedImm64(Gigacage::mask(Gigacage::Primitive)), GPRInfo::wasmBaseMemoryPointer);
+        jit.addPtr(scratch, GPRInfo::wasmBaseMemoryPointer);
+        isNotCaged.link(&jit);
+        return;
+    }
+#endif
+    jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, scratch);
+}
 
 void emitWasmToWasm(CCallHelpers& jit, const Wasm::ModuleInformation& info, unsigned importIndex)
 {
@@ -53,6 +117,7 @@ void emitWasmToWasm(CCallHelpers& jit, const Wasm::ModuleInformation& info, unsi
     // On ARM64 this doesn't really matter, but on intel we need to worry about the pushed pc.
     jit.storeWasmCalleeToCalleeCallFrame(scratch, safeCast<int>(sizeof(CallerFrameAndPC)) - safeCast<int>(prologueStackPointerDelta()));
 
+    emitPrepareToCageMemoryBase(jit, GPRInfo::wasmContextInstancePointer, wasmCallingConvention().prologueScratchGPRs[1]);
     jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfTargetInstance(info, importIndex)), GPRInfo::wasmContextInstancePointer, scratch);
 
     // FIXME the following code assumes that all JSWebAssemblyInstance have the same pinned registers. https://bugs.webkit.org/show_bug.cgi?id=162952
@@ -60,7 +125,7 @@ void emitWasmToWasm(CCallHelpers& jit, const Wasm::ModuleInformation& info, unsi
     {
         // pinned registers always store base and size of memory 0
         jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
-        jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, wasmCallingConvention().prologueScratchGPRs[1]);
+        emitCageMemoryBase(jit, wasmCallingConvention().prologueScratchGPRs[1]);
     }
 
     // Tail call into the callee WebAssembly function.

@@ -1,6 +1,5 @@
 # directives can come in any order, also above the RUN line they belong to
 # CHECK: Add
-# FORM: AsRead
 # RUN: print
 
 module m0 path="main.js" displayPath="main.js"

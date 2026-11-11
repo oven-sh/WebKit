@@ -1,0 +1,41 @@
+# If `n - 1` and `a + b` were the widest type of their rows whatever their operands hold, the parameter would be number|bigint and the result number|string|bigint, each operator would call a stub, and the number would be boxed across every call
+# function fib(n) { if (n < 2) return n; return fib(n - 1) + fib(n - 2); }  fib(+text);
+# RUN: summary f1
+# CHECK: operator [[less]] v5 Sub (Parameter 0 or converted-{{*}}, Constant int[0, 2147483647])
+# CHECK: operator [[sum]] v10 Add (c0.0 or converted-{{*}}, c1.0 or converted-{{*}})
+# CHECK: edge [[sum]] -> Result 0
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 callers-known one-callee {{*}}result=number returns
+# LINK-NEXT: parameter 0 expected=number proven=number
+
+variable g0 name="fib" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = ToNumber v1
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v2 calleeName="fib"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="fib" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = GetModuleVariable variable=g0
+    v4 = Integer integer=1
+    v5 = Sub v0, v4
+    v6 = Call v3, -, v5 calleeName="fib"
+    v7 = Integer integer=2
+    v8 = Sub v0, v7
+    v9 = Call v3, -, v8 calleeName="fib"
+    v10 = Add v6, v9
+    Return v10
+}

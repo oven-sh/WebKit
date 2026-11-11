@@ -1,5 +1,4 @@
 # Lists with the same members get one layout set, whatever the order and the repeats. The empty list is a set too.
-# FORM: Prepared
 # RUN: layout-set L1,L2 L2,L1 L1,L2,L1 L1 L2 - L1 -
 # RUN(MISSING): layout-set
 # RUN(RANGE): layout-set L1 L4
@@ -20,7 +19,9 @@
 # COMMA: error: bad argument L1,
 # WORD: error: bad argument L1,x
 
+module m0 path="main.js" displayPath="main.js"
 layout L0 name="Shape"
 layout L1 name="Circle" supertypes=[L0]
 layout L2 name="Square" supertypes=[L0]
 layout L3 kind=Environment name="scope"
+entry module=m0

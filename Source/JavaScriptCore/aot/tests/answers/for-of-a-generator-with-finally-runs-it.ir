@@ -1,0 +1,235 @@
+# function* guarded() { try { yield 1; yield 2; } finally { console.log("closed"); } }
+# function leaves() { for (const value of guarded()) { if (0 < value) return value; } return 0; }
+# function throws() { try { for (const value of guardedToo()) { if (0 < value) throw 5; } } catch (thrown) { return thrown; } return 0; }
+# function breaks() { for (const value of guarded()) { if (0 < value) break; } return 7; }
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN(ANSWER): run-in-shell
+# ANSWER: closed
+# ANSWER: closed
+# ANSWER: closed
+# ANSWER: 1 5 7
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="leaves"
+    v2 = NewClosure function=f2
+    v3 = Call v2 calleeName="throws"
+    v4 = NewClosure function=f5
+    v5 = Call v4 calleeName="breaks"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="console" [isFreeName]
+    v8 = PropGet v7 key="log"
+    v9 = Call v8, v7, v1, v3, v5 calleeKey="log" calleeName="console.log"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="leaves" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f3
+    v1 = Call v0 calleeName="guarded"
+    v2 = IteratorOpen v1
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Integer
+    Return v7
+  b4():
+    Jump -> next b5()
+  b5() handler=b8():
+    v8 = Integer
+    v9 = Less v8, v6
+    Branch v9 -> taken b6(), notTaken b7()
+  b6():
+    IteratorClose v2
+    Return v6
+  b7() handler=b8():
+    Jump -> next b2()
+  b8() role=IterationCleanup subject=v2:
+    v11 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v11
+}
+function f2 name="throws" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b9():
+    v0 = NewClosure function=f4
+    v1 = Call v0 calleeName="guardedToo"
+    v2 = IteratorOpen v1
+    Jump -> next b2()
+  b2() handler=b9():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Integer
+    Return v7
+  b4() handler=b9():
+    Jump -> next b5()
+  b5() handler=b8():
+    v8 = Integer
+    v9 = Less v8, v6
+    Branch v9 -> taken b6(), notTaken b7()
+  b6() handler=b8():
+    v10 = Integer integer=5
+    Throw v10
+  b7() handler=b8():
+    Jump -> next b2()
+  b8() role=IterationCleanup subject=v2 handler=b9():
+    v11 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v11
+  b9() role=CatchHandler:
+    v13 = CatchValue
+    Return v13
+}
+function f3 name="guarded" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    Jump -> next b1()
+  b1():
+    InitialYield
+    Jump -> next b2()
+  b2() handler=b9():
+    v3 = Integer integer=1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b3(), case b4(), otherwise b5()
+  b3() handler=b9():
+    Throw v5
+  b4():
+    v7 = Integer integer=2
+    Jump -> next b10(v7, v5)
+  b5() handler=b9():
+    v8 = Integer integer=2
+    v9 = Yield v8
+    v10 = ResultAt v9
+    v11 = ResultAt v9 index=1
+    Switch v11 cases=[1, 2] -> case b6(), case b7(), otherwise b8()
+  b6() handler=b9():
+    Throw v10
+  b7():
+    v12 = Integer integer=2
+    Jump -> next b10(v12, v10)
+  b8():
+    v13 = Integer
+    v14 = Undefined
+    Jump -> next b10(v13, v14)
+  b9() role=CleanupHandler:
+    v15 = CatchValue
+    v16 = Integer integer=1
+    Jump -> next b10(v16, v15)
+  b10(v17, v18):
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="console" [isFreeName]
+    v21 = PropGet v20 key="log"
+    v22 = String string="closed"
+    v23 = Call v21, v20, v22 calleeKey="log" calleeName="console.log"
+    Switch v17 cases=[1, 2] -> case b11(), case b12(), otherwise b13()
+  b11():
+    Throw v18
+  b12():
+    Return v18
+  b13():
+    v24 = Undefined
+    Return v24
+}
+function f4 name="guardedToo" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    Jump -> next b1()
+  b1():
+    InitialYield
+    Jump -> next b2()
+  b2() handler=b9():
+    v3 = Integer integer=1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b3(), case b4(), otherwise b5()
+  b3() handler=b9():
+    Throw v5
+  b4():
+    v7 = Integer integer=2
+    Jump -> next b10(v7, v5)
+  b5() handler=b9():
+    v8 = Integer integer=2
+    v9 = Yield v8
+    v10 = ResultAt v9
+    v11 = ResultAt v9 index=1
+    Switch v11 cases=[1, 2] -> case b6(), case b7(), otherwise b8()
+  b6() handler=b9():
+    Throw v10
+  b7():
+    v12 = Integer integer=2
+    Jump -> next b10(v12, v10)
+  b8():
+    v13 = Integer
+    v14 = Undefined
+    Jump -> next b10(v13, v14)
+  b9() role=CleanupHandler:
+    v15 = CatchValue
+    v16 = Integer integer=1
+    Jump -> next b10(v16, v15)
+  b10(v17, v18):
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="console" [isFreeName]
+    v21 = PropGet v20 key="log"
+    v22 = String string="closed"
+    v23 = Call v21, v20, v22 calleeKey="log" calleeName="console.log"
+    Switch v17 cases=[1, 2] -> case b11(), case b12(), otherwise b13()
+  b11():
+    Throw v18
+  b12():
+    Return v18
+  b13():
+    v24 = Undefined
+    Return v24
+}
+function f5 name="breaks" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f3
+    v1 = Call v0 calleeName="guarded"
+    v2 = IteratorOpen v1
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b8()
+  b4():
+    Jump -> next b5()
+  b5() handler=b9():
+    v7 = Integer
+    v8 = Less v7, v6
+    Branch v8 -> taken b6(), notTaken b7()
+  b6():
+    IteratorClose v2
+    Jump -> next b8()
+  b7() handler=b9():
+    Jump -> next b2()
+  b8():
+    v10 = Integer integer=7
+    Return v10
+  b9() role=IterationCleanup subject=v2:
+    v11 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v11
+}

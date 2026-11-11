@@ -1,0 +1,77 @@
+# Whether a match comes in parts is a question of cost: the array is always made behind the parts, and only the sweep takes it away. Here the question is drawn (the seed draws yes for both calls) though the result gets out:
+# whoever takes the array gets it, and an array that somebody has written into is asked itself from then on.
+# function kept(s: string, keep) { const m = /^([a-z]+)=(.*)$/.exec(s); if (m) { if (keep) return m; return m[1]; } return s; }
+# RUN: walk f1 mechanisms=all testing=ShuffleChoices:27
+# CHECK-LABEL: code f1:Body
+# CHECK: = RegExpMatchLiteralInParts
+# CHECK: [[whole]]: {{*}}= NewRegExpMatchArray
+# CHECK: [[boxed]]: {{*}}= Box [[whole]]
+# CHECK: Return [[boxed]]
+# function shown(s: string, show) { const m = /^([a-z]+)=(.*)$/.exec(s); if (m) { show(m); return m[1]; } return s; }   function spoil(m) { m[1] = "spoiled"; }
+# RUN(SHOWN): walk f2 mechanisms=all testing=ShuffleChoices:27
+# SHOWN-LABEL: code f2:Body
+# SHOWN: = RegExpMatchLiteralInParts
+# SHOWN: [[whole]]: {{*}}= NewRegExpMatchArray
+# SHOWN: [[boxed]]: {{*}}= Box [[whole]]
+# SHOWN: PutArrayElement [[boxed]]
+# SHOWN: = GetArrayElement [[boxed]]
+# As it pays, neither comes in parts.
+# RUN(PAYS): walk f1 f2 mechanisms=all
+# PAYS-NOT: InParts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = String string="color=red"
+    v4 = Boolean boolean=true
+    v5 = Call v0, -, v3, v4
+    v6 = Call v1, -, v3, v2
+    v7 = NewArray v5, v6 contents=anything
+    Return v7
+}
+function f1 name="kept" module=m0 position=10 length=2 thisType={type=anything} parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = NewRegExp pattern="^([a-z]+)=(.*)$" @11
+    v3 = PropGet v2 key="exec" @12
+    v4 = Call v3, v2, v0 calleeKey="exec" calleeName="exec" @13
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b4()
+  b1():
+    v6 = ToBoolean v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3():
+    v7 = Integer integer=1
+    v8 = ElemGet v4, v7 @14
+    Return v8
+  b4():
+    Return v0
+}
+function f2 name="shown" module=m0 position=20 length=2 thisType={type=anything} parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = NewRegExp pattern="^([a-z]+)=(.*)$" @21
+    v3 = PropGet v2 key="exec" @22
+    v4 = Call v3, v2, v0 calleeKey="exec" calleeName="exec" @23
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Call v1, -, v4 @24
+    v7 = Integer integer=1
+    v8 = ElemGet v4, v7 @25
+    Return v8
+  b2():
+    Return v0
+}
+function f3 name="spoil" module=m0 position=40 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = String string="spoiled"
+    ElemSet v0, v1, v2 mode=Strict @41
+    v4 = Undefined
+    Return v4
+}

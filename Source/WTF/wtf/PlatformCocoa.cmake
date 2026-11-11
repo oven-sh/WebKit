@@ -154,13 +154,15 @@ endif ()
 
 
 if (WEBKIT_SDK_IS_MACOS)
+    list(APPEND WTF_SOURCES
+        mac/FileSystemMac.mm
+    )
+endif ()
+
+if (WEBKIT_PLATFORM_MAC)
     find_library(COCOA_LIBRARY Cocoa)
     list(APPEND WTF_LIBRARIES
         ${COCOA_LIBRARY}
-    )
-
-    list(APPEND WTF_SOURCES
-        mac/FileSystemMac.mm
     )
 else ()
     find_library(UIKIT_LIBRARY UIKit)
@@ -180,12 +182,5 @@ endif ()
 # Matches CLANG_ENABLE_OBJC_ARC in the Xcode build. Set before the prefix header below so the
 # OBJCXX precompiled header is built with the same flag as the sources that use it.
 target_compile_options(WTF PRIVATE $<$<COMPILE_LANGUAGE:OBJC,OBJCXX>:-fobjc-arc>)
-
-# Optimize the inlined bmalloc fast paths even in Debug builds. The prefix
-# header's PCH is built without optimization, so it can't be used here.
-# Aside from developer UX benefit, needed to prevent tests from timing out.
-set_source_files_properties(FastMalloc.cpp PROPERTIES
-    COMPILE_OPTIONS -O3
-    SKIP_PRECOMPILE_HEADERS ON)
 
 WEBKIT_ADD_PREFIX_HEADER(WTF WTFPrefix.h PREFIX_LANGUAGES CXX OBJCXX PREFIX_NO_CODEGEN)

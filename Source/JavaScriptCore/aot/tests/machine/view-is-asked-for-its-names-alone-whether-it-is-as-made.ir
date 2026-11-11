@@ -1,0 +1,32 @@
+# function size(view: Uint8Array) { return view.length; }
+# Whether a typed array is as its class makes it: one bit of the cell says that it has no name of its own that hides a name of its class and stands below the prototypes that it was made below.
+# The bit of the Structure that speaks of elements is never set for a view (Structure::tryMarkPristine(): its class answers for every number itself), and a view needs none: no accessor can lie among its elements, and nothing above it is asked for a number.
+# The test once asked that bit too, so it passed for no typed array, and every `view.length` behind it went by the name: 106 instructions a turn of `for (let i = 0; i < view.length; i++) total += view[i]`, 34 since.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}} builtinClass=Uint8Array aspects=[Names]
+# CHECK: = GetTypedArrayLength
+# RUN(MACHINE): emit f1:Body mechanisms=all
+# MACHINE-LABEL: unit f1:Body
+# MACHINE: = Load8Z({{*}}JSCell_typeInfoFlags
+# MACHINE-NOT: Structure_bitField
+# MACHINE-NOT: JSArrayBufferView_sharingOfMemory
+# RUN(SHELL): run-in-shell globalThis.sink = (size) => { const plain = new Uint8Array(3); const hidden = Object.defineProperty(new Uint8Array(3), "length", { value: 7 }); const below = Object.setPrototypeOf(new Uint8Array(3), { get length() { return 9; } }); let said = ""; for (let i = 0; i < 3; i++) said += size(plain) + " " + size(hidden) + " " + size(below) + " "; Object.defineProperty(plain, "length", { value: 5 }); print(said + size(plain)); };
+# SHELL: 3 7 9 3 7 9 3 7 9 5
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="size" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}

@@ -50,6 +50,7 @@ class ClipOut;
 class ClipOutRoundedRect;
 class ClipOutToPath;
 class ClipPath;
+class ClipTransformedPath;
 class ClipToImageBuffer;
 class ConcatenateCTM;
 class DrawControlPart;
@@ -64,6 +65,7 @@ class DrawPlaceholder;
 class DrawImageBuffer;
 class DrawLine;
 class DrawLinesForText;
+class DrawMeshGradient;
 class DrawNativeImage;
 class DrawPath;
 class DrawPatternNativeImage;
@@ -119,6 +121,7 @@ using Item = Variant
     , ClipOutRoundedRect
     , ClipOutToPath
     , ClipPath
+    , ClipTransformedPath
     , ClipToImageBuffer
     , ConcatenateCTM
     , DrawControlPart
@@ -133,6 +136,7 @@ using Item = Variant
     , DrawImageBuffer
     , DrawLine
     , DrawLinesForText
+    , DrawMeshGradient
     , DrawNativeImage
     , DrawPath
     , DrawPatternNativeImage
@@ -186,6 +190,8 @@ enum class AsTextFlag : uint8_t {
 void applyItem(GraphicsContext&, const AffineTransform& baseTransform, ControlFactory&, const Item&);
 
 bool shouldDumpItem(const Item&, OptionSet<AsTextFlag>);
+
+WEBCORE_EXPORT bool isResolved(const Item&);
 
 WEBCORE_EXPORT void dumpItem(TextStream&, const Item&, OptionSet<AsTextFlag>);
 

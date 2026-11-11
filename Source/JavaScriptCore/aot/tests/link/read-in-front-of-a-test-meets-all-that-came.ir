@@ -1,0 +1,40 @@
+# If a read by name that the scan looks at late took its object as it is named where somebody asks for the result, `const n = o.name; if (isShapedAsS(o)) use(n)` would read `name` off the one record alone, and the field of the other record that also comes would never be seen to flow into use()
+# function use(n) { return n; }  function pick(o) { const n = o.name; return isShapedAsS(o) ? use(n) : 0; }  pick({ name: 1 });  pick({ name: "a" });
+# The read stands in front of the test, so it has run on all that came. Only what is read behind the test is read off what has passed.
+# both that come are records, because what a text answers under a name that it lacks is anything, and anything hides the integer of the field whoever reads
+# RUN: link functions mechanisms=all
+# CHECK: function f2
+# CHECK-NEXT: parameter 0 {{*}}i32
+
+layout L0 name="R" module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="S" module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="name" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="name" value=String{value="a"}}]} module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Data data=d0
+    v2 = Call v0, -, v1 calleeName="pick"
+    v3 = Data data=d1
+    v4 = Call v0, -, v3 calleeName="pick"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="pick" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="name"
+    v2 = TypeTest v0 testedType=L1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = CallDirect v1 function=f2
+    Return v4
+  b2():
+    v5 = Integer integer=0
+    Return v5
+}
+function f2 name="use" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

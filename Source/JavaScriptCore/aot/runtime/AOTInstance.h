@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinWords.h"
-#include "AOTCodegenScratchWords.h"
 #include "AOTCoroutineWords.h"
 #include "AOTInstanceLayout.h"
 #include "AOTJSONWords.h"
@@ -48,11 +47,18 @@ class VM;
 
 namespace AOT {
 
+class Image;
+struct CaseConversions;
+struct QuotedStringCache;
+struct SortedStorage;
 struct ImageFunction;
+struct ImageRegExp;
 struct ImageStringRecord;
+struct MappedCopy;
 struct ProgramSymbols;
 struct RecordedOptions;
 struct State;
+struct VMState;
 
 enum class Receiver : uint8_t { Map, Set, RegExp, Buffer };
 static constexpr unsigned numberOfReceivers = 4;
@@ -68,25 +74,14 @@ private:
     alignas(T) uint8_t m_bytes[sizeof(T)];
 };
 
-// A function that writes an object whose type may hold itself compares its frame with this limit. It is the limit of the stack, or lies above every frame while a string builder watches which objects are written inside which.
-struct JSONLevelWords {
-    ZeroedStorage<StackManager::Mirror> limit;
-};
-
-// A stub that is about to jump into the code of a function object compares the stack pointer with this limit. It is the limit of the stack, or lies above every frame from the time on that such calls record their callees.
 struct CallByValueWords {
     ZeroedStorage<StackManager::Mirror> limit;
-    // FunctionTables::isRenamedAtRunTime.
-    const uint8_t* isRenamedAtRunTime;
 };
 
-// For the stub that reads the closure table and makes the function object that is not there yet.
 struct ClosureTableWords {
-    // RememberedSlotSet::cards() of the table. Null until the static variables of the program are filled in.
     uint8_t* cards;
 };
 
-// On x86-64 an operand within 128 bytes below the instance takes a one-byte displacement, and one farther away takes four bytes. What compiled code names most lies within.
 struct InstancePrefix {
     int64_t minIntegerAddedTo;
     int64_t maxIntegerAddedTo;
@@ -97,11 +92,9 @@ struct InstancePrefix {
     uint64_t stringHeader;
     void* ropeStringAllocator;
     uint32_t collectionStructureIDs[numberOfReceivers];
-    EncodedJSValue boxedNaN;
     uint64_t newArrayWithInt32Header;
     uint64_t newArrayWithDoubleHeader;
     uint64_t newArrayWithContiguousHeader;
-    // Constants that take ten bytes as an immediate: AOTB3Policy.cpp.
     uint64_t doubleEncodeOffset;
     uint64_t boxedOne;
     int64_t undefinedInteger;
@@ -142,11 +135,8 @@ struct InstanceHeader {
 
 struct ImageWords {
     const uint8_t* code;
-    const uint32_t* codeGranules;
-    const uint32_t* subsequentFunctionStarts;
     const ProgramTables* tables;
     union {
-        // The atoms of the image, read-only, one header per identifier number: the name with the number n is programIdentifiers + n.
         UniquedStringImpl* programIdentifiers;
         const ImageStringRecord* stringRecords;
     };
@@ -154,21 +144,22 @@ struct ImageWords {
         uint64_t sizeOfProgramIdentifiers;
         const uint32_t* lazyStringHeaderOffsets;
     };
-    // ImageSection::Strings, one ImageStringWord for each StringID, and ImageSection::StringConstants, the StringID of each string cell.
     const uint32_t* stringWords;
     const uint32_t* stringConstants;
-    // ImageSection::LongStrings, which says where the strings without a header are, and ImageSection::Text.
+    const uint8_t* namesOfSitesByDistance;
     const uint32_t* listedStrings;
     const uint8_t* text;
-    // The symbols and private names made so far, by identifier number. The table grows, this record stays where it is.
     const ProgramSymbols* programSymbols;
     const uint32_t* fieldTableEntries;
     const uint16_t* fieldRecordIndices;
     const uint64_t* classAccessors;
-    // ProgramTables::data(): compiled code points an array of constants at the storage in its node.
     const uint64_t* data;
-    // Where the kind of function 0 would lie if ProgramTables::closureFunctionKinds() began with it: a stub adds the number of a closure's function.
-    uintptr_t closureFunctionKindsOrigin;
+    const FunctionKindData* closureFunctionKinds;
+    const ImageRegExp* regExps;
+    const uint8_t* regExpCode;
+    const uint16_t* functionSteps;
+    const uint32_t* functionStartGroups;
+    uint64_t endOfIdentifiers;
 };
 
 struct LazyStringWords {
@@ -176,11 +167,10 @@ struct LazyStringWords {
     uint64_t capacity;
 };
 
-// Behind DefaultFinalObject: the same object with room in its cell for two more properties, for four more and so on.
-enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, DefaultFinalObject };
-static constexpr unsigned numberOfRoomierFinalObjects = 13;
-static constexpr unsigned numberOfInlineAllocations = 9 + numberOfRoomierFinalObjects;
-static_assert(static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + 1 + numberOfRoomierFinalObjects == numberOfInlineAllocations);
+enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject, SmallNullPrototypeObject };
+static constexpr unsigned numberOfInlineAllocations = 13;
+static_assert(static_cast<unsigned>(InlineAllocation::SmallNullPrototypeObject) + 1 == numberOfInlineAllocations);
+static constexpr unsigned smallObjectInlineCapacity = 2;
 
 struct InlineAllocationData {
     void* allocator;
@@ -194,19 +184,9 @@ struct TypedArrayAllocation {
     uint64_t unused;
 };
 
-struct ClonedStructure {
-    uint64_t header;
-    uint64_t cellSize;
-};
-
-struct MappedCopy;
-
 struct AllocationWords {
     static constexpr unsigned numberOfTypedArrayAllocations = 16;
-    static constexpr unsigned numberOfClonedStructures = 16;
-    static constexpr unsigned clonedStructureShift = 4;
-    static constexpr unsigned placeOfClonedStructure(uint32_t structureID) { return structureID >> clonedStructureShift & (numberOfClonedStructures - 1); }
-    static constexpr unsigned numberOfCopiesWithoutFrame = 64;
+    static constexpr unsigned numberOfCopiesWithoutFrame = 2048;
     static constexpr unsigned placeOfCopyWithoutFrame(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne)
     {
         return static_cast<uint32_t>(sourceWords + (sourceWords >> 32) + 2 * (targetWords >> 32) + excludedRunNumberPlusOne) & (numberOfCopiesWithoutFrame - 1);
@@ -217,18 +197,30 @@ struct AllocationWords {
     void* cellSpace;
     void* primitiveAuxiliarySpace;
     InlineAllocationData inlineAllocations[numberOfInlineAllocations];
+    JSCell* getterOfAccessorWithoutGetter;
+    JSCell* setterOfAccessorWithoutSetter;
+    JSCell* calleeOfStrictArguments;
     TypedArrayAllocation typedArrayAllocations[numberOfTypedArrayAllocations];
     uint64_t newCopyOnWriteArrayHeaders[2];
-    // Of an array of values that lies in a frame. Zero unless the Structure of such arrays is pristine in every aspect.
-    uint64_t frameArrayHeader;
     uint64_t compactTableHeader;
-    // CompactTable::growthPlans(). Null until an operation has added to a Map or Set.
     const uint64_t* compactTableGrowthPlans;
-    ClonedStructure clonedStructures[numberOfClonedStructures];
-    const MappedCopy* copiesWithoutFrame[numberOfCopiesWithoutFrame];
+    uint32_t textBufferStructureID;
+};
+static_assert(AllocationWords::numberOfCopiesWithoutFrame * sizeof(const MappedCopy*) <= InstanceLayout::bytesReservedForCopiesWithoutFrame);
+
+struct ShortArrayWords {
+    static constexpr unsigned numberOfAllocators = 9;
+    static constexpr unsigned indexOfAllocator(unsigned vectorLength) { return vectorLength / 2; }
+    static constexpr unsigned wordsOfExhaustedAllocator = 24;
+    bool lacksAllocatorFor(unsigned vectorLength) const { return indexOfAllocator(vectorLength) < numberOfAllocators && allocators[indexOfAllocator(vectorLength)] == exhaustedAllocator; }
+    void* allocators[numberOfAllocators];
+    uint64_t exhaustedAllocator[wordsOfExhaustedAllocator];
 };
 
-// Most objects that have extra properties have one or two.
+struct EmptyTableWords {
+    uint64_t words[4];
+};
+
 static constexpr unsigned extraPropertiesInlineCapacity = 2;
 
 struct RealmWords {
@@ -236,10 +228,8 @@ struct RealmWords {
     JSCell* functionPrototypeCall;
     JSCell* boundFunctionExecutable;
     Structure* emptyExtraPropertiesStructure;
-    // Of extra properties that hold elements and no name, and the first word of such a cell.
     Structure* extraPropertiesWithElementsStructure;
     uint64_t headerOfExtraPropertiesWithElements;
-    // What a call without surplus arguments hands to a function that takes the list of them. Nothing writes to it.
     JSCell* emptyArgumentList;
     const ClassInfo* boundFunctionClassInfo;
     const ClassInfo* const* instanceClassInfos;
@@ -250,36 +240,30 @@ struct RealmWords {
     const void* intStrings;
     const uint64_t* integerKeys;
     uint64_t integerKeyMask;
-    // StringKeyCache::tryFindCaseConversion().
-    const uint64_t* caseConversions;
+    const void* keysOfPairs;
+    uint64_t keyOfPairMask;
+    CaseConversions* caseConversions;
+    QuotedStringCache* quotedStringCache;
+    SortedStorage* sortedStorage;
     MicrotaskQueue* microtaskQueue;
-    // Of the ordinary object { read, written } that an encoder answers with. Null until the first is made.
-    Structure* readAndWrittenCountsStructure;
-    // Of the ordinary object that was made last from the fields that a direct entry answered, and the number of its layout in the table of built-ins. Null until the first is made.
-    Structure* builtinLayoutStructure;
-    // A function object of the engine that only hands on to a compiled function, and the closure of that function. Null until the run time has handed on once.
     JSCell* functionOfEngineOverCompiledFunction;
     JSCell* compiledFunctionUnderFunctionOfEngine;
-    uint32_t builtinLayoutOfStructure;
-};
-
-// A function object, and what the stack pointer is once its call has returned.
-struct RecordedCallee {
-    uintptr_t stackPointerOfCaller;
-    JSObject* closure;
 };
 
 struct HeapWords {
     StoredCellLog* storedCellLog;
     MarkStackArray* mutatorMarkStack;
     uintptr_t* barriersExecuted;
-    // The stack pointer of an entry says where the entry lies. A call writes over the entry of a call that was made from no further out, which has returned.
-    // In front of the first entry lies one that holds, in place of a stack pointer, the mask that leaves of a stack pointer the offset of its entry.
-    const RecordedCallee* recordedCallees;
 };
 
 struct IterationWords {
     JSCell* emptyEnumerator;
+    JSCell* functionThatAppendsIterable;
+    JSCell* functionThatTakesFromIterable;
+};
+
+struct CollationWords {
+    const uint8_t* ducetLevel1Weights;
 };
 
 struct NumberWords {
@@ -287,7 +271,6 @@ struct NumberWords {
     uint64_t hashSecrets[2];
 };
 
-// Nothing writes to a part of the second kind once Instance::create() has returned.
 #define FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, writtenOnce) \
     v(propertyCaches, PropertyCacheWords) \
     writtenOnce(image, ImageWords) \
@@ -308,13 +291,15 @@ struct NumberWords {
     v(iteration, IterationWords) \
     v(json, JSONWords) \
     v(stringBuilder, StringBuilderWords) \
-    v(jsonLevels, JSONLevelWords) \
     writtenOnce(stubs, StubWords) \
-    v(scratch, CodegenScratchWords) \
     v(constructWords, ConstructWordCache) \
     v(lazyStrings, LazyStringWords) \
     v(callsByValue, CallByValueWords) \
-    v(closureTable, ClosureTableWords)
+    v(closureTable, ClosureTableWords) \
+    v(shortArrays, ShortArrayWords) \
+    writtenOnce(emptyTable, EmptyTableWords) \
+    writtenOnce(collation, CollationWords) \
+    v(effectsNet, EffectsNetWords)
 #define FOR_EACH_AOT_INSTANCE_PART(v) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, v)
 
 struct Instance : InstanceHeader {
@@ -324,7 +309,9 @@ struct Instance : InstanceHeader {
 #define AOT_ADD_SIZE_OF_INSTANCE_PART(member, Type) + sizeof(Type)
     FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_DECLARE_INSTANCE_PART, AOT_SKIP_INSTANCE_PART)
     State* state;
-    uint8_t unusedBelowWordsWrittenOnce[InstanceLayout::offsetOfWordsWrittenOnce - (sizeof(InstanceHeader) + sizeof(State*) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_ADD_SIZE_OF_INSTANCE_PART, AOT_SKIP_INSTANCE_PART))];
+    uintptr_t pollIsDue;
+    const Image* program;
+    uint8_t unusedBelowWordsWrittenOnce[InstanceLayout::offsetOfWordsWrittenOnce - (sizeof(InstanceHeader) + sizeof(State*) + sizeof(uintptr_t) + sizeof(const Image*) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_ADD_SIZE_OF_INSTANCE_PART, AOT_SKIP_INSTANCE_PART))];
     void** runtimeTable;
     SlotHandlers handlers;
     FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_SKIP_INSTANCE_PART, AOT_DECLARE_INSTANCE_PART)
@@ -333,10 +320,16 @@ struct Instance : InstanceHeader {
 #else
     FOR_EACH_AOT_INSTANCE_PART(AOT_DECLARE_INSTANCE_PART)
     State* state;
+    uintptr_t pollIsDue;
+    const Image* program;
 #endif
 #undef AOT_DECLARE_INSTANCE_PART
 
-    static Instance* of(JSGlobalObject* realm) { return realm->aotInstance(); }
+    static Instance* of(JSGlobalObject* realm)
+    {
+        return realm->aotInstance();
+    }
+    JS_EXPORT_PRIVATE static Instance* owning(const JSCell*);
     static Instance* create(JSGlobalObject* realm);
     JS_EXPORT_PRIVATE static void destroy(Instance*);
     JS_EXPORT_PRIVATE static void destroyDeadInstances(VM&);
@@ -348,17 +341,18 @@ struct Instance : InstanceHeader {
     const RecordedOptions& options() const;
 
     void captureCellHeaders();
+    void findShortArrayAllocators();
+    void findMissingShortArrayAllocator(unsigned vectorLength)
+    {
+        if (shortArrays.lacksAllocatorFor(vectorLength)) [[unlikely]]
+            findShortArrayAllocators();
+    }
     void didCreateInstanceStructure(BuiltinClassID, Structure*);
 
     uint8_t* statics() { return reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfStatics(tables().instanceSizes); }
     const uint8_t* statics() const { return reinterpret_cast<const uint8_t*>(this) + InstanceLayout::offsetOfStatics(tables().instanceSizes); }
     uint8_t* cards() { return reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfCards(tables().instanceSizes); }
     template<typename T> T* tableAt(size_t offsetInInstance) { return reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(this) + offsetInInstance); }
-    std::span<uint32_t> methodTable()
-    {
-        InstanceSizes sizes = tables().instanceSizes;
-        return { reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfMethodTable(sizes)), sizes.sizeOfMethodTable / sizeof(uint32_t) };
-    }
     RememberedSlot<uint32_t>& stringCell(uint32_t number)
     {
         ASSERT(number < tables().instanceSizes.numberOfStringCells);
@@ -368,6 +362,17 @@ struct Instance : InstanceHeader {
     {
         InstanceSizes sizes = tables().instanceSizes;
         return { reinterpret_cast<RememberedSlot<Slot>*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfSiteCaches(sizes)), sizes.numberOfSiteCaches };
+    }
+    std::span<SiteAnswers> siteAnswers() { return { reinterpret_cast<SiteAnswers*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfSiteAnswers), InstanceLayout::bytesReservedForSiteAnswers / sizeof(SiteAnswers) }; }
+    std::span<uint16_t> indicesOfSiteAnswers()
+    {
+        InstanceSizes sizes = tables().instanceSizes;
+        return { reinterpret_cast<uint16_t*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfIndicesOfSiteAnswers(sizes)), sizes.numberOfSiteCaches };
+    }
+    std::span<uint32_t> methodTable()
+    {
+        InstanceSizes sizes = tables().instanceSizes;
+        return { reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfMethodTable(sizes)), sizes.sizeOfMethodTable / sizeof(uint32_t) };
     }
 
     static constexpr ptrdiff_t offsetOfReceiverStructureID(Receiver receiver) { return AOT_INSTANCE_PREFIX_OFFSET(collectionStructureIDs) + static_cast<unsigned>(receiver) * static_cast<ptrdiff_t>(sizeof(uint32_t)); }
@@ -394,15 +399,23 @@ struct Instance : InstanceHeader {
     SlotHandlers& slotHandlers() { return propertyCaches.handlers; }
 #endif
     static constexpr ptrdiff_t offsetOfSlotHandlers(SlotHandlerTable);
+    static constexpr ptrdiff_t offsetOfAnswerHandlers(AnswerHandlerTable);
 
     std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> boxedCalls() { return std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> { reinterpret_cast<BoxedCallEntry*>(reinterpret_cast<uint8_t*>(this) + offsetOfBoxedCalls()), StubWords::numberOfBoxedCallEntries }; }
     static constexpr ptrdiff_t offsetOfBoxedCalls();
+    std::span<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> copiesWithoutFrame() { return std::span<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> { reinterpret_cast<const MappedCopy**>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfCopiesWithoutFrame), AllocationWords::numberOfCopiesWithoutFrame }; }
     std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> keyedValuePlaces() { return std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> { reinterpret_cast<KeyedValuePlace*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfKeyedValuePlaces), KeyedValuePlace::numberOfPlaces }; }
+    static constexpr ptrdiff_t offsetOfAcceptedKindsOfValues = InstanceLayout::offsetOfKeyedValuePlaces + static_cast<ptrdiff_t>(KeyedValuePlace::numberOfPlaces * sizeof(KeyedValuePlace) + KeyedValuePlace::numberOfPlacesPerAccess * sizeof(RestOfPlaceForStores));
+    std::span<AcceptedKindOfValue, AcceptedKindOfValue::numberOfEntries> acceptedKindsOfValues() { return std::span<AcceptedKindOfValue, AcceptedKindOfValue::numberOfEntries> { reinterpret_cast<AcceptedKindOfValue*>(reinterpret_cast<uint8_t*>(this) + offsetOfAcceptedKindsOfValues), AcceptedKindOfValue::numberOfEntries }; }
 
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
     {
-        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.extraPropertiesWithElementsStructure, realm.emptyArgumentList, realm.readAndWrittenCountsStructure, realm.builtinLayoutStructure, realm.functionOfEngineOverCompiledFunction, realm.compiledFunctionUnderFunctionOfEngine };
+        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.extraPropertiesWithElementsStructure, realm.emptyArgumentList, realm.functionOfEngineOverCompiledFunction, realm.compiledFunctionUnderFunctionOfEngine };
+        for (JSCell* function : { iteration.functionThatAppendsIterable, iteration.functionThatTakesFromIterable }) {
+            if (function)
+                visitor.appendUnbarriered(function);
+        }
         for (JSCell* cell : cells) {
             if (cell)
                 visitor.appendUnbarriered(cell);
@@ -433,9 +446,14 @@ constexpr ptrdiff_t Instance::offsetOfSlotHandlers(SlotHandlerTable table)
     return offsetOfHandlers + static_cast<ptrdiff_t>(static_cast<unsigned>(table) * numberOfSlotKindsWithHandlers * sizeof(void*));
 }
 
+constexpr ptrdiff_t Instance::offsetOfAnswerHandlers(AnswerHandlerTable table)
+{
+    return offsetOfSlotHandlers(static_cast<SlotHandlerTable>(numberOfSlotHandlerTables + static_cast<unsigned>(table)));
+}
+
 constexpr ptrdiff_t Instance::offsetOfBoxedCalls()
 {
-#if defined(BUN_HARDENED)
+#if AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE
     return InstanceLayout::offsetOfBoxedCalls;
 #else
     return AOT_INSTANCE_OFFSET(stubs.boxedCalls);
@@ -451,26 +469,32 @@ FOR_EACH_AOT_INSTANCE_PART(AOT_CHECK_INSTANCE_PART)
 static_assert(OBJECT_OFFSETOF(InstanceHeader, vm) == 16, "JSWebAssemblyInstance::offsetOfVM()");
 #if defined(BUN_HARDENED)
 static_assert(AOT_INSTANCE_OFFSET(runtimeTable) == InstanceLayout::offsetOfWordsWrittenOnce);
-static_assert(UINT8_MAX * sizeof(BoxedCallEntry) <= InstanceLayout::bytesReservedForBoxedCalls);
-static_assert(InstanceLayout::offsetOfBoxedCalls + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForBoxedCalls + sizeof(InstancePrefix)) <= 0);
 #else
 static_assert(!OBJECT_OFFSETOF(InstanceHeader, runtimeTable));
 #endif
+#if AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE
+static_assert(UINT8_MAX * sizeof(BoxedCallEntry) <= InstanceLayout::bytesReservedForBoxedCalls);
+static_assert(InstanceLayout::offsetOfBoxedCalls < 0
+    ? InstanceLayout::offsetOfBoxedCalls + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForBoxedCalls + sizeof(InstancePrefix)) <= 0
+    : static_cast<ptrdiff_t>(sizeof(Instance)) <= InstanceLayout::offsetOfBoxedCalls);
+#endif
 static_assert(OBJECT_OFFSETOF(InstanceHeader, globalObject) <= 128);
-static_assert(AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader) == -128);
+static_assert(AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader) >= -128, "On x86-64, a one-byte displacement reaches 128 bytes below the instance.");
 static_assert(sizeof(Instance) <= 32 * KB, "On ARM64, the immediate offset of a 64-bit load reaches 32 KB.");
 static_assert(AOT_INSTANCE_OFFSET(propertyCaches.hashedSlots) <= 504, "On ARM64, the immediate offset of a load of a pair reaches 504 bytes.");
-static_assert(sizeof(Instance) <= InstanceLayout::offsetOfKeyOrderSteps);
-static_assert(InstanceLayout::offsetOfKeyOrderSteps + numberOfKeyOrderStepCaches * sizeof(KeyOrderStepCache) <= InstanceLayout::offsetOfBuiltinLocationStates);
+static_assert(sizeof(Instance) <= InstanceLayout::offsetOfTablesAboveInstance);
+static_assert(InstanceLayout::offsetOfLoopPollPage() < 0 || sizeof(Instance) <= static_cast<size_t>(InstanceLayout::offsetOfLoopPollPage()), "On ARM64 the loop poll page lies behind the instance, where one load reaches it.");
 static_assert(sizeof(InstancePrefix) + InstanceLayout::bytesReservedForLoopPollPage <= InstanceLayout::bytesReservedForPrefixAndPollPage);
-static_assert(KeyedValuePlace::numberOfPlaces * sizeof(KeyedValuePlace) <= InstanceLayout::bytesReservedForKeyedValuePlaces && sizeof(InstancePrefix) <= 32 * KB);
-static_assert(sizeof(RememberedSlot<Slot>) == InstanceLayout::sizeOfSiteCache && sizeof(RememberedSlot<uint32_t>) == InstanceLayout::sizeOfStringCell);
+static_assert(sizeof(InstancePrefix) <= 32 * KB);
+static_assert(sizeof(RememberedSlot<uint32_t>) == InstanceLayout::sizeOfStringCell);
+static_assert(Instance::offsetOfAcceptedKindsOfValues + static_cast<ptrdiff_t>(AcceptedKindOfValue::numberOfEntries * sizeof(AcceptedKindOfValue)) <= InstanceLayout::offsetOfKeyedValuePlaces + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForKeyedValuePlaces));
+static_assert(sizeof(GlobalBinding) == InstanceLayout::sizeOfGlobalBinding);
 static_assert(sizeof(TypedArrayAllocation) == 32);
 static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this size per identifier, and a stub scales an identifier number by it.");
 
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
-// From now on every stub that is about to jump into the code of a function object polls first.
-void makeCallsByValuePoll(Instance&, const uint8_t* isRenamedAtRunTime);
+size_t numberOfRunningInstances(const VMState&);
+void setPollsEnabled(Instance&, bool);
 
 } } // namespace JSC::AOT
 

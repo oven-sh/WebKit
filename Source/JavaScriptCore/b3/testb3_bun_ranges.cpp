@@ -481,6 +481,92 @@ static void testSumOfIntegersBehindDoublesIsAddedInIntegers()
     }
 }
 
+enum class DoubleExpression : uint8_t { IntegerTimesHalf, SumOfProducts, IntegerTimesInfinity, IntegerDividedByInteger, Argument, ManyLargeFactors };
+
+static void checkDoubleComparedWithItself(DoubleExpression expression, bool isNeverNaN, bool reducesWithRanges)
+{
+    for (B3::Opcode comparison : { Equal, NotEqual }) {
+        Procedure proc(rangeReductionPolicy(reducesWithRanges));
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int32_t, int64_t, double>(proc, root);
+        auto constant = [&](double number) -> Value* { return root->appendNew<ConstDoubleValue>(proc, Origin(), number); };
+        Value* narrow = graph.make(root, IToD, arguments[0]);
+        Value* wide = graph.make(root, IToD, arguments[1]);
+        Value* number = nullptr;
+        switch (expression) {
+        case DoubleExpression::IntegerTimesHalf:
+            number = graph.make(root, Mul, narrow, constant(0.5));
+            break;
+        case DoubleExpression::SumOfProducts:
+            number = graph.make(root, Sub, graph.make(root, Add, graph.make(root, Mul, narrow, wide), constant(-1e300)), graph.make(root, Neg, graph.make(root, Abs, wide)));
+            break;
+        case DoubleExpression::IntegerTimesInfinity:
+            number = graph.make(root, Mul, narrow, constant(std::numeric_limits<double>::infinity()));
+            break;
+        case DoubleExpression::IntegerDividedByInteger:
+            number = graph.make(root, Div, narrow, wide);
+            break;
+        case DoubleExpression::Argument:
+            number = graph.make(root, Add, arguments[2], narrow);
+            break;
+        case DoubleExpression::ManyLargeFactors:
+            number = graph.make(root, Mul, graph.make(root, Mul, constant(1e300), constant(1e300)), graph.make(root, Sub, narrow, narrow));
+            break;
+        }
+        graph.ret(root, graph.make(root, comparison, number, number));
+
+        reduceStrengthOnce(proc);
+        CHECK_EQ(numberOfValues(proc, comparison), isNeverNaN && reducesWithRanges ? 0u : 1u);
+
+        auto code = compileProc(proc);
+        for (int32_t first : { std::numeric_limits<int32_t>::min(), 0, 3, std::numeric_limits<int32_t>::max() }) {
+            for (int64_t second : { std::numeric_limits<int64_t>::min(), static_cast<int64_t>(0), static_cast<int64_t>(5), std::numeric_limits<int64_t>::max() }) {
+                for (double third : { 0.5, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity() }) {
+                    double a = first;
+                    double b = static_cast<double>(second);
+                    double expected = 0;
+                    switch (expression) {
+                    case DoubleExpression::IntegerTimesHalf:
+                        expected = a * 0.5;
+                        break;
+                    case DoubleExpression::SumOfProducts:
+                        expected = a * b + -1e300 - -std::abs(b);
+                        break;
+                    case DoubleExpression::IntegerTimesInfinity:
+                        expected = a * std::numeric_limits<double>::infinity();
+                        break;
+                    case DoubleExpression::IntegerDividedByInteger:
+                        expected = a / b;
+                        break;
+                    case DoubleExpression::Argument:
+                        expected = third + a;
+                        break;
+                    case DoubleExpression::ManyLargeFactors:
+                        expected = std::numeric_limits<double>::infinity() * (a - a);
+                        break;
+                    }
+                    bool isNaN = expected != expected;
+                    CHECK(!isNaN || !isNeverNaN);
+                    CHECK_EQ(invoke<int32_t>(*code, first, second, third), static_cast<int32_t>(comparison == Equal ? !isNaN : isNaN));
+                }
+            }
+        }
+    }
+}
+
+static void testReduceStrengthFoldsSelfComparisonOfFiniteDouble()
+{
+    for (bool reducesWithRanges : { true, false }) {
+        checkDoubleComparedWithItself(DoubleExpression::IntegerTimesHalf, true, reducesWithRanges);
+        checkDoubleComparedWithItself(DoubleExpression::SumOfProducts, true, reducesWithRanges);
+        checkDoubleComparedWithItself(DoubleExpression::IntegerTimesInfinity, false, reducesWithRanges);
+        checkDoubleComparedWithItself(DoubleExpression::IntegerDividedByInteger, false, reducesWithRanges);
+        checkDoubleComparedWithItself(DoubleExpression::Argument, false, reducesWithRanges);
+        checkDoubleComparedWithItself(DoubleExpression::ManyLargeFactors, false, reducesWithRanges);
+    }
+}
+
 static void checkSignExtension(IntRange range, bool becomesZeroExtension, bool reducesWithRanges)
 {
     Procedure proc(rangeReductionPolicy(reducesWithRanges));
@@ -567,7 +653,7 @@ static void checkComparisonOfExtensions(B3::Opcode opcode, ExtendedOperand left,
     }
 }
 
-static void testComparisonOfExtensionsIsNarrow()
+static void testNarrowExtensionComparison()
 {
     for (B3::Opcode opcode : { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Below, BelowEqual, Above, AboveEqual }) {
         for (B3::Opcode leftExtension : { SExt32, ZExt32 }) {
@@ -577,6 +663,51 @@ static void testComparisonOfExtensionsIsNarrow()
                         for (bool reducesWithRanges : { true, false })
                             checkComparisonOfExtensions(opcode, { leftExtension, isLeftNonNegative }, { rightExtension, isRightNonNegative }, reducesWithRanges);
                     }
+                }
+            }
+        }
+    }
+}
+
+static void checkExtensionConstantComparison(B3::Opcode opcode, ExtendedOperand left, int64_t constant, bool reducesWithRanges)
+{
+    constexpr int32_t maxInt32 = std::numeric_limits<int32_t>::max();
+    constexpr int32_t minInt32 = std::numeric_limits<int32_t>::min();
+    Procedure proc(rangeReductionPolicy(reducesWithRanges));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    Value* pointer = cCallArgumentValues<int32_t*>(proc, root)[0];
+    Value* word = graph.load(root, Int32, pointer, 0, firstHeap);
+    if (left.isKnownNonNegative)
+        proc.setKnownRange(word, IntRange(0, maxInt32));
+    Value* comparison = graph.make(root, opcode, graph.make(root, left.extension, word), graph.int64(root, constant));
+    graph.ret(root, graph.make(root, ZExt32, comparison));
+
+    reduceStrengthOnce(proc);
+    bool isExtendedWord = constant == extendWord(left, static_cast<int32_t>(constant));
+    if (reducesWithRanges && isExtendedWord) {
+        CHECK_EQ(numberOfValues(proc, [](Value* value) {
+            return isIntegerComparison(value->opcode()) && value->child(0)->type() == Int64;
+        }), 0u);
+    }
+
+    auto code = compileProc(proc);
+    for (int32_t input : { 0, 1, 7, 128, maxInt32, -1, -7, -128, minInt32 }) {
+        if (left.isKnownNonNegative && input < 0)
+            continue;
+        int32_t memory[1] = { input };
+        CHECK_EQ(invoke<int64_t>(*code, memory), static_cast<int64_t>(holds(opcode, extendWord(left, input), constant)));
+    }
+}
+
+static void testNarrowExtensionConstantComparison()
+{
+    for (B3::Opcode opcode : { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Below, BelowEqual, Above, AboveEqual }) {
+        for (B3::Opcode extension : { SExt32, ZExt32 }) {
+            for (bool isNonNegative : { false, true }) {
+                for (int64_t constant : { 0ll, 1ll, 7ll, 128ll, 0x7fffffffll, 0x80000000ll, 0xfffffff9ll, 0xffffffffll, 0x100000000ll, 0x100000007ll, -1ll, -7ll, -128ll, -0x80000000ll, -0x80000001ll, std::numeric_limits<long long>::max(), std::numeric_limits<long long>::min() }) {
+                    for (bool reducesWithRanges : { true, false })
+                        checkExtensionConstantComparison(opcode, { extension, isNonNegative }, constant, reducesWithRanges);
                 }
             }
         }
@@ -702,6 +833,68 @@ static void testReduceStrengthKnowsNarrowLoadRange()
     }
 }
 
+static void testComparisonOfSelectFoldsByRange()
+{
+    struct Case {
+        int64_t bound;
+        bool folds;
+    };
+    for (bool reducesWithRanges : { true, false }) {
+        for (Case variant : { Case { 0, true }, Case { 11, false }, Case { 21, true } }) {
+            Procedure proc(rangeReductionPolicy(reducesWithRanges));
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+            Value* predicate = graph.make(root, Trunc, arguments[0]);
+            Value* small = graph.make(root, BitAnd, arguments[1], graph.int64(root, 15));
+            Value* selected = root->appendNew<Value>(proc, Select, Origin(), predicate, graph.int64(root, 20), small);
+            CHECK(rangeFor(proc, selected) == IntRange(0, 20));
+            graph.ret(root, graph.make(root, ZExt32, graph.make(root, GreaterEqual, selected, graph.int64(root, variant.bound))));
+            reduceStrengthOnce(proc);
+            CHECK_EQ(numberOfValues(proc, [](Value* value) {
+                return isIntegerComparison(value->opcode());
+            }), variant.folds && reducesWithRanges ? 0u : 1u);
+            auto code = compileProc(proc);
+            CHECK_EQ(invoke<int64_t>(*code, 1, 3), 20 >= variant.bound);
+            CHECK_EQ(invoke<int64_t>(*code, 0, 3), 3 >= variant.bound);
+            CHECK_EQ(invoke<int64_t>(*code, 0, 31), 15 >= variant.bound);
+        }
+    }
+}
+
+static void testComparisonOfSelectOfConstantsTestsPredicate()
+{
+    for (bool usesPolicy : { true, false }) {
+        for (B3::Opcode opcode : { Equal, NotEqual, LessThan, GreaterEqual, Above }) {
+            Procedure proc(usesPolicy ? strengthReductionPolicy() : Policy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            Value* predicate = graph.make(root, Trunc, cCallArgumentValues<int64_t>(proc, root)[0]);
+            Value* selected = root->appendNew<Value>(proc, Select, Origin(), predicate, graph.int64(root, 20), graph.int64(root, 10));
+            graph.ret(root, graph.make(root, ZExt32, graph.make(root, opcode, selected, graph.int64(root, 20))));
+            reduceStrengthOnce(proc);
+            CHECK_EQ(numberOfValues(proc, Select), usesPolicy ? 0u : 1u);
+            auto code = compileProc(proc);
+            auto expected = [&](int64_t value) -> int64_t {
+                switch (opcode) {
+                case Equal:
+                    return value == 20;
+                case NotEqual:
+                    return value != 20;
+                case LessThan:
+                    return value < 20;
+                case GreaterEqual:
+                    return value >= 20;
+                default:
+                    return value > 20;
+                }
+            };
+            CHECK_EQ(invoke<int64_t>(*code, 7), expected(20));
+            CHECK_EQ(invoke<int64_t>(*code, 0), expected(10));
+        }
+    }
+}
+
 void addBunRangeTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testRangeForReadsKnownRange());
@@ -718,11 +911,15 @@ void addBunRangeTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testExtensionOfTruncationFoldsByRange());
     RUN(testSumOfIntegersBehindDoublesIsAddedInIntegers());
     RUN(testSignExtensionOfNonNegativeIsZeroExtension());
-    RUN(testComparisonOfExtensionsIsNarrow());
+    RUN(testNarrowExtensionComparison());
+    RUN(testNarrowExtensionConstantComparison());
     RUN(testMaskFoldsByRange());
     RUN(testVariableShiftRanges());
     RUN(testTruncOfVariableShiftLeftAndBack());
     RUN(testReduceStrengthKnowsNarrowLoadRange());
+    RUN(testReduceStrengthFoldsSelfComparisonOfFiniteDouble());
+    RUN(testComparisonOfSelectFoldsByRange());
+    RUN(testComparisonOfSelectOfConstantsTestsPredicate());
 }
 
 #endif // ENABLE(B3_JIT)

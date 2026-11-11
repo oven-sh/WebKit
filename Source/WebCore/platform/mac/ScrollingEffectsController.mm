@@ -96,7 +96,7 @@ void ScrollingEffectsController::stopAllTimers()
 #endif
 }
 
-static ScrollEventAxis LEGACY_NODELETE dominantAxisFavoringVertical(FloatSize delta)
+NODELETE static ScrollEventAxis dominantAxisFavoringVertical(FloatSize delta)
 {
     if (std::abs(delta.height()) >= std::abs(delta.width()))
         return ScrollEventAxis::Vertical;
@@ -104,7 +104,7 @@ static ScrollEventAxis LEGACY_NODELETE dominantAxisFavoringVertical(FloatSize de
     return ScrollEventAxis::Horizontal;
 }
 
-static FloatSize LEGACY_NODELETE deltaAlignedToAxis(FloatSize delta, ScrollEventAxis axis)
+NODELETE static FloatSize deltaAlignedToAxis(FloatSize delta, ScrollEventAxis axis)
 {
     switch (axis) {
     case ScrollEventAxis::Horizontal: return FloatSize { delta.width(), 0 };
@@ -114,7 +114,7 @@ static FloatSize LEGACY_NODELETE deltaAlignedToAxis(FloatSize delta, ScrollEvent
     return { };
 }
 
-static FloatSize LEGACY_NODELETE deltaAlignedToDominantAxis(FloatSize delta)
+NODELETE static FloatSize deltaAlignedToDominantAxis(FloatSize delta)
 {
     auto dominantAxis = dominantAxisFavoringVertical(delta);
     return deltaAlignedToAxis(delta, dominantAxis);
@@ -141,7 +141,7 @@ FloatSize ScrollingEffectsController::deltaAlignedToPredominantGestureAxis(Monot
     return deltaAlignedToAxis(delta, dominantAxisFavoringVertical(m_cumulativeGestureDelta));
 }
 
-static std::optional<BoxSide> LEGACY_NODELETE affectedSideOnDominantAxis(FloatSize delta)
+NODELETE static std::optional<BoxSide> affectedSideOnDominantAxis(FloatSize delta)
 {
     auto dominantAxis = dominantAxisFavoringVertical(delta);
     return ScrollableArea::targetSideForScrollDelta(delta, dominantAxis);
@@ -155,6 +155,24 @@ static FloatSize hyperbolicReboundDeltaForElasticDelta(IntSize stretchAmount, fl
     return { static_cast<float>(width), static_cast<float>(height) };
 }
 #endif
+
+void ScrollingEffectsController::handleWheelEventDuringSpringAnimation(const PlatformWheelEvent& wheelEvent)
+{
+    if (!isSpringAnimationRunning())
+        return;
+
+    // Ignore the rest of a momentum scroll, which would otherwise fight the spring animation, and keep scrolling once it finishes.
+    if (wheelEvent.isMomentumEvent()) {
+        m_ignoreMomentumScrolls = true;
+        m_momentumScrollInProgress = false;
+        return;
+    }
+
+    // Spring animations last long enough that the user may want to take over before they finish, either by touching
+    // the trackpad (as with momentum scrolling) or by scrolling.
+    if (wheelEvent.isGestureStart() || wheelEvent.isNonGestureEvent())
+        stopSpringAnimation();
+}
 
 bool ScrollingEffectsController::handleWheelEvent(const PlatformWheelEvent& wheelEvent)
 {
@@ -860,7 +878,7 @@ enum class WheelEventStatus {
     Unknown
 };
 
-static inline WheelEventStatus LEGACY_NODELETE toWheelEventStatus(PlatformWheelEventPhase phase, PlatformWheelEventPhase momentumPhase)
+NODELETE static inline WheelEventStatus toWheelEventStatus(PlatformWheelEventPhase phase, PlatformWheelEventPhase momentumPhase)
 {
     if (phase == PlatformWheelEventPhase::None) {
         switch (momentumPhase) {

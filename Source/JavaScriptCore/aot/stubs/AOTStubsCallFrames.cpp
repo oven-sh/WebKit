@@ -88,18 +88,12 @@ void emitDropSpilledArgumentRegisters(CCallHelpers& jit)
 
 void emitReturnDroppingSpilledArgumentRegisters(CCallHelpers& jit)
 {
+#if CPU(X86_64)
+    jit.retAndPop(sizeOfSpilledArgumentRegisters);
+#else
     emitDropSpilledArgumentRegisters(jit);
     jit.ret();
-}
-
-void emitCallFromArgumentListFrame(CCallHelpers& jit, const ScopedLambda<void()>& emitJumpToCallee)
-{
-#if CPU(ARM64)
-    jit.loadPtr(argumentListReturnAddress(), CCallHelpers::linkRegister);
-#else
-    jit.push(argumentListReturnAddress());
 #endif
-    emitJumpToCallee();
 }
 
 void emitDropArgumentListFrames(CCallHelpers& jit, GPRReg scratch)

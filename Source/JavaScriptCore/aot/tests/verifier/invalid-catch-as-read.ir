@@ -1,5 +1,4 @@
 # in a program as read: what was thrown is read at the start of a handler block: CatchValue, CatchException, or CatchException and then CatchValue
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidCatch 5
 

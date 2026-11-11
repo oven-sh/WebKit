@@ -1,0 +1,27 @@
+# Object.defineProperty(Function.prototype, "me", descriptor); take(require.me);
+# Each module has its own `require`, of which the table does not speak. Under a name that it lists nowhere on the way up lies nothing, or what the program has laid above: an accessor, whose getter has `require` for its `this`.
+# If nobody said that the loader has gone out of sight, `typeof require.me["ca" + "che"]` would find the stand-in of a member that nobody uses and say `function` for `object`, in silence
+# The control: require-read-under-a-name-that-nobody-lays-anywhere-stays-in-sight.ir.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: image
+# CHECK: flags {{*}}LoadsModulesByName
+
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+openedname holder=FunctionPrototype name="me"
+function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="descriptor" [isFreeName]
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = Builtin builtin=FunctionPrototype
+    v6 = String string="me"
+    v7 = Call v4, -, v5, v6, v3
+    v8 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v9 = PropGet v8 key="me"
+    v10 = PropGet v2 key="take" [isFreeName]
+    v11 = Call v10, -, v9
+    Return
+}

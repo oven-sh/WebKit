@@ -1,0 +1,12 @@
+# the same calls with folding withheld: none is its answer. Each goes by its row, or by the plain operator that the ranges of its operands leave, which hands nothing on and so needs no folding
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = CallInline {{*}}inlineBuiltin=MathMax
+# CHECK: = Negate
+# CHECK: = Mul
+# CHECK: = CallInline {{*}}inlineBuiltin=MathRound
+# CHECK: = NewArray
+# RUN(WHOLE): walk f2 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# WHOLE-LABEL: code f2:Body
+# WHOLE-COUNT-3: = Call
+# PROGRAM-OF: call-of-a-built-in-on-known-numbers-is-its-answer.ir

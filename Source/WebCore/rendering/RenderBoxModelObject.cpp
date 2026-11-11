@@ -118,13 +118,13 @@ LayoutUnit paddingTop(const RenderBoxModelObject& renderer)
 
 using FirstLetterRemainingTextMap = SingleThreadWeakHashMap<const RenderBoxModelObject, SingleThreadWeakPtr<RenderTextFragment>>;
 
-static FirstLetterRemainingTextMap& LEGACY_NODELETE firstLetterRemainingTextMap()
+NODELETE static FirstLetterRemainingTextMap& firstLetterRemainingTextMap()
 {
     static NeverDestroyed<FirstLetterRemainingTextMap> map;
     return map;
 }
 
-static RenderObject* LEGACY_NODELETE firstContentfulChild(const RenderBoxModelObject& renderer)
+NODELETE static RenderObject* firstContentfulChild(const RenderBoxModelObject& renderer)
 {
     for (auto& current : childrenOfType<RenderObject>(renderer)) {
         if (current.isFloatingOrOutOfFlowPositioned())
@@ -136,8 +136,7 @@ static RenderObject* LEGACY_NODELETE firstContentfulChild(const RenderBoxModelOb
                 return nested;
             continue;
         }
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderObject*>(&current);
+        return const_cast<RenderObject*>(&current);
     }
     return { };
 }
@@ -189,7 +188,7 @@ void RenderBoxModelObject::setSelectionState(HighlightState state)
     // FIXME: We should consider whether it is OK propagating to ancestor inline boxes.
     // This is a workaround for http://webkit.org/b/32123
     // The containing block can be null in case of an orphaned tree.
-    RenderBlock* containingBlock = this->containingBlock();
+    RenderBoxModelObject* containingBlock = this->containingBlock();
     if (containingBlock && !containingBlock->isRenderView())
         containingBlock->setSelectionState(state);
 }
@@ -255,25 +254,26 @@ bool RenderBoxModelObject::hasVisibleBoxDecorationStyle() const
         || !style().boxShadow().isNone();
 }
 
-RectEdges<LayoutUnit> RenderBoxModelObject::borderWidths() const { return usedStyle().borderWidths(); }
+// Most boxes have no border and no padding. Checking the style flags first avoids constructing a UsedStyle.
+RectEdges<LayoutUnit> RenderBoxModelObject::borderWidths() const { return style().hasZeroEffectiveBorderWidths() ? RectEdges<LayoutUnit> { } : usedStyle().borderWidths(); }
 
-LayoutUnit RenderBoxModelObject::borderTop() const { return usedStyle().borderTopWidth(); }
-LayoutUnit RenderBoxModelObject::borderBottom() const { return usedStyle().borderBottomWidth(); }
-LayoutUnit RenderBoxModelObject::borderLeft() const { return usedStyle().borderLeftWidth(); }
-LayoutUnit RenderBoxModelObject::borderRight() const { return usedStyle().borderRightWidth(); }
-LayoutUnit RenderBoxModelObject::borderBefore() const { return usedStyle().borderWidthBefore(); }
-LayoutUnit RenderBoxModelObject::borderAfter() const { return usedStyle().borderWidthAfter(); }
-LayoutUnit RenderBoxModelObject::borderStart() const { return usedStyle().borderWidthStart(); }
-LayoutUnit RenderBoxModelObject::borderEnd() const { return usedStyle().borderWidthEnd(); }
+LayoutUnit RenderBoxModelObject::borderTop() const { return style().hasZeroEffectiveBorderWidths() ? 0_lu : usedStyle().borderTopWidth(); }
+LayoutUnit RenderBoxModelObject::borderBottom() const { return style().hasZeroEffectiveBorderWidths() ? 0_lu : usedStyle().borderBottomWidth(); }
+LayoutUnit RenderBoxModelObject::borderLeft() const { return style().hasZeroEffectiveBorderWidths() ? 0_lu : usedStyle().borderLeftWidth(); }
+LayoutUnit RenderBoxModelObject::borderRight() const { return style().hasZeroEffectiveBorderWidths() ? 0_lu : usedStyle().borderRightWidth(); }
+LayoutUnit RenderBoxModelObject::borderBefore() const { return style().hasZeroEffectiveBorderWidths() ? 0_lu : usedStyle().borderWidthBefore(); }
+LayoutUnit RenderBoxModelObject::borderAfter() const { return style().hasZeroEffectiveBorderWidths() ? 0_lu : usedStyle().borderWidthAfter(); }
+LayoutUnit RenderBoxModelObject::borderStart() const { return style().hasZeroEffectiveBorderWidths() ? 0_lu : usedStyle().borderWidthStart(); }
+LayoutUnit RenderBoxModelObject::borderEnd() const { return style().hasZeroEffectiveBorderWidths() ? 0_lu : usedStyle().borderWidthEnd(); }
 
-LayoutUnit RenderBoxModelObject::computedCSSPaddingTop() const { return usedStyle().paddingTop(ReferenceSize::ContainingBlockLogicalWidth); }
-LayoutUnit RenderBoxModelObject::computedCSSPaddingBottom() const { return usedStyle().paddingBottom(ReferenceSize::ContainingBlockLogicalWidth); }
-LayoutUnit RenderBoxModelObject::computedCSSPaddingLeft() const { return usedStyle().paddingLeft(ReferenceSize::ContainingBlockLogicalWidth); }
-LayoutUnit RenderBoxModelObject::computedCSSPaddingRight() const { return usedStyle().paddingRight(ReferenceSize::ContainingBlockLogicalWidth); }
-LayoutUnit RenderBoxModelObject::computedCSSPaddingBefore() const { return usedStyle().paddingBefore(ReferenceSize::ContainingBlockLogicalWidth); }
-LayoutUnit RenderBoxModelObject::computedCSSPaddingAfter() const { return usedStyle().paddingAfter(ReferenceSize::ContainingBlockLogicalWidth); }
-LayoutUnit RenderBoxModelObject::computedCSSPaddingStart() const { return usedStyle().paddingStart(ReferenceSize::ContainingBlockLogicalWidth); }
-LayoutUnit RenderBoxModelObject::computedCSSPaddingEnd() const { return usedStyle().paddingEnd(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingTop() const { return style().hasZeroPadding() ? 0_lu : usedStyle().paddingTop(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingBottom() const { return style().hasZeroPadding() ? 0_lu : usedStyle().paddingBottom(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingLeft() const { return style().hasZeroPadding() ? 0_lu : usedStyle().paddingLeft(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingRight() const { return style().hasZeroPadding() ? 0_lu : usedStyle().paddingRight(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingBefore() const { return style().hasZeroPadding() ? 0_lu : usedStyle().paddingBefore(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingAfter() const { return style().hasZeroPadding() ? 0_lu : usedStyle().paddingAfter(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingStart() const { return style().hasZeroPadding() ? 0_lu : usedStyle().paddingStart(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingEnd() const { return style().hasZeroPadding() ? 0_lu : usedStyle().paddingEnd(ReferenceSize::ContainingBlockLogicalWidth); }
 
 void RenderBoxModelObject::updateFromStyle()
 {
@@ -291,7 +291,7 @@ void RenderBoxModelObject::updateFromStyle()
         view().frameView().setHasFlippedBlockRenderers(true);
 }
 
-static inline bool LEGACY_NODELETE isOutOfFlowPositionedWithImplicitHeight(const RenderBoxModelObject& child)
+NODELETE static inline bool isOutOfFlowPositionedWithImplicitHeight(const RenderBoxModelObject& child)
 {
     return child.isOutOfFlowPositioned() && !child.style().logicalTop().isAuto() && !child.style().logicalBottom().isAuto();
 }
@@ -866,7 +866,7 @@ bool RenderBoxModelObject::fixedBackgroundPaintsInLocalCoordinates() const
 
 bool RenderBoxModelObject::borderObscuresBackgroundEdge(const FloatSize& contextScale) const
 {
-    auto edges = borderEdges(usedStyle(), protect(document())->deviceScaleFactor());
+    auto edges = borderEdges(usedStyle(), document().deviceScaleFactor());
 
     for (auto side : allBoxSides) {
         auto& currEdge = edges.at(side);
@@ -888,7 +888,7 @@ bool RenderBoxModelObject::borderObscuresBackground() const
     if (!style().borderImageSource().isNone())
         return false;
 
-    auto edges = borderEdges(usedStyle(), protect(document())->deviceScaleFactor());
+    auto edges = borderEdges(usedStyle(), document().deviceScaleFactor());
 
     for (auto side : allBoxSides) {
         if (!edges.at(side).obscuresBackground())
@@ -972,6 +972,190 @@ void RenderBoxModelObject::applyTransform(TransformationMatrix&, const Style::Co
     ASSERT_NOT_REACHED();
 }
 
+class OutOfFlowDescendantsMap {
+public:
+    void addDescendant(const RenderBoxModelObject& containingBlock, RenderBox& outOfFlowDescendant)
+    {
+        // Protect against double insert where a descendant would end up with multiple containing blocks.
+        auto previousContainingBlock = m_containerMap.get(outOfFlowDescendant);
+        if (previousContainingBlock && previousContainingBlock != &containingBlock) {
+            if (auto* descendants = m_descendantsMap.get(*previousContainingBlock))
+                descendants->remove(outOfFlowDescendant);
+        }
+
+        auto& descendants = m_descendantsMap.ensure(containingBlock, [] {
+            return makeUnique<TrackedRendererListHashSet>();
+        }).iterator->value;
+
+        auto isNewEntry = false;
+        if (!is<RenderView>(containingBlock) || descendants->isEmptyIgnoringNullReferences())
+            isNewEntry = descendants->add(outOfFlowDescendant).isNewEntry;
+        else if (outOfFlowDescendant.isFixedPositioned() || isInTopLayerOrBackdrop(outOfFlowDescendant.style(), outOfFlowDescendant.element()))
+            isNewEntry = descendants->appendOrMoveToLast(outOfFlowDescendant).isNewEntry;
+        else {
+            auto ensureLayoutDependentBoxPosition = [&] {
+                // RenderView is a special containing block as it may hold both absolute and fixed positioned containing blocks.
+                // When a fixed positioned box is also a descendant of an absolute positioned box anchored to the RenderView,
+                // we have to make sure that the absolute positioned box is inserted before the fixed box to follow
+                // block layout dependency.
+                for (auto it = descendants->begin(); it != descendants->end(); ++it) {
+                    if (it->isFixedPositioned()) {
+                        isNewEntry = descendants->insertBefore(it, outOfFlowDescendant).isNewEntry;
+                        return;
+                    }
+                }
+                isNewEntry = descendants->appendOrMoveToLast(outOfFlowDescendant).isNewEntry;
+            };
+            ensureLayoutDependentBoxPosition();
+        }
+
+        if (!isNewEntry) {
+            ASSERT(m_containerMap.contains(outOfFlowDescendant));
+            return;
+        }
+        m_containerMap.set(outOfFlowDescendant, containingBlock);
+    }
+
+    void removeDescendant(const RenderBox& outOfFlowDescendant)
+    {
+        auto containingBlock = m_containerMap.take(outOfFlowDescendant);
+        if (!containingBlock)
+            return;
+
+        auto descendantsIterator = m_descendantsMap.find(*containingBlock.get());
+        ASSERT(descendantsIterator != m_descendantsMap.end());
+        if (descendantsIterator == m_descendantsMap.end())
+            return;
+
+        auto& descendants = descendantsIterator->value;
+        ASSERT(descendants->contains(const_cast<RenderBox&>(outOfFlowDescendant)));
+
+        descendants->remove(const_cast<RenderBox&>(outOfFlowDescendant));
+        if (descendants->isEmptyIgnoringNullReferences())
+            m_descendantsMap.remove(descendantsIterator);
+    }
+
+    void removeContainingBlock(const RenderBoxModelObject& containingBlock)
+    {
+        auto descendants = m_descendantsMap.take(containingBlock);
+        if (!descendants)
+            return;
+
+        for (auto& renderer : *descendants)
+            m_containerMap.remove(renderer);
+    }
+
+    NODELETE TrackedRendererListHashSet* positionedRenderers(const RenderBoxModelObject& containingBlock) const
+    {
+        return m_descendantsMap.get(containingBlock);
+    }
+
+private:
+    using DescendantsMap = SingleThreadWeakHashMap<const RenderBoxModelObject, std::unique_ptr<TrackedRendererListHashSet>>;
+    using ContainerMap = SingleThreadWeakHashMap<const RenderBox, SingleThreadWeakPtr<const RenderBoxModelObject>>;
+
+    DescendantsMap m_descendantsMap;
+    ContainerMap m_containerMap;
+};
+
+NODELETE static OutOfFlowDescendantsMap& outOfFlowDescendantsMap()
+{
+    static NeverDestroyed<OutOfFlowDescendantsMap> mapForOutOfFlowDescendants;
+    return mapForOutOfFlowDescendants;
+}
+
+TrackedRendererListHashSet* RenderBoxModelObject::outOfFlowBoxes() const
+{
+    return outOfFlowDescendantsMap().positionedRenderers(*this);
+}
+
+void RenderBoxModelObject::addOutOfFlowBox(RenderBox& outOfFlowBox)
+{
+    ASSERT(outOfFlowBox.isOutOfFlowPositioned());
+    ASSERT(!isAnonymousBlock());
+
+    outOfFlowBox.clearGridAreaContentSize();
+
+    if (outOfFlowBox.isRenderFragmentedFlow())
+        return;
+    // FIXME: Find out if we can do this as part of outOfFlowBox.setChildNeedsLayout(MarkingBehavior::OnlyThis)
+    if (outOfFlowBox.needsLayout()) {
+        // We should turn this bit on only while in layout.
+        ASSERT(outOfFlowChildNeedsLayout() || view().frameView().layoutContext().isInLayout());
+        setOutOfFlowChildNeedsLayoutBit(true);
+    }
+    outOfFlowDescendantsMap().addDescendant(*this, outOfFlowBox);
+}
+
+void RenderBoxModelObject::removeOutOfFlowBox(const RenderBox& rendererToRemove)
+{
+    outOfFlowDescendantsMap().removeDescendant(rendererToRemove);
+}
+
+static inline void markRendererAndParentForLayout(RenderBox& renderer)
+{
+    renderer.setChildNeedsLayout(MarkingBehavior::OnlyThis);
+    if (renderer.shouldInvalidateContentWidths())
+        renderer.invalidateContentLogicalWidths(MarkingBehavior::OnlyThis);
+    auto* parentBlock = RenderObject::containingBlockForPositionType(PositionType::Static, renderer);
+    if (!parentBlock) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+    // Parent has to be mark for layout to run static positioning on the out-of-flow content.
+    parentBlock->setChildNeedsLayout();
+}
+
+void RenderBoxModelObject::removeOutOfFlowBoxes(const RenderElement* newContainingBlockCandidate, ContainingBlockState containingBlockState)
+{
+    auto* outOfFlowDescendants = outOfFlowBoxes();
+    if (!outOfFlowDescendants)
+        return;
+
+    Vector<CheckedRef<RenderBox>, 16> renderersToRemove;
+    if (!newContainingBlockCandidate) {
+        // We don't form containing block for these boxes anymore (either through style change or internal render tree shuffle)
+        for (auto& renderer : *outOfFlowDescendants) {
+            renderersToRemove.append(renderer);
+
+            markRendererAndParentForLayout(renderer);
+            auto markNewContainingBlockForLayout = [&] {
+                auto isAbsolutePositioned = renderer.isAbsolutelyPositioned();
+                // During style change we can't tell which ancestor is going to be the final containing block, so let's just mark the new candidate dirty.
+                auto* newContainingBlock = containingBlock();
+                for (; newContainingBlock && (isAbsolutePositioned ? !newContainingBlock->canContainAbsolutelyPositionedObjects() : !newContainingBlock->canContainFixedPositionObjects()); newContainingBlock = newContainingBlock->containingBlock()) { }
+                if (newContainingBlock)
+                    newContainingBlock->setNeedsLayout();
+            };
+            markNewContainingBlockForLayout();
+        }
+    } else if (containingBlockState == ContainingBlockState::NewContainingBlock) {
+        // Some of the positioned boxes are getting transferred over to newContainingBlockCandidate.
+        for (auto& renderer : *outOfFlowDescendants) {
+            if (!renderer.isDescendantOf(newContainingBlockCandidate))
+                continue;
+            renderersToRemove.append(renderer);
+            markRendererAndParentForLayout(renderer);
+        }
+    } else {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    for (auto& renderer : renderersToRemove)
+        removeOutOfFlowBox(renderer);
+}
+
+void RenderBoxModelObject::markOutOfFlowBoxesForLayout(MarkingBehavior markingBehavior)
+{
+    auto* outOfFlowDescendants = outOfFlowBoxes();
+    if (!outOfFlowDescendants)
+        return;
+
+    for (auto& descendant : *outOfFlowDescendants)
+        descendant.setChildNeedsLayout(markingBehavior);
+}
+
 bool RenderBoxModelObject::requiresLayer() const
 {
     return isPositioned() || createsGroup() || requiresRenderingConsolidationForViewTransition() || hasRunningAcceleratedAnimations() || style().willChange().canCreateStackingContext();
@@ -995,14 +1179,14 @@ void RenderBoxModelObject::removeOutOfFlowBoxesIfNeededOnStyleChange(const Style
 
     if ((wasContainingBlockForFixedContent && !isContainingBlockForFixedContent) || (wasContainingBlockForAbsoluteContent && !isContainingBlockForAbsoluteContent)) {
         // We are no longer the containing block for out-of-flow descendants.
-        containingBlockForOutOfFlowBoxes->removeOutOfFlowBoxes({ }, RenderBlock::ContainingBlockState::NewContainingBlock);
+        containingBlockForOutOfFlowBoxes->removeOutOfFlowBoxes({ }, ContainingBlockState::NewContainingBlock);
     }
 
     if (!wasContainingBlockForFixedContent && isContainingBlockForFixedContent) {
         // We are a new containing block for all out-of-flow boxes. Find first ancestor that has our fixed positioned boxes and remove them.
         // They will be inserted into our positioned objects list during their static position layout.
         if (CheckedPtr containingBlock = RenderObject::containingBlockForPositionType(PositionType::Fixed, *this))
-            containingBlock->removeOutOfFlowBoxes(this, RenderBlock::ContainingBlockState::NewContainingBlock);
+            containingBlock->removeOutOfFlowBoxes(this, ContainingBlockState::NewContainingBlock);
     }
 
     if (!wasContainingBlockForAbsoluteContent && isContainingBlockForAbsoluteContent) {
@@ -1010,7 +1194,7 @@ void RenderBoxModelObject::removeOutOfFlowBoxesIfNeededOnStyleChange(const Style
         // Remove our absolutely positioned descendants from their current containing block.
         // They will be inserted into our positioned objects list during layout.
         if (CheckedPtr containingBlock = RenderObject::containingBlockForPositionType(PositionType::Absolute, *this))
-            containingBlock->removeOutOfFlowBoxes(this, RenderBlock::ContainingBlockState::NewContainingBlock);
+            containingBlock->removeOutOfFlowBoxes(this, ContainingBlockState::NewContainingBlock);
     }
 }
 
@@ -1121,6 +1305,68 @@ LayoutUnit RenderBoxModelObject::paddingBoxLogicalHeight() const
     return logicalHeight;
 }
 
+// An inline box is only ever the containing block of out-of-flow boxes, so its geometry here is that of the containing block
+// rectangle it forms (see paddingBoxLogicalWidth() and paddingBoxLogicalHeight()).
+LayoutUnit RenderBoxModelObject::paddingBoxWidth() const
+{
+    ASSERT(isInlineBox());
+    return isHorizontalWritingMode() ? paddingBoxLogicalWidth() : paddingBoxLogicalHeight();
+}
+
+LayoutUnit RenderBoxModelObject::paddingBoxHeight() const
+{
+    ASSERT(isInlineBox());
+    return isHorizontalWritingMode() ? paddingBoxLogicalHeight() : paddingBoxLogicalWidth();
+}
+
+LayoutUnit RenderBoxModelObject::contentBoxLogicalWidth() const
+{
+    ASSERT(isInlineBox());
+    return std::max(0_lu, paddingBoxLogicalWidth() - paddingStart() - paddingEnd());
+}
+
+LayoutUnit RenderBoxModelObject::contentBoxLogicalHeight() const
+{
+    ASSERT(isInlineBox());
+    return std::max(0_lu, paddingBoxLogicalHeight() - paddingBefore() - paddingAfter());
+}
+
+LayoutUnit RenderBoxModelObject::contentBoxWidth() const
+{
+    return isHorizontalWritingMode() ? contentBoxLogicalWidth() : contentBoxLogicalHeight();
+}
+
+LayoutUnit RenderBoxModelObject::contentBoxHeight() const
+{
+    return isHorizontalWritingMode() ? contentBoxLogicalHeight() : contentBoxLogicalWidth();
+}
+
+LayoutSize RenderBoxModelObject::contentBoxSize() const
+{
+    return { contentBoxWidth(), contentBoxHeight() };
+}
+
+LayoutUnit RenderBoxModelObject::availableLogicalHeight(AvailableLogicalHeightType heightType) const
+{
+    ASSERT(isInlineBox());
+    if (heightType == AvailableLogicalHeightType::ExcludeMarginBorderPadding)
+        return contentBoxLogicalHeight();
+    return paddingBoxLogicalHeight() + borderBefore() + borderAfter();
+}
+
+std::optional<LayoutUnit> RenderBoxModelObject::availableLogicalHeightForPercentageComputation() const
+{
+    ASSERT(isInlineBox());
+    // Percentages of out-of-flow boxes resolve against the padding box of their containing block.
+    return paddingBoxLogicalHeight();
+}
+
+bool RenderBoxModelObject::hasDefiniteLogicalHeightForPercentageResolutionFromStyle() const
+{
+    ASSERT(isInlineBox());
+    return true;
+}
+
 void RenderBoxModelObject::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) const
 {
     for (auto rect : localBorderBoxRects())
@@ -1214,7 +1460,7 @@ LayoutRect RenderBoxModelObject::borderBoxRectInContainer() const
 {
     auto boundingBoxOfFragments = [&]() -> IntRect {
         if (auto* layout = LayoutIntegration::LineLayout::containing(*this)) {
-            if (!layoutBox() || !layout->contains(*this)) {
+            if (!layout->contains(*this)) {
                 // Repaint may be issued on subtrees during content mutation with newly inserted renderers
                 // (or we just forgot to initiate layout before querying geometry on stale content after moving inline boxes between blocks).
                 ASSERT(needsLayout());
@@ -1276,14 +1522,9 @@ LayoutRect RenderBoxModelObject::rectWithOutlineForRepaint(const RenderLayerMode
 
 LayoutRect RenderBoxModelObject::visualOverflowRect() const
 {
-    if (auto* layout = LayoutIntegration::LineLayout::containing(*this)) {
-        if (!layoutBox()) {
-            // Repaint may be issued on subtrees during content mutation with newly inserted renderers.
-            ASSERT(needsLayout());
-            return { };
-        }
+    // Newly inserted renderers have no display boxes yet, and get an empty rect.
+    if (auto* layout = LayoutIntegration::LineLayout::containing(*this))
         return layout->inkOverflowBoundingBoxRectFor(*this);
-    }
     return { };
 }
 
@@ -1378,7 +1619,7 @@ auto RenderBoxModelObject::computeVisibleRectsInContainer(const RepaintRects& re
         // in the parent's coordinate space that encloses us.
         if (hasLayer() && layer()->isTransformed()) {
             state.hasPositionFixedDescendant = styleToUse.position() == PositionType::Fixed;
-            adjustedRects.transform(protect(layer())->currentTransform(), protect(document())->deviceScaleFactor());
+            adjustedRects.transform(protect(layer())->currentTransform(), document().deviceScaleFactor());
         } else if (styleToUse.position() == PositionType::Fixed)
             state.hasPositionFixedDescendant = true;
     }

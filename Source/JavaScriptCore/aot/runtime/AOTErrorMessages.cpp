@@ -9,490 +9,241 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
-#include "AOTBuiltinTableRealm.h"
-#include "AOTClassPrototype.h"
-#include "AOTClassTable.h"
-#include "AOTCompiledCallee.h"
+#include "AOTCompiledFrame.h"
 #include "AOTFunctionNames.h"
 #include "AOTImage.h"
-#include "AOTLayoutData.h"
-#include "AOTModuleTable.h"
-#include "AOTObject.h"
-#include "AOTObjectModel.h"
-#include "AOTPrimitives.h"
-#include "AOTProgramIdentifiers.h"
-#include "AOTProgramStrings.h"
-#include "AOTProgramTables.h"
+#include "AOTModuleHost.h"
+#include "AOTNameClass.h"
 #include "AOTRealmStartup.h"
-#include "AOTRuntimeType.h"
-#include "AOTState.h"
-#include "AOTVector.h"
+#include "AOTStackTrace.h"
+#include "AOTTraceFrame.h"
+#include "CodeBlock.h"
+#include "StackVisitor.h"
 #include "ArgList.h"
 #include "ConstructData.h"
 #include "DeferTermination.h"
 #include "Error.h"
 #include "ErrorInstance.h"
 #include "ExceptionHelpers.h"
-#include "InternalFunction.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
 #include "TopExceptionScope.h"
-#include <algorithm>
-#include <wtf/SetForScope.h>
+#include <wtf/ASCIICType.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT {
 
-namespace Primitive = Typed::Primitive;
-
-static bool isObfuscated()
+JSObject* createUpdateOfNullishError(JSGlobalObject* globalObject)
 {
-    return Image::current()->isObfuscated();
+    return createTypeError(globalObject, "Cannot access property of undefined or null"_s);
 }
 
-static bool hasNonEmptyText(StringID string)
+static String describeForErrorMessage(JSGlobalObject* globalObject, JSValue value)
 {
-    const ImageText& text = Image::current()->text();
-    return string && text.hasText(string) && !text.view(string).isEmpty();
+    VM& vm = globalObject->vm();
+    DeferTerminationForAWhile deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    String description = errorDescriptionForValue(globalObject, value);
+    CLEAR_AND_RETURN_IF_EXCEPTION(scope, String());
+    return description;
 }
 
-static String functionName(JSObject* function)
+static String findQuotedSource(ModuleID module, LineColumn place)
 {
-    if (CompiledCallee::isCompiledCallee(function))
-        return CompiledCallee::name(function);
-    if (auto* jsFunction = dynamicDowncast<JSFunction>(function))
-        return jsFunction->name(function->vm());
-    if (auto* internalFunction = dynamicDowncast<InternalFunction>(function))
-        return internalFunction->name();
+    const ProgramTables& tables = Image::current()->programTables();
+    std::tuple wanted { static_cast<uint32_t>(module.index()), static_cast<uint32_t>(place.line), static_cast<uint32_t>(place.column) };
+    std::span<const QuotedSourceGroupData> groups = tables.quotedSourceGroups();
+    auto next = std::ranges::upper_bound(groups, wanted, { }, [](const QuotedSourceGroupData& group) {
+        return std::tuple { group.module, group.line, group.column };
+    });
+    if (next == groups.begin() || std::prev(next)->module != module.index())
+        return { };
+    const QuotedSourceGroupData& group = *std::prev(next);
+    std::span<const uint8_t> rows = tables.quotedSourceRows();
+    const uint8_t* cursor = rows.subspan(group.offsetOfRows).data();
+    const uint8_t* end = next == groups.end() ? std::to_address(rows.end()) : rows.subspan(next->offsetOfRows).data();
+    uint32_t line = group.line;
+    uint32_t column = group.column;
+    int64_t start = 0;
+    while (cursor < end) {
+        QuotedSourceRow row = QuotedSourceRow::read(cursor);
+        line += row.lineChange;
+        column = row.isOnSameLine ? column + row.columnChange : row.column;
+        start += row.startChange;
+        if (line == place.line && column == place.column)
+            return quotedSourceBytes(static_cast<uint32_t>(start), row.length).transform([](std::span<const Latin1Character> text) { return String(text); }).value_or(String());
+    }
     return { };
 }
 
-static String constructorName(JSObject* prototype)
+String failedExpressionSource(VM& vm)
 {
-    if (auto* lazyPrototype = dynamicDowncast<ClassPrototype>(prototype)) {
-        const ClassTable& classes = State::of(prototype->structure()->realm()).objects->classes;
-        return initialNameProperty(FunctionID(classes.classWithIndex(lazyPrototype->classIndex())->classData().classConstructor));
-    }
-    if (CompiledCallee::isCompiledCallee(prototype))
-        return { };
-    VM& vm = prototype->vm();
-    JSValue constructor = prototype->getDirect(vm, vm.propertyNames->constructor);
-    return constructor && constructor.isObject() ? functionName(asObject(constructor)) : String();
-}
-
-static String className(JSObject* object)
-{
-    if (JSValue prototype = object->getPrototypeDirect(); prototype.isObject()) {
-        if (String name = constructorName(asObject(prototype)); !name.isEmpty())
-            return name;
-    }
-    return object->classInfo()->className;
-}
-
-static String describeNamed(ASCIILiteral kind, const String& name)
-{
-    return name.isEmpty() ? String(kind) : makeString(kind, ' ', name);
-}
-
-static String describeInstance(const ProgramTables& tables, const LayoutData& layout)
-{
-    if (!layout.isUntyped)
-        return nameOf(tables, layout);
-    if (isObfuscated() || !hasNonEmptyText(StringID(layout.name)))
-        return "untyped object"_s;
-    return makeString("untyped "_s, ProgramStrings::text(tables, StringID(layout.name)));
-}
-
-String describe(JSValue value)
-{
-    if (!value)
-        return "nothing"_s;
-    if (value.isUndefined())
-        return "undefined"_s;
-    if (value.isNull())
-        return "null"_s;
-    if (value.isBoolean())
-        return "boolean"_s;
-    if (value.isNumber())
-        return "number"_s;
-    if (value.isString())
-        return "string"_s;
-    if (value.isSymbol())
-        return "symbol"_s;
-    if (value.isBigInt())
-        return "bigint"_s;
-    if (Object* object = compiledObjectOrNull(value))
-        return describeInstance(object->state().tables, object->layout());
-    if (!value.isObject())
-        return "internal cell"_s;
-    JSObject* object = asObject(value);
-    if (CompiledCallee::isCompiledCallee(object) && CompiledCallee::kind(object) == CompiledCallee::FunctionKind::Class)
-        return describeNamed("class"_s, functionName(object));
-    if (object->isCallable())
-        return describeNamed("function"_s, functionName(object));
-    if (dynamicDowncast<JSArray>(object))
-        return "Array"_s;
-    if (object->type() != FinalObjectType && !dynamicDowncast<ClassPrototype>(object))
-        return makeString("built-in "_s, className(object));
-    JSValue prototype = object->getPrototypeDirect();
-    bool hasPlainPrototype = prototype.isNull() || prototype == JSValue(object->realm()->objectPrototype());
-    return hasPlainPrototype ? "untyped object"_str : makeString("untyped "_s, className(object));
-}
-
-static void appendUnionMember(StringBuilder& result, bool has, StringView name)
-{
-    if (has)
-        result.append(result.isEmpty() ? ""_s : " | "_s, name);
-}
-
-static void appendPrimitives(StringBuilder& result, uint32_t primitives)
-{
-    // Both together go without saying beside another member.
-    if ((primitives & Primitive::UndefinedOrNull) == Primitive::UndefinedOrNull && (!result.isEmpty() || primitives & ~Primitive::UndefinedOrNull))
-        primitives &= ~Primitive::UndefinedOrNull;
-    appendUnionMember(result, (primitives & Primitive::Boolean) == Primitive::Boolean, "boolean"_s);
-    appendUnionMember(result, (primitives & Primitive::Boolean) == Primitive::True, "true"_s);
-    appendUnionMember(result, (primitives & Primitive::Boolean) == Primitive::False, "false"_s);
-    appendUnionMember(result, primitives & Primitive::Double, "number"_s);
-    appendUnionMember(result, (primitives & Primitive::Number) == Primitive::Integer, "integer"_s);
-    appendUnionMember(result, primitives & Primitive::String, "string"_s);
-    appendUnionMember(result, primitives & Primitive::Symbol, "symbol"_s);
-    appendUnionMember(result, primitives & Primitive::BigInt, "bigint"_s);
-    appendUnionMember(result, primitives & Primitive::Undefined, "undefined"_s);
-    appendUnionMember(result, primitives & Primitive::Null, "null"_s);
-    appendUnionMember(result, result.isEmpty(), "never"_s);
-}
-
-static String describeAnonymousType(std::span<const FieldData> fields)
-{
-    static constexpr size_t maxNamesShown = 4;
-    const Image& image = *Image::current();
-    StringBuilder result;
-    result.append('{');
-    size_t numberOfNames = 0;
-    for (const FieldData& field : fields) {
-        String name = ProgramIdentifiers::textOf(image, field.name);
-        if (name.isNull())
-            continue;
-        if (numberOfNames == maxNamesShown) {
-            result.append(", ..."_s);
-            break;
-        }
-        result.append(numberOfNames++ ? ", "_s : " "_s, name);
-    }
-    result.append(" }"_s);
-    return result.toString();
-}
-
-String nameOf(const ProgramTables& tables, const LayoutData& layout)
-{
-    if (isObfuscated())
-        return "object"_s;
-    if (hasNonEmptyText(StringID(layout.name)))
-        return ProgramStrings::text(tables, StringID(layout.name));
-    return describeAnonymousType(layout.fields());
-}
-
-static String describeMembers(const ProgramTables& tables, const ShapeTestData& members)
-{
-    static constexpr unsigned maxNamesShown = 4;
-    Vector<String, maxNamesShown> names;
-    StringBuilder result;
-    for (uint32_t shape = members.first(); shape < members.first() + members.count; ++shape) {
-        if (!tables.hasLayoutForShape(shape) || !tables.passes(members, shape))
-            continue;
-        String name = nameOf(tables, tables.layoutForShape(shape));
-        if (names.contains(name))
-            continue;
-        if (names.size() == maxNamesShown) {
-            appendUnionMember(result, true, "..."_s);
-            break;
-        }
-        appendUnionMember(result, true, name);
-        names.append(WTF::move(name));
-    }
-    appendUnionMember(result, result.isEmpty(), "object"_s);
-    return result.toString();
-}
-
-String nameOf(const ProgramTables& tables, const LayoutSetData& set)
-{
-    if (isObfuscated())
-        return "object"_s;
-    if (hasNonEmptyText(StringID(set.name)))
-        return ProgramStrings::text(tables, StringID(set.name));
-    return describeMembers(tables, set.members);
-}
-
-static String describeArray(const String& elements)
-{
-    return elements.contains(" | "_s) ? makeString('(', elements, ")[]"_s) : makeString(elements, "[]"_s);
-}
-
-static String builtinClassName(const BuiltinClass& builtinClass, const String& elements)
-{
-    if (builtinClass.type == ArrayType)
-        return describeArray(elements.isNull() ? "any"_str : elements);
-    return builtinClass.constructor ? BuiltinTable::singleton().textOf(builtinClass.constructor) : "object"_str;
-}
-
-static String builtinClassName(JSType cellType, const String& elements)
-{
-    JSType describedType = cellType == DerivedArrayType ? ArrayType : cellType;
-    auto& table = BuiltinTable::singleton();
-    for (unsigned i = 0; table.contains(BuiltinClassID(i)); ++i) {
-        const BuiltinClass& builtinClass = table.at(BuiltinClassID(i));
-        if (builtinClass.instanceTest == BuiltinInstanceTest::JSTypeEquals && builtinClass.type == describedType && builtinClass.constructor)
-            return builtinClassName(builtinClass, elements);
-    }
-    return "object"_s;
-}
-
-static String builtinCellName(const ProgramTables& tables, uint32_t number)
-{
-    auto& table = BuiltinTable::singleton();
-    auto key = BuiltinCellKey::decode(tables.builtinCells()[number], table);
-    return key ? makeString("typeof "_s, table.textOf(key->builtin())) : "object"_str;
-}
-
-static String namespaceName(const ProgramTables& tables, ModuleID module)
-{
-    String path = isObfuscated() ? String() : ModuleTable(tables).displayPathText(module);
-    if (path.isEmpty())
-        return "object"_s;
-    return makeString("typeof import(\""_s, path, "\")"_s);
-}
-
-static void appendUnique(Vector<String, 2>& names, String&& name)
-{
-    if (!names.contains(name))
-        names.append(WTF::move(name));
-}
-
-String describe(const ProgramTables& tables, const RuntimeType& type)
-{
-    static constexpr uint32_t allValues = Primitive::Boolean | Primitive::Number | Primitive::String | Primitive::Symbol | Primitive::BigInt | Primitive::UndefinedOrNull;
-    static constexpr size_t maxLiteralsShown = 4;
-    uint32_t primitives = type.primitiveSet().toRaw();
-    bool allowsAnyObject = false;
-    bool allowsAnyFunction = false;
-    Vector<String, 2> layoutSetNames;
-    Vector<String, 2> cellNames;
-    String elements;
-    if (auto offset = type.contents())
-        elements = describe(tables, tables.typeAt(*offset));
-    for (const RuntimeCellTest& test : type.cellTests()) {
-        switch (test.kind) {
-        case CellTestKind::IsObject:
-        case CellTestKind::ShapeIn:
-            if (auto set = type.layoutSet())
-                appendUnique(layoutSetNames, nameOf(tables, tables.layoutSets()[*set]));
-            else if (test.kind == CellTestKind::IsObject)
-                allowsAnyObject = true;
-            else
-                appendUnique(layoutSetNames, describeMembers(tables, tables.shapeTestAt(test.shapeTestOffset())));
-            continue;
-        case CellTestKind::IsCallable:
-            allowsAnyFunction = true;
-            continue;
-        case CellTestKind::CellTypeIs:
-            for (unsigned cellType = test.cellTypes().first; cellType <= test.cellTypes().last; ++cellType) {
-                if (cellType != ArrayBufferType) {
-                    appendUnique(cellNames, builtinClassName(static_cast<JSType>(cellType), elements));
-                    continue;
-                }
-                for (ArrayBufferSharingMode sharingMode : { ArrayBufferSharingMode::Default, ArrayBufferSharingMode::Shared })
-                    appendUnique(cellNames, arrayBufferSharingModeName(sharingMode));
-            }
-            continue;
-        case CellTestKind::InheritsClassInfo:
-        case CellTestKind::IsPristine:
-            appendUnique(cellNames, builtinClassName(BuiltinTable::singleton().at(test.builtinClass()), elements));
-            continue;
-        case CellTestKind::IsBuiltinCell:
-            appendUnique(cellNames, builtinCellName(tables, test.builtinCellNumber()));
-            continue;
-        case CellTestKind::IsClosureOf:
-            if (String name = initialNameProperty(test.function()); !name.isEmpty())
-                appendUnique(cellNames, makeString("typeof "_s, name));
-            else
-                allowsAnyFunction = true;
-            continue;
-        case CellTestKind::IsSymbol:
-            if (StringID description = ProgramStrings::identifierString(tables, test.symbolKeyNumber()); hasNonEmptyText(description))
-                appendUnique(cellNames, makeString("typeof "_s, ProgramStrings::text(tables, description)));
-            else
-                primitives |= Primitive::Symbol;
-            continue;
-        case CellTestKind::SharingModeIs:
-            appendUnique(cellNames, arrayBufferSharingModeName(test.sharingMode()));
-            continue;
-        case CellTestKind::IsNamespaceOf:
-            appendUnique(cellNames, namespaceName(tables, test.module()));
-            continue;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    if (allowsAnyObject && (primitives & allValues) == allValues)
-        return "any"_s;
-    StringBuilder result;
-    for (auto& name : layoutSetNames)
-        appendUnionMember(result, true, name);
-    for (auto& name : cellNames)
-        appendUnionMember(result, true, name);
-    appendUnionMember(result, allowsAnyObject, "object"_s);
-    appendUnionMember(result, allowsAnyFunction && !allowsAnyObject, "Function"_s);
-    size_t numberOfLiterals = 0;
-    for (uint32_t string : type.literalStrings()) {
-        if (!Image::current()->text().hasText(StringID(string)))
-            continue;
-        if (numberOfLiterals++ < maxLiteralsShown)
-            appendUnionMember(result, true, makeString('"', ProgramStrings::text(tables, StringID(string)), '"'));
-    }
-    appendUnionMember(result, numberOfLiterals > maxLiteralsShown, "..."_s);
-    primitives &= numberOfLiterals ? Primitive::All & ~Primitive::String : Primitive::All;
-    auto range = type.integerRange();
-    if ((primitives & Primitive::Number) == Primitive::Integer && range && range->first >= -Typed::maxExactInteger && range->second <= Typed::maxExactInteger) {
-        appendUnionMember(result, true, range->first == range->second ? makeString(range->first) : makeString("integer "_s, range->first, ".."_s, range->second));
-        primitives &= ~Primitive::Number;
-    }
-    appendPrimitives(result, primitives);
-    return result.toString();
-}
-
-static bool namesLayoutSet(const ProgramTables& tables, const RuntimeType& type)
-{
-    auto set = type.layoutSet();
-    if (set && hasNonEmptyText(StringID(tables.layoutSets()[*set].name)))
-        return true;
-    auto contents = type.contents();
-    return contents && namesLayoutSet(tables, tables.typeAt(*contents));
-}
-
-// A test that asks only for an object says less than the declared type, which is the text of the site.
-static bool acceptsAnyObject(const ProgramTables& tables, const RuntimeType& type)
-{
-    bool hasObjectTest = std::ranges::any_of(type.cellTests(), [](const RuntimeCellTest& test) {
-        return test.kind == CellTestKind::IsObject;
+    String quoted;
+    forEachShownFrameOfRunAtTop(vm, HiddenFrameOnTop::IsShown, [&](const TraceFrame& frame) {
+        std::optional<SourcePosition> position = Image::current()->positionOf(frame.code.index(), frame.callSite);
+        if (position && position->source && FunctionDescription(frame.function).visibility() == TraceVisibility::Hidden)
+            quoted = findQuotedSource(position->source, position->lineColumn);
+        return IterationStatus::Done;
     });
-    if (hasObjectTest && !type.layoutSet())
-        return true;
-    auto contents = type.contents();
-    return contents && acceptsAnyObject(tables, tables.typeAt(*contents));
+    if (!quoted.isNull())
+        return quoted;
+    forEachShownFrameOfRunAtTop(vm, HiddenFrameOnTop::IsLeftOut, [&](const TraceFrame& frame) {
+        std::optional<SourcePosition> position = Image::current()->positionOf(frame.code.index(), frame.callSite);
+        if (position && position->source) {
+            quoted = findQuotedSource(position->source, position->lineColumn);
+            if (quoted.isNull() && position->constructionStart.line)
+                quoted = findQuotedSource(position->source, position->constructionStart);
+        } else if (position && position->lineColumn == superCallOfDefaultConstructor) {
+            quoted = "super(...args)"_s;
+        }
+        return IterationStatus::Done;
+    });
+    return quoted;
 }
 
-String describe(const ProgramTables& tables, const RuntimeType& type, Typed::TypeSiteID site)
+String primitiveKindForErrorMessage(JSValue value)
 {
-    const TypeSiteData* data = site ? tables.findTypeSite(site.index()) : nullptr;
-    // The test of a cast asks for a family, which lists every layout the program converts to the type behind `as`. The text of the site is that type.
-    bool isAssertion = data && static_cast<TypeSiteKind>(data->kind) == TypeSiteKind::Assertion;
-    if (!data || data->text == TypeSiteData::noText || (!isAssertion && !namesLayoutSet(tables, type) && !acceptsAnyObject(tables, type)))
-        return describe(tables, type);
-    return ProgramStrings::text(tables, StringID(data->text));
-}
-
-static thread_local const String* quotedSource;
-
-String quotedSourceOfFailedExpression(VM& vm)
-{
-    if (quotedSource)
-        return *quotedSource;
-    if (!vm.hasCompiledCode())
+    if (value.isObject() || value.isUndefinedOrNull())
         return { };
-    StringView constructor = nameOfConstructorThatRunsOnTop(vm);
-    return constructor.isNull() ? String() : tryMakeString("new "_s, constructor);
-}
-
-static JSObject* createQuoting(const String& source, JSObject* (*create)(JSGlobalObject*, JSValue), JSGlobalObject* globalObject, JSValue value)
-{
-    SetForScope quotedInScope(quotedSource, source.isNull() ? nullptr : &source);
-    return create(globalObject, value);
-}
-
-// As the engine's message describes the value. Null where it cannot be described.
-static String describe(JSGlobalObject* globalObject, JSValue value)
-{
-    DeferTerminationForAWhile deferTermination(globalObject->vm());
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-    String description = errorDescriptionForValue(globalObject, value);
-    if (scope.exception()) [[unlikely]] {
-        scope.clearException();
+    const Image* image = Image::current();
+    if (!image || !image->programTables().quotedSourceGroups().empty())
         return { };
+    if (value.isString())
+        return "a string"_s;
+    if (value.isSymbol())
+        return "a symbol"_s;
+    if (value.isBigInt())
+        return "a BigInt"_s;
+    return value.isBoolean() ? "a boolean"_s : "a number"_s;
+}
+
+static JSObject* createTypeErrorQuoting(JSGlobalObject* globalObject, JSValue value, const String& description, ASCIILiteral complaint, ErrorInstance::SourceAppender appender, const String& spelled)
+{
+    String expression = failedExpressionSource(globalObject->vm());
+    if (expression.isNull())
+        expression = spelled;
+    String message = tryMakeString(description, ' ', complaint);
+    if (description.isNull() || message.isNull()) [[unlikely]]
+        return createOutOfMemoryError(globalObject);
+    if (expression.isNull())
+        return createTypeError(globalObject, message);
+    return createTypeError(globalObject, appender(message, expression, runtimeTypeForValue(value), ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource));
+}
+
+static JSObject* createNotAnObjectErrorQuoting(JSGlobalObject* globalObject, JSValue base, const String& description, const String& spelled)
+{
+    if (!globalObject->stackTraceLimit().value_or(0))
+        return JSC::createNotAnObjectError(globalObject, base);
+    return createTypeErrorQuoting(globalObject, base, description, "is not an object"_s, defaultSourceAppender, spelled);
+}
+
+static bool canFollowDotInErrorMessage(StringView member)
+{
+    if (member.isEmpty() || isASCIIDigit(member[0]))
+        return false;
+    for (unsigned index = 0; index < member.length(); ++index) {
+        char16_t character = member[index];
+        if (isASCII(character) && !isASCIIAlphanumeric(character) && character != '_' && character != '$' && (character != '#' || index))
+            return false;
     }
-    return description;
+    return true;
+}
+
+static String spellMemberInErrorMessage(StringView object, StringView member)
+{
+    return canFollowDotInErrorMessage(member) ? tryMakeString(object, '.', member) : tryMakeString(object, "[\""_s, member, "\"]"_s);
 }
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, StringView member)
 {
-    String source;
-    if (String description = describe(globalObject, base); !member.isNull() && !description.isNull())
-        source = tryMakeString(description, '.', member);
-    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
+    if (member.isNull())
+        return JSC::createNotAnObjectError(globalObject, base);
+    String description = describeForErrorMessage(globalObject, base);
+    return createNotAnObjectErrorQuoting(globalObject, base, description, spellMemberInErrorMessage(description, member));
 }
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier& member)
 {
-    return createNotAnObjectError(globalObject, base, member.isSymbol() || member.isPrivateName() ? StringView() : StringView(member.impl()));
+    if (member.isPrivateName())
+        return JSC::createNotAnObjectError(globalObject, base);
+    if (!member.isSymbol())
+        return createNotAnObjectError(globalObject, base, StringView(member.impl()));
+    String description = describeForErrorMessage(globalObject, base);
+    return createNotAnObjectErrorQuoting(globalObject, base, description, tryMakeString(description, "[Symbol("_s, StringView(member.impl()), ")]"_s));
 }
 
-JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSValue key)
+JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSValue)
 {
-    String source;
-    if (key.isInt32() || (key.isString() && !asString(key)->isRope())) {
-        String description = describe(globalObject, base);
-        String descriptionOfKey = describe(globalObject, key);
-        if (!description.isNull() && !descriptionOfKey.isNull())
-            source = tryMakeString(description, '[', descriptionOfKey, ']');
-    }
-    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
+    return JSC::createNotAnObjectError(globalObject, base);
 }
 
-JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier& member)
+JSObject* createKeyTestOfNonObjectError(JSGlobalObject* globalObject, JSValue base)
 {
-    String source = member.isSymbol() || member.isPrivateName() ? String() : tryMakeString("super."_s, StringView(member.impl()));
-    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
+    return createInvalidInParameterError(globalObject, base);
+}
+
+JSObject* createDeletionFromNullishError(JSGlobalObject* globalObject, JSValue base)
+{
+    return JSC::createNotAnObjectError(globalObject, base);
+}
+
+JSObject* createIterationOfNullishError(JSGlobalObject* globalObject, JSValue iterated)
+{
+    return JSC::createNotAnObjectError(globalObject, iterated);
+}
+
+JSObject* createPrivateNameOfNullishError(JSGlobalObject* globalObject, JSValue base)
+{
+    return JSC::createNotAnObjectError(globalObject, base);
+}
+
+JSObject* createAbsentPrivateNameError(JSGlobalObject* globalObject, JSObject* (*create)(JSGlobalObject*))
+{
+    return create(globalObject);
+}
+
+JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier* member)
+{
+    if (!member || member->isNull() || member->isSymbol())
+        return JSC::createNotAnObjectError(globalObject, base);
+    return createNotAnObjectErrorQuoting(globalObject, base, describeForErrorMessage(globalObject, base), spellMemberInErrorMessage("super"_s, StringView(member->impl())));
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
-    String source = name.isNull() ? String() : tryMakeString(name, "()"_s);
-    return createQuoting(source, JSC::createNotAFunctionError, globalObject, callee);
+    return createTypeErrorQuoting(globalObject, callee, describeForErrorMessage(globalObject, callee), "is not a function"_s, notAFunctionSourceAppender, name.isEmpty() ? String() : tryMakeString(name, "()"_s));
+}
+
+JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, const Identifier& name)
+{
+    return createNotAFunctionError(globalObject, callee, name.isSymbol() ? StringView() : StringView(name.impl()));
+}
+
+JSObject* createParentNotAConstructorError(JSGlobalObject* globalObject, JSValue parent)
+{
+    return createTypeErrorQuoting(globalObject, parent, describeForErrorMessage(globalObject, parent), "is not a constructor"_s, defaultSourceAppender, String());
 }
 
 JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
-    String source = name.isNull() ? String() : tryMakeString("new "_s, name);
-    return createQuoting(source, JSC::createNotAConstructorError, globalObject, callee);
+    return createTypeErrorQuoting(globalObject, callee, describeForErrorMessage(globalObject, callee), "is not a constructor"_s, defaultSourceAppender, name.isEmpty() ? String() : tryMakeString("new "_s, name));
 }
 
-void throwNotAConstructorErrorInFrameOf(JSGlobalObject* globalObject, JSFunction* function, StringView name)
+void throwNotAConstructorErrorInFrameOf(JSGlobalObject* globalObject, JSFunction* function, StringView, bool)
 {
-    String source = name.isNull() ? String() : tryMakeString("new "_s, name);
-    SetForScope quotedInScope(quotedSource, source.isNull() ? nullptr : &source);
     CallData constructData;
     constructData.type = CallData::Type::Native;
     constructData.native.function = function->nativeConstructor();
     constructData.native.isBoundFunction = false;
     constructData.native.isWasm = false;
     construct(globalObject, function, constructData, ArgList());
-}
-
-JSObject* createInstanceofRightHandSideNotAFunctionError(JSGlobalObject* globalObject, JSValue constructor, StringView expression)
-{
-    return createQuoting(expression.isNull() ? String() : expression.toString(), createInvalidInstanceofParameterErrorNotFunction, globalObject, constructor);
-}
-
-JSObject* createHasInstanceNotAFunctionError(JSGlobalObject* globalObject, JSValue constructor, StringView expression)
-{
-    return createQuoting(expression.isNull() ? String() : expression.toString(), createInvalidInstanceofParameterErrorHasInstanceValueNotFunction, globalObject, constructor);
-}
-
-JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, const Identifier& name)
-{
-    return createNotAFunctionError(globalObject, callee, name.isNull() || name.isSymbol() || name.isPrivateName() ? StringView() : StringView(name.impl()));
 }
 
 JSObject* createBuiltinModulesUnavailableError(JSGlobalObject* globalObject)
@@ -513,6 +264,11 @@ JSObject* createBuiltinWithoutPathError(JSGlobalObject* globalObject)
 JSObject* createBuiltinNotCompiledError(JSGlobalObject* globalObject, const String& builtin)
 {
     return createError(globalObject, withAOTErrorNote(makeString(builtin, " was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code."_s)));
+}
+
+JSObject* createBuiltinBehindTargetOfEventNotCompiledError(JSGlobalObject* globalObject, const String& builtin)
+{
+    return createError(globalObject, withAOTErrorNote(makeString(builtin, " was not compiled into this executable because the compiler saw no use of it. Your code reached it through the `target` of an event on the global object. To keep it, write `void dispatchEvent` anywhere in your code."_s)));
 }
 
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject* globalObject, const String& functionName)
@@ -536,38 +292,77 @@ JSObject* createExternalModuleNotLoadedError(JSGlobalObject* globalObject, const
     return createTypeError(globalObject, withAOTErrorNote(makeString("The module \""_s, path, "\" is not loaded"_s)));
 }
 
-static JSObject* createErrorWithCode(JSGlobalObject* globalObject, const String& message, ASCIILiteral code)
+static JSObject* withCode(JSGlobalObject* globalObject, JSObject* error, ASCIILiteral code)
 {
     VM& vm = globalObject->vm();
-    JSObject* error = createError(globalObject, message);
     error->putDirect(vm, Identifier::fromString(vm, "code"_s), jsNontrivialString(vm, String(code)));
     return error;
 }
 
+static JSObject* createErrorWithCode(JSGlobalObject* globalObject, const String& message, ASCIILiteral code)
+{
+    return withCode(globalObject, createError(globalObject, message), code);
+}
+
 JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView name, ASCIILiteral code)
 {
-    // A module of Bun's is no file that could be another entry point. The call went through a value that the compiler did not follow to the loader.
     bool isModuleOfBun = name.startsWith("node:"_s) || name.startsWith("bun:"_s);
-    ASCIILiteral advice = isModuleOfBun ? "The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly."_s : "Pass the file to bun compile as another entry point."_s;
+    const Image* image = Image::current();
+    if (!isModuleOfBun && image && hasFlag(image->header().options.admitted(), AdmittedCode::ReplacedBuiltins))
+        return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': no import() or require() that the build saw can reach it by a dynamic path. Import the file by a constant path, or add --aot-allow-code-from-disk."_s)), code);
+    if (!isModuleOfBun && image && image->loadsCodeOutsideImage())
+        return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': it was compiled into this executable, and a dynamic path finds a compiled file only if the path is a string somewhere in your code. Pass the file to bun compile as another entry point."_s)), code);
+    ASCIILiteral advice = isModuleOfBun ? "The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly."_s : "Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk."_s;
     return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable can't load a module from a dynamic path. "_s, advice)), code);
 }
 
-#if ENABLE(SHADOW_REALM)
-JSObject* createModuleInShadowRealmError(JSGlobalObject* globalObject, StringView path)
+JSObject* createCompiledModuleAccessError(JSGlobalObject* globalObject, StringView path, ASCIILiteral code)
 {
-    return createSyntaxError(globalObject, withAOTErrorNote(makeString("The module "_s, path, " was compiled ahead of time and can't be imported inside a ShadowRealm"_s)));
+    return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, path, "': code that is loaded from disk can't import files that were compiled into this executable. Pass it what it needs as arguments or globals."_s)), code);
 }
-#else
+
+JSObject* createFormNotHeldError(JSGlobalObject* globalObject, StringView path, ASCIILiteral type)
+{
+    return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot import '"_s, path, "' as "_s, type, ": it was compiled, and its source isn't in this executable. Write the type out in the call: import(path, { with: { type: \""_s, type, "\" } })."_s)), "ERR_MODULE_NOT_FOUND"_s);
+}
+
+JSObject* createExportNotHandedOutError(JSGlobalObject* globalObject, StringView path, StringView name)
+{
+    return withCode(globalObject, createReferenceError(globalObject, withAOTErrorNote(makeString("Cannot read '"_s, name, "' from the namespace object of '"_s, path, "': the build kept only the exports that it saw your code read. Import '"_s, name, "' by name."_s))), "ERR_MODULE_NOT_FOUND"_s);
+}
+
 JSObject* createModuleInOtherRealmError(JSGlobalObject* globalObject, StringView path)
 {
     return createSyntaxError(globalObject, withAOTErrorNote(makeString("The module "_s, path, " was compiled ahead of time and can't be imported in another realm"_s)));
 }
-#endif
 
-JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderChange change, StringView changed)
+JSObject* createLoaderChangeError(JSGlobalObject* globalObject, LoaderChange change, StringView changed)
 {
+    if (change == LoaderChange::TakeOutOfRequireCache)
+        return createError(globalObject, makeString("Cannot delete '"_s, changed, "' from require.cache: the build saw no code that deletes it, so the module was compiled to load once. Write the path out where you delete it, in a file that the tests import: delete require.cache[require.resolve(\"./module\")]"_s));
+    if (change == LoaderChange::StoreUnderNameOfModuleInRequireCache)
+        return createError(globalObject, withAOTErrorNote(makeString("Cannot store an entry under '"_s, changed, "' in require.cache: the build saw no store under that key, so require(\""_s, changed, "\") always returns the compiled module. Write the key out where you store it, as in require.cache[\""_s, changed, "\"] = entry, or use mock.module() in a test."_s)));
+    if (change == LoaderChange::EvaluateModuleAgain)
+        return createError(globalObject, withAOTErrorNote(makeString("Cannot run '"_s, changed, "' a second time: a loader in Module._extensions evaluates the source of a file, and this executable has only the compiled file. Use require() to get its exports."_s)));
+    if (change == LoaderChange::PassSourceToCompile)
+        return createError(globalObject, withAOTErrorNote(makeString("Cannot pass the source of '"_s, changed, "' to module._compile: the file was compiled, and its source isn't in this executable. If your program depends on a loader that replaces module._compile, build it with --no-aot."_s)));
     bool isInRequireCache = change == LoaderChange::ReplaceInRequireCache;
     return createError(globalObject, withAOTErrorNote(makeString("Cannot replace "_s, isInRequireCache ? "'"_s : ""_s, changed, isInRequireCache ? "' in require.cache"_s : ""_s, ": imports in this executable were resolved at build time, so the module loader can't be patched."_s)));
+}
+
+JSObject* createEntryOfRequireCacheRefusedError(JSGlobalObject* globalObject, StringView path)
+{
+    return createError(globalObject, makeString("Cannot read the entry of '"_s, path, "' in require.cache: the build saw no code that reads the cache, so the module has no entry. Write the read out in a file that the tests import: require.cache[require.resolve(\"./module\")]"_s));
+}
+
+String moduleObjectRefusedMessage(StringView path)
+{
+    return withAOTErrorNote(makeString("Cannot access the module object of '"_s, path, "': the build saw no code that uses it, so the file has none. To keep it, write `void module.children;` in one of your files."_s));
+}
+
+JSObject* createComparisonOfPrivateFieldRefusedError(JSGlobalObject* globalObject, const String& field)
+{
+    return createError(globalObject, withAOTErrorNote(makeString("Cannot compare the private field "_s, field, ": the build saw no object with this field reach Bun.deepMatch(), toMatchObject() or expect.objectContaining(). Call the comparison directly, and create one of the two objects where you call it."_s)));
 }
 
 JSObject* createModuleMissingAtBuildError(JSGlobalObject* globalObject, const String& specifier, const String& importer, ASCIILiteral code)
@@ -575,19 +370,34 @@ JSObject* createModuleMissingAtBuildError(JSGlobalObject* globalObject, const St
     return createErrorWithCode(globalObject, makeString("Cannot find module '"_s, specifier, "' from '"_s, importer, "'"_s), code);
 }
 
+JSObject* createExportStatementFindsNothingError(JSGlobalObject* globalObject, const String& exportName, const String& specifier)
+{
+    return createSyntaxError(globalObject, makeString("export '"_s, exportName, "' not found in '"_s, specifier, "'"_s));
+}
+
+JSObject* createExportStatementFindsSeveralError(JSGlobalObject* globalObject, const String& exportName, const String& specifier)
+{
+    return createSyntaxError(globalObject, makeString("Cannot export '"_s, exportName, "' multiple times in '"_s, specifier, "'"_s));
+}
+
 JSObject* createSuperCallInDirectEvalError(JSGlobalObject* globalObject)
 {
     return createTypeError(globalObject, withAOTErrorNote("super() cannot be called from direct eval in a compiled executable"_s));
 }
 
-static String messageOfFunctionNotCompiled(const String& description)
+static String messageOfFunctionNotCompiled(const String& description, const String& advice = "call it directly somewhere in your code"_s)
 {
-    return withAOTErrorNote(makeString(description, " was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code."_s));
+    return withAOTErrorNote(makeString(description, " was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, "_s, advice, '.'));
 }
 
 String functionNotCompiledMessage(const String& functionName)
 {
     return messageOfFunctionNotCompiled(makeString('\'', functionName, '\''));
+}
+
+String exportNotCompiledMessage(const String& functionName, const String& module)
+{
+    return messageOfFunctionNotCompiled(makeString('\'', functionName, '\''), makeString("import it by name: import { "_s, functionName, " } from \""_s, module, '"'));
 }
 
 String functionNotCompiledMessage(const String& path, unsigned line)
@@ -600,9 +410,35 @@ String functionNotCompiledMessage()
     return messageOfFunctionNotCompiled("This function"_s);
 }
 
-ASCIILiteral evaluationRefusedMessage()
+ASCIILiteral rejectedEvaluationMessage()
 {
     return "Code generation from strings disallowed for this context: the compiler couldn't tell at build time that this call reaches eval() or the Function constructor. Call eval() or new Function() directly."_s;
+}
+
+static bool isWrittenBehindDot(StringView name)
+{
+    if (name.isEmpty() || isASCIIDigit(name[0]))
+        return false;
+    for (unsigned index = 0; index < name.length(); ++index) {
+        char16_t unit = name[index];
+        if (!isASCIIAlphanumeric(unit) && unit != '_' && unit != '$')
+            return false;
+    }
+    return true;
+}
+
+static String spelledInBrackets(const String& object, StringView name)
+{
+    StringBuilder spelled;
+    spelled.append(object, '[');
+    spelled.appendQuotedJSONString(name.toString());
+    spelled.append(']');
+    return spelled.toString();
+}
+
+static bool mayBeKeyOfElement(const UniquedStringImpl& key)
+{
+    return !key.isSymbol() && key.is8Bit() && Typed::mayBeElementKey(Typed::classifyName(byteCast<uint8_t>(key.span8())));
 }
 
 String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key)
@@ -612,26 +448,159 @@ String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key)
         return makeString(text, "[Symbol("_s, StringView(key), ")]"_s);
     if (parseIndex(*key))
         return makeString(text, '[', StringView(key), ']');
+    if (!isWrittenBehindDot(StringView(key)))
+        return spelledInBrackets(text, StringView(key));
     return holder == Builtins::GlobalThis ? String(key) : makeString(text, '.', StringView(key));
-}
-
-// Fuzzilli's loop in Bun compares a compiled program with `bun run`, where these errors are never thrown, also when the program catches them.
-static String printForFuzzilli(String&& message)
-{
-#if ENABLE(FUZZILLI)
-    dataLogLn(message);
-#endif
-    return WTF::move(message);
 }
 
 String deletionFromLockedBuiltinMessage(const String& property)
 {
-    return printForFuzzilli(withAOTErrorNote(makeString("Cannot delete "_s, property, " because built-in objects are read-only in a compiled executable"_s)));
+    return withAOTErrorNote(makeString("Cannot delete "_s, property, " because built-in objects are read-only in a compiled executable"_s));
 }
 
 String assignmentToLockedBuiltinMessage(const String& property)
 {
-    return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s)));
+    return withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s));
+}
+
+String changeThatCompiledCodeRulesOutMessage(ASCIILiteral change)
+{
+    return withAOTErrorNote(makeString("Cannot "_s, change, " because no code in the executable does, and compiled code relies on that"_s));
+}
+
+String changeThatCompiledCodeRulesOutMessage(ObjectMutation mutation)
+{
+    auto change = [&]() -> ASCIILiteral {
+        switch (mutation) {
+        case ObjectMutation::DeleteField:
+            return "delete this property"_s;
+        case ObjectMutation::RedefineProperty:
+            return "redefine this property"_s;
+        case ObjectMutation::AddProperty:
+            return "add a property to this object"_s;
+        case ObjectMutation::ChangeIntegrity:
+            return "freeze, seal or prevent extensions of this object"_s;
+        case ObjectMutation::ChangePrototype:
+            return "change the prototype of this object"_s;
+        case ObjectMutation::BecomePrototype:
+            return "make this object a prototype"_s;
+        case ObjectMutation::StoreOfOtherType:
+            return "store a value of this type in this property"_s;
+        case ObjectMutation::ConstructDirectly:
+            return "construct an object of this class"_s;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    return changeThatCompiledCodeRulesOutMessage(change());
+}
+
+String callOfBuiltinChangedBeforeFirstUseMessage(const String& property)
+{
+    return withAOTErrorNote(makeString("Cannot call "_s, property, " because it was replaced, redefined or deleted before its first use, and compiled code calls the built-in function without looking it up"_s));
+}
+
+String assignmentThatBuildDidNotSeeMessage(const String& property)
+{
+    if (const Image* image = Image::current(); image && image->loadsCodeOutsideImage())
+        return withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable, and the build saw no assignment to this one. Code that is loaded from disk can replace it only where the executable's own code assigns to it too, spelled out as in "_s, property, " = value"_s));
+    return withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable, and the build didn't see your code assign to this one. Spell out the object and the name where it does, as in "_s, property, " = value"_s));
+}
+
+static constexpr ASCIILiteral pageOnCompiledTests = " (https://bun.com/docs/compiler/debugging#run-your-tests-compiled)"_s;
+
+static String refusalThatNoTestRunLifts(ASCIILiteral change, const String& member, ASCIILiteral does)
+{
+    return makeString(change, member, " because built-in objects are read-only in compiled code, and a test can't "_s, does, " this one: it is read without being looked up. Replace a function of your own that uses it"_s, pageOnCompiledTests);
+}
+
+static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, UniquedStringImpl* key)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    String member = memberOfLockedBuiltin(holder, key);
+    BuiltinName name = table.nameOf(vm, key);
+    BuiltinID found = name ? table.findOwnMember(holder, name) : BuiltinID();
+    bool isText = !key->isSymbol() && !parseIndex(*key);
+    bool canBeOpened = found ? table.canBeReplacedInTestRuns(found) || table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isText && !mayBeKeyOfElement(*key) && table.canTakeNameInTestRuns(holder, name);
+    ASCIILiteral does = found ? "replace"_s : "add"_s;
+    if (!canBeOpened)
+        return refusalThatNoTestRunLifts(change, member, does);
+    String object = table.textOf(holder);
+    String spelled = !isText ? makeString(object, '[', StringView(key), ']') : isWrittenBehindDot(StringView(key)) ? makeString(object, '.', StringView(key)) : spelledInBrackets(object, StringView(key));
+    String example = found
+        ? makeString(spelled, " = f or spyOn("_s, object, ", "_s, isText ? "\""_s : ""_s, StringView(key), isText ? "\""_s : ""_s, ')')
+        : makeString(spelled, " = value"_s);
+    return makeString(change, member, " because built-in objects are read-only in compiled code, and the build didn't see a test "_s, does, " this one. Spell out the object and the name where the test does it, as in "_s, example, pageOnCompiledTests);
+}
+
+bool isWrittenByFileOfProduct(VM& vm)
+{
+    if (!vm.hasCompiledCode() || !vm.topCallFrame || Image::current()->programTables().modulesWithReadOnlyBuiltins().empty())
+        return false;
+    std::optional<bool> answer;
+    StackVisitor::visitWithCompiledFrames(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
+        if (visitor->isCompiledFrame()) {
+            for (CompiledFrameIterator& frames = visitor.compiledFrames(); !answer && !frames.isAtEnd(); frames.advance()) {
+                std::optional<SourcePosition> position = Image::current()->positionOf(frames.frame().code.index(), frames.frame().callSite);
+                if (position && position->source)
+                    answer = hasReadOnlyBuiltins(position->source);
+            }
+            return answer ? IterationStatus::Done : IterationStatus::Continue;
+        }
+        CodeBlock* codeBlock = visitor->codeBlock();
+        if (!codeBlock)
+            return IterationStatus::Continue;
+        const SourceOrigin& origin = codeBlock->ownerExecutable()->sourceOrigin();
+        if (ScriptFetcher* fetcher = origin.fetcher(); fetcher && fetcher->fetcherType() == ScriptFetcher::Type::NodeVM) {
+            answer = static_cast<FetcherOfTextHandedIn*>(fetcher)->isMadeByFileOfProduct();
+            return IterationStatus::Done;
+        }
+        if (!origin.url().protocolIsFile())
+            return IterationStatus::Continue;
+        if (std::optional<ModuleID> file = findModule(origin.url().fileSystemPath()))
+            answer = hasReadOnlyBuiltins(*file);
+        return IterationStatus::Done;
+    }, false, StackVisitor::CompiledFrameVisit::EachRunOnce);
+    return answer.value_or(false);
+}
+
+FetcherOfTextHandedIn::FetcherOfTextHandedIn(VM& vm)
+    : m_isMadeByFileOfProduct(isWrittenByFileOfProduct(vm))
+{
+}
+
+String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringImpl* key, LockedIn lockedIn)
+{
+    if (lockedIn == LockedIn::TestRun)
+        return refusalInTestRun(vm, "Cannot assign to "_s, holder, key);
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(vm, key);
+    BuiltinID found = name ? table.findOwnMember(holder, name) : BuiltinID();
+    bool isNewName = !key->isSymbol() && !mayBeKeyOfElement(*key) && !found && (!name || table.findMember(holder, name).outcome != BuiltinMemberLookup::Outcome::Found);
+    bool isOpenWhereBuildSeesWrite = found ? table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isNewName && table.canonicalID(holder) != Builtins::ObjectPrototype && table.canTakeNameInTestRuns(holder, name);
+    if (isOpenWhereBuildSeesWrite)
+        return assignmentThatBuildDidNotSeeMessage(memberOfLockedBuiltin(holder, key));
+    return assignmentToLockedBuiltinMessage(memberOfLockedBuiltin(holder, key));
+}
+
+String deletionFromLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringImpl* key, LockedIn lockedIn)
+{
+    if (lockedIn == LockedIn::TestRun)
+        return refusalInTestRun(vm, "Cannot delete "_s, holder, key);
+    return deletionFromLockedBuiltinMessage(memberOfLockedBuiltin(holder, key));
+}
+
+String assignmentToFoldedMemberMessage(const String& property, LockedIn lockedIn)
+{
+    if (lockedIn == LockedIn::TestRun)
+        return refusalThatNoTestRunLifts("Cannot assign to "_s, property, "replace"_s);
+    return assignmentToLockedBuiltinMessage(property);
+}
+
+String deletionOfFoldedMemberMessage(const String& property, LockedIn lockedIn)
+{
+    if (lockedIn == LockedIn::TestRun)
+        return refusalThatNoTestRunLifts("Cannot delete "_s, property, "replace"_s);
+    return deletionFromLockedBuiltinMessage(property);
 }
 
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl* uid)
@@ -639,12 +608,41 @@ String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl* uid
     return assignmentToLockedBuiltinMessage(makeString(uid->isSymbol() ? '[' : '\'', StringView(uid), uid->isSymbol() ? ']' : '\'', " of a built-in function"_s));
 }
 
-String prototypeChangeOfLockedBuiltinMessage(const String& holder)
+String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn lockedIn)
 {
-    return printForFuzzilli(withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, " because built-in objects are read-only in a compiled executable"_s)));
+    if (lockedIn == LockedIn::TestRun)
+        return makeString("Cannot change the prototype of "_s, holder, " because built-in objects are read-only in compiled code, and a test can't change this"_s, pageOnCompiledTests);
+    return withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, " because built-in objects are read-only in a compiled executable"_s));
+}
+
+static String makeUncompiledCallerReason(const String& file, ASCIILiteral made)
+{
+    return makeString(" because \""_s, file, "\", which makes the "_s, made, ", wasn't compiled with your tests: the build couldn't follow the path that loads it. Import that file by a constant path, or put its path together from import.meta.dir: import(import.meta.dir + \"/folder/\" + name)"_s, pageOnCompiledTests);
+}
+
+String makeSpyOnExportErrorMessage(UniquedStringImpl* name, const String& path, LockedIn lockedIn, const String& uncompiledCaller)
+{
+    if (lockedIn == LockedIn::TestRun && !uncompiledCaller.isNull())
+        return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, '"', makeUncompiledCallerReason(uncompiledCaller, "spy"_s));
+    if (lockedIn == LockedIn::TestRun)
+        return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, "\" because the build didn't see a test spy on it. Spell out the module and the name where the spy is made: import * as module from \"<path>\"; spyOn(module, \""_s, StringView(name), "\")"_s, pageOnCompiledTests);
+    return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, "\" because module exports can't be replaced in a compiled executable. Spy on it in a test, under bun test"_s);
+}
+
+String makeMockModuleErrorMessage(const String& path, LockedIn lockedIn, const String& uncompiledCaller)
+{
+    if (lockedIn == LockedIn::TestRun && !uncompiledCaller.isNull())
+        return makeString("mock(module, fn) cannot replace \""_s, path, '"', makeUncompiledCallerReason(uncompiledCaller, "mock"_s));
+    if (lockedIn == LockedIn::TestRun)
+        return makeString("mock(module, fn) cannot replace \""_s, path, "\" because the build didn't see a test mock it. Spell out the module's path where the mock is made: mock.module(\"<path>\", factory)"_s, pageOnCompiledTests);
+    return makeString("mock(module, fn) cannot replace \""_s, path, "\" because it was compiled ahead of time. Mock it in a test, under bun test"_s);
 }
 
 } } // namespace JSC::AOT
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 

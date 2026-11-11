@@ -1,5 +1,4 @@
-# On the wire the method definitions of one class head have distinct indexes, and two heads in one function count on their own
-# FORM: AsRead
+# On the wire the method definitions of one class head are numbered from zero in the order of the stream, so no index comes twice, and two heads in one function count on their own
 # RUN: verify
 # DIAGNOSTIC: PayloadOutOfRange 1
 
@@ -10,9 +9,9 @@ function f0 name="badIndexTwice" results=[{type=undefined}] {
     v0 = NewClosure function=f3
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f4
-    DefineMethod v1, v2 layout=L0 index=1 key="m"
+    DefineMethod v1, v2 layout=L0 key="m"
     v4 = NewClosure function=f5
-    DefineMethod v1, v4 layout=L0 side=Static index=1 key="n"
+    DefineMethod v1, v4 layout=L0 side=Static key="n"
     v6 = FinishClass v1 layout=L0
     Return
 }
@@ -20,9 +19,9 @@ function f1 name="goodDistinctIndexes" results=[{type=undefined}] {
     v0 = NewClosure function=f3
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f4
-    DefineMethod v1, v2 layout=L0 index=1 key="m"
+    DefineMethod v1, v2 layout=L0 key="m"
     v4 = NewClosure function=f5
-    DefineMethod v1, v4 layout=L0 side=Static key="n"
+    DefineMethod v1, v4 layout=L0 side=Static index=1 key="n"
     v6 = FinishClass v1 layout=L0
     Return
 }
@@ -39,6 +38,12 @@ function f2 name="goodTwoHeads" results=[{type=undefined}] {
     v9 = FinishClass v6 layout=L0
     Return
 }
-function f3 name="C" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
-function f4 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
-function f5 name="n" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f3 name="C" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    Return
+}
+function f4 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f5 name="n" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}

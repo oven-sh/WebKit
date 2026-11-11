@@ -1,0 +1,45 @@
+# A test run has opened a name on Object.prototype: a test may lay `spoil` there, and a read under a text may find it. A read under a number cannot: a name that is opened is never an index nor a canonical number,
+# nor "undefined", "null", "true" or "false". So of `kept[0]` Link says what it has seen come into the list, as in an executable. One opened name on one built-in used to take the result of every read by key from the whole run.
+# const kept = [];  kept.push({ x: "a" });  kept[0];    const handed = [];  handed.push({ y: "b" });  sink(handed);  handed[0];    const asked = [];  asked.push({ z: "c" });  asked[sink()];
+# ../read-under-a-computed-key-gives-what-has-come-into-the-list.ir is the twin: the same records without the last line.
+# RUN: link accesses mechanisms=all
+# CHECK: read f0 v7 proven=undefined|L0
+# CHECK-NOT: read f0
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="z" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = String string="a"
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = PropGet v0 key="push"
+    v5 = Call v4, v0, v3 calleeKey="push"
+    v6 = Integer integer=0
+    v7 = ElemGet v0, v6
+    v8 = NewArray contents=anything
+    v9 = String string="b"
+    v10 = NewObject -, v9 layout=L1 fields=[0]
+    v11 = FinishObject v10
+    v12 = PropGet v8 key="push"
+    v13 = Call v12, v8, v11 calleeKey="push"
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="sink" [isFreeName]
+    v16 = Call v15, -, v8 calleeName="sink"
+    v17 = ElemGet v8, v6
+    v18 = NewArray contents=anything
+    v19 = String string="c"
+    v20 = NewObject -, v19 layout=L2 fields=[0]
+    v21 = FinishObject v20
+    v22 = PropGet v18 key="push"
+    v23 = Call v22, v18, v21 calleeKey="push"
+    v24 = Call v15, - calleeName="sink"
+    v25 = ElemGet v18, v24
+    v26 = Undefined
+    Return v26
+}
+openedname holder=ObjectPrototype name="spoil"

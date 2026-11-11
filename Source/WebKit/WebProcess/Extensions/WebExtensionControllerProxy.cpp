@@ -42,7 +42,7 @@ namespace WebKit {
 
 using namespace WebCore;
 
-static HashMap<WebExtensionControllerIdentifier, WeakPtr<WebExtensionControllerProxy>>& LEGACY_NODELETE webExtensionControllerProxies()
+NODELETE static HashMap<WebExtensionControllerIdentifier, WeakPtr<WebExtensionControllerProxy>>& webExtensionControllerProxies()
 {
     static MainRunLoopNeverDestroyed<HashMap<WebExtensionControllerIdentifier, WeakPtr<WebExtensionControllerProxy>>> controllers;
     return controllers;
@@ -102,6 +102,10 @@ void WebExtensionControllerProxy::load(const WebExtensionContextParameters& cont
     auto context = WebExtensionContextProxy::getOrCreate(contextParameters, *this);
     m_extensionContextBaseURLMap.add(contextParameters.baseURL.protocolHostAndPort(), context);
     m_extensionContexts.add(context);
+
+#if PLATFORM(COCOA)
+    addTestListenersToContext(context);
+#endif
 }
 
 void WebExtensionControllerProxy::unload(WebExtensionContextIdentifier contextIdentifier)

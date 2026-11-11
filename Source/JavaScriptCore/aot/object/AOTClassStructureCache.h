@@ -29,6 +29,7 @@ struct ClassStructures {
 
     Structure* classObjectStructure { nullptr };
     Structure* prototypeStructure { nullptr };
+    Structure* prototypeStructureOfHolderLeftOut { nullptr };
 };
 
 class ClassStructureCache {

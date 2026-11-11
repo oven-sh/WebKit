@@ -77,6 +77,7 @@ GPUProcess/cocoa/GPUProcessCocoa.mm @nonARC
 GPUProcess/graphics/Model/MeshImpl.cpp
 GPUProcess/graphics/Model/WebKitMesh.mm
 GPUProcess/graphics/RemoteGraphicsContextGLCocoa.cpp
+GPUProcess/graphics/RemoteSnapshotPDFDrawingTask.cpp
 GPUProcess/graphics/ScopedRenderingResourcesRequestCocoa.mm @nonARC @no-unify-when(bundle<=8)
 GPUProcess/ios/GPUProcessIOS.mm @nonARC
 GPUProcess/mac/GPUProcessMac.mm @nonARC
@@ -86,6 +87,7 @@ GPUProcess/media/RemoteImageDecoderAVFProxy.cpp
 GPUProcess/media/cocoa/VideoReceiverEndpointManager.mm @nonARC
 GPUProcess/media/cocoa/RemoteMediaPlayerProxyCocoa.mm @nonARC
 GPUProcess/media/ios/RemoteMediaSessionHelperProxy.cpp
+GPUProcess/webrtc/CapturePreviewManager.mm @nonARC
 GPUProcess/webrtc/LibWebRTCCodecsProxy.mm @nonARC @no-unify // Includes libwebrtc headers with macro pollution.
 GPUProcess/webrtc/RemoteAudioMediaStreamTrackRendererInternalUnitManager.cpp
 GPUProcess/webrtc/RemoteSampleBufferDisplayLayer.mm @nonARC
@@ -110,6 +112,7 @@ Platform/cocoa/MediaPlaybackTargetSerialized.cpp
 Platform/cocoa/PaymentAuthorizationPresenter.mm @nonARC
 Platform/cocoa/PaymentAuthorizationViewController.mm @nonARC
 Platform/cocoa/WKPaymentAuthorizationDelegate.mm @nonARC
+Platform/cocoa/WebExtensionAdditionsHook.mm @no-unify // Includes WebKitAdditions sources.
 Platform/cocoa/WebKitAdditions.mm @nonARC @no-unify // #includes opaque WebKitAdditions sources.
 Platform/cocoa/WebPrivacyHelpers.mm @nonARC
 
@@ -247,8 +250,6 @@ Shared/RemoteLayerTree/DynamicContentScalingBifurcatedImageBuffer.mm @nonARC
 Shared/RemoteLayerTree/DynamicContentScalingImageBufferBackend.mm @nonARC
 Shared/RemoteLayerTree/RemoteLayerBackingStore.mm @nonARC
 Shared/RemoteLayerTree/RemoteLayerBackingStoreCollection.mm @nonARC
-Shared/RemoteLayerTree/RemoteLayerWithInProcessRenderingBackingStore.mm @nonARC
-Shared/RemoteLayerTree/RemoteLayerWithRemoteRenderingBackingStore.mm @nonARC
 Shared/RemoteLayerTree/RemoteLayerTreePropertyApplier.mm @nonARC
 Shared/RemoteLayerTree/RemoteLayerTreeCommitBundle.mm @nonARC
 Shared/RemoteLayerTree/RemoteLayerTreeTransaction.mm @nonARC
@@ -309,6 +310,7 @@ UIProcess/API/Cocoa/_WKInspectorTesting.mm @nonARC
 UIProcess/API/Cocoa/_WKInspectorWindow.mm @nonARC
 UIProcess/API/Cocoa/_WKInternalDebugFeature.mm @nonARC
 UIProcess/API/Cocoa/_WKLinkIconParameters.mm @nonARC
+UIProcess/API/Cocoa/_WKMediaCapturePermissionPromptConfiguration.mm @nonARC
 UIProcess/API/Cocoa/_WKModalContainerInfo.mm @nonARC
 UIProcess/API/Cocoa/_WKNotificationData.mm @nonARC
 UIProcess/API/Cocoa/_WKNSStringExtras.mm @nonARC
@@ -447,6 +449,8 @@ UIProcess/Cocoa/AppKitSoftLink.mm @nonARC
 UIProcess/Cocoa/AutomationClient.mm @nonARC
 UIProcess/Cocoa/AutomationSessionClient.mm @nonARC
 UIProcess/Cocoa/BrowsingWarningCocoa.mm @nonARC
+UIProcess/Cocoa/CapturePreviewDeviceSelection.cpp
+UIProcess/Cocoa/CapturePreviewLevelMeterState.cpp
 UIProcess/Cocoa/CoreTelephonyUtilities.mm @nonARC
 UIProcess/Cocoa/DiagnosticLoggingClient.mm @nonARC
 UIProcess/Cocoa/DisplayCaptureSessionManager.mm @nonARC @cost:3
@@ -517,7 +521,6 @@ UIProcess/Extensions/Cocoa/API/WebExtensionContextAPICookiesCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIDeclarativeNetRequestCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIDevToolsInspectedWindow.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIDevToolsPanels.mm
-UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIEventCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIExtensionCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIMenusCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPINotificationsCocoa.mm
@@ -609,6 +612,7 @@ UIProcess/ios/WKActionSheet.mm @nonARC
 UIProcess/ios/WKActionSheetAssistant.mm @nonARC
 UIProcess/ios/WKApplicationStateTrackingView.mm @nonARC
 UIProcess/ios/WKBaseScrollView.mm @nonARC
+UIProcess/ios/WKCapturePreviewViewController.mm @nonARC
 UIProcess/ios/WKContentView.mm @nonARC @no-unify
 UIProcess/ios/WKContentViewInteraction.mm @nonARC @no-unify
 UIProcess/ios/WKExtendedTextInputTraits.mm @nonARC
@@ -645,7 +649,6 @@ UIProcess/mac/PageClientImplMac.mm @nonARC
 UIProcess/mac/ServicesController.mm @nonARC
 UIProcess/mac/SwipeProgressTrackerMac.mm @nonARC
 UIProcess/mac/TextCheckerMac.mm @nonARC
-UIProcess/mac/TiledCoreAnimationDrawingAreaProxy.mm @nonARC
 UIProcess/mac/ViewGestureControllerMac.mm @nonARC
 UIProcess/mac/WebColorPickerMac.mm @nonARC
 UIProcess/mac/WebContextMenuProxyMac.mm @nonARC
@@ -655,6 +658,7 @@ UIProcess/mac/WebPageProxyMac.mm @nonARC
 UIProcess/mac/WebPopupMenuProxyMac.mm @nonARC
 UIProcess/mac/WebProcessProxyMac.mm @nonARC
 UIProcess/mac/WindowServerConnection.mm @nonARC
+UIProcess/mac/WKCapturePreviewPrompt.mm @nonARC
 UIProcess/mac/WKFullScreenWindowController.mm @nonARC
 UIProcess/mac/WKImmediateActionController.mm @nonARC
 UIProcess/mac/PositionInformationManager.cpp
@@ -674,6 +678,8 @@ UIProcess/Model/PortalPresentationManagerProxy.mm @nonARC
 UIProcess/Model/cocoa/ModelProcessProxyCocoa.mm @nonARC
 
 UIProcess/Network/CustomProtocols/LegacyCustomProtocolManagerProxy.cpp
+
+UIProcess/PhoneNumberPossession/Cocoa/WebPhoneNumberPossessionCoordinatorProxyCocoa.mm
 
 UIProcess/RemoteLayerTree/cocoa/RemoteLayerTreeLayers.mm @nonARC
 
@@ -787,8 +793,6 @@ WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIScriptingCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPISidebarActionCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPISidePanelCocoa.mm
-WebProcess/Extensions/API/Cocoa/WebExtensionAPIStorageAreaCocoa.mm
-WebProcess/Extensions/API/Cocoa/WebExtensionAPIStorageCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPITabsCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPITestCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigationCocoa.mm
@@ -797,8 +801,6 @@ WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebRequestCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebRequestEventCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWindowsCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWindowsEventCocoa.mm
-
-WebProcess/Extensions/Bindings/JSWebExtensionWrapper.cpp
 
 WebProcess/Extensions/Bindings/Cocoa/JSWebExtensionWrapperCocoa.mm
 
@@ -905,8 +907,6 @@ WebProcess/WebPage/ios/WebPageIOS.mm @nonARC
 
 WebProcess/WebPage/mac/PageBannerMac.mm @nonARC
 WebProcess/WebPage/mac/RemoteLayerTreeDrawingAreaMac.mm @nonARC @cost:3
-WebProcess/WebPage/mac/TiledCoreAnimationScrollingCoordinator.mm @nonARC
-WebProcess/WebPage/mac/TiledCoreAnimationDrawingArea.mm @nonARC
 WebProcess/WebPage/mac/WebPageMac.mm @nonARC @cost:7
 WebProcess/WebPage/mac/WKAccessibilityWebPageObjectMac.mm @nonARC
 
@@ -1058,6 +1058,7 @@ WebPageTestingMessageReceiver.cpp
 WebPasteboardProxyMessageReceiver.cpp @cost:15
 WebPaymentCoordinatorMessageReceiver.cpp
 WebPaymentCoordinatorProxyMessageReceiver.cpp @cost:3
+WebPhoneNumberPossessionCoordinatorProxyMessageReceiver.cpp
 WebProcessMessageReceiver.cpp @cost:9
 WebProcessPoolMessageReceiver.cpp @cost:10
 WebProcessProxyMessageReceiver.cpp @cost:15

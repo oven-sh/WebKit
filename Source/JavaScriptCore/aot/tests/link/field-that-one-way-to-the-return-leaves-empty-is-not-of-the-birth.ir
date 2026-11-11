@@ -1,0 +1,46 @@
+# If a field that only some ways to the return of the constructor store counted as of the birth, the objects that took the other way would keep their mark for life, and every typed body that met one would go the closed way
+# function register(n) { }  function Node(kind, pos) { register(this); this.kind = kind; if (pos) this.pos = pos; }  new Node(1, 2);
+# a plain function that `new` enters is through with `this` where it returns
+# RUN: summary f1
+# CHECK: construction This fills [] looks-up ["kind", "pos"] seen-from-outside fills-at-end ["kind"]
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.0 "kind" {{*}}of-birth
+# RUN(NEVER): link fields mechanisms=all
+# NEVER-NOT: field L0.1 "pos" {{*}}of-birth
+# NEVER-NOT: field L0.0 "kind" {{*}}filled
+# NEVER-NOT: field L0.1 "pos" {{*}}filled
+
+layout L0 kind=Instance name="Node" module=m0 constructor=f1 fields=[{key="kind" declared={type=anything}}, {key="pos" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="register" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = Integer integer=1
+    v4 = Integer integer=2
+    v5 = Construct v2, -, v3, v4
+    v6 = Undefined
+    Return v6
+}
+function f1 name="Node" module=m0 flags=[HasThis, HasExplicitName] length=2 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything, v2: anything):
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v0 calleeName="register"
+    PropSet v0, v1 key="kind"
+    v6 = ToBoolean v2
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v0, v2 key="pos"
+    Jump -> next b2()
+  b2():
+    v8 = Undefined
+    Return v8
+}
+function f2 name="register" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}

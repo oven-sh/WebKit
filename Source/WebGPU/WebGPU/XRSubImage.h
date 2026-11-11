@@ -34,8 +34,6 @@
 #import <wtf/ThreadSafeWeakPtr.h>
 #import <wtf/WeakPtr.h>
 
-struct WGPUXRSubImageImpl {
-};
 
 namespace WebGPU::Metal {
 
@@ -44,7 +42,7 @@ class Device;
 class Texture;
 class XRProjectionLayer;
 
-class XRSubImage final : public WebGPU::XRSubImage, public WGPUXRSubImageImpl {
+class XRSubImage final : public WebGPU::XRSubImage {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(XRSubImage);
 public:
     static Ref<XRSubImage> create(Device& device)
@@ -58,10 +56,11 @@ public:
 
     ~XRSubImage();
 
-    void LEGACY_NODELETE setLabel(String&&) final;
+    NODELETE void setLabel(String&&) final;
 
-    bool LEGACY_NODELETE isValid() const final;
+    NODELETE bool isValid() const final;
     void update(const XRProjectionLayer&);
+    void releaseTextures();
     Texture* currentColorTexture();
     Texture* depthTexture();
     RefPtr<WebGPU::Texture> colorTexture() final;

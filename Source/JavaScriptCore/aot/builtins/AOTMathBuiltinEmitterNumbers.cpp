@@ -8,8 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTIRProgram.h"
 #include "AOTStringEmitter.h"
-#include "AOTStringRangeReadEmitter.h"
 #include "AOTTypeTable.h"
 #include "MathCommon.h"
 #include <limits>
@@ -18,7 +18,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 Condition MathBuiltinEmitter::isFinite(Number x)
 {
-    return equal(sub(x, x), number(0));
+    return equal(sub(x, x), 0);
 }
 
 Condition MathBuiltinEmitter::testNumber(Number x, NumberTest test)
@@ -29,9 +29,11 @@ Condition MathBuiltinEmitter::testNumber(Number x, NumberTest test)
     case NumberTest::IsFinite:
         return isFinite(x);
     case NumberTest::IsInteger:
-        return equal(sub(x, trunc(x)), number(0));
-    case NumberTest::IsSafeInteger:
-        return logicalAnd(equal(trunc(x), x), lessThanOrEqual(abs(x), number(maxSafeInteger())));
+        return equal(sub(x, trunc(x)), 0);
+    case NumberTest::IsSafeInteger: {
+        Condition isWhole = equal(trunc(x), x);
+        return logicalAnd(isWhole, lessThanOrEqual(abs(x), maxSafeInteger()));
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -57,12 +59,12 @@ void MathBuiltinEmitter::testNumber(const InlineCall& call, NumberTest test)
 
 void MathBuiltinEmitter::generateIsNaN(const InlineCall& call)
 {
-    testNumber(call, NumberTest::IsNaN);
+    finish(call, testNumber(numberOperand(call.argument(0)), NumberTest::IsNaN));
 }
 
 void MathBuiltinEmitter::generateIsFinite(const InlineCall& call)
 {
-    testNumber(call, NumberTest::IsFinite);
+    finish(call, testNumber(numberOperand(call.argument(0)), NumberTest::IsFinite));
 }
 
 void MathBuiltinEmitter::generateNumberIsNaN(const InlineCall& call)
@@ -87,7 +89,12 @@ void MathBuiltinEmitter::generateNumberIsSafeInteger(const InlineCall& call)
 
 Number MathBuiltinEmitter::stringToNumber(const InlineCall& call, CellPointer string)
 {
-    return emitter<StringRangeReadEmitter>().toNumber(emitter<StringEmitter>().viewOfString(call.context(), string));
+    CharacterView view = emitter<StringEmitter>().viewOfString(call.context(), string);
+    Number result = emitter<StringEmitter>().selectByWidth<Number>(view.is8Bit, [&](bool is8Bit) {
+        return callLeaf<Number>(is8Bit ? RuntimeOperation::StringToNumber8 : RuntimeOperation::StringToNumber16, { view.characters, view.length });
+    }, Machine::EdgeClass::Normal);
+    ensureStillAliveHere(view.owner);
+    return result;
 }
 
 void MathBuiltinEmitter::generateCallNumberConstructor(const InlineCall& call)
@@ -110,7 +117,9 @@ void MathBuiltinEmitter::generateCallNumberConstructor(const InlineCall& call)
         return either<Number>(isNumber(operand), [&] {
             return numberToDouble(operand);
         }, [&] {
-            return select(is(JSValue::ValueUndefined), number(PNaN), select(is(JSValue::ValueTrue), number(1), number(0)));
+            Condition isUndefined = is(JSValue::ValueUndefined);
+            Number notANumber = number(PNaN);
+            return select(isUndefined, notANumber, select<Number>(is(JSValue::ValueTrue), 1, 0));
         });
     }, [&] {
         CellPointer cell = unboxCell(operand);
@@ -125,9 +134,12 @@ void MathBuiltinEmitter::generateParseInt(const InlineCall& call)
     if (ValueID argument = call.argumentOrNull(1))
         radix = int32Operand(argument);
     CellPointer string = cellOperand(call.argument(0));
-    missUnless(call, logicalNot(isRopeString(string)));
-    CharacterView view = emitter<StringEmitter>().viewOfFlatString(string);
-    finish(call, emitter<StringRangeReadEmitter>().parseInt(view, radix.value_or(word32(0))));
+    CharacterView view = emitter<StringEmitter>().viewWithoutResolving(call.context(), string, rareEdge(missBlockOf(call)));
+    Number result = emitter<StringEmitter>().selectByWidth<Number>(view.is8Bit, [&](bool is8Bit) {
+        return callLeaf<Number>(is8Bit ? RuntimeOperation::ParseInt8 : RuntimeOperation::ParseInt16, { view.characters, view.length, radix.value_or(word32(0)) });
+    }, Machine::EdgeClass::Normal);
+    ensureStillAliveHere(view.owner);
+    finish(call, result);
 }
 
 void MathBuiltinEmitter::generateNumberToString(const InlineCall& call)
@@ -140,9 +152,10 @@ void MathBuiltinEmitter::generateNumberToString(const InlineCall& call)
         return;
     }
     ValueID argument = call.argument(0);
+    const Type& radixType = typeOf(argument);
     Integer wideRadix = integerOperand(argument);
-    if (!typeOf(argument).integers.isSubsetOf({ 2, 36 }))
-        missUnless(call, below(sub(wideRadix, integer(2)), integer(35)));
+    if (!radixType.isInteger() || !radixType.integers.isSubsetOf({ 2, 36 }))
+        missUnless(call, below(sub(wideRadix, 2), 35));
     Word32 radix = low32(wideRadix);
     if (hasInt32Receiver) {
         finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::Int32ToStringWithRadix, { int32Operand(receiver), radix }));

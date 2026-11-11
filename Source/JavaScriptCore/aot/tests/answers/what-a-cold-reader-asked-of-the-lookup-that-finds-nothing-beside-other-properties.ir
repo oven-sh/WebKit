@@ -1,0 +1,498 @@
+# WHAT A REVIEWER ASKED OF `$findsNoMember` ON AN OBJECT WITH OTHER PROPERTIES OF ITS OWN (a-lookup-finds-nothing-on-an-object-that-holds-other-properties-of-its-own.ir): he found no wrong answer, and said what its runs shared:
+# one constructor function, one layout, one name with a column, the note taken by a read alone, no run under either net, no witness that the collector empties a place.
+# function Meter(level, tagged) { this.level = level; this.count = 1; if (tagged) this.tagged = tagged; }
+# Meter.prototype.read = function () { return this.level; };
+# class Gauge { constructor(level) { this.level = level; } read() { return this.level; } }
+# class Fine extends Gauge { constructor(level) { super(level); this.grain = 1; } }
+# function road(object) { if ($isPlainInstanceOf(object, Meter) && $findsNoMember(object, "missing")) return "short " + object.missing; return "full " + object.missing; }
+# function fresh(decorate) { const object = new Meter(4); decorate(object); return $findsNoMember(object, "missing") ? "lacks " + object.missing : "may hold " + object.missing; }
+# function twice(object) { if ($isPlainInstanceOf(object, Meter) && $findsNoMember(object, "missing") && $findsNoMember(object, "other") && $findsNoMember(object, "missing")) return "short " + object.missing + " " + object.other; return "full " + object.missing + " " + object.other; }
+# function again(object, name) { if ($isPlainInstanceOf(object, Meter) && $findsNoMember(object, "missing")) { object[name] = "stored"; return ($findsNoMember(object, "missing") ? "lacks " : "may hold ") + object.missing; } return "full " + object.missing; }
+# function kept(object) { if ($isPlainInstanceOf(object, Meter) && $findsNoMember(object, "missing")) { object.tagged = 1; return "short " + object.missing + " " + object.tagged; } return "full " + object.missing; }
+# function named(object) { if (!$isPlainInstanceOf(object, Meter)) return "-"; return $findsNoMember(object, "__proto__") ? "lacks" : "may hold"; }
+# function bare(object) { if (!$isPlainInstanceOf(object, Meter)) return "-"; return $findsNoMember(object, "nowhere") ? "lacks" : "may hold"; }
+# function below(object) { if ($isPlainHeirOf(object, Gauge) && $findsNoMember(object, "missing")) return "short " + object.missing; return "full " + object.missing; }
+# drive({ Meter, Gauge, Fine, road, fresh, twice, again, kept, named, bare, below });
+# f2 = road . f5 = again . f6 = kept . f7 = named . f8 = bare . f9 = below
+# OPTIONS: mechanisms=all
+# A second question behind a store under a key that nobody knows asks the cell again.
+# RUN(AGAINFORM): walk f5
+# AGAINFORM: = FindsNoMember {{*}}key="missing" {{*}}[asksForNoExtraPropertyUnderKey
+# AGAINFORM: = ElemSet
+# AGAINFORM: = FindsNoMember {{*}}key="missing" {{*}}[asksForNoExtraPropertyUnderKey
+# RUN(AGAIN): run-in-shell drive = function ({ Meter, again }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; for (let t = 0; t < 25600; t++) again(extra(), "else"); print(again(extra(), "else"), again(extra(), "missing"), again(new Meter(1), "missing")); };
+# AGAIN: lacks undefined may hold stored may hold stored
+# AGAIN-NEXT: exited with 0
+# UNDER BOTH WORDS THE SAME ANSWERS, AND EACH NET HAS ASKED. The note is checked where a read takes it and where a second question about the name takes it.
+# RUN(CHECKFORM): walk f2 mechanisms=all testing=CheckProofsAtRunTime
+# CHECKFORM: = FindsNoMember {{*}}key="missing" {{*}}[asksForNoExtraPropertyUnderKey, asksRunTime]
+# CHECKFORM-NEXT: CheckProof
+# RUN(CHECKTWICE): walk f4 mechanisms=all testing=CheckProofsAtRunTime
+# CHECKTWICE: = FindsNoMember {{*}}key="other" {{*}}[asksForNoExtraPropertyUnderKey]
+# CHECKTWICE: = FindsNoMember {{*}}key="missing" {{*}}[asksForNoExtraPropertyUnderKey, asksRunTime]
+# CHECKTWICE-NEXT: CheckProof
+# CHECKTWICE: = FindsNoMember {{*}}key="missing" receivers=[L2] traits
+# RUN(NETS): run-in-shell --aotCountsPath=/dev/null testing=CheckProofsAtRunTime,CheckWalkAtRunTime drive = function ({ Meter, road, twice }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; for (let t = 0; t < 12800; t++) { road(extra()); twice(extra()); } print(road(extra()), twice(extra())); print(aotOperationCount("operationAOTStopAtStaleAnswer") > 0 ? "the yes of the stub was asked again" : "NOBODY ASKED THE YES AGAIN", aotOperationCount("operationAOTHasExtraProperty") > 0 ? "the note was checked" : "NOBODY CHECKED THE NOTE"); };
+# NETS: short undefined short undefined undefined
+# NETS-NEXT: the yes of the stub was asked again the note was checked
+# NETS-NEXT: exited with 0
+# A store that makes a field in its slot writes no property beside the fields: the note stands, as the fact that it replaces did: the read behind it looks at no cell.
+# RUN(KEPTFORM): walk f6
+# KEPTFORM: = FindsNoMember {{*}}key="missing"
+# KEPTFORM-NOT: = HasNoExtraProperties
+# KEPTFORM: Return
+# RUN(KEPT): run-in-shell drive = function ({ Meter, kept }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; print(warm(kept, extra, "short undefined 1")); };
+# KEPT: the place answers
+# KEPT-NEXT: exited with 0
+# `__proto__` is looked up as no name: not stamped.
+# RUN(NAMEDFORM): walk f7
+# NAMEDFORM-NOT: receivers=[L2] [asksFor
+# RUN(NAMED): run-in-shell drive = function ({ Meter, named }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; const o = new Meter(1); print(named(o)); o.unrelated = 1; print(named(o)); };
+# NAMED: may hold
+# NAMED-NEXT: may hold
+# NAMED-NEXT: exited with 0
+# An accessor over a DECLARED field: the field lies among the extra properties, both bits of the order word are set, the object bears the mark.
+# RUN(OUTSIDE): run-in-shell drive = function ({ Meter, fresh }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; let calls = 0; const over = o => { Object.defineProperty(o, "level", { get() { calls++; return 9; }, configurable: true, enumerable: true }); }; let wrong = 0; for (let t = 0; t < 12800; t++) { if (!fresh(over).endsWith(" undefined")) wrong++; } print(wrong, calls); const both = o => { over(o); o.missing = 7; }; print(fresh(both), calls); };
+# OUTSIDE: 0 0
+# OUTSIDE-NEXT: may hold 7 0
+# OUTSIDE-NEXT: exited with 0
+# A name that nothing in the program reads, calls or stores has no column: the one stub serves it.
+# RUN(BAREFORM): bytes f8
+# BAREFORM: FindsNoExtraPropertyAtSite
+# RUN(BARE): run-in-shell drive = function ({ Meter, road, bare }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; print(warm(road, extra, "short undefined")); print(warm(bare, extra, "lacks")); const o = extra(); o.nowhere = 1; print(bare(o), bare(extra()), bare(new Meter(1))); };
+# BARE: the place answers
+# BARE-NEXT: the place answers
+# BARE-NEXT: may hold lacks lacks
+# BARE-NEXT: exited with 0
+# Classes: the door for heirs proves two layouts; one place keeps the kinds of both.
+# RUN(BELOW): run-in-shell drive = function ({ Meter, Gauge, Fine, below }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; const lay = o => { o.unrelated = 1; return o; }; let turn = 0; print(warm(below, () => lay(turn++ % 2 ? new Gauge(1) : new Fine(1)), "short undefined")); const g = lay(new Gauge(1)), f = lay(new Fine(1)); f.missing = 1; print(below(g), below(f)); Gauge.prototype.missing = "class"; print(below(g), below(lay(new Fine(1)))); };
+# BELOW: the place answers
+# BELOW-NEXT: short undefined full 1
+# BELOW-NEXT: full class full class
+# BELOW-NEXT: exited with 0
+# Frozen and sealed objects.
+# RUN(FROZEN): run-in-shell drive = function ({ Meter, road }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; let wrong = 0; for (let t = 0; t < 12800; t++) { if (!road(t % 2 ? Object.freeze(extra()) : Object.seal(extra())).endsWith(" undefined")) wrong++; } const o = extra(); o.missing = 1; print(wrong, road(Object.freeze(o))); };
+# FROZEN: 0 full 1
+# FROZEN-NEXT: exited with 0
+# THE COLLECTOR TAKES A STRUCTURE THAT A PLACE REMEMBERS, AND ITS IDENTITY COMES BACK FOR ANOTHER KIND. Six kinds are remembered and die; the kinds made behind the collection hold the name.
+# RUN(SWEPT): run-in-shell drive = function ({ Meter, road }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; const make = (name, held) => { const o = new Meter(1); o[name] = 1; if (held) o.missing = held; return o; }; const until = name => { for (let t = 1; t <= 80000; t++) { if (road(make(name)) === "short undefined") return t; } return 80001; }; const fill = () => { let most = 0; for (let k = 0; k < 6; k++) most = Math.max(most, until("kind" + k)); return most; }; print(fill() < 80001 ? "the place holds six kinds" : "the place holds too few"); const clean = depth => depth ? clean(depth - 1) + 1 : 0; clean(200); gc(); gc(); const ask = () => { let wrong = 0; for (let k = 0; k < 12; k++) { const o = make("new" + k, 7); for (let a = 0; a < 6; a++) { if (road(o) !== "full 7") wrong++; } } return wrong; }; print(ask()); };
+# SWEPT: the place holds six kinds
+# SWEPT-NEXT: 0
+# SWEPT-NEXT: exited with 0
+# Without the mechanism that keeps notes nothing is learned and nothing is folded.
+# RUN(UNFOLDED): run-in-shell mechanisms=-Folding drive = function ({ Meter, road }) { const extra = () => { const o = new Meter(1); o.unrelated = 1; return o; }; const warm = (ask, make, yes) => { let n = 0; for (let t = 0; t < 6400; t++) { if (ask(make()) === yes) n++; } return n > 6000 ? "the place answers" : "the place stays empty: " + n; }; print(warm(road, extra, "short undefined")); const o = extra(); o.missing = 1; print(road(o)); };
+# UNFOLDED: the place answers
+# UNFOLDED-NEXT: full 1
+# UNFOLDED-NEXT: exited with 0
+
+module m0 path="extras2.js" displayPath="extras2.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Gauge" module=m0 position=169 constructor=f10 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Fine" module=m0 position=258 base=L0 constructor=f13 fields=[{key="grain" declared={type=anything} flags=[IsRequired]}, {key="level" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 kind=Instance name="Meter" module=m0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}, {key="count" declared={type=anything} flags=[IsRequired]}, {key="tagged" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=3
+layout L3 module=m0 position=1896 fields=[{key="Fine" declared={type=anything} flags=[IsRequired]}, {key="Gauge" declared={type=anything} flags=[IsRequired]}, {key="Meter" declared={type=anything} flags=[IsRequired]}, {key="again" declared={type=anything} flags=[IsRequired]}, {key="bare" declared={type=anything} flags=[IsRequired]}, {key="below" declared={type=anything} flags=[IsRequired]}, {key="fresh" declared={type=anything} flags=[IsRequired]}, {key="kept" declared={type=anything} flags=[IsRequired]}, {key="named" declared={type=anything} flags=[IsRequired]}, {key="road" declared={type=anything} flags=[IsRequired]}, {key="twice" declared={type=anything} flags=[IsRequired]}] declaredOrder=[2, 1, 0, 9, 6, 10, 3, 7, 8, 4, 5] ownFieldCount=11
+variable g0 name="Meter" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Gauge" module=m0 declared={type=absent|f10 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f7 @0
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f8 @0
+    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f9 @0
+    v15 = Convert v14 declared={type=f9 flags=[IsFromCompiler]} @0
+    v16 = NewClosure function=f10 @163
+    v17 = NewClass v16 layout=L0 @163
+    PutModuleVariable v17 variable=g2 @163
+    v19 = NewClosure function=f11 @220
+    DefineMethod v17, v19 layout=L0 key="read" @220
+    v21 = FinishClass v17 layout=L0 @163
+    v22 = Convert v21 declared={type=f10 flags=[IsFromCompiler]} @163
+    v23 = Convert v21 declared={type=f10 flags=[IsFromCompiler]} @163
+    PutModuleVariable v23 variable=g1 @163
+    v25 = GetModuleVariable variable=g0 @104
+    v26 = PropGet v25 key="prototype" @104
+    v27 = NewClosure function=f12 @127
+    PropSet v26, v27 key="read" @110
+    v29 = ResolveHeritage v23 @271
+    v30 = NewClosure function=f13 @252
+    v31 = NewClass v30, v23, v29 layout=L1 @252
+    PutModuleVariable v31 variable=g3 @252
+    v33 = FinishClass v31 layout=L1 @252
+    v34 = Convert v33 declared={type=f13 flags=[IsFromCompiler]} @252
+    v35 = Convert v33 declared={type=f13 flags=[IsFromCompiler]} @252
+    v36 = Builtin builtin=GlobalThis @1890
+    v37 = PropGet v36 key="drive" [isFreeName] @1890
+    v38 = GetModuleVariable variable=g0 @1898
+    v39 = NewObject -, v38, v23, v35, v1, v3, v5, v7, v9, v11, v13, v15 layout=L3 fields=[2, 1, 0, 9, 6, 10, 3, 7, 8, 4, 5] @1896
+    v40 = FinishObject v39 @1896
+    v41 = Call v37, -, v40 calleeName="drive" @1890
+    v42 = Undefined @1890
+    Return v42 @1890
+}
+function f1 name="Meter" module=m0 flags=[HasThis, HasExplicitName] length=2 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2, v1: anything, v2: anything):
+    PropSet v0, v1 key="level" @32
+    v4 = Integer integer=1 @65
+    PropSet v0, v4 key="count" @52
+    v6 = ToBoolean v2 @72
+    Branch v6 -> taken b1(| 0), notTaken b2() @72
+  b1(v7):
+    PropSet v0, v2 key="tagged" @80
+    Jump -> next b2() @80
+  b2():
+    v9 = Undefined @80
+    Return v9 @80
+}
+function f2 name="road" module=m2 position=334 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @362
+    v2 = Undefined @362
+    v3 = GetModuleVariable variable=g0 @389
+    v4 = IsPlainInstanceOf v0, v3 @362
+    v5 = ToBoolean v4 @362
+    Branch v5 -> taken b1(| 0), notTaken b3() @362
+  b1(v6):
+    v7 = Undefined @399
+    v8 = Undefined @399
+    v9 = String string="missing" @422
+    v10 = FindsNoMember v0 key="missing" @399
+    v11 = ToBoolean v10 @399
+    Branch v11 -> taken b2(| 0), notTaken b3() @399
+  b2(v12):
+    v13 = String string="short " @441
+    v14 = PropGet v0 key="missing" @452
+    v15 = Add v13, v14 @452
+    Return v15 @452
+  b3():
+    v16 = String string="full " @475
+    v17 = PropGet v0 key="missing" @485
+    v18 = Add v16, v17 @485
+    Return v18 @485
+}
+function f3 name="fresh" module=m2 position=503 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|function):
+    v1 = GetModuleVariable variable=g0 @549
+    v2 = Integer integer=4 @555
+    v3 = Construct v1, -, v2 calleeName="Meter" @549
+    v4 = Call v0, -, v3 calleeName="decorate" @559
+    v5 = Undefined @584
+    v6 = Undefined @584
+    v7 = String string="missing" @607
+    v8 = FindsNoMember v3 key="missing" @584
+    v9 = ToBoolean v8 @584
+    Branch v9 -> taken b1(| 0), notTaken b2(| 0) @584
+  b1(v10):
+    v11 = String string="lacks " @620
+    v12 = PropGet v3 key="missing" @631
+    v13 = Add v11, v12 @631
+    Jump -> next b3(v13) @631
+  b2(v14):
+    v15 = String string="may hold " @648
+    v16 = PropGet v3 key="missing" @662
+    v17 = Add v15, v16 @662
+    Jump -> next b3(v17) @662
+  b3(v18):
+    Return v18 @662
+}
+function f4 name="twice" module=m2 position=680 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @709
+    v2 = Undefined @709
+    v3 = GetModuleVariable variable=g0 @736
+    v4 = IsPlainInstanceOf v0, v3 @709
+    v5 = ToBoolean v4 @709
+    Branch v5 -> taken b1(| 0), notTaken b5() @709
+  b1(v6):
+    v7 = Undefined @746
+    v8 = Undefined @746
+    v9 = String string="missing" @769
+    v10 = FindsNoMember v0 key="missing" @746
+    v11 = ToBoolean v10 @746
+    Branch v11 -> taken b2(| 0), notTaken b5() @746
+  b2(v12):
+    v13 = Undefined @783
+    v14 = Undefined @783
+    v15 = String string="other" @806
+    v16 = FindsNoMember v0 key="other" @783
+    v17 = ToBoolean v16 @783
+    Branch v17 -> taken b3(| 0), notTaken b5() @783
+  b3(v18):
+    v19 = Undefined @818
+    v20 = Undefined @818
+    v21 = String string="missing" @841
+    v22 = FindsNoMember v0 key="missing" @818
+    v23 = ToBoolean v22 @818
+    Branch v23 -> taken b4(| 0), notTaken b5() @818
+  b4(v24):
+    v25 = String string="short " @860
+    v26 = PropGet v0 key="missing" @871
+    v27 = Add v25, v26 @871
+    v28 = String string=" " @888
+    v29 = Add v27, v28 @888
+    v30 = PropGet v0 key="other" @894
+    v31 = Add v29, v30 @894
+    Return v31 @894
+  b5():
+    v32 = String string="full " @915
+    v33 = PropGet v0 key="missing" @925
+    v34 = Add v32, v33 @925
+    v35 = String string=" " @942
+    v36 = Add v34, v35 @942
+    v37 = PropGet v0 key="other" @948
+    v38 = Add v36, v37 @948
+    Return v38 @948
+}
+function f5 name="again" module=m2 position=964 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|object, v1: anything):
+    v2 = Undefined @999
+    v3 = Undefined @999
+    v4 = GetModuleVariable variable=g0 @1026
+    v5 = IsPlainInstanceOf v0, v4 @999
+    v6 = ToBoolean v5 @999
+    Branch v6 -> taken b1(| 0), notTaken b6() @999
+  b1(v7):
+    v8 = Undefined @1036
+    v9 = Undefined @1036
+    v10 = String string="missing" @1059
+    v11 = FindsNoMember v0 key="missing" @1036
+    v12 = ToBoolean v11 @1036
+    Branch v12 -> taken b2(| 0), notTaken b6() @1036
+  b2(v13):
+    v14 = String string="stored" @1088
+    ElemSet v0, v1, v14 @1073
+    v16 = Undefined @1106
+    v17 = Undefined @1106
+    v18 = String string="missing" @1129
+    v19 = FindsNoMember v0 key="missing" @1106
+    v20 = ToBoolean v19 @1106
+    Branch v20 -> taken b3(| 0), notTaken b4(| 0) @1106
+  b3(v21):
+    v22 = String string="lacks " @1142
+    Jump -> next b5(v22) @1142
+  b4(v23):
+    v24 = String string="may hold " @1153
+    Jump -> next b5(v24) @1153
+  b5(v25):
+    v26 = PropGet v0 key="missing" @1168
+    v27 = Add v25, v26 @1168
+    Return v27 @1168
+  b6():
+    v28 = String string="full " @1193
+    v29 = PropGet v0 key="missing" @1203
+    v30 = Add v28, v29 @1203
+    Return v30 @1203
+}
+function f6 name="kept" module=m2 position=1221 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @1249
+    v2 = Undefined @1249
+    v3 = GetModuleVariable variable=g0 @1276
+    v4 = IsPlainInstanceOf v0, v3 @1249
+    v5 = ToBoolean v4 @1249
+    Branch v5 -> taken b1(| 0), notTaken b3() @1249
+  b1(v6):
+    v7 = Undefined @1286
+    v8 = Undefined @1286
+    v9 = String string="missing" @1309
+    v10 = FindsNoMember v0 key="missing" @1286
+    v11 = ToBoolean v10 @1286
+    Branch v11 -> taken b2(| 0), notTaken b3() @1286
+  b2(v12):
+    v13 = Integer integer=1 @1339
+    PropSet v0, v13 key="tagged" @1323
+    v15 = String string="short " @1349
+    v16 = PropGet v0 key="missing" @1360
+    v17 = Add v15, v16 @1360
+    v18 = String string=" " @1377
+    v19 = Add v17, v18 @1377
+    v20 = PropGet v0 key="tagged" @1383
+    v21 = Add v19, v20 @1383
+    Return v21 @1383
+  b3():
+    v22 = String string="full " @1407
+    v23 = PropGet v0 key="missing" @1417
+    v24 = Add v22, v23 @1417
+    Return v24 @1417
+}
+function f7 name="named" module=m2 position=1435 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @1465
+    v2 = Undefined @1465
+    v3 = GetModuleVariable variable=g0 @1492
+    v4 = IsPlainInstanceOf v0, v3 @1465
+    v5 = ToBoolean v4 @1465
+    Branch v5 -> taken b1(| 0), notTaken b5(| 0) @1465
+  b1(v6):
+    v7 = Undefined @1519
+    v8 = Undefined @1519
+    v9 = String string="__proto__" @1542
+    v10 = FindsNoMember v0 key="__proto__" @1519
+    v11 = ToBoolean v10 @1519
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0) @1519
+  b2(v12):
+    v13 = String string="lacks" @1557
+    Jump -> next b4(v13) @1557
+  b3(v14):
+    v15 = String string="may hold" @1567
+    Jump -> next b4(v15) @1567
+  b4(v16):
+    Return v16 @1567
+  b5(v17):
+    v18 = String string="-" @1507
+    Return v18 @1507
+}
+function f8 name="bare" module=m2 position=1581 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @1610
+    v2 = Undefined @1610
+    v3 = GetModuleVariable variable=g0 @1637
+    v4 = IsPlainInstanceOf v0, v3 @1610
+    v5 = ToBoolean v4 @1610
+    Branch v5 -> taken b1(| 0), notTaken b5(| 0) @1610
+  b1(v6):
+    v7 = Undefined @1664
+    v8 = Undefined @1664
+    v9 = String string="nowhere" @1687
+    v10 = FindsNoMember v0 key="nowhere" @1664
+    v11 = ToBoolean v10 @1664
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0) @1664
+  b2(v12):
+    v13 = String string="lacks" @1700
+    Jump -> next b4(v13) @1700
+  b3(v14):
+    v15 = String string="may hold" @1710
+    Jump -> next b4(v15) @1710
+  b4(v16):
+    Return v16 @1710
+  b5(v17):
+    v18 = String string="-" @1652
+    Return v18 @1652
+}
+function f9 name="below" module=m2 position=1724 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @1753
+    v2 = Undefined @1753
+    v3 = GetModuleVariable variable=g1 @1776
+    v4 = CheckInitialized v3 name="Gauge" @1776
+    v5 = IsPlainHeirOf v0, v4 @1753
+    v6 = ToBoolean v5 @1753
+    Branch v6 -> taken b1(| 0), notTaken b3() @1753
+  b1(v7):
+    v8 = Undefined @1786
+    v9 = Undefined @1786
+    v10 = String string="missing" @1809
+    v11 = FindsNoMember v0 key="missing" @1786
+    v12 = ToBoolean v11 @1786
+    Branch v12 -> taken b2(| 0), notTaken b3() @1786
+  b2(v13):
+    v14 = String string="short " @1828
+    v15 = PropGet v0 key="missing" @1839
+    v16 = Add v14, v15 @1839
+    Return v16 @1839
+  b3():
+    v17 = String string="full " @1862
+    v18 = PropGet v0 key="missing" @1872
+    v19 = Add v17, v18 @1872
+    Return v19 @1872
+}
+function f10 name="Gauge" module=m0 position=188 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @188
+    v3 = NewObject v2 layout=L0 @188
+    v4 = Convert v3 declared={type=L0} @188
+    PropSet v4, v1 key="level" @198
+    v6 = Undefined @198
+    v7 = TypeTest v6 testedType=object @198
+    Branch v7 -> taken b1(| 0), notTaken b2(v4) @198
+  b1(v8):
+    Jump -> next b2(v8) @198
+  b2(v9):
+    Return v9 @198
+}
+function f11 name="read" module=m0 position=220 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="level" @236
+    Return v1 @236
+}
+function f12 module=m0 position=127 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="level" @148
+    Return v1 @148
+}
+function f13 name="Fine" module=m0 position=290 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = Absent @291
+    v4 = GetSuperBase v0 @300
+    v5 = SuperConstruct v4, v1, v2 layout=L1 @300
+    v6 = Convert v5 declared={type=L1} @300
+    v7 = TypeTest v3 testedType=absent @300
+    Branch v7 -> taken b1(| 0), notTaken b11(| 0) @300
+  b1(v8):
+    v9 = TypeTest v6 testedType=absent @314
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0) @314
+  b2(v10):
+    v11 = NewRuntimeError runtimeError=UninitializedThis @314
+    Throw v11 @314
+  b3(v12):
+    v13 = Integer integer=1 @327
+    PropSet v12, v13 key="grain" @314
+    v15 = Undefined @314
+    v16 = TypeTest v15 testedType=object @314
+    Branch v16 -> taken b4(| 0), notTaken b5(| 0) @314
+  b4(v17):
+    Jump -> next b9(v17) @314
+  b5(v18):
+    v19 = TypeTest v18 testedType=undefined @314
+    Branch v19 -> taken b6(| 0), notTaken b10(| 0) @314
+  b6(v20):
+    v21 = TypeTest v12 testedType=absent @314
+    Branch v21 -> taken b7(| 0), notTaken b8(| 0) @314
+  b7(v22):
+    v23 = NewRuntimeError runtimeError=UninitializedThis @314
+    Throw v23 @314
+  b8(v24):
+    Jump -> next b9(v24) @314
+  b9(v25):
+    Return v25 @314
+  b10(v26):
+    v27 = NewRuntimeError runtimeError=DerivedConstructorResult name="Fine" @314
+    Throw v27 @314
+  b11(v28):
+    v29 = NewRuntimeError runtimeError=ThisAlreadyBound @300
+    Throw v29 @300
+}
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
+function f16 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f16 visibility=Private

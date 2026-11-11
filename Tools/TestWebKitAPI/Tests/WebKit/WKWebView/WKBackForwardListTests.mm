@@ -32,6 +32,7 @@
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestUIDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
+#import "Helpers/cocoa/WKWebViewConfigurationExtras.h"
 #import "TestURLSchemeHandler.h"
 #import <WebKit/WKArray.h>
 #import <WebKit/WKBackForwardListItemPrivate.h>
@@ -401,6 +402,7 @@ TEST(WKBackForwardList, InteractionStateRestorationMultipleItems)
 
 @interface WKBackForwardNavigationDelegate : NSObject <WKNavigationDelegatePrivate>
 - (void)waitForDidFinishNavigationOrDidSameDocumentNavigation;
+@property (nonatomic, copy) void (^backForwardListItemAdded)(WKBackForwardListItem *);
 @end
 
 static RetainPtr<WKNavigation> lastNavigation;
@@ -435,6 +437,12 @@ static RetainPtr<WKNavigation> lastNavigation;
         _navigated = true;
         lastNavigation = navigation;
     }
+}
+
+- (void)_webView:(WKWebView *)webView backForwardListItemAdded:(WKBackForwardListItem *)itemAdded removed:(NSArray<WKBackForwardListItem *> *)itemsRemoved
+{
+    if (_backForwardListItemAdded)
+        _backForwardListItemAdded(itemAdded);
 }
 
 - (void)waitForDidFinishNavigationOrDidSameDocumentNavigation
@@ -1352,8 +1360,6 @@ static void runGoBackAfterNavigatingSameSiteIframe(ShouldEnablePageCache shouldE
     RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
     [navigationDelegate allowAnyTLSCertificate];
     RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
-    // FIXME: Remove once the back-forward cache is enabled for site isolation: rdar://161762363.
-    const bool backForwardCacheEnabled = isUsingBackForwardCache(webView.get());
     webView.get().navigationDelegate = navigationDelegate.get();
     static bool didCommitLoadForAllFrames = false;
     static unsigned expectedCommittedFrameSize = 2;
@@ -1401,7 +1407,7 @@ static void runGoBackAfterNavigatingSameSiteIframe(ShouldEnablePageCache shouldE
 
     // Navigate main frame back.
     // For page cache case, iframe is not reloaded, so there is only one commit.
-    expectedCommittedFrameSize = backForwardCacheEnabled ? 1 : 2;
+    expectedCommittedFrameSize = shouldEnablePageCache == ShouldEnablePageCache::Yes ? 1 : 2;
     [webView goBack];
 
     TestWebKitAPI::Util::run(&didCommitLoadForAllFrames);
@@ -1749,8 +1755,6 @@ static void runGoBackAfterNavigatingSameSiteIframe2(ShouldEnablePageCache should
     RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
     [navigationDelegate allowAnyTLSCertificate];
     RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
-    // FIXME: Remove once the back-forward cache is enabled for site isolation: rdar://161762363.
-    const bool backForwardCacheEnabled = isUsingBackForwardCache(webView.get());
     webView.get().navigationDelegate = navigationDelegate.get();
     static bool didCommitLoadForAllFrames = false;
     static unsigned expectedCommittedFrameSize = 2;
@@ -1798,7 +1802,7 @@ static void runGoBackAfterNavigatingSameSiteIframe2(ShouldEnablePageCache should
 
     // Navigate main frame back.
     // For page cache case, iframe is not reloaded, so there is only one commit.
-    expectedCommittedFrameSize = backForwardCacheEnabled ? 1 : 2;
+    expectedCommittedFrameSize = shouldEnablePageCache == ShouldEnablePageCache::Yes ? 1 : 2;
     [webView goBack];
 
     TestWebKitAPI::Util::run(&didCommitLoadForAllFrames);
@@ -1862,6 +1866,15 @@ TEST(WKBackForwardList, BackForwardNavigationSkipsPromiseRedirectWithoutUserInte
     __block bool popupCreated = false;
     RetainPtr navigationDelegate = adoptNS([WKBackForwardNavigationDelegate new]);
 
+    __block bool sawPageBItemAdded = false;
+    __block bool pageBItemWasFlaggedWhenAdded = false;
+    navigationDelegate.get().backForwardListItemAdded = ^(WKBackForwardListItem *item) {
+        if (![item.URL.path isEqualToString:@"/pageB"])
+            return;
+        sawPageBItemAdded = true;
+        pageBItemWasFlaggedWhenAdded = item._wasCreatedByJSWithoutUserInteraction;
+    };
+
     RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
     uiDelegate.get().createWebViewWithConfiguration = ^(WKWebViewConfiguration *configuration, WKNavigationAction *action, WKWindowFeatures *windowFeatures) {
         popupWebView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration]);
@@ -1882,6 +1895,10 @@ TEST(WKBackForwardList, BackForwardNavigationSkipsPromiseRedirectWithoutUserInte
     // Wait for two navigations to finish: To page A, then to Page B.
     [navigationDelegate waitForDidFinishNavigation];
     [navigationDelegate waitForDidFinishNavigation];
+
+    // Apps like Safari make decisions when an item is added, so the flag must already be set at that point.
+    EXPECT_TRUE(sawPageBItemAdded);
+    EXPECT_TRUE(pageBItemWasFlaggedWhenAdded);
 
     // Page A did some crypto operations in a promise chain.
     // At the end of that promise chain it did a JS redirect to page B.
@@ -1982,6 +1999,66 @@ TEST(WKBackForwardList, CrossDocumentNavigationWithRecentUserGestureNotFlagged)
     EXPECT_FALSE([webView backForwardList].currentItem._wasCreatedByJSWithoutUserInteraction);
     EXPECT_EQ([webView backForwardList].backList.count, 1U);
 }
+
+#if PLATFORM(MAC)
+static bool evaluateBooleanWithoutUserGesture(WKWebView *webView, NSString *script)
+{
+    __block bool done = false;
+    __block bool value = false;
+    [webView _evaluateJavaScriptWithoutUserGesture:script completionHandler:^(id result, NSError *error) {
+        EXPECT_NULL(error);
+        value = [result boolValue];
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    return value;
+}
+
+TEST(WKBackForwardList, BackForwardNavigationDoesNotSkipPageWithConsumedUserActivation)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/first"_s, { "First page"_s } },
+        { "/second"_s, { "<body style='margin: 0; width: 100%; height: 100%' onclick='window.webkit.messageHandlers.testHandler.postMessage(\"clicked\")'></body>"_s } },
+        { "/third"_s, { "Third page"_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    WKWebViewConfiguration *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration addToWindow:YES]);
+    RetainPtr navigationDelegate = adoptNS([WKBackForwardNavigationDelegate new]);
+    [webView setNavigationDelegate:navigationDelegate.get()];
+
+    __block bool clicked = false;
+    [webView performAfterReceivingMessage:@"clicked" action:^{
+        clicked = true;
+    }];
+
+    [webView loadRequest:server.request("/first"_s)];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView loadRequest:server.request("/second"_s)];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView waitForNextPresentationUpdate];
+
+    [webView sendClickAtPoint:NSMakePoint(100, 100)];
+    TestWebKitAPI::Util::run(&clicked);
+    EXPECT_TRUE(evaluateBooleanWithoutUserGesture(webView.get(), @"internals.hasTransientActivation()"));
+
+    // Something else consuming the activation doesn't change that the user interacted with this page.
+    EXPECT_TRUE(evaluateBooleanWithoutUserGesture(webView.get(), @"internals.consumeTransientActivation()"));
+    EXPECT_FALSE(evaluateBooleanWithoutUserGesture(webView.get(), @"internals.hasTransientActivation()"));
+
+    [webView _evaluateJavaScriptWithoutUserGesture:@"location.href = '/third';" completionHandler:nil];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    EXPECT_STREQ([webView URL].absoluteString.UTF8String, server.request("/third"_s).URL.absoluteString.UTF8String);
+    EXPECT_STREQ([[webView stringByEvaluatingJavaScript:@"history.length"] UTF8String], "3");
+    EXPECT_EQ([webView backForwardList].backList.count, 2U);
+    EXPECT_STREQ([webView backForwardList].backItem.URL.absoluteString.UTF8String, server.request("/second"_s).URL.absoluteString.UTF8String);
+
+    [webView goBack];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_STREQ([webView URL].absoluteString.UTF8String, server.request("/second"_s).URL.absoluteString.UTF8String);
+}
+#endif
 
 TEST(WKBackForwardList, BackButtonWorksAfterUserClickFromJSCreatedPage)
 {

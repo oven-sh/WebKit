@@ -19,7 +19,6 @@ class Structure;
 
 namespace AOT {
 
-class BuiltinLocationWatch;
 class JSONRuntime;
 struct Instance;
 struct State;
@@ -35,7 +34,6 @@ struct BuiltinFamilyState {
 
     Instance& instance;
     std::unique_ptr<JSONRuntime> json;
-    std::unique_ptr<BuiltinLocationWatch> locationWatch;
 };
 
 } // namespace AOT

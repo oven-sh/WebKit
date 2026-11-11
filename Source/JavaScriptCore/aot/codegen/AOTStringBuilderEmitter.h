@@ -8,8 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
-#include "AOTStringEmitter.h"
-#include "AOTVector.h"
+#include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -21,37 +20,31 @@ public:
     }
 
     void generateStringBuilderBegin(const ValueContext&);
-    void generateStringBuilderAppendJSON(const ValueContext&);
-    void generateStringBuilderAppendJSONMembers(const ValueContext&);
     void generateStringBuilderLength(const ValueContext&);
     void generateStringBuilderToString(const ValueContext&);
     void generateStringBuilderFinish(const ValueContext&);
     void generateStringBuilderDiscard(const ValueContext&);
     void generateStringBuilderCheckpoint(const ValueContext&);
     void generateStringBuilderRollBack(const ValueContext&);
+    void generateStackStringBuilderBegin(const ValueContext&);
+    void generateStackStringBuilderStart(const ValueContext&);
+    void generateStackStringBuilderCursor(const ValueContext&);
+    void generateStackStringBuilderLength(const ValueContext&);
+    void generateStackStringBuilderToString(const ValueContext&);
+    void generateStackStringBuilderFinish(const ValueContext&);
+    void generateStackStringBuilderDiscard(const ValueContext&);
 
-    struct StackBuilder {
-        B3::Air::StackSlot* slot { nullptr };
-        B3::Variable* cursor { nullptr };
-        bool readsLength { false };
-    };
-    // Null for a builder that is a StringBuilderStorage from the start.
-    const StackBuilder* stackBuilderFor(ValueID builder);
-    Pointer addressOf(const StackBuilder&);
-    Pointer cursorOf(const StackBuilder&);
-    void setCursor(const StackBuilder&, Pointer);
-    Pointer limitOf(const StackBuilder&);
-    // For a cursor behind a write of at most StackStringBuilder::maxBytesWrittenPastLimit bytes.
-    void advance(const OperationContext&, const StackBuilder&, Pointer cursor);
+    Pointer recordOf(const ValueContext& value) const { return Pointer(in<CellPointer>(value->builderOperand()).value()); }
+    Pointer limitOf(Pointer record);
+    Pointer advance(const OperationContext&, Pointer record, Pointer cursor);
+    void defineCursorBehindPart(const ValueContext&, Pointer record, Pointer cursor, unsigned constantsWrittenAhead = 0);
 
-    TypedPointer storageField(CellPointer builder, ptrdiff_t offset) { return contentsAt(builder.value(), offset); }
-    TypedPointer bytesAt(Pointer cursor, ptrdiff_t offset = 0) { return contentsAt(cursor.value(), offset); }
+    TypedPointer storageField(CellPointer builder, ptrdiff_t offset) { return m_out.address(m_heaps.AOTStringBuilderStorage_fields, builder.value(), offset); }
+    TypedPointer bytesAt(Pointer cursor, ptrdiff_t offset = 0) { return m_out.address(m_heaps.stringBuilderBytes, cursor.value(), offset); }
     Word32 lengthOf(CellPointer builder);
 
     Pointer tryReserve(CellPointer builder, Word32 size, LBasicBlock whenThereIsNoRoom);
-    // Room for whole words that hold `length` characters. What appends fewer characters than it asks room for would be refused near the longest text while it fits: see tryReserve().
     Pointer reserve(const OperationContext&, CellPointer builder, uint32_t length);
-    Pointer reserve(const OperationContext&, CellPointer builder, Word32 size);
     void commit(CellPointer builder, Pointer cursor);
 
     Pointer writeBytes(Pointer cursor, std::span<const Latin1Character>);
@@ -62,16 +55,10 @@ public:
     static constexpr int64_t firstIntegerWrittenByCall = 100'000'000;
 
 private:
-    void findStackBuilders();
-    TypedPointer contentsAt(LValue base, ptrdiff_t offset) { return TypedPointer(m_heaps.entire(AbstractHeap::StringBuilderContents), base, offset); }
-    TypedPointer stackBuilderField(const StackBuilder& builder, ptrdiff_t offset) { return contentsAt(addressOf(builder).value(), offset); }
+    TypedPointer recordField(Pointer record, ptrdiff_t offset) { return m_out.address(m_heaps.AOTStackStringBuilder_fields, record.value(), offset); }
+    Pointer limitOnStack(Pointer record);
+    void storeEmptyRecord(Pointer record);
     Pointer copyShortLatin1Characters(Pointer cursor, Pointer source, Word32 length);
-
-    static constexpr uint32_t noStackBuilder = UINT32_MAX;
-
-    bool m_hasFoundStackBuilders { false };
-    Vector<StackBuilder, 1> m_stackBuilders;
-    Vector<uint32_t> m_stackBuilderOf;
 };
 
 } } } // namespace JSC::AOT::Typed

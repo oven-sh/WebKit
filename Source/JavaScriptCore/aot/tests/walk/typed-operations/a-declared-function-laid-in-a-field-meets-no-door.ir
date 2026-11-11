@@ -1,0 +1,32 @@
+# function given(x) { return x; } function make() { return { given }; } make().given(1)
+# The field is held to that one function. The read of a variable that is born with a function makes that closure itself, and nobody can store there: no proof of Link's is in what it gives, and the field asks nothing of it.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[read]]: {{*}} = GetModuleVariable variable=g0
+# CHECK-NOT: CheckProof
+# CHECK: = NewObject -, [[read]] layout=L0
+
+layout L0 module=m0 fields=[{key="given" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="given" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0 calleeName="make"
+    v2 = PropGet v1 key="given"
+    v3 = Integer integer=1
+    v4 = Call v2, v1, v3 calleeKey="given" calleeName="made.given"
+    Return v4
+}
+function f1 name="given" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f2 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}

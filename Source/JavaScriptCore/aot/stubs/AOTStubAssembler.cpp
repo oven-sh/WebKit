@@ -13,6 +13,7 @@
 #include "AOTStubFrontEnds.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
+#include "AOTStubsOperations.h"
 #include "AOTStubsPolls.h"
 #include "AOTVector.h"
 #include "AssemblerPolicy.h"
@@ -34,7 +35,6 @@ void readTagsFromInstance(CCallHelpers& jit)
 #endif
 }
 
-// The stubs count bits with popcnt. Every x86-64 processor that Bun runs on has it: -march=nehalem is the floor.
 static CPUFeatureSet featuresOfStubs(CPUFeatureSet features)
 {
 #if CPU(X86_64)
@@ -44,10 +44,11 @@ static CPUFeatureSet featuresOfStubs(CPUFeatureSet features)
 #endif
 }
 
-StubAssembler::StubAssembler(const StubOptions& options, const StubCatalog& catalog)
+StubAssembler::StubAssembler(const StubOptions& options, const StubCatalog& catalog, PCRelativeReach addressReach)
     : m_options(options)
     , m_catalog(catalog)
     , m_relocations(*this, AssemblerPolicy::forImage(featuresOfStubs(options.targetFeatures)))
+    , m_addressReach(addressReach)
 {
     readTagsFromInstance(*this);
 }
@@ -68,18 +69,32 @@ StubRecording StubAssembler::generateBody(StubKey body, const ScopedLambda<void(
     RELEASE_ASSERT(!m_key.hasFamily());
 
     m_key = body;
-    m_signature = signatureOf(body);
+    m_callPosition = CallPosition::Ordinary;
+    m_signature = signatureOf(key());
     m_recording = { };
     m_recording.body = body;
     m_allocated = RegisterSet();
     m_clobberedOperands = RegisterSet();
     m_borrowedFPRs = RegisterSet();
     m_savedRegisterStack.clear();
+    m_boxesBooleanAtEveryReturn = false;
+    m_stubBehindEveryReturn = std::nullopt;
     m_outOfLineParts.clear();
+    m_entriesBehindTheirHeads.clear();
 
+    if (m_signature.filledOutOfResultInFrontOfBody) {
+        const unsigned sizeOfHead = sizeOfHeadOfStub(m_signature.movedIntoResultInFront ? entryInFrontOfStubThatDoesTwoMoves : entryInFrontOfStub);
+        alignWhatStandsBehind(sizeOfHead);
+        const size_t begin = m_assembler.codeSize();
+        CCallHelpers::move(GPRInfo::returnValueGPR, m_signature.filledOutOfResultInFrontOfBody.gpr());
+        if (m_signature.movedIntoResultInFront)
+            CCallHelpers::move(m_signature.movedIntoResultInFront.gpr(), GPRInfo::returnValueGPR);
+        RELEASE_ASSERT(m_assembler.codeSize() - begin == sizeOfHead);
+    }
     if (!isOperationCallHead(body))
         align();
     Label start = label();
+    m_headOfBody = start;
     generator(*this);
     for (size_t index = 0; index < m_outOfLineParts.size(); ++index)
         std::exchange(m_outOfLineParts[index], nullptr)(*this);
@@ -106,8 +121,7 @@ StubRecording StubAssembler::generateBody(StubKey body, const ScopedLambda<void(
 void StubAssembler::emitOperationCallHead()
 {
     RELEASE_ASSERT(m_signature.immediate);
-    uint32_t offset = *key().immediate();
-    Entry entry = entryAtOffset(offset);
+    Entry entry = entryAtOffset(*key().immediate());
     for (const OperationPrelude& prelude : operationPreludes()) {
         if (prelude.operation == entry && prelude.emit(*this) == PreludeExit::Returns)
             return;
@@ -119,12 +133,41 @@ void StubAssembler::jumpToOperationCallOf(Entry entry)
 {
     recordCall(entry);
     move(TrustedImm32(offsetInRuntimeTable(entry)), *m_signature.immediate);
+    if (key().family() == StubFamily::CallOperationPreservingRegisters && preservingCallShapes[key().form()].firstArgument == OperationCall::FirstArgument::Instance && hasPrelude(entryAtOffset(*key().immediate()))) {
+        unsigned index = 1;
+        for (GPRReg reg : registersThatPreservingCallsTakeArgumentsIn()) {
+            recordClobber(reg);
+            move(operationArgumentGPR(index++), reg);
+        }
+    }
     jumpToStub(key().withoutImmediate());
+}
+
+void StubAssembler::jumpToCallOfOperation(Entry entry)
+{
+    RELEASE_ASSERT(effectsOf(entry).mayThrow);
+    constexpr StubKey callsOperation = AOT::callOperation(OperationCall::Returns::Value, OperationCall::FirstArgument::Instance);
+    if (hasPrelude(entry)) {
+        jumpToStub(callsOperation.withImmediate(offsetInRuntimeTable(entry)));
+        return;
+    }
+    recordCall(entry);
+    move(TrustedImm32(static_cast<int32_t>(offsetInRuntimeTable(entry))), reuseScratch(stubImmediateRegister));
+    jumpToStub(callsOperation);
+}
+
+void StubAssembler::jumpToStubTakingImmediate()
+{
+    RELEASE_ASSERT(m_signature.immediate && m_key.immediate() && !isOperationCallHead(m_key));
+    move(TrustedImm32(static_cast<int32_t>(*m_key.immediate())), *m_signature.immediate);
+    jumpToStub(m_key.withoutImmediate());
 }
 
 void StubAssembler::recordSignatureRegisters(StubKey entry)
 {
     StubSignature signature = signatureOf(entry);
+    if (signature.filledOutOfResultInFront && !m_entriesBehindTheirHeads.contains(entry) && (signature.filledOutOfResultInFront != m_signature.filledOutOfResultInFrontOfBody || m_entryLabels.get(entry.bits()) != m_headOfBody))
+        crashWhileGenerating("an entry that has an operand filled in front does not stand at the head of the body"_s);
     if (signature.firstResult)
         recordClobber(signature.firstResult);
     if (signature.secondResult)
@@ -133,11 +176,36 @@ void StubAssembler::recordSignatureRegisters(StubKey entry)
         recordClobber(*signature.immediate);
 }
 
+static ASCIILiteral nameOfCallerFrameOfStub(CallerFrame callerFrame)
+{
+    switch (callerFrame) {
+    case CallerFrame::HasFrame:
+        return "HasFrame"_s;
+    case CallerFrame::Frameless:
+        return "Frameless"_s;
+    case CallerFrame::StubFrame:
+        return "StubFrame"_s;
+    case CallerFrame::KeepsNoFPRs:
+        return "KeepsNoFPRs"_s;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void StubAssembler::crashWhileGenerating(ASCIILiteral reason) const
 {
     PrintStream& out = WTF::dataFile();
     out.print("AOT: cannot generate the stub "_s);
-    AOT::dump(out, m_key);
+    if (m_key.hasFamily()) {
+        const StubDescriptor& descriptor = descriptorOf(m_key.family());
+        out.print(descriptor.name);
+        if (m_key.form() < descriptor.formNames.size())
+            out.print("."_s, descriptor.formNames[m_key.form()]);
+        out.print(", count "_s, m_key.count(), ", "_s, nameOfCallerFrameOfStub(m_key.callerFrame()));
+        if (std::optional<GPRReg> operandRegister = m_key.operandRegister())
+            out.print(", operand in "_s, *operandRegister);
+        if (std::optional<uint32_t> immediate = m_key.immediate())
+            out.print(", immediate "_s, *immediate);
+    }
     out.println(": "_s, reason);
     CRASH();
 }
@@ -184,6 +252,14 @@ GPRReg StubAssembler::reuseScratch(StubRegister stubRegister)
         crashWhileGenerating("a reused register holds an operand, belongs to the caller, or does not exist on this CPU"_s);
     m_allocated.add(reg);
     recordClobber(reg);
+    return reg;
+}
+
+GPRReg StubAssembler::savedScratch(StubRegister stubRegister)
+{
+    GPRReg reg = gprOf(stubRegister);
+    if (reg == InvalidGPRReg || !isSaved(reg))
+        crashWhileGenerating("a register that is taken for saved is not saved here, or does not exist on this CPU"_s);
     return reg;
 }
 
@@ -270,7 +346,7 @@ void StubAssembler::loadPreservedRegisters(std::span<const GPRReg> saved)
     addPtr(TrustedImm32(alignedSizeOfRegisters(saved.size())), stackPointerRegister);
 }
 
-StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway)
+StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep, unsigned bytesLeftFreeAbove)
 {
     Vector<Reg, 48> registers;
     registersClobberedBy(callee).forEach([&](Reg reg) {
@@ -279,12 +355,17 @@ StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCa
         if (!hasResult || reg != Reg(GPRInfo::returnValueGPR))
             registers.append(reg);
     });
+    const size_t numberToRestore = registers.size();
+    for (std::optional<GPRReg> cell : cellsToKeep) {
+        if (cell && !registers.contains(Reg(*cell)))
+            registers.append(*cell);
+    }
 #if CPU(X86_64)
     unsigned bytes = alignedSizeOfRegisters(registers.size() + 2) - sizeof(CPURegister);
-    subPtr(TrustedImm32(bytes), stackPointerRegister);
+    subPtr(TrustedImm32(bytes + bytesLeftFreeAbove), stackPointerRegister);
 #else
     unsigned bytes = alignedSizeOfRegisters(registers.size() + 1);
-    subPtr(TrustedImm32(bytes), stackPointerRegister);
+    subPtr(TrustedImm32(bytes + bytesLeftFreeAbove), stackPointerRegister);
     storePtr(linkRegister, Address(stackPointerRegister));
 #endif
     for (unsigned i = 0; i < registers.size(); ++i) {
@@ -304,10 +385,11 @@ StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCa
         else
             storeDouble(registers[i].fpr(), address);
     }
+    registers.shrink(numberToRestore);
     return { WTF::move(registers), bytes };
 }
 
-void StubAssembler::loadSavedRegisters(const SavedRegisterArea& area)
+void StubAssembler::loadSavedRegisters(const SavedRegisterArea& area, StackPointerAfterLoads stackPointer)
 {
     auto& registers = area.registers;
     for (unsigned i = 0; i < registers.size(); ++i) {
@@ -330,7 +412,8 @@ void StubAssembler::loadSavedRegisters(const SavedRegisterArea& area)
 #if !CPU(X86_64)
     loadPtr(Address(stackPointerRegister), linkRegister);
 #endif
-    addPtr(TrustedImm32(area.bytes), stackPointerRegister);
+    if (stackPointer == StackPointerAfterLoads::IsMovedBack)
+        addPtr(TrustedImm32(area.bytes), stackPointerRegister);
 }
 
 void StubAssembler::recordCall(Entry entry)
@@ -388,27 +471,26 @@ void StubAssembler::recordFarJump(PtrTag tag)
     recordCallee(tag);
 }
 
-void StubAssembler::emitStackAlignmentCheck()
+void StubAssembler::alignWhatStandsBehind(unsigned size)
 {
-#if CPU(X86_64)
-    if (!m_options.validates)
-        return;
-    Jump isAligned = branchTestPtr(Zero, stackPointerRegister, TrustedImm32(stackAlignmentBytes() - 1));
-    breakpoint();
-    isAligned.link(this);
-#endif
+    constexpr unsigned alignment = 16;
+    while ((m_assembler.codeSize() + size) % alignment)
+        emitPadding(*this);
+}
+
+void StubAssembler::align()
+{
+    alignWhatStandsBehind(0);
 }
 
 CCallHelpers::Call StubAssembler::call(GPRReg target, PtrTag tag)
 {
-    emitStackAlignmentCheck();
     recordCallee(tag);
     return CCallHelpers::call(target, tag);
 }
 
 CCallHelpers::Call StubAssembler::call(Address target, PtrTag tag)
 {
-    emitStackAlignmentCheck();
     recordCallee(tag);
 #if CPU(X86_64)
     CCallHelpers::call(target, tag);
@@ -448,6 +530,7 @@ void StubAssembler::addReference(StubKey target, StubReference::Kind kind)
         checkHasNoBorrowedFPRs();
         break;
     case StubReference::Kind::Call:
+    case StubReference::Kind::PollAfterOperation:
     case StubReference::Kind::Address:
         if (!m_savedRegisterStack.isEmpty())
             savedAround = m_savedRegisterStack.last();
@@ -458,20 +541,36 @@ void StubAssembler::addReference(StubKey target, StubReference::Kind kind)
     m_recording.references.appendIfNotContains(StubReference { target, kind, savedAround });
 }
 
-void StubAssembler::emitStubCall(StubKey target)
+void StubAssembler::emitStubCall(StubKey target, StubReference::Kind kind)
 {
-    addReference(target, StubReference::Kind::Call);
+    addReference(target, kind);
     m_pendingCalls.append({ CCallHelpers::nearCall(), target });
 }
 
 void StubAssembler::callStub(StubKey target)
 {
-    emitStackAlignmentCheck();
     emitStubCall(target);
+}
+
+static bool formOfJumpTargetKeepsResults(const StubSignature& target, const StubSignature& signature)
+{
+    for (Reg result : { signature.firstResult, signature.secondResult }) {
+        if (!result || result.isGPR())
+            continue;
+        if (result != target.firstResult && result != target.secondResult)
+            return false;
+    }
+    return true;
 }
 
 void StubAssembler::linkToStub(Jump jump, StubKey target)
 {
+    RELEASE_ASSERT(!m_boxesBooleanAtEveryReturn || target.family() == StubFamily::HandleException);
+    if (callerKeepsNoFPRs() && target.callerFrame() == CallerFrame::HasFrame) {
+        std::optional<StubKey> form = tryWithCallerFrame(target, m_key.callerFrame());
+        if (form && formOfJumpTargetKeepsResults(signatureOf(target), m_signature))
+            target = *form;
+    }
     addReference(target, StubReference::Kind::Jump);
     m_pendingJumps.append({ jump, target });
 }
@@ -486,19 +585,19 @@ void StubAssembler::linkToStub(JumpList& jumps, StubKey target)
 void StubAssembler::loadStubAddress(StubKey target, GPRReg result)
 {
     addReference(target, StubReference::Kind::Address);
-    m_pendingStubAddresses.append({ movePCRelativeAddress(result, PCRelativeReach::Near), target });
+    m_pendingStubAddresses.append({ movePCRelativeAddress(result, m_addressReach), target });
 }
 
 void StubAssembler::returnStubAddress(StubKey target)
 {
     addReference(target, StubReference::Kind::ReturnedAddress);
-    m_pendingStubAddresses.append({ movePCRelativeAddress(result(), PCRelativeReach::Near), target });
+    m_pendingStubAddresses.append({ movePCRelativeAddress(result(), m_addressReach), target });
     returnToCaller();
 }
 
 void StubAssembler::loadLabelAddress(Label target, GPRReg result)
 {
-    m_pendingLabelAddresses.append({ movePCRelativeAddress(result, PCRelativeReach::Near), target });
+    m_pendingLabelAddresses.append({ movePCRelativeAddress(result, m_addressReach), target });
 }
 
 void StubAssembler::jumpThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers)
@@ -508,20 +607,30 @@ void StubAssembler::jumpThroughHandlerTable(BaseIndex tableEntry, std::span<cons
     CCallHelpers::farJump(tableEntry, JITThunkPtrTag);
 }
 
-void StubAssembler::callThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers)
+void StubAssembler::callThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers, GPRReg scratch)
 {
-    if (!canWrite(tableEntry.index))
-        crashWhileGenerating("the index register of a called handler table holds an operand or belongs to the caller"_s);
-    recordClobber(tableEntry.index);
     for (StubKey handler : handlers)
         addReference(handler, StubReference::Kind::Call);
-    loadPtr(tableEntry, tableEntry.index);
-    CCallHelpers::call(tableEntry.index, JITThunkPtrTag);
+    loadPtr(tableEntry, scratch);
+    CCallHelpers::call(scratch, JITThunkPtrTag);
+}
+
+void StubAssembler::bindEntryBehindItsHead(StubKey entry)
+{
+    const StubSignature signature = signatureOf(entry);
+    RELEASE_ASSERT(signature.filledOutOfResultInFront && !signature.filledOutOfResultInFrontOfBody);
+    const size_t begin = m_assembler.codeSize();
+    CCallHelpers::move(GPRInfo::returnValueGPR, signature.filledOutOfResultInFront.gpr());
+    if (signature.movedIntoResultInFront)
+        CCallHelpers::move(signature.movedIntoResultInFront.gpr(), GPRInfo::returnValueGPR);
+    RELEASE_ASSERT(m_assembler.codeSize() - begin == sizeOfHeadOfStub(signature.movedIntoResultInFront ? entryInFrontOfStubThatDoesTwoMoves : entryInFrontOfStub));
+    m_entriesBehindTheirHeads.append(entry);
+    bindEntry(entry);
 }
 
 void StubAssembler::bindEntryAt(StubKey entry, Label location)
 {
-    if (!exists(entry) || bodyOf(entry) != key())
+    if (!exists(entry) || bodyOf(entry) != m_key)
         crashWhileGenerating("it binds an entry of another body"_s);
     if (!m_entryLabels.add(entry.bits(), location).isNewEntry)
         crashWhileGenerating("an entry is bound twice"_s);
@@ -553,53 +662,41 @@ void StubAssembler::returnToCaller()
     RELEASE_ASSERT(m_savedRegisterStack.isEmpty());
     checkHasNoBorrowedFPRs();
     RELEASE_ASSERT(!isARM64() || key().callerFrame() != CallerFrame::Frameless);
+    if (m_stubBehindEveryReturn) {
+        jumpToStub(*m_stubBehindEveryReturn);
+        return;
+    }
+    if (m_boxesBooleanAtEveryReturn)
+        or32(TrustedImm32(JSValue::ValueFalse), result());
     ret();
 }
 
-void StubAssembler::checkReturnsFlags() const
+void StubAssembler::returnFlags32(RelationalCondition, GPRReg left, GPRReg right)
 {
-    RELEASE_ASSERT(m_signature.result == StubResult::Flags);
-    RELEASE_ASSERT(m_signature.trueCondition == Zero || m_signature.trueCondition == NonZero);
-}
-
-void StubAssembler::checkReturnsFlags(RelationalCondition condition) const
-{
-    checkReturnsFlags();
-    RELEASE_ASSERT(condition == Equal || condition == NotEqual);
-    RELEASE_ASSERT((condition == Equal) == (m_signature.trueCondition == Zero));
-}
-
-void StubAssembler::returnFlags32(RelationalCondition condition, GPRReg left, GPRReg right)
-{
-    checkReturnsFlags(condition);
     compareOnFlags32(left, right);
     returnToCaller();
 }
 
-void StubAssembler::returnFlags32(RelationalCondition condition, GPRReg left, TrustedImm32 right)
+void StubAssembler::returnFlags32(RelationalCondition, GPRReg left, TrustedImm32 right)
 {
-    checkReturnsFlags(condition);
     compareOnFlags32(left, right);
     returnToCaller();
 }
 
-void StubAssembler::returnFlags64(RelationalCondition condition, GPRReg left, GPRReg right)
+void StubAssembler::returnFlags64(RelationalCondition, GPRReg left, GPRReg right)
 {
-    checkReturnsFlags(condition);
     compareOnFlags64(left, right);
     returnToCaller();
 }
 
 void StubAssembler::returnFlagsTest32(GPRReg reg, TrustedImm32 mask)
 {
-    checkReturnsFlags();
-    test32(reg, mask);
+    test32(m_signature.trueCondition, reg, mask);
     returnToCaller();
 }
 
 void StubAssembler::returnFlagsConstant(bool value)
 {
-    checkReturnsFlags();
     if (value == (m_signature.trueCondition == Zero))
         compareOnFlags64(instanceGPR, instanceGPR);
     else {
@@ -619,19 +716,84 @@ void StubAssembler::jumpToExceptionHandler()
     jumpToStub(handleException(false));
 }
 
-CCallHelpers::Address StubAssembler::limitOfCallsByValue()
+CCallHelpers::Address StubAssembler::limitOfTailCallsByValue()
 {
     return Address(instanceGPR, AOT_INSTANCE_OFFSET(callsByValue.limit) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
 }
 
+CCallHelpers::Address StubAssembler::softStackLimitWord()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
+}
+
+CCallHelpers::Address StubAssembler::trapAwareSoftStackLimitWord()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
+}
+
 void StubAssembler::checkStackBeforeEntering()
 {
-    pollIfBelow(Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit()), pollBeforeEntering(PollBeforeEnteringForm::Plain));
+    pollIfBelow(trapAwareSoftStackLimitWord(), pollBeforeEntering(PollBeforeEnteringForm::Plain));
+}
+
+void StubAssembler::pollBeforeReturningFromNativeCode()
+{
+    if (key().callerFrame() == CallerFrame::StubFrame)
+        return;
+    Jump mayHavePendingTrap = branchPtr(Below, stackPointerRegister, trapAwareSoftStackLimitWord());
+    Label afterPoll = label();
+    addOutOfLinePart([mayHavePendingTrap, afterPoll](StubAssembler& jit) {
+        mayHavePendingTrap.link(&jit);
+        jit.branchPtr(Below, stackPointerRegister, softStackLimitWord()).linkTo(afterPoll, &jit);
+        jit.pollAtStubEntry(pollBeforeEntering(PollBeforeEnteringForm::Plain));
+        jit.jump().linkTo(afterPoll, &jit);
+    });
+}
+
+CCallHelpers::Address StubAssembler::pollIsDueWord()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(pollIsDue));
+}
+
+CCallHelpers::Jump StubAssembler::branchIfNonZeroOrPollIsDue(GPRReg value, GPRReg scratch)
+{
+#if CPU(X86_64)
+    UNUSED_PARAM(scratch);
+    or64(pollIsDueWord(), value);
+    return Jump(m_assembler.jCC(x86Condition(NonZero)));
+#else
+    loadPtr(pollIsDueWord(), scratch);
+    or64(scratch, value);
+    return branchTestPtr(NonZero, value);
+#endif
+}
+
+void StubAssembler::pollBeforeReturningFromOperation(Label afterPoll)
+{
+    branchPtr(Below, stackPointerRegister, softStackLimitWord()).linkTo(afterPoll, this);
+    pollAtStubEntry(pollBeforeEntering(PollBeforeEnteringForm::Plain), StubReference::Kind::PollAfterOperation);
+    jump().linkTo(afterPoll, this);
+}
+
+void StubAssembler::checkStackBeforeEntering(GPRReg endOfFrame)
+{
+    Jump mayNotFit = branchPtr(Below, endOfFrame, trapAwareSoftStackLimitWord());
+    Label afterCheck = label();
+    addOutOfLinePart([mayNotFit, afterCheck, endOfFrame](StubAssembler& jit) {
+        mayNotFit.link(&jit);
+        jit.linkToStub(jit.branchPtr(Below, endOfFrame, softStackLimitWord()), throwStackOverflow());
+        jit.pollAtStubEntry(pollBeforeEntering(PollBeforeEnteringForm::Plain));
+        jit.jump().linkTo(afterCheck, &jit);
+    });
 }
 
 void StubAssembler::checkStackBeforeEnteringCallee()
 {
-    pollIfBelow(limitOfCallsByValue(), pollBeforeEntering(PollBeforeEnteringForm::FunctionObject));
+    if (m_callPosition == CallPosition::Ordinary) {
+        checkStackBeforeEntering();
+        return;
+    }
+    pollIfBelow(limitOfTailCallsByValue(), pollBeforeEntering(PollBeforeEnteringForm::FunctionObject));
 }
 
 void StubAssembler::pollIfBelow(Address limit, StubKey poll)
@@ -640,16 +802,33 @@ void StubAssembler::pollIfBelow(Address limit, StubKey poll)
     Label afterCheck = label();
     addOutOfLinePart([doesNotFit, afterCheck, poll](StubAssembler& jit) {
         doesNotFit.link(&jit);
-#if CPU(ARM64)
-        jit.move(linkRegister, ARM64Registers::x16);
-#endif
-        // sp is as at the entry of this stub: on x86-64 not aligned for a call, which PollBeforeEntering expects.
-        jit.emitStubCall(poll);
-#if CPU(X86_64)
-        jit.bindReturnLabel(StubFrameKind::AtStubEntry);
-#endif
+        jit.pollAtStubEntry(poll);
         jit.jump().linkTo(afterCheck, &jit);
     });
+}
+
+void StubAssembler::pollAtStubEntry(StubKey poll, StubReference::Kind kind)
+{
+#if CPU(ARM64)
+    move(linkRegister, ARM64Registers::x16);
+#endif
+    emitStubCall(poll, kind);
+#if CPU(X86_64)
+    bindReturnLabel(StubFrameKind::AtStubEntry);
+#endif
+}
+
+void StubAssembler::pollBeforeCall(Label returnSite)
+{
+#if CPU(ARM64)
+    loadLabelAddress(returnSite, ARM64Registers::x16);
+    emitStubCall(pollBeforeEntering(PollBeforeEnteringForm::Plain));
+#else
+    loadLabelAddress(returnSite, s_scratchRegister);
+    push(s_scratchRegister);
+    pollAtStubEntry(pollBeforeEntering(PollBeforeEnteringForm::Plain));
+    addPtr(TrustedImm32(sizeof(void*)), stackPointerRegister);
+#endif
 }
 
 CCallHelpers::Label StubAssembler::labelOf(StubKey entry) const
@@ -670,11 +849,12 @@ bool StubAssembler::linkCallsAndAddresses(LinkBuffer& linkBuffer)
 {
     for (const PendingCall& pending : m_pendingCalls)
         linkBuffer.link<JITThunkPtrTag>(pending.call, linkBuffer.locationOf<JITThunkPtrTag>(labelOf(pending.target)));
+    RelocationKind addressKind = addressKindFor(m_addressReach);
     bool isInReach = true;
     for (const PendingStubAddress& pending : m_pendingStubAddresses)
-        isInReach &= linkBuffer.link(pending.site, RelocationKind::AddressNear, labelOf(pending.target));
+        isInReach &= linkBuffer.link(pending.site, addressKind, labelOf(pending.target));
     for (const PendingLabelAddress& pending : m_pendingLabelAddresses)
-        isInReach &= linkBuffer.link(pending.site, RelocationKind::AddressNear, pending.target);
+        isInReach &= linkBuffer.link(pending.site, addressKind, pending.target);
     return isInReach;
 }
 

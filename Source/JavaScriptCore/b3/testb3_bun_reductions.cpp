@@ -8,12 +8,15 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirExtendedForms.h"
 #include "B3BulkMemoryValue.h"
 #include "B3EliminateDeadCode.h"
 #include "B3FoldPathConstants.h"
 #include "B3IntRange.h"
 #include "B3OptimizeAssociativeExpressionTrees.h"
+#include "B3ReduceDoubleToFloat.h"
 #include "B3ThreadJumps.h"
+#include "MathCommon.h"
 
 static constexpr int64_t tag = static_cast<int64_t>(0xfffe000000000000ull);
 
@@ -376,6 +379,63 @@ static void testThreadJumpsIgnoresConditionOfEarlierIteration()
     }
 }
 
+// if (guard) { if (*p & 1) ..; else ..; } if (guard) { if (*p & 1) return 10; return 20; } return 30;
+// The second read stands below its own test of the guard, so no earlier read dominates it and it is a value of its own.
+// Where one way has written the word, that way needs the second test, and then no way passes it by.
+static void testThreadJumpsDecidesTestOfWordReadAgain()
+{
+    enum class Between : uint8_t { Nothing, WriteToOtherWord, WriteToSameWord };
+    for (Between between : { Between::Nothing, Between::WriteToOtherWord, Between::WriteToSameWord }) {
+        Procedure proc(jumpThreadingPolicy());
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* firstRead = proc.addBlock();
+        BasicBlock* odd = proc.addBlock();
+        BasicBlock* even = proc.addBlock();
+        BasicBlock* unguarded = proc.addBlock();
+        BasicBlock* join = proc.addBlock();
+        BasicBlock* secondRead = proc.addBlock();
+        BasicBlock* taken = proc.addBlock();
+        BasicBlock* notTaken = proc.addBlock();
+        BasicBlock* end = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t*>(proc, root);
+        Value* guard = arguments[0];
+        Value* pointer = arguments[1];
+        auto isOdd = [&](BasicBlock* block) {
+            return graph.make(block, BitAnd, graph.load(block, Int64, pointer, 0, firstHeap), graph.int64(block, 1));
+        };
+        graph.branch(root, guard, firstRead, unguarded);
+        graph.branch(firstRead, isOdd(firstRead), odd, even);
+        if (between == Between::WriteToOtherWord)
+            graph.store(odd, graph.int64(odd, 4), pointer, 8, secondHeap);
+        if (between == Between::WriteToSameWord)
+            graph.store(odd, graph.int64(odd, 4), pointer, 0, firstHeap);
+        graph.jump(odd, join);
+        graph.jump(even, join);
+        graph.jump(unguarded, join);
+        graph.branch(join, guard, secondRead, end);
+        graph.branch(secondRead, isOdd(secondRead), taken, notTaken);
+        graph.ret(taken, graph.int64(taken, 10));
+        graph.ret(notTaken, graph.int64(notTaken, 20));
+        graph.ret(end, graph.int64(end, 30));
+        resetAndValidate(proc);
+        threadJumps(proc);
+        fixSSA(proc);
+        validate(proc);
+        CHECK(odd->successorBlock(0) == (between == Between::WriteToSameWord ? secondRead : taken));
+        CHECK(even->successorBlock(0) == (between == Between::WriteToSameWord ? secondRead : notTaken));
+        CHECK(unguarded->successorBlock(0) == end);
+
+        auto code = compileProc(proc);
+        for (int64_t word : { 3, 6 }) {
+            int64_t memory[2] = { word, 0 };
+            CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(1), memory), word == 3 && between != Between::WriteToSameWord ? 10 : 20);
+            memory[0] = word;
+            CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(0), memory), 30);
+        }
+    }
+}
+
 static void testThreadJumpsLeavesNoTemporaries()
 {
     Procedure proc(jumpThreadingPolicy());
@@ -509,6 +569,39 @@ static void testWideOperationWithWideUserStaysWide()
         constexpr int32_t maxWord = std::numeric_limits<int32_t>::max();
         CHECK_EQ(invoke<int32_t>(*code, 3, 4), 7);
         CHECK_EQ(invoke<int32_t>(*code, maxWord, 1), hasWideUser ? 99 : std::numeric_limits<int32_t>::min());
+    }
+}
+
+static void testLowWordOfSumBehindDoublesIsNarrowSum()
+{
+    for (B3::Opcode opcode : { Add, Sub }) {
+        for (bool isClient : { true, false }) {
+            Procedure proc(isClient ? strengthReductionPolicy() : Policy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            auto words = cCallArgumentValues<int32_t, int32_t>(proc, root);
+            Value* sum = graph.make(root, opcode, graph.make(root, IToD, words[0]), graph.make(root, IToD, words[1]));
+            PatchpointValue* truncated = root->appendNew<PatchpointValue>(proc, Int64, Origin());
+            truncated->append(sum, ValueRep::SomeRegister);
+            truncated->effects = Effects::none();
+            truncated->pureFunction = PureFunction { 1, true, true };
+            truncated->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+            });
+            graph.ret(root, graph.make(root, Trunc, truncated));
+            resetAndValidate(proc);
+            reduceStrengthOnce(proc);
+            CHECK_EQ(numberOfValues(proc, Patchpoint), isClient ? 0u : 1u);
+            CHECK_EQ(numberOfValues(proc, IToD), isClient ? 0u : 2u);
+            CHECK_EQ(numberOfWideValues(proc, opcode), 0u);
+            CHECK_EQ(numberOfValues(proc, opcode), 1u);
+
+            auto code = compileProc(proc);
+            for (int32_t a : wordsToCombine) {
+                for (int32_t b : wordsToCombine)
+                    CHECK_EQ(invoke<int32_t>(*code, a, b), lowWordOf(opcode, a, b));
+            }
+        }
     }
 }
 
@@ -877,11 +970,16 @@ enum class ExtendedForm : uint8_t {
     SignExtensionOfLoad,
     TestOfLoad,
     SelectOnTestOfLoad,
+    Branch32OnIndexedLoad,
+    Branch32BeforeIndexedLoad,
+    Branch64BeforeIndexedLoad,
+    Branch64OnIndexedLoadAndImmediate,
 };
 
 } // anonymous namespace
 
 static constexpr int64_t factorOfProduct = 1000003;
+static constexpr int64_t loadBound = 300;
 
 static Air::Opcode airOpcodeOf(ExtendedForm form)
 {
@@ -894,10 +992,19 @@ static Air::Opcode airOpcodeOf(ExtendedForm form)
         return Air::Test64;
     case ExtendedForm::SelectOnTestOfLoad:
         return Air::MoveConditionallyTest64;
+    case ExtendedForm::Branch32OnIndexedLoad:
+    case ExtendedForm::Branch32BeforeIndexedLoad:
+        return Air::Branch32;
+    case ExtendedForm::Branch64BeforeIndexedLoad:
+    case ExtendedForm::Branch64OnIndexedLoadAndImmediate:
+        return Air::Branch64;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return Air::Oops;
 }
+
+// Scaled by eight this is in the range of load offsets on ARM64.
+static constexpr int32_t loadIndex = 31;
 
 static void buildUserOfExtendedForm(Graph& graph, ExtendedForm form)
 {
@@ -922,6 +1029,23 @@ static void buildUserOfExtendedForm(Graph& graph, ExtendedForm form)
     case ExtendedForm::SelectOnTestOfLoad:
         graph.ret(root, graph.select(root, appendMaskedLoad(), operand, other));
         return;
+    case ExtendedForm::Branch32OnIndexedLoad:
+    case ExtendedForm::Branch32BeforeIndexedLoad:
+    case ExtendedForm::Branch64BeforeIndexedLoad:
+    case ExtendedForm::Branch64OnIndexedLoadAndImmediate: {
+        Type type = airOpcodeOf(form) == Air::Branch32 ? Int32 : Int64;
+        Value* address = graph.make(root, Add, pointer, graph.make(root, Shl, other, graph.int32(root, 3)));
+        Value* loaded = graph.load(root, type, address, -loadIndex * 8, firstHeap);
+        Value* compared = form == ExtendedForm::Branch64OnIndexedLoadAndImmediate ? graph.int64(root, loadBound) : type == Int32 ? graph.make(root, Trunc, operand) : operand;
+        bool isBefore = form == ExtendedForm::Branch32BeforeIndexedLoad || form == ExtendedForm::Branch64BeforeIndexedLoad;
+        Value* comparison = isBefore ? graph.make(root, LessThan, compared, loaded) : graph.make(root, LessThan, loaded, compared);
+        BasicBlock* lessThanBlock = graph.proc.addBlock();
+        BasicBlock* otherwise = graph.proc.addBlock();
+        graph.branch(root, comparison, lessThanBlock, otherwise);
+        graph.ret(lessThanBlock, graph.int64(lessThanBlock, 1));
+        graph.ret(otherwise, graph.int64(otherwise, 0));
+        return;
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -937,6 +1061,14 @@ static int64_t resultOfExtendedForm(ExtendedForm form, int64_t loaded, int64_t o
         return !(loaded & operand);
     case ExtendedForm::SelectOnTestOfLoad:
         return (loaded & operand) ? operand : other;
+    case ExtendedForm::Branch32OnIndexedLoad:
+        return static_cast<int32_t>(loaded) < static_cast<int32_t>(operand);
+    case ExtendedForm::Branch32BeforeIndexedLoad:
+        return static_cast<int32_t>(operand) < static_cast<int32_t>(loaded);
+    case ExtendedForm::Branch64BeforeIndexedLoad:
+        return operand < loaded;
+    case ExtendedForm::Branch64OnIndexedLoadAndImmediate:
+        return loaded < loadBound;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return 0;
@@ -951,7 +1083,7 @@ static void testExtendedFormsAreSelectedOnRequest()
     };
     const Case cases[] = { { Policy::fromProcessOptions(), false }, { Policy(), false }, { selectionPolicy(), true } };
     for (const Case& testCase : cases) {
-        for (ExtendedForm form : { ExtendedForm::ProductWithImmediate, ExtendedForm::SignExtensionOfLoad, ExtendedForm::TestOfLoad, ExtendedForm::SelectOnTestOfLoad }) {
+        for (ExtendedForm form : { ExtendedForm::ProductWithImmediate, ExtendedForm::SignExtensionOfLoad, ExtendedForm::TestOfLoad, ExtendedForm::SelectOnTestOfLoad, ExtendedForm::Branch32OnIndexedLoad, ExtendedForm::Branch32BeforeIndexedLoad, ExtendedForm::Branch64BeforeIndexedLoad, ExtendedForm::Branch64OnIndexedLoadAndImmediate }) {
             bool isSelected = testCase.extendsInstructionSelection && (isX86() || form == ExtendedForm::SignExtensionOfLoad);
             Procedure lowered(testCase.policy);
             Graph loweredGraph { lowered };
@@ -959,9 +1091,9 @@ static void testExtendedFormsAreSelectedOnRequest()
             lowerToAirForTesting(lowered);
             CHECK_EQ(numberOfInsts(lowered, airOpcodeOf(form)), 1u);
             CHECK_EQ(numberOfInsts(lowered, [&](Air::Inst& inst) {
-                return inst.kind.opcode == airOpcodeOf(form) && std::ranges::any_of(inst.args(), [](const Air::Arg& arg) {
-                    return arg.isImm() || arg.isMemory();
-                });
+                std::span<const Air::Arg> args = inst.args();
+                bool isExtended = args.size() == 2 ? Air::isExtendedForm(inst.kind.opcode, args[0].kind(), args[1].kind()) : args.size() >= 3 && Air::isExtendedForm(inst.kind.opcode, args[0].kind(), args[1].kind(), args[2].kind());
+                return inst.kind.opcode == airOpcodeOf(form) && isExtended;
             }), isSelected ? 1u : 0u);
 
             Procedure proc(testCase.policy);
@@ -971,9 +1103,545 @@ static void testExtendedFormsAreSelectedOnRequest()
             for (int64_t loaded : { 0ll, 6ll, -1ll, 0x180000001ll }) {
                 int64_t memory[1] = { loaded };
                 for (int64_t operand : { 0ll, 1ll, 2ll, -5ll }) {
-                    constexpr int64_t other = 77;
-                    CHECK_EQ(invoke<int64_t>(*code, memory, operand, other), resultOfExtendedForm(form, loaded, operand, other));
+                    CHECK_EQ(invoke<int64_t>(*code, memory, operand, loadIndex), resultOfExtendedForm(form, loaded, operand, loadIndex));
                 }
+            }
+        }
+    }
+}
+
+namespace {
+
+struct IntervalTest {
+    B3::Opcode first;
+    int64_t firstConstant;
+    B3::Opcode second;
+    int64_t secondConstant;
+    // Whether the edge that leaves is the one taken where the comparison holds.
+    bool leavesWhereFirstHolds;
+    bool leavesWhereSecondHolds;
+    bool isMerged;
+};
+
+} // anonymous namespace
+
+template<typename T>
+static bool holds(B3::Opcode relation, T left, T right)
+{
+    using Unsigned = std::make_unsigned_t<T>;
+    switch (relation) {
+    case LessThan:
+        return left < right;
+    case LessEqual:
+        return left <= right;
+    case GreaterThan:
+        return left > right;
+    case GreaterEqual:
+        return left >= right;
+    case Below:
+        return static_cast<Unsigned>(left) < static_cast<Unsigned>(right);
+    case BelowEqual:
+        return static_cast<Unsigned>(left) <= static_cast<Unsigned>(right);
+    case Above:
+        return static_cast<Unsigned>(left) > static_cast<Unsigned>(right);
+    case AboveEqual:
+        return static_cast<Unsigned>(left) >= static_cast<Unsigned>(right);
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+template<typename T>
+static void checkTestsOfOneInterval(const IntervalTest& test, bool usesPolicy, bool leavesThroughBlocksOfTheirOwn, bool bothSidesMeet)
+{
+    Type type = sizeof(T) == 4 ? Int32 : Int64;
+    Procedure proc(usesPolicy ? strengthReductionPolicy() : Policy());
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* next = proc.addBlock();
+    BasicBlock* inside = proc.addBlock();
+    BasicBlock* outside = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+    Value* wideOperand = arguments[0];
+    Value* resultOutside = arguments[1];
+    Value* operand = type == Int32 ? graph.make(root, Trunc, wideOperand) : wideOperand;
+    Value* result = graph.phi(outside, Int64);
+    auto wayOut = [&] {
+        if (!leavesThroughBlocksOfTheirOwn)
+            return outside;
+        BasicBlock* edge = proc.addBlock();
+        graph.upsilon(edge, resultOutside, result);
+        graph.jump(edge, outside);
+        return edge;
+    };
+    auto appendTest = [&](BasicBlock* block, B3::Opcode relation, int64_t constant, bool leavesWhereItHolds, BasicBlock* stays) {
+        Value* comparison = graph.make(block, relation, operand, intConstant(graph, block, type, constant));
+        BasicBlock* leaves = wayOut();
+        graph.branch(block, comparison, leavesWhereItHolds ? leaves : stays, leavesWhereItHolds ? stays : leaves);
+    };
+    if (!leavesThroughBlocksOfTheirOwn)
+        graph.upsilon(root, resultOutside, result);
+    appendTest(root, test.first, test.firstConstant, test.leavesWhereFirstHolds, next);
+    appendTest(next, test.second, test.secondConstant, test.leavesWhereSecondHolds, inside);
+    if (bothSidesMeet) {
+        graph.upsilon(inside, graph.int64(inside, 1000), result);
+        graph.jump(inside, outside);
+    } else
+        graph.ret(inside, graph.int64(inside, 1000));
+    graph.ret(outside, result);
+
+    proc.resetReachability();
+    reduceStrength(proc, ReduceStrengthPass::Initial);
+    if (test.isMerged)
+        CHECK_EQ(numberOfValues(proc, Branch), usesPolicy ? 1u : 2u);
+    CHECK_EQ(numberOfValues(proc, Add), usesPolicy && test.isMerged ? 1u : 0u);
+
+    auto code = compileProc(proc);
+    auto check = [&](T value) {
+        bool leaves = holds<T>(test.first, value, static_cast<T>(test.firstConstant)) == test.leavesWhereFirstHolds
+            || holds<T>(test.second, value, static_cast<T>(test.secondConstant)) == test.leavesWhereSecondHolds;
+        CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(value), 7), leaves ? 7 : 1000);
+    };
+    for (int64_t constant : { test.firstConstant, test.secondConstant }) {
+        for (int64_t distance = -2; distance <= 2; ++distance)
+            check(static_cast<T>(static_cast<uint64_t>(constant) + static_cast<uint64_t>(distance)));
+    }
+    for (T value : { T { 0 }, T { -1 }, std::numeric_limits<T>::min(), std::numeric_limits<T>::max() })
+        check(value);
+}
+
+static void testTwoTestsOfOneIntervalBecomeOne()
+{
+    constexpr int64_t least32 = std::numeric_limits<int32_t>::min();
+    constexpr int64_t greatest32 = std::numeric_limits<int32_t>::max();
+    const IntervalTest tests[] = {
+        { LessThan, 48, GreaterThan, 57, true, true, true },
+        { GreaterThan, 57, LessThan, 48, true, true, true },
+        { Below, 48, Above, 57, true, true, true },
+        { GreaterEqual, 48, LessEqual, 57, false, false, true },
+        { AboveEqual, 48, BelowEqual, 57, false, false, true },
+        { LessEqual, 47, GreaterEqual, 58, true, true, true },
+        { LessThan, -5, GreaterThan, 5, true, true, true },
+        { LessThan, 7, GreaterThan, 7, true, true, true },
+        { LessThan, least32 + 1, GreaterThan, greatest32 - 1, true, true, true },
+        { Below, 2, Above, -3, true, true, true },
+        // No value passes both tests.
+        { LessThan, 57, GreaterThan, 48, true, true, false },
+        // Both tests are of the same side.
+        { LessThan, 48, LessThan, 57, true, true, false },
+        // One test takes the value as signed and the other as unsigned.
+        { LessThan, 48, Above, 57, true, true, false },
+        // The edge is always taken.
+        { LessEqual, greatest32, GreaterThan, 57, true, true, false },
+    };
+    for (const IntervalTest& test : tests) {
+        for (bool usesPolicy : { true, false }) {
+            for (bool leavesThroughBlocksOfTheirOwn : { false, true }) {
+                for (bool bothSidesMeet : { false, true }) {
+                    checkTestsOfOneInterval<int32_t>(test, usesPolicy, leavesThroughBlocksOfTheirOwn, bothSidesMeet);
+                    if (test.firstConstant != greatest32)
+                        checkTestsOfOneInterval<int64_t>(test, usesPolicy, leavesThroughBlocksOfTheirOwn, bothSidesMeet);
+                }
+            }
+        }
+    }
+}
+
+static void testTestsOfOneIntervalStayTwoWhereTheyDiffer()
+{
+    enum class Difference : uint8_t { OtherValueLeaves, StoreBetweenTests, OtherOperand };
+    for (Difference difference : { Difference::OtherValueLeaves, Difference::StoreBetweenTests, Difference::OtherOperand }) {
+        Procedure proc(strengthReductionPolicy());
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* next = proc.addBlock();
+        BasicBlock* inside = proc.addBlock();
+        BasicBlock* under = proc.addBlock();
+        BasicBlock* over = proc.addBlock();
+        BasicBlock* outside = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t*>(proc, root);
+        Value* operand = arguments[0];
+        Value* other = arguments[1];
+        Value* pointer = arguments[2];
+        Value* result = graph.phi(outside, Int64);
+        graph.branch(root, graph.make(root, LessThan, operand, graph.int64(root, 48)), under, next);
+        if (difference == Difference::StoreBetweenTests)
+            graph.store(next, operand, pointer, 0, firstHeap);
+        graph.branch(next, graph.make(next, GreaterThan, difference == Difference::OtherOperand ? other : operand, graph.int64(next, 57)), over, inside);
+        graph.upsilon(under, other, result);
+        graph.jump(under, outside);
+        graph.upsilon(over, difference == Difference::OtherValueLeaves ? operand : other, result);
+        graph.jump(over, outside);
+        graph.ret(inside, graph.int64(inside, 1000));
+        graph.ret(outside, result);
+
+        proc.resetReachability();
+        reduceStrength(proc, ReduceStrengthPass::Initial);
+        CHECK_EQ(numberOfValues(proc, Branch), 2u);
+        auto code = compileProc(proc);
+        int64_t memory[1] = { 0 };
+        CHECK_EQ(invoke<int64_t>(*code, 40, 7, memory), 7);
+        CHECK_EQ(memory[0], 0);
+        CHECK_EQ(invoke<int64_t>(*code, 50, 7, memory), 1000);
+        CHECK_EQ(invoke<int64_t>(*code, 60, 7, memory), difference == Difference::OtherValueLeaves ? 60 : difference == Difference::OtherOperand ? 1000 : 7);
+    }
+}
+
+static void testPhisWithSameInputsBecomeOne()
+{
+    enum class Form : uint8_t { Same, OtherInputOnOneSide, InputsSwapped, SecondInputInOneBlock };
+    for (bool usesPolicy : { true, false }) {
+        for (Form form : { Form::Same, Form::OtherInputOnOneSide, Form::InputsSwapped, Form::SecondInputInOneBlock }) {
+            Procedure proc(usesPolicy ? strengthReductionPolicy() : Policy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            BasicBlock* left = proc.addBlock();
+            BasicBlock* right = proc.addBlock();
+            BasicBlock* join = proc.addBlock();
+            auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
+            Value* condition = arguments[0];
+            Value* fromLeft = arguments[1];
+            Value* fromRight = arguments[2];
+            Value* first = graph.phi(join, Int64);
+            Value* second = graph.phi(join, Int64);
+            graph.branch(root, condition, left, right);
+            graph.upsilon(left, fromLeft, first);
+            if (form == Form::SecondInputInOneBlock)
+                graph.upsilon(left, fromRight, second);
+            graph.upsilon(left, form == Form::InputsSwapped ? fromRight : fromLeft, second);
+            graph.jump(left, join);
+            // The Upsilons of the two stand in either order.
+            graph.upsilon(right, form == Form::Same || form == Form::SecondInputInOneBlock ? fromRight : form == Form::InputsSwapped ? fromLeft : condition, second);
+            graph.upsilon(right, fromRight, first);
+            graph.jump(right, join);
+            graph.ret(join, graph.make(join, Sub, graph.make(join, Mul, first, graph.int64(join, 10)), second));
+
+            proc.resetReachability();
+            reduceStrength(proc, ReduceStrengthPass::Initial);
+            CHECK_EQ(numberOfValues(proc, Phi), usesPolicy && form == Form::Same ? 1u : 2u);
+            auto code = compileProc(proc);
+            CHECK_EQ(invoke<int64_t>(*code, 1, 3, 5), 30 - (form == Form::InputsSwapped ? 5 : 3));
+            CHECK_EQ(invoke<int64_t>(*code, 0, 3, 5), 50 - (form == Form::OtherInputOnOneSide ? 0 : form == Form::InputsSwapped ? 3 : 5));
+        }
+    }
+}
+
+static void testConstantLeavesZeroExtendedSumInAddress()
+{
+    struct Case {
+        IntRange range;
+        int32_t constant;
+        unsigned shift;
+        bool isTakenOut;
+    };
+    constexpr int64_t greatest32 = std::numeric_limits<int32_t>::max();
+    const Case cases[] = {
+        { IntRange(0, greatest32), 3, 0, true },
+        { IntRange(0, greatest32), 3, 1, true },
+        { IntRange(0, greatest32), 3, 3, true },
+        { IntRange(5, 100), -5, 0, true },
+        // The sum of 32 bits may wrap around.
+        { IntRange(5, 100), -6, 0, false },
+        { IntRange(-1, 100), 3, 0, false },
+        { IntRange::top<int32_t>(), 3, 3, false },
+    };
+    for (const Case& testCase : cases) {
+        for (bool usesPolicy : { true, false }) {
+            Procedure proc(usesPolicy ? policyWith([](Policy& policy) {
+                policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
+                policy.optimization.reducesWithRanges = true;
+                policy.loops.unrolls = true;
+            }) : Policy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<uint8_t*, int64_t>(proc, root);
+            Value* index = graph.make(root, Trunc, arguments[1]);
+            if (usesPolicy)
+                proc.setKnownRange(index, testCase.range);
+            Value* extended = graph.make(root, ZExt32, graph.make(root, Add, index, graph.int32(root, testCase.constant)));
+            if (testCase.shift)
+                extended = graph.make(root, Shl, extended, graph.int32(root, testCase.shift));
+            MemoryValue* load = root->appendNew<MemoryValue>(proc, Load8Z, Origin(), graph.make(root, Add, arguments[0], extended), 0, firstHeap);
+            graph.ret(root, graph.make(root, ZExt32, load));
+
+            reduceStrength(proc, ReduceStrengthPass::Initial);
+            CHECK_EQ(load->offset(), usesPolicy && testCase.isTakenOut && (isX86() || !testCase.shift) ? testCase.constant * (1 << testCase.shift) : 0);
+            auto code = compileProc(proc);
+            uint8_t memory[1024];
+            for (unsigned position = 0; position < 1024; ++position)
+                memory[position] = position * 7;
+            for (int64_t position : { 6ll, 50ll, 100ll })
+                CHECK_EQ(invoke<int64_t>(*code, memory, position), static_cast<uint8_t>(((position + testCase.constant) << testCase.shift) * 7));
+        }
+    }
+}
+
+static void testZeroExtendedSumWithAnotherUserStaysOutsideX86()
+{
+    Procedure proc(policyWith([](Policy& policy) {
+        policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
+        policy.optimization.reducesWithRanges = true;
+        policy.loops.unrolls = true;
+    }));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uint8_t*, int64_t>(proc, root);
+    Value* pointer = arguments[0];
+    Value* index = graph.make(root, Trunc, arguments[1]);
+    proc.setKnownRange(index, IntRange(0, std::numeric_limits<int32_t>::max()));
+    Value* sum = graph.make(root, Add, index, graph.int32(root, 3));
+    MemoryValue* load = root->appendNew<MemoryValue>(proc, Load8Z, Origin(), graph.make(root, Add, pointer, graph.make(root, ZExt32, sum)), 0, firstHeap);
+    graph.ret(root, graph.make(root, ZExt32, graph.make(root, Mul, load, sum)));
+
+    reduceStrength(proc, ReduceStrengthPass::Initial);
+    CHECK_EQ(load->offset(), isX86() ? 3 : 0);
+    auto code = compileProc(proc);
+    uint8_t memory[16] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    CHECK_EQ(invoke<int64_t>(*code, memory, 4), 49);
+}
+
+// Two accesses at index + 1 and index + 2, neither in front of the other. Outside x86 base + (index << 3) is an instruction: it is made once, where both come from.
+static void testPartOfAddressIsSharedByAccessesThatDoNotFollowEachOther()
+{
+    Procedure proc(policyWith([](Policy& policy) {
+        policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
+        policy.optimization.reducesWithRanges = true;
+        policy.loops.unrolls = true;
+    }));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* first = proc.addBlock();
+    BasicBlock* second = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*, int64_t, int64_t>(proc, root);
+    Value* pointer = arguments[0];
+    Value* index = arguments[1];
+    Value* isFirst = arguments[2];
+    graph.branch(root, isFirst, first, second);
+    auto returnElement = [&](BasicBlock* block, int64_t distance) {
+        Value* offset = graph.make(block, Shl, graph.make(block, Add, index, graph.int64(block, distance)), graph.int32(block, 3));
+        graph.ret(block, graph.load(block, Int64, graph.make(block, Add, pointer, offset), 0, firstHeap));
+    };
+    returnElement(first, 1);
+    returnElement(second, 2);
+    proc.resetReachability();
+
+    reduceStrength(proc, ReduceStrengthPass::Initial);
+    validate(proc);
+    CHECK_EQ(numberOfValues(proc, Shl), isX86() ? 2u : 1u);
+    auto code = compileProc(proc);
+    int64_t memory[4] = { 10, 11, 12, 13 };
+    CHECK_EQ(invoke<int64_t>(*code, memory, 1, 1), 12);
+    CHECK_EQ(invoke<int64_t>(*code, memory, 1, 0), 13);
+}
+
+// An element moves down by one place: the load at index + 1 stands in front of the store at index. Outside x86 the base + (index << 3) that the walk makes for the load is the one
+// that the program wrote for the store, whichever way round it wrote it.
+static void testPartOfAddressIsSharedWithSameSumFurtherDown()
+{
+    for (bool pointerComesFirst : { false, true }) {
+        Procedure proc(policyWith([](Policy& policy) {
+            policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
+            policy.optimization.reducesWithRanges = true;
+            policy.loops.unrolls = true;
+        }));
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t*, int64_t>(proc, root);
+        Value* pointer = arguments[0];
+        Value* index = arguments[1];
+        auto address = [&](Value* place) {
+            Value* offset = graph.make(root, Shl, place, graph.int32(root, 3));
+            return pointerComesFirst ? graph.make(root, Add, pointer, offset) : graph.make(root, Add, offset, pointer);
+        };
+        Value* element = graph.load(root, Int64, address(graph.make(root, Add, index, graph.int64(root, 1))), 0, firstHeap);
+        graph.store(root, element, address(index), 0, firstHeap);
+        graph.ret(root, element);
+
+        reduceStrength(proc, ReduceStrengthPass::Initial);
+        validate(proc);
+        if (!isX86()) {
+            CHECK_EQ(numberOfValues(proc, Shl), 1u);
+            CHECK_EQ(numberOfValues(proc, Add), 1u);
+        }
+        auto code = compileProc(proc);
+        int64_t memory[4] = { 10, 11, 12, 13 };
+        CHECK_EQ(invoke<int64_t>(*code, memory, 1), 12);
+        CHECK_EQ(memory[1], 12);
+        CHECK_EQ(memory[2], 12);
+    }
+}
+
+// A cycle with two entries, each behind a test that folds. The walk reduces the blocks of the cycle before it has seen that nothing leads to them, and they leave the procedure behind it.
+// What is left shares its part as if the cycle had never been there.
+static void testPartOfAddressIsSharedBesideCycleThatLeavesProcedure()
+{
+    Procedure proc(policyWith([](Policy& policy) {
+        policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
+        policy.optimization.reducesWithRanges = true;
+        policy.loops.unrolls = true;
+    }));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* testInFrontOfFirst = proc.addBlock();
+    BasicBlock* testInFrontOfSecond = proc.addBlock();
+    BasicBlock* storing = proc.addBlock();
+    BasicBlock* loading = proc.addBlock();
+    BasicBlock* first = proc.addBlock();
+    BasicBlock* second = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*, int64_t, int64_t>(proc, root);
+    Value* pointer = arguments[0];
+    Value* index = arguments[1];
+    Value* isFirst = arguments[2];
+    auto address = [&](BasicBlock* block, int64_t distance) {
+        Value* offset = graph.make(block, Shl, graph.make(block, Add, index, graph.int64(block, distance)), graph.int32(block, 3));
+        return graph.make(block, Add, pointer, offset);
+    };
+    graph.branch(root, isFirst, testInFrontOfFirst, testInFrontOfSecond);
+    graph.branch(testInFrontOfFirst, graph.int32(testInFrontOfFirst, 0), storing, first);
+    graph.branch(testInFrontOfSecond, graph.int32(testInFrontOfSecond, 0), loading, second);
+    graph.store(storing, index, address(storing, 3), 0, firstHeap);
+    graph.jump(storing, loading);
+    graph.branch(loading, graph.load(loading, Int64, address(loading, 4), 0, firstHeap), storing, first);
+    graph.ret(first, graph.load(first, Int64, address(first, 1), 0, firstHeap));
+    graph.ret(second, graph.load(second, Int64, address(second, 2), 0, firstHeap));
+    proc.resetReachability();
+
+    reduceStrength(proc, ReduceStrengthPass::Initial);
+    validate(proc);
+    CHECK_EQ(numberOfValues(proc, Store), 0u);
+    CHECK_EQ(numberOfValues(proc, Shl), isX86() ? 2u : 1u);
+    auto code = compileProc(proc);
+    int64_t memory[4] = { 10, 11, 12, 13 };
+    CHECK_EQ(invoke<int64_t>(*code, memory, 1, 1), 12);
+    CHECK_EQ(invoke<int64_t>(*code, memory, 1, 0), 13);
+}
+
+static void testDifferencePlusSubtrahend()
+{
+    for (bool usesPolicy : { true, false }) {
+        for (bool differenceIsOnLeft : { true, false }) {
+            Procedure proc(usesPolicy ? strengthReductionPolicy() : Policy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+            Value* difference = graph.make(root, Sub, arguments[0], arguments[1]);
+            graph.ret(root, differenceIsOnLeft ? graph.make(root, Add, difference, arguments[1]) : graph.make(root, Add, arguments[1], difference));
+            reduceStrength(proc, ReduceStrengthPass::Initial);
+            CHECK_EQ(numberOfValues(proc, Add) + numberOfValues(proc, Sub), usesPolicy ? 0u : 2u);
+            auto code = compileProc(proc);
+            CHECK_EQ(invoke<int64_t>(*code, 1, 12345), 1);
+            CHECK_EQ(invoke<int64_t>(*code, std::numeric_limits<int64_t>::min(), 1), std::numeric_limits<int64_t>::min());
+        }
+    }
+}
+
+static void testFloatOfDoubleOfInteger()
+{
+    enum class Width { Narrow, Extended, Wide };
+    for (Width width : { Width::Narrow, Width::Extended, Width::Wide }) {
+        for (bool joins : { false, true }) {
+            auto build = [&](Procedure& proc) {
+                Graph graph { proc };
+                BasicBlock* root = proc.addBlock();
+                Value* argument = cCallArgumentValues<int64_t>(proc, root)[0];
+                Value* integer = width == Width::Wide ? argument : graph.make(root, Trunc, argument);
+                if (width == Width::Extended)
+                    integer = graph.make(root, ZExt32, integer);
+                Value* number = graph.make(root, IToD, integer);
+                if (joins) {
+                    BasicBlock* taken = proc.addBlock();
+                    BasicBlock* notTaken = proc.addBlock();
+                    BasicBlock* join = proc.addBlock();
+                    Value* phi = graph.phi(join, Double);
+                    graph.branch(root, integer, taken, notTaken);
+                    graph.upsilon(taken, number, phi);
+                    graph.jump(taken, join);
+                    graph.upsilon(notTaken, graph.number(notTaken, 1.5), phi);
+                    graph.jump(notTaken, join);
+                    graph.ret(join, graph.make(join, DoubleToFloat, phi));
+                } else
+                    graph.ret(root, graph.make(root, DoubleToFloat, number));
+                resetAndValidate(proc);
+            };
+            Procedure reduced;
+            build(reduced);
+            reduceDoubleToFloat(reduced);
+            validate(reduced);
+            CHECK_EQ(numberOfValues(reduced, IToF), width == Width::Wide ? 0u : 1u);
+
+            Procedure proc;
+            build(proc);
+            auto code = compileProc(proc);
+            for (int64_t value : { 0x1000001000000001ll, -0x1000001000000001ll, 0x4000004000000001ll, 0x7fffffbfffffffffll, 0x20000010000001ll, 0x1000001000000000ll, 16777217ll, 0x7fffffffll, -1ll, 1ll }) {
+                int64_t integer = value;
+                if (width == Width::Narrow)
+                    integer = static_cast<int32_t>(value);
+                if (width == Width::Extended)
+                    integer = static_cast<uint32_t>(value);
+                double expected = joins && !integer ? 1.5 : static_cast<double>(integer);
+                CHECK_EQ(invoke<float>(*code, value), static_cast<float>(expected));
+            }
+        }
+    }
+}
+
+static void testFloatThroughDoubleIsQuiet()
+{
+    enum class Shape { Pair, Neg, Abs, Join };
+    for (Shape shape : { Shape::Pair, Shape::Neg, Shape::Abs, Shape::Join }) {
+        Procedure proc;
+        proc.setIsWasm(true);
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        Value* bits = graph.make(root, Trunc, cCallArgumentValues<int64_t>(proc, root)[0]);
+        Value* number = graph.make(root, FloatToDouble, graph.make(root, BitwiseCast, bits));
+        BasicBlock* last = root;
+        if (shape == Shape::Neg || shape == Shape::Abs)
+            number = graph.make(root, shape == Shape::Neg ? Neg : Abs, number);
+        if (shape == Shape::Join) {
+            BasicBlock* taken = proc.addBlock();
+            BasicBlock* notTaken = proc.addBlock();
+            last = proc.addBlock();
+            Value* phi = graph.phi(last, Double);
+            graph.branch(root, bits, taken, notTaken);
+            graph.upsilon(taken, number, phi);
+            graph.jump(taken, last);
+            graph.upsilon(notTaken, graph.number(notTaken, 1.5), phi);
+            graph.jump(notTaken, last);
+            number = phi;
+        }
+        graph.ret(last, graph.make(last, BitwiseCast, graph.make(last, DoubleToFloat, number)));
+        resetAndValidate(proc);
+        auto code = compileProc(proc);
+        for (uint32_t value : { 0x7fa00000u, 0xffa12345u, 0x7fc54321u, 0x3f800001u, 0x80000001u, 0x80000000u, 0x7f7fffffu, 0xff800000u }) {
+            bool isNaN = (value & 0x7fffffff) > 0x7f800000;
+            uint32_t expected = isNaN ? value | 0x400000 : value;
+            if (shape == Shape::Neg)
+                expected ^= 0x80000000;
+            if (shape == Shape::Abs)
+                expected &= 0x7fffffff;
+            CHECK_EQ(static_cast<uint32_t>(invoke<int32_t>(*code, static_cast<int64_t>(value))), expected);
+        }
+    }
+}
+
+static void testMinWithConstantIsQuiet()
+{
+    for (B3::Opcode opcode : { FMin, FMax }) {
+        for (double constant : { 1.0, 0.0, -0.0 }) {
+            Procedure proc(selectionPolicy());
+            proc.setIsWasm(true);
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            Value* number = graph.make(root, BitwiseCast, cCallArgumentValues<int64_t>(proc, root)[0]);
+            graph.ret(root, graph.make(root, BitwiseCast, graph.make(root, opcode, number, graph.number(root, constant))));
+            resetAndValidate(proc);
+            auto code = compileProc(proc);
+            for (int64_t bits : { 0x7ff4000000000000ll, 0x7ff8000000054321ll })
+                CHECK_EQ(invoke<int64_t>(*code, bits), bits | 0x8000000000000ll);
+            for (double operand : { 2.0, -2.0, 1.0, 0.0, -0.0 }) {
+                double expected = opcode == FMin ? Math::fMin(operand, constant) : Math::fMax(operand, constant);
+                CHECK_EQ(invoke<int64_t>(*code, std::bit_cast<int64_t>(operand)), std::bit_cast<int64_t>(expected));
             }
         }
     }
@@ -989,11 +1657,13 @@ void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testThreadJumpsUsesConditionAcrossJoin());
     RUN(testThreadJumpsUsesImpliedComparison());
     RUN(testThreadJumpsIgnoresConditionOfEarlierIteration());
+    RUN(testThreadJumpsDecidesTestOfWordReadAgain());
     RUN(testThreadJumpsLeavesNoTemporaries());
     RUN(testTruncOfSumWithZeroLowHalf());
     RUN(testLowWordOfWideOperationIsNarrowOperation());
     RUN(testLowWordOfNestedWideOperations());
     RUN(testWideOperationWithWideUserStaysWide());
+    RUN(testLowWordOfSumBehindDoublesIsNarrowSum());
     RUN(testLowWordOfWideShiftAndDivisionStayWide());
     RUN(testChainOfAssociativeOperationsStaysChain());
     RUN(testChainOfAssociativeOperationsCombinesLeaves());
@@ -1004,6 +1674,18 @@ void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testComparisonLooksThroughReplacementOfNaN());
     RUN(testReplacementOfExcludedConstantFoldsOnPath());
     RUN(testExtendedFormsAreSelectedOnRequest());
+    RUN(testTwoTestsOfOneIntervalBecomeOne());
+    RUN(testTestsOfOneIntervalStayTwoWhereTheyDiffer());
+    RUN(testPhisWithSameInputsBecomeOne());
+    RUN(testConstantLeavesZeroExtendedSumInAddress());
+    RUN(testZeroExtendedSumWithAnotherUserStaysOutsideX86());
+    RUN(testPartOfAddressIsSharedByAccessesThatDoNotFollowEachOther());
+    RUN(testPartOfAddressIsSharedWithSameSumFurtherDown());
+    RUN(testPartOfAddressIsSharedBesideCycleThatLeavesProcedure());
+    RUN(testDifferencePlusSubtrahend());
+    RUN(testFloatOfDoubleOfInteger());
+    RUN(testFloatThroughDoubleIsQuiet());
+    RUN(testMinWithConstantIsQuiet());
 }
 
 #endif // ENABLE(B3_JIT)

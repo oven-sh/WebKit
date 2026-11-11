@@ -37,6 +37,7 @@
 
 namespace WebCore {
 class ColorSpace;
+class ImageRotationSessionVT;
 class PixelBufferConformerCV;
 class VideoFrame;
 }
@@ -53,7 +54,10 @@ public:
     void deref() const final { IPC::WorkQueueMessageReceiver<WTF::DestructionThread::Any>::deref(); }
 
     void close();
-    RemoteVideoFrameProxy::Properties add(Ref<WebCore::VideoFrame>&&);
+    // Adds `frame` under a newly generated reference.
+    RemoteVideoFrameReference add(Ref<WebCore::VideoFrame>&&);
+    // Adds `frame` under `reference`.
+    void add(RemoteVideoFrameReference, Ref<WebCore::VideoFrame>&&);
     RefPtr<WebCore::VideoFrame> get(RemoteVideoFrameReadReference&&);
 
     void stopListeningForIPC(Ref<RemoteVideoFrameObjectHeap>&&) { close(); }
@@ -69,9 +73,8 @@ private:
     // Messages.
     void releaseVideoFrame(RemoteVideoFrameWriteReference&&);
 #if PLATFORM(COCOA)
-    void getVideoFrameBuffer(RemoteVideoFrameReadReference&&, bool canSendIOSurface);
-    void pixelBuffer(RemoteVideoFrameReadReference&&, CompletionHandler<void(RetainPtr<CVPixelBufferRef>)>&&);
-    void convertFrameBuffer(SharedVideoFrame&&, CompletionHandler<void(WebCore::ColorSpace)>&&);
+    void getVideoFrameBuffer(RemoteVideoFrameReadReference&&);
+    void convertFrameBuffer(SharedVideoFrame&&, bool shouldApplyRotation, CompletionHandler<void(WebCore::ColorSpace)>&&);
     void setSharedVideoFrameSemaphore(IPC::Semaphore&&);
     void setSharedVideoFrameMemory(WebCore::SharedMemory::Handle&&);
 
@@ -85,6 +88,7 @@ private:
     SharedVideoFrameReader m_sharedVideoFrameReader;
     Lock m_pixelBufferConformerLock;
     std::unique_ptr<WebCore::PixelBufferConformerCV> m_pixelBufferConformer WTF_GUARDED_BY_LOCK(m_pixelBufferConformerLock);
+    std::unique_ptr<WebCore::ImageRotationSessionVT> m_imageRotationSession WTF_GUARDED_BY_LOCK(m_pixelBufferConformerLock);
 #endif
     bool m_isClosed { false };
 };

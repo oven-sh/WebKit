@@ -58,6 +58,7 @@
 #include "WebCacheStorageProvider.h"
 #include "WebChromeClient.h"
 #include "WebCookieJar.h"
+#include "WebExtensionMatchPattern.h"
 #include "WebFileSystemStorageConnection.h"
 #include "WebFrame.h"
 #include "WebFrameMessages.h"
@@ -145,12 +146,12 @@
 #include <WebCore/PlatformMediaSession.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/ProcessWarming.h>
+#include <WebCore/QuirkTable.h>
 #include <WebCore/Quirks.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/RemoteCommandListener.h>
 #include <WebCore/RenderTreeAsText.h>
 #include <WebCore/ResourceLoadStatistics.h>
-#include <WebCore/RuntimeQuirkTable.h>
 #include <WebCore/ScriptController.h>
 #include <WebCore/ScriptExecutionContext.h>
 #include <WebCore/SecurityOrigin.h>
@@ -511,6 +512,8 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
 
     ASSERT(m_pageMap.isEmpty());
 
+    m_isPrintProcess = parameters.isPrintProcess;
+
     if (parameters.websiteDataStoreParameters)
         setWebsiteDataStoreParameters(WTF::move(*parameters.websiteDataStoreParameters));
 
@@ -853,8 +856,9 @@ void WebProcess::setWebsiteDataStoreParameters(WebProcessDataStoreParameters&& p
         supplement->setWebsiteDataStore(parameters);
 
     platformSetWebsiteDataStoreParameters(WTF::move(parameters));
-    
-    ensureNetworkProcessConnection();
+
+    if (!m_isPrintProcess)
+        ensureNetworkProcessConnection();
 
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES)
     setOptInCookiePartitioningEnabled(parameters.isOptInCookiePartitioningEnabled);
@@ -1108,6 +1112,7 @@ void WebProcess::createWebPage(PageIdentifier pageID, WebPageCreationParameters&
         page->setHiddenPageDOMTimerThrottlingIncreaseLimit(m_hiddenPageDOMTimerThrottlingIncreaseLimit);
 
 #if ENABLE(GPU_PROCESS)
+        assertIsMainRunLoop();
         if (RefPtr gpuProcessConnection = m_gpuProcessConnection)
             page->gpuProcessConnectionDidBecomeAvailable(*gpuProcessConnection);
 #endif
@@ -1184,8 +1189,8 @@ bool WebProcess::dispatchMessage(IPC::Connection& connection, IPC::Decoder& deco
     if (decoder.messageReceiverName() == Messages::WebFrame::messageReceiverName()) {
         if (RefPtr frame = FrameIdentifier::isValidIdentifier(decoder.destinationID()) ? webFrame(FrameIdentifier(decoder.destinationID())) : nullptr)
             frame->didReceiveMessage(connection, decoder);
-        else
-            WebFrame::sendCancelReply(connection, decoder);
+        // If the frame is gone, the message is left unhandled; Connection::dispatchMessage() sends a
+        // CancelAsyncReply for any unhandled async-reply message so the sender is not left waiting.
         return true;
     }
     if (decoder.messageReceiverName() == Messages::WebSWContextManagerConnection::messageReceiverName()) {
@@ -1571,6 +1576,7 @@ WebLoaderStrategy& WebProcess::webLoaderStrategy()
 GPUProcessConnection& WebProcess::ensureGPUProcessConnection()
 {
     RELEASE_ASSERT(RunLoop::isMain());
+    assertIsMainRunLoop();
 
     // If we've lost our connection to the GPU process (e.g. it crashed) try to re-establish it.
     if (!m_gpuProcessConnection) {
@@ -1583,12 +1589,21 @@ GPUProcessConnection& WebProcess::ensureGPUProcessConnection()
         if (gpuConnection->ignoreInvalidMessageForTesting())
             gpuConnection->setIgnoreInvalidMessageForTesting();
 #endif
-        m_gpuProcessConnection = GPUProcessConnection::create(WTF::move(gpuConnection));
+        {
+            Locker locker { m_gpuProcessConnectionLock };
+            m_gpuProcessConnection = GPUProcessConnection::create(WTF::move(gpuConnection));
+        }
         protect(parentProcessConnection())->send(Messages::WebProcessProxy::CreateGPUProcessConnection(m_gpuProcessConnection->identifier(),  WTF::move(connectionIdentifiers->client)), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
         for (auto& page : m_pageMap.values())
             page->gpuProcessConnectionDidBecomeAvailable(Ref { *m_gpuProcessConnection });
     }
     return *m_gpuProcessConnection;
+}
+
+RefPtr<GPUProcessConnection> WebProcess::existingGPUProcessConnectionOffMainThread()
+{
+    Locker locker { m_gpuProcessConnectionLock };
+    return m_gpuProcessConnection;
 }
 
 Seconds WebProcess::gpuProcessTimeoutDuration() const
@@ -1599,8 +1614,14 @@ Seconds WebProcess::gpuProcessTimeoutDuration() const
 
 void WebProcess::gpuProcessConnectionClosed()
 {
+    assertIsMainRunLoop();
     ASSERT(m_gpuProcessConnection);
-    m_gpuProcessConnection = nullptr;
+    // Keeps the connection alive until after the lock is released.
+    RefPtr<GPUProcessConnection> closedConnection;
+    {
+        Locker locker { m_gpuProcessConnectionLock };
+        closedConnection = std::exchange(m_gpuProcessConnection, nullptr);
+    }
 
     for (auto& page : m_pageMap.values())
         page->gpuProcessConnectionWasDestroyed();
@@ -1613,6 +1634,7 @@ void WebProcess::gpuProcessConnectionClosed()
 
 void WebProcess::gpuProcessConnectionDidBecomeUnresponsive()
 {
+    assertIsMainRunLoop();
     ASSERT(m_gpuProcessConnection);
     protect(parentProcessConnection())->send(Messages::WebProcessProxy::GPUProcessConnectionDidBecomeUnresponsive(m_gpuProcessConnection->identifier()), 0);
 }
@@ -1833,9 +1855,17 @@ void WebProcess::bindAccessibilityFrameWithData(WebCore::FrameIdentifier, std::s
 
 #if ENABLE(GPU_PROCESS)
 
+#if PLATFORM(COCOA)
+void WebProcess::prepareForPrinting(CompletionHandler<void(bool)>&& completionHandler)
+{
+    ASSERT(m_isPrintProcess);
+    completionHandler(protect(ensureGPUProcessConnection())->waitForDidInitialize());
+}
+#endif
+
 // Received by the process rather than a page, because the frame's page may have gone here since the
 // frame was painted, and a request that reached nothing would leave the snapshot waiting for it.
-void WebProcess::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const WebCore::IntRect& rect, RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode)
+void WebProcess::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode)
 {
     RefPtr frame = webFrame(frameID);
     RefPtr page = frame ? frame->page() : nullptr;
@@ -1843,7 +1873,7 @@ void WebProcess::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const Web
         abandonSnapshotFrame(snapshotIdentifier, frameID);
         return;
     }
-    page->drawFrameToSnapshot(frameID, rect, snapshotIdentifier, renderingMode);
+    page->drawFrameToSnapshot(frameID, rectRelativeToVisibleContent, snapshotIdentifier, renderingMode);
 }
 
 void WebProcess::abandonSnapshotFrame(RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID)
@@ -2396,7 +2426,7 @@ void WebProcess::grantUserMediaDeviceSandboxExtensions(MediaDeviceSandboxExtensi
         machBootstrapExtension->consume();
 }
 
-static inline void LEGACY_NODELETE checkDocumentsCaptureStateConsistency(const Vector<String>& extensionIDs)
+NODELETE static inline void checkDocumentsCaptureStateConsistency(const Vector<String>& extensionIDs)
 {
 #if ASSERT_ENABLED
     bool isCapturingAudio = std::ranges::any_of(Document::allDocumentsMap().values(), [](auto& document) {
@@ -2570,7 +2600,11 @@ void WebProcess::updateProcessPreferences(const WebPreferencesStore& store)
     platformStrategies()->mediaStrategy()->setWirelessPlaybackMediaPlayerEnabled(store.getBoolValueForKey(WebPreferencesKey::wirelessPlaybackMediaPlayerEnabledKey()));
 #endif
 
-    updateSharedPreferencesForWebProcess(WebKit::sharedPreferencesForWebProcess(store, isLockdownModeEnabled()));
+    // The UI process only merges the preferences of the pages and workers into the shared preferences of
+    // the process (see WebProcessProxy::updateSharedPreferences), so do the same here to keep them in sync.
+    // Replacing them could drop flags that the UI process considers enabled, and the UI process would then
+    // send messages that this process rejects.
+    WebKit::updateSharedPreferencesForWebProcess(m_sharedPreferencesForWebProcess, store, isLockdownModeEnabled());
 }
 
 void WebProcess::updateRemoteWorkerPreferences(const WebPreferencesStore& store)
@@ -2586,21 +2620,10 @@ void WebProcess::updateRemoteWorkerPreferences(const WebPreferencesStore& store)
 #endif
 
 #if PLATFORM(COCOA)
-    // Like WebPage, except that the drawing area type does not matter because the workers do not draw the DOM.
-    bool shouldBlockIOKit = store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForDOMRenderingEnabledKey())
-#if ENABLE(WEBGL)
-        && store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForWebGLEnabledKey())
-#endif
-        && store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForCanvasRenderingEnabledKey())
+    bool shouldBlockIOKit = store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForCanvasRenderingEnabledKey())
         && store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForMediaEnabledKey());
-    if (shouldBlockIOKit) {
-#if ENABLE(GPU_PROCESS)
-        // The workers do not draw the DOM, but without IOKit this process cannot map the image buffers
-        // either, which is what the GPU process DOM rendering means for the image buffers.
-        setUseGPUProcessForDOMRendering(true);
-#endif
+    if (shouldBlockIOKit)
         blockIOKit();
-    }
 #endif
 }
 
@@ -2617,7 +2640,7 @@ void WebProcess::setUseGPUProcessFromPreferences(const WebPreferencesStore& stor
 #endif
     setUseGPUProcessForCanvasRendering(store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForCanvasRenderingEnabledKey()));
     setUseGPUProcessForMedia(useGPUProcessForMedia);
-#if ENABLE(WEBGL)
+#if ENABLE(WEBGL) && !PLATFORM(COCOA)
     setUseGPUProcessForWebGL(store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForWebGLEnabledKey()));
 #endif
 }
@@ -2627,10 +2650,12 @@ void WebProcess::setUseGPUProcessForCanvasRendering(bool useGPUProcessForCanvasR
     m_useGPUProcessForCanvasRendering = useGPUProcessForCanvasRendering;
 }
 
+#if !PLATFORM(COCOA)
 void WebProcess::setUseGPUProcessForDOMRendering(bool useGPUProcessForDOMRendering)
 {
     m_useGPUProcessForDOMRendering = useGPUProcessForDOMRendering;
 }
+#endif
 
 void WebProcess::setUseGPUProcessForMedia(bool useGPUProcessForMedia)
 {
@@ -2716,7 +2741,11 @@ bool WebProcess::shouldUseRemoteRenderingFor(RenderingPurpose purpose)
     case RenderingPurpose::LayerBacking:
     case RenderingPurpose::Snapshot:
     case RenderingPurpose::ShareableSnapshot:
+#if PLATFORM(COCOA)
+        return true;
+#else
         return m_useGPUProcessForDOMRendering;
+#endif
     case RenderingPurpose::MediaPainting:
         return m_useGPUProcessForMedia;
     case RenderingPurpose::ShareableLocalSnapshot:
@@ -2726,7 +2755,7 @@ bool WebProcess::shouldUseRemoteRenderingFor(RenderingPurpose purpose)
     return false;
 }
 
-#if ENABLE(WEBGL)
+#if ENABLE(WEBGL) && !PLATFORM(COCOA)
 void WebProcess::setUseGPUProcessForWebGL(bool useGPUProcessForWebGL)
 {
     m_useGPUProcessForWebGL = useGPUProcessForWebGL;
@@ -2744,7 +2773,7 @@ bool WebProcess::shouldUseRemoteRenderingForWebGL() const
     return m_useGPUProcessForWebGL;
 #endif
 }
-#endif // ENABLE(WEBGL)
+#endif // ENABLE(WEBGL) && !PLATFORM(COCOA)
 
 #endif // ENABLE(GPU_PROCESS)
 
@@ -2909,6 +2938,7 @@ void WebProcess::commitOffscreenCanvasPlaceholderFrame(WebCore::PlaceholderRende
 
 void WebProcess::releaseTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier identifier)
 {
+    assertIsMainRunLoop();
     // The buffer went with the GPU process if there is no connection to it.
     if (RefPtr gpuProcessConnection = existingGPUProcessConnection())
         gpuProcessConnection->connection().send(Messages::GPUConnectionToWebProcess::ReleaseTransferredImageBuffer(identifier), 0);

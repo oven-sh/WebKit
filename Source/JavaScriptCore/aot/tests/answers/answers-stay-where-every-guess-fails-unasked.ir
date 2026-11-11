@@ -1,0 +1,10 @@
+# The program of constants-between-operations-that-lean-on-one-guess.ir. Under the testing word FailSpeculations every guess fails though its value would have passed: row(3) takes the way of row("5").
+# The failing side of a guess is right for every value, so the answers are those of the build without the word.
+# OPTIONS: testing=FailSpeculations
+# STATISTIC: SpeculationFailuresInjected >= 1
+# PROGRAM-OF: constants-between-operations-that-lean-on-one-guess.ir
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = row => { const show = n => { const all = row(n); let line = ""; for (let i = 0; i < all.length; i++) line += " " + String(all[i]); print(all.length + line); }; show(3); show("5"); show(2n); };
+# SHELL: 7 9 undefined null 4 q true 27
+# SHELL-NEXT: 7 25 undefined null 4 q true 125
+# SHELL-NEXT: 7 4 undefined null 4 q true 8
+# SHELL-NEXT: exited with 0

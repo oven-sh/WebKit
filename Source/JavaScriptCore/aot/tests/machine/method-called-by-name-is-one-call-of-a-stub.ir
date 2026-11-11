@@ -1,0 +1,89 @@
+# function callIt(object, a) { return object.m(a); }   function readIt(object) { return object.m; }   function storeIt(object, a) { object.m = a; }
+# function callInTurns(object, times) { let sum = 0; for (let i = 0; i < times; i++) sum = object.m(sum); return sum; }
+# `object.m(a)` is one call of the stub that reads the method and calls it, in a loop too. The site names the property and nothing else: no read by name stands in front of the call, and no call of a value behind it.
+# These functions are written in no module, so no place of theirs remembers anything: the stubs that take a name answer. place-remembers-what-a-read-or-a-call-found.ir has the same functions with places.
+# The stubs keep what they found last under the Structure of the receiver and the name. The shell asks each of them again behind every change that ends such an answer.
+# The shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN: bytes f1:Body f4:Body
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: GetById
+# CHECK-NOT: CallValue
+# CHECK: argument thunk 0 CallMethodById count 1 immediate mention
+# CHECK-NOT: GetById
+# CHECK-NOT: CallValue
+# CHECK-LABEL: unit f4:Body
+# CHECK-NOT: GetById
+# CHECK: argument thunk 0 CallMethodById count 1 immediate mention
+# RUN(SHELL): run-in-shell globalThis.publish = (callIt, readIt, storeIt, callInTurns) => { const tell = (...answers) => print(answers.join()); const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } }; class A { m(x) { return x + 1; } } class B extends A { } const b = new B; tell(callIt(b, 1), callIt(b, 1), callIt(new B, 1), readIt(b) === A.prototype.m, readIt(b) === A.prototype.m); A.prototype.m = function (x) { return x + 2; }; tell(callIt(b, 1), callIt(b, 1), readIt(b) === A.prototype.m); B.prototype.m = function (x) { return x + 3; }; tell(callIt(b, 1), callIt(b, 1), readIt(b) === B.prototype.m); b.m = x => x + 4; tell(callIt(b, 1), callIt(b, 1), callIt(new B, 1)); delete b.m; tell(callIt(b, 1), callIt(b, 1)); delete B.prototype.m; tell(callIt(b, 1), callIt(b, 1)); Object.setPrototypeOf(B.prototype, { m(x) { return x + 5; } }); tell(callIt(b, 1), callIt(b, 1)); Object.setPrototypeOf(b, { m(x) { return x + 6; } }); tell(callIt(b, 1), callIt(b, 1)); const root = { }; const absent = Object.create(root); tell(readIt(absent), readIt(absent), attempt(() => callIt(absent, 1)), attempt(() => callIt(absent, 1))); root.m = x => x + 7; tell(typeof readIt(absent), callIt(absent, 1), callIt(absent, 1)); delete root.m; tell(readIt(absent), attempt(() => callIt(absent, 1)), attempt(() => callIt(null, 1)), attempt(() => callIt(undefined, 1)), attempt(() => callIt(8, 1)), attempt(() => callIt("text", 1))); let reads = 0; const withGetter = { get m() { reads++; return x => x + reads; } }; tell(callIt(withGetter, 1), callIt(withGetter, 1), reads); const own = { m: x => x + 9 }; tell(callIt(own, 1), callIt(own, 1)); own.m = x => x + 10; tell(callIt(own, 1), callIt({ m: x => x + 11 }, 1)); storeIt(own, x => x + 12); storeIt(own, x => x + 13); tell(callIt(own, 1), Object.keys(own)); Object.defineProperty(own, "m", { value: x => x + 14, writable: false }); storeIt(own, x => x + 15); tell(callIt(own, 1)); const frozen = Object.freeze({ m: x => x + 16 }); storeIt(frozen, 1); storeIt(frozen, 1); tell(callIt(frozen, 1)); let stored = 0; const withSetter = { set m(value) { stored += value; } }; storeIt(withSetter, 2); storeIt(withSetter, 3); tell(stored); const below = Object.create(withSetter); storeIt(below, 4); storeIt(below, 5); tell(stored, Object.keys(below).length); const many = { }; for (let i = 0; i < 200; i++) many["k" + i] = i; many.m = x => x + 17; tell(callIt(many, 1), callIt(many, 1)); delete many.m; tell(attempt(() => callIt(many, 1)), readIt(many)); many.m = x => x + 18; tell(callIt(many, 1)); const counts = { m(...all) { return all.length; } }; tell(callIt(counts, 1), callIt(counts, 1)); const strict = { m: function (x) { "use strict"; return this === strict; } }; tell(callIt(strict, 1), callIt(strict, 1)); tell(callInTurns({ m: x => x + 2 }, 5), callInTurns(new B, 5)); for (let i = 0; i < 3; i++) { gc(); tell(callIt(own, 1), callIt(new B, 1), readIt(absent)); } };
+# SHELL: 2,2,2,true,true
+# SHELL-NEXT: 3,3,true
+# SHELL-NEXT: 4,4,true
+# SHELL-NEXT: 5,5,4
+# SHELL-NEXT: 4,4
+# SHELL-NEXT: 3,3
+# SHELL-NEXT: 6,6
+# SHELL-NEXT: 7,7
+# SHELL-NEXT: ,,TypeError,TypeError
+# SHELL-NEXT: function,8,8
+# SHELL-NEXT: ,TypeError,TypeError,TypeError,TypeError,TypeError
+# SHELL-NEXT: 2,3,2
+# SHELL-NEXT: 10,10
+# SHELL-NEXT: 11,12
+# SHELL-NEXT: 14,m
+# SHELL-NEXT: 15
+# SHELL-NEXT: 17
+# SHELL-NEXT: 5
+# SHELL-NEXT: 14,0
+# SHELL-NEXT: 18,18
+# SHELL-NEXT: TypeError,
+# SHELL-NEXT: 19
+# SHELL-NEXT: 1,1
+# SHELL-NEXT: true,true
+# SHELL-NEXT: 10,25
+# SHELL-NEXT: 15,6,
+# SHELL-NEXT: 15,6,
+# SHELL-NEXT: 15,6,
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return
+}
+function f1 name="callIt" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="m"
+    v3 = Call v2, v0, v1 calleeKey="m" calleeName="object.m"
+    Return v3
+}
+function f2 name="readIt" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    Return v1
+}
+function f3 name="storeIt" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="m" mode=Sloppy
+    Return
+}
+function f4 name="callInTurns" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3: anything, v4: anything):
+    LoopHint
+    v6 = Less v3, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v0 key="m"
+    v8 = Call v7, v0, v4 calleeKey="m" calleeName="object.m"
+    v9 = Increment v3
+    Jump -> next b1(v9, v8)
+  b3():
+    Return v4
+}

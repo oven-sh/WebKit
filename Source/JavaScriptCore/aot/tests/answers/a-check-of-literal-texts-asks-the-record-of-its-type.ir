@@ -1,0 +1,61 @@
+# function take(value) { return value; }
+# print(typeof id(take)(given));
+# print("went on");
+# The fault is written by hand in the IR below: `function f1 name="take" .. parameters=[{type=undefined|"on"|"off" flags=[IsFromCompiler]}]`.
+# The front end claims that the parameter holds undefined or one of two strings, and the function is called indirectly with whatever the shell's `given` holds.
+# With testing=CheckProofsAtRunTime, string literals are checked against the type's record. The stub leaves every string to the runtime, which compares a rope piece by piece and resolves nothing.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(FORM): walk f1 mechanisms=all-Inlining
+# FORM: CheckProof {{*}} checkedType=undefined|"off"|"on" typeWithoutProof={{*}}
+# RUN(SHORT): emit f1 mechanisms=all-Inlining
+# SHORT: NumberOf(Number:0)
+# SHORT-NOT: NumberOf(Number:1)
+# RUN(UNDEFINED): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = undefined;
+# UNDEFINED: undefined
+# UNDEFINED-NEXT: went on
+# RUN(LISTED): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = "off";
+# LISTED: string
+# LISTED-NEXT: went on
+# RUN(ROPE): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.half = "o"; globalThis.given = globalThis.half + String.fromCharCode(110);
+# ROPE: string
+# ROPE-NEXT: went on
+# RUN(OTHER): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = "of";
+# OTHER: bun: internal AOT error: type check failed
+# OTHER-NEXT: found string in
+# OTHER-NOT: went on
+# RUN(OTHERROPE): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.half = "of"; globalThis.given = globalThis.half + String.fromCharCode(102, 102);
+# OTHERROPE: bun: internal AOT error: type check failed
+# OTHERROPE-NEXT: found string in
+# OTHERROPE-NOT: went on
+# RUN(NUMBER): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 0;
+# NUMBER: bun: internal AOT error: type check failed
+# NUMBER-NEXT: found int32 in
+# NUMBER-NOT: went on
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="print" [isFreeName]
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="id" [isFreeName]
+    v6 = Call v5, -, v1 calleeName="id"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="given" [isFreeName]
+    v9 = Call v6, -, v8
+    v10 = TypeOf v9
+    v11 = Call v3, -, v10 calleeName="print"
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="print" [isFreeName]
+    v14 = String string="went on"
+    v15 = Call v13, -, v14 calleeName="print"
+    v16 = Undefined
+    Return v16
+}
+function f1 name="take" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|"on"|"off" flags=[IsFromCompiler]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|"on"|"off"):
+    Return v0
+}
+entry module=m0

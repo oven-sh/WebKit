@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInstanceLayout.h"
 #include "AOTStubFrames.h"
 #include <bit>
 #include <type_traits>
@@ -36,8 +37,9 @@ static_assert(OBJECT_OFFSETOF(BoxedCallEntry, nativeFunction) == BoxedCallEntry:
 static_assert(OBJECT_OFFSETOF(BoxedCallEntry, targets) == BoxedCallEntry::offsetOfTarget(BoxedCallEntry::minArgumentCount));
 
 struct StubWords {
-    static constexpr unsigned numberOfBoxedCallEntries = 64;
+    static constexpr unsigned numberOfBoxedCallEntries = 128;
     static constexpr unsigned boxedCallHashShift = 4;
+    static constexpr unsigned numberOfCompiledMethodsOfArray = 13;
 
     static constexpr unsigned indexOfBoxedCall(uintptr_t nativeFunctionBits) { return (nativeFunctionBits >> boxedCallHashShift) % numberOfBoxedCallEntries; }
 
@@ -45,11 +47,13 @@ struct StubWords {
     static constexpr ptrdiff_t offsetOfReturnAddress(StubFrameKind kind) { return static_cast<ptrdiff_t>(static_cast<unsigned>(kind) * sizeof(void*)); }
 
     const void* returnAddresses[numberOfStubFrameKinds];
-#if !defined(BUN_HARDENED)
+#if !AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE
     BoxedCallEntry boxedCalls[numberOfBoxedCallEntries];
 #endif
     const void* closureEntrypoint;
     const void* slimClosureEntrypoint;
+    uint64_t wordsOfCompiledMethodsOfArray[numberOfCompiledMethodsOfArray];
+    uint64_t wordOfCompiledSort;
 };
 static_assert(std::is_trivially_default_constructible_v<StubWords>);
 static_assert(std::has_single_bit(StubWords::numberOfBoxedCallEntries));

@@ -1,0 +1,8 @@
+# without direct calls the call goes by the word of the closure, and nobody says of such a call that it may come back
+# RUN: walk f2 mechanisms=none
+# CHECK-LABEL: code f2:Body
+# CHECK: [[call]]: {{*}} = Call v
+# CHECK: ReturnCall [[call]]
+# RUN(NEVER): walk f2 mechanisms=none
+# NEVER-NOT: requirement=Allowed
+# PROGRAM-OF: ../../plan/tail-calls/function-whose-tail-calls-end-says-so.ir

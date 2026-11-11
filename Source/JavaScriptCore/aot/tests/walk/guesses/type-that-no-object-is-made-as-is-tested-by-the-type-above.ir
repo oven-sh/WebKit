@@ -1,0 +1,28 @@
+# no object is made as an ObjectType: it is an interface below Type, and the maker of the objects is written as a Type. So what is declared an ObjectType is tested for the shape of a Type
+# interface Type { flags; objectFlags }   interface ObjectType extends Type {}   function flagsOf(t: ObjectType) { return t.objectFlags; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="objectFlags" receivers=[L0, L1] level=Expected
+
+layout L0 name="Type" module=m0 fields=[{key="flags" declared={type=anything} flags=[IsRequired]}, {key="objectFlags" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 name="ObjectType" module=m0 fields=[{key="flags" declared={type=anything} flags=[IsRequired]}, {key="objectFlags" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="flags"
+    PropDefine v4, v3 key="objectFlags"
+    v7 = FinishObject v4
+    v8 = Call v1, -, v7
+    Return v8
+}
+function f1 name="flagsOf" module=m0 length=1 thisType={type=anything} parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="objectFlags"
+    Return v1
+}

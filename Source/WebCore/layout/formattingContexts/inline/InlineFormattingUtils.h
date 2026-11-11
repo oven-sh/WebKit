@@ -37,10 +37,11 @@ namespace Layout {
 class InlineFormattingContext;
 class InlineLevelBox;
 class LineBox;
+enum class IntrinsicWidthMode;
 
 class InlineFormattingUtils {
 public:
-    InlineFormattingUtils(const InlineFormattingContext&);
+    NODELETE InlineFormattingUtils(const InlineFormattingContext&);
 
     InlineLayoutUnit logicalTopForNextLine(const LineLayoutResult&, const InlineRect& lineLogicalRect, const FloatingContext&) const;
 
@@ -55,28 +56,29 @@ public:
 
     FloatingContext::Constraints floatConstraintsForLine(InlineLayoutUnit lineLogicalTop, InlineLayoutUnit contentLogicalHeight, const FloatingContext&) const;
 
-    static InlineRect LEGACY_NODELETE flipVisualRectToLogicalForWritingMode(const InlineRect& visualRect, WritingMode);
+    NODELETE static InlineRect flipVisualRectToLogicalForWritingMode(const InlineRect& visualRect, WritingMode);
 
     static InlineLayoutUnit horizontalAlignmentOffset(const Style::ComputedStyle& rootStyle, InlineLayoutUnit contentLogicalRight, InlineLayoutUnit lineLogicalRight, InlineLayoutUnit hangingTrailingWidth, bool isLastLineOrLineEndsWithForcedLineBreak, std::optional<TextDirection> inlineBaseDirectionOverride = std::nullopt);
 
-    static InlineItemPosition LEGACY_NODELETE leadingInlineItemPositionForNextLine(const LineLayoutResult&, std::optional<InlineItemPosition> previousLineContentEnd, InlineItemPosition layoutRangeEnd);
+    NODELETE static InlineItemPosition leadingInlineItemPositionForNextLine(const LineLayoutResult&, std::optional<InlineItemPosition> previousLineContentEnd, InlineItemPosition layoutRangeEnd);
 
     InlineLayoutUnit inlineItemWidth(const InlineItem&, InlineLayoutUnit contentLogicalLeft, bool useFirstLineStyle) const;
+    InlineLayoutUnit intrinsicMarginBoxWidth(const ElementBox&, IntrinsicWidthMode) const;
 
-    size_t nextWrapOpportunity(size_t startIndex, const InlineItemRange& layoutRange, std::span<const InlineItem>) const;
+    size_t nextWrapOpportunity(size_t startIndex, const InlineItemRange& layoutRange, std::span<const InlineItem>, std::optional<IntrinsicWidthMode> = { }) const;
 
     static std::pair<InlineLayoutUnit, InlineLayoutUnit> textEmphasisForInlineBox(const Box&, const ElementBox& rootBox);
 
-    static LineEndingTruncationPolicy LEGACY_NODELETE lineEndingTruncationPolicy(const Style::ComputedStyle& rootStyle, size_t numberOfContentfulLines, std::optional<size_t> numberOfVisibleLinesAllowed, bool currentLineIsContentful);
+    NODELETE static LineEndingTruncationPolicy lineEndingTruncationPolicy(const Style::ComputedStyle& rootStyle, size_t numberOfContentfulLines, std::optional<size_t> numberOfVisibleLinesAllowed, bool currentLineIsContentful);
 
-    static std::optional<LineLayoutResult::InlineContentEnding> LEGACY_NODELETE inlineContentEnding(const LineResult&);
+    NODELETE static std::optional<LineLayoutResult::InlineContentEnding> inlineContentEnding(const LineResult&);
 
-    bool LEGACY_NODELETE shouldDiscardRemainingContentInBlockDirection() const;
+    NODELETE bool shouldDiscardRemainingContentInBlockDirection() const;
 
     std::optional<BlockOverflowEllipsis> blockEllipsisForLine() const;
 
 private:
-    bool isAtSoftWrapOpportunity(const InlineItem& previous, const InlineItem& next) const;
+    bool isAtSoftWrapOpportunity(const InlineItem& previous, const InlineItem& next, std::optional<IntrinsicWidthMode>) const;
 
     const InlineFormattingContext& formattingContext() const LIFETIME_BOUND { return m_inlineFormattingContext; }
 

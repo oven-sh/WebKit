@@ -358,6 +358,7 @@ public:
     virtual bool isTextMarkerRangeValid(AccessibilityTextMarkerRange*);
     virtual bool isTextMarkerNull(AccessibilityTextMarker*);
     virtual RefPtr<AccessibilityTextMarker> textMarkerForIndex(int);
+    virtual RefPtr<AccessibilityTextMarker> textMarkerForRelativeIndex(int);
     virtual RefPtr<AccessibilityTextMarker> startTextMarker();
     virtual RefPtr<AccessibilityTextMarker> endTextMarker();
     virtual bool setSelectedTextMarkerRange(AccessibilityTextMarkerRange*);
@@ -429,6 +430,9 @@ public:
     virtual bool isRemoteFrame() const;
     // True if the element backing |this| is a platform remote element (e.g. NSAccessibilityRemoteUIElement on macOS).
     virtual bool isRemotePlatformElement() const { return false; }
+    // Reads this element's frame the way AXRuntime resolves the application element on iOS: from inside
+    // +[AXRemoteElement remoteElementsForBlock:], which holds AXRuntime's remote element registry lock.
+    virtual void readFrameDuringRemoteElementLookup() { }
     virtual bool isFrameGeometryInitialized() const { return true; }
 
     virtual bool isMarkAnnotation() const;

@@ -1,5 +1,4 @@
 # in a program as read: the handler of a block is a handler block, and only handler edges enter a handler block
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: InvalidHandler 2
 

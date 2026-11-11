@@ -11,6 +11,8 @@
 #include "AOTVector.h"
 #include "StructureID.h"
 #include <array>
+#include <memory>
+#include <wtf/FastMalloc.h>
 
 namespace JSC {
 
@@ -26,6 +28,10 @@ struct MappedCopy {
         OptionalInt32,
         OptionalInt64,
         OptionalDouble,
+        OptionalInt64UnlessMarker,
+        OptionalDoubleUnlessMarker,
+        OptionalBooleanUnlessMarker,
+        JSValueUnlessMarker,
         Word,
         HalfWord,
         QuarterWord,
@@ -35,15 +41,25 @@ struct MappedCopy {
         Int32AsOptionalInt32,
         OptionalInt32AsDouble,
         Int32AsDouble,
+        OptionalInt32AsOptionalInt64,
+        Int32AsInt64,
+        BoxedOptionalInt64,
+        OptionalInt64AsOptionalInt32,
+        OptionalInt64AsDouble,
         WideNarrowReference,
         NarrowWideReference,
+        BoxedAsInt32,
+        BoxedAsInt64,
+        BoxedAsDouble,
+        BoxedAsNarrowString,
+        BoxedAsJSValue,
         OtherForm,
         Tested,
     };
-    // The moves that the stub in front of the operation makes: in a run all are made by the same few instructions.
     enum class RunOfStub : uint8_t { HalfWords, NarrowedReferences, Words, Bytes, Int32sAsDoubles, BoxedInt32s, WidenedReferences };
     static constexpr unsigned numberOfRunsOfStub = 7;
-    // An offset counts from the cell, or from the Extension with the granules that it has in such a copy.
+    enum class Place : uint8_t { Cell, InlineProperties, OutsideProperties };
+    static constexpr unsigned numberOfPlaces = 4;
     struct Move {
         uint32_t from;
         uint32_t to;
@@ -55,18 +71,37 @@ struct MappedCopy {
         SlotRepresentation representationOfTarget;
         uint8_t acceptedKinds;
         uint16_t fieldOfTarget;
-        // The target lists the field before the copy. Whoever makes the copy in another way, once a later move has failed, stores the same value there again.
         bool overwritesField { false };
+        bool testsUndefinedAndNull { false };
         RunOfStub runOfStub { RunOfStub::HalfWords };
-        // The stub leaves the copy to the operation where the bits that it has read, less the first, are below the number.
+        Place placeInSource { Place::Cell };
+        Place placeInTarget { Place::Cell };
         uint64_t firstBitsRefusedByStub { 0 };
         uint64_t numberOfBitsRefusedByStub { 0 };
+        int32_t leastInt32 { 0 };
+        int32_t greatestInt32 { -1 };
+    };
+    static_assert(sizeof(Move) == 48);
+    struct WordMove {
+        int32_t from;
+        int32_t to;
+        Place placeInSource;
+        Place placeInTarget;
     };
     struct Run {
         const Move* end { nullptr };
         intptr_t negativeSize { 0 };
     };
     enum class State : uint8_t { IsUnknown, IsServed, IsNotServed };
+
+    MappedCopy() = default;
+    MappedCopy(MappedCopy&&) = default;
+    MappedCopy& operator=(MappedCopy&&) = default;
+    ~MappedCopy()
+    {
+        if (placeOfOwnedCopy && *placeOfOwnedCopy == this)
+            *placeOfOwnedCopy = nullptr;
+    }
 
     bool isFor(uint64_t target, uint64_t source, uint32_t excludedRun) const { return state != State::IsUnknown && targetWords == target && sourceWords == source && excludedRunNumberPlusOne == excludedRun; }
 
@@ -79,17 +114,14 @@ struct MappedCopy {
     uint32_t orderWordAfter { 0 };
     State state { State::IsUnknown };
     bool mayStoreCells { false };
-    // It takes loads and stores alone and at the most a new Extension out of a free list.
     bool takesNoFrame { false };
-    // Whether it does is asked when the copy is made for the second time: many a kind of copy is made once.
     bool mayTakeNoFrame { false };
     bool extensionWordOfTargetIsWide { false };
     bool extensionWordOfSourceIsWide { false };
+    bool readsOrdinaryObject { false };
     StructureID structureOfTarget;
     StructureID structureOfSource;
-    // That of no cell where the stub leaves the moves to the operation. Else the moves lie in the order of the runs, so the operation begins a copy again that the stub has left.
     StructureID structureOfSourceForStub;
-    // Most copies have moves of the first two runs alone, and few have any behind the first four.
     bool hasRunsBehindSecondForStub { false };
     bool hasRunsBehindFourthForStub { false };
     std::array<Run, numberOfRunsOfStub> runsOfStub { };
@@ -97,7 +129,32 @@ struct MappedCopy {
     uint32_t offsetOfExtensionWordInSource { 0 };
     uint32_t sizeOfNewExtension { 0 };
     LocalAllocator* allocatorOfNewExtension { nullptr };
+    const MappedCopy** placeOfOwnedCopy { nullptr };
+    mutable uint8_t numberOfCopiesInVain { 0 };
+    uint8_t numberOfTurnsLost { 0 };
     Vector<Move> moves;
+
+    struct FollowedPlan {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FollowedPlan);
+
+        bool readsSecondObjectOfSource { false };
+        bool secondObjectWordOfSourceIsWide { false };
+        bool secondObjectWordOfTargetIsWide { false };
+        uint64_t targetWords { 0 };
+        uint32_t offsetOfSecondObjectWordInSource { 0 };
+        uint32_t offsetOfSecondObjectWordInTarget { 0 };
+        StructureID structureOfSecondObjectOfSource;
+        StructureID structureOfTargetAfter;
+        uint64_t headerOfNewSecondObject { 0 };
+        Vector<WordMove> wordMoves;
+        LocalAllocator* allocatorOfNewSecondObject { nullptr };
+        uint32_t sizeOfNewSecondObject { 0 };
+        LocalAllocator* allocatorOfNewStorage { nullptr };
+        uint32_t sizeOfNewStorage { 0 };
+        uint32_t bytesOfNewStorage { 0 };
+        uint32_t bytesOfNewStorageLeftEmpty { 0 };
+    };
+    std::unique_ptr<FollowedPlan> followedPlan;
 };
 
 } } // namespace JSC::AOT

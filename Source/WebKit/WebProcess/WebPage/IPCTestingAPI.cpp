@@ -77,6 +77,10 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
+#if PLATFORM(GTK) || PLATFORM(WPE)
+#include "DrawingAreaCoordinatedGraphicsGLib.h"
+#endif
+
 #include "WebKit-Swift.h"
 
 namespace WebKit::IPCTestingAPI {
@@ -451,6 +455,9 @@ private:
     static JSValueRef sessionID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef pageID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef frameID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    static JSValueRef acceleratedSurfaceID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
+#endif
     static JSValueRef retrieveID(JSContextRef, JSObjectRef thisObject, JSValueRef* exception, NOESCAPE const WTF::Function<uint64_t(JSIPC&)>&);
 
     static JSValueRef messages(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
@@ -559,9 +566,6 @@ static JSValueRef jsSend(IPC::Connection& connection, uint64_t destinationID, IP
 
 static JSValueRef jsSendWithAsyncReply(IPC::Connection& connection, uint64_t destinationID, IPC::MessageName messageName, JSContextRef context, const JSObjectRef callback, const JSValueRef messageArguments, JSValueRef* exception)
 {
-    auto encoder = makeUniqueRef<IPC::Encoder>(messageName, destinationID);
-    if (messageArguments && !encodeArgument(encoder.get(), context, messageArguments, exception))
-        return JSValueMakeUndefined(context);
     JSGlobalContextRetain(JSContextGetGlobalContext(context));
     JSValueProtect(context, callback);
     IPC::Connection::AsyncReplyHandler handler = {
@@ -588,6 +592,10 @@ static JSValueRef jsSendWithAsyncReply(IPC::Connection& connection, uint64_t des
         IPC::Connection::AsyncReplyID::generate()
     };
     auto asyncReplyID = *handler.replyID;
+    auto encoder = makeUniqueRef<IPC::Encoder>(messageName, destinationID);
+    encoder.get() << asyncReplyID;
+    if (messageArguments && !encodeArgument(encoder.get(), context, messageArguments, exception))
+        return JSValueMakeUndefined(context);
     auto result = connection.sendMessageWithAsyncReply(WTF::move(encoder), WTF::move(handler), IPC::SendOption::IPCTestingMessage);
     if (result != IPC::Error::NoError) {
         *exception = createErrorFromIPCError(context, result);
@@ -623,6 +631,8 @@ static JSValueRef jsWaitForMessage(IPC::Connection& connection, uint64_t destina
     JSC::JSLockHolder lock(globalObject->vm());
     auto decoderOrError = connection.waitForMessageForTesting(messageName, destinationID, timeout, { });
     if (decoderOrError.has_value()) {
+        if (decoderOrError.value()->messageName() == IPC::MessageName::CancelAsyncReply)
+            return JSValueMakeUndefined(context);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         auto jsResult = jsValueForArguments(globalObject, messageName, decoderOrError.value().get());
         if (scope.exception()) {
@@ -646,6 +656,10 @@ static JSValueRef jsWaitForAsyncReplyAndDispatchImmediately(IPC::Connection& con
     if (!decoderOrError.has_value()) {
         *exception = createErrorFromIPCError(context, decoderOrError.error());
         handler(nullptr, nullptr);
+        return JSValueMakeUndefined(context);
+    }
+    if (decoderOrError.value()->messageName() == IPC::MessageName::CancelAsyncReply) {
+        handler(&connection, nullptr);
         return JSValueMakeUndefined(context);
     }
     handler(&connection, &decoderOrError.value().get());
@@ -1922,6 +1936,9 @@ const JSStaticValue* JSIPC::staticValues()
         { "sessionID", sessionID, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "webPageProxyID", webPageProxyID, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "webPageProxyIdentifierForMessageArguments", webPageProxyIdentifierForMessageArguments, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
+#if PLATFORM(GTK) || PLATFORM(WPE)
+        { "acceleratedSurfaceID", acceleratedSurfaceID, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
+#endif
         { "messages", messages, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "serializedTypeInfo", serializedTypeInfo, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "serializedEnumInfo", serializedEnumInfo, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
@@ -2948,6 +2965,16 @@ JSValueRef JSIPC::webPageProxyIdentifierForMessageArguments(JSContextRef context
     });
 }
 
+#if PLATFORM(GTK) || PLATFORM(WPE)
+JSValueRef JSIPC::acceleratedSurfaceID(JSContextRef context, JSObjectRef thisObject, JSStringRef, JSValueRef* exception)
+{
+    return retrieveID(context, thisObject, exception, [](JSIPC& wrapped) -> uint64_t {
+        RefPtr drawingArea = dynamicDowncast<DrawingAreaCoordinatedGraphics>(wrapped.m_webPage->drawingArea());
+        return drawingArea ? drawingArea->surfaceIDForTesting() : 0;
+    });
+}
+#endif
+
 JSValueRef JSIPC::retrieveID(JSContextRef context, JSObjectRef thisObject, JSValueRef* exception, NOESCAPE const WTF::Function<uint64_t(JSIPC&)>& callback)
 {
     auto* globalObject = toJS(context);
@@ -3045,7 +3072,7 @@ JSValueRef JSIPC::messages(JSContextRef context, JSObjectRef thisObject, JSStrin
         dictionary->putDirect(vm, dispatchedToIdent, JSC::jsString(vm, String(dispatchedTo(name))));
         RETURN_IF_EXCEPTION(scope, JSValueMakeUndefined(context));
 
-        dictionary->putDirect(vm, isAsyncReplyIdent, JSC::jsBoolean(isAsyncReply(name)));
+        dictionary->putDirect(vm, isAsyncReplyIdent, JSC::jsBoolean(messageIsReplyToAsyncWithReply(name)));
         RETURN_IF_EXCEPTION(scope, JSValueMakeUndefined(context));
 
         messagesObject->putDirect(vm, JSC::Identifier::fromString(vm, description(name)), dictionary);
@@ -3182,11 +3209,10 @@ JSC::JSObject* JSMessageListener::jsDescriptionFromDecoder(JSC::JSGlobalObject* 
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
-    if (!decoder.isSyncMessage() && messageReplyArgumentDescriptions(decoder.messageName())) {
-        if (auto asyncReplyID = decoder.decode<IPC::Connection::AsyncReplyID>()) {
-            jsResult->putDirect(vm, JSC::Identifier::fromString(vm, "listenerID"_s), JSC::JSValue(asyncReplyID->toUInt64()));
-            RETURN_IF_EXCEPTION(scope, nullptr);
-        }
+    if (decoder.isAsyncWithReplyMessage()) {
+        // The reply ID is a header field (see Decoder and messageIsAsyncWithReply), already decoded.
+        jsResult->putDirect(vm, JSC::Identifier::fromString(vm, "listenerID"_s), JSC::JSValue(decoder.asyncReplyID().toUInt64()));
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return jsResult;
 }

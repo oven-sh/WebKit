@@ -1,0 +1,263 @@
+# a length that is only asked for zero is asked of the cell, two relations on two texts share one order, a relation with one written character reads one code unit,
+# and a row of comparisons of one subject with written texts shares its length
+# function isEmpty(s) { if (typeof s === "string") return [s.length === 0]; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = ToBoolean
+# CHECK: = LogicalNot
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: = GetStringLength
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-NOT: = GetStringLength
+# function hasText(s) { if (typeof s === "string" && s.length) return 1; }
+# RUN(TRUTHY): walk f2 mechanisms=none+TypedOperations
+# TRUTHY-NOT: = GetStringLength
+# function isFilled(s) { if (typeof s === "string") return [s.length > 0]; }
+# RUN(FILLED): walk f3 mechanisms=none+TypedOperations
+# FILLED-NOT: = GetStringLength
+# the cell does not say whether the length is one: function isOne(s) { if (typeof s === "string") return [s.length === 1]; }
+# RUN(ONE): walk f4 mechanisms=none+TypedOperations
+# ONE-LABEL: code f4:Body
+# ONE: = GetStringLength
+# function order(a, b) { if (typeof a === "string" && typeof b === "string") return a < b ? -1 : a > b ? 1 : 0; }
+# RUN(ORDER): walk f5 mechanisms=none+TypedOperations
+# ORDER-LABEL: code f5:Body
+# ORDER: [[order]]: {{*}} = StringOrder
+# ORDER: = Less [[order]]
+# ORDER-NOT: = StringOrder
+# ORDER: = Greater [[order]]
+# one relation alone is asked as it is written: function isBelow(a, b) { if (typeof a === "string" && typeof b === "string") return [a < b]; }
+# RUN(ALONE): walk f6 mechanisms=none+TypedOperations
+# ALONE-LABEL: code f6:Body
+# ALONE-NOT: = StringOrder
+# ALONE: = Less
+# function below(s, n) { if (typeof s !== "string") return; let c = 0; for (let i = 0; i < n; i++) if (s < "a") c++; return c; }
+# RUN(LETTER): walk f7 mechanisms=none+TypedOperations
+# LETTER-LABEL: code f7:Body
+# LETTER: = StringOrderToCharacter {{*}}codeUnit=97
+# function verbs(s, n) { if (typeof s !== "string") return; let c = 0; for (let i = 0; i < n; i++) if (s === "get" || s === "put" || s === "post") c++; return c; }
+# RUN(VERBS): walk f8 mechanisms=none+TypedOperations
+# VERBS-LABEL: code f8:Body
+# behind "get" the length tells "put" apart from nothing: `e.kind === "num" .. e.kind === "add"` stays the comparison of two strings
+# VERBS-NOT: = GetStringLength
+# VERBS: = StrictEq {{*}}form=Strings
+# VERBS-NOT: = GetStringLength
+# VERBS: = StrictEq {{*}}form=Strings
+# VERBS: [[length]]: {{*}} = GetStringLength
+# VERBS: = StringEqualsLiteral {{*}}, [[length]] literal="post"
+# outside a loop the characters in line do not pay: function verb(s) { if (typeof s === "string") { if (s === "get") return 1; if (s === "put") return 2; if (s < "a") return 3; } }
+# RUN(ONCE): walk f9 mechanisms=none+TypedOperations
+# ONCE-LABEL: code f9:Body
+# ONCE-NOT: = StringEqualsLiteral
+# ONCE-NOT: = StringOrderToCharacter
+# ONCE: Return
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = NewClosure function=f9
+    v11 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10
+    Return v11
+}
+function f1 name="isEmpty" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="length"
+    v4 = Integer
+    v5 = StrictEq v3, v4
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f2 name="hasText" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    v3 = PropGet v2 key="length"
+    v4 = ToBoolean v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    Return v5
+  b3():
+    v6 = Undefined
+    Return v6
+}
+function f3 name="isFilled" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="length"
+    v4 = Integer
+    v5 = Greater v3, v4
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f4 name="isOne" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="length"
+    v4 = Integer integer=1
+    v5 = StrictEq v3, v4
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f5 name="order" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b7()
+  b1(v3):
+    v4 = TypeTest v1 testedType=string
+    Branch v4 -> taken b2(| 0), notTaken b7()
+  b2(v5):
+    v6 = Less v3, v5
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Integer integer=-1
+    Return v7
+  b4():
+    v8 = Greater v3, v5
+    Branch v8 -> taken b5(), notTaken b6()
+  b5():
+    v9 = Integer integer=1
+    Return v9
+  b6():
+    v10 = Integer
+    Return v10
+  b7():
+    v11 = Undefined
+    Return v11
+}
+function f6 name="isBelow" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=string
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Less v3, v5
+    v7 = NewArray v6 contents=anything
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f7 name="below" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b7()
+  b1(v3):
+    v4 = Integer
+    v5 = Integer
+    Jump -> next b2(v4, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(), notTaken b6()
+  b3():
+    v10 = String string="a"
+    v11 = Less v3, v10
+    Branch v11 -> taken b4(), notTaken b5(v6)
+  b4():
+    v12 = Increment v6
+    Jump -> next b5(v12)
+  b5(v13):
+    v14 = Increment v7
+    Jump -> next b2(v13, v14)
+  b6():
+    Return v6
+  b7():
+    v15 = Undefined
+    Return v15
+}
+function f8 name="verbs" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b9()
+  b1(v3):
+    v4 = Integer
+    v5 = Integer
+    Jump -> next b2(v4, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(), notTaken b8()
+  b3():
+    v10 = String string="get"
+    v11 = StrictEq v3, v10
+    Branch v11 -> taken b6(), notTaken b4()
+  b4():
+    v12 = String string="put"
+    v13 = StrictEq v3, v12
+    Branch v13 -> taken b6(), notTaken b5()
+  b5():
+    v14 = String string="post"
+    v15 = StrictEq v3, v14
+    Branch v15 -> taken b6(), notTaken b7(v6)
+  b6():
+    v16 = Increment v6
+    Jump -> next b7(v16)
+  b7(v17):
+    v18 = Increment v7
+    Jump -> next b2(v17, v18)
+  b8():
+    Return v6
+  b9():
+    v19 = Undefined
+    Return v19
+}
+function f9 name="verb" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b7()
+  b1(v2):
+    v3 = String string="get"
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    Return v5
+  b3():
+    v6 = String string="put"
+    v7 = StrictEq v2, v6
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
+    v8 = Integer integer=2
+    Return v8
+  b5():
+    v9 = String string="a"
+    v10 = Less v2, v9
+    Branch v10 -> taken b6(), notTaken b7()
+  b6():
+    v11 = Integer integer=3
+    Return v11
+  b7():
+    v12 = Undefined
+    Return v12
+}

@@ -1,0 +1,21 @@
+# a record that leans on a fact is followed by its `fact` line. The parser reads every kind that the printer prints, the last enumerator of FactKind among them
+# RUN: code-round-trip
+# CHECK: = TypeTest v0 testedType=undefined
+# CHECK-NEXT: fact v1 kind=HeapWords subjectKind=Function subject=0
+# CHECK: round trip: same
+# -- code
+# code f0:Body {
+#   frame 0 callee=f0
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: boolean @Boolean = TypeTest v0 testedType=undefined
+#       fact v1 kind=HeapWords subjectKind=Function subject=0
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="same" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+entry module=m0

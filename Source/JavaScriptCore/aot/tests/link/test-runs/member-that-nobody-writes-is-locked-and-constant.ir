@@ -1,0 +1,24 @@
+# a member to which no write is followed is compiled as in the executable: the program locks it when it starts, Link goes by it, and the code reads nothing off Math
+# a.test.js: Math.imul(given, given)
+# executable-leaves-every-lock-as-the-table-has-it.ir runs the same records without the test run, with the same check lines for the code
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: locks open
+# CHECK: locked MathImul constant
+# CHECK-NOT: open MathImul
+# RUN(NEVER): test-run
+# NEVER-NOT: replaces
+# RUN(WALK): walk f0 mechanisms=all
+# WALK-LABEL: code f0:Body
+# WALK-NOT: key="imul"
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Math" [isFreeName]
+    v2 = PropGet v1 key="imul"
+    v3 = PropGet v0 key="given" [isFreeName]
+    v4 = Call v2, v1, v3, v3 calleeKey="imul"
+    Return v4
+}

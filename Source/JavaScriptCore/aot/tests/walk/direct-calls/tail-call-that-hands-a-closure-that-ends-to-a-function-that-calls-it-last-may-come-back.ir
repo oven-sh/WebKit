@@ -1,0 +1,22 @@
+# the jump to a function that calls a parameter last is owed only because of what may arrive there: where the call hands over a closure made here whose function ends its tail calls, it may come back
+# f5 = maker, which returns last(toLeaf, v). f11 = both, which meets both conditions of either. f14 = outer, which hands toMaker to passes, and passes hands it on to last
+# f3 = passes hands on its own parameter, f7 = round and f16 = spin stand on rings through their closures, f9 = blind hands over a closure with a condition of its own, f12 = oneOfTwo meets one condition of two
+# RUN: walk f5 mechanisms=none+DirectCalls
+# CHECK-LABEL: code f5:Body
+# CHECK: [[call]]: {{*}} = CallDirect {{*}}function=f2
+# CHECK: ReturnCall [[call]] {{*}}requirement=Allowed
+# RUN(BOTH): walk f11 mechanisms=none+DirectCalls
+# BOTH-LABEL: code f11:Body
+# BOTH: [[call]]: {{*}} = CallDirect {{*}}function=f10
+# BOTH: ReturnCall [[call]] {{*}}requirement=Allowed
+# RUN(OUTER): walk f14 mechanisms=none+DirectCalls
+# OUTER-LABEL: code f14:Body
+# OUTER: [[call]]: {{*}} = CallDirect {{*}}function=f3
+# OUTER: ReturnCall [[call]] {{*}}requirement=Allowed
+# RUN(OWED): walk f7 mechanisms=none+DirectCalls
+# OWED-LABEL: code f7:Body
+# OWED: [[call]]: {{*}} = CallDirect {{*}}function=f2
+# OWED: ReturnCall [[call]]
+# RUN(NEVER): walk f3 f7 f9 f12 f16 mechanisms=none+DirectCalls
+# NEVER-NOT: requirement=Allowed
+# PROGRAM-OF: ../../plan/tail-calls/function-that-calls-a-parameter-last-ends-its-tail-calls-if-what-arrives-does.ir

@@ -190,7 +190,8 @@ OptionSet<ScrollingStateNode::Property> ScrollingStateScrollingNode::applicableP
         Property::ScrolledContentsLayer,
         Property::HorizontalScrollbarLayer,
         Property::VerticalScrollbarLayer,
-        Property::PainterForScrollbar
+        Property::PainterForScrollbar,
+        Property::ScrollbarEnabledState
     };
 
     auto properties = ScrollingStateNode::applicableProperties();
@@ -643,6 +644,9 @@ void ScrollingStateScrollingNode::dumpProperties(TextStream& ts, OptionSet<Scrol
 
         if (isAnimatedUpdate(request.requestType))
             ts.dumpProperty("requested scroll position is animated"_s, true);
+
+        if (request.animationCurve != ScrollAnimationCurve::Default)
+            ts.dumpProperty("requested scroll animation curve"_s, request.animationCurve);
     };
 
     for (auto& request : m_requestedScrollData)

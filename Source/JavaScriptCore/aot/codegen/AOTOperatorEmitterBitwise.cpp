@@ -9,20 +9,20 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
-#include "AOTFunctionAnalyses.h"
+#include "AOTRepresentationRules.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct BitwiseTraits {
+struct BitwiseOperatorTraits {
     BinaryOperator stub;
     RuntimeOperation onBigInts;
 };
 
 } // anonymous namespace
 
-static BitwiseTraits traitsOfOperator(BitwiseOperator op)
+static BitwiseOperatorTraits traitsOfBitwiseOperator(BitwiseOperator op)
 {
     switch (op) {
     case BitwiseOperator::And:
@@ -41,20 +41,6 @@ static BitwiseTraits traitsOfOperator(BitwiseOperator op)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The conversion of a number has a branch to a call for what lies beyond int64, and B3 shares the arithmetic of two conversions but not their branches.
-template<typename Functor>
-Word32 OperatorEmitter::int32ConvertedOnce(const ValueContext& user, ValueID number, const Functor& convert)
-{
-    Vector<Int32OfNumber, 1>& converted = m_int32OfNumbers.add(number.index(), Vector<Int32OfNumber, 1>()).iterator->value;
-    for (const Int32OfNumber& earlier : converted) {
-        if (earlier.block == user.block() || generator().analyses().dominators().terminatorDominates(earlier.block, user.block()))
-            return earlier.word;
-    }
-    Word32 word = convert();
-    converted.append({ user.block(), word });
-    return word;
-}
-
 Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperator op)
 {
     ValueID left = value->leftOperand();
@@ -64,40 +50,43 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
         Word32 word = bitwiseOnWords(op, x, y);
         return isUnsigned ? Operand(zeroExtended(word)) : Operand(word);
     };
-    auto numberToInt32 = [&](ValueID id) {
-        switch (representationOf(id)) {
+    auto isMaskOfLowestBits = [&](ValueID id) {
+        return op == BitwiseOperator::And && isMaskOfLowestBitsOfInt32(typeOf(id));
+    };
+    auto formOfNumber = [&](ValueID id) {
+        if (!constantsInFormOfUses.contains(opcodeOf(id)))
+            return representationOf(id);
+        const Type& type = typeOf(id);
+        if (type.isInteger())
+            return type.isInt32() ? Representation::Int32 : Representation::Int64;
+        return type.isNumber() ? Representation::Double : Representation::OptionalDouble;
+    };
+    auto numberToInt32 = [&](ValueID id, ValueID other) {
+        ConversionEmitter::BitsOfInt32 bits = isMaskOfLowestBits(other) ? ConversionEmitter::BitsOfInt32::Lowest : ConversionEmitter::BitsOfInt32::All;
+        switch (formOfNumber(id)) {
         case Representation::Int32:
             return in<Word32>(id);
         case Representation::Int64:
-            return low32(in<Integer>(id));
+            return low32InWords(in<Integer>(id));
         case Representation::OptionalInt64:
             static_assert(!static_cast<uint32_t>(undefinedInteger) && !static_cast<uint32_t>(nullInteger) && !static_cast<uint32_t>(absentInteger));
             return low32(Integer(in<OptionalInteger>(id).value()));
         case Representation::Double:
-        case Representation::DoubleWithPayload:
-        case Representation::ImpureDouble:
         case Representation::OptionalDouble:
-            return int32ConvertedOnce(value, id, [&] {
-                return emitter<ConversionEmitter>().toInt32(asNumericOperand(id));
-            });
-        case Representation::JSValue: {
-            if (!typeOf(id).isNumber())
+            if (representationOf(id) == Representation::OptionalDouble && !generator().holdsAnyNaN(id))
+                return emitter<ConversionEmitter>().toInt32(asNumber(in<OptionalNumber>(id), typeOf(id), PayloadOfNaN::Stays), bits);
+            return emitter<ConversionEmitter>().toInt32(asNumericOperandWithAnyNaN(id), bits);
+        case Representation::JSValue:
+            if (typeOf(id).isNumber())
+                return emitter<ConversionEmitter>().toInt32OfBoxedNumber(in<Boxed>(id));
+            if (!typeOf(id).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
                 break;
-            Boxed boxed = in<Boxed>(id);
-            return int32ConvertedOnce(value, id, [&] {
-                return either<Word32>(isInt32(boxed), [&] {
-                    return unboxInt32(boxed);
-                }, [&] {
-                    return emitter<ConversionEmitter>().toInt32(unboxDouble(boxed));
-                });
-            });
-        }
+            return emitter<ConversionEmitter>().truncateNullableNumber(in<Boxed>(id));
         case Representation::Unchosen:
         case Representation::Void:
         case Representation::Boolean:
         case Representation::Cell:
         case Representation::Cell32:
-        case Representation::LiteralString:
         case Representation::RawWord:
             break;
         }
@@ -107,24 +96,55 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
 
     switch (value->form()) {
     case OperatorForm::Integers: {
+        m_out.noteForm(Form::Open, StateOfKnowledge::Integers);
         Word32 x = in<Word32>(left);
         Word32 y = in<Word32>(right);
         return onWords(x, y);
     }
     case OperatorForm::Numbers: {
-        Word32 x = numberToInt32(left);
-        Word32 y = numberToInt32(right);
+        m_out.noteForm(Form::Open, StateOfKnowledge::Numbers);
+        Word32 x = numberToInt32(left, right);
+        Word32 y = numberToInt32(right, left);
         return onWords(x, y);
     }
     case OperatorForm::BigInts:
         if (isUnsigned)
             break;
-        return unboxCell(callOperation<Boxed>(value, traitsOfOperator(op).onBigInts, { boxCell(in<CellPointer>(left)), boxCell(in<CellPointer>(right)) }));
+        m_out.noteForm(Form::Runtime, StateOfKnowledge::BigInts);
+        return unboxCell(callOperation<Boxed>(value, traitsOfBitwiseOperator(op).onBigInts, { boxCell(in<CellPointer>(left)), boxCell(in<CellPointer>(right)) }));
     case OperatorForm::Generic: {
+        m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
         Boxed x = in<Boxed>(left);
         Boxed y = in<Boxed>(right);
-        Boxed result(callBinaryStub(value, traitsOfOperator(op).stub, x, y));
-        // A result from 2^31 on comes back as a double.
+        bool mayBothBeInt32 = typeOf(left).primitives & Primitive::Integer && typeOf(right).primitives & Primitive::Integer;
+        if (!isUnsigned && mayBothBeInt32 && !standsInRareBlock(value)) {
+            auto isWrittenInt32 = [&](ValueID id) {
+                return operationAt(definitionOf(id)).opcode == Opcode::Integer && typeOf(id).isInt32();
+            };
+            Condition areInt32 = isWrittenInt32(left) ? isInt32(y) : isWrittenInt32(right) ? isInt32(x) : logicalAnd(isInt32(x), isInt32(y));
+            bool givesWord = value.representation() == Representation::Int32;
+            LBasicBlock worksOnWords = newBlock();
+            LBasicBlock callsStub = newBlock();
+            Join<Boxed> boxedJoin(m_out);
+            Join<Word32> wordJoin(m_out);
+            ScopeFork fork = m_out.forkScope();
+            m_out.branch(areInt32.value(), normalEdge(worksOnWords), rareEdge(callsStub));
+            m_out.appendToArm(worksOnWords, fork);
+            Word32 word = bitwiseOnWords(op, low32(x), low32(y));
+            if (givesWord)
+                wordJoin.add(word);
+            else
+                boxedJoin.add(boxInt32(word));
+            m_out.appendToArm(callsStub, fork);
+            Boxed answer(callStub(value, binaryOperation(traitsOfBitwiseOperator(op).stub, true), { x.value(), y.value() }).first);
+            if (givesWord) {
+                wordJoin.add(unboxInt32(answer));
+                return wordJoin.finishBehind(fork);
+            }
+            boxedJoin.add(answer);
+            return boxedJoin.finishBehind(fork);
+        }
+        Boxed result(callBinaryStub(value, traitsOfBitwiseOperator(op).stub, x, y));
         if (isUnsigned)
             return emitter<ConversionEmitter>().unbox(result, typeOf(value.id()), value.representation());
         return value.representation() == Representation::Int32 ? Operand(unboxInt32(result)) : Operand(result);

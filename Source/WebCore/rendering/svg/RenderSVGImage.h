@@ -39,7 +39,7 @@ public:
     RenderSVGImage(SVGImageElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGImage();
 
-    SVGImageElement& LEGACY_NODELETE imageElement() const;
+    NODELETE SVGImageElement& imageElement() const;
 
     RenderImageResource& imageResource() { return m_imageResource; }
     const RenderImageResource& imageResource() const { return m_imageResource; }
@@ -65,6 +65,7 @@ private:
     FloatRect decoratedBoundingBox() const final { return m_objectBoundingBox; }
 
     void imageChanged(WrappedImagePtr, const IntRect* = nullptr) final;
+    void forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>&) override final;
 
     void layout() final;
     void paint(PaintInfo&, const LayoutPoint&) final;

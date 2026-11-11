@@ -1,0 +1,26 @@
+# the program hands a built-in object to a function of its own, which writes nothing on it and hands it to nobody: Link follows it there, and its members keep their locks
+# The control: let-go-by-the-program.ir
+# function put(given) { return given; } put(Date); Date.now(); Math.random();
+# RUN: locks
+# CHECK: locked DateNow constant
+# CHECK: locked MathRandom constant
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v1 key="now"
+    v3 = Call v2, v1
+    v4 = Builtin builtin=Math
+    v5 = PropGet v4 key="random"
+    v6 = Call v5, v4
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v1
+    Return v6
+}
+function f1 name="put" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

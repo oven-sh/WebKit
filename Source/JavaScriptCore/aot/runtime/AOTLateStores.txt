@@ -1,0 +1,32 @@
+# A fence behind late stores of a new object, asked of the text of builtins/, object/ and runtime/ in every build by aot/runtime/generator/late-stores.ts, and by Bun's build of its own files of the compiler too (bindings/<file>).
+# <late store or behind finishCreation> | <file> | <function> | <how many lines> | <why each is right>. Every line counts, so a new store beside a listed one is asked about.
+# late store: a line with setWithoutWriteBarrier(, ..WithoutBarrier(, storeWordOf..(, atUnsafe(..) =, tryWriteSlot(, storeBitsOfWidth( or *reinterpret_cast<..*>(..) =, or a copy whose line names words as wide as a cell, and no fence, barrier, remembering or creation in the text between it and the next return. The return right behind `if (!tryWriteSlot(` is passed over: a try that failed has stored nothing.
+# behind finishCreation: a finishCreation() whose last store into a field of its own stands behind Base::finishCreation() with no .set(, barrier or fence behind it.
+# It reads text: it knows no paths and not whose barrier it sees, other spellings of a store pass it, and so do the emitters and the stubs. The emitters have InternalErrorKind::MissingFenceAfterLateStores.
+late store | builtins/AOTBuiltinArrayAllocationOperations.cpp | operationAOTNewArrayFromDoubles | 1 | numbers into a list of doubles
+late store | builtins/AOTEngineIntrinsicOperations.cpp | resumeBytecodeGenerator | 1 | a number
+late store | builtins/AOTEngineIntrinsicOperations.cpp | resumeIteratorHelperOfEitherKind | 1 | a number
+late store | builtins/AOTMapSetBuiltinOperations.cpp | tryAppendMembersInPlace | 3 | an old list, not a new object; the arm for a list of any values has the list's barrier; the elements of a list of int32 or of doubles are not looked at, and what is no int32 is taken out again before the function returns
+late store | object/AOTClassTable.cpp | ClassTable::forgetStructuresOfHeirs | 1 | the numbers of six structures in a table of the instance, not an object
+late store | object/AOTFieldMoves.cpp | acceptInSlot | 1 | a word of the stack
+late store | object/AOTFieldMoves.cpp | applyMovesToNewObject | 1 | the returns between give the new object up, and both callers drop it; the way on ends in its barrier and a fence
+late store | object/AOTMappedCopyInlines.h | storeBitsOfWidth | 3 | the helper itself: who calls it is asked
+late store | object/AOTMappedCopyInlines.h | tryCopyByFieldMapWithoutFrame | 7 | it goes on only where the state of the target lies above the instance's threshold, which no state does while the collector marks, and nothing in it can stop for the collector
+late store | object/AOTObjectAssign.cpp | FieldStoreRun::tryStoreEveryProperty | 2 | one into words of the stack; one into the target, whose barrier both callers run where a cell was stored
+late store | object/AOTObjectAssign.cpp | storeNewExtraPropertiesFromOrdinaryObject | 1 | a new object, filled in front of setExtraProperties(), which begins with the fence
+late store | object/AOTObjectAssign.cpp | tryCopyFollowingPlan | 8 | the test at its head, as in tryCopyByFieldMapWithoutFrame(): it goes on only where the state of the target lies above the instance's threshold, which no state does while the collector marks, and nothing in it can stop for the collector
+late store | object/AOTObjectAssign.cpp | tryFillEmptySlotsAsBefore | 2 | the return between takes back what was stored; the way on has the target's barrier where cells may be stored
+late store | object/AOTObjectAssign.cpp | tryReadInOtherWay | 1 | a word of the stack
+late store | object/AOTObjectBuilder.cpp | ObjectBuilder::tryStoreSlow | 1 | into the cell that tryBuild() fills, which ends in the fence
+late store | object/AOTObjectBuilder.cpp | ObjectBuilderPlan::createInitialBody | 2 | a vector of the plan, no cell
+late store | object/AOTObjectBuilderInlines.h | ObjectBuilder::tryBuild | 2 | the return between gives the cell up; the way on ends in the fence
+late store | object/AOTObjectModel.cpp | CompiledStructure::initializeForObject | 1 | the constructors call it, in front of finishCreation()
+late store | object/AOTThisAllocation.cpp | ClassTable::keepWordsOfObjectWithoutFields | 1 | out of the new object into an array of the table, no cell
+late store | runtime/AOTCompactTable.cpp | CompactTable::copyWithAbsentKey | 1 | the return is a lambda's; the function ends in a fence and the new table's barrier
+late store | runtime/AOTInstance.cpp | State::State | 1 | undefined
+late store | runtime/AOTInstance.cpp | VMState::attachImage | 2 | two structures that are whole, into fields of the VM's state
+late store | runtime/AOTModuleEvaluation.cpp | Modules::forgetTemplateObjects | 1 | a zero
+late store | runtime/AOTPoisonedCell.cpp | PoisonedCell::tryPoison | 1 | a zero, into a cell that is given up
+late store | runtime/AOTStraightIterationOperations.cpp | closeStraightIterationUnlessDone | 1 | a boolean
+late store | runtime/AOTStraightIterationOperations.cpp | operationAOTStepEnumeration | 1 | a number
+late store | runtime/AOTStraightIterationOperations.cpp | operationAOTStepIteration | 2 | booleans

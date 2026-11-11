@@ -1,0 +1,8 @@
+# the same functions with guesses withheld: no test of ours is put in, and the read goes by the text of its key
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = ElemGet
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: IsEnumeratorCurrent
+# NEVER-NOT: EnumeratorGetByVal
+# PROGRAM-OF: read-under-the-key-of-a-for-in-is-a-load-behind-one-test.ir

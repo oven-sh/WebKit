@@ -1,0 +1,5 @@
+runtime OpenIteration : JSCell* (EncodedJSValue iterable) ; unknownCode
+runtime StepIteration : UGPRPair (JSCell* state) ; unknownCode
+runtime CloseIteration, CloseIterationAfterThrow : void (JSCell* state) ; unknownCode
+runtime OpenEnumeration : JSCell* (EncodedJSValue object) ; unknownCode
+runtime StepEnumeration : UGPRPair (JSCell* state, EncodedJSValue object) ; unknownCode

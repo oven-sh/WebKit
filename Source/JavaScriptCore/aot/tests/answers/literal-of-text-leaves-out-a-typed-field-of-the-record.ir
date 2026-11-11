@@ -1,0 +1,45 @@
+# interface Payload { value: unknown; issues: unknown; flag?: boolean }
+# function read(payload) { return payload.value + payload.issues }   function mark(payload) { payload.flag = true; return payload.flag }   register(read, mark, { value: one, issues: two })
+# The sibling of literal-of-text-gets-the-layout-of-a-record.ir. The record has a field that takes booleans alone, and a literal of text that leaves it out gets the layout all the same:
+# the field stays absent, as in a record that JSON.parse made from a text without the member, and the run time tests what is stored there later. A literal that names the field stays an ordinary object.
+# TODO: link: nothing lists a layout among those that parsers make (Facts::parsersMayMake), so a literal of text under the names of a record stays an ordinary object
+# RUN: run-in-shell globalThis.one = 1; globalThis.two = 2; globalThis.register = (read, mark, kept) => { const ordinary = o => describe(o).includes("value:"); const made = { value: 3, issues: 4 }; print(read(made), ordinary(kept), ordinary(made), Object.keys(made), made.flag, "flag" in made); print(mark(made), Object.keys(made), JSON.stringify(made)); made.flag = "text"; print(made.flag, mark(made), made.flag); const whole = { value: 3, issues: 4, flag: true }; print(ordinary(whole), read(whole), whole.flag); };
+# CHECK: 7 false false value,issues undefined false
+# CHECK-NEXT: true value,issues,flag {"value":3,"issues":4,"flag":true}
+# CHECK-NEXT: text true true
+# CHECK-NEXT: true 7 true
+# CHECK-NEXT: exited with 0
+
+layout L0 name="Payload" module=m0 position=10 fields=[{key="flag" declared={type=undefined|boolean}}, {key="issues" declared={type=anything}}, {key="value" declared={type=anything}}] declaredOrder=[2, 1, 0] ownFieldCount=3
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="one" [isFreeName]
+    v4 = PropGet v2 key="two" [isFreeName]
+    v5 = NewObject -, v4, v3 layout=L0 fields=[1, 2]
+    v6 = Builtin builtin=Function
+    v7 = String string="return globalThis.register"
+    v8 = Construct v6, -, v7
+    v9 = Call v8
+    v10 = Call v9, -, v0, v1, v5
+    v11 = Undefined
+    Return v11
+}
+function f1 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0):
+    v1 = PropGet v0 key="value"
+    v2 = PropGet v0 key="issues"
+    v3 = Add v1, v2
+    Return v3
+}
+function f2 name="mark" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0):
+    v1 = Boolean boolean=true
+    PropSet v0, v1 key="flag"
+    v3 = PropGet v0 key="flag"
+    Return v3
+}

@@ -51,7 +51,9 @@ struct ImageRegExp {
     uint8_t isLiteral : 1;
     uint8_t sourceIsPattern : 1;
     uint8_t hasNamedGroups : 1;
-    uint8_t reserved : 3;
+    uint8_t hasCodeFor8BitSubjectsAlone : 1;
+    uint8_t handsLongSearchesOver : 1;
+    uint8_t reserved : 1;
     uint8_t rawSpecificPattern;
 };
 static_assert(sizeof(ImageRegExp) == 32);

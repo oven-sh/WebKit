@@ -1,0 +1,21 @@
+# the program lets a built-in object go: whoever has it may write on it, so its members stay open. What goes nowhere keeps its locks
+# globalThis.put(Date); Date.now(); Math.random();
+# RUN: locks
+# CHECK-NOT: DateNow
+# CHECK: locked MathRandom constant
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v1 key="now"
+    v3 = Call v2, v1
+    v4 = Builtin builtin=Math
+    v5 = PropGet v4 key="random"
+    v6 = Call v5, v4
+    v7 = PropGet v0 key="put"
+    v8 = Call v7, v0, v1 calleeKey="put"
+    Return v6
+}

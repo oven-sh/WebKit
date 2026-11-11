@@ -1,0 +1,165 @@
+# The list follows from the program alone. What a built-in is handed is looked at by its kind before it is entered: what native code would first convert is not handed over, for nobody can say from outside what the conversion gives.
+# boxed: new String("abc").indexOf("c") . counted: "abc".slice([1]) . gone: new Set(new String("abab")).size . listed: "abc".indexOf(["c"]) . matched: "aab".match("b+"): a text that would be made a pattern . spread: [...new String("abab")].length
+# plain: "abc".indexOf("c") and written: "aab".match(/b+/) are entered as ever.
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /A2/
+# CHECK-NOT: text /Bbc/
+# CHECK-NOT: text /C2/
+# CHECK-NOT: text /D2/
+# CHECK-NOT: text /Eb/
+# CHECK: text /F2/
+# CHECK-NOT: text /G4/
+# CHECK: text /Hb/
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="boxed" variable=g0}, {name="counted" variable=g1}, {name="gone" variable=g2}, {name="listed" variable=g3}, {name="matched" variable=g4}, {name="plain" variable=g5}, {name="spread" variable=g6}, {name="written" variable=g7}]
+entry module=m0
+variable g0 name="boxed" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="counted" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="gone" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g3 name="listed" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g4 name="matched" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g5 name="plain" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g6 name="spread" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g7 name="written" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    v4 = NewClosure function=f3
+    PutModuleVariable v4 variable=g2
+    v6 = NewClosure function=f4
+    PutModuleVariable v6 variable=g3
+    v8 = NewClosure function=f5
+    PutModuleVariable v8 variable=g4
+    v10 = NewClosure function=f6
+    PutModuleVariable v10 variable=g5
+    v12 = NewClosure function=f7
+    PutModuleVariable v12 variable=g6
+    v14 = NewClosure function=f8
+    PutModuleVariable v14 variable=g7
+    v16 = Undefined
+    Return v16
+}
+function f1 name="boxed" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=String
+    v1 = String string="abc"
+    v2 = Construct v0, -, v1
+    v3 = PropGet v2 key="indexOf"
+    v4 = String string="c"
+    v5 = Call v3, v2, v4 calleeKey="indexOf"
+    v6 = String string="a"
+    v7 = PropGet v6 key="toUpperCase"
+    v8 = Call v7, v6 calleeKey="toUpperCase"
+    v9 = Add v8, v5
+    v10 = Builtin builtin=RegExp
+    v11 = Construct v10, -, v9
+    Return v11
+}
+function f2 name="counted" module=m0 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abc"
+    v1 = PropGet v0 key="slice"
+    v2 = Integer integer=1
+    v3 = NewArray v2 contents=anything
+    v4 = Call v1, v0, v3 calleeKey="slice"
+    v5 = String string="b"
+    v6 = PropGet v5 key="toUpperCase"
+    v7 = Call v6, v5 calleeKey="toUpperCase"
+    v8 = Add v7, v4
+    v9 = Builtin builtin=RegExp
+    v10 = Construct v9, -, v8
+    Return v10
+}
+function f3 name="gone" module=m0 position=30 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=String
+    v1 = String string="abab"
+    v2 = Construct v0, -, v1
+    v3 = Builtin builtin=Set
+    v4 = Construct v3, -, v2
+    v5 = PropGet v4 key="size"
+    v6 = String string="c"
+    v7 = PropGet v6 key="toUpperCase"
+    v8 = Call v7, v6 calleeKey="toUpperCase"
+    v9 = Add v8, v5
+    v10 = Builtin builtin=RegExp
+    v11 = Construct v10, -, v9
+    Return v11
+}
+function f4 name="listed" module=m0 position=40 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abc"
+    v1 = PropGet v0 key="indexOf"
+    v2 = String string="c"
+    v3 = NewArray v2 contents=anything
+    v4 = Call v1, v0, v3 calleeKey="indexOf"
+    v5 = String string="d"
+    v6 = PropGet v5 key="toUpperCase"
+    v7 = Call v6, v5 calleeKey="toUpperCase"
+    v8 = Add v7, v4
+    v9 = Builtin builtin=RegExp
+    v10 = Construct v9, -, v8
+    Return v10
+}
+function f5 name="matched" module=m0 position=50 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="aab"
+    v1 = PropGet v0 key="match"
+    v2 = String string="b+"
+    v3 = Call v1, v0, v2 calleeKey="match"
+    v4 = String string="e"
+    v5 = PropGet v4 key="toUpperCase"
+    v6 = Call v5, v4 calleeKey="toUpperCase"
+    v7 = Add v6, v3
+    v8 = Builtin builtin=RegExp
+    v9 = Construct v8, -, v7
+    Return v9
+}
+function f6 name="plain" module=m0 position=60 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="abc"
+    v1 = PropGet v0 key="indexOf"
+    v2 = String string="c"
+    v3 = Call v1, v0, v2 calleeKey="indexOf"
+    v4 = String string="f"
+    v5 = PropGet v4 key="toUpperCase"
+    v6 = Call v5, v4 calleeKey="toUpperCase"
+    v7 = Add v6, v3
+    v8 = Builtin builtin=RegExp
+    v9 = Construct v8, -, v7
+    Return v9
+}
+function f7 name="spread" module=m0 position=70 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=String
+    v1 = String string="abab"
+    v2 = Construct v0, -, v1
+    v3 = NewArray contents=anything
+    AppendSpread v3, v2
+    v5 = PropGet v3 key="length"
+    v6 = String string="g"
+    v7 = PropGet v6 key="toUpperCase"
+    v8 = Call v7, v6 calleeKey="toUpperCase"
+    v9 = Add v8, v5
+    v10 = Builtin builtin=RegExp
+    v11 = Construct v10, -, v9
+    Return v11
+}
+function f8 name="written" module=m0 position=80 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="aab"
+    v1 = PropGet v0 key="match"
+    v2 = NewRegExp pattern="b+"
+    v3 = Call v1, v0, v2 calleeKey="match"
+    v4 = String string="h"
+    v5 = PropGet v4 key="toUpperCase"
+    v6 = Call v5, v4 calleeKey="toUpperCase"
+    v7 = Add v6, v3
+    v8 = Builtin builtin=RegExp
+    v9 = Construct v8, -, v7
+    Return v9
+}

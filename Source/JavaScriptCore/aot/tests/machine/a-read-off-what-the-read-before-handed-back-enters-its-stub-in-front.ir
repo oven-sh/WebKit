@@ -1,0 +1,31 @@
+# A read off what the read before handed back: the receiver lies in the register of results. No move stands at the place: the call enters the stub one instruction earlier, where the stub brings the receiver to its register itself.
+# The parameter arrives in the first register of arguments. On x86_64 that is another register than the one of results, so the first read is entered at its head. On arm64 the two are one register.
+# RUN(CHAIN): bytes f1:Body mechanisms=all-Inlining
+# CHAIN: Call Stub ReadAtSite
+# CHAIN: Call Stub ReadAtSite{{*}}, entered in front
+# CHAIN: Call Stub ReadAtSite{{*}}, entered in front
+# RUN(FIRST): bytes f1:Body mechanisms=all-Inlining
+# REQUIRES(FIRST): x86_64
+# FIRST: Call Stub ReadAtSite
+# FIRST-NOT: entered in front
+# FIRST: Call Stub ReadAtSite{{*}}, entered in front
+
+module m0 path="a-read-off-what-the-read-before-handed-back-enters-its-stub-in-front.js" displayPath="a-read-off-what-the-read-before-handed-back-enters-its-stub-in-front.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @53
+    v3 = PropGet v2 key="report" [isFreeName] @53
+    v4 = Call v3, -, v1 calleeName="report" @53
+    v5 = Undefined @53
+    Return v5 @53
+}
+function f1 name="chain" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner" @29
+    v2 = PropGet v1 key="deep" @33
+    v3 = PropGet v2 key="value" @39
+    Return v3 @29
+}

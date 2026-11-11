@@ -1,0 +1,64 @@
+# If a module that a function may be the first to require had no state, the second call of the function would run its body again, and so would the import of another module behind the call
+# main.js: import "./a.js"; function late() { require("./shared.js") }  late(); late();    a.js: print("a")    shared.js: import "./below.js"; print("shared")
+# A site that is not bare may stand anywhere, so it calls the start of its target, which asks the status. `below` is reached through `shared` alone and has no state.
+# The module may be left by an error that the caller of `late` catches, so its row abandons the evaluation on a throw: the module keeps the error.
+# RUN: plan module-starts
+# CHECK: module-start m2 body=f2: BeginOrReturn m2, AbandonOnThrow m2, CallBody f3, CallBody f2, Finish m2
+# CHECK: module m2 called-where-required starts-itself
+# CHECK: module m3 called-where-required starts-itself evaluated-by-code-alone
+# RUN(WALK): walk f4 mechanisms=none
+# WALK: CallDirect function=f2 {{*}}role=ModuleStart [isNeverInlined]
+# WALK-NOT: EvaluateRequiredModule
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: a
+# NONE-NEXT: below
+# NONE-NEXT: shared
+# NONE-NEXT: main
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: a
+# ALL-NEXT: below
+# ALL-NEXT: shared
+# ALL-NEXT: main
+# ALL-NEXT: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 kind=Require completes=true}]
+module m1 path="/a.js" displayPath="a.js" body=f1
+module m2 path="/shared.js" displayPath="shared.js" body=f2 requests=[{target=m3 completes=true}]
+module m3 path="/below.js" displayPath="below.js" body=f3
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = Call v0, - calleeName="late"
+    v2 = Call v0, - calleeName="late"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="print" [isFreeName]
+    v5 = String string="main"
+    v6 = Call v4, -, v5
+    Return
+}
+function f1 name="a" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="a"
+    v3 = Call v1, -, v2
+    Return
+}
+function f2 name="shared" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="shared"
+    v3 = Call v1, -, v2
+    Return
+}
+function f3 name="below" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="below"
+    v3 = Call v1, -, v2
+    Return
+}
+function f4 name="late" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m2 referrer=m0 [isCallOfRequire]
+    Return
+}

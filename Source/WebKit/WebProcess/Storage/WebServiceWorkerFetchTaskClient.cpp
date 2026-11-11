@@ -64,12 +64,11 @@ void WebServiceWorkerFetchTaskClient::didReceiveRedirection(const WebCore::Resou
         return;
 
     m_didSendResponse = true;
-    connection->send(Messages::ServiceWorkerFetchTask::DidReceiveRedirectResponse { response }, m_fetchIdentifier);
-
     cleanup();
+    connection->send(Messages::ServiceWorkerFetchTask::DidReceiveRedirectResponse { response }, m_fetchIdentifier);
 }
 
-void WebServiceWorkerFetchTaskClient::didReceiveResponse(ResourceResponse&& response)
+void WebServiceWorkerFetchTaskClient::didReceiveResponse(ResourceResponse&& response, const URL& firstResponseURL)
 {
     Locker lock(m_connectionLock);
 
@@ -81,7 +80,7 @@ void WebServiceWorkerFetchTaskClient::didReceiveResponse(ResourceResponse&& resp
     if (m_needsContinueDidReceiveResponseMessage)
         m_waitingForContinueDidReceiveResponseMessage = true;
 
-    connection->send(Messages::ServiceWorkerFetchTask::DidReceiveResponse { WTF::move(response), m_needsContinueDidReceiveResponseMessage }, m_fetchIdentifier);
+    connection->send(Messages::ServiceWorkerFetchTask::DidReceiveResponse { WTF::move(response), firstResponseURL, m_needsContinueDidReceiveResponseMessage }, m_fetchIdentifier);
 }
 
 void WebServiceWorkerFetchTaskClient::didReceiveData(const SharedBuffer& buffer)
@@ -330,9 +329,7 @@ void WebServiceWorkerFetchTaskClient::continueDidReceiveResponse()
 void WebServiceWorkerFetchTaskClient::cleanup()
 {
     m_connection = nullptr;
-    ensureOnMainRunLoop([serviceWorkerIdentifier = m_serviceWorkerIdentifier, serverConnectionIdentifier = m_serverConnectionIdentifier, fetchIdentifier = m_fetchIdentifier, needsContinueDidReceiveResponseMessage = m_needsContinueDidReceiveResponseMessage] {
-        SWContextManager::singleton().removeFetch(serviceWorkerIdentifier, serverConnectionIdentifier, fetchIdentifier, needsContinueDidReceiveResponseMessage);
-    });
+    SWContextManager::singleton().removeFetch(m_serviceWorkerIdentifier, m_serverConnectionIdentifier, m_fetchIdentifier, m_needsContinueDidReceiveResponseMessage);
 }
 
 void WebServiceWorkerFetchTaskClient::contextIsStopping()

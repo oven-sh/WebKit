@@ -1,0 +1,117 @@
+# const nobody = { get lazy() { return 1; }, set lazy(v) {} };  read.lazy;  called.lazy();  stored.lazy = 2;  ({ ...copied });
+# An accessor that is laid on a record is entered where its field is asked: where a read, a call through it, a store or a copy of the record comes to the field, or unseen code comes by the record.
+# To lay it enters nothing. If it did, as it did, the six lazy getters on what node:fs exports would load node:fs/promises, the stream classes and node:stream in every program that loads node:fs.
+# f1, f2: of the record that nobody asks. f3, f4: read. f5, f6: called through. f7, f8: stored into. f9, f10: copied. Whoever asks a field enters both its halves.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+# CHECK: function f2 unreached
+# CHECK-NOT: function f3 unreached
+# CHECK-NOT: function f4 unreached
+# CHECK-NOT: function f5 unreached
+# CHECK-NOT: function f6 unreached
+# CHECK-NOT: function f7 unreached
+# CHECK-NOT: function f8 unreached
+# CHECK-NOT: function f9 unreached
+# CHECK-NOT: function f10 unreached
+
+layout L0 module=m0 fields=[{key="lazy" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="lazy" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="lazy" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="lazy" declared={type=anything} flags=[IsRequired]}]
+layout L4 module=m0 fields=[{key="lazy" declared={type=anything} flags=[IsRequired]}]
+layout L5 module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    DefineGetter v0, v1 key="lazy"
+    v3 = NewClosure function=f2
+    DefineSetter v0, v3 key="lazy"
+    v5 = FinishObject v0
+    v6 = NewObject layout=L1
+    v7 = NewClosure function=f3
+    DefineGetter v6, v7 key="lazy"
+    v9 = NewClosure function=f4
+    DefineSetter v6, v9 key="lazy"
+    v11 = FinishObject v6
+    v12 = NewObject layout=L2
+    v13 = NewClosure function=f5
+    DefineGetter v12, v13 key="lazy"
+    v15 = NewClosure function=f6
+    DefineSetter v12, v15 key="lazy"
+    v17 = FinishObject v12
+    v18 = NewObject layout=L3
+    v19 = NewClosure function=f7
+    DefineGetter v18, v19 key="lazy"
+    v21 = NewClosure function=f8
+    DefineSetter v18, v21 key="lazy"
+    v23 = FinishObject v18
+    v24 = NewObject layout=L4
+    v25 = NewClosure function=f9
+    DefineGetter v24, v25 key="lazy"
+    v27 = NewClosure function=f10
+    DefineSetter v24, v27 key="lazy"
+    v29 = FinishObject v24
+    v30 = PropGet v11 key="lazy"
+    v31 = PropGet v17 key="lazy"
+    v32 = Call v31, v17 calleeKey="lazy" calleeName="called.lazy"
+    v33 = Integer integer=2
+    PropSet v23, v33 key="lazy" mode=Strict
+    v35 = NewObject layout=L5
+    CopyDataProperties v35, v29
+    v37 = FinishObject v35
+    v38 = Undefined
+    Return v38
+}
+function f1 name="lazy" module=m0 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="lazy" module=m0 kind=Setter length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f3 name="lazy" module=m0 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f4 name="lazy" module=m0 kind=Setter length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f5 name="lazy" module=m0 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f6 name="lazy" module=m0 kind=Setter length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f7 name="lazy" module=m0 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f8 name="lazy" module=m0 kind=Setter length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f9 name="lazy" module=m0 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f10 name="lazy" module=m0 kind=Setter length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}

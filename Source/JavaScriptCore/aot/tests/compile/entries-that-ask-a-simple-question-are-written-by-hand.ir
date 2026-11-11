@@ -1,0 +1,244 @@
+# class Square { side = 2; area() { return this.side * this.side; } grown(by) { return this.side + by; } }
+# class Wide { across = 2; down = 3; area() { return this.across * this.down; } grown(by) { return this.across + by; } }
+# class Tall { across = 1; down = 5; up = 2; area() { return this.across * (this.down + this.up); } grown(by) { return this.up + by; } }
+# class Round { reach = 2; area() { return this.reach * this.reach * 3; } grown(by) { return this.reach + by; } }
+# const shapes = [new Square(), new Wide(), new Tall(), new Round()];
+# let sum = 0;  for (let i = 0; i < shapes.length; i++) sum += shapes[i].area() + shapes[i].grown(i);  print(sum);
+# Four classes answer to each name, so the eight methods are entered by value, and each entry asks what its body believes.
+# `area` believes that `this` has the one shape of its class: a simple question, and the entry is written by hand, without a walk.
+# `grown` believes also that `by` is a whole number, which is asked of an int32 and of a double: no simple question, and the entry is walked.
+# Every `new` is copied and nothing enters the four constructors by value: their entries are closed, by hand too, and their bodies are not compiled.
+# RUN: compile GenericEntryThunksEmitted UnitsCompiled mechanisms=all-UnboxedNumbers
+# CHECK: statistic GenericEntryThunksEmitted 8
+# CHECK-NEXT: statistic UnitsCompiled 21
+# Where numbers cross calls raw the four bodies of `area` hand back a raw number, for the call in the loop. Whoever comes by value gets it boxed: that entry calls, boxes and returns: it is walked.
+# RUN(RAW): compile GenericEntryThunksEmitted UnitsCompiled mechanisms=all
+# RAW: statistic GenericEntryThunksEmitted 4
+# RAW-NEXT: statistic UnitsCompiled 21
+# Where proofs are checked at run time every entry is walked.
+# RUN(CHECKED): compile GenericEntryThunksEmitted UnitsCompiled mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic GenericEntryThunksEmitted 0
+# CHECKED-NEXT: statistic UnitsCompiled 21
+# RUN(SIMPLE): walk f2:GenericCallEntry mechanisms=all
+# SIMPLE: = TypeTest {{*}}testedType=L0
+# SIMPLE-NOT: = TypeTest
+# RUN(OTHER): walk f3:GenericCallEntry mechanisms=all
+# OTHER: = TypeTest {{*}}testedType=L0
+# OTHER: = TypeTest {{*}}testedType=int|whole
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 43
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Instance name="Square" module=m0 constructor=f1 fields=[{key="side" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Wide" module=m0 constructor=f4 fields=[{key="across" declared={type=anything} flags=[IsRequired]}, {key="down" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L2 kind=Instance name="Tall" module=m0 constructor=f7 fields=[{key="across" declared={type=anything} flags=[IsRequired]}, {key="down" declared={type=anything} flags=[IsRequired]}, {key="up" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+layout L3 kind=Instance name="Round" module=m0 constructor=f10 fields=[{key="reach" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f2
+    DefineMethod v1, v3 layout=L0 key="area"
+    v5 = NewClosure function=f3
+    DefineMethod v1, v5 layout=L0 index=1 key="grown"
+    v7 = FinishClass v1 layout=L0
+    v8 = Convert v7 declared={type=f1 flags=[IsFromCompiler]}
+    v9 = Convert v7 declared={type=f1 flags=[IsFromCompiler]}
+    v10 = NewClosure function=f4
+    v11 = NewClass v10 layout=L1
+    PutModuleVariable v11 variable=g1
+    v13 = NewClosure function=f5
+    DefineMethod v11, v13 layout=L1 key="area"
+    v15 = NewClosure function=f6
+    DefineMethod v11, v15 layout=L1 index=1 key="grown"
+    v17 = FinishClass v11 layout=L1
+    v18 = Convert v17 declared={type=f4 flags=[IsFromCompiler]}
+    v19 = Convert v17 declared={type=f4 flags=[IsFromCompiler]}
+    v20 = NewClosure function=f7
+    v21 = NewClass v20 layout=L2
+    PutModuleVariable v21 variable=g2
+    v23 = NewClosure function=f8
+    DefineMethod v21, v23 layout=L2 key="area"
+    v25 = NewClosure function=f9
+    DefineMethod v21, v25 layout=L2 index=1 key="grown"
+    v27 = FinishClass v21 layout=L2
+    v28 = Convert v27 declared={type=f7 flags=[IsFromCompiler]}
+    v29 = Convert v27 declared={type=f7 flags=[IsFromCompiler]}
+    v30 = NewClosure function=f10
+    v31 = NewClass v30 layout=L3
+    PutModuleVariable v31 variable=g3
+    v33 = NewClosure function=f11
+    DefineMethod v31, v33 layout=L3 key="area"
+    v35 = NewClosure function=f12
+    DefineMethod v31, v35 layout=L3 index=1 key="grown"
+    v37 = FinishClass v31 layout=L3
+    v38 = Convert v37 declared={type=f10 flags=[IsFromCompiler]}
+    v39 = Convert v37 declared={type=f10 flags=[IsFromCompiler]}
+    v40 = Construct v9 calleeName="Square"
+    v41 = Construct v19 calleeName="Wide"
+    v42 = Construct v29 calleeName="Tall"
+    v43 = Construct v39 calleeName="Round"
+    v44 = NewArray v40, v41, v42, v43 contents=anything
+    v45 = Integer
+    v46 = Convert v45 declared={type=number flags=[IsExpected]}
+    v47 = Integer
+    v48 = Convert v47 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v46, v48)
+  b1(v49, v50):
+    LoopHint
+    v52 = PropGet v44 key="length"
+    v53 = Less v50, v52
+    Branch v53 -> taken b2(), notTaken b3()
+  b2():
+    v54 = ElemGet v44, v50
+    v55 = PropGet v54 key="area"
+    v56 = Call v55, v54 calleeKey="area" calleeName="shapes[i].area"
+    v57 = ElemGet v44, v50
+    v58 = PropGet v57 key="grown"
+    v59 = Call v58, v57, v50 calleeKey="grown" calleeName="shapes[i].grown"
+    v60 = Add v56, v59
+    v61 = Add v49, v60
+    v62 = Convert v61 declared={type=number flags=[IsExpected]}
+    v63 = Increment v50
+    v64 = Convert v63 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v62, v64)
+  b3():
+    v65 = Builtin builtin=GlobalThis
+    v66 = PropGet v65 key="print" [isFreeName]
+    v67 = Call v66, -, v49 calleeName="print"
+    v68 = Undefined
+    Return v68
+}
+function f1 name="Square" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0}
+    v4 = CallDirect v3 function=f13
+    Return v3
+}
+function f2 name="area" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="side"
+    v2 = PropGet v0 key="side"
+    v3 = Mul v1, v2
+    Return v3
+}
+function f3 name="grown" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="side"
+    v3 = Add v2, v1
+    Return v3
+}
+function f4 name="Wide" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Convert v2 declared={type=L1}
+    v4 = CallDirect v3 function=f14
+    Return v3
+}
+function f5 name="area" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="across"
+    v2 = PropGet v0 key="down"
+    v3 = Mul v1, v2
+    Return v3
+}
+function f6 name="grown" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1, v1: anything):
+    v2 = PropGet v0 key="across"
+    v3 = Add v2, v1
+    Return v3
+}
+function f7 name="Tall" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    v3 = Convert v2 declared={type=L2}
+    v4 = CallDirect v3 function=f15
+    Return v3
+}
+function f8 name="area" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="across"
+    v2 = PropGet v0 key="down"
+    v3 = PropGet v0 key="up"
+    v4 = Add v2, v3
+    v5 = Mul v1, v4
+    Return v5
+}
+function f9 name="grown" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2, v1: anything):
+    v2 = PropGet v0 key="up"
+    v3 = Add v2, v1
+    Return v3
+}
+function f10 name="Round" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3
+    v3 = Convert v2 declared={type=L3}
+    v4 = CallDirect v3 function=f16
+    Return v3
+}
+function f11 name="area" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L3):
+    v1 = PropGet v0 key="reach"
+    v2 = PropGet v0 key="reach"
+    v3 = Mul v1, v2
+    v4 = Integer integer=3
+    v5 = Mul v3, v4
+    Return v5
+}
+function f12 name="grown" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L3 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L3, v1: anything):
+    v2 = PropGet v0 key="reach"
+    v3 = Add v2, v1
+    Return v3
+}
+function f13 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=2
+    PropDefine v1, v2 key="side"
+    v4 = Undefined
+    Return v4
+}
+function f14 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=2
+    PropDefine v1, v2 key="across"
+    v4 = Integer integer=3
+    PropDefine v1, v4 key="down"
+    v6 = Undefined
+    Return v6
+}
+function f15 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L2} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    PropDefine v1, v2 key="across"
+    v4 = Integer integer=5
+    PropDefine v1, v4 key="down"
+    v6 = Integer integer=2
+    PropDefine v1, v6 key="up"
+    v8 = Undefined
+    Return v8
+}
+function f16 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L3} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L3):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=2
+    PropDefine v1, v2 key="reach"
+    v4 = Undefined
+    Return v4
+}

@@ -33,6 +33,7 @@ private import WebKit_Private.WKFrameInfoPrivate
 private import WebKit_Private.WKPreferencesPrivate
 public import WebKit_Private.WKWebViewPrivate
 private import WebKit_Private.WKWebsiteDataStorePrivate
+private import WebKit_Private._WKFeature
 private import WebKit_Private._WKFrameTreeNode
 private import WebKit_Private._WKWebsiteDataStoreConfiguration
 
@@ -46,13 +47,31 @@ extension WKWebViewConfiguration {
     /// test can use several sites, such as `https://example.com` and `https://webkit.org`. The server routes
     /// requests by path alone, so each route needs a path that's distinct across all of those sites.
     ///
-    /// - Parameter server: The configuration of the server.
-    public convenience init(httpsProxyFor server: HTTPServer.Configuration) {
+    /// A test that also loads `http` URLs can send them to a second server, which uses the `.http` protocol and
+    /// routes requests by their whole URL, such as `http://example.com/page`.
+    ///
+    /// - Parameters:
+    ///   - server: The configuration of the server.
+    ///   - plaintextServer: The configuration of a server to send HTTP loads to, if any.
+    public convenience init(httpsProxyFor server: HTTPServer.Configuration, httpProxyFor plaintextServer: HTTPServer.Configuration? = nil) {
         self.init()
 
         let storeConfiguration = _WKWebsiteDataStoreConfiguration(nonPersistentConfiguration: ())
         storeConfiguration.httpsProxy = server.httpsProxy
+        storeConfiguration.httpProxy = plaintextServer?.address
         websiteDataStore = WKWebsiteDataStore._store(with: storeConfiguration)
+    }
+
+    /// Turns an experimental feature on or off for the web views created with the configuration.
+    ///
+    /// - Parameters:
+    ///   - key: The key of the feature, such as `IPCTestingAPIEnabled`.
+    ///   - enabled: Whether to turn the feature on.
+    public func setFeature(_ key: String, enabled: Bool) {
+        guard let feature = WKPreferences._features().first(where: { $0.key == key }) else {
+            fatalError("No experimental feature has the key \"\(key)\"")
+        }
+        preferences._setEnabled(enabled, for: feature)
     }
 }
 
@@ -248,7 +267,8 @@ public struct FrameTree: Sendable, Equatable, CustomStringConvertible {
             origin = nil
         }
 
-        self.init(origin: origin, children: node.childFrames.map(FrameTree.init), processIdentifier: info._processIdentifier)
+        // The frame info of a remote frame names the process that hosts the frame's document, rather than this one.
+        self.init(origin: origin, children: node.childFrames.map(FrameTree.init), processIdentifier: node._processIdentifierForTesting)
     }
 
     /// Creates a frame that is local to the process.
@@ -350,6 +370,86 @@ public func isProcessRunning(_ processIdentifier: pid_t) -> Bool {
     kill(processIdentifier, 0) == 0
 }
 
+// MARK: Opened windows
+
+/// A UI delegate that opens a web view for each window a page opens, so that a test can wait for them in order.
+///
+/// The recorder keeps the windows that open before a test waits for them. A web view only holds its UI delegate weakly,
+/// so keep the recorder alive for as long as the web view can open windows.
+@MainActor
+public final class OpenedWebViewRecorder: NSObject, WKUIDelegate {
+    @MainActor
+    private final class OpenedWindow {
+        let webView: TestWKWebView
+        let navigationDelegate: TestNavigationDelegate
+        var firstNavigationResult: Result<Void, any Error>?
+
+        init(webView: TestWKWebView, navigationDelegate: TestNavigationDelegate) {
+            self.webView = webView
+            self.navigationDelegate = navigationDelegate
+        }
+    }
+
+    private let siteIsolationEnabled: Bool
+    private var openedWindows: [OpenedWindow] = []
+
+    /// Creates a recorder.
+    ///
+    /// - Parameter siteIsolationEnabled: Whether the web views of opened windows have site isolation enabled. Pass the
+    ///   setting of the opener, as a window's browsing context group has a single setting.
+    public init(siteIsolationEnabled: Bool = true) {
+        self.siteIsolationEnabled = siteIsolationEnabled
+    }
+
+    /// Waits for the next window to open, if one hasn't already, and for the first navigation in it to finish.
+    ///
+    /// The recorder starts waiting for the navigation as soon as the window opens, so it can't miss a navigation that
+    /// finishes before this is called. The window has to open with a URL to load.
+    ///
+    /// - Parameter timeout: How long to wait for the window to open, and then for its navigation to finish.
+    /// - Returns: The web view of the window and its navigation delegate, which trusts any server certificate.
+    /// - Throws: ``ConditionTimedOut`` if no window opens or its navigation doesn't finish before the timeout, or the
+    ///   navigation error if its provisional load fails.
+    public func nextOpenedWebView(
+        timeout: Duration = .seconds(10)
+    ) async throws -> (webView: TestWKWebView, navigationDelegate: TestNavigationDelegate) {
+        try await waitForCondition("a window to open", timeout: timeout) {
+            !openedWindows.isEmpty
+        }
+        let window = openedWindows.removeFirst()
+
+        try await waitForCondition("the first navigation in the opened window to finish", timeout: timeout) {
+            window.firstNavigationResult != nil
+        }
+        try window.firstNavigationResult?.get()
+
+        return (window.webView, window.navigationDelegate)
+    }
+
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        let (openedWebView, navigationDelegate) = webViewAndDelegate(
+            configuration: configuration,
+            siteIsolationEnabled: siteIsolationEnabled
+        )
+        let window = OpenedWindow(webView: openedWebView, navigationDelegate: navigationDelegate)
+        openedWindows.append(window)
+
+        navigationDelegate.waitForDidFinishNavigation { error in
+            MainActor.assumeIsolated {
+                window.firstNavigationResult = error.map { .failure($0) } ?? .success(())
+            }
+        }
+
+        return openedWebView
+    }
+}
+
 // MARK: Alerts
 
 /// A UI delegate that records the message of each JavaScript alert, so that a test can wait for them in order.
@@ -362,6 +462,13 @@ public func isProcessRunning(_ processIdentifier: pid_t) -> Bool {
 @MainActor
 public final class AlertRecorder: NSObject, WKUIDelegate {
     private var messages: [String] = []
+
+    /// The messages of the alerts that have been shown but not yet returned by ``nextAlert(timeout:)``, in order.
+    ///
+    /// Use this to check that no other alert was shown, or to wait for one of several outcomes.
+    public var pendingAlerts: [String] {
+        messages
+    }
 
     /// Waits for the next alert, if it hasn't already been shown.
     ///

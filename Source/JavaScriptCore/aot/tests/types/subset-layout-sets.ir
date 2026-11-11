@@ -1,5 +1,5 @@
 # The whole relation over two layouts: each alone, both, both beside undefined, and object
-# FORM: Prepared
+# Neither layout is declared below the other: a name stands for all that is declared below it.
 # RUN: subset
 # CHECK: t0 <= t0: yes overlaps: yes
 # CHECK-NEXT: t0 <= t1: no overlaps: yes
@@ -30,5 +30,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point"
-layout L1 name="Point3D" supertypes=[L0]
-function f0 name="types" parameters=[{type=L0|L1}, {type=L0}, {type=L1}, {type=object}, {type=undefined|L0|L1}] results=[{type=undefined}]
+layout L1 name="Point3D"
+function f0 name="types" role=Signature parameters=[{type=L0|L1}, {type=L0}, {type=L1}, {type=object}, {type=undefined|L0|L1}] results=[{type=undefined}]
+entry module=m0

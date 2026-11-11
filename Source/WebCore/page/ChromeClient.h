@@ -22,6 +22,7 @@
 #pragma once
 
 #include <WebCore/AutoplayEvent.h>
+#include <WebCore/Color.h>
 #include <WebCore/ContactInfo.h>
 #include <WebCore/CornerRadii.h>
 #include <WebCore/DatabaseDetails.h>
@@ -150,7 +151,7 @@ class Widget;
 class WorkerClient;
 
 #if ENABLE(WEB_AUTHN)
-struct DigitalCredentialsMobileDocumentRequestData;
+struct DigitalCredentialsRequestData;
 struct MobileDocumentRequest;
 #endif
 
@@ -334,11 +335,10 @@ public:
 
     virtual bool shouldUseMouseEventForSelection(const PlatformMouseEvent&) { return true; }
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    virtual FloatSize screenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize availableScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize overrideScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize overrideAvailableScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize screenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize availableScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize overrideScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize overrideAvailableScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
 
     virtual void dispatchDisabledAdaptationsDidChange(const OptionSet<DisabledAdaptations>&) const { }
     virtual void dispatchViewportPropertiesDidChange(const ViewportArguments&) const { }
@@ -373,6 +373,9 @@ public:
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     virtual void allowImmersiveElement(CompletionHandler<void(bool)>&& completion) const { completion(false); }
     virtual void presentImmersiveElement(const LayerHostingContextIdentifier, CompletionHandler<void(bool)>&& completion) const { completion(false); }
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+    virtual void presentImmersiveImageElement(HTMLImageElement&, CompletionHandler<void(bool)>&& completion) const { completion(false); }
+#endif
     virtual void dismissImmersiveElement(CompletionHandler<void()>&& completion) const { completion(); }
     virtual bool supportsImmersiveElement() const { return false; }
 #endif
@@ -697,8 +700,8 @@ public:
 #if ENABLE(SERVICE_CONTROLS)
     virtual void handleSelectionServiceClick(FrameIdentifier, FrameSelection&, const Vector<String>&, const IntPoint&) { }
     virtual bool hasRelevantSelectionServices(bool /*isTextOnly*/) const { return false; }
-    virtual void handleImageServiceClick(FrameIdentifier, const IntPoint&, Image&, HTMLImageElement&) { }
-    virtual void handlePDFServiceClick(FrameIdentifier, const IntPoint&, HTMLAttachmentElement&) { }
+    virtual bool handleImageServiceClick(FrameIdentifier, const IntPoint&, HTMLImageElement&) { return false; }
+    virtual bool handlePDFServiceClick(FrameIdentifier, const IntPoint&, HTMLAttachmentElement&) { return false; }
 #endif
 
     virtual std::pair<URL, DidFilterLinkDecoration> applyLinkDecorationFilteringWithResult(const URL& url, LinkDecorationFilteringTrigger) const { return { url, DidFilterLinkDecoration::No }; };
@@ -862,7 +865,7 @@ public:
     WEBCORE_EXPORT virtual ~ChromeClient();
 
 protected:
-    WEBCORE_EXPORT ChromeClient();
+    NODELETE WEBCORE_EXPORT ChromeClient();
 };
 
 } // namespace WebCore

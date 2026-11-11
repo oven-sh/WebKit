@@ -1,0 +1,95 @@
+# a suspension holds the spills that a path leads on from it to a read of, and no other. One arm awaits, the other reads `make` and ten values.
+# In the order of allocation one arm stands behind the other, so in one of the two functions the ranges of those eleven reach over the await, and no path leads from it to their reads.
+# What a suspension holds is copied out at every await and back at every resumption, and what none holds is cleared there.
+# async function awaitsFirst(make, awaited, waits) { const a = make(make), .., j = make(make); if (waits) return await awaited; make(a); ..; return make(j); }
+# async function readsFirst(make, awaited, waits) { const a = make(make), .., j = make(make); if (waits) { make(a); ..; return make(j); } return await awaited; }
+# RUN: frame f1:CoroutineBody f3:CoroutineBody mechanisms=none
+# CHECK-LABEL: unit f1:CoroutineBody
+# CHECK-NOT: holds [[a]] [[b]] [[c]] [[d]] [[e]] [[f]] [[g]] [[h]]
+# CHECK: bytesKeptAtSuspensions
+# CHECK-LABEL: unit f3:CoroutineBody
+# CHECK-NOT: holds [[a]] [[b]] [[c]] [[d]] [[e]] [[f]] [[g]] [[h]]
+# CHECK: bytesKeptAtSuspensions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="flag" [isFreeName]
+    v5 = Call v1, -, v1
+    v6 = Call v0, -, v1, v5, v4
+    v7 = Call v2, -, v1, v5, v4
+    Return v7
+}
+function f1 name="awaitsFirst" module=m0 flags=[IsAsync, HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Call v1, -, v1
+    v5 = Call v1, -, v1
+    v6 = Call v1, -, v1
+    v7 = Call v1, -, v1
+    v8 = Call v1, -, v1
+    v9 = Call v1, -, v1
+    v10 = Call v1, -, v1
+    v11 = Call v1, -, v1
+    v12 = Call v1, -, v1
+    v13 = Call v1, -, v1
+    v14 = ToBoolean v3
+    Branch v14 -> taken b1(), notTaken b2()
+  b1():
+    v15 = Await v2
+    Return v15
+  b2():
+    v16 = Call v1, -, v4
+    v17 = Call v1, -, v5
+    v18 = Call v1, -, v6
+    v19 = Call v1, -, v7
+    v20 = Call v1, -, v8
+    v21 = Call v1, -, v9
+    v22 = Call v1, -, v10
+    v23 = Call v1, -, v11
+    v24 = Call v1, -, v12
+    v25 = Call v1, -, v13
+    Return v25
+}
+function f2 name="make" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="print" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = NewArray v0 contents=anything
+    Return v4
+}
+function f3 name="readsFirst" module=m0 flags=[IsAsync, HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Call v1, -, v1
+    v5 = Call v1, -, v1
+    v6 = Call v1, -, v1
+    v7 = Call v1, -, v1
+    v8 = Call v1, -, v1
+    v9 = Call v1, -, v1
+    v10 = Call v1, -, v1
+    v11 = Call v1, -, v1
+    v12 = Call v1, -, v1
+    v13 = Call v1, -, v1
+    v14 = ToBoolean v3
+    Branch v14 -> taken b1(), notTaken b2()
+  b1():
+    v15 = Call v1, -, v4
+    v16 = Call v1, -, v5
+    v17 = Call v1, -, v6
+    v18 = Call v1, -, v7
+    v19 = Call v1, -, v8
+    v20 = Call v1, -, v9
+    v21 = Call v1, -, v10
+    v22 = Call v1, -, v11
+    v23 = Call v1, -, v12
+    v24 = Call v1, -, v13
+    Return v24
+  b2():
+    v25 = Await v2
+    Return v25
+}
+entry module=m0

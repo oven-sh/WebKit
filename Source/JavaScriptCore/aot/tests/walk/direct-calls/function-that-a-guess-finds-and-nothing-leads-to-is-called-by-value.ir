@@ -1,0 +1,63 @@
+# THE WALK ASKS BEFORE IT TAKES A VALUE FOR A FUNCTION. `look` is handed to unseen code. One layout alone has the three names that it uses off its parameter, so that layout is expected, though no such object ever comes there.
+# The run behind the test reads `run` out of its slot, where Link has proven the closure of one function. One call alone enters that function: it waits for that caller and takes what it leaves, and nothing leads to it from `look`.
+# A direct call there would bring its body from where nobody has waited, and the queue would end the build. So the call goes by the value.
+# function run(n) { return n; }  class O { constructor(run) { this.a = 1; this.b = 2; this.run = run; } }  const o = new O(run);  o.run(1);  function look(x) { return x.a + x.b + x.run(2); }  sink(look);
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[run]]: f1 {{*}}= GetSlot {{*}}key="run" receivers=[L0]
+# CHECK: = Call [[run]],
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: CallDirect {{*}}function=f1
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 callers-known one-callee {{*}} takes-arrivals
+# LINK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]
+# LINK-NEXT: referrers f0
+# RUN(WHOLE): units-with-code f2:Body mechanisms=all
+# WHOLE: unit f2:Body {{*}} bytes
+
+layout L0 kind=Instance name="O" module=m0 constructor=f3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="run" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f3
+    v4 = NewClass v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    v6 = Construct v5, -, v2
+    v7 = PropGet v6 key="run"
+    v8 = Call v7, v6, v0 calleeKey="run" [isNeverInlined]
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="sink" [isFreeName]
+    v11 = NewClosure function=f2
+    v12 = Call v10, -, v11
+    Return v12
+}
+function f1 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="look" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v0 key="b"
+    v3 = Add v1, v2
+    v4 = PropGet v0 key="run"
+    v5 = Integer integer=2
+    v6 = Call v4, v0, v5 calleeKey="run" [isNeverInlined]
+    v7 = Add v3, v6
+    Return v7
+}
+function f3 name="O" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Integer integer=1
+    PropSet v3, v4 key="a"
+    v6 = Integer integer=2
+    PropSet v3, v6 key="b"
+    PropSet v3, v1 key="run"
+    Return v3
+}

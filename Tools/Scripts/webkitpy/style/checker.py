@@ -442,7 +442,8 @@ _PATH_RULES_SPECIFIER = [
 
     ([  # libwebrtc source and some SPI headers have identifier names with underscores.
       os.path.join('Source', 'ThirdParty', 'libwebrtc', 'Source', 'webrtc'),
-      os.path.join('Source', 'WebCore', 'PAL', 'pal', 'spi')],
+      os.path.join('Source', 'WebCore', 'PAL', 'pal', 'spi'),
+      os.path.join('Source', 'WebDriver', 'cocoa', 'WebDriverNetworkSPI.h')],
      ["-readability/naming/underscores"]),
 
     ([  # c code with underscores in variable names and tabs for the Makefile
@@ -468,7 +469,9 @@ _PATH_RULES_SPECIFIER = [
      os.path.join('Tools', 'MiniBrowser')],
      ["-runtime/wtf_make_unique",
       "-runtime/wtf_move",
-      "-runtime/wtf_to_array"]),
+      "-runtime/wtf_to_array",
+      "-safercpp/dispatch_get_global_queue",
+      "-safercpp/dispatch_get_main_queue"]),
 
     ([  # Ignore formatting and whitespace issues in gmock.
      os.path.join('Source', 'ThirdParty', 'gmock')],
@@ -695,6 +698,7 @@ def _all_categories():
     categories = categories.union(JSTestChecker.categories)
     categories = categories.union(TestExpectationsChecker.categories)
     categories = categories.union(APITestExpectationsChecker.categories)
+    categories = categories.union(APITestAllowlistChecker.categories)
     categories = categories.union(ChangeLogChecker.categories)
     categories = categories.union(PNGChecker.categories)
     categories = categories.union(FeatureDefinesChecker.categories)
@@ -987,6 +991,8 @@ class CheckerDispatcher(object):
             return FileType.PNG
         elif ((file_extension == _CMAKE_FILE_EXTENSION) or os.path.basename(file_path) == 'CMakeLists.txt'):
             return FileType.CMAKE
+        elif 'api_tests' in file_path and os.path.basename(file_path) == 'allowlist.txt':
+            return FileType.API_TEST_ALLOWLIST
         elif ((not file_extension and os.path.join("Tools", "Scripts") in file_path) or
               file_extension in _TEXT_FILE_EXTENSIONS or os.path.basename(file_path) == 'TestExpectations'):
             return FileType.TEXT
@@ -998,8 +1004,6 @@ class CheckerDispatcher(object):
             return FileType.BASE_XCCONFIG
         elif os.path.basename(file_path).startswith('AllowedSPI') and file_extension == 'toml':
             return FileType.SPI_ALLOWLIST
-        elif 'api_tests' in file_path and os.path.basename(file_path) == 'allowlist.txt':
-            return FileType.API_TEST_ALLOWLIST
         else:
             return FileType.NONE
 
@@ -1182,15 +1186,22 @@ class StyleProcessorConfiguration(object):
                           confidence_in_error,
                           file_path,
                           line_number,
-                          message):
+                          message,
+                          column_number=None):
         """Write a style error to the configured stderr."""
         if self._output_format == 'vs7':
             format_string = "%s(%s): error: [%s]  %s"
+            location_separator = ','
         else:
             format_string = f"{ANSIColor.WHITE}%s:%s:{ANSIColor.RESET} {ANSIColor.RED}error:{ANSIColor.RESET} {ANSIColor.YELLOW}[%s]{ANSIColor.RESET} {ANSIColor.WHITE}%s{ANSIColor.RESET}"
+            location_separator = ':'
+
+        location = line_number
+        if column_number is not None:
+            location = '%s%s%s' % (line_number, location_separator, column_number)
 
         _log.log(41, format_string % (file_path,
-                                      line_number,
+                                      location,
                                       category,
                                       message))
 

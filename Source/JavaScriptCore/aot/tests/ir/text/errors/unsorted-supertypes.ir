@@ -1,5 +1,5 @@
 # Supertypes that do not ascend
-# RUN: print
+# RUN: verify
 # DIAGNOSTIC: UnsortedList
 
 layout L0

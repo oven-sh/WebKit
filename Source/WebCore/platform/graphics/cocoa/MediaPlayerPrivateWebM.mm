@@ -31,6 +31,7 @@
 #import "AudioMediaStreamTrackRenderer.h"
 #import "AudioTrackPrivateWebM.h"
 #import "AudioVideoRendererAVFObjC.h"
+#import "ContentTypeUtilities.h"
 #import "FloatSize.h"
 #import "GraphicsContext.h"
 #import "GraphicsContextStateSaver.h"
@@ -184,6 +185,9 @@ MediaPlayer::SupportsType MediaPlayerPrivateWebM::supportsType(const MediaEngine
         return MediaPlayer::SupportsType::IsNotSupported;
 #endif
 
+    if (!contentTypeMeetsContainerAndCodecTypeRequirements(parameters.type, parameters.allowedMediaContainerTypes, parameters.allowedMediaCodecTypes))
+        return MediaPlayer::SupportsType::IsNotSupported;
+
     return SourceBufferParserWebM::isContentTypeSupported(parameters.type, parameters.supportsLimitedMatroska);
 }
 
@@ -241,6 +245,20 @@ void MediaPlayerPrivateWebM::load(const URL& url, const LoadOptions& options)
     ALWAYS_LOG(LOGIDENTIFIER);
 
     setReadyState(MediaPlayer::ReadyState::HaveNothing);
+
+    RefPtr player = m_player.get();
+    if (!player)
+        return;
+
+    auto allowedMediaContainerTypes = player->allowedMediaContainerTypes();
+    constexpr auto isWebMContainerType = [](auto& containerType) {
+        return equalLettersIgnoringASCIICase(containerType, "video/webm"_s) || equalLettersIgnoringASCIICase(containerType, "audio/webm"_s);
+    };
+    if (allowedMediaContainerTypes && !allowedMediaContainerTypes->containsIf(isWebMContainerType)) {
+        ERROR_LOG(LOGIDENTIFIER, "WebM is not an allowed container type");
+        setNetworkState(MediaPlayer::NetworkState::FormatError);
+        return;
+    }
 
     m_assetURL = url;
     if (options.supportsLimitedMatroska)
@@ -690,6 +708,9 @@ void MediaPlayerPrivateWebM::completeSeek(const MediaTime& seekedTime)
 
     m_seeking = false;
 
+    // The time-reached action is one-shot; re-arm it so the next end of media is reported.
+    durationReachedActionIfNeeded();
+
     monitorReadyState();
 
     ensureOnMainThread([weakThis = ThreadSafeWeakPtr { *this }, seekedTime] {
@@ -997,18 +1018,16 @@ void MediaPlayerPrivateWebM::setHasAvailableVideoFrame(bool hasAvailableVideoFra
         player->readyStateChanged();
 }
 
-void MediaPlayerPrivateWebM::setDuration(MediaTime duration)
+void MediaPlayerPrivateWebM::durationReachedActionIfNeeded()
 {
     assertIsCurrent(runningQueue());
-    if (duration == m_duration)
-        return;
 
-    if (m_stallRequest->hasCallback())
-        protect(m_stallRequest)->disconnect();
+    if (!m_duration.isValid() || !m_duration.isFinite() || m_stallRequest->hasCallback())
+        return;
 
     m_renderer->cancelTimeReachedAction();
 
-    m_renderer->notifyTimeReachedAndStall(duration)->whenSettled(runningQueue(), [weakThis = ThreadSafeWeakPtr { *this }](MediaTimePromise::Result&& result) {
+    m_renderer->notifyTimeReachedAndStall(m_duration)->whenSettled(runningQueue(), [weakThis = ThreadSafeWeakPtr { *this }](MediaTimePromise::Result&& result) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -1025,8 +1044,20 @@ void MediaPlayerPrivateWebM::setDuration(MediaTime duration)
                 player->timeChanged();
         });
     })->track(protect(m_stallRequest));
+}
+
+void MediaPlayerPrivateWebM::setDuration(MediaTime duration)
+{
+    assertIsCurrent(runningQueue());
+    if (duration == m_duration)
+        return;
+
+    if (m_stallRequest->hasCallback())
+        protect(m_stallRequest)->disconnect();
 
     m_duration = WTF::move(duration);
+    durationReachedActionIfNeeded();
+
     ensureOnMainThread([weakThis = ThreadSafeWeakPtr { *this }, durationCopy = m_duration] {
         assertIsMainThread();
         if (RefPtr protectedThis = weakThis.get()) {

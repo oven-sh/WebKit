@@ -1,0 +1,27 @@
+# this.kind = "circle"; finish(this).shape = s;
+# A string constant that the VM does not keep is a cell like any other, so v3 has a barrier to omit. v4 is another name of v1, so the barrier of v5 remembers the owner of v3.
+# RUN: sweep-code
+# CHECK: v3 @Void = SetMappedArgument
+# CHECK: LaterBarrierCovers
+# CHECK: v5 @Void = SetMappedArgument
+# CHECK-NOT: LaterBarrierCovers
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=string}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="circle"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   constants:
+#     v0: string @Cell = String string="circle"
+#   b0(v1: anything @Cell, v2: anything @JSValue) entry=0:
+#     v3 @Void = SetMappedArgument v1, v0 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v4: anything @Cell = FinishObject v1
+#     v5 @Void = SetMappedArgument v4, v2 index=1 traits=[mayWriteObservableState, mayTouchMemory]
+#     Return
+# }
+# -- end of code

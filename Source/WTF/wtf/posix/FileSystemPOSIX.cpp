@@ -52,9 +52,7 @@
 #include "Path.h"
 #endif
 
-namespace WTF {
-
-namespace FileSystemImpl {
+namespace WTF::FileSystemImpl {
 
 FileHandle openFile(const String& path, FileOpenMode mode, FileAccessPermission permission, OptionSet<FileLockMode> lockMode, bool failIfFileExists)
 {
@@ -241,14 +239,14 @@ bool makeAllDirectories(const String& path)
         if (p[0] == '/') {
             p[0] = '\0';
             if (posixAccess(fullPath, F_OK)) {
-                if (posixMkdir(fullPath, S_IRWXU))
+                if (posixMkdir(fullPath, S_IRWXU) && errno != EEXIST)
                     return false;
             }
             p[0] = '/';
         }
     }
     if (posixAccess(fullPath, F_OK)) {
-        if (posixMkdir(fullPath, S_IRWXU))
+        if (posixMkdir(fullPath, S_IRWXU) && errno != EEXIST)
             return false;
     }
 
@@ -282,5 +280,4 @@ String pathByAppendingComponents(StringView path, std::span<const StringView> co
 
 #endif
 
-} // namespace FileSystemImpl
-} // namespace WTF
+} // namespace WTF::FileSystemImpl

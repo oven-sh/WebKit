@@ -10,20 +10,11 @@
 #include "AOTOperationEmitter.h"
 #include "AOTVector.h"
 #include "HandlerInfo.h"
+#include <span>
 #include <wtf/BitVector.h>
-#include <wtf/Box.h>
 #include <wtf/HashMap.h>
 
-namespace JSC {
-
-namespace B3 {
-class Variable;
-namespace Air {
-class StackSlot;
-}
-}
-
-namespace AOT { namespace Typed {
+namespace JSC { namespace AOT { namespace Typed {
 
 class ExceptionEmitter final : public OperationEmitter {
 public:
@@ -35,52 +26,66 @@ public:
     void throwValue(const TerminatorContext&, Boxed);
     void rethrow(const TerminatorContext&, CellPointer exception);
 
-    // The code that follows is what the call returns to. The block that is answered is entered with the same registers, and the result is what the callee could not return.
-    LBasicBlock attachLandingOfMisfit(B3::PatchpointValue*, uint32_t site);
-
 private:
     friend class HintEmitter;
     friend class RuntimeCallEmitter;
     friend class ThrowEmitter;
 
-    bool unwindsWithinFunction(const OperationContext& context) const { return context.handler(); }
-    void attachLandingPad(const OperationContext&, B3::PatchpointValue*, uint32_t site, bool mayReturn);
+    static bool unwindsWithinFunction(const OperationContext& context) { return context.handler(); }
+    void attachLandingPad(const OperationContext&, Machine::PatchOperation*, uint32_t site, bool mayReturn);
 
     struct LandingPad {
-        Arguments arguments;
+        const Edge* handler;
         LBasicBlock block;
+        uint32_t indexInRecords;
+        uint32_t next;
+        HandlerType type;
     };
-    template<typename T> using BlockMap = UncheckedKeyHashMap<BlockID, T>;
-    using LandingPadsBySuccessor = UncheckedKeyHashMap<CCallHelpers::Label*, uint32_t>;
+    static constexpr uint32_t noLandingPad = UINT32_MAX;
+    template<typename T> using BlockMap = std::span<T>;
 
-    LBasicBlock landingPadFor(const Target& handler);
+    void forEachReachedBlock(NOESCAPE const Invocable<void(BlockID, const Block&)> auto& functor) const
+    {
+        uint32_t numberOfBlocks = m_code.numberOfBlocks();
+        for (uint32_t index = 0; index < numberOfBlocks; ++index) {
+            BlockID block(index);
+            if (m_code.isReached(block))
+                functor(block, m_code.at(block));
+        }
+    }
+
+    BlockID handlerOf(BlockID) const;
+    uint32_t findOrAddLandingPad(const Edge& handler);
+    const LandingPad& landingPadFor(BlockID, const Edge& handler);
     HandlerType handlerTypeOf(BlockID handler) const;
     HandlerType handlerTypeByOperations(BlockID handler) const;
     bool isEnteredByJump(BlockID handler) const { return m_handlersEnteredByJump.get(handler.index()); }
-    // Beside the value, such a cleanup takes what says where the value was thrown, and hands it to the Throw at its end.
     bool keepsException(BlockID handler) const { return m_cleanupsThatKeepException.get(handler.index()); }
-    B3::Variable* caughtVariableFor(BlockID handler);
-    void setCaughtVariable(BlockID handler, LValue);
+    bool isCaughtByCleanup(ValueID) const;
+    BlockID cleanupThatCaught(ValueID) const;
+    LValue caughtPhiOf(BlockID handler);
+    void passCaughtWord(BlockID handler, LValue);
     TypedPointer wordKeptBy(BlockID cleanup);
     void keep(BlockID cleanup, LValue);
     LValue keptBy(ValueID thrown);
-    void jumpToHandler(const Target& handler, LValue caught);
+    void jumpToHandler(const Edge& handler, LValue caught);
     void throwByOperation(const TerminatorContext&, RuntimeOperation, Boxed thrown);
     void throwAfterCleanup(const TerminatorContext&, Boxed thrown);
-    void findValuesCaughtByCleanups();
+    void findValuesCaughtByCleanups(Vector<BlockID, 8>& blocksThatThrowIntoHandlers);
     void findCleanupsThatKeepException();
     LValue caughtWord(const ValueContext&);
     Boxed valueOfException(CellPointer exception);
 
     BitVector m_handlersEnteredByJump;
     BitVector m_cleanupsThatKeepException;
-    // No block for a value that comes from one of several cleanups.
-    UncheckedKeyHashMap<ValueID, BlockID> m_valuesCaughtByCleanups;
-    BlockMap<B3::Variable*> m_caughtVariables;
-    BlockMap<B3::Air::StackSlot*> m_keptWords;
+    BitVector m_valuesCaughtByCleanups;
+    std::span<BlockID> m_cleanupsOfCaughtValues;
+    BlockMap<LValue> m_caughtPhis;
+    BlockMap<Machine::StackSlot*> m_keptWords;
     BlockMap<LValue> m_caughtWords;
-    BlockMap<Vector<LandingPad, 2>> m_landingPads;
-    Box<LandingPadsBySuccessor> m_landingPadsBySuccessor;
+    BlockMap<uint32_t> m_landingPadsOfBlocks;
+    Vector<LandingPad, 4> m_landingPads;
+    UncheckedKeyHashMap<uint64_t, uint32_t> m_firstLandingPadsByKey;
 };
 
 } } } // namespace JSC::AOT::Typed

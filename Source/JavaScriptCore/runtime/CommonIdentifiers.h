@@ -111,6 +111,7 @@
     macro(daysDisplay) \
     macro(dayPeriod) \
     macro(defineProperty) \
+    macro(deleteProperty) \
     macro(deref) \
     macro(description) \
     macro(descriptions) \
@@ -145,6 +146,7 @@
     macro(fromCharCode) \
     macro(get) \
     macro(getOwnPropertyDescriptor) \
+    macro(getPrototypeOf) \
     macro(global) \
     macro(globalThis) \
     macro(go) \
@@ -183,6 +185,7 @@
     macro(instructionCount) \
     macro(isArray) \
     macro(isEnabled) \
+    macro(isExtensible) \
     macro(isPrototypeOf) \
     macro(isRawJSON) \
     macro(isView) \
@@ -245,9 +248,11 @@
     macro(parseInt) \
     macro(parseFloat) \
     macro(pluralCategories) \
+    macro(preventExtensions) \
     macro(profiledBytecodes) \
     macro(propertyIsEnumerable) \
     macro(prototype) \
+    macro(proxy) \
     macro(raw) \
     macro(rawJSON) \
     macro(read) \
@@ -259,6 +264,7 @@
     macro(resolve) \
     macro(reject) \
     macro(reason) \
+    macro(revoke) \
     macro(roundingIncrement) \
     macro(roundingMode) \
     macro(roundingPriority) \
@@ -270,6 +276,7 @@
     macro(selectRange) \
     macro(sensitivity) \
     macro(set) \
+    macro(setPrototypeOf) \
     macro(size) \
     macro(slice) \
     macro(smallestUnit) \

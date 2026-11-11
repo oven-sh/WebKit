@@ -218,7 +218,7 @@ private:
         {
         }
 
-        static Override LEGACY_NODELETE constant(BasicBlock* block, int64_t value)
+        NODELETE static Override constant(BasicBlock* block, int64_t value)
         {
             Override result;
             result.block = block;
@@ -229,7 +229,7 @@ private:
             return result;
         }
 
-        static Override LEGACY_NODELETE nonZero(BasicBlock* block)
+        NODELETE static Override nonZero(BasicBlock* block)
         {
             Override result;
             result.block = block;
@@ -237,7 +237,7 @@ private:
             return result;
         }
 
-        bool LEGACY_NODELETE isBetterThan(const Override& override)
+        NODELETE bool isBetterThan(const Override& override)
         {
             if (hasValue && !override.hasValue)
                 return true;
@@ -293,6 +293,7 @@ public:
         findRunsOfDecidedComparisons();
 
         bool changed = applyOverrides();
+        dropKnownPropertiesOfPathDependentValues();
 
         if (changed) {
             m_proc.resetReachability();
@@ -824,6 +825,7 @@ private:
         for (BasicBlock* block : m_proc) {
             for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
                 Value* value = block->at(valueIndex);
+                bool wasRewrittenWithPathFact = false;
 
                 switch (value->opcode()) {
                 case Branch: {
@@ -835,20 +837,26 @@ private:
                 }
 
                 case Equal: {
-                    if (value->child(1)->isInt(0) && getOverride(block, value->child(0)).isNonZero)
+                    if (value->child(1)->isInt(0) && getOverride(block, value->child(0)).isNonZero) {
                         value->replaceWithIdentity(m_insertionSet.insertIntConstant(valueIndex, value, 0));
+                        wasRewrittenWithPathFact = true;
+                    }
                     break;
                 }
 
                 case NotEqual: {
-                    if (value->child(1)->isInt(0) && getOverride(block, value->child(0)).isNonZero)
+                    if (value->child(1)->isInt(0) && getOverride(block, value->child(0)).isNonZero) {
                         value->replaceWithIdentity(m_insertionSet.insertIntConstant(valueIndex, value, 1));
+                        wasRewrittenWithPathFact = true;
+                    }
                     break;
                 }
 
                 case Select: {
-                    if (m_foldsImpliedComparisons && getOverride(block, value->child(0)).isNonZero)
+                    if (m_foldsImpliedComparisons && getOverride(block, value->child(0)).isNonZero) {
                         value->replaceWithIdentity(value->child(1));
+                        wasRewrittenWithPathFact = true;
+                    }
                     break;
                 }
 
@@ -865,6 +873,7 @@ private:
                             if (decided.isNonZero || decided.hasValue) {
                                 Value* chosen = select->child(decided.isNonZero ? 1 : 2);
                                 child = isCast ? m_insertionSet.insert<Value>(valueIndex, BitwiseCast, child->origin(), chosen) : chosen;
+                                wasRewrittenWithPathFact = true;
                             }
                         }
                     }
@@ -876,6 +885,11 @@ private:
                         overridesWithNewConstants.append(override);
                     }
                     child = override->valueNode;
+                    wasRewrittenWithPathFact = true;
+                }
+                if (wasRewrittenWithPathFact && !m_proc.knownProperties().isEmpty() && !value->effects().mustExecute()) {
+                    m_valuesRewrittenWithPathFacts.add(value);
+                    m_blocksDominatedByRewrittenValues.add(block);
                 }
             }
             m_insertionSet.execute(block);
@@ -885,6 +899,30 @@ private:
             m_insertionSet.execute(override->block);
         }
         return changed;
+    }
+
+    void dropKnownPropertiesOfPathDependentValues()
+    {
+        if (m_valuesRewrittenWithPathFacts.isEmpty())
+            return;
+        for (BasicBlock* block : m_proc.blocksInPreOrder()) {
+            BasicBlock* dominator = m_dominators->idom(block);
+            if (!m_blocksDominatedByRewrittenValues.contains(block) && (!dominator || !m_blocksDominatedByRewrittenValues.contains(dominator)))
+                continue;
+            m_blocksDominatedByRewrittenValues.add(block);
+            for (Value* value : *block) {
+                bool dependsOnPathFact = m_valuesRewrittenWithPathFacts.contains(value);
+                for (Value* child : value->children())
+                    dependsOnPathFact = dependsOnPathFact || m_movablePathDependentValues.contains(child);
+                if (!dependsOnPathFact)
+                    continue;
+                Effects effects = m_proc.effectsOf(value);
+                if (effects.mustExecute() || effects.controlDependent)
+                    continue;
+                m_movablePathDependentValues.add(value);
+                m_proc.knownProperties().remove(value);
+            }
+        }
     }
 
     Procedure& m_proc;
@@ -900,6 +938,9 @@ private:
     IndexMap<BasicBlock*, unsigned> m_timeOfExit;
     Vector<RangeTreeNode> m_rangeTreeNodes;
     Vector<std::optional<unsigned>, 512> m_firstOverride;
+    IndexSet<Value*> m_valuesRewrittenWithPathFacts;
+    IndexSet<BasicBlock*> m_blocksDominatedByRewrittenValues;
+    IndexSet<Value*> m_movablePathDependentValues;
 };
 
 } // anonymous namespace
@@ -907,7 +948,7 @@ private:
 void foldPathConstants(Procedure& proc)
 {
     PhaseScope phaseScope(proc, "foldPathConstants"_s);
-    if (proc.policy().optimization.foldsImpliedComparisons || proc.policy().addressing.relocationLowering) {
+    if (proc.policy().optimization.foldsImpliedComparisons || proc.policy().addressing.relocationLowering || !proc.knownProperties().isEmpty()) {
         FoldPathConstantsInValueOrder foldPathConstants(proc);
         foldPathConstants.run();
         return;

@@ -9,12 +9,14 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTVector.h"
 #include "WasmFormat.h"
 #include <array>
+#include <bmalloc/Gigacage.h>
 #include <optional>
 #include <utility>
 #include <wtf/HashMap.h>
-#include "AOTVector.h"
+#include <wtf/StdLibExtras.h>
 
 namespace JSC {
 
@@ -25,7 +27,6 @@ class RelocationRecorder;
 namespace B3 {
 class CompilationScratch;
 struct Policy;
-enum class RuntimeFunction : uint32_t;
 }
 
 namespace Wasm {
@@ -34,7 +35,11 @@ class RTT;
 struct ModuleInformation;
 
 #define FOR_EACH_WASM_IMAGE_CODE_OPERATION(macro) \
-    macro(operationThrowExceptionFromOMG) \
+    macro(operationWasmToJSException) \
+    macro(operationWasmUnwind) \
+    macro(operationWasmThrow) \
+    macro(operationWasmRethrow) \
+    macro(operationWasmRetrieveAndClearExceptionIfCatchable) \
     macro(operationGrowMemory) \
     macro(operationWasmMemorySizeInPages) \
     macro(operationWasmMemoryFill) \
@@ -42,6 +47,7 @@ struct ModuleInformation;
     macro(operationWasmMemoryInit) \
     macro(operationWasmDataDrop) \
     macro(operationMemoryMove) \
+    macro(operationGCSafeMemoryMove) \
     macro(operationMemoryFill) \
     macro(operationMemoryAtomicWait32) \
     macro(operationMemoryAtomicWait64) \
@@ -54,9 +60,30 @@ struct ModuleInformation;
     macro(operationWasmTableCopy) \
     macro(operationWasmElemDrop) \
     macro(operationWasmRefFunc) \
+    macro(operationWasmRefTest) \
+    macro(operationWasmAnyConvertExtern) \
+    macro(operationWasmStructNewEmpty) \
+    macro(operationWasmArrayNewEmpty) \
+    macro(operationWasmArrayNewData) \
+    macro(operationWasmArrayNewElem) \
+    macro(operationWasmArrayInitData) \
+    macro(operationWasmArrayInitElem) \
+    macro(operationWasmArrayFill2B) \
+    macro(operationWasmArrayFill4B) \
+    macro(operationWasmArrayFill8B) \
+    macro(operationWasmArrayFill16B) \
+    macro(operationWasmArrayFillRefs) \
     macro(operationWasmWriteBarrierSlowPath) \
     macro(operationPopcount32) \
-    macro(operationPopcount64)
+    macro(operationPopcount64) \
+    macro(operationConvertToI32) \
+    macro(operationConvertToI64) \
+    macro(operationConvertToF32) \
+    macro(operationConvertToF64) \
+    macro(operationConvertToBigInt) \
+    macro(operationConvertToFuncref) \
+    macro(operationConvertToAnyref) \
+    macro(operationIterateResults)
 
 enum class ImageCodeOperation : uint32_t {
 #define DECLARE_OPERATION(operation) operation,
@@ -67,18 +94,8 @@ enum class ImageCodeOperation : uint32_t {
 #define FOR_EACH_WASM_IMAGE_DECLINE_REASON(macro) \
     macro(UnsupportedCPU) \
     macro(InvalidModule) \
-    macro(NoFunctions) \
-    macro(HasGCTypes) \
     macro(CodeTooLarge) \
-    macro(UsesExceptions) \
-    macro(UsesTailCalls) \
-    macro(TestsReferenceTypes) \
-    macro(CallsUnlistedOperation) \
-    macro(NamesTypeOfOtherModule) \
-    macro(SavesVectorRegister) \
-    macro(SavedRegisterOrder) \
-    macro(ProcessAddressInCode) \
-    macro(CodeGeneratorFailed)
+    macro(FunctionNotCompiled)
 
 enum class ImageDeclineReason : uint8_t {
     None,
@@ -87,45 +104,99 @@ enum class ImageDeclineReason : uint8_t {
 #undef DECLARE_REASON
 };
 
-enum class InterpreterFallbackReason : uint8_t {
-    MemoryChecksBounds,
-    VectorsAreDisabled,
+enum class ImageCodeFailure : uint8_t {
+    None,
+    NamesTypeOfOtherModule,
+    SavesVectorRegister,
+    SavedRegisterOrder,
+    TooManySavedRegisterSets,
+    ProcessAddressInCode,
+    OutOfPCRelativeReach,
+    OutOfMemory,
 };
 
-static constexpr unsigned numberOfInterpreterFallbackReasons = 2;
-static_assert(static_cast<unsigned>(InterpreterFallbackReason::VectorsAreDisabled) + 1 == numberOfInterpreterFallbackReasons);
+enum class ImageCodeFlavor : uint8_t {
+    Checking,
+    Trapping,
+};
+static constexpr unsigned numberOfImageCodeFlavors = 2;
 
-// In the records of the directory an array field is an offset from the start of the directory, and a code offset counts from the start of the image's WebAssembly code.
+static constexpr ptrdiff_t lowestAccessibleAddressOfEveryTarget = 4 * KB;
+
+enum class ImageStub : uint32_t {
+    ThrowException,
+    ThrowStackOverflow,
+    CatchRunway,
+    FaultWithoutFrame,
+};
+static constexpr uint32_t numberOfImageStubs = 4;
+static_assert(static_cast<uint32_t>(ImageStub::FaultWithoutFrame) + 1 == numberOfImageStubs);
+
+enum class ImageEntry : uint16_t {
+    Primary,
+    Direct,
+    DirectWithZero,
+};
+
+constexpr uint32_t imageSymbolOf(ImageStub stub) { return static_cast<uint32_t>(stub); }
+inline uint32_t imageSymbolOf(FunctionCodeIndex function) { return numberOfImageStubs + static_cast<uint32_t>(function.rawIndex()); }
+
 struct DirectoryInImage {
     uint32_t numberOfModules;
     uint32_t numberOfDeclinedModules;
+    uint32_t catchRunway;
+    uint32_t faultWithoutFrame;
 };
+static_assert(sizeof(DirectoryInImage) == 16);
+
+struct FramelessRangeInImage {
+    friend constexpr auto operator<=>(const FramelessRangeInImage&, const FramelessRangeInImage&) = default;
+
+    uint32_t begin;
+    uint32_t end;
+};
+static_assert(sizeof(FramelessRangeInImage) == 8);
 
 struct FunctionInImage {
     uint32_t entry;
+    uint32_t size;
+    uint32_t firstHandler;
+    uint32_t numberOfHandlers;
     uint16_t savedRegisters;
-    uint8_t hasCode;
     uint8_t usesVectors;
+    uint8_t unused;
 };
-static_assert(sizeof(FunctionInImage) == 8);
+static_assert(sizeof(FunctionInImage) == 20);
+
+struct HandlerInImage {
+    uint32_t type;
+    uint32_t start;
+    uint32_t end;
+    uint32_t tryDepth;
+    uint32_t exceptionIndexOrDelegateTarget;
+    uint32_t code;
+};
+static_assert(sizeof(HandlerInImage) == 24);
 
 struct ModuleInImage {
     std::array<uint8_t, 20> digest;
     uint32_t sourceSize;
     uint32_t numberOfFunctions;
     uint32_t numberOfImportedFunctions;
-    uint32_t functions;
-    uint32_t functionsEnd;
+    std::array<uint32_t, numberOfImageCodeFlavors> functions;
+    uint32_t handlers;
     uint32_t importStubs;
+    uint32_t javaScriptImportStubs;
     uint32_t savedRegisters;
-    uint32_t isForSignalingMemory;
     uint32_t numberOfJSEntrypoints;
     uint32_t jsEntrypoints;
     uint32_t usesVectors;
+    uint32_t framelessRanges;
+    uint32_t numberOfFramelessRanges;
+    uint32_t unused;
 };
-static_assert(sizeof(ModuleInImage) == 64);
+static_assert(sizeof(ModuleInImage) == 80);
 
-// A module of the program that has no code in the image at all.
 struct DeclinedModuleInImage {
     std::array<uint8_t, 20> digest;
     uint32_t sourceSize;
@@ -150,8 +221,19 @@ struct ImagePointerTable {
     static constexpr uint32_t numberOfOperations = 0 FOR_EACH_WASM_IMAGE_CODE_OPERATION(COUNT_OPERATION);
 #undef COUNT_OPERATION
     static constexpr uint32_t genericJSEntrypoint = numberOfOperations;
-    static constexpr uint32_t interpreterEntrypoint = numberOfOperations + 1;
-    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 2;
+    static constexpr uint32_t defaultJSCall = numberOfOperations + 1;
+    static constexpr uint32_t wasmToJSCallee = numberOfOperations + 2;
+    static constexpr uint32_t restoreFrameCallee = numberOfOperations + 3;
+    static constexpr uint32_t restoreFrameReturnAddress = numberOfOperations + 4;
+    static constexpr uint32_t structureIDBase = numberOfOperations + 5;
+    static constexpr uint32_t throwFromFaultHandler = numberOfOperations + 6;
+#if GIGACAGE_ENABLED
+    static constexpr uint32_t primitiveGigacageDisableRequest = numberOfOperations + 7;
+    static constexpr uint32_t primitiveGigacageBase = numberOfOperations + 8;
+    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 9;
+#else
+    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 7;
+#endif
 
     static constexpr uint32_t slotOf(ImageCodeOperation operation) { return static_cast<uint32_t>(operation); }
     JS_EXPORT_PRIVATE static std::optional<uint32_t> slotOfOperation(const void* taggedOperation);
@@ -167,42 +249,43 @@ struct ImagePointerTable {
     uint32_t numberOfJSEntrypoints { 0 };
 };
 
-JS_EXPORT_PRIVATE std::optional<uint32_t> runtimeFunctionSlot(B3::RuntimeFunction);
-
-// Code offsets count from the start of code.
 struct ModuleForImage {
     std::array<uint8_t, 20> digest;
     uint32_t sourceSize { 0 };
-    bool isForSignalingMemory { false };
     bool usesVectors { false };
     Vector<uint8_t> code;
-    Vector<FunctionInImage> functions;
-    uint32_t functionsEnd { 0 };
+    std::array<Vector<FunctionInImage>, numberOfImageCodeFlavors> functions;
+    Vector<HandlerInImage> handlers;
     Vector<uint32_t> importStubs;
+    Vector<uint32_t> javaScriptImportStubs;
     Vector<JSEntrypointInImage> jsEntrypoints;
     WTF::Vector<SavedRegistersInImage> savedRegisters;
-    Vector<std::pair<uint32_t, ImageDeclineReason>> interpretedFunctions;
+    WTF::Vector<FramelessRangeInImage> framelessRanges;
+    uint32_t catchRunway { 0 };
+    uint32_t faultWithoutFrame { 0 };
 };
 
-struct ImageCallTarget {
-    enum class Kind : uint8_t {
-        ThrowStub,
-        Function,
-    };
-
-    Kind kind;
-    FunctionCodeIndex function;
+struct StructLayoutInImage {
+    Vector<uint32_t> offsetsOfFieldsInPayload;
+    uint32_t payloadSize { 0 };
 };
 
 struct CodeForImage {
     const ImagePointerTable& pointers;
     const UncheckedKeyHashMap<const RTT*, uint32_t>& typeIndices;
+    const Vector<StructLayoutInImage>& structLayouts;
     AOT::RelocationRecorder& recorder;
-    const B3::Policy& policy;
-    B3::CompilationScratch& scratch;
-    uint32_t pointerSpace;
-    ImageDeclineReason declineReason { ImageDeclineReason::None };
-    Vector<ImageCallTarget> callTargets { };
+    ImageCodeFlavor flavor;
+
+    bool dependsOnFlavor { false };
+    ImageCodeFailure failure { ImageCodeFailure::None };
+    const B3::Policy* policy { nullptr };
+    B3::CompilationScratch* scratch { nullptr };
+    uint32_t pointerSpace { 0 };
+    unsigned threadedJumps { 0 };
+    unsigned firstStateTests { 0 };
+    static constexpr GPRReg passedGlobalGPR = GPRInfo::wasmScratchGPR0;
+    std::optional<uint32_t> passedGlobal { };
 };
 
 } } // namespace JSC::Wasm

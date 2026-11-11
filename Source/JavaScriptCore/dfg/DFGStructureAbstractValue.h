@@ -215,8 +215,7 @@ public:
         return m_set.onlyStructure();
     }
 
-    template<typename Functor>
-    void forEach(NOESCAPE const Functor& functor) const
+    void forEach(NOESCAPE const Invocable<void(const RegisteredStructure&)> auto& functor) const
     {
         ASSERT(!isTop());
         m_set.forEach(functor);
@@ -227,9 +226,9 @@ public:
     
     // The methods below are all conservative and err on the side of making 'this' appear bigger
     // than it is. For example, contains() may return true if the set is clobbered or TOP.
-    // LEGACY_NODELETE isSubsetOf() may return false in case of ambiguities. Therefore you should only perform
+    // NODELETE isSubsetOf() may return false in case of ambiguities. Therefore you should only perform
     // optimizations as a consequence of the "this is smaller" return value - so false for
-    // LEGACY_NODELETE contains(), true for isSubsetOf(), false for isSupersetOf(), and false for overlaps().
+    // NODELETE contains(), true for isSubsetOf(), false for isSupersetOf(), and false for overlaps().
 
     bool contains(RegisteredStructure) const;
     JS_EXPORT_PRIVATE bool contains(Structure* structure) const;
@@ -246,8 +245,8 @@ public:
     bool overlaps(const RegisteredStructureSet& other) const;
     bool overlaps(const StructureAbstractValue& other) const;
 
-    bool LEGACY_NODELETE isSubClassOf(const ClassInfo*) const;
-    bool LEGACY_NODELETE isNotSubClassOf(const ClassInfo*) const;
+    NODELETE bool isSubClassOf(const ClassInfo*) const;
+    NODELETE bool isNotSubClassOf(const ClassInfo*) const;
     
     void validateReferences(const TrackedReferences&) const;
     
@@ -261,7 +260,7 @@ private:
     void filterClassInfoSlow(const ClassInfo*);
     bool mergeSlow(const StructureAbstractValue& other);
     
-    bool LEGACY_NODELETE equalsSlow(const StructureAbstractValue& other) const;
+    NODELETE bool equalsSlow(const StructureAbstractValue& other) const;
     
     void makeTopWhenThin()
     {

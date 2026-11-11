@@ -1,0 +1,63 @@
+# plain = 1; shared = 1; Object.defineProperty(globalThis, "shared", { get() { return 2; }, set(value) { }, configurable: true });
+# function readPlain() { return plain }  function readShared() { return shared }  function storePlain(value) { plain = value }  function storeShared(value) { shared = value }
+# publish(readPlain, readShared, storePlain, storeShared)
+# RUN(SHELL): run-in-shell globalThis.publish = (readPlain, readShared, storePlain, storeShared) => { storePlain(3); storeShared(4); print(readPlain()); print(readShared()); };
+# SHELL: 3
+# SHELL-NEXT: 2
+# SHELL-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="set" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    PropSet v0, v1 key="plain" mode=Sloppy [isFreeName]
+    PropSet v0, v1 key="shared" mode=Sloppy [isFreeName]
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectDefineProperty
+    v6 = String string="shared"
+    v7 = NewObject layout=L0
+    v8 = NewClosure function=f5
+    PropDefine v7, v8 key="get"
+    v10 = NewClosure function=f6
+    PropDefine v7, v10 key="set"
+    v12 = Boolean boolean=true
+    PropDefine v7, v12 key="configurable"
+    v14 = FinishObject v7
+    v15 = Call v5, v4, v0, v6, v14 calleeName="Object.defineProperty"
+    v16 = PropGet v0 key="publish" [isFreeName]
+    v17 = NewClosure function=f1
+    v18 = NewClosure function=f2
+    v19 = NewClosure function=f3
+    v20 = NewClosure function=f4
+    v21 = Call v16, -, v17, v18, v19, v20
+    Return
+}
+function f1 name="readPlain" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="plain" [isFreeName]
+    Return v1
+}
+function f2 name="readShared" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="shared" [isFreeName]
+    Return v1
+}
+function f3 name="storePlain" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="plain" mode=Sloppy [isFreeName]
+    Return
+}
+function f4 name="storeShared" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="shared" mode=Sloppy [isFreeName]
+    Return
+}
+function f5 name="get" results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f6 name="set" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}

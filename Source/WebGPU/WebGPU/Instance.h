@@ -42,8 +42,6 @@
 #import <wtf/WeakObjCPtr.h>
 #import <wtf/WeakPtr.h>
 
-struct WGPUInstanceImpl {
-};
 
 namespace WTF {
 class MachSendRight;
@@ -58,7 +56,7 @@ class PresentationContext;
 class Texture;
 
 // https://gpuweb.github.io/gpuweb/#gpu
-class Instance final : public WebGPU::Instance, public WGPUInstanceImpl {
+class Instance final : public WebGPU::Instance {
     WTF_MAKE_TZONE_ALLOCATED(Instance);
 public:
     static Ref<Instance> create(WebGPU::InstanceDescriptor&&);
@@ -83,7 +81,7 @@ public:
     // This can be called on a background thread.
     using WorkItem = Function<void()>;
     void scheduleWork(WorkItem&&);
-    const std::optional<const MachSendRight>& LEGACY_NODELETE webProcessID() const;
+    NODELETE const std::optional<const MachSendRight>& webProcessID() const;
     id<MTLDevice> device() const;
 
     // The futures of the C API. A future completes when the callback it stands for has run.

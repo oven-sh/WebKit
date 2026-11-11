@@ -48,7 +48,7 @@ namespace WebCore {
 class GPUVideoEncoderBitrateAdjuster {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(GPUVideoEncoderBitrateAdjuster);
 public:
-    void LEGACY_NODELETE setTargetBitrateBps(uint32_t bitrateBps)
+    NODELETE void setTargetBitrateBps(uint32_t bitrateBps)
     {
         Locker locker { m_lock };
         if (!isWithinTolerance(bitrateBps, m_targetBitrateBps) || !isWithinTolerance(bitrateBps, m_lastAdjustedTargetBitrateBps))
@@ -56,7 +56,7 @@ public:
         m_targetBitrateBps = bitrateBps;
     }
 
-    uint32_t LEGACY_NODELETE adjustedBitrateBps() const
+    NODELETE uint32_t adjustedBitrateBps() const
     {
         Locker locker { m_lock };
         return m_adjustedBitrateBps;
@@ -77,7 +77,7 @@ private:
     static constexpr float minAdjustedRatio = .5;
     static constexpr float maxAdjustedRatio = .95;
 
-    static bool LEGACY_NODELETE isWithinTolerance(uint32_t bitrateBps, uint32_t targetBitrateBps)
+    NODELETE static bool isWithinTolerance(uint32_t bitrateBps, uint32_t targetBitrateBps)
     {
         if (!targetBitrateBps)
             return false;
@@ -85,7 +85,7 @@ private:
         return (delta / targetBitrateBps) < toleranceRatio;
     }
 
-    void LEGACY_NODELETE updateBitrate(MonotonicTime now) WTF_REQUIRES_LOCK(m_lock)
+    NODELETE void updateBitrate(MonotonicTime now) WTF_REQUIRES_LOCK(m_lock)
     {
         ++m_framesSinceLastUpdate;
         if (!m_lastUpdateTime)
@@ -291,7 +291,7 @@ void GPUVideoEncoderVTB::setRates(uint32_t bitRateKbps, uint32_t frameRate)
     setEncoderBitrateBps(m_targetBitrateBps);
 }
 
-void GPUVideoEncoderVTB::encodeFrame(CVPixelBufferRef pixelBuffer, int64_t timeStampNs, int64_t timeStamp, std::optional<uint64_t> duration, VideoFrame::Rotation rotation, bool isKeyframeRequired)
+void GPUVideoEncoderVTB::encodeFrame(CVPixelBufferRef pixelBuffer, int64_t timeStampNs, int64_t timeStamp, std::optional<uint64_t> duration, VideoFrame::Rotation rotation, bool isMirrored, bool isKeyframeRequired)
 {
     assertIsCurrent(queue());
 
@@ -316,7 +316,7 @@ void GPUVideoEncoderVTB::encodeFrame(CVPixelBufferRef pixelBuffer, int64_t timeS
     uint16_t width = m_width;
     uint16_t height = m_height;
 
-    auto status = protect(m_encoder)->encodeFrame(pixelBuffer, presentationTimeStamp, PAL::kCMTimeInvalid, frameProperties, makeBlockPtr([weakThis = ThreadSafeWeakPtr { *this }, width, height, captureTimeMS, timeStamp, duration, rotation, colorSpace = m_colorSpace](OSStatus status, VTEncodeInfoFlags infoFlags, CMSampleBufferRef sampleBuffer) mutable {
+    auto status = protect(m_encoder)->encodeFrame(pixelBuffer, presentationTimeStamp, PAL::kCMTimeInvalid, frameProperties, makeBlockPtr([weakThis = ThreadSafeWeakPtr { *this }, width, height, captureTimeMS, timeStamp, duration, rotation, isMirrored, colorSpace = m_colorSpace](OSStatus status, VTEncodeInfoFlags infoFlags, CMSampleBufferRef sampleBuffer) mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -351,7 +351,7 @@ void GPUVideoEncoderVTB::encodeFrame(CVPixelBufferRef pixelBuffer, int64_t timeS
         if (protectedThis->m_creationInfo.scalabilityMode == VideoEncoderScalabilityMode::L1T2)
             temporalIndex = isBaseLayer ? 0 : 1;
 
-        GPUVideoEncoderFrameInfo info { width, height, timeStamp, duration, captureTimeMS, isKeyframe, rotation, false, -1, temporalIndex };
+        GPUVideoEncoderFrameInfo info { width, height, timeStamp, duration, captureTimeMS, isKeyframe, rotation, isMirrored, false, -1, temporalIndex };
         if (!protectedThis->convertAndNotify(sampleBuffer, WTF::move(info), colorSpace)) {
             protectedThis->notifyError();
             return;

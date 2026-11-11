@@ -1,0 +1,83 @@
+# Number, String, Boolean, Object and BigInt, called and not constructed, convert their argument. What is converted already is handed back, and what converts without running code is converted by the operation
+# function ofFlag(x) { const isNumber = typeof x === "number"; return Number(isNumber); }
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = ToNumber
+# CHECK-NOT: = Call
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = ToNumber
+# function truth(x) { return Boolean(x); } the row has converted its argument where the rule is asked, so what it finds is converted already, and that is handed back under folding alone
+# RUN(TRUTH): walk f2 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# TRUTH-LABEL: code f2:Body
+# TRUTH: = ToBoolean
+# TRUTH-NOT: = Call
+# function same(x) { if (typeof x !== "number") return x; return [Number(x), Number()]; }
+# RUN(SAME): walk f3 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# SAME-NOT: = Call
+# function ofAnything(x) { return Number(x); } Number(1n) is 1 where the conversion throws, and an object runs code
+# RUN(ANYTHING): walk f4 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# ANYTHING-LABEL: code f4:Body
+# ANYTHING-NOT: = ToNumber
+# function made(x) { if (typeof x !== "number") return x; return new Number(x); } a construction makes an object
+# RUN(MADE): walk f5 mechanisms=none+DirectCalls+BuiltinCalls+Folding+TypedOperations+UnboxedNumbers
+# MADE-LABEL: code f5:Body
+# MADE: = C
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="ofFlag" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    v2 = Builtin builtin=Number
+    v3 = Call v2, -, v1 calleeName="Number"
+    Return v3
+}
+function f2 name="truth" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Boolean
+    v2 = Call v1, -, v0 calleeName="Boolean"
+    Return v2
+}
+function f3 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Builtin builtin=Number
+    v4 = Call v3, -, v2 calleeName="Number"
+    v5 = Call v3 calleeName="Number"
+    v6 = NewArray v4, v5 contents=anything
+    Return v6
+  b2(v7):
+    Return v7
+}
+function f4 name="ofAnything" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Number
+    v2 = Call v1, -, v0 calleeName="Number"
+    Return v2
+}
+function f5 name="made" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Builtin builtin=Number
+    v4 = Construct v3, -, v2 calleeName="Number"
+    Return v4
+  b2(v5):
+    Return v5
+}

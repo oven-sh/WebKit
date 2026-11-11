@@ -1,0 +1,29 @@
+# the names of a mock that comes ahead of the load are those that its factory gives: a name that the module lacks may be there, so the read is not proven undefined
+# lib.js, which a test mocks: export const text = "real"   main.test.js: mock.module("./lib.js", () => ({ more: 1 })); import * as ns from "./lib.js"; out = ns.more
+# Link gives anything for a name without a field off any namespace object. This holds that answer in place for whoever comes to prove more of it: he asks MocksOfProgram::modulesThatMayBeMocked first
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link variables mechanisms=all
+# CHECK-NOT: variable g1 proven=
+# RUN(MOCKS): test-run
+# MOCKS: through-mock m1 "text"
+
+module m0 path="/main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/lib.js" displayPath="lib.js" flags=[MayBeMocked] body=f1 exports=[{name="text" variable=g0}]
+entry module=m0
+variable g0 name="text" module=m1 declared={type=anything} flags=[IsReplaceable]
+variable g1 name="out" module=m0 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="more"
+    PutModuleVariable v1 variable=g1
+    v3 = Undefined
+    Return v3
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="real"
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}

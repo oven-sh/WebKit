@@ -513,9 +513,17 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
             features = features.with(feature);
     };
 
-#if !OS(DARWIN)
-    bool hasAVX = false;
+    bool isTranslated = false;
+#if OS(DARWIN)
+    {
+        uint32_t val = 0;
+        size_t valSize = sizeof(val);
+        // Not WTF::isX86BinaryRunningOnARM(): Rosetta developer builds compile it out but still run translated.
+        int rc = sysctlbyname("sysctl.proc_translated", &val, &valSize, nullptr, 0);
+        isTranslated = rc >= 0 && val;
+    }
 #endif
+    bool hasAVX = false;
     {
         CPUID cpuid = getCPUID(0x1);
         add(CPUFeature::SSE3, cpuid[2] & (1 << 0));
@@ -524,7 +532,7 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
         add(CPUFeature::SSE4_2, cpuid[2] & (1 << 20));
         add(CPUFeature::Popcnt, cpuid[2] & (1 << 23));
 #if OS(DARWIN)
-        add(CPUFeature::AVX, true);
+        hasAVX = true;
 #else
         // Per the Intel SDM, AVX is usable only when:
         //   1. CPUID.1:ECX.AVX[bit 28] = 1      (CPU supports AVX)
@@ -538,11 +546,29 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
             constexpr uint64_t ymmStateMask = 0x6; // XCR0.SSE | XCR0.AVX
             hasAVX = (readXCR0() & ymmStateMask) == ymmStateMask;
         }
-        add(CPUFeature::AVX, hasAVX);
 #endif
+        add(CPUFeature::AVX, hasAVX);
+        // F16C is VEX-encoded, so it needs what AVX needs. Rosetta translates F16C even though it does not advertise it, the same as AVX.
+        add(CPUFeature::F16C, hasAVX && (isTranslated || (cpuid[2] & (1 << 29))));
     }
+    auto collectLeaf7Features = [&] {
+        if (getCPUID(0x0)[0] < 0x7)
+            return;
+        // CPUID leaf 7 sub-leaf 0: BMI1 = EBX[3], AVX2 = EBX[5].
+        CPUID cpuid = getCPUID(0x7);
+        add(CPUFeature::BMI1, cpuid[1] & (1 << 3));
+        // AVX2 is VEX-encoded and therefore also requires the OS to have
+        // enabled YMM state; gate it on the AVX result computed above.
+        bool hasAVX2Feature = cpuid[1] & (1 << 5);
+        add(CPUFeature::AVX2, hasAVX2Feature && hasAVX);
+    };
 #if OS(DARWIN)
-    {
+    if (isTranslated) {
+        // Rosetta translates AVX2 even when it does not advertise it, the same as AVX. It reports
+        // BMI1 only through CPUID, and only when the process is launched with ROSETTA_ADVERTISE_AVX=1.
+        collectLeaf7Features();
+        add(CPUFeature::AVX2, true);
+    } else {
         uint32_t val = 0;
         size_t valSize = sizeof(val);
         int rc = sysctlbyname("hw.optional.bmi1", &val, &valSize, nullptr, 0);
@@ -552,21 +578,57 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
         add(CPUFeature::AVX2, rc >= 0 && val);
     }
 #else
-    {
-        // CPUID leaf 7 sub-leaf 0: BMI1 = EBX[3], AVX2 = EBX[5].
-        CPUID cpuid = getCPUID(0x7);
-        add(CPUFeature::BMI1, cpuid[1] & (1 << 3));
-        // AVX2 is VEX-encoded and therefore also requires the OS to have
-        // enabled YMM state; gate it on the AVX result computed above.
-        bool hasAVX2Feature = cpuid[1] & (1 << 5);
-        add(CPUFeature::AVX2, hasAVX2Feature && hasAVX);
-    }
+    collectLeaf7Features();
 #endif
     {
         CPUID cpuid = getCPUID(0x80000001);
         add(CPUFeature::LZCNT, cpuid[2] & (1 << 5));
     }
     return features;
+}
+
+void MacroAssemblerX86_64::emitVectorOperationWithoutAVX(VectorOperationWithoutAVX operation, SIMDLane lane, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+{
+    // Of two numbers that are both NaN the left one comes out, so only operations on integers and on bits may change sides.
+    bool mayChangeSides = operation != VectorOperationWithoutAVX::Sub && operation != VectorOperationWithoutAVX::Div && operation != VectorOperationWithoutAVX::NarrowSigned
+        && operation != VectorOperationWithoutAVX::NarrowUnsigned && operation != VectorOperationWithoutAVX::Swizzle && !scalarTypeIsFloatingPoint(lane);
+    if (dest == right && mayChangeSides)
+        std::swap(left, right);
+    if (dest == right && dest != left) {
+        moveVector(right, fpTempRegister);
+        right = fpTempRegister;
+    }
+    if (dest != left)
+        moveVector(left, dest);
+
+    // The last byte of the instruction, and above it: 1 = behind the prefix 66, 2 = behind the escape 38. Zero: there is no such instruction.
+    constexpr uint16_t with66 = 0x100;
+    constexpr uint16_t with6638 = 0x300;
+    // In the order of SIMDLane: i8x16, i16x8, i32x4, i64x2, f32x4, f64x2.
+    static constexpr uint16_t arithmetic[10][6] = {
+        { with66 | 0xfc, with66 | 0xfd, with66 | 0xfe, with66 | 0xd4, 0x58, with66 | 0x58 }, // paddb paddw paddd paddq addps addpd
+        { with66 | 0xf8, with66 | 0xf9, with66 | 0xfa, with66 | 0xfb, 0x5c, with66 | 0x5c }, // psubb psubw psubd psubq subps subpd
+        { 0, with66 | 0xd5, with6638 | 0x40, 0, 0x59, with66 | 0x59 }, // pmullw pmulld mulps mulpd
+        { 0, 0, 0, 0, 0x5e, with66 | 0x5e }, // divps divpd
+        { with6638 | 0x3c, with66 | 0xee, with6638 | 0x3d, 0, 0, 0 }, // pmaxsb pmaxsw pmaxsd
+        { with6638 | 0x38, with66 | 0xea, with6638 | 0x39, 0, 0, 0 }, // pminsb pminsw pminsd
+        { with66 | 0xde, with6638 | 0x3e, with6638 | 0x3f, 0, 0, 0 }, // pmaxub pmaxuw pmaxud
+        { with66 | 0xda, with6638 | 0x3a, with6638 | 0x3b, 0, 0, 0 }, // pminub pminuw pminud
+        { 0, with66 | 0x63, with66 | 0x6b, 0, 0, 0 }, // packsswb packssdw
+        { 0, with66 | 0x67, with6638 | 0x2b, 0, 0, 0 }, // packuswb packusdw
+    };
+    static constexpr uint16_t whateverLane[5] = { 0x54, 0x56, 0x57, with6638 | 0x00, with66 | 0xf5 }; // andps orps xorps pshufb pmaddwd
+    static_assert(static_cast<unsigned>(SIMDLane::i8x16) + 5 == static_cast<unsigned>(SIMDLane::f64x2));
+    static_assert(static_cast<unsigned>(VectorOperationWithoutAVX::And) == 10 && static_cast<unsigned>(VectorOperationWithoutAVX::DotProduct) == 14);
+    uint16_t instruction = 0;
+    if (operation >= VectorOperationWithoutAVX::And)
+        instruction = whateverLane[static_cast<unsigned>(operation) - 10];
+    else {
+        RELEASE_ASSERT(lane >= SIMDLane::i8x16 && lane <= SIMDLane::f64x2);
+        instruction = arithmetic[static_cast<unsigned>(operation)][static_cast<unsigned>(lane) - static_cast<unsigned>(SIMDLane::i8x16)];
+    }
+    RELEASE_ASSERT(instruction);
+    m_assembler.vectorOp_rr(instruction & 0x100, instruction & 0x200, static_cast<uint8_t>(instruction), right, dest);
 }
 
 } // namespace JSC

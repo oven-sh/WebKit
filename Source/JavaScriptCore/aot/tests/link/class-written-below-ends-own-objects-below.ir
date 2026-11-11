@@ -1,0 +1,9 @@
+# If a class with a class written below it still counted as one below whose prototype object only its own objects stand, `Disk.prototype instanceof Square` and `new Disk() instanceof Square` would be answered by the shape of Square alone, with false
+# class Square { area(k) { return 4; } }  class Disk extends Square { area(k) { return 3; } }
+# The twin of own-objects-alone-stand-below-the-prototype-object-of-a-class.ir. Below Square.prototype stands Disk.prototype, which no `new Square` has made. Below Disk.prototype stand the objects of Disk alone.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0
+# CHECK-NOT: own-objects-below
+# CHECK: layout L1 {{*}}own-objects-below
+
+# PROGRAM-OF: ../machine/call-by-name-on-a-family-goes-through-the-method-table.ir

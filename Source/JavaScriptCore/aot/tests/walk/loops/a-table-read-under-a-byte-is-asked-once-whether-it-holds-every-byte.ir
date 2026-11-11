@@ -1,0 +1,95 @@
+# function swap(bytes: Uint8Array, table: Uint8Array, start: number, end: number) { let i = start, j = end - 1;
+#   while (i < j) { const a = bytes[i], b = bytes[j]; bytes[i++] = table[b]; bytes[j--] = table[a]; } }
+# What a view gives is undefined behind its end. So what `table[b]` gave was `undefined|int`, a store of it into a view was no store of a number, and both stores called a stub with everything in boxes;
+# `table[a]` stands behind the first store of its turn, where a turn can no longer begin again, so nothing could be asked of it there.
+# A read out of a view whose value the turn takes for a key, or stores into a view, is held inside its view or the turn begins again. A key out of a small range (a byte) is not asked by itself:
+# the view is asked ONCE whether it holds the whole range (`255 < length`), and the length so narrowed is the view's length from there on: the read behind the store lies inside by the types alone.
+# A table that is too short takes the loop as it is written.
+# RUN: walk f1 mechanisms=all
+# CHECK: i32 @Int32) isInLoop=true isLoopHead=true
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# CHECK: = PutTypedArrayElement {{*}}level=Proven
+# CHECK-NOT: = Less
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# CHECK: = PutTypedArrayElement {{*}}level=Proven
+# CHECK: = GetTypedArrayElement {{*}}isInsideView
+# RUN(SHELL): run-in-shell let asked = 0; const table = new Uint8Array(256); for (let at = 0; at < 256; at++) table[at] = 255 - at; const all = [new Uint8Array([1, 2, 3, 4, 5]), table, 0, 5, new Uint8Array([7, 2, 1]), new Uint8Array([9, 8, 7, 6]), 0, 3]; globalThis.hidden = () => all[asked++]; globalThis.sink = (one, other) => { let text = ""; for (let at = 0; at < one.length; at++) text += (at ? "," : "") + one[at]; text += " "; for (let at = 0; at < other.length; at++) text += (at ? "," : "") + other[at]; print(text); };
+# SHELL: 250,251,3,253,254 8,2,0
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @1
+    v3 = PropGet v2 key="hidden" [isFreeName] @1
+    v4 = Call v3 calleeName="hidden" @1
+    v5 = Convert v4 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @1
+    v6 = Builtin builtin=GlobalThis @1
+    v7 = PropGet v6 key="hidden" [isFreeName] @1
+    v8 = Call v7 calleeName="hidden" @1
+    v9 = Convert v8 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @1
+    v10 = Builtin builtin=GlobalThis @1
+    v11 = PropGet v10 key="hidden" [isFreeName] @1
+    v12 = Call v11 calleeName="hidden" @1
+    v13 = Convert v12 declared={type=number} illTypedCause=Assertion @1
+    v14 = Builtin builtin=GlobalThis @1
+    v15 = PropGet v14 key="hidden" [isFreeName] @1
+    v16 = Call v15 calleeName="hidden" @1
+    v17 = Convert v16 declared={type=number} illTypedCause=Assertion @1
+    v18 = Call v1, -, v5, v9, v13, v17 calleeName="swap" @1
+    v19 = Builtin builtin=GlobalThis @1
+    v20 = PropGet v19 key="hidden" [isFreeName] @1
+    v21 = Call v20 calleeName="hidden" @1
+    v22 = Convert v21 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @1
+    v23 = Builtin builtin=GlobalThis @1
+    v24 = PropGet v23 key="hidden" [isFreeName] @1
+    v25 = Call v24 calleeName="hidden" @1
+    v26 = Convert v25 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @1
+    v27 = Builtin builtin=GlobalThis @1
+    v28 = PropGet v27 key="hidden" [isFreeName] @1
+    v29 = Call v28 calleeName="hidden" @1
+    v30 = Convert v29 declared={type=number} illTypedCause=Assertion @1
+    v31 = Builtin builtin=GlobalThis @1
+    v32 = PropGet v31 key="hidden" [isFreeName] @1
+    v33 = Call v32 calleeName="hidden" @1
+    v34 = Convert v33 declared={type=number} illTypedCause=Assertion @1
+    v35 = Call v1, -, v22, v26, v30, v34 calleeName="swap" @1
+    v36 = Builtin builtin=GlobalThis @1
+    v37 = PropGet v36 key="sink" [isFreeName] @1
+    v38 = Call v37, -, v5, v22 calleeName="sink" @1
+    v39 = Undefined @1
+    Return v39 @1
+}
+function f1 name="swap" module=m0 position=84 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array, v1: undefined|null|Uint8Array, v2: number, v3: number):
+    v4 = Convert v2 declared={type=number} @1
+    v5 = Integer integer=1 @1
+    v6 = Sub v3, v5 @1
+    v7 = Convert v6 declared={type=number} @1
+    Jump -> next b1(v4, v7) @1
+  b1(v8: number, v9: number):
+    LoopHint @1
+    v11 = Less v8, v9 @1
+    Branch v11 -> taken b2(), notTaken b3() @1
+  b2():
+    v12 = ElemGet v0, v8 @1
+    v13 = ElemGet v0, v9 @1
+    v14 = ToNumeric v8 @1
+    v15 = Increment v14 @1
+    v16 = Convert v15 declared={type=number} @1
+    v17 = ElemGet v1, v13 @1
+    ElemSet v0, v14, v17 @1
+    v19 = ToNumeric v9 @1
+    v20 = Decrement v19 @1
+    v21 = Convert v20 declared={type=number} @1
+    v22 = ElemGet v1, v12 @1
+    ElemSet v0, v19, v22 @1
+    Jump -> next b1(v16, v21) @1
+  b3():
+    v24 = Undefined @1
+    Return v24 @1
+}

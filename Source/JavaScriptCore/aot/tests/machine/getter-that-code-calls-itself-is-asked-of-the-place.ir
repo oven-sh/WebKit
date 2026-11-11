@@ -1,0 +1,13 @@
+# `flags.n3`, where Link expects one getter at the read and the code calls it itself: the lookup in front of the call asks the answers of its place, and the table that all places share stands behind a miss
+# the program is made from source: its text stands at the head of the file that it is taken from
+# RUN: bytes f3:Body mechanisms=all-Inlining
+# CHECK-LABEL: unit f3:Body
+# CHECK: GetterAtSite
+# RUN(NEVER): bytes f3:Body mechanisms=all-Inlining
+# NEVER-NOT: GetterByAccessTable
+# RUN(ALL): bytes f3:Body mechanisms=all
+# ALL-LABEL: unit f3:Body
+# ALL: GetterAtSite
+# RUN(WITHHELD): bytes f3:Body mechanisms=all-Guesses
+# WITHHELD-NOT: GetterAtSite
+# PROGRAM-OF: ../walk/guesses/getter-that-a-descriptor-lays-is-called-by-the-code-that-reads.ir

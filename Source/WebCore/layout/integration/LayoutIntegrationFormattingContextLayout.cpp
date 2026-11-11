@@ -58,12 +58,12 @@ static void layoutRendererWithOverridingBorderBoxSize(RenderBox& renderer, std::
 {
     if (overridingBorderBoxLogicalWidth) {
         renderer.setOverridingBorderBoxLogicalWidth(*overridingBorderBoxLogicalWidth);
-        renderer.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        renderer.setNeedsLayout(MarkingBehavior::OnlyThis);
     }
 
     if (overridingBorderBoxLogicalHeight) {
         renderer.setOverridingBorderBoxLogicalHeight(*overridingBorderBoxLogicalHeight);
-        renderer.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        renderer.setNeedsLayout(MarkingBehavior::OnlyThis);
     }
 
     renderer.layoutIfNeeded();
@@ -171,7 +171,7 @@ static inline void populateIFCWithNewlyPlacedFloats(auto& blockRenderer, auto& p
     }
 }
 
-static inline size_t LEGACY_NODELETE remainingLinesForLineClamp(auto& inlineLayoutState)
+NODELETE static inline size_t remainingLinesForLineClamp(auto& inlineLayoutState)
 {
     // The lines we have already put on the parent's own lines (and in its earlier nested blocks) are part of the clamp's
     // budget, and the nested block has to lay out within what is left of it. A block level sibling gets this from
@@ -201,7 +201,7 @@ static inline void updateRenderTreeLineClampBeforeLayout(auto& inlineLayoutState
         renderTreeLayoutState.setLineClamp(RenderLayoutState::LineClamp { remainingLinesForLineClamp(inlineLayoutState), renderTreeLineClamp->shouldDiscardOverflow, renderTreeLineClamp->clampAfterBox, renderTreeLineClamp->isStableTextWrap, renderTreeLineClamp->hasConstrainedTextWrapContent });
 }
 
-static inline void LEGACY_NODELETE updateIFCLineClampAfterLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
+NODELETE static inline void updateIFCLineClampAfterLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
 {
     auto& parentBlockLayoutState = inlineLayoutState.parentBlockLayoutState();
 
@@ -292,25 +292,36 @@ LayoutUnit formattingContextRootLogicalWidthForType(const Layout::ElementBox& bo
 {
     // Either a box inline layout treats as atomic, or a block level box on a line: the render tree lays both of them
     // out, so it is the render tree that knows what they cost (see LineBuilder::handleBlockContent).
-    ASSERT(box.establishesFormattingContext() || box.isBlockLevelBox());
+    ASSERT(box.establishesFormattingContext() || box.isBlockLevelBox() || box.isAtomicInlineBox());
 
     CheckedRef renderer = downcast<RenderBox>(*box.rendererForIntegration());
 
-    auto isOrthogonalBlockLevelBox = [&] {
-        if (!box.isBlockLevelBox())
+    auto isOrthogonalToContainingBlock = [&] {
+        if (!box.isBlockLevelBox() && !box.isAtomicInlineBox())
             return false;
         CheckedPtr containingBlock = renderer->containingBlock();
         return containingBlock && containingBlock->writingMode().isOrthogonal(renderer->writingMode());
     };
 
+    auto intrinsicBlockSizeOfOrthogonalBox = [&] {
+        // Laying the box out for its block size lays out its content too, where the box is the root and gets its geometry set in its
+        // own writing mode (one BoxGeometry per box, see BoxGeometryUpdater::updateBoxGeometryAfterIntegrationLayout).
+        // Put back the geometry the formatting context asking for this width has for the box, e.g. its margins along the line.
+        auto& boxGeometry = renderer->view().layoutState().ensureGeometryForBox(box);
+        auto boxGeometryInParentFormattingContext = Layout::BoxGeometry { boxGeometry };
+        auto intrinsicBlockSize = renderer->computeIntrinsicLogicalHeight();
+        boxGeometry = boxGeometryInParentFormattingContext;
+        return intrinsicBlockSize;
+    };
+
     switch (logicalWidthType) {
     case LogicalWidthType::MaxContentContribution:
-        if (isOrthogonalBlockLevelBox())
-            return renderer->computeIntrinsicLogicalHeight();
+        if (isOrthogonalToContainingBlock())
+            return intrinsicBlockSizeOfOrthogonalBox();
         return renderer->maxContentLogicalWidthContribution();
     case LogicalWidthType::MinContentContribution:
-        if (isOrthogonalBlockLevelBox())
-            return renderer->computeIntrinsicLogicalHeight();
+        if (isOrthogonalToContainingBlock())
+            return intrinsicBlockSizeOfOrthogonalBox();
         return renderer->minContentLogicalWidthContribution();
     case LogicalWidthType::MaxContent:
     case LogicalWidthType::MinContent: {

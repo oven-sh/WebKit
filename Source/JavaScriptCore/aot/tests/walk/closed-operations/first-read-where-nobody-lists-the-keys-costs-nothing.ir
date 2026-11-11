@@ -1,0 +1,28 @@
+# if (Reflect.has) ..;  Object.keys(o);  return Reflect.ownKeys(Object)
+# Reflect adds `has` when it is first read. Nothing lists the keys of Reflect and Reflect goes nowhere: operations name it and read members off it under names that are written there. So nobody can tell, and the read costs nothing.
+# Object is handed to a row that goes through its own keys: the read of `keys` off it is seen.
+# RUN: walk f0 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: InitializeBuiltin builtin=ObjectKeys
+# RUN(NEVER): walk f0 mechanisms=all
+# NEVER-NOT: InitializeBuiltin builtin=Reflect
+# RUN(NONE): walk f0 mechanisms=none
+# NONE: InitializeBuiltin builtin=ObjectKeys
+# RUN(NEITHER): walk f0 mechanisms=none
+# NEITHER-NOT: InitializeBuiltin builtin=Reflect
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ReflectHas
+    v1 = Builtin builtin=Reflect
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectKeys
+    v4 = NewObject layout=L0
+    v5 = Call v3, v2, v4 calleeName="Object.keys"
+    v6 = Builtin builtin=ReflectOwnKeys
+    v7 = Call v6, v1, v2 calleeName="Reflect.ownKeys"
+    Return v7
+}

@@ -1,0 +1,84 @@
+# Jar, Tin and Pot have a supertype in common and no constructor in common: none calls another. Jar and Tin meet at a parameter of their own: "the constructors of the family", a type that does not say who came. That value comes, by a longer way, to a parameter that holds a plain function already, and is constructed there with a text.
+# All constructors of the class family are one family of functions with `plain`. If they were lost one by one and not united, the text would come to Jar alone, whose name the lost value bears, and not to Tin. Pot came nowhere, and is handed the text all the same: nothing may hang on who came first.
+# function either(a) { return a; }  function make(held, x) { return new held(x); }  make(plain, "text");  make(pass(pass(either(Jar))), "text");  either(Tin);
+# RUN(HELD): link held functions mechanisms=all
+# HELD: function f2 
+# HELD: parameter 1 expected=undefined|string proven=undefined|string
+# HELD: function f3 
+# HELD: parameter 1 expected=undefined|string proven=undefined|string
+# HELD: function f4 
+# HELD: parameter 1 expected=undefined|string proven=undefined|string
+# HELD: function f5 
+
+layout L0 kind=Instance name="Vessel" module=m0 fields=[]
+layout L1 kind=Instance name="Jar" module=m0 constructor=f2 fields=[] supertypes=[L0]
+layout L2 kind=Instance name="Tin" module=m0 constructor=f3 fields=[] supertypes=[L0]
+layout L3 kind=Instance name="Pot" module=m0 constructor=f4 fields=[] supertypes=[L0]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L1
+    v2 = FinishClass v1 layout=L1
+    v3 = NewClosure function=f3
+    v4 = NewClass v3 layout=L2
+    v5 = FinishClass v4 layout=L2
+    v6 = NewClosure function=f4
+    v7 = NewClass v6 layout=L3
+    v8 = FinishClass v7 layout=L3
+    v9 = NewClosure function=f5
+    v10 = NewClosure function=f6
+    v11 = NewClosure function=f7
+    v12 = NewClosure function=f8
+    v13 = String string="text"
+    v14 = Call v10, -, v11, v13 calleeName="make"
+    v15 = Call v9, -, v2 calleeName="either"
+    v16 = Call v9, -, v5 calleeName="either"
+    v17 = Call v12, -, v15 calleeName="pass"
+    v18 = Call v12, -, v17 calleeName="pass"
+    v19 = Call v10, -, v18, v13 calleeName="make"
+    v20 = Undefined
+    Return v20
+}
+function f1 name="unused" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="Jar" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    Return v3
+}
+function f3 name="Tin" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    Return v3
+}
+function f4 name="Pot" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L3 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L3
+    v3 = NewObject v2 layout=L3
+    Return v3
+}
+function f5 name="either" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="make" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Construct v0, -, v1
+    Return v2
+}
+function f7 name="plain" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f8 name="pass" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

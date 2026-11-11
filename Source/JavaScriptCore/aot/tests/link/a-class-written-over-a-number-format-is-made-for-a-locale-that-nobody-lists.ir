@@ -1,0 +1,40 @@
+# class Money extends Intl.NumberFormat {} new Intl.NumberFormat("en-US") new Money("de-DE")
+# The construction behind `super(..)` is followed by nobody: what stands above a class of the program is constructed where nobody sees the operands.
+# If the one call in sight spoke for all, a trimmed executable would keep the data of en-US alone and the heir would answer in the wrong locale, silently.
+# It stands beside a-class-written-over-set-brings-what-is-used-of-set-alone.ir.
+# RUN: locales
+# CHECK: locale unknown IntlNumberFormat
+# CHECK: locale constant "en-US" IntlNumberFormat
+
+layout L0 kind=Instance name="Money" module=m0 constructor=f1 flags=[HasHeritage]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Intl" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Intl) flags=[IsExpected]}
+    v3 = PropGet v2 key="NumberFormat"
+    v4 = Convert v3 declared={type=builtin(IntlNumberFormat) flags=[IsExpected]}
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f1
+    v7 = NewClass v6, v4, v5 layout=L0
+    v8 = FinishClass v7 layout=L0
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="Intl" [isFreeName]
+    v11 = Convert v10 declared={type=builtin(Intl) flags=[IsExpected]}
+    v12 = PropGet v11 key="NumberFormat"
+    v13 = Convert v12 declared={type=builtin(IntlNumberFormat) flags=[IsExpected]}
+    v14 = String string="en-US"
+    v15 = Construct v13, -, v14 calleeName="Intl.NumberFormat"
+    v16 = String string="de-DE"
+    v17 = Construct v8, -, v16 calleeName="Money"
+    v18 = NewArray v15, v17 contents=anything
+    Return v18
+}
+function f1 name="Money" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L0
+    Return v4
+}

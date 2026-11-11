@@ -9,12 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
-#include "AOTFunctionAnalyses.h"
 #include "AOTPureOperations.h"
 #include "AOTRepresentationRules.h"
-#include "AOTVector.h"
+#include "AOTThrowEmitter.h"
 #include "B3ComputeDivisionMagic.h"
-#include "B3StackmapGenerationParams.h"
 #include "CCallHelpers.h"
 #include "MathCommon.h"
 #include "PureNaN.h"
@@ -24,7 +22,9 @@
 #include <limits>
 #include <type_traits>
 #include <wtf/Atomics.h>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/MathExtras.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -35,16 +35,25 @@ static std::optional<int64_t> constantIntegerOf(LValue value)
 {
     if (value->hasInt())
         return value->asInt();
-    if (value->opcode() == B3::SExt32 && value->child(0)->hasInt32())
+    if (value->opcode() == Machine::SExt32 && value->child(0)->hasInt32())
         return value->child(0)->asInt32();
     return std::nullopt;
+}
+
+static std::optional<int64_t> magnitudeOfConstantDivisor(LValue divisor)
+{
+    std::optional<int64_t> constantDivisor = constantIntegerOf(divisor);
+    int64_t leastInteger = divisor->type() == Machine::Int32 ? std::numeric_limits<int32_t>::min() : std::numeric_limits<int64_t>::min();
+    if (!constantDivisor || !*constantDivisor || *constantDivisor == leastInteger)
+        return std::nullopt;
+    return *constantDivisor < 0 ? -*constantDivisor : *constantDivisor;
 }
 
 static std::optional<double> constantNumberOf(LValue value)
 {
     if (value->hasDouble())
         return value->asDouble();
-    if (value->opcode() != B3::IToD)
+    if (value->opcode() != Machine::IToD)
         return std::nullopt;
     if (std::optional<int64_t> integer = constantIntegerOf(value->child(0)))
         return static_cast<double>(*integer);
@@ -69,23 +78,18 @@ class InlineMathEmitter : public OperationEmitter {
 protected:
     using OperationEmitter::OperationEmitter;
 
-    // An invalid operation produces a NaN with the sign bit set on x86-64 and clear on ARM64. A C library function may pick either.
     static bool matchesHardwareNaN(double libraryNaN) { return std::signbit(libraryNaN) == isX86_64(); }
 
-    // What the function answers when a program calls it. A C++ compiler that sees the callee and constant operands computes the result itself, and its NaN may have the other sign.
     template<typename Function>
     static double resultAtRunTime(Function* function, double left, double right) { return WTF::opaque(function)(left, right); }
 
     Number callLibraryIfNaN(Number inlineResult, RuntimeOperation function, Number left, Number right)
     {
-        LBasicBlock isNaN = newBlock();
-        Join<Number> join(m_out);
-        branchUnless(equal(inlineResult, inlineResult), isNaN);
-        join.add(inlineResult);
-
-        m_out.appendTo(isNaN);
-        join.add(callLeaf<Number>(function, { left, right }));
-        return join.finish();
+        return either<Number>(equal(inlineResult, inlineResult), [&] {
+            return inlineResult;
+        }, [&] {
+            return callLeaf<Number>(function, { left, right });
+        });
     }
 };
 
@@ -96,19 +100,32 @@ public:
     {
     }
 
+    Representation widthOfOperands(const ValueContext& value)
+    {
+        bool fitInt32 = true;
+        for (ValueID operand : value->operands()) {
+            if (!constantsInFormOfUses.contains(opcodeOf(operand)))
+                return representationOf(operand);
+            fitInt32 = fitInt32 && typeOf(operand).isInt32();
+        }
+        return fitInt32 ? Representation::Int32 : Representation::Int64;
+    }
+
     template<typename T>
     Operand exactResult(const ValueContext& value, ArithmeticOperator op)
     {
         auto [left, right] = operandsOf<T>(value);
         switch (op) {
         case ArithmeticOperator::Add:
-            return add(left, right);
+            return heldToWhatNumbersGive(value, op, left, right, add(left, right));
         case ArithmeticOperator::Sub:
-            return sub(left, right);
+            return heldToWhatNumbersGive(value, op, left, right, sub(left, right));
         case ArithmeticOperator::Mul:
-            return mul(left, right);
+            return heldToWhatNumbersGive(value, op, left, right, mul(left, right));
         case ArithmeticOperator::Mod:
-            return remainderOfNonNegative(left, right);
+            if (checksProofs())
+                emitter<ThrowEmitter>().requireOrCrash(value, logicalAnd(greaterThanOrEqual(left, constant<T>(0)), logicalAnd(isNotZero(right), lessThanOrEqual(left, constant<T>(typeOf(value->leftOperand()).integers.maximum)))), std::nullopt, ProofSource::OtherOperation);
+            return remainderOfNonNegative(left, right, typeOf(value->leftOperand()).integers.maximum);
         case ArithmeticOperator::Div:
         case ArithmeticOperator::Pow:
             break;
@@ -125,10 +142,26 @@ public:
             return toNumber(add(widened(left), widened(right)));
         case ArithmeticOperator::Sub:
             return toNumber(sub(widened(left), widened(right)));
-        case ArithmeticOperator::Mul:
-            return mul(toNumber(left), toNumber(right));
-        case ArithmeticOperator::Div:
-            return div(toNumber(left), toNumber(right));
+        case ArithmeticOperator::Mul: {
+            Range multiplicands = typeOf(value->leftOperand()).integers;
+            Range multipliers = typeOf(value->rightOperand()).integers;
+            if (productIsRoundedOnceFromIntegers(multiplicands, multipliers)) {
+                Integer exact = mul(widened(left, multiplicands), widened(right, multipliers));
+                Number product = toNumber(exact);
+                if (checksProofs()) {
+                    Number x = toNumber(left);
+                    Condition holds = logicalAnd(equal(mul(x, toNumber(right)), product), logicalOr(isNotZero(exact), greaterThanOrEqual(bitOr(left, right), constant<T>(0))));
+                    emitter<ThrowEmitter>().requireOrCrash(value, holds, std::nullopt, ProofSource::OtherOperation);
+                }
+                return product;
+            }
+            Number x = toNumber(left);
+            return mul(x, toNumber(right));
+        }
+        case ArithmeticOperator::Div: {
+            Number x = toNumber(left);
+            return div(x, toNumber(right));
+        }
         case ArithmeticOperator::Mod:
         case ArithmeticOperator::Pow:
             break;
@@ -137,83 +170,249 @@ public:
     }
 
     template<typename T>
-    WholeRemainder remainderOfIntegers(const ValueContext& value)
+    Number remainderOfIntegers(const ValueContext& value)
     {
         auto [dividend, divisor] = operandsOf<T>(value);
-        std::optional<int64_t> constantDivisor = constantIntegerOf(divisor.value());
-        bool isNeverNaN = constantDivisor && *constantDivisor;
-        uint64_t magnitude = isNeverNaN ? (*constantDivisor < 0 ? -static_cast<uint64_t>(*constantDivisor) : static_cast<uint64_t>(*constantDivisor)) : 0;
+        Range dividends = typeOf(value->leftOperand()).integers;
+        bool mayBeNegative = dividends.minimum < 0;
+        bool mayOverflow = dividends.minimum <= (std::is_same_v<T, Word32> ? std::numeric_limits<int32_t>::min() : std::numeric_limits<int64_t>::min());
+        if (checksProofs() && !mayOverflow)
+            emitter<ThrowEmitter>().requireOrCrash(value, greaterThanOrEqual(dividend, constant<T>(dividends.minimum)), std::nullopt, ProofSource::OtherOperation);
+        auto zeroWithSignOfDividend = [&] {
+            return mayBeNegative ? select(lessThan(dividend, constant<T>(0)), number(-0.0), number(0)) : number(0);
+        };
+        auto remainderOfDivisionByZero = [&] {
+            bool hasSignOfDividend = mayBeNegative && std::signbit(remainderByZero(-1)) != std::signbit(remainderByZero(1));
+            return hasSignOfDividend ? select(lessThan(dividend, constant<T>(0)), number(remainderByZero(-1)), number(remainderByZero(1))) : number(remainderByZero(1));
+        };
 
-        WholeRemainder result;
-        result.dividend = dividend;
-        T whole;
-        if (magnitude && hasOneBitSet(magnitude) && magnitude <= 1ull << 30) {
-            whole = remainderByPowerOfTwo(dividend, magnitude);
-            result.zeroWhereWholeIsZero = bitAnd(dividend, constant<T>(magnitude - 1));
-            result.powerOfTwoDivisor = magnitude;
-        } else if (std::is_same_v<T, Integer> && magnitude && magnitude <= 1ull << 62) {
-            if constexpr (std::is_same_v<T, Integer>)
-                whole = remainderByConstant(dividend, static_cast<int64_t>(magnitude));
+        if (std::optional<int64_t> constantDivisor = constantIntegerOf(divisor.value())) {
+            if (!*constantDivisor)
+                return remainderOfDivisionByZero();
+            if (*constantDivisor == -1)
+                return zeroWithSignOfDividend();
+        }
+
+        LBasicBlock divides = newBlock();
+        LBasicBlock doesNotDivide = newBlock();
+        Join<Number> join(m_out);
+        Condition answerIsNumber = isNotZero(divisor);
+        Condition isOrdinary = mayOverflow ? above(add(divisor, constant<T>(1)), constant<T>(1)) : answerIsNumber;
+        ScopeFork fork = m_out.forkScope();
+        m_out.branch(isOrdinary.value(), normalEdge(divides), rareEdge(doesNotDivide));
+
+        m_out.appendToArm(divides, fork);
+        T remainder = signedRemainder(dividend, divisor);
+        if (mayBeNegative) {
+            LBasicBlock hasSignOfItsOwn = newBlock();
+            LBasicBlock isZero = newBlock();
+            LBasicBlock isNegativeZero = newBlock();
+            Join<Number> signedNumber(m_out);
+            m_out.branch(isNotZero(remainder).value(), normalEdge(hasSignOfItsOwn), unlikelyEdge(isZero));
+            m_out.appendTo(isZero);
+            m_out.branch(lessThan(dividend, constant<T>(0)).value(), unlikelyEdge(isNegativeZero), normalEdge(hasSignOfItsOwn));
+            m_out.appendTo(isNegativeZero);
+            signedNumber.add(number(-0.0));
+            m_out.appendTo(hasSignOfItsOwn);
+            signedNumber.add(toNumber(remainder));
+            join.add(signedNumber.finish());
         } else
-            whole = binary<T>(&FTL::Output::chillMod, dividend, divisor);
-        result.whole = whole;
-        if (!result.powerOfTwoDivisor)
-            result.zeroWhereWholeIsZero = whole;
-        if (!isNeverNaN)
-            result.isNumber = isNotZero(divisor);
-        result.number = remainderAsNumber(whole, dividend, divisor, !isNeverNaN);
+            join.add(toNumber(remainder));
+
+        m_out.appendToArm(doesNotDivide, fork);
+        Number ofZero = remainderOfDivisionByZero();
+        join.add(mayOverflow ? select(answerIsNumber, zeroWithSignOfDividend(), ofZero) : ofZero);
+        Number result = join.finishBehind(fork);
+        if (isOrdinary.value()->hasInt() && isOrdinary.value()->asInt())
+            emitter<ConversionEmitter>().noteIntegerBehind(result, remainder.value());
         return result;
     }
 
-    Condition testRemainder(Integer dividend, int32_t divisor, std::optional<int64_t> comparedWith)
+    Number remainder(const ValueContext* value, Number dividend, Number divisor)
     {
-        uint64_t lowBits = static_cast<uint64_t>(divisor) - 1;
-        int64_t constant = comparedWith.value_or(0);
-        if (hasOneBitSet(static_cast<uint64_t>(divisor)) && static_cast<uint64_t>(constant < 0 ? -constant : constant) <= lowBits) {
-            if (!constant) {
-                Integer low = bitAnd(dividend, integer(static_cast<int64_t>(lowBits)));
-                return comparedWith ? isZero(low) : isNotZero(low);
-            }
-            uint64_t sign = 1ull << 63;
-            return equal(bitAnd(dividend, integer(static_cast<int64_t>(sign | lowBits))), integer(static_cast<int64_t>((constant < 0 ? sign : 0) | (static_cast<uint64_t>(constant) & lowBits))));
-        }
-        Integer remainder = remainderByConstant(dividend, divisor);
-        return comparedWith ? equal(remainder, integer(constant)) : isNotZero(remainder);
-    }
-
-    Number remainder(Number dividend, Number divisor)
-    {
+        static constexpr OpcodeSet remainders { Opcode::Mod };
         std::optional<double> constantDivisor = constantNumberOf(divisor.value());
         if (constantDivisor && std::abs(*constantDivisor) == 1) {
+            m_out.noteFormOf(remainders, Form::Open, StateOfKnowledge::NumbersAndDivisorOne);
             Number fraction = sub(dividend, trunc(dividend));
-            Number result = select(equal(fraction, number(0)), mul(dividend, number(0)), fraction);
+            Condition isWhole = equal(fraction, 0);
+            Number result = select(isWhole, mul(dividend, 0), fraction);
             constexpr double infinity = std::numeric_limits<double>::infinity();
             if (matchesHardwareNaN(resultAtRunTime(Math::fmodDouble, infinity, *constantDivisor)) && matchesHardwareNaN(resultAtRunTime(Math::fmodDouble, -infinity, *constantDivisor)))
                 return result;
             return callLibraryIfNaN(result, RuntimeOperation::Fmod, dividend, divisor);
         }
         std::optional<int64_t> constantWholeDivisor = constantDivisor ? positiveWholeNumberOf(*constantDivisor) : std::nullopt;
-        if (constantDivisor && !constantWholeDivisor)
+        if (constantDivisor && !constantWholeDivisor) {
+            bool hasFraction = *constantDivisor != std::trunc(*constantDivisor);
+            if (std::optional<SplitDivisor> split = hasFraction ? splitDivisor(*constantDivisor) : std::nullopt) {
+                m_out.noteFormOf(remainders, Form::Open, StateOfKnowledge::NumbersAndDivisorWithFraction);
+                return remainderBySplitDivisor(dividend, divisor, *split);
+            }
+            m_out.noteFormOf(remainders, Form::Runtime, StateOfKnowledge::NumbersAndOtherDivisor);
             return callLeaf<Number>(RuntimeOperation::Fmod, { dividend, divisor });
-
-        LBasicBlock genericPath = newBlock();
-        Join<Number> join(m_out);
-        if (constantWholeDivisor)
-            join.add(toNumber(remainderOfNonNegative(nonNegativeIntegerOrElse(dividend, genericPath), integer(*constantWholeDivisor))));
-        else {
-            Word32 wholeDividend = nonNegativeInt32OrElse(dividend, genericPath);
-            Word32 wholeDivisor = nonNegativeInt32OrElse(divisor, genericPath);
-            branchUnless(isNotZero(wholeDivisor), genericPath);
-            join.add(toNumber(remainderOfNonNegative(wholeDividend, wholeDivisor)));
         }
 
-        m_out.appendTo(genericPath);
-        join.add(callLeaf<Number>(RuntimeOperation::Fmod, { dividend, divisor }));
-        return join.finish();
+        m_out.noteFormOf(remainders, Form::Open, constantWholeDivisor ? StateOfKnowledge::NumbersAndWholeDivisor : StateOfKnowledge::Numbers);
+        LBasicBlock genericPath = newBlock();
+        Join<Number> join(m_out);
+        Vector<ValueFromBlock, 3> indexes;
+        bool isKey = value && mayBeKey(*value);
+        auto addWhole = [&](Integer remainder) {
+            if (isKey)
+                indexes.append(m_out.anchor(remainder.value()));
+            join.add(toNumber(remainder));
+        };
+        std::optional<Integer> provenDividend = value ? provenNonNegativeInteger(*value, (*value)->leftOperand(), dividend) : std::nullopt;
+        if (constantWholeDivisor)
+            addWhole(remainderOfNonNegative(provenDividend ? *provenDividend : nonNegativeIntegerOrElse(dividend, genericPath), integer(*constantWholeDivisor)));
+        else {
+#if CPU(ARM64)
+            if (!provenDividend && MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(build().targetFeatures())) {
+                LBasicBlock widerPath = newBlock();
+                Word32 narrowDividend = nonNegativeInt32OrElse(dividend, widerPath);
+                Word32 narrowDivisor = nonNegativeInt32OrElse(divisor, widerPath);
+                branchUnless(isNotZero(narrowDivisor), genericPath);
+                addWhole(zeroExtended(remainderOfNonNegative(narrowDividend, narrowDivisor)));
+                m_out.appendTo(widerPath);
+            }
+#endif
+            Integer wholeDivisor = positiveIntegerOrElse(divisor, genericPath);
+            Integer wholeDividend = provenDividend ? *provenDividend : wholeDividendOrElse(dividend, join, indexes, genericPath, isKey);
+            addWhole(remainderOfNonNegative(wholeDividend, wholeDivisor));
+        }
+
+        return joinedWithLibrary(join, indexes, genericPath, dividend, divisor, isKey);
+    }
+
+    Number remainderByWholeDivisor(const ValueContext& value, Number dividend, Number divisor, Integer wholeDivisor)
+    {
+        if (checksProofs())
+            emitter<ThrowEmitter>().requireOrCrash(value, logicalOr(equal(wholeDivisor, integer(0)), equal(toNumber(wholeDivisor), divisor)), std::nullopt, ProofSource::OtherOperation);
+        LBasicBlock genericPath = newBlock();
+        Join<Number> join(m_out);
+        Vector<ValueFromBlock, 3> indexes;
+        std::optional<Integer> provenDividend = provenNonNegativeInteger(value, value->dividendOperand(), dividend);
+        branchUnless(isNotZero(wholeDivisor), genericPath);
+        bool isKey = mayBeKey(value);
+        Integer wholeDividend = provenDividend ? *provenDividend : wholeDividendOrElse(dividend, join, indexes, genericPath, isKey);
+        Integer remainder = remainderOfNonNegative(wholeDividend, wholeDivisor);
+        if (isKey)
+            indexes.append(m_out.anchor(remainder.value()));
+        join.add(toNumber(remainder));
+        return joinedWithLibrary(join, indexes, genericPath, dividend, divisor, isKey);
     }
 
 private:
-    enum class DividendSign : bool { Any, NonNegative };
+    struct SplitDivisor {
+        double magnitude;
+        double high;
+        double low;
+        double reciprocal;
+        double quotientLimit;
+    };
+
+    bool checksProofs() { return emittersCheckProofs(); }
+
+    bool mayBeKey(const ValueContext& value)
+    {
+        static constexpr OpcodeSet usersOfNumbersAlone = allNumericOperators | allRelations | allEqualities | allBitwiseOperators | OpcodeSet { Opcode::ToBoolean, Opcode::Box, Opcode::NumberToInteger };
+        const Code& code = generator().code();
+        if (code.useCountOf(value.id()) != 1)
+            return code.useCountOf(value.id());
+        ValueID user = code.onlyUserOf(value.id());
+        return user && !usersOfNumbersAlone.contains(code.at(user).opcode);
+    }
+
+    Integer wholeDividendOrElse(Number dividend, Join<Number>& join, Vector<ValueFromBlock, 3>& indexes, LBasicBlock genericPath, bool isKey)
+    {
+        if (!isX86_64() || (dividend.value()->opcode() == Machine::IToD && dividend.value()->child(0)->type() == Machine::Int32))
+            return nonNegativeIntegerOrElse(dividend, genericPath);
+        LBasicBlock isNotPositive = newBlock();
+        LBasicBlock isZero = newBlock();
+        LBasicBlock continuation = newBlock();
+        Integer whole = positiveIntegerOrElse(dividend, isNotPositive);
+        m_out.jump(continuation);
+        m_out.appendTo(isNotPositive);
+        branch(equal(dividend, 0), { rareEdge(isZero), normalEdge(genericPath) });
+        m_out.appendTo(isZero);
+        if (isKey)
+            indexes.append(m_out.anchor(integer(0).value()));
+        join.add(dividend);
+        m_out.appendTo(continuation);
+        return whole;
+    }
+
+    Number joinedWithLibrary(Join<Number>& join, Vector<ValueFromBlock, 3>& indexes, LBasicBlock genericPath, Number dividend, Number divisor, bool isKey)
+    {
+        m_out.appendTo(genericPath);
+        Number ofAnyNumbers = callLeaf<Number>(RuntimeOperation::Fmod, { dividend, divisor });
+        if (!isKey) {
+            join.add(ofAnyNumbers);
+            return join.finish();
+        }
+        Integer whole = emitter<ConversionEmitter>().truncateUnchecked(ofAnyNumbers);
+        indexes.append(m_out.anchor(select(equal(toNumber(whole), ofAnyNumbers), whole, integer(-1)).value()));
+        join.add(ofAnyNumbers);
+        Number result = join.finish();
+        emitter<ConversionEmitter>().noteIndexBehind(result, Integer(m_out.phi(machineTypeOf(Integer::representation), indexes)));
+        return result;
+    }
+
+    template<typename T>
+    T heldToWhatNumbersGive(const ValueContext& value, ArithmeticOperator op, T left, T right, T result)
+    {
+        if (!checksProofs())
+            return result;
+        Number x = toNumber(left);
+        Number y = toNumber(right);
+        Number ofNumbers = op == ArithmeticOperator::Add ? add(x, y) : op == ArithmeticOperator::Sub ? sub(x, y) : mul(x, y);
+        Condition holds = equal(ofNumbers, toNumber(result));
+        if (op == ArithmeticOperator::Mul)
+            holds = logicalAnd(holds, logicalOr(isNotZero(result), greaterThanOrEqual(bitOr(left, right), constant<T>(0))));
+        emitter<ThrowEmitter>().requireOrCrash(value, holds, std::nullopt, ProofSource::OtherOperation);
+        return result;
+    }
+
+    static std::optional<SplitDivisor> splitDivisor(double divisor)
+    {
+        constexpr unsigned precision = std::numeric_limits<double>::digits;
+        constexpr unsigned lowBits = 27;
+        double magnitude = std::abs(divisor);
+        if (!(magnitude >= 0x1p-500 && magnitude <= 0x1p500))
+            return std::nullopt;
+        uint64_t bits = std::bit_cast<uint64_t>(magnitude);
+        double high = std::bit_cast<double>(bits & ~((1ull << lowBits) - 1));
+        double low = magnitude - high;
+        unsigned significantBits = precision - std::countr_zero(bits | 1ull << (precision - 1));
+        unsigned quotientBits = low ? precision - lowBits : std::min(precision - significantBits, 49u);
+        return SplitDivisor { magnitude, high, low, std::nextafter(1 / magnitude, std::numeric_limits<double>::infinity()), std::ldexp(1.0, quotientBits) };
+    }
+
+    Number remainderBySplitDivisor(Number dividend, Number divisor, const SplitDivisor& split)
+    {
+        Number magnitude = abs(dividend);
+        return selectByBranch<Number>(lessThan(magnitude, split.magnitude), [&] {
+            return dividend;
+        }, [&] {
+            Number quotient = trunc(mul(magnitude, split.reciprocal));
+            return either<Number>(lessThan(quotient, split.quotientLimit), [&] {
+                Number difference = sub(magnitude, mul(quotient, split.high));
+                if (split.low)
+                    difference = sub(difference, mul(quotient, split.low));
+                Number remainder = either<Number>(greaterThanOrEqual(difference, 0), [&] {
+                    return difference;
+                }, [&] {
+                    return add(difference, split.magnitude);
+                });
+                ConversionEmitter& conversions = emitter<ConversionEmitter>();
+                Integer signOfDividend = bitAnd(conversions.bitsOf(dividend), std::numeric_limits<int64_t>::min());
+                return conversions.fromBits(bitOr(conversions.bitsOf(remainder), signOfDividend), Representation::Double).as<Number>();
+            }, [&] {
+                return callLeaf<Number>(RuntimeOperation::Fmod, { dividend, divisor });
+            });
+        });
+    }
 
     template<typename T>
     T constant(int64_t value)
@@ -229,145 +428,197 @@ private:
     {
         if (isStepByOne(value.opcode()))
             return { in<T>(value->valueOperand()), constant<T>(1) };
+        if (value.opcode() == Opcode::Mod) {
+            const Type& divisor = typeOf(value->rightOperand());
+            if (divisor.isInteger() && divisor.integers.isSingleValue()) {
+                build().statistics().count(StatisticID::RemaindersByProvenConstantDivisor);
+                if (checksProofs())
+                    emitter<ThrowEmitter>().requireOrCrash(value, equal(in<T>(value->rightOperand()), constant<T>(divisor.integers.minimum)), std::nullopt, ProofSource::OtherOperation);
+                return { in<T>(value->leftOperand()), constant<T>(divisor.integers.minimum) };
+            }
+        }
         return { in<T>(value->leftOperand()), in<T>(value->rightOperand()) };
     }
 
+    static bool productIsRoundedOnceFromIntegers(Range left, Range right)
+    {
+        if (left.isEmpty() || right.isEmpty())
+            return false;
+        if ((left.minimum < 0 && right.contains(0)) || (right.minimum < 0 && left.contains(0)))
+            return false;
+        for (int64_t multiplicand : { left.minimum, left.maximum }) {
+            for (int64_t multiplier : { right.minimum, right.maximum }) {
+                if ((CheckedInt64(multiplicand) * multiplier).hasOverflowed())
+                    return false;
+            }
+        }
+        return true;
+    }
+
     Integer widened(Word32 value) { return signExtended(value); }
+    Integer widened(Word32 value, Range range) { return emitter<ConversionEmitter>().widen(value, range); }
+    Integer widened(Integer value, Range) { return value; }
     Integer widened(Integer value) { return value; }
 
     template<typename T>
-    T remainderOfNonNegative(T dividend, T divisor)
+    T remainderOfNonNegative(T dividend, T divisor, int64_t greatestDividend = std::numeric_limits<int64_t>::max())
     {
-        std::optional<int64_t> constantDivisor = constantIntegerOf(divisor.value());
-        if (constantDivisor && *constantDivisor > 0) {
-            if (hasOneBitSet(static_cast<uint64_t>(*constantDivisor)))
-                return bitAnd(dividend, constant<T>(*constantDivisor - 1));
-            if constexpr (std::is_same_v<T, Word32>) {
-                Word32 quotient(m_out.m_block->appendNew<B3::Value>(m_proc, B3::UDiv, m_out.origin(), dividend.value(), divisor.value()));
-                return sub(dividend, mul(quotient, divisor));
-            } else
-                return remainderByConstant(dividend, *constantDivisor, DividendSign::NonNegative);
+        if (std::optional<int64_t> magnitude = magnitudeOfConstantDivisor(divisor.value())) {
+            if (hasOneBitSet(static_cast<uint64_t>(*magnitude)))
+                return bitAnd(dividend, constant<T>(*magnitude - 1));
+            if (greatestDividend >= 0 && greatestDividend - *magnitude < *magnitude) {
+                build().statistics().count(StatisticID::RemaindersByConditionalSubtraction);
+                T lessened = sub(dividend, constant<T>(*magnitude));
+                return select(below(dividend, constant<T>(*magnitude)), dividend, lessened);
+            }
+            return remainderByConstant(dividend, *magnitude);
         }
-        return binary<T>(&FTL::Output::mod, dividend, divisor);
+        return binary<T>(&Output::mod, dividend, divisor);
     }
 
     template<typename T>
-    T remainderByPowerOfTwo(T dividend, uint64_t divisor)
+    T signedRemainder(T dividend, T divisor)
     {
-        constexpr unsigned numberOfBits = std::is_same_v<T, Word32> ? 32 : 64;
-        unsigned shift = WTF::fastLog2(divisor);
-        if (!shift)
-            return constant<T>(0);
-        T roundsTowardZero(m_out.lShr(m_out.aShr(dividend.value(), m_out.constInt32(numberOfBits - 1)), m_out.constInt32(numberOfBits - shift)));
-        return sub(dividend, bitAnd(add(dividend, roundsTowardZero), constant<T>(-static_cast<int64_t>(divisor))));
+        std::optional<int64_t> magnitude = magnitudeOfConstantDivisor(divisor.value());
+        if (magnitude && *magnitude > 1) {
+            if constexpr (std::is_same_v<T, Word32>)
+                return signedRemainderByConstant(dividend, static_cast<int32_t>(*magnitude));
+            else
+                return signedRemainderByConstant(dividend, *magnitude);
+        }
+        return binary<T>(&Output::mod, dividend, divisor);
     }
 
-    Integer remainderByConstant(Integer dividend, int64_t divisor, DividendSign sign = DividendSign::Any)
+    Word32 signedRemainderByConstant(Word32 dividend, int32_t divisor)
+    {
+        if (hasOneBitSet(static_cast<uint32_t>(divisor))) {
+            unsigned shift = WTF::fastLog2(static_cast<uint64_t>(divisor));
+            Word32 raised = add(dividend, Word32(m_out.lShr(m_out.aShr(dividend.value(), 31), 32 - shift)));
+            return sub(dividend, bitAnd(raised, word32(-divisor)));
+        }
+        B3::DivisionMagic<int32_t> magic = B3::computeSignedDivisionMagic(divisor);
+        Integer product = mul(signExtended(dividend), integer(static_cast<uint32_t>(magic.magicMultiplier)));
+        Integer roundedDown(m_out.aShr(product.value(), 32 + magic.shift));
+        Integer quotient = add(roundedDown, Integer(m_out.lShr(product.value(), 63)));
+        return sub(dividend, mul(low32(quotient), word32(divisor)));
+    }
+
+    Integer signedRemainderByConstant(Integer dividend, int64_t divisor)
+    {
+        if (hasOneBitSet(static_cast<uint64_t>(divisor))) {
+            unsigned shift = WTF::fastLog2(static_cast<uint64_t>(divisor));
+            Integer raised = add(dividend, Integer(m_out.lShr(m_out.aShr(dividend.value(), 63), 64 - shift)));
+            return sub(dividend, bitAnd(raised, integer(-divisor)));
+        }
+        Integer uncorrected = uncorrectedQuotient(dividend, divisor);
+        Integer quotient = add(uncorrected, Integer(m_out.lShr(uncorrected.value(), 63)));
+        return sub(dividend, mul(quotient, integer(divisor)));
+    }
+
+    Word32 remainderByConstant(Word32 dividend, int64_t divisor)
+    {
+        B3::DivisionMagic<int32_t> magic = B3::computeSignedDivisionMagic(static_cast<int32_t>(divisor));
+        Integer product = mul(zeroExtended(dividend), integer(static_cast<uint32_t>(magic.magicMultiplier)));
+        Word32 quotient = low32(Integer(m_out.lShr(product.value(), 32 + magic.shift)));
+        return sub(dividend, mul(quotient, word32(static_cast<int32_t>(divisor))));
+    }
+
+    Integer remainderByConstant(Integer dividend, int64_t divisor)
+    {
+        Integer quotient = uncorrectedQuotient(dividend, divisor);
+        return sub(dividend, mul(quotient, integer(divisor)));
+    }
+
+    Integer uncorrectedQuotient(Integer dividend, int64_t divisor)
     {
         B3::DivisionMagic<int64_t> magic = B3::computeSignedDivisionMagic(divisor);
-        Integer quotient(m_out.m_block->appendNew<B3::Value>(m_proc, B3::MulHigh, m_out.origin(), dividend.value(), m_out.constInt64(magic.magicMultiplier)));
+        Integer quotient(m_out.mulHigh(dividend.value(), m_out.constInt64(magic.magicMultiplier)));
         if (magic.magicMultiplier < 0)
             quotient = add(quotient, dividend);
         if (magic.shift)
             quotient = Integer(m_out.aShr(quotient.value(), m_out.constInt32(magic.shift)));
-        if (sign == DividendSign::Any)
-            quotient = add(quotient, Integer(m_out.lShr(quotient.value(), m_out.constInt32(63))));
-        return sub(dividend, mul(quotient, integer(divisor)));
+        return quotient;
     }
 
     static double remainderByZero(double dividend) { return AOT::withoutPayload(resultAtRunTime(Math::fmodDouble, dividend, 0)); }
 
-    template<typename T>
-    Number remainderAsNumber(T whole, T dividend, T divisor, bool mayBeNaN)
-    {
-        constexpr bool is32Bit = std::is_same_v<T, Word32>;
-        B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Double);
-        patchpoint->append(whole.value(), B3::ValueRep::SomeRegister);
-        patchpoint->append(dividend.value(), B3::ValueRep::SomeRegister);
-        if (mayBeNaN)
-            patchpoint->append(divisor.value(), B3::ValueRep::SomeRegister);
-        patchpoint->effects = B3::Effects::none();
-        patchpoint->pureFunction = Typed::remainderAsNumber(is32Bit, mayBeNaN);
-        patchpoint->setRunsWithoutFrame(true);
-        patchpoint->setGenerator([mayBeNaN](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-            FPRReg result = params[0].fpr();
-            GPRReg whole = params[1].gpr();
-            GPRReg dividend = params[2].gpr();
-            GPRReg divisor = mayBeNaN ? params[3].gpr() : InvalidGPRReg;
-            auto branchOnTest = [](CCallHelpers& jit, CCallHelpers::ResultCondition condition, GPRReg tested) {
-                return is32Bit ? jit.branchTest32(condition, tested) : jit.branchTest64(condition, tested);
-            };
-            if constexpr (is32Bit)
-                jit.convertInt32ToDouble(whole, result);
-            else
-                jit.convertInt64ToDouble(whole, result);
-            CCallHelpers::Jump isZero = branchOnTest(jit, CCallHelpers::Zero, whole);
-            CCallHelpers::Label done = jit.label();
-            params.addLatePath([=](CCallHelpers& jit) {
-                auto produce = [&](double number) {
-                    jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(number)), whole);
-                    jit.move64ToDouble(whole, result);
-                    jit.move(CCallHelpers::TrustedImm32(0), whole);
-                    jit.jump().linkTo(done, &jit);
-                };
-                isZero.link(&jit);
-                if (mayBeNaN) {
-                    CCallHelpers::Jump isNumber = branchOnTest(jit, CCallHelpers::NonZero, divisor);
-                    double ofNegative = remainderByZero(-1);
-                    double ofNonNegative = remainderByZero(1);
-                    if (std::signbit(ofNegative) != std::signbit(ofNonNegative)) {
-                        CCallHelpers::Jump isNonNegative = branchOnTest(jit, CCallHelpers::PositiveOrZero, dividend);
-                        produce(ofNegative);
-                        isNonNegative.link(&jit);
-                    }
-                    produce(ofNonNegative);
-                    isNumber.link(&jit);
-                }
-                branchOnTest(jit, CCallHelpers::PositiveOrZero, dividend).linkTo(done, &jit);
-                produce(-0.0);
-            });
-        });
-        return Number(patchpoint);
-    }
-
     Word32 nonNegativeInt32OrElse(Number number, LBasicBlock otherwise)
     {
-        if (number.value()->opcode() == B3::IToD && number.value()->child(0)->type() == B3::Int32) {
+        if (number.value()->opcode() == Machine::IToD && number.value()->child(0)->type() == Machine::Int32) {
             Word32 whole(number.value()->child(0));
             branchUnless(greaterThanOrEqual(whole, word32(0)), otherwise);
             return whole;
         }
 #if CPU(ARM64)
         if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(build().targetFeatures())) {
-            B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Int32);
-            patchpoint->append(B3::ConstrainedValue(number.value(), B3::ValueRep::SomeRegister));
-            patchpoint->effects = B3::Effects::none();
-            patchpoint->pureFunction = pureFunction(PureOperation::NonNegativeInt32, 0, true);
-            patchpoint->setRunsWithoutFrame(true);
-            patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-                jit.convertDoubleToInt32UsingJavaScriptSemantics(params[1].fpr(), params[0].gpr());
-                jit.m_assembler.csinv<32>(params[0].gpr(), params[0].gpr(), ARM64Registers::zr, ARM64Assembler::ConditionEQ);
-            });
-            Word32 converted(patchpoint);
+            Machine::PureFunction function = pureFunction(PureOperation::NonNegativeInt32, 0, true);
+            LValue operand = number.value();
+            LValue conversion = m_out.findPurePatch(function, Machine::Int32, singleElementSpan(operand));
+            if (!conversion) {
+                Machine::PatchOperation* patchpoint = m_out.patchpoint(Machine::Int32);
+                patchpoint->appendSomeRegister(operand);
+                patchpoint->effects = Machine::Effects::none();
+                patchpoint->pureFunction = function;
+                patchpoint->setRunsWithoutFrame(true);
+                patchpoint->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
+                    jit.convertDoubleToInt32UsingJavaScriptSemantics(params[1].fpr(), params[0].gpr());
+                    jit.m_assembler.csinv<32>(params[0].gpr(), params[0].gpr(), ARM64Registers::zr, ARM64Assembler::ConditionEQ);
+                });
+                m_out.recordPurePatch(patchpoint);
+                conversion = patchpoint;
+            }
+            Word32 converted(conversion);
             branchUnless(greaterThanOrEqual(converted, word32(0)), otherwise);
             return converted;
         }
 #endif
         ConversionEmitter& conversions = emitter<ConversionEmitter>();
-        Word32 narrow = low32(conversions.toInteger(number));
-        branchUnless(equal(conversions.bitsOf(toNumber(narrow)), conversions.bitsOf(number)), otherwise);
+        Word32 narrow = conversions.truncateToWord(number);
+        Integer bitsOfNarrow = conversions.bitsOf(toNumber(narrow));
+        branchUnless(equal(bitsOfNarrow, conversions.bitsOf(number)), otherwise);
         branchUnless(greaterThanOrEqual(narrow, word32(0)), otherwise);
         return narrow;
     }
 
+    std::optional<Integer> provenNonNegativeInteger(const ValueContext& value, ValueID operand, Number number)
+    {
+        const Type& type = typeOf(operand);
+        if (!type.isInteger() || type.integers.minimum < 0)
+            return std::nullopt;
+        Integer whole;
+        if (LValue converted = number.value()->opcode() == Machine::IToD ? number.value()->child(0) : nullptr; converted && converted->type() == Machine::Int32)
+            whole = zeroExtended(Word32(converted));
+        else
+            whole = emitter<ConversionEmitter>().toInteger(number, type.integers, value.block() && generator().isInLoop(value.block()));
+        if (checksProofs()) {
+            Condition isInRange = logicalAnd(greaterThanOrEqual(whole, integer(0)), lessThanOrEqual(whole, integer(type.integers.maximum)));
+            emitter<ThrowEmitter>().requireOrCrash(value, logicalAnd(equal(toNumber(whole), number), isInRange), std::nullopt, ProofSource::OtherOperation);
+        }
+        return whole;
+    }
+
+    Integer positiveIntegerOrElse(Number number, LBasicBlock otherwise)
+    {
+        if (!isX86_64() || (number.value()->opcode() == Machine::IToD && number.value()->child(0)->type() == Machine::Int32)) {
+            Integer whole = nonNegativeIntegerOrElse(number, otherwise);
+            branchUnless(isNotZero(whole), otherwise);
+            return whole;
+        }
+        Integer whole = emitter<ConversionEmitter>().truncateUnchecked(number);
+        branchUnless(greaterThan(whole, integer(0)), otherwise);
+        branchUnless(equalOrUnordered(toNumber(whole), number), otherwise);
+        return whole;
+    }
+
     Integer nonNegativeIntegerOrElse(Number number, LBasicBlock otherwise)
     {
-        if (number.value()->opcode() == B3::IToD && number.value()->child(0)->type() == B3::Int32)
+        if (number.value()->opcode() == Machine::IToD && number.value()->child(0)->type() == Machine::Int32)
             return zeroExtended(nonNegativeInt32OrElse(number, otherwise));
         ConversionEmitter& conversions = emitter<ConversionEmitter>();
-        Integer whole = conversions.toInteger(number);
-        branchUnless(equal(conversions.bitsOf(toNumber(whole)), conversions.bitsOf(number)), otherwise);
-        branchUnless(greaterThanOrEqual(whole, integer(0)), otherwise);
+        Integer whole = conversions.truncateUnchecked(number);
+        Integer bitsOfWhole = conversions.bitsOf(toNumber(whole));
+        branchUnless(equal(bitsOfWhole, conversions.bitsOf(number)), otherwise);
+        branchUnless(isARM64() ? below(whole, integer(1ll << 62)) : greaterThanOrEqual(whole, integer(0)), otherwise);
         return whole;
     }
 };
@@ -381,27 +632,81 @@ public:
 
     Number power(Number base, Number exponent)
     {
+        static constexpr OpcodeSet powers { Opcode::Pow };
         if (std::optional<double> constantExponent = constantNumberOf(exponent.value())) {
-            if (std::optional<Number> result = powerWithConstantExponent(base, *constantExponent))
+            if (std::optional<Number> result = powerWithConstantExponent(base, *constantExponent)) {
+                m_out.noteFormOf(powers, Form::Open, StateOfKnowledge::NumbersAndConstantExponent);
                 return *result;
+            }
         }
         if (std::optional<double> constantBase = constantNumberOf(base.value())) {
-            if (std::optional<Number> result = powerWithConstantBase(*constantBase, exponent))
+            if (std::optional<Number> result = powerWithConstantBase(*constantBase, exponent)) {
+                m_out.noteFormOf(powers, Form::Open, StateOfKnowledge::NumbersAndConstantBase);
                 return *result;
+            }
         }
+        if (exponent.value()->opcode() == Machine::IToD) {
+            m_out.noteFormOf(powers, Form::Open, StateOfKnowledge::NumbersAndWholeExponent);
+            return powerWithWholeExponent(base, exponent);
+        }
+        m_out.noteFormOf(powers, Form::Runtime, StateOfKnowledge::Numbers);
         return callLeaf<Number>(RuntimeOperation::Pow, { base, exponent });
     }
 
 private:
+    Number powerWithWholeExponent(Number base, Number exponent)
+    {
+        LBasicBlock test = newBlock();
+        LBasicBlock step = newBlock();
+        LBasicBlock finished = newBlock();
+        LBasicBlock genericPath = newBlock();
+        Join<Number> join(m_out);
+        Integer whole = wholeExponentOrElse(exponent, genericPath);
+        branchUnless(belowOrEqual(whole, static_cast<int64_t>(maxExponentForIntegerMathPow)), genericPath);
+        ValueFromBlock firstBits = m_out.anchor(whole.value());
+        ValueFromBlock firstResult = m_out.anchor(number(1).value());
+        ValueFromBlock firstSquare = m_out.anchor(base.value());
+        m_out.jump(test);
+
+        m_out.appendTo(test);
+        Integer bits(m_out.phi(Machine::Int64, firstBits));
+        Number result(m_out.phi(Machine::Double, firstResult));
+        Number square(m_out.phi(Machine::Double, firstSquare));
+        branch(isNotZero(bits), { normalEdge(step), normalEdge(finished) });
+
+        m_out.appendTo(step);
+        Condition isOdd = hasBits(bits, 1);
+        Number nextResult = select(isOdd, mul(result, square), result);
+        Number nextSquare = mul(square, square);
+        Integer nextBits(m_out.lShr(bits.value(), 1));
+        m_out.addIncomingToPhi(result.value(), m_out.anchor(nextResult.value()));
+        m_out.addIncomingToPhi(square.value(), m_out.anchor(nextSquare.value()));
+        m_out.addIncomingToPhi(bits.value(), m_out.anchor(nextBits.value()));
+        m_out.jump(test);
+
+        m_out.appendTo(finished);
+        join.add(result);
+
+        m_out.appendTo(genericPath);
+        join.add(callLeaf<Number>(RuntimeOperation::Pow, { base, exponent }));
+        return join.finish();
+    }
+
     std::optional<Number> powerWithConstantExponent(Number base, double exponent)
     {
         if (std::abs(exponent) == 0.5) {
             Number magnitude = abs(base);
             Number zero = number(0);
             Number infinity = number(std::numeric_limits<double>::infinity());
-            Number result = exponent > 0
-                ? select(equal(magnitude, zero), zero, select(equal(magnitude, infinity), infinity, sqrt(base)))
-                : select(equal(magnitude, zero), infinity, select(equal(magnitude, infinity), zero, div(number(1), sqrt(base))));
+            Condition isZero = equal(magnitude, zero);
+            Condition isInfinite = equal(magnitude, infinity);
+            Number result;
+            if (exponent > 0)
+                result = select(isZero, zero, select(isInfinite, infinity, sqrt(base)));
+            else {
+                Number one = number(1);
+                result = select(isZero, infinity, select(isInfinite, zero, div(one, sqrt(base))));
+            }
             if (matchesHardwareNaN(resultAtRunTime(operationMathPow, -1, exponent)))
                 return result;
             return callLibraryIfNaN(result, RuntimeOperation::Pow, base, number(exponent));
@@ -423,9 +728,9 @@ private:
 
     Integer wholeExponentOrElse(Number exponent, LBasicBlock otherwise)
     {
-        if (exponent.value()->opcode() == B3::IToD) {
+        if (exponent.value()->opcode() == Machine::IToD) {
             LValue whole = exponent.value()->child(0);
-            return whole->type() == B3::Int32 ? signExtended(Word32(whole)) : Integer(whole);
+            return whole->type() == Machine::Int32 ? signExtended(Word32(whole)) : Integer(whole);
         }
         Word32 narrow = low32(emitter<ConversionEmitter>().toInteger(exponent));
         branchUnless(equal(toNumber(narrow), exponent), otherwise);
@@ -436,13 +741,13 @@ private:
     {
         constexpr int64_t exponentBias = 1023;
         constexpr int32_t numberOfFractionBits = 52;
-        return Number(m_out.bitCast(m_out.shl(add(exponent, integer(exponentBias)).value(), m_out.constInt32(numberOfFractionBits)), B3::Double));
+        return Number(m_out.bitCast(m_out.shl(add(exponent, exponentBias).value(), numberOfFractionBits), Machine::Double));
     }
 
     Number powerOfTen(Integer exponent)
     {
         Pointer table = loadImmutablePointer(AOT_INSTANCE_OFFSET(numbers.powersOfTen));
-        return Number(m_out.loadDouble(m_out.baseIndex(m_heaps.AOTInstance_fixedFields, table.value(), exponent.value(), FTL::ScaleEight)));
+        return Number(m_out.loadDouble(m_out.baseIndex(m_heaps.AOTInstance_fixedFields, table.value(), exponent.value(), ScaleEight)));
     }
 
     std::optional<Number> powerWithConstantBase(double base, Number exponent)
@@ -455,7 +760,7 @@ private:
         LBasicBlock genericPath = newBlock();
         Join<Number> join(m_out);
         Integer whole = wholeExponentOrElse(exponent, genericPath);
-        branchUnless(belowOrEqual(sub(whole, integer(handled.minimum)), integer(handled.maximum - handled.minimum)), genericPath);
+        branchUnless(belowOrEqual(sub(whole, handled.minimum), handled.maximum - handled.minimum), genericPath);
         join.add(isBaseTwo ? powerOfTwo(whole) : powerOfTen(whole));
 
         m_out.appendTo(genericPath);
@@ -466,7 +771,7 @@ private:
 
 } // anonymous namespace
 
-Number OperatorEmitter::asNumber(Operand operand, const Type& type)
+Number OperatorEmitter::asNumber(Operand operand, const Type& type, PayloadOfNaN payload)
 {
     if (operand.is<Word32>())
         return toNumber(operand.as<Word32>());
@@ -474,38 +779,69 @@ Number OperatorEmitter::asNumber(Operand operand, const Type& type)
     if (operand.is<Boxed>())
         unboxed = emitter<ConversionEmitter>().unbox(operand.as<Boxed>(), type, type.isNumber() ? Representation::Double : Representation::OptionalDouble);
     RELEASE_ASSERT(unboxed.is<Number>() || unboxed.is<OptionalNumber>());
-    if (unboxed.is<Number>() || !(type.primitives & Primitive::Null))
-        return Number(unboxed.value);
+    if (unboxed.is<Number>())
+        return unboxed.as<Number>();
+
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    Number number(unboxed.value);
+    if (payload == PayloadOfNaN::Goes && type.primitives & ~(Primitive::Number | Primitive::Null))
+        number = conversions.withoutPayload(number);
+    if (!(type.primitives & Primitive::Null))
+        return number;
     uint64_t nullMarker = ConversionEmitter::markerBits(Primitive::Null, Representation::OptionalDouble);
-    return select(emitter<ConversionEmitter>().isMarker(unboxed, nullMarker), number(0), Number(unboxed.value));
+    return select(conversions.isMarker(unboxed, nullMarker), 0, number);
 }
 
-Number OperatorEmitter::asNumericOperand(ValueID id)
+Number OperatorEmitter::asNumericOperand(ValueID id, const OperationContext* user)
 {
-    switch (representationOf(id)) {
+    if (const Type& type = typeOf(id); type.isInteger() && type.integers.isSingleValue()) {
+        Number taken = number(static_cast<double>(type.integers.minimum));
+        if (!emittersCheckProofs())
+            return taken;
+        if (user) {
+            emitter<ThrowEmitter>().requireOrCrash(*user, equal(numericOperandAsItComes(id), taken), std::nullopt, ProofSource::OtherOperation);
+            return taken;
+        }
+    }
+    return numericOperandAsItComes(id);
+}
+
+Number OperatorEmitter::numericOperandAsItComes(ValueID id)
+{
+    Representation representation = representationOf(id);
+    if (constantsInFormOfUses.contains(opcodeOf(id))) {
+        const Type& type = typeOf(id);
+        representation = type.isNumber() ? Representation::Double : type.isBoolean() ? Representation::Boolean : Representation::OptionalDouble;
+    }
+    switch (representation) {
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
         return in<Number>(id);
     case Representation::OptionalDouble:
         return asNumber(in<OptionalNumber>(id), typeOf(id));
+    case Representation::Boolean:
+        return toNumber(asWord32(in<Condition>(id)));
+    case Representation::Int32:
+        return toNumber(in<Word32>(id));
+    case Representation::Int64:
+        return toNumber(in<Integer>(id));
     case Representation::Unchosen:
     case Representation::Void:
-    case Representation::Boolean:
-    case Representation::Int32:
-    case Representation::Int64:
     case Representation::OptionalInt64:
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Boxed OperatorEmitter::sumOfBoxedNumbers(ArithmeticOperator op, Operand left, const Type& leftType, Operand right, const Type& rightType)
+Number OperatorEmitter::asNumericOperandWithAnyNaN(ValueID id)
+{
+    return generator().holdsAnyNaN(id) ? generator().getWithAnyNaN(id).as<Number>() : asNumericOperand(id);
+}
+
+Boxed OperatorEmitter::sumOfBoxedNumbers(ArithmeticOperator op, Operand left, const Type& leftType, Operand right, const Type& rightType, std::span<const CastEmitter::DeferredNumberCheck> deferredChecks)
 {
     RELEASE_ASSERT(op == ArithmeticOperator::Add || op == ArithmeticOperator::Sub);
     RELEASE_ASSERT(left.is<Boxed>() || right.is<Boxed>());
@@ -520,15 +856,62 @@ Boxed OperatorEmitter::sumOfBoxedNumbers(ArithmeticOperator op, Operand left, co
     LBasicBlock int32Case = newBlock();
     LBasicBlock numberCase = newBlock();
     Join<Boxed> join(m_out);
-    m_out.branch(isInt32(tested).value(), normalEdge(int32Case), unlikelyEdge(numberCase));
+    Condition areInt32 = isInt32(tested);
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(areInt32.value(), normalEdge(int32Case), unlikelyEdge(numberCase));
 
-    m_out.appendTo(int32Case);
-    Integer exact = op == ArithmeticOperator::Add ? add(int32Of(left), int32Of(right)) : sub(int32Of(left), int32Of(right));
+    m_out.appendToArm(int32Case, fork);
+    Integer x = int32Of(left);
+    Integer y = int32Of(right);
+    Integer exact = op == ArithmeticOperator::Add ? add(x, y) : sub(x, y);
     join.add(conversions.boxInteger(exact, { 2 * static_cast<int64_t>(INT32_MIN), 2 * static_cast<int64_t>(INT32_MAX) + 1 }));
 
-    m_out.appendTo(numberCase);
-    join.add(conversions.boxNumberByStub(arithmeticOnNumbers(op, asNumber(left, leftType), asNumber(right, rightType))));
-    return join.finish();
+    m_out.appendToArm(numberCase, fork);
+    for (const CastEmitter::DeferredNumberCheck& check : deferredChecks) {
+        LBasicBlock holdsNumber = newBlock();
+        m_out.branch(isNumber(check.value).value(), normalEdge(holdsNumber), check.failing);
+        m_out.appendTo(holdsNumber);
+    }
+    bool oneAloneWasAsked = left.is<Boxed>() != right.is<Boxed>();
+    auto numberIn = [&](Operand operand, const Type& type) {
+        if (!oneAloneWasAsked || !operand.is<Boxed>())
+            return asNumber(operand, type);
+        if (type.isNumber())
+            return unboxDouble(operand.as<Boxed>());
+        Type rest = type;
+        rest.primitives = (type.primitives & ~Primitive::Integer) | Primitive::Double;
+        return asNumber(operand, rest);
+    };
+    Number leftNumber = numberIn(left, leftType);
+    join.add(conversions.boxNumberByStub(arithmeticOnNumbers(op, leftNumber, numberIn(right, rightType))));
+    return join.finishBehind(fork);
+}
+
+Boxed OperatorEmitter::boxedSum(ValueID sum)
+{
+    const Operation& operation = operationAt(sum);
+    struct Term {
+        Operand operand;
+        ValueID typed;
+    };
+    auto termOf = [&](ValueID id) -> Term {
+        const Operation& term = operationAt(id);
+        if (term.opcode == Opcode::Integer)
+            return { word32(static_cast<int32_t>(term.integer())), id };
+        ValueID converted = term.valueOperand();
+        if (term.opcode == Opcode::IntegerToNumber)
+            return { in<Word32>(converted), converted };
+        return { in<Boxed>(converted), converted };
+    };
+    bool adds = operation.opcode == Opcode::Add || operation.opcode == Opcode::Increment;
+    ArithmeticOperator op = adds ? ArithmeticOperator::Add : ArithmeticOperator::Sub;
+    if (operation.opcode == Opcode::Increment || operation.opcode == Opcode::Decrement) {
+        Term stepped = termOf(operation.valueOperand());
+        return sumOfBoxedNumbers(op, stepped.operand, typeOf(stepped.typed), word32(1), typeOf(stepped.typed));
+    }
+    Term left = termOf(operation.leftOperand());
+    Term right = termOf(operation.rightOperand());
+    return sumOfBoxedNumbers(op, left.operand, typeOf(left.typed), right.operand, typeOf(right.typed));
 }
 
 Operand OperatorEmitter::arithmeticOnIntegers(const ValueContext& value, ArithmeticOperator op)
@@ -542,14 +925,11 @@ Operand OperatorEmitter::arithmeticOnIntegers(const ValueContext& value, Arithme
     case Representation::Void:
     case Representation::Boolean:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -560,7 +940,7 @@ Operand OperatorEmitter::arithmeticOnCheckedIntegers(const ValueContext& value, 
 {
     IntegerArithmeticEmitter integers(generator());
     bool is32Bit = false;
-    switch (representationOf(isStepByOne(value.opcode()) ? value->valueOperand() : value->leftOperand())) {
+    switch (integers.widthOfOperands(value)) {
     case Representation::Int32:
         is32Bit = true;
         break;
@@ -570,105 +950,26 @@ Operand OperatorEmitter::arithmeticOnCheckedIntegers(const ValueContext& value, 
     case Representation::Void:
     case Representation::Boolean:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         return failWithZero(value);
     }
     if (op != ArithmeticOperator::Mod)
         return is32Bit ? integers.resultAsNumber<Word32>(value, op) : integers.resultAsNumber<Integer>(value, op);
 
-    WholeRemainder remainder = is32Bit ? integers.remainderOfIntegers<Word32>(value) : integers.remainderOfIntegers<Integer>(value);
-    m_wholeRemainders.set(value.id().index(), remainder);
-    Word32 word = is32Bit ? remainder.whole.as<Word32>() : low32(remainder.whole.as<Integer>());
-    m_int32OfNumbers.add(value.id().index(), Vector<Int32OfNumber, 1>()).iterator->value.append({ value.block(), word });
-    return remainder.number;
+    return is32Bit ? integers.remainderOfIntegers<Word32>(value) : integers.remainderOfIntegers<Integer>(value);
 }
 
-std::optional<OperatorEmitter::RemainderLeftToTest> OperatorEmitter::findRemainderLeftToTest(ValueID id)
+Number OperatorEmitter::remainderByWholeDivisor(const ValueContext& value, Number dividend, Number divisor, Integer wholeDivisor)
 {
-    const Value& remainder = m_function.at(id);
-    if (remainder.opcode != Opcode::Mod || remainder.form() != OperatorForm::Numbers || (representationOf(id) != Representation::Double && !holdsAnyNaN(representationOf(id))) || generator().validatesOrChecksProofs())
-        return std::nullopt;
-    const Value& divisor = m_function.at(remainder.rightOperand());
-    if (divisor.opcode != Opcode::Integer || divisor.integer() < 2 || divisor.integer() > std::numeric_limits<int32_t>::max())
-        return std::nullopt;
-    std::optional<Use> use = analyses().useLists().singleUse(id);
-    if (!use || use->kind != Use::Kind::Operand || use->block != analyses().useLists().locationOf(id).block)
-        return std::nullopt;
-
-    const Terminator& terminator = m_function.at(use->block).terminator;
-    bool handsOnRemainder = terminator.isConditionalBranch() && terminator.conditionOperand() == use->user && std::ranges::any_of(terminator.targets, [](const Target& target) {
-        return !target.proofs.isEmpty();
-    });
-    if (handsOnRemainder)
-        return std::nullopt;
-
-    RemainderLeftToTest result { remainder.leftOperand(), static_cast<int32_t>(divisor.integer()), std::nullopt };
-    const Value& test = m_function.at(use->user);
-    if (test.opcode == Opcode::ToBoolean)
-        return test.form() == OperatorForm::Numbers ? std::optional(result) : std::nullopt;
-    if (!isEqualityOfNumbers(m_program, m_function, test))
-        return std::nullopt;
-    const Value& other = m_function.at(test.leftOperand() == id ? test.rightOperand() : test.leftOperand());
-    if (other.opcode != Opcode::Integer)
-        return std::nullopt;
-    result.comparedWith = other.integer();
-    return result;
+    return IntegerArithmeticEmitter(generator()).remainderByWholeDivisor(value, dividend, divisor, wholeDivisor);
 }
 
-bool OperatorEmitter::tryGenerateTestOfRemainder(const ValueContext& test, ValueID id)
-{
-    std::optional<RemainderLeftToTest> remainder = findRemainderLeftToTest(id);
-    if (!remainder)
-        return false;
-    generator().takeOperandsOf(id);
-    Number dividend = asNumericOperand(remainder->dividend);
-    defineTestByBranching(test, [&](BranchTargets targets) {
-        IntegerArithmeticEmitter integers(generator());
-        LBasicBlock isNotWhole = newBlock();
-        Integer whole = emitter<ConversionEmitter>().toInteger(dividend);
-        branchUnless(equal(toNumber(whole), dividend), isNotWhole);
-        branch(integers.testRemainder(whole, remainder->divisor, remainder->comparedWith), targets);
-
-        m_out.appendTo(isNotWhole);
-        Number number = integers.remainder(dividend, this->number(remainder->divisor));
-        branch(remainder->comparedWith ? equal(number, this->number(static_cast<double>(*remainder->comparedWith))) : isNeitherZeroNorNaN(number), targets);
-    });
-    return true;
-}
-
-const WholeRemainder* OperatorEmitter::findWholeRemainder(ValueID number)
-{
-    auto entry = m_wholeRemainders.find(number.index());
-    return entry == m_wholeRemainders.end() ? nullptr : &entry->value;
-}
-
-std::optional<Integer> OperatorEmitter::wholeRemainderAsIndex(ValueID position, LBasicBlock isNotAnIndex)
-{
-    const WholeRemainder* remainder = findWholeRemainder(position);
-    if (!remainder)
-        return std::nullopt;
-    if (remainder->isNumber && isNotAnIndex)
-        branchUnless(remainder->isNumber, isNotAnIndex);
-    return remainder->whole.is<Word32>() ? signExtended(remainder->whole.as<Word32>()) : remainder->whole.as<Integer>();
-}
-
-Number OperatorEmitter::asTermOfSum(ValueID term, ValueID otherTerm)
-{
-    const WholeRemainder* remainder = findWholeRemainder(term);
-    if (!remainder || remainder->isNumber || !typeOf(otherTerm).isInteger())
-        return asNumericOperand(term);
-    return remainder->whole.is<Word32>() ? toNumber(remainder->whole.as<Word32>()) : toNumber(remainder->whole.as<Integer>());
-}
-
-Number OperatorEmitter::arithmeticOnNumbers(ArithmeticOperator op, Number left, Number right)
+Number OperatorEmitter::arithmeticOnNumbers(ArithmeticOperator op, Number left, Number right, const ValueContext* value)
 {
     switch (op) {
     case ArithmeticOperator::Add:
@@ -680,7 +981,7 @@ Number OperatorEmitter::arithmeticOnNumbers(ArithmeticOperator op, Number left, 
     case ArithmeticOperator::Div:
         return div(left, right);
     case ArithmeticOperator::Mod:
-        return IntegerArithmeticEmitter(generator()).remainder(left, right);
+        return IntegerArithmeticEmitter(generator()).remainder(value, left, right);
     case ArithmeticOperator::Pow:
         return pow(left, right);
     }

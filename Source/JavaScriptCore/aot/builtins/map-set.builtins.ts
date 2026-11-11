@@ -8,14 +8,13 @@ const element = b.slot("this", "element");
 const key = b.slot("this", "key");
 const value = b.slot("this", "value");
 
-// Each value that the operand yields is an object whose elements 0 and 1 become a key and its value.
 const storedAsEntries = [
   b.runsTransitively("Iterate", "OwnValues", "PrototypeChain"),
+  b.contentsOfContentsOnlyStored,
   b.reachableValuesStoredIn(b.resultSlot("key")),
   b.reachableValuesStoredIn(b.resultSlot("value")),
 ];
 
-// A Map refuses an entry that is no object, and a WeakSet a value that is none.
 const arrayOfObjects = b.instance("Array").holding({ element: b.object });
 
 const requiresNew = {
@@ -71,11 +70,12 @@ const setMethod = (nativeSymbol: string, withPristineSet: b.TableType, withSetLi
       capability: "heap",
       throws: b.propagated,
       uses: { this: [b.readsContents()], other: [b.readsContents()] },
+      reads: [storage],
+      writes: [storage],
       usesFeature: "SetMethods",
       nativeSymbols: [nativeSymbol],
       implementation: b.hostCall,
     },
-    // SetPrototype.cpp getSetSizeAsInt: what is no object, or is not passed, makes each of them throw.
     {
       args: { other: b.primitiveValue },
       returns: b.never,
@@ -106,6 +106,8 @@ export default b.declarations(
     slots: { key: b.contents("Key", entries), value: b.contents("Value", entries) },
     stateHeap: storage,
     lockedMembers: ["constructor", "prototype"],
+    constructorAdder: "set",
+    keepsStructuresOfClassesBelow: true,
     mutability: "AlwaysLocked",
     openNamesOfPrototype: ["toJSON"],
     types: [b.exactType("Map", "key", "value"), b.viewType("ReadonlyMap", "key", "value")],
@@ -125,7 +127,6 @@ export default b.declarations(
         throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: { entries: storedAsEntries },
-        model: b.functionIn("models/Collections", "mapFromEntries"),
         implementation: b.inline("MapFromEntries", { otherwise: b.hostCall }),
       },
     ],
@@ -163,7 +164,7 @@ export default b.declarations(
         nativeSymbols: ["mapProtoFuncSize"],
         implementation: b.inline("MapSize"),
       },
-      clear: { ...clearing("MapClear"), privateAlias: true },
+      clear: { ...clearing("MapClear"), privateAlias: true, length: 0, boxedCallStub: "MapClear", nativeSymbols: ["mapProtoFuncClear"] },
       delete: {
         ...removal(b.inline("MapDelete")),
         throws: b.propagated,
@@ -196,7 +197,6 @@ export default b.declarations(
         capability: "heap",
         throws: b.propagated,
         uses: { this: [b.readsContents()], key: b.inspected },
-        writes: [storage],
         privateAlias: true,
         length: 1,
         boxedCallStub: "MapGet",
@@ -205,7 +205,6 @@ export default b.declarations(
       },
       has: {
         ...lookup("MapHas"),
-        writes: [storage],
         throws: b.propagated,
         privateAlias: true,
         length: 1,
@@ -243,7 +242,6 @@ export default b.declarations(
         uses: {
           this: [b.readsContents()],
           key: [b.storedIn(key)],
-          // The callback gets the key as the map keeps it: +0 for -0.
           callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", this: b.undefined, args: [key], result: "Stored", resultTo: value })],
         },
         usesFeature: "MapGetOrInsert",
@@ -259,6 +257,8 @@ export default b.declarations(
     slots: { element: b.contents("Element", entries) },
     stateHeap: storage,
     lockedMembers: ["constructor", "prototype"],
+    constructorAdder: "add",
+    keepsStructuresOfClassesBelow: true,
     mutability: "AlwaysLocked",
     openNamesOfPrototype: ["toJSON"],
     types: [b.exactType("Set", "element"), b.viewType("ReadonlySet", "element")],
@@ -278,7 +278,6 @@ export default b.declarations(
         throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: { values: [b.runs("Iterate")] },
-        model: b.functionIn("models/Collections", "setFromValues"),
         implementation: b.inline("SetFromIterable", { otherwise: b.hostCall }),
       },
     ],
@@ -305,7 +304,7 @@ export default b.declarations(
         nativeSymbols: ["setProtoFuncAdd"],
         implementation: b.inline("SetAdd"),
       },
-      clear: { ...clearing("SetClear"), privateAlias: true },
+      clear: { ...clearing("SetClear"), privateAlias: true, length: 0, boxedCallStub: "SetClear", nativeSymbols: ["setProtoFuncClear"] },
       delete: {
         ...removal(b.inline("SetDelete")),
         throws: b.propagated,
@@ -339,7 +338,6 @@ export default b.declarations(
       },
       has: {
         ...lookup("SetHas"),
-        writes: [storage],
         throws: b.propagated,
         privateAlias: true,
         length: 1,
@@ -364,6 +362,7 @@ export default b.declarations(
     slots: { key: b.contents("Key", entries), value: b.contents("Value", entries) },
     stateHeap: storage,
     lockedMembers: ["constructor", "prototype"],
+    constructorAdder: "set",
     types: [b.exactType("WeakMap", "key", "value")],
     call: requiresNew,
     construct: [
@@ -380,7 +379,6 @@ export default b.declarations(
         throws: true,
         runsOnlyOperandCode: true,
         uses: { entries: storedAsEntries },
-        model: b.functionIn("models/Collections", "weakMapFromEntries"),
         implementation: b.hostCall,
       },
     ],
@@ -446,6 +444,7 @@ export default b.declarations(
     slots: { element: b.contents("Element", entries) },
     stateHeap: storage,
     lockedMembers: ["constructor", "prototype"],
+    constructorAdder: "add",
     mutability: "AlwaysLocked",
     types: [b.exactType("WeakSet", "element")],
     call: requiresNew,
@@ -463,7 +462,6 @@ export default b.declarations(
         throws: b.propagated,
         runsOnlyOperandCode: true,
         uses: { values: [b.runs("Iterate")] },
-        model: b.functionIn("models/Collections", "weakSetFromValues"),
         implementation: b.hostCall,
       },
     ],
@@ -577,7 +575,6 @@ export default b.declarations(
     }),
   ),
 
-  // `import "core-js"` replaces a proposal without a test until the proposal is finished: 3.22 to 3.30, and 3.40 to 3.41.
   b.replacedByPackages("Map.groupBy"),
   b.replacedByPackages(
     "Map.prototype.getOrInsert",

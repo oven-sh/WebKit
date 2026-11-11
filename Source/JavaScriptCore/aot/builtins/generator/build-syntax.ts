@@ -15,12 +15,10 @@ import {
   type NativeCallKind,
 } from "./vocabulary.ts";
 
-/** What the sources that the front end of the host compiles use of the lines. A host without a front end has none, and nobody reads its lines. */
 export interface SyntaxUses {
   names: ReadonlyMap<string, ReadonlySet<IntrinsicPosition>>;
   prefixedGlobals: readonly string[];
   privateNames: readonly string[];
-  /** Among privateNames: those that native code never reads or writes. */
   modulePrivateNames: readonly string[];
   errorCodes: readonly { name: string; number: number }[];
   inheritableClasses: readonly { name: string; number: number }[];
@@ -40,7 +38,7 @@ const inheritsCallee = "inherits";
 const symbolKeyMark = "$";
 const symbolConstructorPath = "Symbol";
 const maxUint32 = 2 ** 32 - 1;
-const usingSources = "src/js, the engine's built-ins, the models or the prelude";
+const usingSources = "src/js, the engine's built-ins or the prelude";
 const declaringFiles =
   "src/codegen/builtins/host/bun-syntax.builtins.ts or WebKit's Source/JavaScriptCore/aot/builtins/engine-syntax.builtins.ts";
 
@@ -227,7 +225,8 @@ function resolveMeaning(builder: ModelBuilder, line: SyntaxLine): ModelIntrinsic
       return { intrinsic: "SymbolKey", symbol: constant.name };
     }
     case "Builtin":
-    case "Construct": {
+    case "Construct":
+    case "IsHolderWithoutAddedNames": {
       const builtin = builder.resolve(spec.path, source);
       if (builtin === null) return null;
       const { mutability, text } = builtin;
@@ -264,7 +263,7 @@ function resolveMeaning(builder: ModelBuilder, line: SyntaxLine): ModelIntrinsic
       const named = builder.functions.filter(candidate => candidate.name === line.name);
       if (named.length === 0) return builder.reportUnknown(source, `${subjectOf(line)}: no runtime function has this name`);
       if (named.length !== 1) return reject(`${named.length} runtime functions have this name`);
-      return { intrinsic: "LinkedFunction", function: named[0] };
+      return { intrinsic: "LinkedFunction", function: named[0], expansion: spec.expansion };
     }
     case "IfAbruptCloseIterator":
     case "HasJSType":
@@ -313,7 +312,6 @@ function buildNativeBindings(builder: ModelBuilder, declarations: readonly Sourc
     );
 }
 
-// The engine is compiled with an enumeration of these words, so its own lines say which there are.
 function wordsOfEngine(
   builder: ModelBuilder,
   lines: readonly SyntaxLine[],

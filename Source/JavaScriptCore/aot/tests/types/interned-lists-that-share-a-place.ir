@@ -1,0 +1,29 @@
+# A list that is new goes where the search for it has ended. The list at a position holds that position alone, so lists under one hash differ.
+# One hash for all. A place that another hash has taken (19 and 3 meet in sixteen slots). A search that goes round the end of the slots (15, 15, 15, 31).
+# The slots grow at the eleventh list, in the middle of a row of equal hashes. A list that nobody has added is not found, under its hash or under another.
+# RUN(ONEHASH): hashed-index 7,7,7,7,7 7 3
+# RUN(OTHERHASH): hashed-index 3,19,3,19 19 3
+# RUN(ROUND): hashed-index 15,15,15,31 31 3
+# RUN(GROWS): hashed-index 5,5,5,5,5,5,5,5,5,5,5,5,5 5 12
+# RUN(ABSENT): hashed-index 7,7 7 5
+# RUN(WRONGHASH): hashed-index 3,19 3 1
+# RUN(EMPTY): hashed-index - 7 0
+# ONEHASH: position 3
+# ONEHASH-NEXT: positions follow the order of arrival: ok
+# ONEHASH-NEXT: every list is found again: ok
+# OTHERHASH: position 3
+# OTHERHASH-NEXT: positions follow the order of arrival: ok
+# OTHERHASH-NEXT: every list is found again: ok
+# ROUND: position 3
+# ROUND-NEXT: positions follow the order of arrival: ok
+# ROUND-NEXT: every list is found again: ok
+# GROWS: position 12
+# GROWS-NEXT: positions follow the order of arrival: ok
+# GROWS-NEXT: every list is found again: ok
+# ABSENT: none
+# ABSENT-NEXT: positions follow the order of arrival: ok
+# ABSENT-NEXT: every list is found again: ok
+# WRONGHASH: none
+# WRONGHASH-NEXT: positions follow the order of arrival: ok
+# WRONGHASH-NEXT: every list is found again: ok
+# EMPTY: none

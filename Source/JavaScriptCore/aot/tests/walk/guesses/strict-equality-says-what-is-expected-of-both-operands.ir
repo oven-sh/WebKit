@@ -1,0 +1,85 @@
+# function numbers(a: number, b: number) { return a === b; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = StrictEq {{*}}form=Generic [expectsInt32s]
+# RUN(ALONE): walk f1 f2 f3 mechanisms=none+TypedOperations+Guesses
+# ALONE-NOT: = TypeTest
+# ALONE-NOT: = ShapeTest
+# ALONE-NOT: Branch
+# function texts(a: string, b: string) { return a === b; }
+# RUN(TEXTS): walk f2 mechanisms=none+TypedOperations+Guesses
+# TEXTS-LABEL: code f2:Body
+# TEXTS-NOT: expects
+# TEXTS: Return
+# function objects(a: unknown[] | undefined, b: unknown[] | undefined) { return a === b; }
+# RUN(OBJECTS): walk f3 mechanisms=none+TypedOperations+Guesses
+# OBJECTS-LABEL: code f3:Body
+# OBJECTS: = StrictEq {{*}}form=Generic [expectsObjectOnLeft]
+# RUN(ONE): walk f4 mechanisms=none+TypedOperations+Guesses
+# ONE-LABEL: code f4:Body
+# ONE: = StrictEq {{*}}form=Generic [expectsInt32s]
+# RUN(MIXED): walk f5 f6 mechanisms=none+TypedOperations+Guesses
+# MIXED-NOT: expects
+# MIXED: Return
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewObject layout=L0
+    PropDefine v8, v1 key="x"
+    v10 = FinishObject v8
+    v11 = Call v1, -, v2, v3, v4, v5, v6, v7, v10
+    Return v11
+}
+function f1 name="numbers" module=m0 length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = StrictEq v0, v1
+    v3 = NewClosure function=f1
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+function f2 name="texts" module=m0 length=2 thisType={type=anything} parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = StrictEq v0, v1
+    v3 = NewClosure function=f2
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+function f3 name="objects" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|Array}, {type=undefined|Array}] results=[{type=anything}] {
+  b0(v0: undefined|Array, v1: undefined|Array):
+    v2 = StrictEq v0, v1
+    v3 = NewClosure function=f3
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+function f4 name="one" module=m0 length=2 thisType={type=anything} parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    v2 = StrictEq v0, v1
+    v3 = NewClosure function=f4
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+function f5 name="mixed" module=m0 length=2 thisType={type=anything} parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: number, v1: string):
+    v2 = StrictEq v0, v1
+    v3 = NewClosure function=f5
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+function f6 name="nothing" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = StrictEq v0, v1
+    v3 = NewClosure function=f6
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}

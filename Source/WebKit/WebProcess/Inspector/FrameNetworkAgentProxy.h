@@ -35,6 +35,7 @@
 #include <WebCore/NetworkAgentInstrumentation.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
+#include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
 
@@ -91,7 +92,7 @@ public:
     void didReceiveData(WebCore::ResourceLoaderIdentifier, const WebCore::SharedBuffer*, int expectedDataLength, int encodedDataLength) final;
     void didFinishLoading(WebCore::ResourceLoaderIdentifier, WebCore::DocumentLoader*, const WebCore::NetworkLoadMetrics&, WebCore::ResourceLoader*) final;
     void didFailLoading(WebCore::ResourceLoaderIdentifier, WebCore::DocumentLoader*, const WebCore::ResourceError&) final;
-    void didLoadResourceFromMemoryCache(WebCore::DocumentLoader*, WebCore::CachedResource&) final;
+    void didLoadResourceFromMemoryCache(WebCore::DocumentLoader*, WebCore::CachedResource&, const URL&) final;
     void didReceiveThreadableLoaderResponse(WebCore::ResourceLoaderIdentifier, WebCore::DocumentThreadableLoader&) final;
     void didReceiveScriptResponse(WebCore::ResourceLoaderIdentifier) final;
     void willDestroyCachedResource(WebCore::CachedResource&) final;
@@ -112,6 +113,9 @@ private:
 
     // Owned by the WebInspectorBackend that owns this proxy; applied in willSendRequest.
     const WebCore::HTTPHeaderMap& m_extraRequestHeaders;
+
+    // Loads whose request is hidden from the inspector. Their later hooks must not reach the UIProcess.
+    HashSet<WebCore::ResourceLoaderIdentifier> m_hiddenRequestIdentifiers;
 
     bool m_enabled { false };
 };

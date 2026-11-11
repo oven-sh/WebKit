@@ -177,7 +177,7 @@ std::optional<FloatSize> RenderImageResource::usedImageSize(FloatSize containerS
 
 float RenderImageResource::density() const
 {
-    if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(m_renderer))
+    if (auto* renderImage = dynamicDowncast<RenderImage>(m_renderer))
         return renderImage->currentPixelDensity();
     return 1;
 }
@@ -189,7 +189,7 @@ LayoutSize RenderImageResource::intrinsicSize(float multiplier) const
 
     auto size = ReplacedElementIntrinsicSizing { density() }.resolve(naturalDimensions()).size();
     size.scale(multiplier);
-    return LayoutSize(size / protect(m_styleImage)->imageScaleFactor());
+    return LayoutSize(size / narrowPrecisionToFloat(protect(m_styleImage)->imageResolution().value));
 }
 
 } // namespace WebCore

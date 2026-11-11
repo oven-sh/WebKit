@@ -28,6 +28,7 @@
 #pragma once
 
 #include <WebCore/DecodingOptions.h>
+#include <WebCore/FloatRect.h>
 #include <WebCore/GainMap.h>
 #include <WebCore/ImageTypes.h>
 #include <WebCore/PixelFormat.h>
@@ -37,6 +38,11 @@
 #include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE) && USE(CG)
+#include <WebCore/IntRectHash.h>
+#include <wtf/HashMap.h>
+#endif
 
 #if USE(SKIA)
 class GrDirectContext;
@@ -51,12 +57,13 @@ namespace WebCore {
 class Color;
 class ColorSpace;
 class FloatRect;
+class FragmentedSharedBuffer;
 class GraphicsContext;
 class IntSize;
 class NativeImageBackend;
 class PixelBuffer;
+class ShareableBitmap;
 struct ImageOrientation;
-struct ImageDrawingOptions;
 
 class NativeImage : public ThreadSafeRefCounted<NativeImage>, public CanMakeThreadSafeCheckedPtr<NativeImage> {
     WTF_MAKE_TZONE_ALLOCATED(NativeImage);
@@ -78,16 +85,21 @@ public:
     WEBCORE_EXPORT static RefPtr<NativeImage> create(RetainPtr<CVPixelBufferRef>, CGImageAlphaInfo, RetainPtr<CGColorSpaceRef>);
 #endif
     WEBCORE_EXPORT static RefPtr<NativeImage> create(Ref<PixelBuffer>&&);
+    WEBCORE_EXPORT static std::optional<Ref<NativeImage>> create(RefPtr<ShareableBitmap>&&); // Uses `std::optional<Ref<...>>` to conform to the interface needed by IPC infrastructure.
+    WEBCORE_EXPORT static RefPtr<NativeImage> create(FragmentedSharedBuffer&, AlphaOption = AlphaOption::Premultiplied, GammaAndColorProfileOption = GammaAndColorProfileOption::Applied);
+    WEBCORE_EXPORT static RefPtr<NativeImage> createFromPlatformResource(StringView name);
 
     WEBCORE_EXPORT virtual ~NativeImage();
 
     WEBCORE_EXPORT virtual PlatformImagePtr platformImage() const;
-    WEBCORE_EXPORT const std::optional<GainMap>& LEGACY_NODELETE gainMap() const;
+    NODELETE WEBCORE_EXPORT const std::optional<GainMap>& gainMap() const;
     WEBCORE_EXPORT virtual IntSize size() const;
     WEBCORE_EXPORT virtual bool hasAlpha() const;
     WEBCORE_EXPORT size_t sizeInBytes() const;
     std::optional<Color> singlePixelSolidColor() const;
     WEBCORE_EXPORT virtual ColorSpace colorSpace() const;
+
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> toShareableBitmap() const;
     // The pixels are held elsewhere and cannot be read in this process: platformImage() is null, and
     // only a compositor can display the image.
     virtual bool isDisplayOnly() const { return false; }
@@ -107,7 +119,7 @@ public:
     RefPtr<NativeImage> rotatedImage(ImageOrientation);
 
 #if ENABLE(AX_CUSTOM_COLOR_MODE) && USE(CG)
-    ImagePaintTimeTransformation paintTimeTransformation() const;
+    ImagePaintTimeTransformation paintTimeTransformation(std::optional<FloatRect> sourceRect = std::nullopt) const;
 #endif
 
     void clearSubimages();
@@ -150,6 +162,7 @@ protected:
     mutable WeakHashSet<RenderingResourceObserver> m_observers;
 #if ENABLE(AX_CUSTOM_COLOR_MODE) && USE(CG)
     mutable std::optional<ImagePaintTimeTransformation> m_paintTimeTransformation WTF_GUARDED_BY_LOCK(m_lock);
+    mutable HashMap<IntRect, ImagePaintTimeTransformation> m_subimagePaintTimeTransformations WTF_GUARDED_BY_LOCK(m_lock);
 #endif
     RenderingResourceIdentifier m_renderingResourceIdentifier { RenderingResourceIdentifier::generate() };
 #if USE(SKIA)

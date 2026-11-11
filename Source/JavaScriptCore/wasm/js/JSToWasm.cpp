@@ -34,6 +34,7 @@
 #include "JSWebAssemblyInstance.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "ThunkGenerator.h"
+#include "WasmBinding.h"
 #include "WasmCallingConvention.h"
 #include "WasmContext.h"
 #include "WasmOperations.h"
@@ -423,7 +424,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> wasmFunctionThunkGenerator(VM&)
     return createJSToWasmJITShared();
 }
 
-static size_t LEGACY_NODELETE trampolineReservedStackSize()
+NODELETE static size_t trampolineReservedStackSize()
 {
     // If we are jumping to the function which can have stack-overflow check,
     // then, trampoline does not need to do the check again if it is smaller than a threshold.
@@ -552,13 +553,6 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
             CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), CCallHelpers::TrustedImm32(argumentCount() + 1)));
     }
 
-    bool haveTagRegisters = false;
-    auto materializeTagRegistersIfNeeded = [&] {
-        if (!haveTagRegisters) {
-            haveTagRegisters = true;
-            jit.emitMaterializeTagCheckRegisters();
-        }
-    };
 
     // Loop backwards so we can use the first FP/GP argument as a scratch.
     FPRReg scratchFPR = Wasm::wasmCallingConvention().fprArgs[0];
@@ -572,9 +566,8 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
         JIT_COMMENT(jit, "Arg ", i, " : ", type);
         switch (type.kind()) {
         case Wasm::TypeKind::I32: {
-            materializeTagRegistersIfNeeded();
             jit.loadValue(jsParam, scratchGPR);
-            slowPath.append(jit.branchIfNotInt32(scratchGPR));
+            slowPath.append(jit.branchIfNotInt32(scratchGPR, DoNotHaveTagRegisters));
             if (isStack) {
                 CCallHelpers::Address addr { calleeFrame.withOffset(wasmCallInfo.params[i].location.offsetFromSP()) };
                 jit.store32(scratchGPR, addr.withOffset(LowWordOffset));
@@ -584,9 +577,8 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
             break;
         }
         case Wasm::TypeKind::I64: {
-            materializeTagRegistersIfNeeded();
             jit.loadValue(jsParam, scratchGPR);
-            slowPath.append(jit.branchIfNotCell(scratchGPR));
+            slowPath.append(jit.branchIfNotCell(scratchGPR, DoNotHaveTagRegisters));
             slowPath.append(jit.branchIfNotHeapBigInt(scratchGPR));
             if (isStack) {
                 jit.toBigInt64(scratchGPR, stackLimitGPR);
@@ -597,7 +589,6 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
                 if (wasmCallInfo.params[i].location.gpr() == scratch) {
                     scratch = GPRInfo::numberTagRegister;
                     // FIXME: In theory this only needs to restore the numberTagRegister not both but this is rare.
-                    haveTagRegisters = false;
                 }
                 jit.toBigInt64(scratchGPR, wasmCallInfo.params[i].location.gpr());
             }
@@ -613,7 +604,7 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
                 auto isNull = jit.branchIfNull(scratchGPR);
                 if (!type.isNullable())
                     slowPath.append(isNull);
-                slowPath.append(jit.branchIfNotCell(scratchGPR));
+                slowPath.append(jit.branchIfNotCell(scratchGPR, DoNotHaveTagRegisters));
 
                 jit.emitLoadStructure(scratchGPR, scratchGPR);
                 jit.loadPtr(CCallHelpers::Address(scratchGPR, Structure::classInfoOffset()), scratchGPR);
@@ -663,14 +654,13 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
         }
         case Wasm::TypeKind::F32:
         case Wasm::TypeKind::F64: {
-            materializeTagRegistersIfNeeded();
             if (!isStack)
                 scratchFPR = wasmCallInfo.params[i].location.fpr();
 
             jit.loadValue(jsParam, scratchGPR);
-            slowPath.append(jit.branchIfNotNumber(scratchGPR));
-            auto isInt32 = jit.branchIfInt32(scratchGPR);
-            jit.unboxDouble(scratchGPR, scratchGPR, scratchFPR);
+            slowPath.append(jit.branchIfNotNumber(scratchGPR, DoNotHaveTagRegisters));
+            auto isInt32 = jit.branchIfInt32(scratchGPR, DoNotHaveTagRegisters);
+            jit.unboxDouble(scratchGPR, stackLimitGPR, scratchFPR, DoNotHaveTagRegisters);
             if (argumentType(i).isF32())
                 jit.convertDoubleToFloat(scratchFPR, scratchFPR);
             auto done = jit.jump();
@@ -699,7 +689,8 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
     // At this point, we're committed to doing a fast call.
     // We don't know what memory mode we're about to call into but it's always valid to fill both bounds checking and base memory.
     jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
-    jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, stackLimitGPR, scratchGPR);
+    emitPrepareToCageMemoryBase(jit, GPRInfo::wasmContextInstancePointer, scratchGPR);
+    emitCageMemoryBase(jit, scratchGPR);
 
     // FIXME: We could load this much earlier on ARM64 since we have a ton of scratch registers and already have callee in a register. Maybe that's profitable?
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), stackLimitGPR);
@@ -750,7 +741,7 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
     jit.emitRestore(registersToSpill, GPRInfo::callFrameRegister);
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT0);
     jit.emitFunctionEpilogue();
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     jit.untagReturnAddress(scratchGPR);
 #endif
 

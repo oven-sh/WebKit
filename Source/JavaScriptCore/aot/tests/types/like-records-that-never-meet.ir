@@ -1,0 +1,13 @@
+# Two files declare a record each. That of the second has every name of the first and one more, and no value of either file reaches the other: nothing lists a supertype.
+# RUN: members
+# TODO: front-end-tests: a family holds what looks like its type beside what flows into it, so it grows with the program
+
+module m0 path="first.ts" displayPath="first.ts"
+module m1 path="second.ts" displayPath="second.ts"
+layout L0 name="Item" module=m0 fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}]
+layout L1 name="Item" module=m1 fields=[{key="extra" declared={type=number} flags=[IsRequired]}, {key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}]
+# CHECK: L0: members [L0]
+# CHECK-NEXT: L1: members [L1]
+# CHECK-NEXT: t0: members [L0] only-layouts: yes
+function f0 name="types" role=Signature parameters=[{type=L0}] results=[{type=undefined}]
+entry module=m0

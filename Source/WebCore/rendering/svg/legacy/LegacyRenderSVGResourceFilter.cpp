@@ -117,7 +117,7 @@ auto LegacyRenderSVGResourceFilter::applyResource(RenderElement& renderer, const
     }
 
     // Eliminate shear of the absolute transformation matrix, to be able to produce unsheared tile images for feTile.
-    FloatSize filterScale(absoluteTransform.xScale(), absoluteTransform.yScale());
+    FloatSize filterScale = FloatSize(absoluteTransform.xScale(), absoluteTransform.yScale()).expandedTo(context->scaleFactor());
 
     // Determine absolute boundaries of the filter and the drawing region.
     filterData->sourceImageRect = renderer.strokeBoundingBox();
@@ -127,7 +127,7 @@ auto LegacyRenderSVGResourceFilter::applyResource(RenderElement& renderer, const
     ImageBuffer::sizeNeedsClamping(filterData->sourceImageRect.size(), filterScale);
 
     auto preferredFilterModes = protect(renderer.page())->preferredFilterRenderingModes(*context);
-    auto renderingOptions(protect(renderer.settings())->showDebugBorders() ? std::make_optional(FilterRenderingOption::ShowDebugOverlay) : std::nullopt);
+    auto renderingOptions(renderer.settings().showDebugBorders() ? std::make_optional(FilterRenderingOption::ShowDebugOverlay) : std::nullopt);
 
     // Create the SVGFilterRenderer object.
     filterData->filter = SVGFilterRenderer::create(contextElement.get(), filterElement, {

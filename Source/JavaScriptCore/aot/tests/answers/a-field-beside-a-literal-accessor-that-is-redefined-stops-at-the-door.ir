@@ -1,0 +1,79 @@
+# const box = { inner: { n: 1 }, get x() { return 1; } };
+# function redefines(b) { Object.defineProperty(b, "inner", { value: "text", enumerable: false }); }
+# function inner(b) { return b.inner.n; }
+# if (which === 1) id(redefines)(box);
+# print(inner(box));   print("went on");
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so `box` never escapes from compiled code.
+# Link calls `inner` filled because the only accessors next to it are defined by object literals, and inner() reads the slot without a check. A redefinition with other attributes empties the slot.
+# The compiled program then died with SIGSEGV, where the program without AoT prints undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(BESIDEANACCESSOR): run-in-shell mechanisms=all globalThis.which = 1;
+# BESIDEANACCESSOR: bun: internal AOT error: object mutation check failed
+# BESIDEANACCESSOR-NEXT: RedefineProperty on an {{*}}, but the compiler proved that
+# BESIDEANACCESSOR-NOT: went on
+# BESIDEANACCESSOR: crashed with
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: 1
+# NONE-NEXT: went on
+# NONE-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewClosure function=f1
+    DefineGetter v3, v4 key="x"
+    v6 = FinishObject v3
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="which" [isFreeName]
+    v9 = PropGet v7 key="id" [isFreeName]
+    v10 = Integer integer=1
+    v11 = StrictEq v8, v10
+    Branch v11 -> taken b1(), notTaken b2()
+  b1():
+    v12 = NewClosure function=f2
+    v13 = Call v9, -, v12 calleeName="id"
+    v14 = Call v13, -, v6
+    Jump -> next b2()
+  b2():
+    v15 = NewClosure function=f3
+    v16 = Call v15, -, v6 calleeName="inner"
+    v17 = PropGet v7 key="print" [isFreeName]
+    v18 = Call v17, -, v16 calleeName="print"
+    v19 = String string="went on"
+    v20 = Call v17, -, v19 calleeName="print"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="x" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f2 name="redefines" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Object" [isFreeName]
+    v3 = PropGet v2 key="defineProperty"
+    v4 = String string="inner"
+    v5 = String string="text"
+    v6 = Boolean
+    v7 = NewObject -, v5, v6 layout=L2 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = Call v3, v2, v0, v4, v8 calleeKey="defineProperty"
+    v10 = Undefined
+    Return v10
+}
+function f3 name="inner" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner"
+    v2 = PropGet v1 key="n"
+    Return v2
+}

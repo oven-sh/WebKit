@@ -226,6 +226,8 @@ public:
     static void forWebPagesWithOrigin(PAL::SessionID, const WebCore::SecurityOriginData&, NOESCAPE const Function<void(WebPageProxy&)>&);
     void addAllowedFirstPartyForCookies(const WebCore::RegistrableDomain&, LoadedWebArchive);
     const std::pair<LoadedWebArchive, HashSet<WebCore::RegistrableDomain>>& allowedFirstPartiesForCookiesData() const { return m_allowedFirstPartiesForCookies; }
+    bool hasCommittedWebArchive() const { return m_hasCommittedWebArchive; }
+    void setHasCommittedWebArchive() { m_hasCommittedWebArchive = true; }
 
     void initializeWebProcess(WebProcessCreationParameters&&);
 
@@ -274,14 +276,15 @@ public:
     void disableRemoteWorkers(OptionSet<RemoteWorkerType>);
 
     WebsiteDataStore* websiteDataStore() const { ASSERT(m_websiteDataStore); return m_websiteDataStore.get(); }
+    bool hasWebsiteDataStore() const { return !!m_websiteDataStore; }
     void setWebsiteDataStore(WebsiteDataStore&);
     
-    PAL::SessionID LEGACY_NODELETE sessionID() const;
+    NODELETE PAL::SessionID sessionID() const;
 
     static unsigned runningProcessCount();
     static bool isNearingProcessCountLimit();
     static bool hasReachedProcessCountLimit();
-    static void LEGACY_NODELETE setProcessCountLimit(unsigned);
+    NODELETE static void setProcessCountLimit(unsigned);
 
     static void reclaimProcessesIfNeeded();
     static void scheduleReclaimProcessesIfNeeded();
@@ -289,9 +292,9 @@ public:
     static RefPtr<WebProcessProxy> processForIdentifier(WebCore::ProcessIdentifier);
     static Ref<WebProcessProxy> fromConnection(const IPC::Connection&);
     static Vector<Ref<WebProcessProxy>> allProcesses();
-    static WebPageProxy* LEGACY_NODELETE webPage(WebPageProxyIdentifier);
-    static WebPageProxy* LEGACY_NODELETE webPage(WebCore::PageIdentifier);
-    static WebPageProxy* LEGACY_NODELETE audioCapturingWebPage();
+    NODELETE static WebPageProxy* webPage(WebPageProxyIdentifier);
+    NODELETE static WebPageProxy* webPage(WebCore::PageIdentifier);
+    NODELETE static WebPageProxy* audioCapturingWebPage();
 #if ENABLE(WEBXR)
     static WebPageProxy* webPageWithActiveXRSession();
 #endif
@@ -338,7 +341,10 @@ public:
     bool isRunningWorkers() const { return m_sharedWorkerInformation || m_serviceWorkerInformation; }
     std::optional<WebPageProxyIdentifier> remoteWorkerPageProxyID(RemoteWorkerType) const;
 
-    bool LEGACY_NODELETE isDummyProcessProxy() const;
+    NODELETE bool isDummyProcessProxy() const;
+
+    bool isPrintProcess() const { return m_isPrintProcess; }
+    void setIsPrintProcess() { m_isPrintProcess = true; }
 
     void didCreateWebPageInProcess(WebCore::PageIdentifier);
 
@@ -357,7 +363,7 @@ public:
 
     void consumeIfNotVerifiablyFromUIProcess(WebCore::PageIdentifier, API::UserInitiatedAction&, std::optional<WTF::UUID>);
 
-    bool LEGACY_NODELETE isResponsive() const;
+    NODELETE bool isResponsive() const;
 
     VisibleWebPageToken visiblePageToken() const;
 
@@ -537,8 +543,8 @@ public:
     void unregisterRemoteWorkerClientProcess(RemoteWorkerType, WebProcessProxy&);
     void updateRemoteWorkerProcessAssertion(RemoteWorkerType);
     bool hasServiceWorkerPageProxy(WebPageProxyIdentifier pageProxyID) { return m_serviceWorkerInformation && m_serviceWorkerInformation->remoteWorkerPageProxyID == pageProxyID; }
-    bool LEGACY_NODELETE hasServiceWorkerForegroundActivityForTesting() const;
-    bool LEGACY_NODELETE hasServiceWorkerBackgroundActivityForTesting() const;
+    NODELETE bool hasServiceWorkerForegroundActivityForTesting() const;
+    NODELETE bool hasServiceWorkerBackgroundActivityForTesting() const;
     void startServiceWorkerBackgroundProcessing();
     void endServiceWorkerBackgroundProcessing();
     void setThrottleStateForTesting(ProcessThrottleState);
@@ -627,15 +633,15 @@ public:
     void hardwareConsoleStateChanged();
 #endif
 
-    const WeakHashSet<WebProcessProxy>* LEGACY_NODELETE serviceWorkerClientProcesses() const LIFETIME_BOUND;
-    const WeakHashSet<WebProcessProxy>* LEGACY_NODELETE sharedWorkerClientProcesses() const LIFETIME_BOUND;
+    NODELETE const WeakHashSet<WebProcessProxy>* serviceWorkerClientProcesses() const LIFETIME_BOUND;
+    NODELETE const WeakHashSet<WebProcessProxy>* sharedWorkerClientProcesses() const LIFETIME_BOUND;
 
     static void permissionChanged(WebCore::PermissionName, const WebCore::SecurityOriginData&);
     void processPermissionChanged(WebCore::PermissionName, const WebCore::SecurityOriginData&);
 
     Logger& logger();
 
-    void LEGACY_NODELETE resetState();
+    NODELETE void resetState();
 
     ProcessThrottleState throttleStateForStatistics() const { return m_throttleStateForStatistics; }
     Seconds totalForegroundTime() const;
@@ -673,10 +679,10 @@ public:
 #if ENABLE(WEBASSEMBLY_DEBUGGER) && ENABLE(REMOTE_INSPECTOR)
     void createWasmDebuggerTarget();
     void destroyWasmDebuggerTarget();
-    void LEGACY_NODELETE connectWasmDebuggerTarget(bool isAutomaticConnection, bool immediatelyPause);
-    void LEGACY_NODELETE disconnectWasmDebuggerTarget();
+    NODELETE void connectWasmDebuggerTarget(bool isAutomaticConnection, bool immediatelyPause);
+    NODELETE void disconnectWasmDebuggerTarget();
     void dispatchWasmDebuggerMessage(const String& message);
-    void LEGACY_NODELETE setWasmDebuggerTargetIndicating(bool);
+    NODELETE void setWasmDebuggerTargetIndicating(bool);
 
     void sendWasmDebuggerResponse(const String& response);
     void updateWasmDebuggerTarget();
@@ -744,7 +750,6 @@ private:
     bool isJITEnabled() const final;
     bool shouldEnableLockdownMode() const final { return m_lockdownMode == LockdownMode::Enabled; }
     bool shouldEnableEnhancedSecurity() const final { return isEnhancedSecurityEnabledForState(m_enhancedSecurity); }
-    bool shouldDisableJITCage() const final;
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
     RefPtr<XPCEventHandler> xpcEventHandler() const final;
     void didReceiveLogsDuringLaunchForTesting() final;
@@ -756,8 +761,8 @@ private:
     void wrapCryptoKey(Vector<uint8_t>&&, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&&);
 
     using WebProcessProxyMap = HashMap<WebCore::ProcessIdentifier, CheckedRef<WebProcessProxy>>;
-    static WebProcessProxyMap& LEGACY_NODELETE allProcessMap();
-    static WebPageProxyMap& LEGACY_NODELETE globalPageMap();
+    NODELETE static WebProcessProxyMap& allProcessMap();
+    NODELETE static WebPageProxyMap& globalPageMap();
     static Vector<Ref<WebPageProxy>> globalPages();
 
     void initializePreferencesForGPUAndNetworkProcesses(const WebPageProxy&);
@@ -771,7 +776,7 @@ private:
     static void registerNotifyObservers();
 #endif
 
-    ProcessTerminationReason LEGACY_NODELETE terminationReason() const;
+    NODELETE ProcessTerminationReason terminationReason() const;
 
     // IPC message handlers.
     void didDestroyUserGestureToken(WebCore::PageIdentifier, WebCore::UserGestureTokenIdentifier);
@@ -784,7 +789,7 @@ private:
 #if ENABLE(GPU_PROCESS)
     void createGPUProcessConnection(GPUProcessConnectionIdentifier, IPC::Connection::Handle&&);
     void gpuProcessConnectionDidBecomeUnresponsive(GPUProcessConnectionIdentifier);
-    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect&, RemoteSnapshotIdentifier, WebCore::RenderingMode);
+    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier, WebCore::RenderingMode);
 #endif
 
 #if HAVE(IOSURFACE)
@@ -846,11 +851,11 @@ private:
     void systemBeep();
     
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
-    void isAXAuthenticated(CoreIPCAuditToken&&, CompletionHandler<void(bool)>&&);
+    void requestAXAuthenticationDecision(CoreIPCAuditToken&&, CompletionHandler<void(uint32_t)>&&);
 #endif
 
 #if PLATFORM(COCOA)
-    bool LEGACY_NODELETE messageSourceIsValidWebContentProcess();
+    NODELETE bool messageSourceIsValidWebContentProcess();
 #endif
 
     bool shouldTakeNearSuspendedAssertion() const;
@@ -967,7 +972,9 @@ private:
 
     bool m_hasCommittedAnyProvisionalLoads { false };
     bool m_hasCommittedAnyMeaningfulProvisionalLoads { false }; // True if the process has committed a provisional load to a URL that was not about:*.
+    bool m_hasCommittedWebArchive { false };
     bool m_isPrewarmed;
+    bool m_isPrintProcess { false };
     LockdownMode m_lockdownMode { LockdownMode::Disabled };
     EnhancedSecurity m_enhancedSecurity { EnhancedSecurity::Disabled };
     const ProcessCrossOriginIsolation m_crossOriginIsolation;

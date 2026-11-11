@@ -9,6 +9,7 @@ add_definitions("-include MiniBrowser_Prefix.pch -DWEBCORE_EXPORT=")
 
 set(MiniBrowser_SOURCES
     ${MINIBROWSER_DIR}/AppDelegate.m
+    ${MINIBROWSER_DIR}/AutomationConnection.m
     ${MINIBROWSER_DIR}/BrowserWindowController.m
     ${MINIBROWSER_DIR}/ExtensionManagerWindowController.m
     ${MINIBROWSER_DIR}/HistoryButton.m
@@ -80,8 +81,13 @@ foreach (_service IN LISTS MiniBrowser_XPC_SERVICES)
     set_property(TARGET MiniBrowser APPEND PROPERTY LINK_DEPENDS $<TARGET_FILE:${_service}>)
 endforeach ()
 
-set_property(TARGET MiniBrowser PROPERTY CODE_SIGN_ENTITLEMENTS
-    ${MINIBROWSER_DIR}/../MiniBrowser.entitlements)
+if (USE_APPLE_INTERNAL_SDK)
+    set_property(TARGET MiniBrowser PROPERTY CODE_SIGN_ENTITLEMENTS
+        ${MINIBROWSER_DIR}/../MiniBrowser-internal.entitlements)
+else ()
+    set_property(TARGET MiniBrowser PROPERTY CODE_SIGN_ENTITLEMENTS
+        ${MINIBROWSER_DIR}/../MiniBrowser.entitlements)
+endif ()
 _WEBKIT_ADD_DSYM(MiniBrowser)
 _WEBKIT_ADD_CODE_SIGN(MiniBrowser)
 

@@ -49,14 +49,14 @@ static void moveAllChildrenToInternal(RenderBoxModelObject& from, RenderElement&
         newParent.attachRendererInternal(from.detachRendererInternal(*from.firstChild()), &from);
 }
 
-static bool LEGACY_NODELETE canDropAnonymousBlock(const RenderBlock& anonymousBlock)
+NODELETE static bool canDropAnonymousBlock(const RenderBlock& anonymousBlock)
 {
     if (anonymousBlock.beingDestroyed())
         return false;
     return true;
 }
 
-static bool LEGACY_NODELETE canMergeContiguousAnonymousBlocks(const RenderObject& rendererToBeRemoved, const RenderObject* previous, const RenderObject* next, const RenderObject*)
+NODELETE static bool canMergeContiguousAnonymousBlocks(const RenderObject& rendererToBeRemoved, const RenderObject* previous, const RenderObject* next, const RenderObject*)
 {
     ASSERT(!rendererToBeRemoved.renderTreeBeingDestroyed());
 
@@ -89,15 +89,15 @@ struct ParentAndBeforeChild {
     RenderObject* beforeChild { nullptr };
 };
 
-static bool LEGACY_NODELETE isExcludedMarker(const RenderBlock& parent, const RenderObject& child)
+NODELETE static bool isExcludedMarker(const RenderBlock& parent, const RenderObject& child)
 {
-    CheckedPtr marker = dynamicDowncast<RenderListOutsideMarker>(child);
+    auto* marker = dynamicDowncast<RenderListOutsideMarker>(child);
     if (!marker || !marker->document().settings().listMarkerPositionedPostLayoutEnabled())
         return false;
     return is<RenderListItem>(parent);
 }
 
-static bool LEGACY_NODELETE hasInlineInFlowChild(const RenderBlock& parent)
+NODELETE static bool hasInlineInFlowChild(const RenderBlock& parent)
 {
     for (CheckedPtr child = parent.firstChild(); child; child = child->nextSibling()) {
         if (child->isFloatingOrOutOfFlowPositioned())
@@ -418,6 +418,10 @@ RenderPtr<RenderObject> RenderTreeBuilder::Block::detach(RenderBlock& parent, Re
 
 void RenderTreeBuilder::Block::dropAnonymousBoxChild(RenderBlock& parent, RenderBlock& child)
 {
+    // The children move without notifying the line layout of the child, which reads them through the render tree.
+    if (CheckedPtr childBlockFlow = dynamicDowncast<RenderBlockFlow>(child))
+        childBlockFlow->destroyLineLayout();
+
     parent.setNeedsLayoutAndInvalidateContentLogicalWidths();
     parent.setChildrenInline(child.childrenInline());
 

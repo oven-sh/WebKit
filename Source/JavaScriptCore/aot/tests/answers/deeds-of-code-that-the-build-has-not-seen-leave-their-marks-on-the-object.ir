@@ -1,0 +1,267 @@
+# What code that the build has not seen does to an object of the program leaves its mark where compiled code looks: the slot, the order word, the Structure, the guards of the class. Nothing stops, and every answer is that of the language.
+# The shell's own text is that code: the program hands it its functions. aotPlaceOfProperty() and aotMarksOfObject() say what the cell says.
+# RUN: run-in-shell --aotCountsPath=/dev/null const counted = () => { const lines = aotRuntimeCounters().split("\n"), kept = []; for (let i = 0; i < lines.length; i++) { const line = lines[i]; if (!line.startsWith("0") && (line.includes("FieldsEvicted") || line.includes("ObjectsGiven") || line.includes("ObjectPrototypesChanged"))) kept[kept.length] = line.split("\t").join(" "); } return kept.join(", "); }; globalThis.register = (make, read, between, inLoop, belowCalls, copyLabel, storeAgain) => { const h = make(); print(JSON.stringify(aotMarksOfObject(h)), aotPlaceOfProperty(h, "label"), aotPlaceOfProperty(h, "other"), aotPlaceOfProperty({ }, "label"), read(h)); print("counted: " + counted()); };
+# CHECK: "" slot absent, and no field null 8
+# CHECK-NEXT: counted:
+# CHECK-NEXT: exited with 0
+# RUN(FREEZES): run-in-shell --aotCountsPath=/dev/null const counted = () => { const lines = aotRuntimeCounters().split("\n"), kept = []; for (let i = 0; i < lines.length; i++) { const line = lines[i]; if (!line.startsWith("0") && (line.includes("FieldsEvicted") || line.includes("ObjectsGiven") || line.includes("ObjectPrototypesChanged"))) kept[kept.length] = line.split("\t").join(" "); } return kept.join(", "); }; globalThis.register = (make, read, between, inLoop, belowCalls, copyLabel, storeAgain) => { for (const close of [Object.preventExtensions, Object.seal, Object.freeze]) { const h = make(); print(between(h, close), aotMarksOfObject(h), aotPlaceOfProperty(h, "label")); try { print(storeAgain(h)); } catch (error) { print(error.name); } print(read(h)); } print(counted()); };
+# FREEZES: 12 notExtensible slot
+# FREEZES-NEXT: 12
+# FREEZES-NEXT: 26
+# FREEZES-NEXT: 12 notExtensible sealed slot
+# FREEZES-NEXT: 12
+# FREEZES-NEXT: 26
+# FREEZES-NEXT: 12 notExtensible sealed frozen slot
+# FREEZES-NEXT: TypeError
+# FREEZES-NEXT: 8
+# FREEZES-NEXT: 3 counter:ObjectsGivenIntegrityLevel
+# FREEZES-NEXT: exited with 0
+# RUN(DELETES): run-in-shell --aotCountsPath=/dev/null const counted = () => { const lines = aotRuntimeCounters().split("\n"), kept = []; for (let i = 0; i < lines.length; i++) { const line = lines[i]; if (!line.startsWith("0") && (line.includes("FieldsEvicted") || line.includes("ObjectsGiven") || line.includes("ObjectPrototypesChanged"))) kept[kept.length] = line.split("\t").join(" "); } return kept.join(", "); }; globalThis.register = (make, read, between, inLoop, belowCalls, copyLabel, storeAgain) => { const h = make(); print(between(h, h => { delete h.count; }), aotPlaceOfProperty(h, "count"), JSON.stringify(aotMarksOfObject(h)), Object.keys(h)); print(inLoop(make(), h => { delete h.count; }), belowCalls(make(), h => { Reflect.deleteProperty(h, "count"); })); print(storeAgain(h), aotPlaceOfProperty(h, "count"), Object.keys(h)); print(counted()); };
+# DELETES: NaN absent "" point,label
+# DELETES-NEXT: NaN NaN
+# DELETES-NEXT: 12 slot point,label,count
+# DELETES-NEXT: 3 counter:FieldsEvictedByDelete, 3 field:L1.2:FieldsEvictedByDelete:nothing
+# DELETES-NEXT: exited with 0
+# RUN(REDEFINES): run-in-shell --aotCountsPath=/dev/null const counted = () => { const lines = aotRuntimeCounters().split("\n"), kept = []; for (let i = 0; i < lines.length; i++) { const line = lines[i]; if (!line.startsWith("0") && (line.includes("FieldsEvicted") || line.includes("ObjectsGiven") || line.includes("ObjectPrototypesChanged"))) kept[kept.length] = line.split("\t").join(" "); } return kept.join(", "); }; globalThis.register = (make, read, between, inLoop, belowCalls, copyLabel, storeAgain) => { let reads = 0; const accessor = h => { Object.defineProperty(h, "count", { get() { return ++reads; }, configurable: true }); }; const h = make(); print(between(h, accessor), aotPlaceOfProperty(h, "count"), aotMarksOfObject(h)); print(inLoop(make(), accessor), belowCalls(make(), accessor)); const fixed = make(); Object.defineProperty(fixed, "count", { writable: false }); print(aotPlaceOfProperty(fixed, "count"), read(fixed)); try { storeAgain(fixed); } catch (error) { print(error.name); } Object.defineProperty(h, "count", { value: 3, writable: true, enumerable: true }); print(aotPlaceOfProperty(h, "count"), aotMarksOfObject(h), read(h)); print(counted()); };
+# REDEFINES: 12 beside its slot extraProperties fieldOutsideSlot
+# REDEFINES-NEXT: 57 18
+# REDEFINES-NEXT: beside its slot 8
+# REDEFINES-NEXT: TypeError
+# REDEFINES-NEXT: slot extraProperties fieldOutsideSlot 14
+# REDEFINES-NEXT: 4 counter:FieldsEvictedByRedefinition, 1 field:L1.2:FieldsEvictedByRedefinition:int32, 3 field:L1.2:FieldsEvictedByRedefinition:GetterSetterType
+# REDEFINES-NEXT: exited with 0
+# RUN(RELINKS): run-in-shell --aotCountsPath=/dev/null const counted = () => { const lines = aotRuntimeCounters().split("\n"), kept = []; for (let i = 0; i < lines.length; i++) { const line = lines[i]; if (!line.startsWith("0") && (line.includes("FieldsEvicted") || line.includes("ObjectsGiven") || line.includes("ObjectPrototypesChanged"))) kept[kept.length] = line.split("\t").join(" "); } return kept.join(", "); }; globalThis.register = (make, read, between, inLoop, belowCalls, copyLabel, storeAgain) => { const relink = h => { Object.setPrototypeOf(h, { twice() { return 100; } }); }; const h = make(); print(inLoop(h, relink), aotMarksOfObject(h), read(h), read(make())); const above = make(); const below = Object.create(above); print(aotMarksOfObject(above), read(below), storeAgain(below), read(above), read(below)); print(counted()); };
+# RELINKS: 318 otherPrototype 106 8
+# RELINKS-NEXT: isPrototype 8 12 8 26
+# RELINKS-NEXT: 1 counter:ObjectPrototypesChanged
+# RELINKS-NEXT: exited with 0
+# RUN(REPLACES): run-in-shell globalThis.register = (make, read, between, inLoop, belowCalls, copyLabel, storeAgain) => { const h = make(); print(inLoop(h, h => { Object.getPrototypeOf(h).twice = () => 50; }), read(make())); h.twice = () => 7; print(read(h), aotPlaceOfProperty(h, "twice"), aotMarksOfObject(h)); };
+# REPLACES: 168 56
+# REPLACES-NEXT: 13 extra property extraProperties
+# REPLACES-NEXT: exited with 0
+
+module m0 path="held.js" displayPath="held.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 position=6 constructor=f9 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="Holder" module=m0 position=80 constructor=f10 fields=[{key="point" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}, {key="count" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+variable g0 name="lowest" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Point" module=m0 declared={type=absent|f9 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 name="Holder" module=m0 declared={type=absent|f10 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f7 @0
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} @0
+    v12 = NewClosure function=f8 @0
+    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f9 @0
+    v15 = NewClass v14 layout=L0 @0
+    PutModuleVariable v15 variable=g3 @0
+    v17 = FinishClass v15 layout=L0 @0
+    v18 = Convert v17 declared={type=f9 flags=[IsFromCompiler]} @0
+    v19 = Convert v17 declared={type=f9 flags=[IsFromCompiler]} @0
+    PutModuleVariable v19 variable=g1 @0
+    v21 = NewClosure function=f10 @74
+    v22 = NewClass v21 layout=L1 @74
+    PutModuleVariable v22 variable=g4 @74
+    v24 = NewClosure function=f11 @193
+    DefineMethod v22, v24 layout=L1 key="twice" @193
+    v26 = FinishClass v22 layout=L1 @74
+    v27 = Convert v26 declared={type=f10 flags=[IsFromCompiler]} @74
+    v28 = Convert v26 declared={type=f10 flags=[IsFromCompiler]} @74
+    PutModuleVariable v28 variable=g2 @74
+    v30 = Builtin builtin=GlobalThis @1085
+    v31 = PropGet v30 key="Function" [isFreeName] @1085
+    v32 = Convert v31 declared={type=builtin(Function) flags=[IsExpected]} @1085
+    v33 = String string="return globalThis.register" @1094
+    v34 = Construct v32, -, v33 calleeName="Function" @1085
+    v35 = Call v34 @1122
+    v36 = Call v35, -, v1, v3, v5, v7, v9, v11, v13 @1124
+    v37 = Undefined @1081
+    Return v37 @1081
+}
+function f1 name="lowest" module=m0 position=709 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function):
+    Jump -> next b1() @709
+  b1():
+    v2 = Call v1, -, v0 calleeName="deed" @743
+    v3 = PropGet v0 key="count" @766
+    Return v3 @766
+}
+function f2 name="make" module=m0 position=236 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @236
+  b1():
+    v0 = GetModuleVariable variable=g2 @267
+    v1 = CheckInitialized v0 name="Holder" @267
+    v2 = Construct v1 calleeName="Holder" @267
+    Return v2 @263
+}
+function f3 name="read" module=m0 position=279 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    Jump -> next b1() @279
+  b1():
+    v1 = PropGet v0 key="label" @312
+    v2 = PropGet v1 key="length" @319
+    v3 = PropGet v0 key="count" @334
+    v4 = Add v2, v3 @334
+    v5 = PropGet v0 key="twice" @349
+    v6 = Call v5, v0 calleeKey="twice" calleeName="holder.twice" @356
+    v7 = Add v4, v6 @349
+    Return v7 @349
+}
+function f4 name="between" module=m0 position=367 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: undefined|null|function):
+    Jump -> next b1() @367
+  b1():
+    v2 = PropGet v0 key="label" @417
+    v3 = PropGet v2 key="length" @424
+    v4 = PropGet v0 key="count" @439
+    v5 = Add v3, v4 @439
+    v6 = Call v1, -, v0 calleeName="deed" @455
+    v7 = PropGet v0 key="label" @487
+    v8 = PropGet v7 key="length" @494
+    v9 = Add v5, v8 @487
+    v10 = PropGet v0 key="count" @509
+    v11 = Add v9, v10 @509
+    Return v11 @509
+}
+function f5 name="inLoop" module=m0 position=525 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function):
+    Jump -> next b1() @525
+  b1():
+    v2 = Integer @569
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @569
+    v4 = Integer @590
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @590
+    Jump -> next b2(v3, v5) @583
+  b2(v6, v7):
+    LoopHint @583
+    v9 = Integer integer=8 @600
+    v10 = Less v7, v9 @600
+    Branch v10 -> taken b3(), notTaken b7() @600
+  b3():
+    v11 = Integer integer=5 @630
+    v12 = StrictEq v7, v11 @630
+    Branch v12 -> taken b4(), notTaken b5() @630
+  b4():
+    v13 = Call v1, -, v0 calleeName="deed" @633
+    Jump -> next b5() @633
+  b5():
+    v14 = PropGet v0 key="count" @658
+    v15 = PropGet v0 key="twice" @673
+    v16 = Call v15, v0 calleeKey="twice" calleeName="holder.twice" @680
+    v17 = Add v14, v16 @673
+    v18 = Add v6, v17 @673
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @651
+    Jump -> next b6() @651
+  b6():
+    v20 = Increment v7 @603
+    v21 = Convert v20 declared={type=number flags=[IsExpected]} @603
+    Jump -> next b2(v19, v21) @603
+  b7():
+    Return v6 @702
+}
+function f6 name="belowCalls" module=m0 position=782 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function):
+    Jump -> next b1() @782
+  b1():
+    v2 = PropGet v0 key="count" @827
+    v3 = GetModuleVariable variable=g0 @842
+    v4 = Call v3, -, v0, v1 calleeName="lowest" @842
+    v5 = Add v2, v4 @842
+    v6 = PropGet v0 key="count" @865
+    v7 = Add v5, v6 @865
+    Return v7 @865
+}
+function f7 name="copyLabel" module=m0 position=881 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @881
+  b1():
+    v2 = PropGet v1 key="label" @925
+    PropSet v0, v2 key="label" @914
+    v4 = PropGet v0 key="label" @946
+    Return v4 @946
+}
+function f8 name="storeAgain" module=m0 position=958 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    Jump -> next b1() @958
+  b1():
+    v1 = String string="again" @1005
+    PropSet v0, v1 key="label" @990
+    v3 = Integer integer=7 @1031
+    PropSet v0, v3 key="count" @1016
+    v5 = PropGet v0 key="label" @1043
+    v6 = PropGet v5 key="length" @1050
+    v7 = PropGet v0 key="count" @1065
+    v8 = Add v6, v7 @1065
+    Return v8 @1065
+}
+function f9 name="Point" module=m0 position=27 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @27
+  b1():
+    v3 = GetConstructPrototype v0 layout=L0 @27
+    v4 = NewObject v3 layout=L0 @27
+    v5 = Convert v4 declared={type=L0} @27
+    PropSet v5, v1 key="x" @40
+    PropSet v5, v2 key="y" @56
+    v8 = Undefined @56
+    v9 = TypeTest v8 testedType=object @56
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0) @56
+  b2(v10):
+    Jump -> next b4(v10) @56
+  b3(v11):
+    Jump -> next b4(v5) @56
+  b4(v12):
+    Return v12 @56
+}
+function f10 name="Holder" module=m0 position=102 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    Jump -> next b1() @102
+  b1():
+    v1 = GetConstructPrototype v0 layout=L1 @102
+    v2 = NewObject v1 layout=L1 @102
+    v3 = Convert v2 declared={type=L1} @102
+    v4 = GetModuleVariable variable=g1 @128
+    v5 = CheckInitialized v4 name="Point" @128
+    v6 = Integer integer=1 @134
+    v7 = Integer integer=2 @137
+    v8 = Construct v5, -, v6, v7 calleeName="Point" @128
+    PropSet v3, v8 key="point" @111
+    v10 = String string="label" @158
+    PropSet v3, v10 key="label" @145
+    v12 = Integer integer=1 @184
+    PropSet v3, v12 key="count" @171
+    v14 = Undefined @171
+    v15 = TypeTest v14 testedType=object @171
+    Branch v15 -> taken b2(| 0), notTaken b3(| 0) @171
+  b2(v16):
+    Jump -> next b4(v16) @171
+  b3(v17):
+    Jump -> next b4(v3) @171
+  b4(v18):
+    Return v18 @171
+}
+function f11 name="twice" module=m0 position=193 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @193
+  b1():
+    v1 = PropGet v0 key="count" @214
+    v2 = Integer integer=2 @227
+    v3 = Mul v1, v2 @227
+    Return v3 @227
+}

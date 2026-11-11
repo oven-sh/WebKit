@@ -9,20 +9,21 @@
 #if ENABLE(AOT)
 
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTStringTable.h"
 #include "AOTStubsStrings.h"
 #include "AOTVector.h"
-#include "B3IntRange.h"
-#include "B3MemoryValue.h"
-#include "JSGlobalObjectFunctions.h"
-#include <cmath>
 #include <wtf/text/ASCIIFastPath.h>
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(descriptorOf(StubFamily::StringEqualsLiteralOfLength).maxCount == sizeof(uint64_t));
 static_assert(descriptorOf(StubFamily::ValueEqualsLiteralOfLength).maxCount == sizeof(uint64_t));
 
-static bool fitsInRegister(const String& text)
+static bool comparedTextFitsInRegister(const String& text)
 {
     const StubDescriptor& descriptor = descriptorOf(StubFamily::StringEqualsLiteralOfLength);
     return text.is8Bit() && text.length() >= descriptor.minCount && text.length() <= descriptor.maxCount;
@@ -43,8 +44,7 @@ LValue loadBytes(Output& out, unsigned width, TypedPointer pointer)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The text as it lies in a 16-bit string.
-static Vector<uint8_t, 64> bytesInWideString(const String& text)
+static Vector<uint8_t, 64> bytesOfTextInWideString(const String& text)
 {
     Vector<uint8_t, 64> bytes;
     for (unsigned i = 0; i < text.length(); ++i) {
@@ -60,7 +60,6 @@ uint64_t packStringIntoRegister(StringView text)
     RELEASE_ASSERT(text.length() <= sizeof(uint64_t));
     RELEASE_ASSERT(text.is8Bit() || WTF::charactersAreAllLatin1(text.span16()));
     uint64_t packed = 0;
-    // The stub reads seven units as two words of four that overlap in the fourth unit.
     if (text.length() == 7) {
         for (unsigned i = 0; i < 4; ++i)
             packed |= static_cast<uint64_t>(text[i]) << (8 * i) | static_cast<uint64_t>(text[3 + i]) << (32 + 8 * i);
@@ -79,14 +78,7 @@ Condition StringEmitter::areEqual(const OperationContext& context, CellPointer a
 
 Word32 StringEmitter::order(const OperationContext& context, CellPointer a, CellPointer b)
 {
-    LValue result = callStub(context, compareStrings(), { a.value(), b.value() }).first;
-    m_proc.setKnownRange(result, B3::IntRange(-1, 1));
-    return Word32(m_out.castToInt32(result));
-}
-
-void StringEmitter::generateStringOrder(const ValueContext& value)
-{
-    define(value, order(value, in<CellPointer>(value->leftOperand()), in<CellPointer>(value->rightOperand())));
+    return low32(Integer(callStub(context, compareStrings(), { a.value(), b.value() }).first));
 }
 
 Word32 StringEmitter::orderToCharacter(const CharacterView& view, char16_t character)
@@ -96,9 +88,17 @@ Word32 StringEmitter::orderToCharacter(const CharacterView& view, char16_t chara
         return word32(-1);
     }, [&] {
         Word32 first = codeUnitAt(view, word32(0));
-        Word32 orderAfterSameUnit = select(equal(view.length, word32(1)), word32(0), word32(1));
-        return select(below(first, codeUnit), word32(-1), select(above(first, codeUnit), word32(1), orderAfterSameUnit));
+        Word32 orderAfterSameUnit = select<Word32>(equal(view.length, 1), 0, 1);
+        Condition comesFirst = below(first, codeUnit);
+        Word32 before = word32(-1);
+        return select(comesFirst, before, select(above(first, codeUnit), 1, orderAfterSameUnit));
     });
+}
+
+void StringEmitter::generateStringOrder(const ValueContext& value)
+{
+    CellPointer left = in<CellPointer>(value->leftOperand());
+    define(value, order(value, left, in<CellPointer>(value->rightOperand())));
 }
 
 void StringEmitter::generateStringOrderToCharacter(const ValueContext& value)
@@ -106,116 +106,161 @@ void StringEmitter::generateStringOrderToCharacter(const ValueContext& value)
     define(value, orderToCharacter(viewOf(value, value->stringOperand()), static_cast<char16_t>(value->codeUnit())));
 }
 
-bool StringEmitter::comparesLiteralInPlace(const OperationContext& context, const String& text) const
+bool StringEmitter::comparesLiteralInPlace(const String& text) const
 {
-    return context.shape() == CodeShape::Fast && text.is8Bit() && !text.isEmpty() && text.length() <= m_generator.build().limit(LimitID::MaxInlineStringCompareLength);
+    return text.is8Bit() && !text.isEmpty() && text.length() <= maxLengthComparedInPlace;
 }
 
 void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets)
 {
-    String text = textOf(literal);
-    if (!fitsInRegister(text)) {
-        branch(Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .immediate = literal.index() }).first)), targets);
+    branchOnEqualsLiteralByStub(context, operand, subject, literal, textOf(literal), targets);
+}
+
+void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, const String& text, BranchTargets targets)
+{
+    if (!comparedTextFitsInRegister(text)) {
+        branch(Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand, text.length()), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first)), targets);
         return;
     }
     LValue operands[] = { subject, m_out.constInt64(static_cast<int64_t>(packStringIntoRegister(text))) };
     emitter<RuntimeCallEmitter>().callStubAndBranch(context, equalsLiteralOfLength(operand, text.length()), operands, { }, targets);
 }
 
-void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, bool subjectIsFlat, bool everyCellIsString)
+static constexpr OpcodeSet comparisonsWithLiteral { Opcode::StringEqualsLiteral, Opcode::ValueEqualsLiteral };
+
+void StringEmitter::makeCellsHoldAtomOf(StringID literal)
 {
-    String text = textOf(literal);
-    if (text.isEmpty() && operand == ComparedOperand::String) {
-        branch(isZero(lengthOf(CellPointer(subject))), targets);
+    makeCellsHoldAtomOf(literal, textOf(literal));
+}
+
+void StringEmitter::makeCellsHoldAtomOf(StringID literal, const String& text)
+{
+    if (comparesLiteralInPlace(text) && !hasCellOfVM(types().bytesOf(literal)))
+        m_mentions.add(NumberSpace::AtomOfString, literal);
+}
+
+bool StringEmitter::readsCharactersInLine(const OperationContext& context)
+{
+    static_assert(formDependsOnLoopOf(Opcode::ValueEqualsLiteral) && formDependsOnLoopOf(Opcode::StringEqualsLiteral));
+    static_assert(formDependsOnLoopOf(Opcode::StrictEq) && formDependsOnLoopOf(Opcode::Eq) && formDependsOnLoopOf(TerminatorKind::SwitchString));
+    static_assert(formByLoopAlone(Opcode::StringEqualsLiteral, StateOfKnowledge::Always, true).form == formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, true).form);
+    static_assert(formByLoopAlone(Opcode::StringEqualsLiteral, StateOfKnowledge::Always, false).form == formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, false).form);
+    static constexpr FormAtPlace namedInLoops = formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, true);
+    static constexpr FormAtPlace namedOutsideLoops = formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, false);
+    bool hasLeftLoop = context.valueID() && comparisonsWithLiteral.contains(generator().code().at(context.valueID()).opcode) && generator().code().at(context.valueID()).hasLeftLoop();
+    FormAtPlace named = context.block() && (generator().isInLoop(context.block()) || hasLeftLoop) ? namedInLoops : namedOutsideLoops;
+    m_out.noteFormOf(comparisonsWithLiteral, named.form, StateOfKnowledge::Always, named.place);
+    return named.form == Form::Open;
+}
+
+void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, std::optional<Word32> lengthOfSubject)
+{
+    branchOnEqualsLiteral(context, operand, subject, literal, textOf(literal), targets, flatSubject, everyCellIsString, lengthOfSubject);
+}
+
+void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, const String& text, BranchTargets targets, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, std::optional<Word32> lengthOfSubject)
+{
+    RELEASE_ASSERT(!flatSubject || (operand == ComparedOperand::String && flatSubject->cell().value() == subject));
+    bool subjectIsFlat = !!flatSubject;
+    if (text.isEmpty()) {
+        m_out.noteFormOf(comparisonsWithLiteral, Form::Open, StateOfKnowledge::EmptyLiteral);
+        branch(equal(Boxed(subject), boxCell(emptyString())), targets);
         return;
     }
-    bool asksForLengthInPlace = text.isEmpty() && context.shape() == CodeShape::Fast;
-    if (!asksForLengthInPlace && !comparesLiteralInPlace(context, text)) {
-        branchOnEqualsLiteralByStub(context, operand, subject, literal, targets);
+    if (lengthOfSubject) {
+        continueIf(equal(*lengthOfSubject, text.length()), targets.notTaken);
+        if (operand == ComparedOperand::Value) {
+            subject = unboxCell(Boxed(subject)).value();
+            operand = ComparedOperand::String;
+        }
+    }
+    StateOfKnowledge known = subjectIsFlat ? StateOfKnowledge::FlatSubject : lengthOfSubject ? StateOfKnowledge::LengthOfSubject : StateOfKnowledge::Always;
+    if (!comparesLiteralInPlace(text)) {
+        m_out.noteFormOf(comparisonsWithLiteral, Form::Closed, StateOfKnowledge::LiteralComparedByStub);
+        branchOnEqualsLiteralByStub(context, operand, subject, literal, text, targets);
         return;
     }
 
-    build().statistics().count(StatisticID::StringLiteralsComparedInPlace);
     CellPointer string(subject);
-    if (operand == ComparedOperand::Value) {
-        Boxed boxed(subject);
-        continueIf(isCell(boxed), targets.notTaken);
-        string = unboxCell(boxed);
-        if (!everyCellIsString)
+    if (known == StateOfKnowledge::Always) {
+        if (!readsCharactersInLine(context)) {
+            branchOnEqualsLiteralByStub(context, operand, subject, literal, text, targets);
+            return;
+        }
+        bool isString = operand == ComparedOperand::String || everyCellIsString;
+        if (operand == ComparedOperand::Value) {
+            Boxed boxed(subject);
+            continueIf(isCell(boxed), targets.notTaken);
+            string = unboxCell(boxed);
+        }
+        if (!isString)
             continueIf(hasCellType(string, StringType), targets.notTaken);
-    }
-    if (asksForLengthInPlace) {
-        branch(isZero(lengthOf(string)), targets);
-        return;
+    } else {
+        m_out.noteFormOf(comparisonsWithLiteral, Form::Open, known);
+        makeCellsHoldAtomOf(literal, text);
     }
 
-    // A rope of the same length and a 16-bit string without a unit above 0xFF may equal the text: the stub answers for them without flattening.
-    // What nobody has read yet is read where it is asked for, so that it becomes the memory operand of the compare that uses it.
     LBasicBlock slow = newBlock();
     auto openedString = subjectIsFlat ? m_openedStrings.find(string.value()) : m_openedStrings.end();
     const CharacterSource* source = openedString != m_openedStrings.end() ? &openedString->value.source : nullptr;
-    Pointer impl = source ? openedString->value.impl : subjectIsFlat ? implOfFlatString(string) : loadField<Pointer>(string, m_heaps.JSString_value);
+    Pointer impl = source ? openedString->value.impl : flatSubject ? implOfFlatString(*flatSubject) : loadField<Pointer>(string, m_heaps.JSString_value);
     if (!subjectIsFlat)
         continueIf(hasNoBits(impl, JSString::isRopeInPointer), unlikelyEdge(slow));
-    continueIf(equal(source ? source->length : loadField<Word32>(impl, m_heaps.StringImpl_length), word32(text.length())), targets.notTaken);
-    continueIf(hasBits(source ? source->implFlags : flagsInImpl(impl, subjectIsFlat), StringImpl::flagIs8Bit()), unlikelyEdge(slow));
+    if (!lengthOfSubject)
+        continueIf(equal(source ? source->length : loadField<Word32>(impl, m_heaps.StringImpl_length), text.length()), targets.notTaken);
+    continueIf(hasBits(source ? source->implFlags : flagsInImpl(impl), StringImpl::flagIs8Bit()), unlikelyEdge(slow));
     Pointer characters = source ? source->characters : loadField<Pointer>(impl, m_heaps.StringImpl_data);
     branchOnBytesAt(characters, asBytes(text.span8()), m_heaps.characters8.atAnyIndex(), string, targets);
 
     m_out.appendTo(slow);
-    branchOnEqualsLiteralByStub(context, ComparedOperand::String, string.value(), literal, targets);
+    branchOnEqualsLiteralByStub(context, ComparedOperand::String, string.value(), literal, text, targets);
 }
 
-Condition StringEmitter::equalsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, bool subjectIsFlat, bool everyCellIsString)
+Condition StringEmitter::equalsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, std::optional<Word32> lengthOfSubject)
 {
     String text = textOf(literal);
-    if (text.isEmpty() && operand == ComparedOperand::String)
-        return isZero(lengthOf(CellPointer(subject)));
-    if (fitsInRegister(text) || comparesLiteralInPlace(context, text)) {
+    if (text.isEmpty()) {
+        m_out.noteFormOf(comparisonsWithLiteral, Form::Open, StateOfKnowledge::EmptyLiteral);
+        return equal(Boxed(subject), boxCell(emptyString()));
+    }
+    if (lengthOfSubject || comparedTextFitsInRegister(text) || comparesLiteralInPlace(text)) {
         return asBoolean([&](BranchTargets targets) {
-            branchOnEqualsLiteral(context, operand, subject, literal, targets, subjectIsFlat, everyCellIsString);
+            branchOnEqualsLiteral(context, operand, subject, literal, text, targets, flatSubject, everyCellIsString, lengthOfSubject);
         });
     }
-    return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .immediate = literal.index() }).first));
+    m_out.noteFormOf(comparisonsWithLiteral, Form::Closed, StateOfKnowledge::LiteralComparedByStub);
+    return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand, text.length()), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first));
 }
 
-void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOperand operand, LValue subject, bool subjectIsFlat, bool everyCellIsString)
+void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOperand operand, LValue subject, std::optional<FlatStringCell> flatSubject, bool everyCellIsString)
 {
+    std::optional<Word32> lengthOfSubject;
+    if (ValueID length = value->lengthOperand())
+        lengthOfSubject = word32Of(length);
     if (value.isBranchCondition()) {
-        branchOnEqualsLiteral(value, operand, subject, value->literal(), value.branchTargets(), subjectIsFlat, everyCellIsString);
+        branchOnEqualsLiteral(value, operand, subject, value->literal(), value.branchTargets(), flatSubject, everyCellIsString, lengthOfSubject);
         return;
     }
-    define(value, equalsLiteral(value, operand, subject, value->literal(), subjectIsFlat, everyCellIsString));
+    define(value, equalsLiteral(value, operand, subject, value->literal(), flatSubject, everyCellIsString, lengthOfSubject));
 }
 
 void StringEmitter::generateStringEqualsLiteral(const ValueContext& value)
 {
     ValueID string = value->stringOperand();
-    generateEqualsLiteral(value, ComparedOperand::String, in<CellPointer>(string).value(), typeOf(string).isOpaque(OpaqueKind::FlatString));
+    std::optional<FlatStringCell> flat;
+    if (ValueID flatString = value->flatOperand())
+        flat = flatStringByType(flatString);
+    generateEqualsLiteral(value, ComparedOperand::String, (flat ? flat->cell() : in<CellPointer>(string)).value(), flat);
 }
 
 void StringEmitter::generateValueEqualsLiteral(const ValueContext& value)
 {
     const Type& type = typeOf(value->valueOperand());
     bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
-    generateEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(value->valueOperand()).value(), false, everyCellIsString);
+    generateEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(value->valueOperand()).value(), std::nullopt, everyCellIsString);
 }
 
-void StringEmitter::generateValueLooselyEqualsLiteral(const ValueContext& value)
-{
-    // The stub answers false for every number, boolean and BigInt without converting the text.
-    RELEASE_ASSERT(std::isnan(jsToNumber(textOf(value->literal()))));
-    Boxed subject = in<Boxed>(value->valueOperand());
-    defineTest(value, Condition(m_out.castToInt32(callStub(value, looseEqualsLiteral(), { subject.value() }, { .immediate = value->literal().index() }).first)));
-}
-
-bool StringEmitter::canCompareInline(StringID literal) const
-{
-    return textOf(literal).length() <= m_generator.build().limit(LimitID::MaxInlineStringCompareLength);
-}
-
-// Each piece is loaded in the block of the branch on it: B3 makes a load the memory operand of a compare only within one block.
-void StringEmitter::branchOnBytesAt(Pointer address, std::span<const uint8_t> bytes, const B3::AbstractHeap& heap, CellPointer owner, BranchTargets targets)
+void StringEmitter::branchOnBytesAt(Pointer address, std::span<const uint8_t> bytes, const Machine::AbstractHeap& heap, CellPointer owner, BranchTargets targets)
 {
     RELEASE_ASSERT(!bytes.empty());
     struct Piece {
@@ -239,7 +284,6 @@ void StringEmitter::branchOnBytesAt(Pointer address, std::span<const uint8_t> by
         for (unsigned i = 0; i < piece.width; ++i)
             expected |= static_cast<uint64_t>(bytes[piece.offset + i]) << (8 * i);
         LValue loaded = loadBytes(m_out, piece.width, m_out.address(heap, address.value(), piece.offset));
-        loaded->as<B3::MemoryValue>()->setReadsMutability(B3::Mutability::Immutable);
         Condition isSame = piece.width == 8 ? equal(Integer(loaded), integer(static_cast<int64_t>(expected))) : equal(Word32(loaded), word32(static_cast<int32_t>(expected)));
         if (!--remainingPieces) {
             ensureStillAliveHere(owner);
@@ -250,30 +294,27 @@ void StringEmitter::branchOnBytesAt(Pointer address, std::span<const uint8_t> by
     }
 }
 
-Condition StringEmitter::hasTextAt(const CharacterView& view, Word32 offset, StringID literal)
+bool StringEmitter::canCompareInline(StringID literal) const
 {
-    return asBoolean([&](BranchTargets targets) {
-        branchOnTextAt(view, offset, literal, targets);
-    });
+    return textOf(literal).length() <= maxLengthComparedInPlace;
 }
 
 void StringEmitter::branchOnTextAt(const CharacterView& view, Word32 offset, StringID literal, BranchTargets targets)
 {
-    RELEASE_ASSERT(canCompareInline(literal));
     String text = textOf(literal);
+    RELEASE_ASSERT(canCompareInline(text));
     if (text.isEmpty()) {
-        m_out.jump(targets.taken.block());
+        m_out.jump(targets.taken);
         return;
     }
 
     auto compare = [&](bool is8Bit) {
         if (!is8Bit) {
-            branchOnBytesAt(offsetBy(view.characters, zeroExtended(offset), 1), bytesInWideString(text).span(), m_heaps.characters16.atAnyIndex(), view.owner, targets);
+            branchOnBytesAt(offsetBy(view.characters, zeroExtended(offset), 1), bytesOfTextInWideString(text).span(), m_heaps.characters16.atAnyIndex(), view.owner, targets);
             return;
         }
-        // A text with a unit above 0xFF equals no 8-bit string.
         if (!text.is8Bit()) {
-            m_out.jump(targets.notTaken.block());
+            m_out.jump(targets.notTaken);
             return;
         }
         branchOnBytesAt(offsetBy(view.characters, zeroExtended(offset), 0), asBytes(text.span8()), m_heaps.characters8.atAnyIndex(), view.owner, targets);
@@ -292,22 +333,37 @@ void StringEmitter::branchOnTextAt(const CharacterView& view, Word32 offset, Str
     compare(false);
 }
 
+Word32 StringEmitter::find(const CharacterView& subject, const CharacterView& sought, Word32 position, SearchDirection direction)
+{
+    bool isForward = direction == SearchDirection::Forward;
+    Word32 found = selectByWidth<Word32>(subject.is8Bit, [&](bool is8Bit) {
+        RuntimeOperation forward = is8Bit ? RuntimeOperation::StringFind8 : RuntimeOperation::StringFind16;
+        RuntimeOperation backward = is8Bit ? RuntimeOperation::StringReverseFind8 : RuntimeOperation::StringReverseFind16;
+        if (is8Bit && isForward) {
+            LValue operands[] = { subject.characters.value(), subject.length.value(), sought.characters.value(), sought.length.value(), position.value() };
+            return low32(Integer(emitter<RuntimeCallEmitter>().callStubWithoutSite(findText8(), operands).first));
+        }
+        return low32(callLeaf<Integer>(isForward ? forward : backward, { subject.characters, subject.length, sought.characters, sought.length, position }));
+    });
+    ensureStillAliveHere(subject.owner);
+    ensureStillAliveHere(sought.owner);
+    return found;
+}
+
 void StringEmitter::generateEndsLiteral(const ValueContext& value, LiteralEnd end)
 {
-    bool isAtStart = end == LiteralEnd::Start;
-    ValueID string = value->stringOperand();
     StringID literal = value->literal();
     if (!canCompareInline(literal)) {
-        RuntimeOperation operation = isAtStart ? RuntimeOperation::StringStartsWithLiteral : RuntimeOperation::StringEndsWithLiteral;
-        defineTest(value, callOperation<Condition>(value, operation, { in<CellPointer>(string), word32(literal.index()) }));
+        fail(value, InternalErrorKind::PayloadOutOfRange);
+        defineTest(value, boolean(false));
         return;
     }
 
-    CharacterView view = viewOf(value, string);
+    CharacterView view = viewOf(value, value->stringOperand());
     Word32 length = word32(textOf(literal).length());
     defineTestByBranching(value, [&](BranchTargets targets) {
         continueIf(aboveOrEqual(view.length, length), targets.notTaken);
-        branchOnTextAt(view, isAtStart ? word32(0) : sub(view.length, length), literal, targets);
+        branchOnTextAt(view, end == LiteralEnd::Start ? word32(0) : sub(view.length, length), literal, targets);
     });
 }
 
@@ -322,9 +378,8 @@ Word32 StringEmitter::findCodeUnit(const CharacterView& subject, Word32 codeUnit
             return search(isForward ? RuntimeOperation::StringFindCharacter16 : RuntimeOperation::StringReverseFindCharacter16);
         if (!isForward)
             return search(RuntimeOperation::StringReverseFindCharacter8);
-        if (codeUnit.value()->hasInt32() && static_cast<uint32_t>(codeUnit.value()->asInt32()) > 0xFF)
+        if (codeUnit.value()->hasInt() && static_cast<uint64_t>(codeUnit.value()->asInt()) > 0xFF)
             return word32(-1);
-        // The stub walks a short string itself and hands a long one to the leaf. Like the leaf it reads 32 bits of all but the first operand.
         LValue operands[] = { subject.characters.value(), subject.length.value(), codeUnit.value(), position.value() };
         return low32(Integer(emitter<RuntimeCallEmitter>().callStubWithoutSite(findCharacter8(), operands).first));
     });
@@ -332,57 +387,54 @@ Word32 StringEmitter::findCodeUnit(const CharacterView& subject, Word32 codeUnit
     return found;
 }
 
-Word32 StringEmitter::find(const CharacterView& subject, const CharacterView& sought, Word32 position, SearchDirection direction)
-{
-    bool isForward = direction == SearchDirection::Forward;
-    Word32 found = selectByWidth<Word32>(subject.is8Bit, [&](bool is8Bit) {
-        RuntimeOperation forward = is8Bit ? RuntimeOperation::StringFind8 : RuntimeOperation::StringFind16;
-        RuntimeOperation backward = is8Bit ? RuntimeOperation::StringReverseFind8 : RuntimeOperation::StringReverseFind16;
-        return low32(callLeaf<Integer>(isForward ? forward : backward, { subject.characters, subject.length, sought.characters, sought.length, position }));
-    });
-    ensureStillAliveHere(subject.owner);
-    ensureStillAliveHere(sought.owner);
-    return found;
-}
-
 void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirection direction)
 {
     bool isForward = direction == SearchDirection::Forward;
     ValueID string = value->stringOperand();
-    Word32 literal = word32(value->literal().index());
+    StringID literal = value->literal();
+    String text = textOf(literal);
     Word32 position = word32Of(value->positionOperand());
-    // Backward from position 0 the text is found at the start or not at all.
-    if (!isForward && position.value()->hasInt32() && !position.value()->asInt32() && canCompareInline(value->literal())) {
-        CharacterView view = viewOf(value, string);
-        Word32 length = word32(textOf(value->literal()).length());
+    if (isForward && !position.value()->isInt32(0))
+        holdRangeInside(value, position, position);
+    bool readsRange = !!value->startOperand();
+    auto viewOfSubject = [&] {
+        return readsRange ? viewOfRange(value) : viewOf(value, string);
+    };
+    if (!isForward && position.value()->isInt32(0) && canCompareInline(literal)) {
+        CharacterView view = viewOfSubject();
+        Word32 length = word32(text.length());
         Condition isAtStart = asBoolean([&](BranchTargets targets) {
             continueIf(aboveOrEqual(view.length, length), targets.notTaken);
-            branchOnTextAt(view, word32(0), value->literal(), targets);
+            branchOnTextAt(view, word32(0), literal, targets);
         });
-        define(value, select(isAtStart, word32(0), word32(-1)));
+        define(value, select<Word32>(isAtStart, 0, -1));
         return;
     }
+
+    Word32 numberOfText = numberOf(m_mentions.add(NumberSpace::String, literal));
     auto findInCell = [&] {
         RuntimeOperation operation = isForward ? RuntimeOperation::StringIndexOfLiteral : RuntimeOperation::StringLastIndexOfLiteral;
-        return low32(callOperation<Integer>(value, operation, { in<CellPointer>(string), literal, position }));
+        return low32(callOperation<Integer>(value, operation, { in<CellPointer>(string), numberOfText, position }));
     };
-    if (!textOf(value->literal()).is8Bit()) {
+    if (!text.is8Bit()) {
+        RELEASE_ASSERT(!readsRange);
         define(value, findInCell());
         return;
     }
 
-    CharacterView view = viewOf(value, string);
-    if (String text = textOf(value->literal()); !isForward && text.length() == 1) {
-        // A position in front of the string stands for its start, and the leaf finds nothing from there.
-        define(value, findCodeUnit(view, word32(text[0]), select(lessThan(position, word32(0)), word32(0), position), direction));
+    CharacterView view = viewOfSubject();
+    if (!isForward && text.length() == 1) {
+        Word32 codeUnit = word32(text[0]);
+        define(value, findCodeUnit(view, codeUnit, select(lessThan(position, 0), 0, position), direction));
         return;
     }
 
     Word32 found = selectByWidth<Word32>(view.is8Bit, [&](bool is8Bit) {
-        if (!is8Bit)
+        if (!is8Bit && !readsRange)
             return findInCell();
-        RuntimeOperation operation = isForward ? RuntimeOperation::StringFindLiteral8 : RuntimeOperation::StringReverseFindLiteral8;
-        return low32(callWithoutSite<Integer>(operation, { view.characters, view.length, literal, position }));
+        RuntimeOperation operation = isForward ? (is8Bit ? RuntimeOperation::StringFindLiteral8 : RuntimeOperation::StringFindLiteral16)
+            : (is8Bit ? RuntimeOperation::StringReverseFindLiteral8 : RuntimeOperation::StringReverseFindLiteral16);
+        return low32(callWithoutSite<Integer>(operation, { view.characters, view.length, numberOfText, position }));
     });
     ensureStillAliveHere(view.owner);
     define(value, found);
@@ -393,26 +445,32 @@ void StringEmitter::generateStringIndexOfCharacter(const ValueContext& value)
     ValueID string = value->stringOperand();
     Word32 codeUnit = word32(static_cast<int32_t>(value->codeUnit()));
     Word32 position = word32Of(value->positionOperand());
+    if (!position.value()->isInt32(0))
+        holdRangeInside(value, position, position);
+    if (value->startOperand()) {
+        define(value, findCodeUnit(viewOfRange(value), codeUnit, position, SearchDirection::Forward));
+        return;
+    }
     if (typeOf(string).isOpaque(OpaqueKind::FlatString)) {
         define(value, findCodeUnit(viewOf(value, string), codeUnit, position, SearchDirection::Forward));
         return;
     }
 
     CellPointer cell = in<CellPointer>(string);
-    LBasicBlock flat = newBlock();
     LBasicBlock rope = newBlock();
     Join<Word32> join(m_out);
-    m_out.branch(isRopeString(cell).value(), unlikelyEdge(rope), normalEdge(flat));
+    ScopeFork fork = m_out.forkScope();
+    join.add(findCodeUnit(viewWithoutResolving(value, cell, unlikelyEdge(rope)), codeUnit, position, SearchDirection::Forward));
 
-    m_out.appendTo(flat);
-    join.add(findCodeUnit(viewOfFlatString(cell), codeUnit, position, SearchDirection::Forward));
-
-    // The operation searches a long rope without flattening it.
     m_out.appendTo(rope);
     join.add(low32(callOperation<Integer>(value, RuntimeOperation::StringIndexOfCharacter, { cell, codeUnit, position })));
-    define(value, join.finish());
+    define(value, join.finishBehind(fork));
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

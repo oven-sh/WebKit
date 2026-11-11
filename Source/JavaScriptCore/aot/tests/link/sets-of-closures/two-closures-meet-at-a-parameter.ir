@@ -1,0 +1,47 @@
+# If nothing said who the two closures are that meet at a place, a call of what lies there could be nothing but a call of an unknown function. The call is a caller of each of the two: what it passes arrives at the parameters of both, so every caller of both is known. Neither may take what a walk has left at a call for all that arrives: the call has two callees.
+# If the set were a proof, every place that it reaches would have to check it, and a wrong set would stop a right program: it is what held() expects, and linked() proves a function.
+# function take(f) { return f(1); }  take(first);  take(second);
+# RUN(HELD): link held functions mechanisms=all
+# HELD: function f1
+# HELD-NEXT: parameter 0 {{*}}proven=f2|f3
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK-NEXT: parameter 0 {{*}}proven=function
+# CHECK: function f2 callers-known
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]
+# CHECK: function f3 callers-known
+# CHECK-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]
+# RUN(NEVER): link functions calls mechanisms=all
+# NEVER-NOT: function f2 callers-known one-callee
+# NEVER-NOT: function f3 callers-known one-callee
+# NEVER-NOT: call f1
+# Outside of a loop nothing tests for several closures at once: the tests and the arms would cost more than the call by value.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-NOT: testedType=f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v0, -, v1 calleeName="take"
+    v4 = Call v0, -, v2 calleeName="take"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1 calleeName="f"
+    Return v2
+}
+function f2 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -131,6 +131,7 @@
 		5CABDBE92735C9BD00B88BCB /* UnifiedSource8-nonARC.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5CABDBBC2735C9BD00B88BCB /* UnifiedSource8-nonARC.mm */; };
 		5CABDBEA2735C9BD00B88BCB /* UnifiedSource37-nonARC.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5CABDBBD2735C9BD00B88BCB /* UnifiedSource37-nonARC.mm */; };
 		5CABDBEB2735C9BD00B88BCB /* UnifiedSource32-nonARC.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5CABDBBE2735C9BD00B88BCB /* UnifiedSource32-nonARC.mm */; };
+		7A1C4E2F2E8B9D0100A1B2D1 /* QuirkTable.json in Copy Resources */ = {isa = PBXBuildFile; fileRef = 7A1C4E2F2E8B9D0100A1B2D0 /* QuirkTable.json */; };
 		7B6FF89728C22D9400CA76B0 /* WebKit.framework in Product Dependencies */ = {isa = PBXBuildFile; fileRef = 2B648DBA28C1C1F700791F2B /* WebKit.framework */; };
 		7B9FC3AA28A26137007570E7 /* libicucore.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C83E0331D0A5F2700FEBCF3 /* libicucore.dylib */; };
 		7B9FC3AD28A26137007570E7 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 574F55D0204D471C002948C6 /* Security.framework */; };
@@ -155,7 +156,6 @@
 		A1B8D76A2D67CD830045C305 /* InjectedBundleTestWebKitAPI.bundle in Copy Resources */ = {isa = PBXBuildFile; fileRef = BC575980126E74AF006F0F12 /* InjectedBundleTestWebKitAPI.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A1B8D76B2D67CD9B0045C305 /* TestWebKitAPIPlugIn.wkbundle in Copy Resources */ = {isa = PBXBuildFile; fileRef = A13EBB491B87339E00097110 /* TestWebKitAPIPlugIn.wkbundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A1B8D76C2D67CDA20045C305 /* TestWebKitAPIResources.bundle in Copy Resources */ = {isa = PBXBuildFile; fileRef = A17C46462C98E3430023F3C7 /* TestWebKitAPIResources.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		7A1C4E2F2E8B9D0100A1B2D1 /* QuirkTable.json in Copy Resources */ = {isa = PBXBuildFile; fileRef = 7A1C4E2F2E8B9D0100A1B2D0 /* QuirkTable.json */; };
 		BC575A97126E74F1006F0F12 /* InjectedBundleMain.cpp in Sources */ = {isa = PBXBuildFile; fileRef = BC575946126E7351006F0F12 /* InjectedBundleMain.cpp */; };
 		BC575AA2126E7660006F0F12 /* InjectedBundleController.cpp in Sources */ = {isa = PBXBuildFile; fileRef = BC575AA0126E7657006F0F12 /* InjectedBundleController.cpp */; };
 		CC1FEED000000000000FF002 /* WebFoundTextRange.cpp in Sources */ = {isa = PBXBuildFile; fileRef = CC1FEED000000000000FF001 /* WebFoundTextRange.cpp */; };
@@ -505,6 +505,7 @@
 		634910DF1E9D3FF300880309 /* CoreLocation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreLocation.framework; path = System/Library/Frameworks/CoreLocation.framework; sourceTree = SDKROOT; };
 		7A010BCA1D877C0500EDE72A /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
 		7A010BCC1D877C0D00EDE72A /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		7A1C4E2F2E8B9D0100A1B2D0 /* QuirkTable.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = QuirkTable.json; path = ../../Source/WebCore/page/QuirkTable.json; sourceTree = SOURCE_ROOT; };
 		7B9FC57E28A26137007570E7 /* TestIPC */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = TestIPC; sourceTree = BUILT_PRODUCTS_DIR; };
 		7B9FC5A928A38F2E007570E7 /* libWebKitIPC.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libWebKitIPC.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		7B9FC5B028A5221B007570E7 /* CryptoTokenKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CryptoTokenKit.framework; path = System/Library/Frameworks/CryptoTokenKit.framework; sourceTree = SDKROOT; };
@@ -543,7 +544,6 @@
 		C081224813FC1B0300DC39AE /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = WebKit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C20F88A62295B96700D610FA /* CoreText.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreText.framework; path = System/Library/Frameworks/CoreText.framework; sourceTree = SDKROOT; };
 		CC1FEED000000000000FF001 /* WebFoundTextRange.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = WebFoundTextRange.cpp; path = ../../Source/WebKit/Shared/WebFoundTextRange.cpp; sourceTree = SOURCE_ROOT; };
-		7A1C4E2F2E8B9D0100A1B2D0 /* QuirkTable.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = QuirkTable.json; path = ../../Source/WebCore/page/QuirkTable.json; sourceTree = SOURCE_ROOT; };
 		CDA3159C1ED5643F009F60D3 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
 		DD403D4928EB932F009B4684 /* libbmalloc.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libbmalloc.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		DD5697FF2DC1320500050321 /* rdar150228472.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rdar150228472.swift; sourceTree = "<group>"; };
@@ -570,6 +570,7 @@
 		07AA27602F83C3A900FE10FC /* Exceptions for "Tests" folder in "TestWebKitAPI" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				WebCore/cocoa/WebAVPlayerLayerTests.mm,
 				"WebKit/WebPage/AppKit Gesture Tests/AppKitGesturesTestsSupport.swift",
 				"WebKit/WebPage/AppKit Gesture Tests/BasicAppKitGesturesTests.swift",
 				"WebKit/WebPage/AppKit Gesture Tests/DoubleClickGesturesTests.swift",
@@ -594,22 +595,40 @@
 				WebKit/WebPage/WebPageScrollbarTests.swift,
 				WebKit/WebPage/WebPageTests.swift,
 				WebKit/WebPage/WebPageTransferableTests.swift,
+				WebKit/WebPage/WebViewInspectorAttachmentTests.swift,
 				WebKit/WebPage/WebViewTests.swift,
 				WebKit/WKWebView/CodingTests.swift,
+				WebKit/WKWebView/ContentAutoSizing.swift,
 				WebKit/WKWebView/HTTP2Server.swift,
 				WebKit/WKWebView/HTTP3Server.swift,
+				WebKit/WKWebView/PDFLookUpTests.swift,
+				WebKit/WKWebView/ProcessSwapStaleNavigationTests.swift,
+				WebKit/WKWebView/SiteIsolationAnimationControlTests.swift,
+				WebKit/WKWebView/SiteIsolationAutocorrectionTests.swift,
+				WebKit/WKWebView/SiteIsolationBackForwardTests.swift,
+				WebKit/WKWebView/SiteIsolationBrowsingContextGroupTests.swift,
+				WebKit/WKWebView/SiteIsolationContentsOfAllFramesTests.swift,
 				WebKit/WKWebView/SiteIsolationCookieTests.swift,
 				WebKit/WKWebView/SiteIsolationDataDetectionTests.swift,
+				WebKit/WKWebView/SiteIsolationEditableRegionTests.swift,
 				WebKit/WKWebView/SiteIsolationEditingTests.swift,
 				WebKit/WKWebView/SiteIsolationFullscreenTests.swift,
+				WebKit/WKWebView/SiteIsolationLinkIndicatorTests.swift,
 				WebKit/WKWebView/SiteIsolationLookUpTests.swift,
 				WebKit/WKWebView/SiteIsolationNavigationTests.swift,
+				WebKit/WKWebView/SiteIsolationProvisionalPageTests.swift,
 				WebKit/WKWebView/SiteIsolationServiceWorkerTests.swift,
 				WebKit/WKWebView/SiteIsolationSessionStateTests.swift,
+				WebKit/WKWebView/SiteIsolationSnapshotTests.swift,
+				WebKit/WKWebView/SiteIsolationTextExtractionTests.swift,
+				WebKit/WKWebView/SiteIsolationTextFragmentTests.swift,
+				WebKit/WKWebView/SiteIsolationTextPreviewTests.swift,
 				WebKit/WKWebView/SiteIsolationUIDelegateTests.swift,
 				WebKit/WKWebView/SiteIsolationUserAgentTests.swift,
+				WebKit/WKWebView/SiteIsolationWebExtensionTests.swift,
 				WebKit/WKWebView/TextExtractionTests.swift,
 				WebKit/WKWebView/TextFragments.swift,
+				WebKit/WKWebView/TextManipulation.swift,
 				WebKit/WKWebView/TextPlaceholderTests.swift,
 				WebKit/WKWebView/TextSize.swift,
 				WebKit/WKWebView/TextWidth.swift,
@@ -668,6 +687,7 @@
 				cocoa/JavaScriptTypes.swift,
 				cocoa/MiniTURNServer.mm,
 				cocoa/PDFTestHelpers.swift,
+				cocoa/ProcessSwapTestUtilities.swift,
 				cocoa/SafeBrowsingTestUtilities.swift,
 				cocoa/SiteIsolationTestUtilities.swift,
 				cocoa/StdLibExtras.swift,
@@ -765,9 +785,6 @@
 		};
 		07C913DA2F820CCA003A09D8 /* Exceptions for "Tests" folder in "TestWebKitAPILibrary" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			additionalCompilerFlagsByRelativePath = {
-				WebKit/WKWebView/WKWebExtensionAPILocalization.mm = "-fobjc-arc";
-			};
 			membershipExceptions = (
 				JavaScriptCore/DisallowVMEntry.cpp,
 				JavaScriptCore/InspectorConsoleMessage.cpp,
@@ -775,6 +792,7 @@
 				JavaScriptCore/MarkedVector.cpp,
 				JavaScriptCore/PropertySlot.cpp,
 				JavaScriptCore/StrongBlock.cpp,
+				JavaScriptCore/WeakSet.cpp,
 				Misc/TestRunnerTests.cpp,
 				TestWebKitAPIAdditionsHook.mm,
 				WebCore/AffineTransform.cpp,
@@ -808,6 +826,7 @@
 				WebCore/cocoa/ISOBMFFTrackInfoParserTests.cpp,
 				WebCore/cocoa/MediaPlayerPrivateAVFoundationObjCTests.mm,
 				WebCore/cocoa/MediaRecorderPrivateWriterTests.cpp,
+				WebCore/cocoa/MediaSamplesDecoderTests.mm,
 				WebCore/cocoa/PaymentSummaryItemsCocoa.mm,
 				WebCore/cocoa/PlatformScreenTests.mm,
 				WebCore/cocoa/PrivateClickMeasurementCocoa.mm,
@@ -843,6 +862,7 @@
 				WebCore/DigitalCredentialsRequestDataBuilder.cpp,
 				WebCore/DisplayListRecorderTests.cpp,
 				WebCore/DisplayRefreshMonitorManager.cpp,
+				WebCore/DocumentCheckedPtr.cpp,
 				WebCore/DocumentOrder.cpp,
 				WebCore/FidoHidMessageTest.cpp,
 				WebCore/FileMonitor.cpp,
@@ -883,6 +903,7 @@
 				WebCore/MediaConstraintsTests.cpp,
 				WebCore/MediaQueryListCapacity.cpp,
 				WebCore/MediaReorderQueue.cpp,
+				WebCore/MeshGradientRendererTests.cpp,
 				WebCore/MIMESniffer.cpp,
 				WebCore/MIMETypeRegistry.cpp,
 				WebCore/MixedContentChecker.cpp,
@@ -902,6 +923,7 @@
 				WebCore/PublicSuffix.cpp,
 				WebCore/PushDatabase.cpp,
 				WebCore/PushMessageCrypto.cpp,
+				WebCore/PushPullFIFOTest.cpp,
 				WebCore/QuirkMatchPattern.cpp,
 				WebCore/Quirks.cpp,
 				WebCore/RegionTests.cpp,
@@ -927,6 +949,7 @@
 				WebCore/TextIterator.cpp,
 				WebCore/TextMeasurementCache.cpp,
 				WebCore/TimeRanges.cpp,
+				WebCore/TrackPrivateChangedCallbacks.cpp,
 				WebCore/TransformationMatrix.cpp,
 				WebCore/U2fCommandConstructorTest.cpp,
 				WebCore/URLParserTextEncoding.cpp,
@@ -1123,6 +1146,7 @@
 				WebKit/WKWebView/mac/ContextMenuMouseEvents.mm,
 				WebKit/WKWebView/mac/ContextMenuTests.mm,
 				WebKit/WKWebView/mac/CrossPartitionFileSchemeAccess.mm,
+				WebKit/WKWebView/mac/DataListTests.mm,
 				WebKit/WKWebView/mac/DateInputTests.mm,
 				WebKit/WKWebView/mac/DeviceScaleFactorOnBack.mm,
 				WebKit/WKWebView/mac/DisableAutomaticSpellingCorrection.mm,
@@ -1200,6 +1224,7 @@
 				WebKit/WKWebView/mac/WillPerformClientRedirectToURLCrash.mm,
 				WebKit/WKWebView/mac/WillSendSubmitEvent.mm,
 				WebKit/WKWebView/mac/WindowlessWebViewWithMedia.mm,
+				WebKit/WKWebView/mac/WKInspectorAttachment.mm,
 				WebKit/WKWebView/mac/WKWebViewCoders.mm,
 				WebKit/WKWebView/mac/WKWebViewMacEditingTests.mm,
 				WebKit/WKWebView/mac/WKWebViewMagnification.mm,
@@ -1246,6 +1271,7 @@
 				WebKitLegacy/mac/PreventImageLoadWithAutoResizing.mm,
 				WebKitLegacy/mac/URLExtras.mm,
 				WebKitLegacy/mac/UserContentTest.mm,
+				WebKitLegacy/mac/WindowScriptObjectReentrancy.mm,
 				WebKitLegacy/mac/WKBrowsingContextLoadDelegateTest.mm,
 			);
 			target = 7CCE7E8B1A41144E00447C4C /* TestWebKitAPILibrary */;
@@ -1290,6 +1316,7 @@
 				WTF/cocoa/RetainPtrHashingCocoaARC.mm,
 				WTF/cocoa/RetainRef.mm,
 				WTF/cocoa/RetainRefARC.mm,
+				WTF/cocoa/RunLoopCocoa.mm,
 				WTF/cocoa/TextStreamCocoa.cpp,
 				WTF/cocoa/TextStreamCocoa.mm,
 				WTF/cocoa/TypeCastsCocoa.mm,
@@ -1323,6 +1350,7 @@
 				WTF/EnumSet.cpp,
 				WTF/EnumTraits.cpp,
 				WTF/EscapableByteSpan.cpp,
+				WTF/FastFloat.cpp,
 				WTF/FileSystem.cpp,
 				WTF/FixedBitVector.cpp,
 				WTF/FixedVector.cpp,
@@ -1333,6 +1361,7 @@
 				WTF/Hasher.cpp,
 				WTF/HashMap.cpp,
 				WTF/HashSet.cpp,
+				WTF/HashTable.cpp,
 				WTF/HexNumber.cpp,
 				WTF/IndexSparseSet.cpp,
 				WTF/InlineMap.cpp,
@@ -1351,6 +1380,7 @@
 				WTF/ListHashSet.cpp,
 				WTF/Lock.cpp,
 				WTF/Logger.cpp,
+				WTF/LoggingHashMap.cpp,
 				WTF/Markable.cpp,
 				WTF/MathExtras.cpp,
 				WTF/MediaTime.cpp,
@@ -1360,6 +1390,7 @@
 				WTF/NakedPtr.cpp,
 				WTF/NativePromise.cpp,
 				WTF/NeverDestroyed.cpp,
+				WTF/NonEscapableBorrow.cpp,
 				WTF/Observer.cpp,
 				WTF/OptionCountedSet.cpp,
 				WTF/OptionSet.cpp,
@@ -1448,6 +1479,7 @@
 				IPC/IPCEventTests.cpp,
 				IPC/IPCSerialization.mm,
 				IPC/IPCTestUtilities.cpp,
+				IPC/MachMessageTests.cpp,
 				IPC/MessageLogEndToEndTests.cpp,
 				IPC/MessageLogTests.cpp,
 				IPC/MessageSenderTests.cpp,
@@ -1489,8 +1521,10 @@
 				WebKit/WebPage/WebPageScrollbarTests.swift,
 				WebKit/WebPage/WebPageTests.swift,
 				WebKit/WebPage/WebPageTransferableTests.swift,
+				WebKit/WebPage/WebViewInspectorAttachmentTests.swift,
 				WebKit/WebPage/WebViewTests.swift,
 				WebKit/WKWebView/CodingTests.swift,
+				WebKit/WKWebView/ContentAutoSizing.swift,
 				WebKit/WKWebView/WKWebViewSwiftOverlayTests.swift,
 			);
 			target = A17C582D2C9B3EAD009DD0B5 /* TestWebKitAPIBundle */;
@@ -1506,6 +1540,7 @@
 				WGSL/ParserTests.cpp,
 				WGSL/TestWGSLAPI.cpp,
 				WGSL/TypeCheckingTests.mm,
+				WebGPU/UncapturedErrorCallbackTests.cpp,
 			);
 			target = 3A15783C28D1505B00142DB1 /* TestWGSL */;
 		};
@@ -1567,7 +1602,6 @@
 				WebKit/WKWebView/BundleRetainPagePlugIn.mm,
 				WebKit/WKWebView/CancelFontSubresourcePlugIn.mm,
 				WebKit/WKWebView/ClearWrappersNavigatePlugIn.mm,
-				WebKit/WKWebView/ClickAutoFillButton.mm,
 				WebKit/WKWebView/ContentFilteringPlugIn.mm,
 				WebKit/WKWebView/ContentWorldPlugIn.mm,
 				WebKit/WKWebView/GetComputedStyleAfterIframeRemovalPlugIn.mm,
@@ -2478,10 +2512,9 @@
 				"# parent module's location, so the _Testing_* overlays must live next to the dittoed",
 				"# Testing.framework, not just in PLATFORM_DIR.",
 				"",
-				"# Prefer copy from SDKROOT over PLATFORM_DIR if it's present",
 				"frameworks_dir=\"${PLATFORM_DIR}/Developer/Library/Frameworks\"",
 				"libraries_dir=\"${PLATFORM_DIR}/Developer/usr/lib\"",
-				"if [ \"$(basename \"${TOOLCHAIN_DIR}\")\" != XcodeDefault.xctoolchain ] && [ -d \"${SDKROOT}/AppleInternal/Developer/Library/Frameworks/Testing.framework\" ]; then",
+				"if [ \"${TEST_BUILD_STYLE}\" = _APPLEINTERNAL ]; then",
 				"    frameworks_dir=\"${SDKROOT}/AppleInternal/Developer/Library/Frameworks\"",
 				"    libraries_dir=\"${SDKROOT}/AppleInternal/Developer/usr/lib\"",
 				"fi",

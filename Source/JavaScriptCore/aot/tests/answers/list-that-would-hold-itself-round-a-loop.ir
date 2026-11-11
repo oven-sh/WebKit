@@ -1,0 +1,51 @@
+# type Box = { list: number[] }
+# function nest(depth: number) { let b = [1.5]; for (let i = 0; i < depth; i++) b = [b]; const box: Box = { list: b }; return JSON.stringify(box); }
+# RUN(ANSWER): run-in-shell
+# ANSWER: {"list":[1.5]}
+# ANSWER: {"list":[{{*}}[1.5]]}
+# ANSWER: {"list":[{{*}}[{{*}}[{{*}}[1.5]]]]}
+
+layout L0 module=m0 fields=[{key="list" declared={type=undefined|null|Array<undefined|null|number> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}]
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer
+    v2 = Call v0, -, v1 calleeName="nest"
+    v3 = Integer integer=1
+    v4 = Call v0, -, v3 calleeName="nest"
+    v5 = Integer integer=3
+    v6 = Call v0, -, v5 calleeName="nest"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="console" [isFreeName]
+    v9 = PropGet v8 key="log"
+    v10 = Call v9, v8, v2 calleeKey="log" calleeName="console.log"
+    v11 = Call v9, v8, v4 calleeKey="log" calleeName="console.log"
+    v12 = Call v9, v8, v6 calleeKey="log" calleeName="console.log"
+    v13 = Undefined
+    Return v13
+}
+function f1 name="nest" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Double number=1.5
+    v2 = NewArray v1 contents=anything
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = NewArray v4 contents=anything
+    v9 = Increment v5
+    Jump -> next b1(v8, v9)
+  b3():
+    v10 = NewObject -, v4 layout=L0 fields=[0]
+    v11 = FinishObject v10
+    v12 = Builtin builtin=JSON
+    v13 = PropGet v12 key="stringify"
+    v14 = Convert v13 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v15 = Call v14, v12, v11 calleeKey="stringify" calleeName="JSON.stringify"
+    Return v15
+}

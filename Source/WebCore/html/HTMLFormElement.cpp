@@ -143,6 +143,9 @@ Node::NeedsPostConnectionSteps HTMLFormElement::insertionSteps(InsertionType ins
 void HTMLFormElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
     Ref root = traverseToRootNode(); // Do not rely on rootNode() because our IsInTreeScope is outdated.
+
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
+
     auto listedElements = copyListedElementsVector();
     for (auto& listedElement : listedElements)
         listedElement->formOwnerRemovedFromTree(root);
@@ -151,7 +154,6 @@ void HTMLFormElement::removingSteps(RemovalType removalType, ContainerNode& oldP
     });
     for (auto& imageElement : imageElements)
         imageElement->formOwnerRemovedFromTree(root);
-    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
     if (removalType.disconnectedFromDocument)
       m_controlsCollection = nullptr; // Avoid leaks since HTMLCollection has a back Ref to this element.
 }
@@ -971,8 +973,7 @@ Vector<Ref<ValidatedFormListedElement>> HTMLFormElement::copyValidatedListedElem
 
 HTMLFormElement* HTMLFormElement::findClosestFormAncestor(const Element& startElement)
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<HTMLFormElement*>(ancestorsOfType<HTMLFormElement>(startElement).first());
+    return const_cast<HTMLFormElement*>(ancestorsOfType<HTMLFormElement>(startElement).first());
 }
 
 const AtomString& HTMLFormElement::autocomplete() const

@@ -169,6 +169,26 @@ auto StackTraceSymbolResolver::demangle(void* pc) -> std::optional<DemangleEntry
     return std::nullopt;
 }
 
+#if HAVE(BACKTRACE_SYMBOLS)
+void StackTraceSymbolResolver::freeSymbols(char** symbols)
+{
+#if USE(BUN_JSC_ADDITIONS) && OS(LINUX)
+    // backtrace_symbols() is code of the C library and allocates with the malloc that the library is bound to. An executable
+    // that defines malloc and free and does not export them (bun does so with mimalloc's, and with AddressSanitizer's) has
+    // a pair of its own. This finds free as the library finds it.
+    if (auto* freeOfLibrary = reinterpret_cast<void (*)(void*)>(dlsym(RTLD_DEFAULT, "free"))) {
+        freeOfLibrary(symbols);
+        return;
+    }
+#endif
+#if USE(BUN_JSC_ADDITIONS) && ASAN_ENABLED
+    UNUSED_PARAM(symbols);
+#else
+    free(symbols);
+#endif
+}
+#endif
+
 void StackTracePrinter::dump(PrintStream& out) const
 {
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

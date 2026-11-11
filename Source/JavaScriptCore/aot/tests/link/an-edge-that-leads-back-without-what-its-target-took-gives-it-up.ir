@@ -1,0 +1,52 @@
+# Two ways lead into the round of b2 and b3: over b1, where `v0 === true` has failed, and from b0 straight into b3. b2 has one forward entry, which carries that v0 is not true; the edge
+# from b3 leads back to it and carries nothing: over it `true` arrives. What b2 took is given up: an edge that lets everything through is laid into the join that its uses read.
+# RUN: summary f1
+# CHECK: edge Parameter 0 -> [[join]]
+# CHECK-NOT: passes=undefined|null|false
+# CHECK: edge [[join]] -> Contents Element of ClassInstance Array
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError, IsImportedAsESModule] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0 place=0
+layout L1 module=m0 place=0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=2
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
+    v5 = Builtin builtin=GlobalThis @59
+    v6 = PropGet v5 key="print" [isFreeName] @59
+    v7 = Boolean boolean=true @70
+    v8 = Call v4, -, v7, v7 calleeName="keep" @65
+    v9 = PropGet v8 key="length" @74
+    v10 = Integer integer=2 @90
+    v11 = Call v4, -, v10, v7 calleeName="keep" @85
+    v12 = PropGet v11 key="length" @91
+    v13 = Add v9, v12 @85
+    v14 = Call v6, -, v13 calleeName="print" @59
+    v15 = Undefined @59
+    Return v15 @59
+}
+function f1 name="keep" module=m0 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v1 @29
+    Branch v2 -> taken b1(), notTaken b3() @29
+  b1():
+    v3 = Boolean boolean=true @29
+    v4 = StrictEq v0, v3 @29
+    Branch v4 -> taken b4(), notTaken b2() @29
+  b2():
+    LoopHint @52
+    v6 = NewArray v0 contents=anything @52
+    PutModuleVariable v6 variable=g0 @52
+    Jump -> next b3() @52
+  b3():
+    v8 = ToBoolean v0 @35
+    Branch v8 -> taken b2(), notTaken b4() @35
+  b4():
+    v9 = NewArray contents=anything @52
+    Return v9 @52
+}

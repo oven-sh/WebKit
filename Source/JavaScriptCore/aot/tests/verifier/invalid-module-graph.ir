@@ -1,8 +1,8 @@
-# a library requests nothing, and a module named by an export or a required name is reached over requests, directly or not
-# FORM: AsRead
+# a library requests nothing, and a module named by an export or a required name is reached over requests, directly or not, and so is the module of a variable that an export shows
 # RUN: verify
-# DIAGNOSTIC: InvalidModule 4
+# DIAGNOSTIC: InvalidModule 5
 
+variable g0 name="ofLast" module=m2 declared={type=anything} initialization=Undefined
 module m0 path="main" displayPath="main" requests=[{target=m1 completes=true}]
 module m1 path="middle" displayPath="middle" requests=[{target=m2 completes=true}, {target=m3 completes=true}]
 module m2 path="last" displayPath="last"
@@ -15,4 +15,6 @@ module m8 path="badLibraryWithRequest" displayPath="badLibraryWithRequest" flags
 module m9 path="badNamespaceNotReached" displayPath="badNamespaceNotReached" requests=[{target=m2 completes=true}] exports=[{name="n" kind=Namespace module=m0}]
 module m10 path="badIndirectExportNotReached" displayPath="badIndirectExportNotReached" requests=[{target=m2 completes=true}] exports=[{name="i" kind=Indirect module=m3 importName="x"}]
 module m11 path="badRequiredNameNotReached" displayPath="badRequiredNameNotReached" requiredNames=[{module=m2 name="a"}]
+module m12 path="goodVariableOverTwoRequests" displayPath="goodVariableOverTwoRequests" requests=[{target=m0 completes=true}] exports=[{name="v" variable=g0}]
+module m13 path="badVariableNotReached" displayPath="badVariableNotReached" requests=[{target=m6 completes=true}] exports=[{name="v" variable=g0}]
 entry module=m0

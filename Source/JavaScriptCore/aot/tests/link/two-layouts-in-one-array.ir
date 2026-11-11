@@ -1,0 +1,45 @@
+# If two layouts that meet in an array escaped, as in the first version, every object that is ever put into a list would lose the types of its fields. If the read through the set found the field of one of the two alone, a boolean would be taken for a string
+# const list = [{ x: "a", p: null }, { x: true, q: null }];  function take(e) { return e.x; }  take(list[0]);
+# The two are a set: neither is lost, neither has escaped: every writer of their fields is still known, and each field under the shared name keeps its own type. The read through the set gives the join of the two fields and nothing else: both members have the name. `list[2]` leaves the same summary, so undefined arrives at `take` too.
+# RUN: summary f0
+# CHECK: edge Allocation L0 -> Contents Element of ClassInstance Array #7
+# CHECK: edge Allocation L1 -> Contents Element of ClassInstance Array #7
+# RUN(KEPT): summary f0
+# KEPT-NOT: Allocation L0 -> Unknown
+# KEPT-NOT: Allocation L1 -> Unknown
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f1 callers-known one-callee {{*}}result=true|string
+# LINK-NEXT: parameter 0 {{*}}proven=undefined|L0|L1
+# LINK: field L0.0 "x" proven=string writers-known written-at-construction-alone
+# LINK: field L0.1 "p" proven=null writers-known written-at-construction-alone
+# LINK: field L1.0 "x" proven=true writers-known written-at-construction-alone
+# LINK: field L1.1 "q" proven=null writers-known written-at-construction-alone
+# LINK: layout L0 changes=[]
+# LINK: layout L1 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Null
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v4, v1 layout=L1 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = NewArray v3, v6 contents=anything
+    v8 = Double number=0.5
+    v9 = ElemGet v7, v8
+    v10 = NewClosure function=f1
+    v11 = Call v10, -, v9 calleeName="take"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

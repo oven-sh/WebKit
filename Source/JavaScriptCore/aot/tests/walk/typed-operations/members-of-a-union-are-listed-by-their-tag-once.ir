@@ -1,0 +1,197 @@
+# type Shape = { kind: "circle"; r: number } | { kind: "square"; s: number } | { kind: "dot"; d: number } | { kind: "line"; l: number }: each layout is proven to hold one text under `kind`.
+# The members of the union are listed by that text once for the union and the name (Walker::findMembersByTag()), so no test and no case asks every member: there is no limit on the members.
+# f1 switch (x.kind) { case "circle": return x.r; case "square": return x.s; case "dot": return x.d; default: return x.l; }: a switch over the shape: nothing is read, no text is looked up
+# f2 if (x.kind === "circle") return x.r; if (x.kind === "square") return x.s; if (x.kind === "dot") return x.d; return x.l;: each comparison is a test of the shape
+# f3 the same with a call of unseen code between the tests. A tag is written at birth alone: it is not read again behind the call.
+#    What the last test leaves is one layout: the last read has no test of its own
+# f0 calls each with each object, so nothing is copied into it here: with copies only what is left over arrives at a body
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: SwitchOnShape
+# CHECK: = GetSlot {{*}}key="r" receivers=[L0] level=Proven
+# CHECK: = GetSlot {{*}}key="s" receivers=[L1] level=Proven
+# CHECK: = GetSlot {{*}}key="d" receivers=[L2] level=Proven
+# RUN(ROW): walk f2 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding
+# ROW-LABEL: code f2:Body
+# ROW: = ShapeTest {{*}}layouts=[L0]
+# ROW: = ShapeTest {{*}}layouts=[L1]
+# ROW: = ShapeTest {{*}}layouts=[L2]
+# ROW: = GetSlot {{*}}key="l" receivers=[L3] level=Proven
+# RUN(CALLS): walk f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding
+# CALLS-LABEL: code f3:Body
+# CALLS: = ShapeTest {{*}}layouts=[L0]
+# CALLS: = ShapeTest {{*}}layouts=[L1]
+# CALLS: = ShapeTest {{*}}layouts=[L2]
+# CALLS: : L3 {{*}} = Narrowed
+# CALLS: = GetSlot {{*}}key="l" receivers=[L3] level=Proven
+# RUN(NOTHING): walk f1 f2 f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding
+# NOTHING-NOT: StrictEq
+# NOTHING-NOT: SwitchString
+# NOTHING-NOT: key="kind"
+# RUN(SHELL): run-in-shell globalThis.sink = (...told) => { if (told.length) print(told.join()); };
+# SHELL: 2,3,4,5,2,3,4,5,2,3,4,5
+# SHELL-NEXT: exited with 0
+# testing=CheckProofsAtRunTime builds the same forms and holds what the shape answers against what the tag answers: behind a test the comparison as written,
+# on the edge of each case that case, on the last edge every case. A list of members that is wrong stops the run by name; it used to be silent as built and never built under the word.
+# RUN(SWITCHCHECKED): walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding testing=CheckProofsAtRunTime
+# SWITCHCHECKED-LABEL: code f1:Body
+# SWITCHCHECKED: [[tag]]: {{*}} = GetSlot {{*}}key="kind"
+# SWITCHCHECKED: SwitchOnShape
+# SWITCHCHECKED: = StrictEq [[tag]], {{*}}form=Generic
+# SWITCHCHECKED: [[led]]: boolean @Boolean = StrictEq {{*}}form=Generic
+# SWITCHCHECKED: CheckProof [[led]] checkedType=true {{*}}source=Field
+# RUN(ROWCHECKED): walk f2 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding testing=CheckProofsAtRunTime
+# ROWCHECKED-LABEL: code f2:Body
+# ROWCHECKED: [[tag]]: {{*}} = GetSlot {{*}}key="kind"
+# ROWCHECKED: [[byShape]]: boolean @Boolean = ShapeTest {{*}}layouts=[L0]
+# ROWCHECKED: = StrictEq [[tag]], {{*}}form=Generic
+# ROWCHECKED: [[agree]]: boolean @Boolean = StrictEq {{*}}form=Generic
+# ROWCHECKED: CheckProof [[agree]] checkedType=true {{*}}source=Field
+# ROWCHECKED: Branch [[byShape]]
+# RUN(NEVERASWRITTEN): walk f1 f2 f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding testing=CheckProofsAtRunTime
+# NEVERASWRITTEN-NOT: SwitchString
+# NEVERASWRITTEN-NOT: narrowsHolderOfOperand
+# RUN(SHELLCHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.sink = (...told) => { if (told.length) print(told.join()); };
+# SHELLCHECKED: 2,3,4,5,2,3,4,5,2,3,4,5
+# SHELLCHECKED-NEXT: exited with 0
+
+layout L0 name="Circle" module=m0 fields=[{key="kind" declared={type=undefined|null|"circle" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="r" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Square" module=m0 fields=[{key="kind" declared={type=undefined|null|"square" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="s" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Dot" module=m0 fields=[{key="kind" declared={type=undefined|null|"dot" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}]
+layout L3 name="Line" module=m0 fields=[{key="kind" declared={type=undefined|null|"line" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="l" declared={type=number} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = String string="circle"
+    v4 = Integer integer=2
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = String string="square"
+    v8 = Integer integer=3
+    v9 = NewObject -, v7, v8 layout=L1 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = String string="dot"
+    v12 = Integer integer=4
+    v13 = NewObject -, v11, v12 layout=L2 fields=[0, 1]
+    v14 = FinishObject v13
+    v15 = String string="line"
+    v16 = Integer integer=5
+    v17 = NewObject -, v15, v16 layout=L3 fields=[0, 1]
+    v18 = FinishObject v17
+    v19 = Call v0, -, v6
+    v20 = Call v0, -, v10
+    v21 = Call v0, -, v14
+    v22 = Call v0, -, v18
+    v23 = Call v1, -, v6
+    v24 = Call v1, -, v10
+    v25 = Call v1, -, v14
+    v26 = Call v1, -, v18
+    v27 = Call v2, -, v6
+    v28 = Call v2, -, v10
+    v29 = Call v2, -, v14
+    v30 = Call v2, -, v18
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="sink" [isFreeName]
+    v33 = Call v32, -, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30
+    Return v33
+}
+function f1 name="cases" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2|L3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|L1|L2|L3):
+    v1 = PropGet v0 key="kind"
+    SwitchString v1 strings=["circle", "square", "dot"] -> case b1(| 0), case b2(| 0), case b3(| 0), otherwise b4()
+  b1(v2):
+    v3 = NarrowByField v0, v2 key="kind"
+    v4 = PropGet v3 key="r"
+    Return v4
+  b2(v5):
+    v6 = NarrowByField v0, v5 key="kind"
+    v7 = PropGet v6 key="s"
+    Return v7
+  b3(v8):
+    v9 = NarrowByField v0, v8 key="kind"
+    v10 = PropGet v9 key="d"
+    Return v10
+  b4():
+    v11 = PropGet v0 key="l"
+    Return v11
+}
+function f2 name="row" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2|L3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|L1|L2|L3):
+    v1 = PropGet v0 key="kind"
+    v2 = String string="circle"
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    v6 = PropGet v5 key="r"
+    Return v6
+  b2(v7):
+    v8 = NarrowByField v0, v7 key="kind"
+    v9 = PropGet v8 key="kind"
+    v10 = String string="square"
+    v11 = StrictEq v9, v10
+    Branch v11 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v12):
+    v13 = NarrowByField v8, v12 key="kind"
+    v14 = PropGet v13 key="s"
+    Return v14
+  b4(v15):
+    v16 = NarrowByField v8, v15 key="kind"
+    v17 = PropGet v16 key="kind"
+    v18 = String string="dot"
+    v19 = StrictEq v17, v18
+    Branch v19 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v20):
+    v21 = NarrowByField v16, v20 key="kind"
+    v22 = PropGet v21 key="d"
+    Return v22
+  b6(v23):
+    v24 = NarrowByField v16, v23 key="kind"
+    v25 = PropGet v24 key="l"
+    Return v25
+}
+function f3 name="rowWithCalls" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2|L3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|L1|L2|L3):
+    v1 = PropGet v0 key="kind"
+    v2 = String string="circle"
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    v6 = PropGet v5 key="r"
+    Return v6
+  b2(v7):
+    v8 = NarrowByField v0, v7 key="kind"
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="sink" [isFreeName]
+    v11 = Call v10, -
+    v12 = PropGet v8 key="kind"
+    v13 = String string="square"
+    v14 = StrictEq v12, v13
+    Branch v14 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v15):
+    v16 = NarrowByField v8, v15 key="kind"
+    v17 = PropGet v16 key="s"
+    Return v17
+  b4(v18):
+    v19 = NarrowByField v8, v18 key="kind"
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="sink" [isFreeName]
+    v22 = Call v21, -
+    v23 = PropGet v19 key="kind"
+    v24 = String string="dot"
+    v25 = StrictEq v23, v24
+    Branch v25 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v26):
+    v27 = NarrowByField v19, v26 key="kind"
+    v28 = PropGet v27 key="d"
+    Return v28
+  b6(v29):
+    v30 = NarrowByField v19, v29 key="kind"
+    v31 = PropGet v30 key="l"
+    Return v31
+}

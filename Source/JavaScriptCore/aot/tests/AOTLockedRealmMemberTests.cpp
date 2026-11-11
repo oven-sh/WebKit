@@ -15,6 +15,7 @@
 #include "AOTVector.h"
 #include "FunctionPrototype.h"
 #include "JSCInlines.h"
+#include "ObjectConstructor.h"
 #include "Options.h"
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
@@ -60,6 +61,7 @@ struct Statements {
     std::span<const ASCIILiteral> throwing;
     std::span<const ASCIILiteral> returningFalse;
     std::span<const ASCIILiteral> returningTrue;
+    bool areAboutObjectClosedToOtherNames { false };
 };
 
 constexpr ASCIILiteral replaceableStringMethods[] = {
@@ -123,6 +125,10 @@ constexpr ObjectWithLockedMembers objectsWithLockedMembers[] = {
     { "Reflect"_s, ClosedProtocolNames::None },
     { "Atomics"_s, ClosedProtocolNames::None },
     { "Array.prototype"_s, ClosedProtocolNames::OfObjects },
+    { "Promise.prototype"_s, ClosedProtocolNames::OfObjects },
+    { "RegExp.prototype"_s, ClosedProtocolNames::OfObjects },
+    { "Object.getPrototypeOf(function* () { }).prototype"_s, ClosedProtocolNames::OfObjects },
+    { "Object.getPrototypeOf(async function* () { }).prototype"_s, ClosedProtocolNames::OfObjects },
     { "Iterator.prototype"_s, ClosedProtocolNames::OfObjects, replaceableIteratorMethods },
     { "Object.getPrototypeOf([][Symbol.iterator]())"_s, ClosedProtocolNames::OfObjects },
     { "Object.getPrototypeOf(new Map()[Symbol.iterator]())"_s, ClosedProtocolNames::OfObjects },
@@ -302,14 +308,12 @@ constexpr ASCIILiteral throwingWritesToRegExpPrototype[] = {
     "(function () { 'use strict'; delete RegExp.prototype.exec; })()"_s,
     "RegExp.prototype.exec = function () { }"_s,
     "delete RegExp.prototype.exec"_s,
-    "RegExp.prototype.nameNobodyHas = 1"_s,
     "Object.defineProperty(RegExp.prototype, 'exec', { value: 1 })"_s,
     "Object.defineProperty(RegExp.prototype, 'flags', { get() { return ''; } })"_s,
     "Object.defineProperty(RegExp.prototype, 'global', { value: true })"_s,
     "(function () { 'use strict'; RegExp.prototype[Symbol.replace] = function () { }; })()"_s,
-    "(function () { 'use strict'; RegExp.prototype.nameNobodyHas = 1; })()"_s,
-    "Object.defineProperty(RegExp.prototype, 'nameNobodyHas', { value: 1 })"_s,
-    "(function () { 'use strict'; RegExp.prototype[Symbol('made by the program')] = 1; })()"_s,
+    "(function () { 'use strict'; RegExp.prototype[Symbol.toPrimitive] = function () { }; })()"_s,
+    "(function () { 'use strict'; RegExp.prototype.hasOwnProperty = function () { }; })()"_s,
     "(function () { 'use strict'; RegExp.prototype[0] = 1; })()"_s,
     "(function () { 'use strict'; RegExp.prototype.lastIndex = 1; })()"_s,
     "Object.setPrototypeOf(RegExp.prototype, {})"_s,
@@ -319,12 +323,8 @@ constexpr ASCIILiteral refusedWritesToRegExpPrototype[] = {
     "Reflect.set(RegExp.prototype, 'exec', 1)"_s,
     "Reflect.defineProperty(RegExp.prototype, 'exec', { value: 1 })"_s,
     "Reflect.deleteProperty(RegExp.prototype, 'exec')"_s,
-    "Reflect.set(RegExp.prototype, 'nameNobodyHas', 1)"_s,
-    "Reflect.defineProperty(RegExp.prototype, 'nameNobodyHas', { value: 1 })"_s,
-    "Reflect.set(RegExp.prototype, Symbol('made by the program'), 1)"_s,
     "Reflect.set(RegExp.prototype, 0, 1)"_s,
     "Reflect.setPrototypeOf(RegExp.prototype, {})"_s,
-    "Object.isExtensible(RegExp.prototype)"_s,
     "RegExp.prototype.hasOwnProperty('nameNobodyHas')"_s,
 };
 
@@ -332,6 +332,10 @@ constexpr ASCIILiteral allowedBesideRegExpPrototype[] = {
     "Object.getOwnPropertyDescriptor(RegExp.prototype, 'exec').writable"_s,
     "Object.getOwnPropertyDescriptor(RegExp.prototype, 'exec').configurable"_s,
     "Reflect.defineProperty(RegExp.prototype, 'exec', { value: RegExp.prototype.exec })"_s,
+    "Object.isExtensible(RegExp.prototype)"_s,
+    "(RegExp.prototype.nameNobodyHas = 1, /a/.nameNobodyHas === 1 && delete RegExp.prototype.nameNobodyHas)"_s,
+    "Reflect.defineProperty(RegExp.prototype, 'nameNobodyHas', { value: 2, configurable: true }) && /a/.nameNobodyHas === 2 && Reflect.deleteProperty(RegExp.prototype, 'nameNobodyHas')"_s,
+    "(symbol => Reflect.set(RegExp.prototype, symbol, 3) && /a/[symbol] === 3 && delete RegExp.prototype[symbol])(Symbol('made by the program'))"_s,
     "/a/.test('a') && 'a'.replace(/a/, 'b') === 'b'"_s,
     "((r, f) => (r.exec = f, r.exec === f))(/a/, function () { })"_s,
     "(r => (r.lastIndex = 3, r.lastIndex === 3))(/a/g)"_s,
@@ -618,7 +622,7 @@ constexpr ASCIILiteral allowedOnProtocolHolders[] = {
 
 constexpr Statements statementsAboutStringPrototype { throwingWritesToStringPrototype, refusedWritesToStringPrototype, allowedOnStringPrototype };
 constexpr Statements statementsAboutRegExpPrototype { throwingWritesToRegExpPrototype, refusedWritesToRegExpPrototype, allowedBesideRegExpPrototype };
-constexpr Statements statementsAboutFunctionPrototype { throwingWritesToFunctionPrototype, refusedWritesToFunctionPrototype, allowedOnFunctionPrototype };
+constexpr Statements statementsAboutFunctionPrototype { throwingWritesToFunctionPrototype, refusedWritesToFunctionPrototype, allowedOnFunctionPrototype, true };
 constexpr Statements statementsAboutSpecies { throwingWritesToSpecies, refusedWritesToSpecies, allowedBesideSpecies };
 constexpr Statements statementsAboutLockedMembers { throwingWritesToLockedMembers, refusedWritesToLockedMembers, allowedBesideLockedMembers };
 constexpr Statements statementsAboutProtocolHolders { throwingWritesToProtocolHolders, refusedWritesToProtocolHolders, allowedOnProtocolHolders };
@@ -697,7 +701,6 @@ void checkSymbols(Realms& realms, JSObject* object, ASCIILiteral source)
     }
 }
 
-// A constructor and a namespace object take a property under a number. A prototype object takes none: an element that an instance lacks is looked for there.
 bool isConstructor(JSObject* object)
 {
     return object->isCallable() && object != object->globalObject()->functionPrototype();
@@ -755,9 +758,11 @@ void checkObjectClosedToOtherNames(Realms& realms, ASCIILiteral source, std::spa
     Structure* structure = prototype->structure();
     checkSymbols(realms, prototype, source);
     checkNames(vm, structure, source, numericKeys, true);
-    checkNames(vm, structure, source, ordinaryKeys, true);
+    bool takesOtherTexts = !!Options::aotImagePath();
+    checkNames(vm, structure, source, ordinaryKeys, !takesOtherTexts);
     checkNames(vm, structure, source, namesReadFromFunctions, true);
-    checkNames(vm, structure, source, openNamesOfFunctionPrototype, !hasOpenNames);
+    if (hasOpenNames || !takesOtherTexts)
+        checkNames(vm, structure, source, openNamesOfFunctionPrototype, !hasOpenNames);
     AOT_TEST_CHECK_FOR_SOURCE(!structure->hasImmutableProperties() && structure->isStructureExtensible(), source);
     AOT_TEST_CHECK_FOR_SOURCE(structure->hasImmutablePrototype() && structure->hasImmutableIndexedProperties(), source);
     AOT_TEST_CHECK_FOR_SOURCE(!realms.object(realms.plain(), source)->structure()->mayHaveImmutableProperties(), source);
@@ -774,7 +779,6 @@ void checkPrototypesOfFunctionKinds(Realms& realms)
         checkObjectClosedToOtherNames(realms, source, { }, false);
 }
 
-// An object that is given the names of a holder twice, with other constant members the second time, keeps both.
 void checkNamesGivenTwice(Realms& realms)
 {
     VM& vm = realms.vm();
@@ -792,7 +796,71 @@ void checkNamesGivenTwice(Realms& realms)
     AOT_TEST_CHECK(isFixed("UTC"_s) && isFixed("now"_s) && isFixed("parse"_s) && isFixed("call"_s) && !isFixed("7"_s) && !isFixed("nameNobodyHas"_s));
 }
 
-// Whoever has found a fixed name keeps its offset, also where a name below it is deleted and the storage of the holder is packed anew.
+void checkWriteIsToldOfOnceForEachMember(Realms& realms)
+{
+    class Listener final : public WritesToBuiltinMembers {
+    public:
+        void willWrite(BuiltinID member, UniquedStringImpl*) final { membersTold.append(member); }
+        void willAddNameTo(BuiltinID) final { ++timesToldOfAddedName; }
+
+        Vector<BuiltinID> membersTold;
+        unsigned timesToldOfAddedName { 0 };
+    };
+    VM& vm = realms.vm();
+    const uint32_t fixed[] = { Builtins::DateNow.index() };
+    const uint32_t unlocked[] = { Builtins::DateUTC.index() | ProgramTables::unlockedBuiltinMember };
+    auto numberOf = [](const Listener& listener, BuiltinID member) { return std::ranges::count(listener.membersTold, member); };
+
+    Listener inExecutable;
+    JSObject* object = realms.object(realms.plain(), "({ })"_s);
+    AOT_TEST_CHECK(object->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, Builtins::Date, fixed, &inExecutable).get()));
+    auto refuses = [&](ASCIILiteral name) { return object->structure()->isImmutableProperty(Identifier::fromString(vm, name).impl()); };
+    for (unsigned turn = 0; turn < 3; ++turn)
+        AOT_TEST_CHECK(!refuses("parse"_s) && !refuses("nameNobodyHas"_s) && !refuses("otherNameNobodyHas"_s) && refuses("now"_s) && refuses("UTC"_s));
+    AOT_TEST_CHECK(inExecutable.membersTold.size() == 1 && numberOf(inExecutable, Builtins::DateParse) == 1 && inExecutable.timesToldOfAddedName == 6);
+
+    Listener inTestRun;
+    object = realms.object(realms.plain(), "({ })"_s);
+    AOT_TEST_CHECK(object->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, Builtins::Date, fixed, &inTestRun, unlocked, true).get()));
+    for (unsigned turn = 0; turn < 3; ++turn)
+        AOT_TEST_CHECK(!refuses("parse"_s) && !refuses("UTC"_s) && refuses("now"_s));
+    AOT_TEST_CHECK(numberOf(inTestRun, Builtins::DateParse) == 1 && numberOf(inTestRun, Builtins::DateUTC) == 3);
+}
+
+void checkLockLeavesObjectsWithSameStructure(Realms& realms)
+{
+    VM& vm = realms.vm();
+    Structure* empty = realms.plain()->objectStructureForObjectConstructor();
+    Identifier now = Identifier::fromString(vm, "now"_s);
+    Identifier addedByRun = Identifier::fromString(vm, "addedByRun"_s);
+    Identifier addedByList = Identifier::fromString(vm, "addedByList"_s);
+    UniquedStringImpl* namesOfRun[] = { now.impl(), addedByRun.impl() };
+    UniquedStringImpl* namesOfList[] = { now.impl(), addedByList.impl() };
+    const PropertyRun* run = vm.propertyRuns.intern(namesOfRun);
+    AOT_TEST_CHECK(run);
+    const uint32_t fixed[] = { Builtins::DateNow.index() };
+
+    for (bool locksEveryProperty : { false, true }) {
+        for (bool usesRun : { true, false }) {
+            auto findStructure = [&] {
+                return usesRun ? Structure::addPropertyRunTransition(vm, empty, *run) : Structure::createWithProperties(vm, empty, namesOfList);
+            };
+            Structure* shared = findStructure();
+            AOT_TEST_CHECK(shared && shared->isPinnedPropertyTable() && !shared->isDictionary());
+            JSObject* locked = constructEmptyObject(vm, shared);
+            JSObject* other = constructEmptyObject(vm, shared);
+            AOT_TEST_CHECK(locksEveryProperty ? locked->makePropertiesImmutable(vm) : locked->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, Builtins::Date, fixed).get()));
+            AOT_TEST_CHECK(locked->structure() != shared && locked->structure()->isImmutableProperty(now.impl()));
+
+            JSObject* later = constructEmptyObject(vm, findStructure());
+            for (JSObject* object : { other, later }) {
+                AOT_TEST_CHECK(object->structure() == shared);
+                AOT_TEST_CHECK(!object->hasImmutableProperties() && !shared->isImmutableProperty(now.impl()) && shared->isStructureExtensible());
+            }
+        }
+    }
+}
+
 void checkFixedNamesKeepOffsetsWhenFlattened(Realms& realms)
 {
     VM& vm = realms.vm();
@@ -852,7 +920,6 @@ void checkPristineInstances(Realms& realms)
     }
 }
 
-// An object that overrides put takes stores to itself, and to whatever lies below it, out of the inline caches: a realm that locks nothing must not pay for that.
 void checkNativeConstructorsOverridePut(Realms& realms)
 {
     for (ASCIILiteral source : { "Array"_s, "Map"_s, "Set"_s, "Error"_s, "TypeError"_s, "RegExp"_s, "Uint8Array"_s, "Intl.Collator"_s }) {
@@ -873,12 +940,15 @@ void checkNativeConstructorsOverridePut(Realms& realms)
 void checkStatements(Realms& realms, const Statements& statements)
 {
     JSGlobalObject* locked = realms.locked();
+    auto isTakenWithImage = [&](ASCIILiteral source) {
+        return statements.areAboutObjectClosedToOtherNames && Options::aotImagePath() && StringView(source).contains("nameNobodyHas"_s);
+    };
     for (ASCIILiteral source : statements.throwing) {
-        AOT_TEST_CHECK_FOR_SOURCE(realms.throwsTypeError(locked, source), source);
+        AOT_TEST_CHECK_FOR_SOURCE(realms.throwsTypeError(locked, source) == !isTakenWithImage(source), source);
         AOT_TEST_CHECK_FOR_SOURCE(!realms.throwsTypeError(realms.plain(), source), source);
     }
     for (ASCIILiteral source : statements.returningFalse)
-        AOT_TEST_CHECK_FOR_SOURCE(realms.evaluate(locked, source) == jsBoolean(false), source);
+        AOT_TEST_CHECK_FOR_SOURCE(realms.evaluate(locked, source) == jsBoolean(isTakenWithImage(source)), source);
     for (ASCIILiteral source : statements.returningTrue)
         AOT_TEST_CHECK_FOR_SOURCE(realms.evaluate(locked, source) == jsBoolean(true), source);
 }
@@ -909,7 +979,7 @@ ASCIILiteral nameOfTest(void (*run)())
 void runInProcessWithSharedArrayBuffer(ASCIILiteral testName, std::span<const String> otherOptions)
 {
     ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), "--useSharedArrayBuffer=1"_s };
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), "--alwaysUseSharedArrayBuffer=1"_s };
     arguments.append(otherOptions);
     ChildProcessResult result = launcher.run(arguments.span());
     if (result.exitedWith(0))
@@ -924,7 +994,7 @@ void runInProcessWithSharedArrayBuffer(ASCIILiteral testName, std::span<const St
 template<RealmsCheck check>
 static void withoutImage()
 {
-    if (!Options::useSharedArrayBuffer()) {
+    if (!Options::alwaysUseSharedArrayBuffer()) {
         runInProcessWithSharedArrayBuffer(nameOfTest(&withoutImage<check>), { });
         return;
     }
@@ -952,6 +1022,8 @@ std::span<const NativeTest> lockedRealmMemberTests()
         { "locked-realm-members/function-prototype"_s, withoutImage<checkFunctionPrototype> },
         { "locked-realm-members/prototypes-of-function-kinds"_s, withoutImage<checkPrototypesOfFunctionKinds> },
         { "locked-realm-members/names-given-twice"_s, withoutImage<checkNamesGivenTwice> },
+        { "locked-realm-members/a-write-is-told-of-once-for-each-member"_s, withoutImage<checkWriteIsToldOfOnceForEachMember> },
+        { "locked-realm-members/lock-leaves-objects-with-same-structure"_s, withoutImage<checkLockLeavesObjectsWithSameStructure> },
         { "locked-realm-members/fixed-names-keep-their-offsets-when-the-holder-is-flattened"_s, withoutImage<checkFixedNamesKeepOffsetsWhenFlattened> },
         { "locked-realm-members/pristine-instances"_s, withoutImage<checkPristineInstances> },
         { "locked-realm-members/writes-to-string-prototype"_s, withoutImage<checkStatementsOf<statementsAboutStringPrototype>> },

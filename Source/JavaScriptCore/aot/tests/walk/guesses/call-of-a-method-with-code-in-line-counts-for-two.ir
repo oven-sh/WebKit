@@ -1,0 +1,41 @@
+# `text.charCodeAt(1)` and one more use of `text` that gains nothing by a proof, outside a loop, on a receiver that is written to be a string and not proven one. Closed, the call goes through the stub of the class.
+# Behind a test of what is written the code of the row stands in line, so the call counts for two and the guess opens.
+# function coded(text: string, sink: (text: string) => void) { const code = text.charCodeAt(1); sink(text); return code; }
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}} testedType=string
+# A method whose rows have no code in line counts for one, and the call goes by name: function cased(text: string, sink) { const other = text.toLocaleUpperCase(); sink(text); return other; }
+# RUN(HOST): walk f2 mechanisms=all-Inlining
+# HOST-LABEL: code f2:Body
+# HOST-NOT: TypeTest
+# With guesses withheld the call goes by name.
+# RUN(WITHHELD): walk f1 mechanisms=all-Inlining-Guesses
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD-NOT: TypeTest
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="coded" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|string, v1: anything):
+    v2 = PropGet v0 key="charCodeAt"
+    v3 = Integer integer=1
+    v4 = Call v2, v0, v3 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+    v5 = Call v1, -, v0 calleeName="sink"
+    Return v4
+}
+function f2 name="cased" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|string, v1: anything):
+    v2 = PropGet v0 key="toLocaleUpperCase"
+    v3 = Call v2, v0 calleeKey="toLocaleUpperCase" calleeName="text.toLocaleUpperCase"
+    v4 = Call v1, -, v0 calleeName="sink"
+    Return v3
+}

@@ -12,13 +12,18 @@
 #include <limits>
 #include <wtf/Assertions.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/OptionSet.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
+#if USE(MIMALLOC)
+#endif
+
 namespace JSC {
 
+class BlockDirectory;
 class HeapCell;
 class JSCell;
 class ReservedRangeHeap;
@@ -31,6 +36,8 @@ public:
     [[nodiscard]] JS_EXPORT_PRIVATE static std::expected<void, Error> initialize();
     // Where every VM shares a range that takes address space as it fills: makes sure that it has room for the cells that this many VMs make when they are created.
     JS_EXPORT_PRIVATE static bool tryEnsureRoomForNewVMs(unsigned count);
+    // On the thread of the VM, before the first statement of the program runs. The next VMs are given room for as much as this one has taken.
+    JS_EXPORT_PRIVATE void willRunProgram();
     [[nodiscard]] JS_EXPORT_PRIVATE static std::expected<void, Error> require();
 
     MarkedBlockCage();
@@ -53,8 +60,11 @@ public:
     static JSCell* decode(uintptr_t base, uint32_t index) { return std::bit_cast<JSCell*>(base + (static_cast<uintptr_t>(index) << shift)); }
 
     uintptr_t base() const { return m_base; }
+    uintptr_t start() const { return m_start; }
     size_t size() const { return m_size; }
-    bool contains(const void* pointer) const { return std::bit_cast<uintptr_t>(pointer) - m_base < m_size; }
+    bool contains(const void* pointer) const { return std::bit_cast<uintptr_t>(pointer) - m_start < m_size; }
+    // Large enough that no address in the image of the executable that fits in 32 bits is the index of a cell or its distance from the base.
+    JS_EXPORT_PRIVATE static size_t distanceOfStartFromBase();
 
     void* tryAllocateAligned(size_t alignment, size_t);
     // On the thread of the VM, where tryAllocateAligned() found no room and releaseLastReserve() has said that there is a reserve beside the range.
@@ -72,21 +82,21 @@ public:
 
     void keepReserveOnceHalfFull();
     bool releaseReserve();
-    // The last of the reserve of this VM. A VM that has none uses the one that is kept for all VMs of its range.
+    // The last of the reserve of this VM. From here on the VM also takes from the reserve that is kept for all VMs of its range.
     bool releaseLastReserve();
     // The range was full where no collection may run. The collection runs where collections are allowed again. If it makes room for all of the reserve that releaseReserve() gave out, no error is owed any more.
-    void didFindNoRoomWhereNothingCollects() { m_owesCollection = true; }
+    void didFindNoRoomWithoutCollecting() { m_owesCollection = true; }
     bool owesCollection() const { return m_owesCollection; }
+    // An error thrown for Structures leaves their reserve short, and most Structures are allocated where no collection may run: with no reserve, a full heap ends the process there.
+    // Only a collection that frees whole blocks can fill it again. The next poll that may collect runs one. If the program had dropped nothing by then, one more is owed when it next needs room for a Structure.
+    void willAllocateStructureInSlowPath() { m_owesCollection |= m_owesStructureReserve; }
     JS_EXPORT_PRIVATE bool tryTakeBackOutOfMemoryError(VM&);
-    // At a poll the frames of the loop's callees are gone. What they left on the stack is cleared and one more full collection runs. If it makes room, no error is owed any more.
+    // At a poll the frames of the loop's callees are gone. One more full collection runs. If it makes room, no error is owed any more.
     JS_EXPORT_PRIVATE bool tryTakeBackOutOfMemoryErrorAtPoll(VM&);
     // An error that barren collections owe is offered to a poll first.
     bool errorWaitsForPoll() const { return m_errorWaitsForPoll; }
     JS_EXPORT_PRIVATE void didThrowOutOfMemoryError();
-    // A program that catches the error lets go of objects. Words of frames that are gone still name them, and a later frame is scanned with every word under it that it does not write.
-    bool hasDeadStackToClear() const { return m_stackPointerAtError; }
-    JS_EXPORT_PRIVATE void clearDeadStack(VM&);
-    JS_EXPORT_PRIVATE void* takeLowestAddressOfDeadStack(VM&);
+    JS_EXPORT_PRIVATE void didThrowOutOfMemoryError(VM&);
     size_t reserveSize() const;
 
     // Makes fallible allocations use the reserve. For callers that can neither collect nor throw.
@@ -103,11 +113,14 @@ public:
     };
     bool allocationsAreInfallible() const { return m_allocationsAreInfallible; }
 
-    enum class ExhaustedHeap : bool { Cells, Structures };
+    // Tables: the VM's hash tables that hold one entry per live value of some kind, such as Symbols. Growing one is a single large malloc.
+    enum class ExhaustedHeap : uint8_t { Cells = 1 << 0, Structures = 1 << 1, Tables = 1 << 2, ListOfArrayBuffers = 1 << 3, WeakBlocks = 1 << 4 };
     // Called on the thread of the VM, on the slow path of an allocation, each time there is no room for the request and a full collection is tried next.
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
     JS_EXPORT_PRIVATE void didFindNoRoom(VM&, ExhaustedHeap);
     JS_EXPORT_PRIVATE void didCreateOutOfMemoryError();
+    // Where the program is owed an error for cells under a limit on address space, this error is that error.
+    JS_EXPORT_PRIVATE void didCreateOutOfMemoryError(VM&);
 
     struct ReservationFailure {
         size_t sizeWithinBudget { 0 };
@@ -116,42 +129,69 @@ public:
     JS_EXPORT_PRIVATE static ReservationFailure reservationFailure();
 
     static void logExhaustion(ExhaustedHeap);
-    void setExhaustedHeap(ExhaustedHeap exhaustedHeap) { m_exhaustedHeap = exhaustedHeap; }
+    // One error may be owed for several heaps.
+    void addExhaustedHeap(ExhaustedHeap exhaustedHeap) { m_exhaustedHeaps.add(exhaustedHeap); }
     JS_EXPORT_PRIVATE String describeExhaustedLimit() const;
     using ExhaustionHandler = void (*)();
     JS_EXPORT_PRIVATE static void setExhaustionHandler(ExhaustionHandler);
+    // Before the first VM. See ReservedRangeHeap::setCommitsOnDemand().
+    JS_EXPORT_PRIVATE static void setCommitsOnDemand(bool);
 
     // Called on the thread of the VM, inside an allocation, when the error that is owed has found no place to be thrown and the last of the reserve is given out, or full collections keep freeing next to nothing.
     // A host that can end this thread alone asks for its termination here.
     static void willUseLastReserve(VM&);
+    // Called on the VM's thread before each Symbol is created. With limited address space, grows the Symbol table early, so a failed allocation can schedule an out-of-memory error while the table still has room.
+    JS_EXPORT_PRIVATE static void willAddSymbol(VM&);
+    // The same for the heap's list of array buffers. No collection runs here: the caller's cell is not finished.
+    void willAddArrayBuffer(VM&);
+    // Called on the VM's thread before each block is made. With limited address space, grows the heap's set of blocks early, and the directory's list of blocks
+    // when it is full, with requests for memory that may fail. A growth that fails owes nothing: it is tried again before the next block.
+    // Returns false when the set or the list has no room for the block. The block is not made then, as where the cage has none.
+    bool willAddBlock(VM&, BlockDirectory&);
+    // The same before a directory takes a block from another directory. The set holds that block already.
+    static bool willStealBlock(BlockDirectory&);
+    // The same for the blocks that weak handles lie in. A handle cannot fail, so with limited address space its block comes out of a few spare ones, which are filled up again each time.
+    // Where they cannot be, the program is owed an error while some are left.
+    static bool keepsSpareWeakBlocks();
+    void* allocateWeakBlock(VM&);
     using LastReserveHandler = void (*)(VM&);
     JS_EXPORT_PRIVATE static void setLastReserveHandler(LastReserveHandler);
 
 private:
     void didAllocate(const void*, size_t);
-    bool tryKeepReleasedReserveAgain();
+    bool hasHeapThatReleasedReserve() const;
+    bool tryRestoreReleasedReserves(VM&);
+    void didCollectForStructureReserve();
+    bool tryRestoreOwnReserve();
     bool releaseOwnLastReserve();
     bool tryUseSharedReserve();
+    bool tryFillSpareWeakBlocks();
+
+    static constexpr size_t numberOfSpareWeakBlocks = 16;
 
     ReservedRangeHeap* m_range { nullptr };
     uintptr_t m_base { 0 };
+    uintptr_t m_start { 0 };
     size_t m_size { 0 };
     bool m_sharesRange { false };
     bool m_isInFirstRange { false };
     bool m_usesSharedReserve { false };
+    bool m_owesSharedReserve { false };
     bool m_hasReleasedReserve { false };
     bool m_shouldKeepLargeCellReserve { true };
     bool m_owesCollection { false };
+    bool m_pollFillsStructureReserve { false };
+    bool m_owesStructureReserve { false };
     bool m_errorWaitsForPoll { false };
     bool m_hasCollectedAtPoll { false };
     bool m_allocationsAreInfallible { false };
-    void* m_stackPointerAtError { nullptr };
     size_t m_numberOfChunksReleased { 0 };
     std::atomic<size_t> m_numberOfBlocksTaken { 0 };
-    ExhaustedHeap m_exhaustedHeap { ExhaustedHeap::Cells };
+    OptionSet<ExhaustedHeap> m_exhaustedHeaps;
     unsigned m_numberOfBarrenCollections { 0 };
     uint64_t m_bytesAllocatedWhenLastFull { 0 };
     Vector<void*> m_reserve;
+    Vector<void*, numberOfSpareWeakBlocks> m_spareWeakBlocks;
     void* m_largeCellReserve { nullptr };
     std::atomic<uintptr_t> m_lowestAllocation { std::numeric_limits<uintptr_t>::max() };
     std::atomic<uintptr_t> m_endOfHighestAllocation { 0 };

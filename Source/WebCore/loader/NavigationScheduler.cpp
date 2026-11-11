@@ -108,17 +108,17 @@ public:
     enum class AccumulateResult : uint8_t { NotHandled, Accumulated, CancelPending };
     virtual AccumulateResult accumulateHistorySteps(Frame& /*frame*/, int /*additionalSteps*/) { return AccumulateResult::NotHandled; }
 
-    double LEGACY_NODELETE delay() const { return m_delay; }
-    LockHistory LEGACY_NODELETE lockHistory() const { return m_lockHistory; }
-    LockBackForwardList LEGACY_NODELETE lockBackForwardList() const { return m_lockBackForwardList; }
-    bool LEGACY_NODELETE wasDuringLoad() const { return m_wasDuringLoad; }
-    bool LEGACY_NODELETE isLocationChange() const { return m_isLocationChange; }
-    UserGestureToken* LEGACY_NODELETE userGestureToForward() const { return m_userGestureToForward.get(); }
+    NODELETE double delay() const { return m_delay; }
+    NODELETE LockHistory lockHistory() const { return m_lockHistory; }
+    NODELETE LockBackForwardList lockBackForwardList() const { return m_lockBackForwardList; }
+    NODELETE bool wasDuringLoad() const { return m_wasDuringLoad; }
+    NODELETE bool isLocationChange() const { return m_isLocationChange; }
+    NODELETE UserGestureToken* userGestureToForward() const { return m_userGestureToForward.get(); }
 
 protected:
     void clearUserGesture() { m_userGestureToForward = nullptr; }
-    ShouldOpenExternalURLsPolicy LEGACY_NODELETE shouldOpenExternalURLs() const { return m_shouldOpenExternalURLsPolicy; }
-    InitiatedByMainFrame LEGACY_NODELETE initiatedByMainFrame() const { return m_initiatedByMainFrame; };
+    NODELETE ShouldOpenExternalURLsPolicy shouldOpenExternalURLs() const { return m_shouldOpenExternalURLsPolicy; }
+    NODELETE InitiatedByMainFrame initiatedByMainFrame() const { return m_initiatedByMainFrame; };
 
 private:
     double m_delay;
@@ -172,10 +172,10 @@ protected:
             localFrame->loader().clientRedirectCancelledOrFinished(newLoadInProgress);
     }
 
-    Document& LEGACY_NODELETE initiatingDocument() const { return m_initiatingDocument.get(); }
-    SecurityOrigin* LEGACY_NODELETE securityOrigin() const { return m_securityOrigin.get(); }
-    const URL& LEGACY_NODELETE url() const { return m_url; }
-    const String& LEGACY_NODELETE referrer() const { return m_referrer; }
+    NODELETE Document& initiatingDocument() const { return m_initiatingDocument.get(); }
+    NODELETE SecurityOrigin* securityOrigin() const { return m_securityOrigin.get(); }
+    NODELETE const URL& url() const { return m_url; }
+    NODELETE const String& referrer() const { return m_referrer; }
 
     bool isSameDocumentNavigation(Frame&) const final { return equalIgnoringFragmentIdentifier(initiatingDocument().url(), url()); }
 
@@ -435,20 +435,18 @@ public:
 
         Ref historyItem = entry->associatedHistoryItem();
 
-        if (localFrame.isMainFrame())
-            return historyItem;
-
-        // FIXME: heuristic to fix disambigaute-* tests, we should find something more exact.
         bool backwards = entry->index() < protect(protect(protect(localFrame.window())->navigation())->currentEntry())->index();
 
         RefPtr page { localFrame.page() };
         auto items = protect(page->backForward())->allItems();
         for (size_t i = 0 ; i < items.size(); i++) {
             Ref item = items[backwards ? items.size() - 1 - i: i];
-            auto index = item->children().findIf([&historyItem](const auto& child) {
-                return child->itemSequenceNumber() == historyItem->itemSequenceNumber();
-            });
-            if (index != notFound) {
+            bool matches = localFrame.isMainFrame()
+                ? item->itemSequenceNumber() == historyItem->itemSequenceNumber()
+                : item->children().findIf([&historyItem](const auto& child) {
+                    return child->itemSequenceNumber() == historyItem->itemSequenceNumber();
+                }) != notFound;
+            if (matches) {
                 historyItem = item;
                 break;
             }
@@ -507,24 +505,13 @@ public:
         if (!localFrame)
             return false;
 
-        RefPtr page { localFrame->page() };
-        if (!page)
+        // Only the URL matters here, so the entry's own item is enough. Avoid findBackForwardItemByKey(),
+        // which needs a synchronous allItems() IPC and is reached on every token via locationChangePending().
+        RefPtr entry = findEntry(*localFrame);
+        if (!entry)
             return false;
-
-        if (page->settings().useUIProcessForBackForwardItemLoading()) {
-            RefPtr entry = findEntry(*localFrame);
-            if (!entry)
-                return false;
-            Ref historyItem = entry->associatedHistoryItem();
-            return equalIgnoringFragmentIdentifier(protect(localFrame->document())->url(), historyItem->url());
-        }
-
-        auto historyItem = findBackForwardItemByKey(*localFrame);
-        if (!historyItem)
-            return false;
-
-        URL url { protect(*historyItem)->url() };
-        return equalIgnoringFragmentIdentifier(protect(localFrame->document())->url(), url);
+        Ref historyItem = entry->associatedHistoryItem();
+        return equalIgnoringFragmentIdentifier(protect(localFrame->document())->url(), historyItem->url());
     }
 
 private:

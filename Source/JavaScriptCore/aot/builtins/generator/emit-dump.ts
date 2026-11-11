@@ -3,6 +3,7 @@ import type {
   DumpedClass,
   DumpedEntry,
   DumpedHandlerCall,
+  DumpedHostObject,
   DumpedImplementation,
   DumpedKey,
   DumpedLayout,
@@ -25,6 +26,7 @@ import {
   type ModelCallback,
   type ModelClass,
   type ModelHandlerCall,
+  type ModelHostObject,
   type ModelImplementation,
   type ModelKey,
   type ModelLayout,
@@ -122,6 +124,7 @@ export function dumpType(type: ModelType): DumpedType {
   const { integers } = type;
   return {
     isAnything: type.isAnything,
+    isMadeOfListedClasses: type.isMadeOfListedClasses,
     hasAnyObject: type.hasAnyObject,
     hasAnyFunction: type.hasAnyFunction,
     hasPlainData: type.hasPlainData,
@@ -152,7 +155,7 @@ function dumpPlace(place: ModelPlace): DumpedPlace {
     case "ResultField":
       return { place: "ResultField", index: place.index, holdsOnlyWhatIsStored: place.holdsOnlyWhatIsStored };
     case "NewValue":
-      return { place: "NewValue", type: dumpType(place.type) };
+      return { place: "NewValue", type: dumpType(place.type), holdsWhatIsThrown: place.holdsWhatIsThrown };
     case "Member":
       return {
         place: "Member",
@@ -161,7 +164,7 @@ function dumpPlace(place: ModelPlace): DumpedPlace {
         firstStep: place.firstStep,
       };
     case "NativeCell":
-      return { place: "NativeCell", cell: place.cell.text };
+      return { place: "NativeCell", cell: place.cell.text, holdsOnlyWhatIsStored: place.holdsOnlyWhatIsStored };
   }
 }
 
@@ -249,6 +252,8 @@ function dumpResult(result: ModelResult): DumpedResult {
     iteratedOperand: dumpOptionalOperand(result.iteratedOperand),
     iterationKind: result.iterationKind,
     prototypeSource: dumpOptionalOperand(result.prototypeSource),
+    testedOperand: dumpOptionalOperand(result.testedOperand),
+    testedType: result.testedType === null ? null : dumpType(result.testedType),
     properties: result.properties.map(({ name, type }) => ({ name: spellingOf(name), type: dumpType(type) })),
   };
 }
@@ -306,6 +311,7 @@ export function dumpOverload(overload: ModelOverload): DumpedOverload {
     readsStateBeforeConversions: flags.includes("ReadsStateBeforeConversions"),
     isSpecialCase: flags.includes("IsSpecialCase"),
     ...(flags.includes("ResultIsDeclaredOnly") ? { resultIsDeclaredOnly: true as const } : {}),
+    ...(flags.includes("ResultIsHeld") ? { resultIsHeld: true as const } : {}),
     reads: [...effects.reads],
     writes: [...effects.writes],
     transfers: flow.transfers.map(dumpTransfer),
@@ -329,6 +335,8 @@ function dumpEntry(builtin: ModelBuiltin): DumpedEntry {
     mutability: builtin.mutability,
     platforms: inListOrder(targetPlatforms, builtin.platforms),
     flags: inListOrder(builtinFlags, builtin.flags),
+    isAddedAtFirstRead: builtin.isAddedAtFirstRead,
+    isAddedAsEnumerable: builtin.isAddedAsEnumerable,
     holder: tokenOrNull(builtin.holder),
     name: builtin.name.text,
     isSymbolName: builtin.name.kind !== "Text",
@@ -384,10 +392,28 @@ function dumpLayout(layout: ModelLayout): DumpedLayout {
   };
 }
 
+function dumpHostObject(object: ModelHostObject): DumpedHostObject {
+  return {
+    cell: object.cell.text,
+    function: object.function?.token ?? null,
+    prototype: object.prototype?.token ?? null,
+    fields: object.fields.map(field => ({
+      name: field.name === null ? null : spellingOf(field.name),
+      value: dumpPlace(field.value),
+    })),
+    keepsStringsOfStoredValues: object.keepsStringsOfStoredValues,
+    nativeAccessors: object.nativeAccessors.map(spellingOf),
+    lockedNames: object.lockedNames.map(spellingOf),
+    holder: object.holder?.token ?? null,
+    platforms: inListOrder(targetPlatforms, object.platforms),
+  };
+}
+
 export function dumpOf(model: TableModel): TableDump {
   return {
     entries: model.builtins.map(dumpEntry),
     classes: model.classes.map(dumpClass),
     layouts: model.layouts.map(dumpLayout),
+    hostObjects: model.hostObjects.map(dumpHostObject),
   };
 }

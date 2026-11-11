@@ -7,6 +7,8 @@
 
 #define RUN_BUN_PASS_TESTS() do { \
         RUN(testHoistCommonMoves()); \
+        RUN(testHoistMovesFromBackEdgeBlock()); \
+        RUN(testHoistMovesFromOneBackEdgeBlockPerLatch()); \
         RUN(testTerminalResultsOnEdge()); \
         RUN(testMovesBeforePatch()); \
         RUN(testForwardRegisterCopies()); \
@@ -325,10 +327,10 @@ void testHoistCommonMoves()
         appendSuccessor(notTaken, testCase == Case::DifferentSources ? a3 : a1, 2);
 
         unsigned branchIndex = root->size() - 1;
-        if (testCase == Case::Hoisted || (testCase == Case::BranchOnFlags && preservesFlags(Move))) {
+        if (testCase == Case::Hoisted || testCase == Case::Move32 || (testCase == Case::BranchOnFlags && preservesFlags(Move))) {
             checkPassChangesCode(code, hoistCommonMoves);
             CHECK(root->size() == branchIndex + 2);
-            CHECK(isInst(root->at(branchIndex), Move, { a1, a2 }));
+            CHECK(isInst(root->at(branchIndex), testCase == Case::Move32 ? Move32 : Move, { a1, a2 }));
             CHECK(root->last().isTerminal());
             CHECK(taken->size() == 3);
             CHECK(notTaken->size() == 3);
@@ -345,6 +347,102 @@ void testHoistCommonMoves()
         CHECK(invokeInt64(*compilation, 0, 10, 0, 20) == (testCase == Case::DifferentSources ? 22 : 12));
         if (hasSecondPredecessor)
             CHECK(invokeInt64(*compilation, 0, 10, 0, 0) == 11);
+    }
+}
+
+// sum = 0; do { previous = current; current += step; sum += previous; } while (--count); with `Move next, current` on the back edge, as the register allocator leaves it.
+void testHoistMovesFromBackEdgeBlock()
+{
+    enum class Case : uint8_t { Hoisted, DestinationIsLiveAtExit, BranchTestsDestination, BackEdgeIsRare, BackEdgeBlockAdds, JumpsForward };
+    auto [count, current, step, next, sum, ret] = PassRegisters { };
+    for (Case testCase : { Case::Hoisted, Case::DestinationIsLiveAtExit, Case::BranchTestsDestination, Case::BackEdgeIsRare, Case::BackEdgeBlockAdds, Case::JumpsForward }) {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        BasicBlock* root = code.addBlock();
+        BasicBlock* body = code.addBlock(10);
+        BasicBlock* backEdgeBlock = code.addBlock(9);
+        BasicBlock* exit = code.addBlock();
+        BasicBlock* join = code.addBlock();
+
+        appendChecked(root, Move, Arg::imm(0), sum);
+        appendJump(root, body);
+        appendChecked(body, Add64, current, step, next);
+        appendChecked(body, Add64, current, sum);
+        appendChecked(body, Add64, Arg::imm(-1), count);
+        FrequentedBlock backEdge(backEdgeBlock, testCase == Case::BackEdgeIsRare ? B3::FrequencyClass::Rare : B3::FrequencyClass::Normal);
+        appendBranchTest(body, testCase == Case::BranchTestsDestination ? current : count, backEdge, exit);
+        if (testCase == Case::BackEdgeBlockAdds)
+            appendChecked(backEdgeBlock, Add64, Arg::imm(0), next);
+        appendChecked(backEdgeBlock, Move, next, current);
+        appendJump(backEdgeBlock, testCase == Case::JumpsForward ? join : body);
+        if (testCase == Case::DestinationIsLiveAtExit)
+            appendChecked(exit, Add64, current, sum);
+        appendJump(exit, join);
+        appendChecked(join, Move, sum, ret);
+        appendReturn(join);
+
+        unsigned branchIndex = body->size() - 1;
+        if (testCase == Case::Hoisted) {
+            checkPassChangesCode(code, hoistCommonMoves);
+            CHECK(body->size() == branchIndex + 2);
+            CHECK(isInst(body->at(branchIndex), Move, { next, current }));
+            CHECK(body->last().isTerminal());
+            CHECK(backEdgeBlock->size() == 1);
+        } else
+            checkPassLeavesCodeUnchanged(code, hoistCommonMoves);
+        if (testCase == Case::BranchTestsDestination || testCase == Case::JumpsForward)
+            continue;
+        auto compilation = compile(proc);
+        CHECK(invokeInt64(*compilation, 3, 10, 5) == (testCase == Case::DestinationIsLiveAtExit ? 65 : 45));
+        CHECK(invokeInt64(*compilation, 1, 10, 5) == (testCase == Case::DestinationIsLiveAtExit ? 20 : 10));
+    }
+}
+
+// The inner loop's bottom test branches to the inner header on one side and to the outer header on the other, and both back edge blocks write the same register.
+// sum = 0; while (--count) { left = 2; do { sum += carried; carried = --left ? step : sum; } while (left); }
+void testHoistMovesFromOneBackEdgeBlockPerLatch()
+{
+    auto [count, carried, left, step, sum, ret] = PassRegisters { };
+    for (bool secondMoveReadsFirstDestination : { false, true }) {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        BasicBlock* root = code.addBlock();
+        BasicBlock* outer = code.addBlock(10);
+        BasicBlock* inner = code.addBlock(10);
+        BasicBlock* backToInner = code.addBlock(9);
+        BasicBlock* backToOuter = code.addBlock(9);
+        BasicBlock* exit = code.addBlock();
+
+        appendChecked(root, Move, Arg::imm(0), sum);
+        appendJump(root, outer);
+        appendChecked(outer, Add64, Arg::imm(-1), count);
+        appendChecked(outer, Move, Arg::imm(2), left);
+        appendBranchTest(outer, count, inner, exit);
+        appendChecked(inner, Add64, carried, sum);
+        appendChecked(inner, Add64, Arg::imm(-1), left);
+        appendBranchTest(inner, left, backToInner, backToOuter);
+        appendChecked(backToInner, Move, step, carried);
+        appendJump(backToInner, inner);
+        if (secondMoveReadsFirstDestination)
+            appendChecked(backToOuter, Move, carried, step);
+        else
+            appendChecked(backToOuter, Move, sum, carried);
+        appendJump(backToOuter, outer);
+        appendChecked(exit, Move, sum, ret);
+        appendReturn(exit);
+
+        unsigned branchIndex = inner->size() - 1;
+        if (secondMoveReadsFirstDestination)
+            checkPassLeavesCodeUnchanged(code, hoistCommonMoves);
+        else {
+            checkPassChangesCode(code, hoistCommonMoves);
+            CHECK(inner->size() == branchIndex + 2);
+            CHECK(backToInner->size() + backToOuter->size() == 3);
+        }
+        auto compilation = compile(proc);
+        CHECK(invokeInt64(*compilation, 3, 10, 0, 5) == (secondMoveReadsFirstDestination ? 25 : 35));
     }
 }
 

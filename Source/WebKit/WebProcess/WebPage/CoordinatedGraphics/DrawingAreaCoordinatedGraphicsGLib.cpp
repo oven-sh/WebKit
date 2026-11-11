@@ -129,7 +129,7 @@ void DrawingAreaCoordinatedGraphics::updatePreferences(const WebPreferencesStore
 #if ENABLE(DEVELOPER_MODE)
     if (m_supportsAsyncScrolling) {
         auto disableAsyncScrolling = StringView::fromLatin1(getenv("WEBKIT_DISABLE_ASYNC_SCROLLING"));
-        if (!disableAsyncScrolling.isEmpty() && disableAsyncScrolling == "0"_s)
+        if (!disableAsyncScrolling.isEmpty() && disableAsyncScrolling != "0"_s)
             m_supportsAsyncScrolling = false;
     }
 #endif
@@ -402,6 +402,13 @@ void DrawingAreaCoordinatedGraphics::fillGLInformation(RenderProcessInfo&& info,
 
     m_renderer->fillGLInformation(WTF::move(info), WTF::move(completionHandler));
 }
+
+#if ENABLE(IPC_TESTING_API)
+uint64_t DrawingAreaCoordinatedGraphics::surfaceIDForTesting() const
+{
+    return m_renderer ? m_renderer->surfaceID() : 0;
+}
+#endif
 
 bool DrawingAreaCoordinatedGraphics::shouldUseTiledBackingForFrameView(const WebCore::LocalFrameView& frameView) const
 {

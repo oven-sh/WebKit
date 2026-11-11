@@ -1,0 +1,109 @@
+# function fill(count) { const row = []; for (let i = 0; i < count; i++) row.push("word"); return row; }
+# function read(row) { let sum = 0; for (let at = 0; at < row.length; at++) { const held = row[at]; sum += held === 2147483650.5 ? 100 : 1; } return sum; }
+# const one = fill(3);
+# print(read(one));
+# one.push(id(2147483650.5));
+# print(read(one));
+# print("went on");
+# In the specialized version of the loop the read is in bounds and the storage holds boxed values. Its code is only loads, and its effects say so: it allocates no string, throws nothing and never collects.
+# Link claims strings, so the comparison with a number is folded and nothing uses the value. The read stays anyway, because the check of what the array holds is a separate operation after the read.
+# The counterpart for unboxed numbers is a-double-out-of-a-list-is-asked-for-the-part-that-link-claims.ir. There the check is part of the read's own code, so that read keeps the wider effects.
+# With the narrow effects the sweep removed that read, and the injected fault went undetected.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(FORM): walk f2 mechanisms=all
+# FORM: [[read]]: undefined|string @JSValue = GetArrayElement {{*}} arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds] traits=[mayTouchMemory]
+# FORM: = CheckProof [[read]] checkedType=undefined|string
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 3
+# ALL-NEXT: bun: internal AOT error: type check failed
+# ALL-NOT: went on
+# ALL: crashed with
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]}
+    v4 = Integer integer=3
+    v5 = Call v1, -, v4 calleeName="fill"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="print" [isFreeName]
+    v8 = Call v3, -, v5 calleeName="read"
+    v9 = Call v7, -, v8 calleeName="print"
+    v10 = PropGet v5 key="push"
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="id" [isFreeName]
+    v13 = Double number=2147483650.5
+    v14 = Call v12, -, v13 calleeName="id"
+    v15 = Call v10, v5, v14 calleeKey="push" calleeName="one.push"
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="print" [isFreeName]
+    v18 = Call v3, -, v5 calleeName="read"
+    v19 = Call v17, -, v18 calleeName="print"
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="print" [isFreeName]
+    v22 = String string="went on"
+    v23 = Call v21, -, v22 calleeName="print"
+    v24 = Undefined
+    Return v24
+}
+function f1 name="fill" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Data data=d0
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v1 key="push"
+    v8 = Integer integer=2147483647
+    v9 = Integer integer=3
+    v10 = Add v4, v9
+    v11 = String string="word"
+    v12 = Call v7, v1, v11 calleeKey="push" calleeName="row.push"
+    v13 = Increment v4
+    v14 = Convert v13 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v14)
+  b3():
+    Return v1
+}
+function f2 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<string> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<string>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b6()
+  b2():
+    v10 = ElemGet v0, v6
+    v11 = Double number=2147483650.5
+    v12 = StrictEq v10, v11
+    Branch v12 -> taken b3(), notTaken b4()
+  b3():
+    v13 = Integer integer=100
+    Jump -> next b5(v13)
+  b4():
+    v14 = Integer integer=1
+    Jump -> next b5(v14)
+  b5(v15):
+    v16 = Add v5, v15
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Increment v6
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v17, v19)
+  b6():
+    Return v5
+}
+data d0 root=Array{contents=anything} module=m0
+entry module=m0

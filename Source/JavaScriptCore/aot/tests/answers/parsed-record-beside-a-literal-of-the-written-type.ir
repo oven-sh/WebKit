@@ -1,0 +1,46 @@
+# type Row = { line: string };  function kind(r: Row) { return typeof r.line; }  report(kind({ line: "a" }));  const p: Row = JSON.parse('{"line":5}');  report(kind(p));
+# The record of the call lists the layout of the written type, and the parser of the run time builds with it wherever every value fits its slot. So Link gives the layout up from the start: nothing is proven of its field,
+# every change may befall it, and parsers may make it. Here the number does not fit the slot of a text: what the parse answers is an ordinary object, and the reader takes it
+# RUN(LINK): link fields layouts mechanisms=all
+# LINK-NOT: field L0.0 "line" proven=
+# LINK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# LINK: parsers-may-make L0
+# RUN: run-in-shell globalThis.report = value => print(String(value));
+# CHECK: string
+# CHECK-NEXT: number
+# CHECK-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none globalThis.report = value => print(String(value));
+# NONE: string
+# NONE-NEXT: number
+# NONE-NEXT: exited with 0
+
+expectedresult x0 type=undefined|null|L0 layouts=[L0] flags=[IsMadeByParser]
+layout L0 module=m0 fields=[{key="line" declared={type=string} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = String string="a"
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="line"
+    v6 = FinishObject v4
+    v7 = Call v2, -, v6 calleeName="kind"
+    v8 = Call v1, -, v7 calleeName="report"
+    v9 = String string="{\"line\":5}"
+    v10 = Builtin builtin=JSON
+    v11 = PropGet v10 key="parse"
+    v12 = Call v11, v10, v9 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0
+    v13 = Convert v12 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v14 = Call v2, -, v13 calleeName="kind"
+    v15 = Call v1, -, v14 calleeName="report"
+    Return v15
+}
+function f1 name="kind" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="line"
+    v2 = TypeOf v1
+    Return v2
+}

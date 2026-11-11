@@ -1,0 +1,14 @@
+# only a file of data has one answer for the calls that the build has bound and another for the loader
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 2
+
+variable g0 name="_0" module=m1 declared={type=anything} flags=[IsImmutable]
+variable g1 name="exports" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="main" displayPath="main"
+module m1 path="goodText" displayPath="goodText" kind=Data flags=[LoaderReturnsNamespace] requireResult=DefaultExport exports=[{name="default" variable=g0}]
+module m2 path="badESModule" displayPath="badESModule" flags=[LoaderReturnsNamespace]
+module m3 path="badCommonJS" displayPath="badCommonJS" kind=CommonJs flags=[LoaderReturnsNamespace] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g1
+entry module=m0
+function f0 name="" module=m3 kind=CommonJsModule results=[{type=anything}] {
+    Return
+}

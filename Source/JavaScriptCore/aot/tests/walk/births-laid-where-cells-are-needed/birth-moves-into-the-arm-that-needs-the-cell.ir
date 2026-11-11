@@ -1,0 +1,31 @@
+# const p = [a]; p[0] = b; if (c) keep(p); return a;
+# The call in b1 is all that needs the cell of v3: v4 only fills it. Both are laid at the head of b1, in their order, and the way through b2 alone allocates nothing.
+# RUN: sweep-code mechanisms=all
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1():
+# CHECK-NEXT: v3: Array @Cell = NewArray v0
+# CHECK-NEXT: v4 @Void = SetMappedArgument v3, v1
+# CHECK-NEXT: = Call v1, -, v3
+# CHECK-NOT: NewArray
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Return v0
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     v3: Array @Cell = NewArray v0 contents=anything traits=[mayCollect, mayTouchMemory]
+#     v4 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     Branch v2 -> taken b1(), notTaken b2()
+#   b1():
+#     v5: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b2()
+#   b2():
+#     Return v0
+# }
+# -- end of code

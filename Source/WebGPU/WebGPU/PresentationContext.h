@@ -33,11 +33,7 @@
 #import <wtf/TZoneMalloc.h>
 #import <wtf/TypeCasts.h>
 
-struct WGPUSurfaceImpl {
-};
 
-struct WGPUSwapChainImpl {
-};
 
 namespace WebGPU::Metal {
 
@@ -47,7 +43,7 @@ class Instance;
 class Texture;
 class TextureView;
 
-class PresentationContext : public WebGPU::PresentationContext, public WGPUSurfaceImpl, public WGPUSwapChainImpl {
+class PresentationContext : public WebGPU::PresentationContext {
     WTF_MAKE_TZONE_ALLOCATED(PresentationContext);
 public:
     static Ref<PresentationContext> create(const WebGPU::PresentationContextDescriptor&, const Instance&);
@@ -58,7 +54,7 @@ public:
 
     virtual ~PresentationContext();
 
-    WebGPU::TextureFormat LEGACY_NODELETE getPreferredFormat(const Adapter&);
+    NODELETE WebGPU::TextureFormat getPreferredFormat(const Adapter&);
 
     void configure(const WebGPU::CanvasConfiguration&) override;
     void unconfigure() override;

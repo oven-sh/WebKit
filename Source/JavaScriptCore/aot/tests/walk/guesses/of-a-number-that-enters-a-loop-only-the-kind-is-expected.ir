@@ -1,0 +1,37 @@
+# `sum` enters the loop as 0, and what comes round is made of `sum` itself. Which number enters says nothing of the next turn: a test for 0 would fail from the second turn on. Any number is expected
+# function grow(step: number) { let sum = 0; while (sum < 100) sum += step; return sum; }
+# The head holds a number or a text: a number and whatever `step` is give one of the two or throw, and a text and anything give a text, so no BigInt comes round
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[sum]]: number|string @JSValue) {{*}}isLoopHead=true
+# CHECK: = TypeTest [[sum]] testedType=number
+# CHECK: = Add {{*}}form=Numbers
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses
+# NEVER-NOT: testedType=0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="grow" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Integer integer=100
+    v5 = Less v2, v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Convert v0 declared={type=number}
+    v7 = Add v2, v6
+    Jump -> next b1(v7)
+  b3():
+    Return v2
+}

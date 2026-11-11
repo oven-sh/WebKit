@@ -32,13 +32,13 @@ from collections import Counter
 
 class QuirkTableValidator(object):
     """Validates a parsed QuirkTable.json against the files next to it.
-    This validator mirrors the runtime parser in RuntimeQuirkTable.cpp
+    This validator mirrors the runtime parser in QuirkTable.cpp
     """
 
     ROW_FIELDS = ('bugs', 'comment', 'matches', 'embeddedMatches', 'excludeMatches', 'queryContains', 'fragmentContains', 'environment', 'available', 'behaviors')
     PATTERN_FIELDS = ('matches', 'embeddedMatches', 'excludeMatches')
     SUBSTRING_FIELDS = ('queryContains', 'fragmentContains')
-    PARAMETER_FIELDS = {'script': 'Script', 'userAgent': 'UserAgent', 'chromeCompatibilityVersion': 'ChromeCompatibilityVersion', 'cookieNames': 'CookieNames'}
+    PARAMETER_FIELDS = {'script': 'Script', 'userAgent': 'UserAgent', 'chromeCompatibilityVersion': 'ChromeCompatibilityVersion', 'cookieNames': 'CookieNames', 'styleSheet': 'StyleSheet'}
     CONDITION_FIELDS = {'elementSelector': 'ElementSelector', 'secondaryURL': 'SecondaryURL', 'documentSelector': 'DocumentSelector'}
     LIST_FIELDS = ('cookieNames', 'secondaryURL')
     BEHAVIOR_FIELDS = ('id',) + tuple(PARAMETER_FIELDS) + tuple(CONDITION_FIELDS) + ('bugs', 'comment')

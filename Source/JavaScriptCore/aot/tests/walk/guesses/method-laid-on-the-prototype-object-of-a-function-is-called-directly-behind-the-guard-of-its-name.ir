@@ -1,0 +1,65 @@
+# `made.m()` below `P.prototype.m = function () { .. }`. Nothing proves that the store has run or that nothing was stored over it: the record of P only expects the function there.
+# The guard of the name begins where the first P is made and a closure of the function lies under the name. Behind it, and behind the look at the object's own link, stands the call of the function
+# function P() { this.x = 1; }  P.prototype.m = function () { return 1; };  function call(made: P, n) { let x; while (n()) x = made.m(); return x; }  publish(call, new P());
+# RUN: walk f3 mechanisms=none+TypedOperations+Guesses+DirectCalls
+# CHECK-LABEL: code f3:Body
+# CHECK: isLoopHead=true
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
+# CHECK: = HasLayoutPrototype
+# CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
+# CHECK: [[closed]]() frequency=Rare isInLoop=true:
+# CHECK-NEXT: [[read]]: {{*}} = PropGet {{*}}key="m"
+# CHECK: = Call [[read]],
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="m"}]
+# CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
+# CHECK: = CallDirect {{*}}function=f2
+# RUN(WITHHELD): walk f3 mechanisms=none+TypedOperations+Guesses
+# WITHHELD-NOT: AreMembersUnchanged
+# WITHHELD-NOT: CallDirect
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="m"
+    v4 = Construct v0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="publish" [isFreeName]
+    v7 = NewClosure function=f3
+    v8 = Call v6, -, v7, v4
+    Return v8
+}
+function f1 name="P" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f3 name="call" module=m0 length=2 thisType={type=anything} parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = Convert v0 declared={type=L0}
+    v3 = Undefined
+    Jump -> next b1(v3)
+  b1(v4: anything):
+    LoopHint
+    v6 = Call v1, -
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v2 key="m"
+    v9 = Call v8, v2 calleeKey="m"
+    Jump -> next b1(v9)
+  b3():
+    Return v4
+}

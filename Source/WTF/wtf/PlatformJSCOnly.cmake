@@ -124,6 +124,8 @@ elseif (APPLE)
         ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c
         ${WTF_DERIVED_SOURCES_DIR}/mach_excUser.c
     )
+
+    set_source_files_properties(darwin/OSLogPrintStream.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
 elseif (ANDROID)
     list(APPEND WTF_SOURCES
         linux/CurrentProcessMemoryStatus.cpp
@@ -157,6 +159,7 @@ endif ()
 if (LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
     list(APPEND WTF_PUBLIC_HEADERS
         glib/FilePathWatcher.h
+        glib/GMallocString.h
         glib/GRefPtr.h
         glib/GSpanExtras.h
         glib/GTypedefs.h

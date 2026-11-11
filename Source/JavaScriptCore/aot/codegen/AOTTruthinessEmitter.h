@@ -16,12 +16,13 @@ public:
     explicit TruthinessEmitter(CodeGenerator&);
 
     Condition isTruthy(const OperationContext&, Operand, const Type&);
-    void branchOnTruthiness(const OperationContext&, Operand, const Type&, BranchTargets);
+    void branchOnTruthiness(const OperationContext&, Operand, const Type&, BranchTargets, bool expectsObjectOrNothing = false, bool expectsInt32OrNothing = false, bool isAnswerOfCall = false, bool expectsBoolean = false);
 
 private:
     Condition isTruthyCell(CellPointer, const Type&);
     Condition isTruthyBoxed(const OperationContext&, Boxed, const Type&);
-    void branchOnTruthinessOfAnyValue(const OperationContext&, Boxed, const Type&, BranchTargets);
+    void branchOnTruthinessOfAnyValue(const OperationContext&, Boxed, const Type&, BranchTargets, bool expectsObjectOrNothing, bool expectsInt32OrNothing, bool isAnswerOfCall, bool expectsBoolean);
+    Type withoutPrimitives(const Type&, uint16_t removed);
 };
 
 } } } // namespace JSC::AOT::Typed

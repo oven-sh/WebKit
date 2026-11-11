@@ -1,0 +1,32 @@
+# with every mechanism withheld each operation stands in Code as it was read: boxed, in its closed form, and beside no test that the program did not write
+# function read(o, n) { return o.x + n; }
+# RUN: walk f1 mechanisms=none
+# CHECK: mechanisms none
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[o]]: {{*}}@JSValue {{*}}, [[n]]: {{*}}@JSValue {{*}})
+# CHECK: [[x]]: {{*}}@JSValue = PropGet [[o]] key="x"
+# CHECK: @JSValue = Add [[x]], [[n]] form=Generic
+# CHECK: Return
+# RUN(NOTHING): walk f1 mechanisms=none
+# NOTHING-NOT: TypeTest
+# NOTHING-NOT: ShapeTest
+# NOTHING-NOT: GetSlot
+# NOTHING-NOT: CallDirect
+# NOTHING-NOT: frame 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="read" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="x"
+    v3 = Add v2, v1
+    Return v3
+}

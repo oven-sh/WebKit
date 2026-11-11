@@ -37,8 +37,6 @@
 #import <wtf/Vector.h>
 #import <wtf/WeakPtr.h>
 
-struct WGPUComputePassEncoderImpl {
-};
 
 namespace WebGPU::Metal {
 
@@ -51,7 +49,7 @@ class QuerySet;
 struct BindableResources;
 
 // https://gpuweb.github.io/gpuweb/#gpucomputepassencoder
-class ComputePassEncoder final : public WebGPU::ComputePassEncoder, public WGPUComputePassEncoderImpl, public CommandsMixin {
+class ComputePassEncoder final : public WebGPU::ComputePassEncoder, public CommandsMixin {
     WTF_MAKE_TZONE_ALLOCATED(ComputePassEncoder);
 public:
     static Ref<ComputePassEncoder> create(id<MTLComputeCommandEncoder> computeCommandEncoder, const WebGPU::ComputePassDescriptor& descriptor, CommandEncoder& parentEncoder, Device& device)
@@ -92,8 +90,8 @@ public:
 
     Device& device() const { return m_device; }
 
-    bool LEGACY_NODELETE isValid() const final;
-    id<MTLComputeCommandEncoder> LEGACY_NODELETE computeCommandEncoder() const;
+    NODELETE bool isValid() const final;
+    NODELETE id<MTLComputeCommandEncoder> computeCommandEncoder() const;
 
     // A pass begun while its command encoder was not open never took the encoder over, so it can
     // never be ended. https://gpuweb.github.io/gpuweb/#dom-gpucomputepassencoder-end
@@ -103,7 +101,7 @@ private:
     ComputePassEncoder(id<MTLComputeCommandEncoder>, const WebGPU::ComputePassDescriptor&, CommandEncoder&, Device&);
     ComputePassEncoder(CommandEncoder&, Device&, NSString*);
 
-    bool LEGACY_NODELETE validatePopDebugGroup() const;
+    NODELETE bool validatePopDebugGroup() const;
 
     void makeInvalid(NSString* = nil);
     void executePreDispatchCommands(const Buffer* = nullptr);

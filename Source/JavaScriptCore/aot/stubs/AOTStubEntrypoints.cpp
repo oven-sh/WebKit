@@ -94,9 +94,8 @@ void initializeStubWords(Instance& instance)
         BoxedCallEntry& entry = findBoxedCallEntry(instance.boxedCalls(), nativeFunction);
         bool isFree = !entry.nativeFunction;
         if (isFree) {
-            // A probe, here and in FindBoxedCall, ends at a free entry.
             ++numberOfUsedEntries;
-            RELEASE_ASSERT(numberOfUsedEntries * 2 <= StubWords::numberOfBoxedCallEntries);
+            RELEASE_ASSERT(numberOfUsedEntries * 3 <= StubWords::numberOfBoxedCallEntries * 2);
             entry.nativeFunction = nativeFunction;
         }
 

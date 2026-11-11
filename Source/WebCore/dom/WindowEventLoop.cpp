@@ -49,7 +49,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WindowEventLoop);
 
-static MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>& LEGACY_NODELETE windowEventLoopMap()
+NODELETE static MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>& windowEventLoopMap()
 {
     RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>> map;
@@ -233,8 +233,7 @@ std::optional<MonotonicTime> WindowEventLoop::nextRenderingTime() const
         return *m_nextRenderingTimeCache;
 
     std::optional<MonotonicTime> nextRenderingTime;
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<WindowEventLoop*>(this)->forEachAssociatedContext([&](ScriptExecutionContext& context) {
+    const_cast<WindowEventLoop*>(this)->forEachAssociatedContext([&](ScriptExecutionContext& context) {
         RefPtr document = dynamicDowncast<Document>(context);
         if (!document)
             return;

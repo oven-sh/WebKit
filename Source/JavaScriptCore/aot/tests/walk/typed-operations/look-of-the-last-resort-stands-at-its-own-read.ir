@@ -1,0 +1,80 @@
+# function make() {
+#   function Box(value, fills) { this.tag = 1; this.kind = 1; if (fills) this.held = value; }
+#   Box.prototype.peek = function peek() { return this.held; };
+#   Box.prototype.three = function three() { return [this.tag, this.kind, this.held]; };
+#   return Box;
+# }
+# globalThis.First = make();        globalThis.Second = make();
+# Two fields of birth and `held`, which may be absent, read one behind the other (as read-of-a-field-that-is-not-of-birth-looks-at-its-slot-outside-of-loops-too.ir: Box may be evaluated again, `three` is marked
+# as checked and its receiver as written, by hand). The looks of a stretch are all asked in front of it, and one that fails sends the whole stretch to the closed block. A field of birth is there; a look of the
+# LAST RESORT says nothing of the kind: with `held` absent all three reads went by name (sixteen fields of birth beside it: +67%). Outside of loops such a look counts in a stretch only as the operation that
+# opens it: here the stretch is `tag` and `kind`, and `held` looks at its slot at its own read: empty, that one read goes as it is written.
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: IsSlotFilled {{*}}key="tag"
+# CHECK: IsSlotFilled {{*}}key="kind"
+# CHECK: GetSlot v0 key="held" receivers=[L0] level=Expected
+# RUN(ALONE): walk f4 mechanisms=all
+# ALONE-LABEL: code f4:Body
+# ALONE-NOT: IsSlotFilled {{*}}key="held"
+# ALONE-NOT: PropGet {{*}}key="held"
+
+module m0 path="w7.js" displayPath="w7.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Box" module=m0 position=20 constructor=f2 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}, {key="kind" declared={type=anything} flags=[IsRequired]}, {key="held" declared={type=anything}}] flags=[IsConstructorFunction] place=20 ownFieldCount=3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @247
+    v3 = PropGet v2 key="globalThis" [isFreeName] @247
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @247
+    v5 = Call v1 calleeName="make" @266
+    PropSet v4, v5 key="First" @247
+    v7 = Builtin builtin=GlobalThis @274
+    v8 = PropGet v7 key="globalThis" [isFreeName] @274
+    v9 = Convert v8 declared={type=builtin(GlobalThis) flags=[IsExpected]} @274
+    v10 = Call v1 calleeName="make" @294
+    PropSet v9, v10 key="Second" @274
+    v12 = Undefined @274
+    Return v12 @274
+}
+function f1 name="make" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined @0
+    v1 = NewClosure function=f2 @97
+    v2 = PropGet v1 key="prototype" @97
+    v3 = NewClosure function=f3 @118
+    PropSet v2, v3 key="peek" @101
+    v5 = PropGet v1 key="prototype" @159
+    v6 = NewClosure function=f4 @180
+    PropSet v5, v6 key="three" @163
+    Return v1 @240
+}
+function f2 name="Box" module=m0 position=20 flags=[HasThis, HasExplicitName] length=2 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything, v2: anything):
+    v3 = Integer integer=1 @60
+    PropSet v0, v3 key="tag" @49
+    PropSet v0, v3 key="kind" @49
+    v6 = ToBoolean v2 @67
+    Branch v6 -> taken b1(| 0), notTaken b2() @67
+  b1(v7):
+    PropSet v0, v1 key="held" @74
+    Jump -> next b2() @74
+  b2():
+    v9 = Undefined @74
+    Return v9 @74
+}
+function f3 name="peek" module=m0 position=118 flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="held" @143
+    Return v1 @143
+}
+function f4 name="three" module=m0 position=180 flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="tag" @206
+    v2 = PropGet v0 key="kind" @211
+    v3 = PropGet v0 key="held" @216
+    v4 = NewArray v1, v2, v3 contents=anything @205
+    Return v4 @205
+}

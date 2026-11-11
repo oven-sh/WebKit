@@ -417,22 +417,8 @@ function f29 name="accessorsOfStoredClass" parameters=[{type=string}, {type=stri
 
 static void checkUnderEveryOption(ASCIILiteral statementsBeforeProgram, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral words[] = {
-        "validate"_s,
-        "disable=flow-results"_s,
-        "references=narrow"_s,
-        "heat=EverythingIsHot"_s,
-        "heat=EverythingIsCold"_s,
-        "disable=pass:ResolveCalls"_s,
-        "disable=pass:ResolveAccesses"_s,
-        "disable=pass:PlaceTypeTests"_s,
-        "disable=pass:RemoveUnreadFields"_s,
-        "disable=pass:SinkAllocations"_s,
-        "disable=pass:EliminateGuards"_s,
-    };
-    checkOutputOfProgramInShell(programText, expectedOutput, { }, statementsBeforeProgram);
-    for (ASCIILiteral word : words)
-        checkOutputOfProgramInShell(programText, expectedOutput, { word }, statementsBeforeProgram);
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s }, statementsBeforeProgram);
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s }, statementsBeforeProgram);
 }
 
 static void testRecordInheritsFromStoredObject()

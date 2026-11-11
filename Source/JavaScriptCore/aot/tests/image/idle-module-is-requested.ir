@@ -1,0 +1,36 @@
+# main.js: register(() => import("./e.js"))      e.js: import "./f.js"; report("runs", "e.js")      f.js: export function f() {}
+# Only e.js imports f.js, whose body does nothing.
+# It is evaluated all the same, and the loader of `bun run` reads it in steps that a program can count: the table keeps the request of e.js
+# RUN: image ProgramTables
+# CHECK-LABEL: ProgramTables:
+# CHECK: moduleRequests 1
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/e.js" displayPath="e.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/f.js" displayPath="f.js" body=f2
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="e" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="e.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="f" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    Return
+}
+function f3 name="importE" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}

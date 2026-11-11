@@ -41,7 +41,11 @@ namespace Wasm {
 
 class WasmToJSCallee;
 
+struct ImagePointerTable;
+
 std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToJS(const Wasm::ModuleInformation&, unsigned importIndex);
+// With the pointer table of the module where the code is for an image.
+void emitWasmToJS(CCallHelpers&, const Wasm::ModuleInformation&, unsigned importIndex, const ImagePointerTable* = nullptr);
 
 void emitThrowWasmToJSException(CCallHelpers&, GPRReg wasmInstance, Wasm::ExceptionType);
 

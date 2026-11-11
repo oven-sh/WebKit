@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTIRPrinter.h"
 #include "AOTSort.h"
+#include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/ASCIICType.h>
@@ -47,43 +49,26 @@ static constexpr PrimitiveTypeWord primitiveTypeWords[] = {
 };
 
 struct TextParser::TypeParts {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(TypeParts);
-
-    struct EngineClassPart {
-        bool contentsAreProven { false };
-        ArrayStorage arrayStorage { ArrayStorage::Other };
-        OptionSet<PristineAspects> provenPristine;
-    };
-
     static bool isAtSymbolKey(const TextParser&);
     bool hasMixedInternalValue(const Wire::Type&) const;
+    bool hasPrimitivesThatWireLacks(const Wire::Type&) const;
 
     Vector<uint32_t> strings;
     Vector<uint32_t> layouts;
     Vector<uint32_t> builtins;
     Vector<uint32_t> functions;
     Vector<Wire::ClassPart> classes;
-
     uint16_t numberBits { 0 };
-    Vector<uint32_t> symbolKeyWords;
-    Vector<EngineClassPart> engineClassParts;
-    Vector<RegExpLiteralInType> regExpLiterals;
-    bool layoutsAreExact { false };
-    bool hasEngineParts { false };
 };
 
-TextParser::TextParser(std::span<const uint8_t> text, IRForm form, BuildContext& build, const VerifierInputs& verifierInputs)
+TextParser::TextParser(std::span<const uint8_t> text, BuildContext& build)
     : m_text(text)
     , m_cursor { Lexer(text), { }, { } }
-    , m_form(form)
-    , m_verifierInputs(verifierInputs)
     , m_build(build)
     , m_builtins(BuiltinTable::singleton())
     , m_builder(m_builtins)
 {
 }
-
-TextParser::~TextParser() = default;
 
 static uint32_t wirePrimitivesOf(uint16_t primitives)
 {
@@ -226,7 +211,6 @@ bool TextParser::TypeParts::isAtSymbolKey(const TextParser& parser)
     if (parser.nextToken().kind != TokenKind::At)
         return false;
 
-    // "symbol @12" and "symbol @JSValue" are the primitive followed by a position or a representation.
     Lexer lexer = parser.m_cursor.lexer;
     Token afterAt = lexer.next();
     return afterAt.kind == TokenKind::Minus || (afterAt.kind == TokenKind::ID && afterAt.prefix == IDPrefix::Module);
@@ -240,9 +224,16 @@ bool TextParser::TypeParts::hasMixedInternalValue(const Wire::Type& wire) const
         return false;
     if (hasOpaque && hasEnvironment)
         return true;
-    if (wire.primitives & ~wirePrimitivesOf(Primitive::Absent) || wire.flags || numberBits)
+    if (wire.primitives & ~wirePrimitivesOf(Primitive::Absent) || wire.flags || numberBits & ~Primitive::Unspecified)
         return true;
-    return !strings.isEmpty() || !layouts.isEmpty() || !builtins.isEmpty() || !classes.isEmpty() || !functions.isEmpty() || !symbolKeyWords.isEmpty();
+    return !strings.isEmpty() || !layouts.isEmpty() || !builtins.isEmpty() || !classes.isEmpty() || !functions.isEmpty();
+}
+
+bool TextParser::TypeParts::hasPrimitivesThatWireLacks(const Wire::Type& wire) const
+{
+    if (numberBits & Primitive::Unspecified)
+        return true;
+    return numberBits & Primitive::Double && !(wire.primitives & wirePrimitivesOf(Primitive::Number));
 }
 
 static void addIntegers(Wire::Type& wire, uint16_t& numberBits, Range range)
@@ -341,25 +332,43 @@ static BuiltinID parseBuiltinPart(TextParser& parser)
     return builtin;
 }
 
+static std::optional<OpaqueKind> findOpaqueKindNamedAt(const TextParser& parser)
+{
+    if (!parser.at(TokenKind::Word))
+        return std::nullopt;
+    StringView word = parser.token().view();
+    for (OpaqueKind kind : allMembersOf<OpaqueKind>) {
+        if (equalIgnoringASCIICase(word, nameOf(kind)))
+            return kind;
+    }
+    return std::nullopt;
+}
+
 static bool parseOpaquePart(TextParser& parser, Wire::Type& wire)
 {
     if (!parser.at(TokenKind::Word))
         return false;
-    if (std::ranges::any_of(parser.token().text, [](uint8_t byte) { return isASCIIUpper(byte); }))
-        return false;
-    StringView word = parser.token().view();
-    for (OpaqueKind kind : allMembersOf<OpaqueKind>) {
-        if (!equalIgnoringASCIICase(word, nameOf(kind)))
-            continue;
-        if (wire.opaque != Wire::none) {
-            parser.fail();
-            return true;
-        }
-        wire.opaque = static_cast<uint32_t>(kind);
+
+    TextPosition position = parser.token().position;
+    bool isInParentheses = parser.atWord("opaque"_s) && parser.nextToken().kind == TokenKind::LeftParenthesis;
+    if (isInParentheses) {
         parser.advance();
+        parser.advance();
+    } else if (std::ranges::any_of(parser.token().text, [](uint8_t byte) { return isASCIIUpper(byte); }))
+        return false;
+
+    std::optional<OpaqueKind> kind = findOpaqueKindNamedAt(parser);
+    if (!kind && !isInParentheses)
+        return false;
+    if (!kind || static_cast<unsigned>(*kind) >= numberOfWireOpaqueKinds || wire.opaque != Wire::none) {
+        parser.fail(InternalErrorKind::IRTextError, position);
         return true;
     }
-    return false;
+    wire.opaque = static_cast<uint32_t>(*kind);
+    parser.advance();
+    if (isInParentheses)
+        parser.expect(TokenKind::RightParenthesis);
+    return true;
 }
 
 uint32_t TextParser::typeWordOfAnything()
@@ -382,20 +391,11 @@ uint32_t TextParser::parseTypeWord()
         return 0;
     }
 
-    auto parts = makeUnique<TypeParts>();
-    Wire::Type wire = parseTypeValue(*parts);
+    TypeParts parts;
+    Wire::Type wire = parseTypeValue(parts);
     if (hasFailed())
         return 0;
-
-    parts->layoutsAreExact = m_layoutsAreExact && !parts->layouts.isEmpty();
-    if (!parts->hasEngineParts && !parts->layoutsAreExact)
-        return m_builder.internType(wire);
-
-    Vector<Wire::Type>& types = m_builder.sections().types;
-    uint32_t index = static_cast<uint32_t>(types.size());
-    types.append(wire);
-    m_engineTypeParts.add(index, WTF::move(parts));
-    return index;
+    return m_builder.internType(wire);
 }
 
 Wire::Type TextParser::parseTypeValue(TypeParts& parts)
@@ -413,13 +413,11 @@ Wire::Type TextParser::parseTypeValue(TypeParts& parts)
     while (!hasFailed() && accept(TokenKind::Bar));
     if (hasFailed())
         return { };
-    if (parts.hasMixedInternalValue(wire)) {
+    if (parts.hasMixedInternalValue(wire) || parts.hasPrimitivesThatWireLacks(wire)) {
         fail(InternalErrorKind::IRTextError, position);
         return { };
     }
 
-    if ((parts.numberBits & Primitive::Double && !(wire.primitives & wirePrimitivesOf(Primitive::Number))) || parts.numberBits & Primitive::Unspecified)
-        parts.hasEngineParts = true;
     wire.strings = appendSortedWords(m_builder, parts.strings);
     wire.layouts = appendSortedWords(m_builder, parts.layouts);
     wire.builtins = appendSortedWords(m_builder, parts.builtins);
@@ -444,8 +442,7 @@ void TextParser::parseTypePart(Wire::Type& wire, TypeParts& parts)
         return;
     }
     if (TypeParts::isAtSymbolKey(*this)) {
-        parts.symbolKeyWords.append(parsePropertyKeyWord());
-        parts.hasEngineParts = true;
+        fail();
         return;
     }
     if (parseIntegerPart(*this, wire, parts.numberBits) || parsePrimitivePart(*this, wire, parts.numberBits) || parseObjectWordPart(*this, wire))
@@ -466,37 +463,24 @@ void TextParser::parseClassPart(TypeParts& parts, BuiltinClassID builtinClass)
 {
     TextPosition position = token().position;
     unsigned arity = m_builtins.numberOfSlotsInType(builtinClass);
-    Vector<uint32_t, 2> contents;
-    TypeParts::EngineClassPart enginePart;
+    Vector<uint32_t, mostContentsOfClass> contents;
     if (at(TokenKind::LeftAngle)) {
         parseList(TokenKind::LeftAngle, TokenKind::RightAngle, [&] {
-            if (contents.size() < arity) {
-                contents.append(parseTypeWord());
+            if (contents.size() == arity) {
+                fail();
                 return;
             }
-            parts.hasEngineParts = true;
-            if (builtinClass == BuiltinClasses::RegExp && at(TokenKind::String)) {
-                StringID pattern(parseStringWord());
-                parts.regExpLiterals.append({ pattern, parseFlagWord<RegExpFlags>() });
-                return;
-            }
-            if (acceptWord("proven"_s)) {
-                enginePart.contentsAreProven = true;
-                return;
-            }
-            if (acceptWord("pristine"_s)) {
-                uint32_t aspects = parseFlagWord<PristineAspects>();
-                enginePart.provenPristine = OptionSet<PristineAspects>::fromRaw(static_cast<OptionSet<PristineAspects>::StorageType>(aspects));
-                return;
-            }
-            enginePart.arrayStorage = parseEnumerator<ArrayStorage>();
+            contents.append(parseTypeWord());
         });
-        if (contents.size() != arity)
-            fail(InternalErrorKind::IRTextError, position);
-    } else if (arity)
-        contents.fill(m_builder.internType(anythingOnWire()), arity);
+    }
     if (hasFailed())
         return;
+
+    if (contents.size() < arity) {
+        uint32_t anything = typeWordOfAnything();
+        while (contents.size() < arity)
+            contents.append(anything);
+    }
 
     size_t index = 0;
     while (index < parts.classes.size() && parts.classes[index].builtinClass < builtinClass.index())
@@ -507,78 +491,28 @@ void TextParser::parseClassPart(TypeParts& parts, BuiltinClassID builtinClass)
     }
     Wire::Span contentsSpan = contents.isEmpty() ? Wire::Span { } : m_builder.appendWords(contents.span());
     parts.classes.insert(index, Wire::ClassPart { builtinClass.index(), contentsSpan });
-    parts.engineClassParts.insert(index, enginePart);
-}
-
-void TextParser::completeType(uint32_t wireIndex, Type& type) const
-{
-    auto iterator = m_engineTypeParts.find(wireIndex);
-    if (iterator == m_engineTypeParts.end())
-        return;
-    const TypeParts& parts = *iterator->value;
-
-    type.primitives = static_cast<uint16_t>((type.primitives & ~Primitive::Number) | parts.numberBits);
-    for (uint32_t keyWord : parts.symbolKeyWords)
-        type.symbolLiterals.add(PropertyKeyID(keyWord));
-
-    RELEASE_ASSERT(type.classes.size() == parts.engineClassParts.size());
-    for (size_t index = 0; index < type.classes.size(); ++index) {
-        ClassPart& part = type.classes[index];
-        const TypeParts::EngineClassPart& enginePart = parts.engineClassParts[index];
-        part.contentsAreProven = enginePart.contentsAreProven;
-        part.arrayStorage = enginePart.arrayStorage;
-        part.provenPristine = enginePart.provenPristine;
-    }
-    type.regExpLiteralSet = SortedSet<RegExpLiteralInType>(parts.regExpLiterals.span());
-
-    if (parts.layoutsAreExact) {
-        type.layouts = m_program->types.intern(LayoutSet::complete(parts.layouts.map([](uint32_t word) { return LayoutID(word); })));
-    }
 }
 
 LayoutSetID TextParser::parseLayoutSet()
 {
+    if (accept(TokenKind::Minus))
+        return { };
+
     Vector<LayoutID> members;
-    bool isComplete = true;
     parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
-        if (!isComplete) {
-            fail();
-            return;
-        }
-        if (accept(TokenKind::DotDot)) {
-            isComplete = false;
-            return;
-        }
         members.append(LayoutID(parseIDWordUnderLimit(*this, IDPrefix::Layout, countOf(ProgramList::Layouts))));
     });
-    if (hasFailed())
+    if (hasFailed() || members.isEmpty())
         return { };
-    return m_program->types.intern(isComplete ? LayoutSet::complete(WTF::move(members)) : LayoutSet::open(WTF::move(members)));
-}
 
-CalleeSetID TextParser::parseCalleeSet()
-{
-    Vector<FunctionID> functions;
-    Vector<BuiltinID> builtins;
-    bool isComplete = true;
-    parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
-        if (!isComplete) {
-            fail();
-            return;
-        }
-        if (accept(TokenKind::DotDot)) {
-            isComplete = false;
-            return;
-        }
-        if (atWord("builtin"_s)) {
-            builtins.append(parseBuiltinPart(*this));
-            return;
-        }
-        functions.append(FunctionID(parseIDWordUnderLimit(*this, IDPrefix::Function, countOf(ProgramList::Functions))));
-    });
-    if (hasFailed())
-        return { };
-    return m_program->types.intern(isComplete ? CalleeSet::complete(WTF::move(functions), WTF::move(builtins)) : CalleeSet::open(WTF::move(functions), WTF::move(builtins)));
+    AOT::sort(members);
+    removeRepeatedElements(members);
+    if (members.size() == 1)
+        return LayoutSets::of(members.first());
+
+    RELEASE_ASSERT(m_program);
+    TypeArena arena(m_program->types, ArenaKeeps::InProgram);
+    return arena.layoutSets().ofSorted(members.span());
 }
 
 template<typename IDType>
@@ -594,20 +528,6 @@ static IDType parseBuiltinToken(TextParser& parser, IDType (BuiltinTable::*fromT
         return { };
     }
     parser.advance();
-    return id;
-}
-
-template<typename IDType>
-static IDType parseBuiltinNumber(TextParser& parser)
-{
-    TextPosition position = parser.token().position;
-    IDType id(parser.parseUInt32());
-    if (parser.hasFailed())
-        return { };
-    if (!parser.builtins().contains(id)) {
-        parser.fail(InternalErrorKind::IRTextError, position);
-        return { };
-    }
     return id;
 }
 
@@ -651,7 +571,13 @@ RuntimeModuleID TextParser::parseRuntimeModule()
 
 RuntimeFunctionID TextParser::parseRuntimeFunction()
 {
-    return parseBuiltinNumber<RuntimeFunctionID>(*this);
+    RuntimeFunctionID id = at(TokenKind::Word) ? runtimeFunctionFromToken(m_builtins, token().view()) : RuntimeFunctionID();
+    if (!id) {
+        fail();
+        return { };
+    }
+    advance();
+    return id;
 }
 
 } } } // namespace JSC::AOT::Typed

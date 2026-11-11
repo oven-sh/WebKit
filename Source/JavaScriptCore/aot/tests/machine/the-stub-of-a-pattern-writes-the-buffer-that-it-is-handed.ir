@@ -1,0 +1,44 @@
+# the emitter of a pattern, by itself. No walk runs: the Code is written out, because the walk steps a text by index and hands the operation none.
+# the stub fills the buffer of its caller. Over texts alone the operation runs no code of the program, so its call writes few heaps: the buffer is one of them, and what the second pattern takes is read behind the second call.
+# const [a, b] = one; const [c, d] = two;
+# RUN: emit-code
+# CHECK-LABEL: unit f1:Body
+# CHECK-COUNT-2: = Patch({{*}}Writes:{{*}}argumentBuffer}|Reads:
+# RUN(LOADS): emit-code
+# LOADS-COUNT-4: = Load({{*}}argumentBuffer
+# -- code
+# code f1:Body {
+#   b0(v0: string @JSValue, v1: string @JSValue) entry=0:
+#     v2: undefined @Void = DestructureIterable v0 count=2 [readsListsByIndex] traits=[mayThrow, mayCollect, mayTouchMemory]
+#     v3: anything @JSValue = ResultAt v2
+#     v4: anything @JSValue = ResultAt v2 index=1
+#     v5: undefined @Void = DestructureIterable v1 count=2 [readsListsByIndex] traits=[mayThrow, mayCollect, mayTouchMemory]
+#     v6: anything @JSValue = ResultAt v5
+#     v7: anything @JSValue = ResultAt v5 index=1
+#     v8: boolean @Boolean = StrictEq v3, v6 form=Bits
+#     v9: boolean @Boolean = StrictEq v4, v7 form=Bits
+#     Branch v8 -> taken b1(), notTaken b2()
+#   b1():
+#     Return v3
+#   b2():
+#     Branch v9 -> taken b3(), notTaken b4()
+#   b3():
+#     Return v4
+#   b4():
+#     Return v7
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="taken" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Add v0, v1
+    Return v2
+}

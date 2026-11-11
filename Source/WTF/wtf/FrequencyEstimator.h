@@ -216,6 +216,8 @@ private:
             lowerWeight(node, m_adaptor.weightCapAfterPropagation(node, m_constants));
     }
 
+    bool isSeldomGoneRound(unsigned cycle) const { return cycle < m_cyclesSeldomGoneRound.size() && m_cyclesSeldomGoneRound[cycle]; }
+
     double leavingShare(Node from, Node to) const
     {
         if (!m_cycles.size())
@@ -223,8 +225,10 @@ private:
         unsigned fromCycle = m_cycles.innermost(from);
         unsigned common = m_cycles.nearestCommon(fromCycle, m_cycles.innermost(to));
         double share = 1;
-        for (unsigned cycle = fromCycle; cycle != common; cycle = m_cycles[cycle].parent)
-            share /= m_propagation.iterationsOf(cycle);
+        for (unsigned cycle = fromCycle; cycle != common; cycle = m_cycles[cycle].parent) {
+            if (!isSeldomGoneRound(cycle))
+                share /= m_propagation.iterationsOf(cycle);
+        }
         return share;
     }
 
@@ -300,6 +304,9 @@ private:
                 if (m_cycles.depth(cycle) != depth || returning > m_constants.unlikelyEdgeShare)
                     continue;
                 m_propagation.setIterations(cycle, 1 / (1 - returning));
+                if (m_cyclesSeldomGoneRound.isEmpty())
+                    m_cyclesSeldomGoneRound.fill(false, m_cycles.size());
+                m_cyclesSeldomGoneRound[cycle] = true;
                 hasCycleSeldomGoneRound = true;
             }
             if (hasCycleSeldomGoneRound)
@@ -326,6 +333,7 @@ private:
     const FrequencyEstimatorConstants m_constants;
     FrequencyPropagation<Graph> m_propagation;
     Vector<double> m_weights;
+    Vector<bool> m_cyclesSeldomGoneRound;
 };
 
 template<typename Graph, typename MultiplierOf>

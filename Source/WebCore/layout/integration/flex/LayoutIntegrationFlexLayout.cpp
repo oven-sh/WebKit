@@ -58,14 +58,14 @@ void FlexLayout::prepareOutOfFlowBoxForPositionedLayout(RenderBox& outOfFlowBox)
     if (layer->staticInlinePosition() != staticInlinePosition) {
         layer->setStaticInlinePosition(staticInlinePosition);
         if (outOfFlowBox.style().hasStaticInlinePosition(flexBox().writingMode().isHorizontal()))
-            outOfFlowBox.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            outOfFlowBox.setChildNeedsLayout(MarkingBehavior::OnlyThis);
     }
 
     LayoutUnit staticBlockPosition = flexBox().borderAndPaddingBefore();
     if (layer->staticBlockPosition() != staticBlockPosition) {
         layer->setStaticBlockPosition(staticBlockPosition);
         if (outOfFlowBox.style().hasStaticBlockPosition(flexBox().writingMode().isHorizontal()))
-            outOfFlowBox.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            outOfFlowBox.setChildNeedsLayout(MarkingBehavior::OnlyThis);
     }
 }
 
@@ -119,8 +119,7 @@ LayoutUnit FlexLayout::mainAxisAvailableSpace() const
 
 FlexLayoutItems FlexLayout::buildFlexLayoutItems(RelayoutChildren relayoutChildren, const FlexLayoutConstraints& constraints)
 {
-    FlexLayoutItems flexLayoutItems;
-    flexLayoutItems.reserveInitialCapacity(m_flexItems.size());
+    FlexLayoutItems flexLayoutItems(ReserveCapacityTag { }, m_flexItems.size());
     auto contentBoxLogicalWidth = flexBox().contentBoxLogicalWidth();
     for (auto& renderer : m_flexItems) {
         // buildFlexItemList has just collected these from the container's children, so none of them is gone.
@@ -133,7 +132,7 @@ FlexLayoutItems FlexLayout::buildFlexLayoutItems(RelayoutChildren relayoutChildr
 
         auto everHadLayout = flexItem->everHadLayout();
         if (flexItem->shouldInvalidateContentWidths())
-            flexItem->invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);
+            flexItem->invalidateContentLogicalWidths(MarkingBehavior::OnlyThis);
         flexBox().updateBlockChildDirtyBitsBeforeLayout(relayoutChildren, flexItem.get());
         flexLayoutItems.append({ flexItem.get(), constraints.isHorizontalFlow, margins, everHadLayout, relayoutChildren == RelayoutChildren::Yes });
     }
@@ -245,7 +244,7 @@ void FlexLayout::layout(RelayoutChildren relayoutChildren)
     m_flexLayoutResult = WebCore::FlexFormattingContext(flexBox(), integrationUtils, constraints, *m_flexLayoutState).layout(flexLayoutItems);
 }
 
-std::pair<LayoutUnit, LayoutUnit> FlexLayout::computeIntrinsicLogicalWidths() const
+std::pair<LayoutUnit, LayoutUnit> FlexLayout::computeIntrinsicLogicalWidths()
 {
     auto scrollbarWidth = flexBox().scrollbarLogicalWidth();
 
@@ -266,24 +265,17 @@ std::pair<LayoutUnit, LayoutUnit> FlexLayout::computeIntrinsicLogicalWidths() co
         if (flexItem->isOutOfFlowPositioned() || flexItem->isExcludedFromNormalLayout())
             continue;
 
-        // Pre-layout orthogonal children in order to get a valid value for the preferred width.
-        if (flexBox().writingMode().isOrthogonal(flexItem->writingMode()))
-            flexItem->layoutIfNeeded();
-
         LayoutUnit margin = flexBox().marginIntrinsicLogicalWidthForChild(*flexItem);
-
-        auto [minContentInParentInlineAxis, maxContentInParentInlineAxis] = [&] -> std::pair<LayoutUnit, LayoutUnit> {
-            if (flexBox().writingMode().isOrthogonal(flexItem->writingMode())) {
-                auto intrinsicBlockSize = flexItem->computeIntrinsicLogicalHeight();
-                return { intrinsicBlockSize, intrinsicBlockSize };
-            }
-            return flexBox().computeChildIntrinsicLogicalWidths(*flexItem);
-        }();
-
+        auto [minContentInParentInlineAxis, maxContentInParentInlineAxis] = intrinsicLogicalWidthsForFlexItem(*flexItem);
         contributions.append({ minContentInParentInlineAxis + margin, maxContentInParentInlineAxis + margin });
     }
 
     auto [minimumContentSize, maximumContentSize] = FlexFormattingContext::minimumMaximumContentSize(flexBox(), contributions);
+    // CSS Flexbox 9.9.2
+    if (FlexFormattingUtils::isColumnFlow(flexBox()) && FlexFormattingUtils::isMultiline(flexBox())) {
+        if (auto maximumContentSizeFromFlexLines = maximumContentSizeForMultilineColumn())
+            maximumContentSize = *maximumContentSizeFromFlexLines;
+    }
     maximumContentSize = std::max(minimumContentSize, maximumContentSize);
 
     // Due to negative margins, it is possible that we calculated a negative
@@ -292,6 +284,113 @@ std::pair<LayoutUnit, LayoutUnit> FlexLayout::computeIntrinsicLogicalWidths() co
     maximumContentSize = std::max(0_lu, maximumContentSize);
 
     return { std::max(minimumContentSize, legendMinWidth) + scrollbarWidth, std::max(maximumContentSize, legendMaxWidth) + scrollbarWidth };
+}
+
+std::pair<LayoutUnit, LayoutUnit> FlexLayout::intrinsicLogicalWidthsForFlexItem(RenderBox& flexItem) const
+{
+    if (!flexBox().writingMode().isOrthogonal(flexItem.writingMode()))
+        return flexBox().computeChildIntrinsicLogicalWidths(flexItem);
+
+    auto intrinsicBlockSize = flexItem.computeIntrinsicLogicalHeight();
+    return { intrinsicBlockSize, intrinsicBlockSize };
+}
+
+// CSS Flexbox 9.9.2: the flex algorithm runs with the items at their max-content widths and content-based heights.
+class FlexLayout::FlexItemsAtMaxContentWidthScope {
+public:
+    FlexItemsAtMaxContentWidthScope(FlexLayout&, const FlexLayoutItems&, const FlexFormattingContext::SizeList& flexItemsMaxContentWidths);
+    ~FlexItemsAtMaxContentWidthScope();
+
+    FlexLayoutState& flexLayoutState() LIFETIME_BOUND { return *m_flexLayout.m_flexLayoutState; }
+
+private:
+    struct OverridingSizes {
+        std::optional<LayoutUnit> borderBoxLogicalWidth;
+        std::optional<LayoutUnit> borderBoxLogicalHeight;
+    };
+
+    FlexLayout& m_flexLayout;
+    const FlexLayoutItems& m_flexLayoutItems;
+    Vector<OverridingSizes, 4> m_overridingSizes;
+    SetForScope<std::optional<FlexLayoutState>> m_flexLayoutStateScope;
+};
+
+FlexLayout::FlexItemsAtMaxContentWidthScope::FlexItemsAtMaxContentWidthScope(FlexLayout& flexLayout, const FlexLayoutItems& flexLayoutItems, const FlexFormattingContext::SizeList& flexItemsMaxContentWidths)
+    : m_flexLayout(flexLayout)
+    , m_flexLayoutItems(flexLayoutItems)
+    , m_flexLayoutStateScope(flexLayout.m_flexLayoutState, FlexLayoutState { flexLayout.flexBox().hasDefiniteLogicalHeight() })
+{
+    ASSERT(flexLayoutItems.size() == flexItemsMaxContentWidths.size());
+    m_overridingSizes.reserveInitialCapacity(flexLayoutItems.size());
+    for (size_t index = 0; index < flexLayoutItems.size(); ++index) {
+        auto& flexLayoutItem = flexLayoutItems[index];
+        CheckedRef flexItem = flexLayoutItem.renderer;
+        m_overridingSizes.append({ flexItem->overridingBorderBoxLogicalWidth(), flexItem->overridingBorderBoxLogicalHeight() });
+
+        flexItem->clearOverridingBorderBoxLogicalHeight();
+        if (!flexLayoutItem.mainAxisIsInlineAxis)
+            flexItem->setOverridingBorderBoxLogicalWidth(flexItemsMaxContentWidths[index]);
+    }
+}
+
+FlexLayout::FlexItemsAtMaxContentWidthScope::~FlexItemsAtMaxContentWidthScope()
+{
+    auto flexItemsNeedLayout = false;
+    for (size_t index = 0; index < m_flexLayoutItems.size(); ++index) {
+        CheckedRef flexItem = m_flexLayoutItems[index].renderer;
+        auto& overridingSizes = m_overridingSizes[index];
+        flexItem->clearOverridingSize();
+        if (auto width = overridingSizes.borderBoxLogicalWidth)
+            flexItem->setOverridingBorderBoxLogicalWidth(*width);
+        if (auto height = overridingSizes.borderBoxLogicalHeight)
+            flexItem->setOverridingBorderBoxLogicalHeight(*height);
+
+        if (flexLayoutState().hasFlexItemCompletedLayout(flexItem)) {
+            flexItem->setChildNeedsLayout(MarkingBehavior::OnlyThis);
+            flexItemsNeedLayout = true;
+        }
+    }
+    if (!flexItemsNeedLayout)
+        return;
+
+    // Computing a box's intrinsic widths may not mark it for layout, but the items were just laid out at their max-content widths.
+    // Its layout usually follows anyway; grid and flex parents can ask a laid-out container again.
+    RenderObject::SetLayoutNeededForbiddenScope allowSetNeedsLayout(m_flexLayout.flexBox(), false);
+    m_flexLayout.flexBox().setChildNeedsLayout();
+}
+
+std::optional<LayoutUnit> FlexLayout::maximumContentSizeForMultilineColumn()
+{
+    ASSERT(FlexFormattingUtils::isColumnFlow(flexBox()) && FlexFormattingUtils::isMultiline(flexBox()));
+
+    Vector<CheckedRef<RenderBox>> flexItems;
+    for (CheckedPtr flexItem = flexBox().firstChildBox(); flexItem; flexItem = flexItem->nextSiblingBox()) {
+        if (!flexItem->isOutOfFlowPositioned() && !flexItem->isExcludedFromNormalLayout())
+            flexItems.append(*flexItem);
+    }
+
+    auto constraints = flexLayoutConstraints();
+    if (!FlexFormattingUtils::maximumContentSizeNeedsFlexLines(constraints, flexItems))
+        return { };
+
+    std::stable_sort(flexItems.begin(), flexItems.end(), [](auto& a, auto& b) {
+        return a->style().order().value < b->style().order().value;
+    });
+
+    FlexLayoutItems flexLayoutItems;
+    FlexFormattingContext::SizeList flexItemsMaxContentWidths;
+    for (auto& flexItem : flexItems) {
+        // Against zero, like marginIntrinsicLogicalWidthForChild: percentages refer to the width being computed.
+        auto usedStyle = flexItem->usedStyle();
+        auto margins = LayoutBoxExtent { usedStyle.marginTop(0_lu).value_or(0_lu), usedStyle.marginRight(0_lu).value_or(0_lu), usedStyle.marginBottom(0_lu).value_or(0_lu), usedStyle.marginLeft(0_lu).value_or(0_lu) };
+        flexLayoutItems.append({ flexItem.get(), constraints.isHorizontalFlow, margins, flexItem->everHadLayout(), true });
+        flexItemsMaxContentWidths.append(intrinsicLogicalWidthsForFlexItem(flexItem).second);
+    }
+
+    auto flexItemsAtMaxContentWidthScope = FlexItemsAtMaxContentWidthScope { *this, flexLayoutItems, flexItemsMaxContentWidths };
+    auto integrationUtils = FlexIntegrationUtils { flexBox(), flexItemsAtMaxContentWidthScope.flexLayoutState(), m_flexItemContentCache };
+    auto flexFormattingContext = FlexFormattingContext { flexBox(), integrationUtils, constraints, flexItemsAtMaxContentWidthScope.flexLayoutState() };
+    return flexFormattingContext.maximumContentSizeForMultilineColumn(flexLayoutItems, flexItemsMaxContentWidths);
 }
 
 std::optional<LayoutUnit> FlexLayout::firstLineBaseline() const
@@ -411,6 +510,9 @@ LayoutUnit FlexLayout::staticCrossAxisPositionForPositionedFlexItem(const Render
     auto availableSpace = utils.availableAlignmentSpaceForFlexItem(FlexFormattingUtils::crossAxisContentExtent(flexBox()), flexItem, utils.crossAxisExtentForFlexItem(flexItem));
     auto safety = utils.overflowAlignmentForFlexItem(flexItem);
     auto align = FlexFormattingUtils::alignmentForFlexItem(flexItem);
+    // An out-of-flow item has no baseline-sharing group, so baseline values use their fallback alignment: start for first baseline and end for last baseline.
+    if (align == ItemPosition::LastBaseline)
+        align = ItemPosition::FlexEnd;
     if (availableSpace < 0 && safety == OverflowAlignment::Safe)
         align = ItemPosition::FlexStart;
     return FlexFormattingUtils::alignmentOffset(availableSpace, align, { }, { }, FlexFormattingUtils::isWrapReverse(flexBox()));
@@ -456,6 +558,9 @@ void FlexLayout::setFlexItemContentLogicalHeightFromLayout(const RenderBox& flex
     if (!canSetFlexItemContentLogicalHeight)
         return;
     if (flexItem.overridingBorderBoxLogicalHeight())
+        return;
+    // Not while computing the intrinsic widths; see computeBlockAxisContentSizeForFlexItem.
+    if (flexBox().layoutContext().isComputingIntrinsicLogicalWidthFor(flexBox()))
         return;
     m_flexItemContentCache.setContentLogicalHeight(flexItem, height);
 }
@@ -508,14 +613,31 @@ bool FlexLayout::hasDefiniteSizeForPercentResolution(const RenderBox& flexItem)
         return FlexFormattingUtils::alignmentForFlexItem(flexItem) == ItemPosition::Stretch;
 
     // Flexbox 9.8 rule 2: definite flex-basis makes post-flexing main size definite.
-    // A percentage (or stretch) flex-basis is definite only when the container's block size is, which is rule 1 below.
+    // A percentage (or stretch) flex-basis is definite only when the container's block size is, which is rule 1 below,
+    // or when it is used as content and the aspect-ratio makes that definite, which is checked after rule 1.
     auto* flexLayoutState = m_flexLayoutState ? &*m_flexLayoutState : nullptr;
     auto flexBasis = FlexFormattingUtils::flexBasisForFlexItem(flexItem);
     if (!flexBasis.isPercentOrCalculated() && !flexBasis.isStretch() && FlexIntegrationUtils::flexItemMainSizeIsDefinite(flexItem, flexBasis, flexLayoutState))
         return true;
 
     // Flexbox 9.8 rule 1: definite container main size makes post-flexing sizes definite.
-    return FlexIntegrationUtils::canResolvePercentAgainstContainerBlockSize(flexItem, RenderBox::UpdatePercentageHeightDescendants::Yes, flexLayoutState);
+    if (FlexIntegrationUtils::canResolvePercentAgainstContainerBlockSize(flexItem, RenderBox::UpdatePercentageHeightDescendants::Yes, flexLayoutState))
+        return true;
+
+    // At this point, the container main size is assumed to be indefinite.
+    // FIXME: Extend this to replaced items and to items whose height behaves as auto. Their percentage
+    // children still resolve against the aspect-ratio size from RenderBlock::availableLogicalHeightForPercentageComputation.
+    if (is<RenderReplaced>(flexItem) || flexItem.logicalHeightBehavesAsAuto())
+        return false;
+
+    // Flexbox 9.8 rule 2 + Flexbox 9.2.3.B: check if a non-fixed flexBasis can also be definite.
+    // A flex item has a definite inline size if it has a preferred aspect ratio, a used flex basis of 'content', and a definite cross size.
+    // https://drafts.csswg.org/css-flexbox/#algo-main-item
+    // https://drafts.csswg.org/css-flexbox/#flex-basis-property
+    // If a value would resolve against a containing block with an indefinite size, the used value for flex-basis is content.
+    bool usedFlexBasisIsContent = flexBasis.isPercentOrCalculated() || flexBasis.isStretch() || flexBasis.isContent();
+
+    return usedFlexBasisIsContent && FlexIntegrationUtils::flexItemHasComputableAspectRatioAndCrossSizeIsConsideredDefinite(flexItem, flexLayoutState);
 }
 
 }

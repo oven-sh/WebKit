@@ -28,10 +28,12 @@
 #include <WebCore/FloatPoint.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/FrameIdentifier.h>
+#include <WebCore/IntSize.h>
 #include <WebCore/NodeIdentifier.h>
 #include <WebCore/RectEdges.h>
 #include <WebCore/RenderStyleConstants.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/URLHash.h>
@@ -68,14 +70,37 @@ struct TargetedElementInfo {
     FloatRect boundsInClientCoordinates;
     PositionType positionType { PositionType::Static };
     Vector<FrameIdentifier> childFrameIdentifiers;
+    Vector<FrameIdentifier> remoteFrameIdentifiers;
     HashSet<URL> mediaAndLinkURLs;
     bool isNearbyTarget { true };
     bool isPseudoElement { false };
     bool isInShadowTree { false };
     bool isInVisibilityAdjustmentSubtree { false };
     bool hasLargeReplacedDescendant { false };
+    FloatSize sizeInDocument;
     bool hasAudibleMedia { false };
 };
+
+struct TargetedTextMatch {
+    // Only computed for a match in the main document. A match in a subframe targets the main document's element that
+    // contains the subframe instead.
+    Vector<TargetedElementInfo> targets;
+};
+
+using TargetedTextSearchItem = Variant<TargetedTextMatch, FrameIdentifier>;
+
+struct TargetedTextSearchResult {
+    HashMap<FrameIdentifier, Vector<TargetedTextSearchItem>> itemsByFrame;
+    // Targets for the owner element of each of the main frame's subframes. Only computed by the main frame's process.
+    HashMap<FrameIdentifier, Vector<TargetedElementInfo>> targetsBySubframe;
+};
+
+struct TargetedFrameContent {
+    bool hasAudibleMedia { false };
+    Vector<IntSize> largestReplacedContentSizes;
+};
+
+WEBCORE_EXPORT void mergeRemoteFrameContent(TargetedElementInfo&, const TargetedFrameContent&);
 
 WEBCORE_EXPORT Ref<SharedBuffer> serializeTargetedElementSelectors(const TargetedElementSelectors&);
 WEBCORE_EXPORT std::optional<TargetedElementSelectors> deserializeTargetedElementSelectors(std::span<const uint8_t>);

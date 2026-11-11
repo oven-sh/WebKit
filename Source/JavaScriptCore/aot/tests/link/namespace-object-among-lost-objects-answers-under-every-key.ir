@@ -1,0 +1,76 @@
+# barrel.mjs: export * from "./legacy.cjs"; export const own = 1      legacy.cjs: exports.extra = 5; exports.taint = function (r) { r.n = "text" }
+# main.mjs: import * as space from "./barrel.mjs"; const plain = { other: 1 }, rec = { n: 1 };  function read(n) { return n.extra }  function poke(n, r) { return n.taint(r) }
+#           read(space); read(plain); poke(space, rec); poke(plain, rec); rec.n
+# Two layouts without a family that meet at one site are lost. Through lost objects only the holders of a key are tied one by one, and a namespace object lists what its module's table lists:
+# the names that the star shows in the run are none of them. `read` was proven undefined, and the call in `poke` had no callee: its operand went nowhere and the field stayed proven
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 {{*}}result=undefined returns
+# RUN(FIELD): link fields mechanisms=all
+# FIELD-NOT: field L1.0 "n" {{*}}writers-known
+# read-off-one-namespace-object: the arm of one layout was right all along
+# RUN(ONE): link functions mechanisms=all
+# ONE-NOT: function f3 {{*}}result=undefined returns
+
+layout L0 module=m0 fields=[{key="other" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/barrel.mjs" displayPath="barrel.mjs" body=f4 requests=[{target=m3 isDynamicStarExport=true completes=true}] exports=[{name="own" variable=g0}]
+module m2 path="/legacy.cjs" displayPath="legacy.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g1
+module m3 path="#3" displayPath="legacy.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f6 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g2}]
+entry module=m0
+variable g0 name="own" module=m1 declared={type=anything}
+variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g2 name="default" module=m3 declared={type=anything|absent}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = NewObject -, v1 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f1
+    v7 = Call v6, -, v0 calleeName="read"
+    v8 = Call v6, -, v3 calleeName="read"
+    v9 = NewClosure function=f2
+    v10 = Call v9, -, v0, v5 calleeName="poke"
+    v11 = Call v9, -, v3, v5 calleeName="poke"
+    v12 = NewClosure function=f3
+    v13 = Call v12, -, v0 calleeName="readOffOne"
+    v14 = PropGet v5 key="n"
+    Return v14
+}
+function f1 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="extra"
+    Return v1
+}
+function f2 name="poke" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="taint"
+    v3 = Call v2, v0, v1 calleeKey="taint"
+    Return v3
+}
+function f3 name="readOffOne" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="extra"
+    Return v1
+}
+function f4 name="barrel" module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f5 name="legacy" module=m2 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f6 name="facadeOfLegacy" module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m3 [isBare]
+    v1 = Undefined
+    Return v1
+}

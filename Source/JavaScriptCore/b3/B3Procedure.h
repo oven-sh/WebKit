@@ -73,6 +73,7 @@ class CFG;
 class CompilationScratch;
 class ConstPtrValue;
 class Dominators;
+struct ValidatedForm;
 class FrequencyEstimate;
 class MemoryValue;
 class NaturalLoops;
@@ -146,9 +147,9 @@ public:
 
     JS_EXPORT_PRIVATE Type addTuple(Vector<Type>&& types);
     const Vector<Vector<Type>>& tuples() const { return m_tuples; };
-    bool LEGACY_NODELETE isValidTuple(Type tuple) const;
+    NODELETE bool isValidTuple(Type tuple) const;
     Type extractFromTuple(Type tuple, unsigned index) const;
-    JS_EXPORT_PRIVATE const Vector<Type>& LEGACY_NODELETE tupleForType(Type tuple) const;
+    NODELETE JS_EXPORT_PRIVATE const Vector<Type>& tupleForType(Type tuple) const;
 
     unsigned resultCount(Type type) const { return type.isTuple() ? tupleForType(type).size() : type.isNumeric(); }
     Type typeAtOffset(Type type, unsigned index) const { ASSERT(index < resultCount(type)); return type.isTuple() ? extractFromTuple(type, index) : type; }
@@ -172,12 +173,14 @@ public:
     // Returns null for TriState::Indeterminate.
     Value* addBoolConstant(Origin, TriState);
 
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE resetValueOwners();
+    NODELETE JS_EXPORT_PRIVATE void resetValueOwners();
     JS_EXPORT_PRIVATE void resetReachability();
 
     // This destroys CFG analyses. If we ask for them again, we will recompute them. Usually you
     // should call this anytime you call resetReachability().
     JS_EXPORT_PRIVATE void invalidateCFG();
+
+    std::unique_ptr<ValidatedForm>& validatedForm() LIFETIME_BOUND { return m_validatedForm; }
 
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
@@ -252,7 +255,7 @@ public:
     JS_EXPORT_PRIVATE void updateFrequencies();
 
     void addFastConstant(const ValueKey&);
-    bool LEGACY_NODELETE isFastConstant(const ValueKey&);
+    NODELETE bool isFastConstant(const ValueKey&);
     
     unsigned numEntrypoints() const { return m_numEntrypoints; }
     JS_EXPORT_PRIVATE void setNumEntrypoints(unsigned);
@@ -315,19 +318,21 @@ public:
     const Air::Code& code() const { return *m_code; }
     Air::Code& code() { return *m_code; }
 
-    unsigned LEGACY_NODELETE callArgAreaSizeInBytes() const;
+    NODELETE unsigned callArgAreaSizeInBytes() const;
     void requestCallArgAreaSizeInBytes(unsigned size);
 
     // This tells the register allocators to stay away from this register.
     JS_EXPORT_PRIVATE void pinRegister(Reg);
     
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE setOptLevel(unsigned value);
+    NODELETE JS_EXPORT_PRIVATE void setOptLevel(unsigned value);
     unsigned optLevel() const { return m_optLevel; }
 
     const Policy& policy() const { return m_policy; }
     // A load is not folded into an instruction that comes after a write to this range.
     const HeapRange& heapThatLoadsStayInFrontOf() const { return m_heapThatLoadsStayInFrontOf; }
     void setHeapThatLoadsStayInFrontOf(const HeapRange& range) { m_heapThatLoadsStayInFrontOf = range; }
+    const HeapRange& heapOfStackSlots() const { return m_heapOfStackSlots; }
+    void setHeapOfStackSlots(const HeapRange& range) { m_heapOfStackSlots = range; }
     uint64_t limit(Limit limit) const { return m_policy.limits.get(limit); }
     HeapSetTable& heapSets() LIFETIME_BOUND { return m_heapSets; }
     Arena* arenaOrNull() LIFETIME_BOUND { return m_policy.allocation.usesArena ? &m_arena : nullptr; }
@@ -343,7 +348,7 @@ public:
     }
     void didAddOpcode(Opcode opcode) { m_opcodesEverAdded.set(opcode); }
 
-    JS_EXPORT_PRIVATE void fail(FailureKind, Origin = Origin());
+    JS_EXPORT_PRIVATE void fail(FailureKind, Origin = Origin(), String detail = { });
     const CompilationReport& report() const { return m_report; }
     void didReachLimit(Limit limit, Origin origin = Origin()) const
     {
@@ -360,7 +365,11 @@ public:
     void setNeedsUsedRegisters(bool value) { m_needsUsedRegisters = value; }
     bool needsUsedRegisters() const { return m_needsUsedRegisters; }
 
-    JS_EXPORT_PRIVATE unsigned LEGACY_NODELETE frameSize() const;
+    // Some patchpoint says StackmapValue::releasesDeadValues().
+    void setReleasesDeadValues(bool value) { m_releasesDeadValues = value; }
+    bool releasesDeadValues() const { return m_releasesDeadValues; }
+
+    NODELETE JS_EXPORT_PRIVATE unsigned frameSize() const;
     JS_EXPORT_PRIVATE RegisterAtOffsetList calleeSaveRegisterAtOffsetList() const;
 
     PCToOriginMap& pcToOriginMap() LIFETIME_BOUND { return m_pcToOriginMap; }
@@ -380,13 +389,13 @@ public:
 
     JS_EXPORT_PRIVATE RegisterSet mutableGPRs();
 
-    void LEGACY_NODELETE setNeedsPCToOriginMap();
+    NODELETE void setNeedsPCToOriginMap();
     bool needsPCToOriginMap() { return m_needsPCToOriginMap; }
 
     JS_EXPORT_PRIVATE void freeUnneededB3ValuesAfterLowering();
 
     bool shouldDumpIR() const { return m_shouldDumpIR; }
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE setShouldDumpIR();
+    NODELETE JS_EXPORT_PRIVATE void setShouldDumpIR();
 
     void setUsesSIMD()
     { 
@@ -454,6 +463,7 @@ private:
     SparseCollection<Value> m_values;
     std::unique_ptr<CFG> m_cfg;
     std::unique_ptr<Dominators> m_dominators;
+    std::unique_ptr<ValidatedForm> m_validatedForm;
     std::unique_ptr<NaturalLoops> m_naturalLoops;
     std::unique_ptr<BackwardsCFG> m_backwardsCFG;
     std::unique_ptr<BackwardsDominators> m_backwardsDominators;
@@ -474,6 +484,7 @@ private:
     unsigned m_optLevel { 2 };
     Policy m_policy;
     HeapRange m_heapThatLoadsStayInFrontOf;
+    HeapRange m_heapOfStackSlots { HeapRange::top() };
     CompilationScratch* m_scratch { nullptr };
     mutable CompilationReport m_report;
     HeapSetTable m_heapSets;
@@ -488,6 +499,7 @@ private:
     bool m_hasCycle { false };
     bool m_areFrequenciesCurrent { false };
     bool m_needsUsedRegisters : 1 { true };
+    bool m_releasesDeadValues : 1 { false };
     bool m_hasQuirks : 1 { false };
     bool m_needsPCToOriginMap : 1 { false };
     bool m_shouldDumpIR : 1 { false };

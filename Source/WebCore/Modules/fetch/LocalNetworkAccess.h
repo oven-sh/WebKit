@@ -41,7 +41,7 @@ struct ClientOrigin;
 // would block nearly every cross-origin subresource, so the check is skipped instead.
 constexpr bool canDetermineConnectionAddressSpace()
 {
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || USE(SOUP)
     return true;
 #else
     return false;
@@ -55,7 +55,7 @@ enum class LocalNetworkAccessPermissionRequestOutcome : uint8_t {
     UseRecordedDecision,
     Prompt,
 };
-WEBCORE_EXPORT LocalNetworkAccessPermissionRequestOutcome LEGACY_NODELETE localNetworkAccessPermissionRequestOutcome(IPAddressSpace connectionAddressSpace, bool hasRecordedDecision);
+NODELETE WEBCORE_EXPORT LocalNetworkAccessPermissionRequestOutcome localNetworkAccessPermissionRequestOutcome(IPAddressSpace connectionAddressSpace, bool hasRecordedDecision);
 
 enum class LocalNetworkAccessRequirement : bool { None, Permission };
 

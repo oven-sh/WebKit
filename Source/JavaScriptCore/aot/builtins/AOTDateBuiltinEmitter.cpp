@@ -13,30 +13,25 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static ptrdiff_t offsetOfCachedDateTime(TimeZone zone)
-{
-    switch (zone) {
-    case TimeZone::Local:
-        return DateInstance::offsetOfCachedGregorianDateTime();
-    case TimeZone::UTC:
-        return DateInstance::offsetOfCachedGregorianDateTimeUTC();
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 DateBuiltinEmitter::DateBuiltinEmitter(CodeGenerator& generator)
     : BuiltinFamilyEmitter(generator)
 {
 }
 
-TypedPointer DateBuiltinEmitter::fieldAt(CellPointer date, ptrdiff_t offset)
+const Machine::AbstractHeap& DateBuiltinEmitter::cachedDateTimeIn(TimeZone zone) const
 {
-    return m_out.address(m_heaps.entire(AbstractHeap::InternalFields), date.value(), offset);
+    switch (zone) {
+    case TimeZone::Local:
+        return m_heaps.DateInstance_cachedGregorianDateTime;
+    case TimeZone::UTC:
+        return m_heaps.DateInstance_cachedGregorianDateTimeUTC;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 Number DateBuiltinEmitter::timeValueOf(CellPointer date)
 {
-    return Number(m_out.loadDouble(fieldAt(date, DateInstance::offsetOfInternalNumber())));
+    return Number(m_out.loadDouble(date.value(), m_heaps.DateInstance_internalNumber));
 }
 
 void DateBuiltinEmitter::generateDateNow(const InlineCall& call)
@@ -52,18 +47,19 @@ void DateBuiltinEmitter::generateDateGetTime(const InlineCall& call)
 void DateBuiltinEmitter::generateDateGetMilliseconds(const InlineCall& call)
 {
     Number time = timeValueOf(cellOperand(call.receiver()));
-    finish(call, sub(time, mul(floor(div(time, number(msPerSecond))), number(msPerSecond))));
+    finish(call, sub(time, mul(floor(div(time, msPerSecond)), msPerSecond)));
 }
 
 void DateBuiltinEmitter::generateDateSetTime(const InlineCall& call)
 {
     CellPointer date = cellOperand(call.receiver());
     Number unclippedTime = numberOperand(call.argument(0));
-    Number time = select(lessThanOrEqual(abs(unclippedTime), number(WTF::maxECMAScriptTime)), add(trunc(unclippedTime), number(0)), number(PNaN));
-    m_out.storeDouble(time.value(), fieldAt(date, DateInstance::offsetOfInternalNumber()));
+    Condition isInRange = lessThanOrEqual(abs(unclippedTime), WTF::maxECMAScriptTime);
+    Number time = select(isInRange, add(trunc(unclippedTime), 0), PNaN);
+    m_out.storeDouble(time.value(), date.value(), m_heaps.DateInstance_internalNumber);
     LValue stale = m_out.constInt64(PlainGregorianDateTime::staleMarker().payload());
-    m_out.store64(stale, fieldAt(date, DateInstance::offsetOfCachedGregorianDateTime()));
-    m_out.store64(stale, fieldAt(date, DateInstance::offsetOfCachedGregorianDateTimeUTC()));
+    m_out.store64(stale, date.value(), m_heaps.DateInstance_cachedGregorianDateTime);
+    m_out.store64(stale, date.value(), m_heaps.DateInstance_cachedGregorianDateTimeUTC);
     finish(call, time);
 }
 
@@ -110,11 +106,11 @@ void DateBuiltinEmitter::generateDateGetField(const InlineCall& call)
     RELEASE_ASSERT(!hasOnlyLocalForm || zone == TimeZone::Local);
 
     BitField bitField = bitFieldOf(field);
-    LValue payload = m_out.load64(fieldAt(cellOperand(call.receiver()), offsetOfCachedDateTime(zone)));
-    missUnless(call, Condition(m_out.testNonZero64(payload, integer(PlainGregorianDateTime::validityMask).value())));
+    Integer payload(m_out.load64(cellOperand(call.receiver()).value(), cachedDateTimeIn(zone)));
+    missUnless(call, hasBits(payload, static_cast<int64_t>(PlainGregorianDateTime::validityMask)));
     LValue bits = bitField.isSigned
-        ? m_out.aShr(m_out.shl(payload, m_out.constInt32(64 - bitField.width - bitField.offset)), m_out.constInt32(64 - bitField.width))
-        : m_out.bitAnd(m_out.lShr(payload, m_out.constInt32(bitField.offset)), m_out.constInt64((1ULL << bitField.width) - 1));
+        ? m_out.aShr(m_out.shl(payload.value(), 64 - bitField.width - bitField.offset), 64 - bitField.width)
+        : m_out.bitAnd(m_out.lShr(payload.value(), bitField.offset), (1ULL << bitField.width) - 1);
     Integer result(bits);
     if (field == DateField::TimezoneOffset)
         result = neg(result);

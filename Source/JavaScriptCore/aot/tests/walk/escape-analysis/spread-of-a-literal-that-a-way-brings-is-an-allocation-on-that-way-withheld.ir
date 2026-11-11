@@ -1,0 +1,7 @@
+# the same function with EscapeAnalysis withheld: no state holds what a literal was made with, so the ways meet and the copy asks the cell that arrives for its keys
+# function widen(c, a, b) { const more = c ? { a } : { a, b }; return { ...more }; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-1: CopyDataProperties
+# CHECK-NOT: CopyDataProperties
+# PROGRAM-OF: spread-of-a-literal-that-a-way-brings-is-an-allocation-on-that-way.ir

@@ -24,11 +24,12 @@ static_assert(sizeof(IndexingHeader) == sizeof(EncodedJSValue) && MarkedSpace::s
 static_assert(Butterfly::offsetOfPublicLength() == -static_cast<ptrdiff_t>(sizeof(IndexingHeader)) && Butterfly::offsetOfVectorLength() == Butterfly::offsetOfPublicLength() + static_cast<ptrdiff_t>(sizeof(uint32_t)));
 
 enum class ArrayElementKind : uint8_t { Int32, Double, Contiguous };
-// OwnStorage: the capacity is how many elements the function that makes the array appends itself.
-enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, ContiguousCapacity1OwnStorage, ContiguousCapacity3OwnStorage };
-enum class ArraySliceRange : uint8_t { Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom };
-// Number: an array of int32 that takes a number which may be none becomes an array of doubles.
-enum class ArrayStoredValue : uint8_t { Value, Number };
+enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, Int32Capacity1, Int32Capacity3 };
+enum class ArraySliceRange : uint8_t { Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom, BoundedAsDoubles, WholeAsDoubles };
+enum class ArrayStoredValue : uint8_t { Value, Number, ValueInSloppyCode };
+enum class ArrayRead : uint8_t { OfListAsMade, OfAnyList };
+enum class SharedElements : uint8_t { InImage, InStorageOfSite };
+enum class SearchedElements : uint8_t { Values, ValuesFromStart };
 
 constexpr IndexingType indexingTypeOf(ArrayElementKind kind)
 {
@@ -69,63 +70,74 @@ inline constexpr StubRegister arrayStorageRegister = StubRegister::T12;
 inline constexpr int64_t arraySliceToEnd = 1ll << 32;
 
 constexpr StubKey arrayLiteral(unsigned count) { return StubKey(StubFamily::ArrayLiteral).withCount(count); }
-// Behind the elements: the address of sizeOfFrameArray(count) bytes in the frame of the caller.
-constexpr StubKey frameArrayLiteral(unsigned count) { return StubKey(StubFamily::FrameArrayLiteral).withCount(count); }
-constexpr size_t sizeOfFrameArray(unsigned capacity) { return sizeof(JSArray) + sizeof(IndexingHeader) + capacity * sizeof(EncodedJSValue); }
-static_assert(sizeOfArrayWithStorage(3) == sizeOfFrameArray(3) && propertyRoomOfArray == initialOutOfLineCapacity * sizeof(EncodedJSValue));
+constexpr StubKey arrayLiteralWithInt32(unsigned count) { return StubKey(StubFamily::ArrayLiteralWithInt32).withCount(count); }
 constexpr StubKey arrayLiteralWithDouble(unsigned count) { return StubKey(StubFamily::ArrayLiteralWithDouble).withCount(count); }
 constexpr StubKey arrayLiteralWithDoubleSlow() { return StubKey(StubFamily::ArrayLiteralWithDoubleSlow); }
-// A cell around the storage of an array of constants. The immediate: the request. The storage is the node in the image, but for SharedValues: there the operand is the word of the statics for it.
-enum class ArrayOfData : uint8_t { Int32, Double, Values, SharedValues };
-constexpr StubKey arrayOfData(ArrayOfData form) { return StubKey(StubFamily::ArrayOfData).withForm(static_cast<uint8_t>(form)); }
+constexpr StubKey newCopyOnWriteArray(ArrayElementKind kind, SharedElements elements) { return StubKey(StubFamily::NewCopyOnWriteArray).withForm(static_cast<uint8_t>(kind) + 3 * static_cast<uint8_t>(elements)); }
 constexpr StubKey newEmptyArray(EmptyArray array) { return StubKey(StubFamily::NewEmptyArray).withForm(static_cast<uint8_t>(array)); }
 constexpr StubKey newEmptyArrayWithCapacity() { return StubKey(StubFamily::NewEmptyArrayWithCapacity); }
+constexpr StubKey newArrayFromBuffer() { return StubKey(StubFamily::NewArrayFromBuffer); }
+constexpr StubKey newArrayOfList(bool isContiguous) { return StubKey(StubFamily::NewArrayOfList).withForm(isContiguous); }
 constexpr StubKey newArrayWithLength(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayWithLength).withForm(static_cast<uint8_t>(kind)); }
-// The operands are those of the operation: the length and the capacity in one word, and the indexing type.
 constexpr StubKey newArrayOfHolesSlow() { return StubKey(StubFamily::NewArrayOfHolesSlow); }
+constexpr StubKey newArrayOfLength(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayOfLength).withForm(static_cast<uint8_t>(kind)); }
+constexpr StubKey newArrayOfGiven() { return StubKey(StubFamily::NewArrayOfGiven); }
 constexpr StubKey newEmptyArrayAtSite(ArrayElementKind seed) { return StubKey(StubFamily::NewEmptyArrayAtSite).withForm(static_cast<uint8_t>(seed)); }
+constexpr StubKey newArrayWithLengthAtSite(ArrayElementKind seed) { return StubKey(StubFamily::NewArrayWithLengthAtSite).withForm(static_cast<uint8_t>(seed)); }
 constexpr StubKey arraySlice(bool withPropertyRoom = false) { return StubKey(StubFamily::ArraySlice).withForm(static_cast<uint8_t>(withPropertyRoom ? ArraySliceRange::BoundedWithPropertyRoom : ArraySliceRange::Bounded)); }
 constexpr StubKey arrayCopy(bool withPropertyRoom = false) { return StubKey(StubFamily::ArraySlice).withForm(static_cast<uint8_t>(withPropertyRoom ? ArraySliceRange::WholeWithPropertyRoom : ArraySliceRange::Whole)); }
+constexpr StubKey arraySliceAsDoubles() { return StubKey(StubFamily::ArraySlice).withForm(static_cast<uint8_t>(ArraySliceRange::BoundedAsDoubles)); }
+constexpr StubKey arrayCopyAsDoubles() { return StubKey(StubFamily::ArraySlice).withForm(static_cast<uint8_t>(ArraySliceRange::WholeAsDoubles)); }
+constexpr StubKey createArguments() { return StubKey(StubFamily::CreateArguments); }
+constexpr StubKey createMappedArguments() { return StubKey(StubFamily::CreateMappedArguments); }
 constexpr StubKey arrayPush() { return StubKey(StubFamily::ArrayPush); }
 constexpr StubKey arrayPushOfKnownKind() { return StubKey(StubFamily::ArrayPushOfKnownKind); }
-constexpr StubKey arrayPushDouble() { return StubKey(StubFamily::ArrayPushDouble); }
-// The operands: an array, and the array whose elements go behind its own as the iterator of an array reads them: a hole as undefined.
 constexpr StubKey appendElements() { return StubKey(StubFamily::AppendElements); }
-// What stands behind the code in line of an access to an element of an array whose holes read as undefined.
+constexpr StubKey appendMembers() { return StubKey(StubFamily::AppendMembers); }
+constexpr StubKey appendValuesOfMap() { return StubKey(StubFamily::AppendValuesOfMap); }
+constexpr StubKey appendIterable() { return StubKey(StubFamily::AppendIterable); }
+constexpr StubKey destructureIterable() { return StubKey(StubFamily::DestructureIterable); }
 constexpr StubKey arrayPutAtIndex(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtIndex).withForm(static_cast<uint8_t>(stored)); }
 constexpr StubKey arrayPutAtNumber(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtNumber).withForm(static_cast<uint8_t>(stored)); }
-constexpr StubKey arrayGetAtIndex() { return StubKey(StubFamily::ArrayGetAtIndex); }
+constexpr StubKey reserveArrayCapacity() { return StubKey(StubFamily::ReserveArrayCapacity); }
+struct ListWhoseLengthIsStoredWithoutRunTime {
+    static constexpr IndexingType firstKind = ArrayWithUndecided;
+    static constexpr IndexingType lastKind = ArrayWithContiguous;
+    static constexpr uint32_t bitsThatItsStructureMayNotHave = Structure::s_anyImmutablePropertiesBits;
+};
+constexpr StubKey setArrayLength(bool isInSloppyCode) { return StubKey(StubFamily::SetArrayLength).withForm(isInSloppyCode); }
+constexpr StubKey arrayGetAtIndex(ArrayRead read = ArrayRead::OfListAsMade) { return StubKey(StubFamily::ArrayGetAtIndex).withForm(static_cast<uint8_t>(read)); }
 constexpr StubKey arrayGetAtNumber() { return StubKey(StubFamily::ArrayGetAtNumber); }
-// The answer of `in`: 1 or 0.
-constexpr StubKey arrayHasAtIndex() { return StubKey(StubFamily::ArrayHasAtIndex); }
-constexpr StubKey arrayHasAtNumber() { return StubKey(StubFamily::ArrayHasAtNumber); }
+constexpr StubKey arrayIndexOfString(SearchedElements elements) { return StubKey(StubFamily::ArrayIndexOfString).withForm(static_cast<uint8_t>(elements)); }
 
 Jump branchIfHavingABadTime(StubAssembler&);
-// In the space of plain cells.
 ptrdiff_t offsetOfArrayWithStorageAllocator(unsigned vectorLength, unsigned propertyRoom = 0);
 void emitEmptyArrayOfHoles(StubAssembler&, EmptyArray);
 void emitElementBarrierAndReturn(StubAssembler&, GPRReg array, GPRReg value);
 
 struct SparseElementSearch {
-    // Has an ArrayStorage. Preserved.
     GPRReg owner;
-    // Below 2^32. Preserved.
     GPRReg index;
-    // On x86-64 rax and rdx.
     GPRReg entry;
     GPRReg probe;
     GPRReg table;
 };
-// Falls through with the address of the SparseArrayEntry where the map of the storage has the index.
 void emitFindSparseElement(StubAssembler&, const SparseElementSearch&, JumpList& isAbsent);
 
 static_assert(exists(arrayLiteral(0)) && exists(arrayLiteral(maxArrayElementsInRegisters)) && !exists(arrayLiteral(maxArrayElementsInRegisters).withCount(maxArrayElementsInRegisters + 1)));
 static_assert(exists(arrayLiteralWithDouble(1)) && !exists(arrayLiteralWithDouble(1).withCount(0)) && exists(arrayLiteralWithDoubleSlow()));
-static_assert(exists(newEmptyArray(EmptyArray::ContiguousCapacity3OwnStorage)) && !exists(newEmptyArray(EmptyArray::Int32DefaultCapacity).withForm(8)));
+static_assert(exists(newCopyOnWriteArray(ArrayElementKind::Contiguous, SharedElements::InStorageOfSite)) && !exists(newCopyOnWriteArray(ArrayElementKind::Contiguous, SharedElements::InStorageOfSite).withForm(6)));
+static_assert(exists(newEmptyArray(EmptyArray::Int32Capacity3)) && !exists(newEmptyArray(EmptyArray::Int32Capacity3).withForm(8)));
+static_assert(exists(newArrayWithLengthAtSite(ArrayElementKind::Double)) && !exists(newArrayWithLengthAtSite(ArrayElementKind::Contiguous)));
+static_assert(exists(newArrayOfLength(ArrayElementKind::Contiguous)) && exists(newArrayOfGiven()));
 static_assert(exists(newArrayWithLength(ArrayElementKind::Contiguous)) && exists(newEmptyArrayAtSite(ArrayElementKind::Contiguous)) && exists(newEmptyArrayWithCapacity()) && exists(newArrayOfHolesSlow()));
-static_assert(exists(arraySlice()) && exists(arrayCopy()) && exists(arrayPush()) && exists(arrayPushOfKnownKind()) && exists(arrayPushDouble()) && exists(appendElements()));
+static_assert(exists(arraySlice(true)) && exists(arrayCopy(true)) && exists(arraySliceAsDoubles()) && exists(arrayCopyAsDoubles()) && !exists(arrayCopyAsDoubles().withForm(6)));
+static_assert(exists(arrayIndexOfString(SearchedElements::Values)) && exists(arrayIndexOfString(SearchedElements::ValuesFromStart)) && !exists(arrayIndexOfString(SearchedElements::Values).withForm(2)));
+static_assert(exists(arraySlice()) && exists(arrayCopy()) && exists(createArguments()) && exists(arrayPush()) && exists(arrayPushOfKnownKind()) && exists(appendElements()));
+static_assert(exists(appendMembers()));
 static_assert(bodyOf(arrayPushOfKnownKind()) == arrayPush());
-static_assert(exists(arrayPutAtIndex(ArrayStoredValue::Number)) && exists(arrayPutAtNumber(ArrayStoredValue::Number)) && exists(arrayGetAtIndex()) && exists(arrayGetAtNumber()) && exists(arrayHasAtIndex()) && exists(arrayHasAtNumber()));
+static_assert(exists(arrayPutAtIndex(ArrayStoredValue::ValueInSloppyCode)) && !exists(arrayPutAtNumber(ArrayStoredValue::ValueInSloppyCode)));
+static_assert(exists(arrayPutAtIndex(ArrayStoredValue::Number)) && exists(arrayPutAtNumber(ArrayStoredValue::Number)) && exists(arrayGetAtIndex()) && exists(arrayGetAtIndex(ArrayRead::OfAnyList)) && !exists(arrayGetAtIndex().withForm(2)) && exists(arrayGetAtNumber()));
 
 } } // namespace JSC::AOT
 

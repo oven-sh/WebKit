@@ -62,7 +62,7 @@ public:
     };
 
     struct Entry {
-        void LEGACY_NODELETE reset()
+        NODELETE void reset()
         {
             instPC = 0;
             divot = 0;
@@ -77,8 +77,8 @@ public:
     };
 
     struct EncodedInfo {
-        bool LEGACY_NODELETE isAbsInstPC() const;
-        bool LEGACY_NODELETE isExtension() const;
+        NODELETE bool isAbsInstPC() const;
+        NODELETE bool isExtension() const;
         unsigned value;
     };
 
@@ -114,17 +114,17 @@ public:
             SortOrder order { SortOrder::Multi };
         };
 
-        static EncodedInfo LEGACY_NODELETE encodeAbsInstPC(InstPC absInstPC);
-        static EncodedInfo LEGACY_NODELETE encodeExtension(unsigned offset);
-        static constexpr EncodedInfo LEGACY_NODELETE encodeExtensionEnd();
-        static EncodedInfo LEGACY_NODELETE encodeSingle(FieldID, unsigned);
-        static EncodedInfo LEGACY_NODELETE encodeDuo(FieldID, unsigned value1, FieldID, unsigned value2);
-        static EncodedInfo LEGACY_NODELETE encodeMultiHeader(unsigned numWides, Wide*);
-        static EncodedInfo LEGACY_NODELETE encodeBasic(const Diff&);
+        NODELETE static EncodedInfo encodeAbsInstPC(InstPC absInstPC);
+        NODELETE static EncodedInfo encodeExtension(unsigned offset);
+        NODELETE static constexpr EncodedInfo encodeExtensionEnd();
+        NODELETE static EncodedInfo encodeSingle(FieldID, unsigned);
+        NODELETE static EncodedInfo encodeDuo(FieldID, unsigned value1, FieldID, unsigned value2);
+        NODELETE static EncodedInfo encodeMultiHeader(unsigned numWides, Wide*);
+        NODELETE static EncodedInfo encodeBasic(const Diff&);
 
         void adjustInstPC(unsigned infoIndex, unsigned instPCDelta);
 
-        template<unsigned bitCount> bool LEGACY_NODELETE fits(Wide);
+        template<unsigned bitCount> NODELETE bool fits(Wide);
         template<typename T, unsigned bitCount> bool fits(T);
 
         Entry m_entry;
@@ -141,9 +141,9 @@ public:
         Decoder(const ExpressionInfo&);
         Decoder(Vector<ExpressionInfo::EncodedInfo>&);
 
-        IterationStatus LEGACY_NODELETE decode(std::optional<InstPC> targetInstPC = std::nullopt);
+        NODELETE IterationStatus decode(std::optional<InstPC> targetInstPC = std::nullopt);
 
-        void LEGACY_NODELETE recacheInfo(Vector<ExpressionInfo::EncodedInfo>&);
+        NODELETE void recacheInfo(Vector<ExpressionInfo::EncodedInfo>&);
         EncodedInfo* currentInfo() const { return m_currentInfo; }
 
         // This is meant to be used to jump to the start of a chapter, where the encoder
@@ -202,8 +202,8 @@ public:
     LineColumn lineColumnInTextForInstPC(InstPC, SourceProvider&, unsigned sourceOffset);
 
     bool isEmpty() const { return !m_numberOfEncodedInfo; };
-    size_t LEGACY_NODELETE byteSize() const; // owned by this object
-    size_t LEGACY_NODELETE byteSizeForGCPacing() const; // what a generated (non-borrowed) one this size would own
+    NODELETE size_t byteSize() const; // owned by this object
+    NODELETE size_t byteSizeForGCPacing() const; // what a generated (non-borrowed) one this size would own
 
     template<unsigned bitCount>
     static void print(PrintStream&, FieldID, unsigned value);
@@ -213,10 +213,10 @@ private:
     ExpressionInfo(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions);
     ExpressionInfo(Vector<Chapter>&&, Vector<EncodedInfo>&&, unsigned numberOfEncodedInfoExtensions);
 
-    template<typename T, unsigned bitCount> static T LEGACY_NODELETE cast(unsigned);
+    template<typename T, unsigned bitCount> NODELETE static T cast(unsigned);
 
-    static bool LEGACY_NODELETE isSpecial(unsigned);
-    static bool LEGACY_NODELETE isWideOrSpecial(unsigned);
+    NODELETE static bool isSpecial(unsigned);
+    NODELETE static bool isWideOrSpecial(unsigned);
 
     static size_t payloadSizeInBytes(size_t numChapters, size_t numberOfEncodedInfo, size_t numberOfEncodedInfoExtensions)
     {
@@ -229,7 +229,7 @@ private:
         return sizeof(ExpressionInfo) + payloadSizeInBytes(numChapters, numberOfEncodedInfo, numberOfEncodedInfoExtensions);
     }
 
-    EncodedInfo* LEGACY_NODELETE findChapterEncodedInfoJustBelow(InstPC) const;
+    NODELETE EncodedInfo* findChapterEncodedInfoJustBelow(InstPC) const;
 
     Chapter* chapters() const
     {

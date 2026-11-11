@@ -1,0 +1,136 @@
+# function pick(i: number) { const table = [10, 20, 30, 40]; return table[i & 3]; }   function anywhere(i: number) { const table = [10, 20, 30, 40]; return table[i | 0]; }
+# function named(i: number) { const table = ["a", "b", "c", "d"]; return table[i & 3]; }   function made(a, b, i: number) { const pair = [a, b]; return pair[i & 1]; }
+# A list that is made here and that nothing has changed since has the storage that it was born with: the walk has seen the making, and every operation between it and the read.
+# A list of constants is born with the kind that arrayStorageOfData() gives, which the image and the emitter ask too. So the read names the kind: no look at the cell, and what comes out of storage for whole numbers is a whole number or nothing.
+# Its length is known as well, and it has no hole: an index that lies inside finds an element: one load.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent]
+# An index that may lie anywhere is still held against the length, and the kind is named.
+# RUN(ANYWHERE): walk f2 mechanisms=all
+# ANYWHERE-LABEL: code f2:Body
+# ANYWHERE: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
+# RUN(NAMED): walk f3 mechanisms=all
+# NAMED-LABEL: code f3:Body
+# NAMED: = GetArrayElement {{*}}arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, isPresent]
+# RUN(MADE): walk f4 mechanisms=all
+# MADE-LABEL: code f4:Body
+# MADE: = GetArrayElement {{*}}arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds
+# THE RED CONTROLS. Code that nobody has seen gets the list: function seen(look, i: number) { const table = [10, 20, 30, 40]; look(table); return table[i & 3]; }
+# RUN(SEEN): walk f5 mechanisms=all
+# SEEN-NOT: arrayStorage=Int32 level=Proven
+# RUN(LEFT): walk f5 mechanisms=all
+# LEFT-NOT: isPresent
+# A literal with a hole says nothing of its storage here: function holed(i: number) { const table = [10, , 30, 40]; return table[i & 3]; }
+# RUN(HOLED): walk f6 mechanisms=all
+# HOLED-NOT: isPresent
+# A native that may give the list other storage ends what is known: function filled(i: number, x) { const table = [10, 20, 30, 40]; table.fill(x); return table[i & 3]; }
+# RUN(FILLED): walk f7 mechanisms=all
+# FILLED-NOT: arrayStorage=Int32 level=Proven
+# Under the word each kind that is named is asked of the cell in front of the read, and each element that is said to be there is looked for.
+# RUN(ASKED): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# ASKED-LABEL: code f1:Body
+# ASKED: [[kind]]: {{*}} = HasArrayStorage {{*}}arrayStorage=Int32
+# ASKED: CheckProof [[kind]]
+# ASKED: [[there]]: {{*}} = IsElementPresent {{*}}arrayStorage=Int32
+# ASKED: CheckProof [[there]]
+# ASKED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven
+# RUN(ANSWER): run-in-shell globalThis.sink = (pick, anywhere, named, made, seen, holed, filled) => { print(pick(0), pick(1), pick(6), pick(7)); print(anywhere(3), anywhere(4), anywhere(-1)); print(named(1), named(7)); print(made("x", "y", 1), made(1.5, null, 0)); print(seen(list => { list[1] = "changed"; list.length = 2; }, 1), seen(list => { list.length = 2; }, 3)); print(holed(1), holed(2)); print(filled(1, "z"), filled(2, 0.5)); };
+# ANSWER: 10 20 30 40
+# ANSWER-NEXT: 40 undefined undefined
+# ANSWER-NEXT: b d
+# ANSWER-NEXT: y 1.5
+# ANSWER-NEXT: changed undefined
+# ANSWER-NEXT: undefined 30
+# ANSWER-NEXT: z 0.5
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckBoundsAtRunTime globalThis.sink = (pick, anywhere, named, made, seen, holed, filled) => { print(pick(0), pick(1), pick(6), pick(7)); print(anywhere(3), anywhere(4), anywhere(-1)); print(named(1), named(7)); print(made("x", "y", 1), made(1.5, null, 0)); print(seen(list => { list[1] = "changed"; list.length = 2; }, 1), seen(list => { list.length = 2; }, 3)); print(holed(1), holed(2)); print(filled(1, "z"), filled(2, 0.5)); };
+# CHECKED: 10 20 30 40
+# CHECKED-NEXT: 40 undefined undefined
+# CHECKED-NEXT: b d
+# CHECKED-NEXT: y 1.5
+# CHECKED-NEXT: changed undefined
+# CHECKED-NEXT: undefined 30
+# CHECKED-NEXT: z 0.5
+# CHECKED-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+data d0 root=Array{contents=anything elements=[Number{value=10}, Number{value=20}, Number{value=30}, Number{value=40}]} module=m0
+data d1 root=Array{contents=anything elements=[String{value="a"}, String{value="b"}, String{value="c"}, String{value="d"}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = Call v1, -, v2, v3, v4, v5, v6, v7, v8
+    Return v9
+}
+function f1 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Data data=d0
+    v2 = Integer integer=3
+    v3 = BitAnd v0, v2
+    v4 = ElemGet v1, v3
+    Return v4
+}
+function f2 name="anywhere" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Data data=d0
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = ElemGet v1, v3
+    Return v4
+}
+function f3 name="named" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Data data=d1
+    v2 = Integer integer=3
+    v3 = BitAnd v0, v2
+    v4 = ElemGet v1, v3
+    Return v4
+}
+function f4 name="made" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = NewArray v0, v1 contents=anything
+    v4 = Integer integer=1
+    v5 = BitAnd v2, v4
+    v6 = ElemGet v3, v5
+    Return v6
+}
+function f5 name="seen" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Data data=d0
+    v3 = Call v0, -, v2 calleeName="look"
+    v4 = Integer integer=3
+    v5 = BitAnd v1, v4
+    v6 = ElemGet v2, v5
+    Return v6
+}
+function f6 name="holed" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer integer=10
+    v2 = Integer integer=30
+    v3 = Integer integer=40
+    v4 = NewArray v1, v2, v3 contents=anything holes=[1]
+    v5 = Integer integer=3
+    v6 = BitAnd v0, v5
+    v7 = ElemGet v4, v6
+    Return v7
+}
+function f7 name="filled" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    v2 = Data data=d0
+    v3 = PropGet v2 key="fill"
+    v4 = Call v3, v2, v1 calleeKey="fill" calleeName="table.fill"
+    v5 = Integer integer=3
+    v6 = BitAnd v0, v5
+    v7 = ElemGet v2, v6
+    Return v7
+}

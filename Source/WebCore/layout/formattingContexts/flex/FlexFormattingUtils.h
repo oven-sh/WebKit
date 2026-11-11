@@ -27,6 +27,7 @@
 
 #include <WebCore/LayoutUnit.h>
 #include <optional>
+#include <span>
 #include <wtf/CheckedRef.h>
 
 namespace WebCore {
@@ -52,6 +53,7 @@ class ComputedStyle;
 class RenderBox;
 class RenderFlexibleBox;
 class FlexLayoutItem;
+struct FlexLayoutConstraints;
 class StyleContentAlignmentData;
 
 // Stateless geometry and query helpers for the flex formatting context.
@@ -67,11 +69,11 @@ public:
     LayoutUnit flowAwareMarginEndForFlexItem(const FlexLayoutItem&) const;
     LayoutUnit flowAwareMarginBeforeForFlexItem(const FlexLayoutItem&) const;
 
-    LayoutUnit LEGACY_NODELETE crossAxisExtentForFlexItem(const RenderBox& flexItem) const;
-    LayoutUnit LEGACY_NODELETE crossAxisExtentForFlexItem(const FlexLayoutItem&) const;
-    LayoutUnit LEGACY_NODELETE mainAxisExtentForFlexItem(const RenderBox& flexItem) const;
-    LayoutUnit LEGACY_NODELETE mainAxisExtentForFlexItem(const FlexLayoutItem&) const;
-    LayoutUnit LEGACY_NODELETE mainAxisExtent() const;
+    NODELETE LayoutUnit crossAxisExtentForFlexItem(const RenderBox& flexItem) const;
+    NODELETE LayoutUnit crossAxisExtentForFlexItem(const FlexLayoutItem&) const;
+    NODELETE LayoutUnit mainAxisExtentForFlexItem(const RenderBox& flexItem) const;
+    NODELETE LayoutUnit mainAxisExtentForFlexItem(const FlexLayoutItem&) const;
+    NODELETE LayoutUnit mainAxisExtent() const;
     static LayoutUnit crossAxisContentExtent(const RenderFlexibleBox&);
 
     enum class GapType : uint8_t { BetweenLines, BetweenItems };
@@ -85,18 +87,23 @@ public:
     LayoutUnit crossAxisScrollbarExtent() const;
     LayoutUnit mainAxisScrollbarExtent() const;
 
-    const Style::PreferredSize& LEGACY_NODELETE preferredMainSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
-    const Style::MinimumSize& LEGACY_NODELETE minMainSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
-    const Style::MaximumSize& LEGACY_NODELETE maxMainSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
-    const Style::PreferredSize& LEGACY_NODELETE preferredCrossSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
-    const Style::MinimumSize& LEGACY_NODELETE minCrossSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
-    const Style::MaximumSize& LEGACY_NODELETE maxCrossSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
+    NODELETE const Style::PreferredSize& preferredMainSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
+    NODELETE const Style::MinimumSize& minMainSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
+    NODELETE const Style::MaximumSize& maxMainSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
+    NODELETE static const Style::PreferredSize& preferredCrossSizeLengthForFlexItem(const RenderBox& flexItem LIFETIME_BOUND);
+    NODELETE const Style::PreferredSize& preferredCrossSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
+    NODELETE const Style::MinimumSize& minCrossSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
+    NODELETE const Style::MaximumSize& maxCrossSizeLengthForFlexItem(const FlexLayoutItem&) const LIFETIME_BOUND;
 
-    static Overflow LEGACY_NODELETE mainAxisOverflowForFlexItem(const RenderBox& flexItem);
+    NODELETE static Overflow mainAxisOverflowForFlexItem(const RenderBox& flexItem);
     OverflowAlignment overflowAlignmentForFlexItem(const RenderBox& flexItem) const;
     OverflowAlignment overflowAlignmentForFlexItem(const FlexLayoutItem&) const;
-    static bool LEGACY_NODELETE hasAutoMarginsInCrossAxis(const RenderBox& flexItem);
-    bool LEGACY_NODELETE hasAutoMarginsInCrossAxis(const FlexLayoutItem&) const;
+    NODELETE static bool hasAutoMarginsInCrossAxis(const RenderBox& flexItem);
+    NODELETE bool hasAutoMarginsInCrossAxis(const FlexLayoutItem&) const;
+    static bool participatesInBaselineAlignment(const RenderBox& flexItem);
+    bool participatesInBaselineAlignment(const FlexLayoutItem&) const;
+    // CSS Flexbox 9.9.2
+    static bool maximumContentSizeNeedsFlexLines(const FlexLayoutConstraints&, std::span<const CheckedRef<RenderBox>> flexItems);
     // Whether the container will stretch the item along containingAxis (RenderBlock::willStretchItem for flex).
     static bool willStretchFlexItem(const RenderFlexibleBox&, const RenderBox& flexItem, LogicalBoxAxis containingAxis, StretchingMode);
     static bool hasStretchedFlexItemWithAspectRatio(const RenderFlexibleBox&);
@@ -107,7 +114,7 @@ public:
     static bool flexItemHasAspectRatio(const RenderBox& flexItem);
     static bool flexItemHasAspectRatio(const FlexLayoutItem&);
     static bool canResolveFullyConstrainedLogicalHeight(const RenderFlexibleBox&);
-    bool flexItemHasComputableAspectRatio(const FlexLayoutItem&) const;
+    static bool flexItemHasComputableAspectRatio(const RenderBox& flexItem);
     bool needToStretchFlexItemLogicalHeight(const FlexLayoutItem&) const;
     static LayoutUnit innerCrossSizeForFlexItem(const RenderBox& flexItem);
     LayoutUnit innerCrossSizeForFlexItem(const FlexLayoutItem&) const;
@@ -116,43 +123,43 @@ public:
     LayoutUnit availableAlignmentSpaceForFlexItem(LayoutUnit lineCrossAxisExtent, const FlexLayoutItem&, LayoutUnit crossSize) const;
     LayoutUnit marginBoxAscentForFlexItem(const FlexLayoutItem&, LayoutUnit crossSize) const;
 
-    FlowDirection LEGACY_NODELETE crossAxisDirection() const;
-    FlowDirection LEGACY_NODELETE transformedBlockFlowDirection() const;
-    static bool LEGACY_NODELETE isHorizontalFlow(const RenderFlexibleBox&);
-    static bool LEGACY_NODELETE isColumnFlow(const RenderFlexibleBox&);
-    bool LEGACY_NODELETE isColumnOrRowReverse() const;
-    static bool LEGACY_NODELETE isWrapReverse(const RenderFlexibleBox&);
-    static bool LEGACY_NODELETE isMultiline(const RenderFlexibleBox&);
-    static bool LEGACY_NODELETE isBalance(const RenderFlexibleBox&);
-    static size_t LEGACY_NODELETE minimumLineCount(const RenderFlexibleBox&);
-    bool LEGACY_NODELETE isLeftToRightFlow() const;
-    static bool LEGACY_NODELETE mainAxisIsFlexItemInlineAxis(const RenderBox& flexItem);
+    NODELETE FlowDirection crossAxisDirection() const;
+    NODELETE FlowDirection transformedBlockFlowDirection() const;
+    NODELETE static bool isHorizontalFlow(const RenderFlexibleBox&);
+    NODELETE static bool isColumnFlow(const RenderFlexibleBox&);
+    NODELETE bool isColumnOrRowReverse() const;
+    NODELETE static bool isWrapReverse(const RenderFlexibleBox&);
+    NODELETE static bool isMultiline(const RenderFlexibleBox&);
+    NODELETE static bool isBalance(const RenderFlexibleBox&);
+    NODELETE static size_t minimumLineCount(const RenderFlexibleBox&);
+    NODELETE bool isLeftToRightFlow() const;
+    NODELETE static bool mainAxisIsFlexItemInlineAxis(const RenderBox& flexItem);
     static Style::FlexBasis flexBasisForFlexItem(const RenderBox& flexItem);
     Style::FlexBasis flexBasisForFlexItem(const FlexLayoutItem&) const;
     static ItemPosition alignmentForFlexItem(const RenderBox& flexItem);
     ItemPosition alignmentForFlexItem(const FlexLayoutItem&) const;
     static bool hasDefiniteCrossSizeForFlexItem(const RenderBox& flexItem);
     bool hasDefiniteCrossSizeForFlexItem(const FlexLayoutItem&) const;
-    static bool LEGACY_NODELETE hasDefiniteLogicalWidthForAspectRatioCrossSize(const RenderFlexibleBox&);
-    static std::optional<TextDirection> LEGACY_NODELETE leftRightAxisDirectionFromStyle(const Style::ComputedStyle&);
+    NODELETE static bool hasDefiniteLogicalWidthForAspectRatioCrossSize(const RenderFlexibleBox&);
+    NODELETE static std::optional<TextDirection> leftRightAxisDirectionFromStyle(const Style::ComputedStyle&);
 
-    static const StyleContentAlignmentData& LEGACY_NODELETE contentAlignmentNormalBehavior();
-    static ContentPosition LEGACY_NODELETE resolveLeftRightAlignment(const StyleContentAlignmentData&, const Style::ComputedStyle&, bool isReversed);
+    NODELETE static const StyleContentAlignmentData& contentAlignmentNormalBehavior();
+    NODELETE static ContentPosition resolveLeftRightAlignment(const StyleContentAlignmentData&, const Style::ComputedStyle&, bool isReversed);
     static LayoutUnit initialJustifyContentOffset(const Style::ComputedStyle&, LayoutUnit availableFreeSpace, unsigned numberOfFlexItems, bool isReversed);
-    static LayoutUnit LEGACY_NODELETE justifyContentSpaceBetweenFlexItems(LayoutUnit availableFreeSpace, ContentDistribution, unsigned numberOfFlexItems);
-    static LayoutUnit LEGACY_NODELETE alignmentOffset(LayoutUnit availableFreeSpace, ItemPosition, std::optional<LayoutUnit> ascent, std::optional<LayoutUnit> maxAscent, bool isWrapReverse);
-    static LayoutUnit LEGACY_NODELETE contentAlignmentStartOverflow(LayoutUnit availableFreeSpace, ContentPosition, ContentDistribution, OverflowAlignment safety, bool isReverse);
-    static LayoutUnit LEGACY_NODELETE initialContentAlignmentOffset(LayoutUnit availableFreeSpace, ContentPosition, ContentDistribution, OverflowAlignment safety, unsigned numberOfAlignmentSubjects, bool isReversed);
-    static LayoutUnit LEGACY_NODELETE alignContentSpaceBetweenFlexItems(LayoutUnit availableFreeSpace, ContentDistribution, unsigned numberOfLines);
+    NODELETE static LayoutUnit justifyContentSpaceBetweenFlexItems(LayoutUnit availableFreeSpace, ContentDistribution, unsigned numberOfFlexItems, unsigned gapIndex);
+    NODELETE static LayoutUnit alignmentOffset(LayoutUnit availableFreeSpace, ItemPosition, std::optional<LayoutUnit> ascent, std::optional<LayoutUnit> maxAscent, bool isWrapReverse);
+    NODELETE static LayoutUnit contentAlignmentStartOverflow(LayoutUnit availableFreeSpace, ContentPosition, ContentDistribution, OverflowAlignment safety, bool isReverse);
+    NODELETE static LayoutUnit initialContentAlignmentOffset(LayoutUnit availableFreeSpace, ContentPosition, ContentDistribution, OverflowAlignment safety, unsigned numberOfAlignmentSubjects, bool isReversed);
+    NODELETE static LayoutUnit alignContentSpaceBetweenFlexItems(LayoutUnit availableFreeSpace, ContentDistribution, unsigned numberOfLines, unsigned gapIndex);
+    NODELETE static LayoutUnit evenlyDistributedFreeSpace(LayoutUnit freeSpace, unsigned numberOfSpaces, unsigned spaceIndex);
 
 private:
     static bool isStretchedFlexItem(const RenderBox& flexItem);
     static LayoutUnit crossAxisMarginExtentForFlexItem(const RenderBox& flexItem);
     static LayoutUnit innerCrossSizeForFlexItem(const RenderBox& flexItem, LayoutUnit crossAxisMarginExtent);
     LayoutUnit usedMainAxisMarginExtentForFlexItem(const RenderBox& flexItem) const;
-    static const Style::PreferredSize& LEGACY_NODELETE preferredMainSizeLengthForFlexItem(const RenderBox& flexItem LIFETIME_BOUND);
-    static const Style::MinimumSize& LEGACY_NODELETE minMainSizeLengthForFlexItem(const RenderBox& flexItem LIFETIME_BOUND);
-    static const Style::PreferredSize& LEGACY_NODELETE preferredCrossSizeLengthForFlexItem(const RenderBox& flexItem LIFETIME_BOUND);
+    NODELETE static const Style::PreferredSize& preferredMainSizeLengthForFlexItem(const RenderBox& flexItem LIFETIME_BOUND);
+    NODELETE static const Style::MinimumSize& minMainSizeLengthForFlexItem(const RenderBox& flexItem LIFETIME_BOUND);
     static bool useContentBasedMinimumSize(const RenderBox& flexItem);
 
     const RenderFlexibleBox& flexBox() const LIFETIME_BOUND { return m_flexBox; }

@@ -12,9 +12,9 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTPropertyCaches.h"
-#include "AOTPropertyList.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTShellProgramTestSupport.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "PropertyNameArray.h"
@@ -47,352 +47,296 @@ function f2 name="count" parameters=[{type=anything}, {type=string}, {type=anyth
 }
 )IR"_s;
 
-static constexpr unsigned numberOfNames = Structure::s_maxTransitionLength + 40;
-
 namespace {
 
-struct Counter {
-    Object* object;
-    JSObject* extraProperties;
+}
+
+static constexpr ASCIILiteral programOfReadsByName = R"IR(layout L0 name="Counter" fields=[{key="total" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Labeled" fields=[{key="label" declared={type=anything} flags=[IsRequired]}]
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = NewClosure function=f9
+    v11 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10
+    Return
+}
+function f1 name="makeCounter" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="makeLabeled" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f3 name="readLabel" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="label"
+    Return v1
+}
+function f4 name="readLoose" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="loose"
+    Return v1
+}
+function f5 name="labelIsTruthy" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="label"
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer
+    Return v4
+}
+function f6 name="looseIsTruthy" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="loose"
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer
+    Return v4
+}
+function f7 name="readLabelOfLoose" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="loose"
+    v2 = PropGet v1 key="label"
+    Return v2
+}
+function f8 name="readBoth" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="label"
+    v2 = PropGet v0 key="loose"
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+function f9 name="readTotal" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="total"
+    Return v1
+}
+)IR"_s;
+
+#define STATEMENTS_CHECKING_ANSWERS R"JS(
+const check = (what, answer, expected) => {
+    let wrong = 0;
+    let last;
+    for (let i = 0; i < 400; i++) {
+        last = answer();
+        if (last !== expected) wrong++;
+    }
+    print(what + ": " + (wrong ? "WRONG " + wrong + " times, at last " + last : "right"));
 };
+)JS"
 
-}
+static constexpr ASCIILiteral statementsChangingWhatReadsFind = STATEMENTS_CHECKING_ANSWERS R"JS(
+globalThis.publish = (makeCounter, makeLabeled, readLabel, readLoose, labelIsTruthy, looseIsTruthy) => {
+    for (const [name, read, isTruthy] of [["label", readLabel, labelIsTruthy], ["loose", readLoose, looseIsTruthy]]) {
+        const expect = (what, object, expected) => check(name + ", " + what, () => read(object) + " " + isTruthy(object), expected);
 
-static Object* allocateCounter(LoadedProgram& program)
-{
-    const ProgramTables& tables = program.state().tables;
-    for (uint32_t number = 0; number < tables.allocations().size(); ++number) {
-        uint32_t shape = tables.allocations()[number].shape;
-        if (tables.hasLayoutForShape(shape) && Image::current()->text().equals(StringID(tables.layoutForShape(shape).name), "Counter"_s))
-            return uncheckedDowncast<Object>(program.state().objects->structures.allocate(program.vm(), number));
+        const counter = makeCounter(1);
+        expect("nothing has it", counter, "undefined 0");
+        counter[name] = 5;
+        expect("added", counter, "5 1");
+        counter[name] = 0;
+        expect("replaced", counter, "0 0");
+        delete counter[name];
+        expect("deleted", counter, "undefined 0");
+        counter[name] = 6;
+        expect("added again", counter, "6 1");
+        Object.defineProperty(counter, name, { get() { return this === counter ? 17 : "another receiver"; }, configurable: true });
+        expect("a getter", counter, "17 1");
+        Object.defineProperty(counter, name, { value: 7, writable: true, enumerable: true, configurable: true });
+        expect("a value again", counter, "7 1");
+        Object.freeze(counter);
+        counter[name] = 8;
+        delete counter[name];
+        expect("frozen", counter, "7 1");
+
+        const below = makeCounter(2);
+        const holder = { [name]: 9 };
+        Object.setPrototypeOf(below, holder);
+        expect("a holder above", below, "9 1");
+        holder[name] = 0;
+        expect("replaced on the holder", below, "0 0");
+        delete holder[name];
+        expect("deleted on the holder", below, "undefined 0");
+        holder[name] = 10;
+        expect("added on the holder", below, "10 1");
+        Object.defineProperty(holder, name, { get() { return this === below ? 11 : "another receiver"; }, configurable: true });
+        expect("a getter on the holder", below, "11 1");
+        Object.setPrototypeOf(below, { [name]: 12 });
+        expect("another holder", below, "12 1");
+        below[name] = 13;
+        expect("its own in front of the holder's", below, "13 1");
+        delete below[name];
+        expect("the holder's again", below, "12 1");
+        Object.setPrototypeOf(below, null);
+        expect("no prototype", below, "undefined 0");
+
+        const wide = { };
+        for (let i = 0; i < 20; i++) wide["filler" + i] = i;
+        wide[name] = 14;
+        const belowWide = makeCounter(3);
+        Object.setPrototypeOf(belowWide, wide);
+        expect("out of line in the holder", belowWide, "14 1");
+
+        const full = makeCounter(4);
+        for (let i = 0; i < 20; i++) full["filler" + i] = i;
+        full[name] = 15;
+        expect("out of line", full, "15 1");
+        delete full.filler3;
+        expect("behind the deletion of another name", full, "15 1");
+
+        const top = { };
+        const deep = makeCounter(5);
+        Object.setPrototypeOf(deep, Object.create(top));
+        expect("nothing two objects above", deep, "undefined 0");
+        top[name] = 16;
+        expect("added two objects above", deep, "16 1");
+        delete top[name];
+        expect("deleted two objects above", deep, "undefined 0");
+
+        const first = makeCounter(6);
+        const second = makeCounter(7);
+        first[name] = 1;
+        second[name] = 2;
+        check(name + ", two objects by turns", () => read(first) + " " + read(second), "1 2");
+        gc();
+        check(name + ", behind a collection", () => read(first) + " " + read(second), "1 2");
     }
-    failNativeTest(__FILE__, __LINE__, "no allocation of Counter");
+};
+)JS"_s;
+
+#define LINES_OF_CHANGES(name) \
+    name ", nothing has it: right\n" \
+    name ", added: right\n" \
+    name ", replaced: right\n" \
+    name ", deleted: right\n" \
+    name ", added again: right\n" \
+    name ", a getter: right\n" \
+    name ", a value again: right\n" \
+    name ", frozen: right\n" \
+    name ", a holder above: right\n" \
+    name ", replaced on the holder: right\n" \
+    name ", deleted on the holder: right\n" \
+    name ", added on the holder: right\n" \
+    name ", a getter on the holder: right\n" \
+    name ", another holder: right\n" \
+    name ", its own in front of the holder's: right\n" \
+    name ", the holder's again: right\n" \
+    name ", no prototype: right\n" \
+    name ", out of line in the holder: right\n" \
+    name ", out of line: right\n" \
+    name ", behind the deletion of another name: right\n" \
+    name ", nothing two objects above: right\n" \
+    name ", added two objects above: right\n" \
+    name ", deleted two objects above: right\n" \
+    name ", two objects by turns: right\n" \
+    name ", behind a collection: right\n"
+
+static void testReadsByNameFollowEveryChange()
+{
+    checkOutputOfProgramInShell(programOfReadsByName, LINES_OF_CHANGES("label") LINES_OF_CHANGES("loose") ""_s, { }, statementsChangingWhatReadsFind);
 }
 
-static Identifier nameAt(VM& vm, unsigned index)
+static constexpr ASCIILiteral statementsWithTwoReads = STATEMENTS_CHECKING_ANSWERS R"JS(
+globalThis.publish = (makeCounter, makeLabeled, readLabel, readLoose, labelIsTruthy, looseIsTruthy, readLabelOfLoose, readBoth, readTotal) => {
+    const outer = makeCounter(1);
+    const inner = makeCounter(2);
+    inner.label = 21;
+    outer.loose = inner;
+    check("one behind the other, two extra properties", () => readLabelOfLoose(outer), 21);
+    delete inner.label;
+    check("one behind the other, the second deleted", () => readLabelOfLoose(outer), undefined);
+    outer.loose = makeLabeled(22);
+    check("one behind the other, a field", () => readLabelOfLoose(outer), 22);
+    outer.loose = { label: 23 };
+    check("one behind the other, an ordinary object", () => readLabelOfLoose(outer), 23);
+    Object.defineProperty(outer, "loose", { get() { return inner; }, configurable: true });
+    inner.label = 24;
+    check("one behind the other, a getter first", () => readLabelOfLoose(outer), 24);
+    delete outer.loose;
+    Object.setPrototypeOf(outer, { loose: makeLabeled(25) });
+    check("one behind the other, a holder first", () => readLabelOfLoose(outer), 25);
+
+    const both = makeCounter(3);
+    check("side by side, neither", () => readBoth(both).join(), ",");
+    both.label = 1;
+    both.loose = 2;
+    check("side by side, two extra properties", () => readBoth(both).join(), "1,2");
+    delete both.label;
+    check("side by side, the first deleted", () => readBoth(both).join(), ",2");
+    Object.setPrototypeOf(both, { label: 3 });
+    check("side by side, a holder and an extra property", () => readBoth(both).join(), "3,2");
+    check("side by side, a field and nothing", () => readBoth(makeLabeled(4)).join(), "4,");
+
+    const counter = makeCounter(40);
+    check("a field in its slot", () => readTotal(counter), 40);
+    Object.defineProperty(counter, "total", { get() { return this === counter ? 30 : "another receiver"; }, configurable: true });
+    check("a field that became a getter", () => readTotal(counter), 30);
+    Object.defineProperty(counter, "total", { value: 31, writable: false, enumerable: false, configurable: true });
+    check("a field that became read only", () => readTotal(counter), 31);
+    delete counter.total;
+    check("a field that was deleted", () => readTotal(counter), undefined);
+    counter.total = 32;
+    check("a field that was added again", () => readTotal(counter), 32);
+    check("the field of another object of the layout", () => readTotal(makeCounter(41)), 41);
+
+    const labeled = makeLabeled(50);
+    check("where most layouts have the name", () => readLabel(labeled), 50);
+    delete labeled.label;
+    check("its slot is empty", () => readLabel(labeled), undefined);
+    Object.setPrototypeOf(labeled, { label: 51 });
+    check("its slot is empty below a holder", () => readLabel(labeled), 51);
+    labeled.label = 52;
+    check("its slot is filled again", () => readLabel(labeled), 52);
+    check("an ordinary object", () => readLabel({ label: 53 }), 53);
+    check("an ordinary object without the name", () => readLabel({ other: 1 }), undefined);
+    check("a text", () => readLabel("text"), undefined);
+    check("a number", () => readLabel(5), undefined);
+};
+)JS"_s;
+
+static void testTwoReadsByNameFollowEveryChange()
 {
-    return Identifier::fromString(vm, makeString("word"_s, index));
-}
-
-static JSString* keyFor(VM& vm, const Identifier& name)
-{
-    return jsString(vm, name.string());
-}
-
-// The steps of the caching operations, which expect a compiled caller.
-static JSValue getAndCache(LoadedProgram& program, Object* object, const Identifier& name)
-{
-    Object::ensureStructureForExtraPropertiesIfNeeded(program.vm(), object);
-    Structure* structureBefore = object->structure();
-    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-    JSValue value = JSValue(object).get(program.realm(), name, slot);
-    program.state().propertyCaches->cache({ structureBefore, { name.impl(), std::nullopt }, SlotAccess::Read }, classifyRead({ program.realm(), object, structureBefore, name.impl(), slot }));
-    return value;
-}
-
-static void putAndCache(LoadedProgram& program, Object* object, const Identifier& name, JSValue value)
-{
-    using Flag = Object::ExtraPropertyStoreFlag;
-    object->ensureStructureForExtraProperties(program.vm());
-    Structure* structureBefore = object->structure();
-    PutPropertySlot slot(object, true);
-    AOT_TEST_CHECK(object->tryStoreExtraProperty(program.vm(), name, value, { Flag::IsKnownNotToBeField, Flag::NamesExtraPropertiesStructure }).kind != Object::ExtraPropertyStore::NotHandled);
-    program.state().propertyCaches->cache({ structureBefore, { name.impl(), std::nullopt }, SlotAccess::Store }, classifyStore({ program.realm(), object, structureBefore, name.impl(), slot, PutMode::Strict }));
-}
-
-static bool hasOwn(LoadedProgram& program, JSObject* object, const Identifier& name)
-{
-    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
-    return object->methodTable()->getOwnPropertySlot(object, program.realm(), name, slot);
-}
-
-static JSValue getInLeaf(LoadedProgram& program, JSObject* object, const Identifier& name)
-{
-    return JSValue::decode(operationAOTGetByValGeneric(&program.instance(), object, keyFor(program.vm(), name)));
-}
-
-static LeafAnswer putInLeaf(LoadedProgram& program, JSObject* object, const Identifier& name, JSValue value)
-{
-    return static_cast<LeafAnswer>(operationAOTPutByValGeneric(&program.instance(), object, keyFor(program.vm(), name), JSValue::encode(value)));
-}
-
-static LeafPresence presenceInLeaf(LoadedProgram& program, JSObject* object, const Identifier& name)
-{
-    return static_cast<LeafPresence>(operationAOTInByValGeneric(&program.instance(), object, keyFor(program.vm(), name)));
-}
-
-static const Slot* findSlot(LoadedProgram& program, JSObject* object, const Identifier& name, SlotAccess access)
-{
-    return program.state().propertyCaches->tables().hashedTable().find(object->structure()->id(), name.impl(), access);
-}
-
-static unsigned numberOfKeys(LoadedProgram& program, JSObject* object)
-{
-    PropertyNameArrayBuilder names(program.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    object->methodTable()->getOwnPropertyNames(object, program.realm(), names, DontEnumPropertiesMode::Exclude);
-    return names.size();
-}
-
-static Counter createCounterWithDictionary(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    Object* object = allocateCounter(program);
-    AOT_TEST_CHECK(object->layout().extraPropertiesSlot() && object->store(vm, object->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))));
-    for (unsigned index = 0; index < numberOfNames; ++index)
-        putAndCache(program, object, nameAt(vm, index), jsNumber(index));
-    JSObject* extraProperties = object->extraProperties();
-    AOT_TEST_CHECK(isCompiledObject(object) && extraProperties);
-    AOT_TEST_CHECK(extraProperties->structure()->isDictionary() && !extraProperties->structure()->isUncacheableDictionary());
-    return { object, extraProperties };
-}
-
-static void testStructureNamesDictionary(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    auto [object, extraProperties] = createCounterWithDictionary(program);
-    auto [other, otherExtraProperties] = createCounterWithDictionary(program);
-
-    AOT_TEST_CHECK(getAndCache(program, object, nameAt(vm, 3)) == jsNumber(3) && getAndCache(program, other, nameAt(vm, 3)) == jsNumber(3));
-    const CompiledStructure& structure = object->compiledStructure();
-    AOT_TEST_CHECK(structure.extraPropertiesStructure() == extraProperties->structure() && !structure.listsEveryExtraProperty());
-    AOT_TEST_CHECK(other->compiledStructure().extraPropertiesStructure() == otherExtraProperties->structure() && other->structure() != object->structure());
-
-    Structure* named = object->structure();
-    object->ensureStructureForExtraProperties(vm);
-    AOT_TEST_CHECK(object->structure() == named && !Object::ensureStructureForExtraPropertiesIfNeeded(vm, object));
-}
-
-static void testPresentNamesHaveSlots(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    auto [object, extraProperties] = createCounterWithDictionary(program);
-    for (unsigned index : { 0u, static_cast<unsigned>(Structure::s_maxTransitionLength), numberOfNames - 1 }) {
-        Identifier name = nameAt(vm, index);
-        AOT_TEST_CHECK(getAndCache(program, object, name) == jsNumber(index));
-        const Slot* read = findSlot(program, object, name, SlotAccess::Read);
-        AOT_TEST_CHECK(read && read->kind == Slot::Kind::ExtraProperty && read->has(Slot::isOwn) && Slot::presenceOf(read->kind) == SlotPresence::Present);
-
-        putAndCache(program, object, name, jsNumber(index + 1000));
-        const Slot* store = findSlot(program, object, name, SlotAccess::Store);
-        AOT_TEST_CHECK(store && store->kind == Slot::Kind::ExtraProperty);
-        AOT_TEST_CHECK(extraProperties->getDirect(vm, name) == jsNumber(index + 1000) && object->extraProperties() == extraProperties);
-    }
-}
-
-static void testAbsentNameIsNeverFiled(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    auto [object, extraProperties] = createCounterWithDictionary(program);
-    Identifier late = Identifier::fromString(vm, "late"_s);
-    AOT_TEST_CHECK(getAndCache(program, object, nameAt(vm, 0)) == jsNumber(0));
-    Structure* structure = object->structure();
-
-    AOT_TEST_CHECK(!Object::structureGuaranteesAbsence(structure, late.impl()));
-    AOT_TEST_CHECK(getAndCache(program, object, late).isUndefined() && !hasOwn(program, object, late));
-    AOT_TEST_CHECK(!findSlot(program, object, late, SlotAccess::Read) && object->structure() == structure);
-    AOT_TEST_CHECK(getInLeaf(program, object, late).isUndefined() && presenceInLeaf(program, object, late) == LeafPresence::Absent);
-    AOT_TEST_CHECK(!findSlot(program, object, late, SlotAccess::Read));
-
-    AOT_TEST_CHECK(putInLeaf(program, object, late, jsNumber(5)) == LeafAnswer::Yes);
-    AOT_TEST_CHECK(object->structure() == structure && object->extraProperties() == extraProperties && extraProperties->getDirect(vm, late) == jsNumber(5));
-    AOT_TEST_CHECK(!findSlot(program, object, late, SlotAccess::Store));
-    AOT_TEST_CHECK(hasOwn(program, object, late) && getAndCache(program, object, late) == jsNumber(5));
-    const Slot* read = findSlot(program, object, late, SlotAccess::Read);
-    AOT_TEST_CHECK(read && read->kind == Slot::Kind::ExtraProperty);
-}
-
-static void testLeafFindsInheritedProperty(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    auto [object, extraProperties] = createCounterWithDictionary(program);
-    Identifier inherited = Identifier::fromString(vm, "inherited"_s);
-    JSObject* prototype = constructEmptyObject(program.realm());
-    prototype->putDirect(vm, inherited, jsNumber(9));
-    AOT_TEST_CHECK(object->methodTable()->setPrototype(object, program.realm(), prototype, false) && isCompiledObject(object));
-    AOT_TEST_CHECK(object->get(program.realm(), inherited) == jsNumber(9));
-
-    AOT_TEST_CHECK(getInLeaf(program, object, inherited) == jsNumber(9) && presenceInLeaf(program, object, inherited) == LeafPresence::Inherited);
-    AOT_TEST_CHECK(!findSlot(program, object, inherited, SlotAccess::Read));
-    AOT_TEST_CHECK(putInLeaf(program, object, inherited, jsNumber(10)) == LeafAnswer::Yes && extraProperties->getDirect(vm, inherited) == jsNumber(10));
-    AOT_TEST_CHECK(object->get(program.realm(), inherited) == jsNumber(10) && prototype->getDirect(vm, inherited) == jsNumber(9));
-}
-
-static void testKeysFollowDictionary(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    auto [object, extraProperties] = createCounterWithDictionary(program);
-    AOT_TEST_CHECK(getAndCache(program, object, nameAt(vm, 0)) == jsNumber(0));
-    AOT_TEST_CHECK(object->compiledStructure().extraPropertiesStructure() == extraProperties->structure() && !object->keysDependOnlyOnStructureAndOrderWord());
-    AOT_TEST_CHECK(numberOfKeys(program, object) == numberOfNames + 1);
-    AOT_TEST_CHECK(putInLeaf(program, object, Identifier::fromString(vm, "late"_s), jsNumber(5)) == LeafAnswer::Yes);
-    AOT_TEST_CHECK(numberOfKeys(program, object) == numberOfNames + 2);
-}
-
-static void testDeletedNameLosesItsSlot(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    auto [object, extraProperties] = createCounterWithDictionary(program);
-    Identifier deleted = nameAt(vm, 10);
-    Identifier kept = nameAt(vm, numberOfNames - 1);
-    AOT_TEST_CHECK(getAndCache(program, object, deleted) == jsNumber(10) && getAndCache(program, object, kept) == jsNumber(numberOfNames - 1));
-    Structure* structureBefore = object->structure();
-
-    DeletePropertySlot slot;
-    AOT_TEST_CHECK(object->methodTable()->deleteProperty(object, program.realm(), deleted, slot));
-    AOT_TEST_CHECK(object->structure() != structureBefore && !findSlot(program, object, deleted, SlotAccess::Read));
-    AOT_TEST_CHECK(getAndCache(program, object, deleted).isUndefined() && !hasOwn(program, object, deleted));
-    AOT_TEST_CHECK(getAndCache(program, object, kept) == jsNumber(numberOfNames - 1) && numberOfKeys(program, object) == numberOfNames);
-
-    if (!extraProperties->structure()->isUncacheableDictionary())
-        return;
-    Structure* unnamed = object->structure();
-    AOT_TEST_CHECK(!object->compiledStructure().extraPropertiesStructure());
-    object->ensureStructureForExtraProperties(vm);
-    AOT_TEST_CHECK(object->structure() == unnamed && !findSlot(program, object, kept, SlotAccess::Read));
-    AOT_TEST_CHECK(getInLeaf(program, object, kept) == jsNumber(numberOfNames - 1) && presenceInLeaf(program, object, kept) == LeafPresence::Own);
-    AOT_TEST_CHECK(getInLeaf(program, object, deleted).isUndefined() && presenceInLeaf(program, object, deleted) == LeafPresence::Absent);
-    AOT_TEST_CHECK(putInLeaf(program, object, kept, jsNumber(1)) == LeafAnswer::Yes && extraProperties->getDirect(vm, kept) == jsNumber(1));
-}
-
-static bool addWithoutNamingStructure(LoadedProgram& program, Object* object, const Identifier& name, JSValue value)
-{
-    return object->tryStoreExtraProperty(program.vm(), name, value, { Object::ExtraPropertyStoreFlag::IsKnownNotToBeField }).kind == Object::ExtraPropertyStore::Added;
-}
-
-static void testNamingFlattensDictionaryOnce(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    Object* object = allocateCounter(program);
-    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))));
-    for (unsigned index = 0; index < numberOfNames; ++index)
-        AOT_TEST_CHECK(addWithoutNamingStructure(program, object, nameAt(vm, index), jsNumber(index)));
-    JSObject* extraProperties = object->extraProperties();
-    AOT_TEST_CHECK(extraProperties->structure()->isDictionary() && !object->fieldsAndExtraPropertiesInKeyOrder(vm));
-
-    object->ensureStructureForExtraProperties(vm);
-    AOT_TEST_CHECK(object->extraProperties() == extraProperties && !extraProperties->structure()->isDictionary());
-    AOT_TEST_CHECK(object->compiledStructure().listsEveryExtraProperty() && object->keysDependOnlyOnStructureAndOrderWord());
-    auto* listed = object->fieldsAndExtraPropertiesInKeyOrder(vm);
-    AOT_TEST_CHECK(listed && listed->size() == numberOfNames + 1 && numberOfKeys(program, object) == numberOfNames + 1);
-    AOT_TEST_CHECK(getAndCache(program, object, nameAt(vm, numberOfNames - 1)) == jsNumber(numberOfNames - 1));
-
-    AOT_TEST_CHECK(addWithoutNamingStructure(program, object, Identifier::fromString(vm, "late"_s), jsNumber(5)) && extraProperties->structure()->isDictionary());
-    object->ensureStructureForExtraProperties(vm);
-    AOT_TEST_CHECK(extraProperties->structure()->isDictionary() && !object->compiledStructure().listsEveryExtraProperty());
-    AOT_TEST_CHECK(!object->fieldsAndExtraPropertiesInKeyOrder(vm) && numberOfKeys(program, object) == numberOfNames + 2);
-}
-
-// Deletes the names with the even numbers below twice the number of deletions.
-static Object* createCounterAfterDeletions(LoadedProgram& program, unsigned numberOfAdditions, unsigned numberOfDeletions)
-{
-    VM& vm = program.vm();
-    Object* object = allocateCounter(program);
-    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))));
-    for (unsigned index = 0; index < numberOfAdditions; ++index)
-        AOT_TEST_CHECK(addWithoutNamingStructure(program, object, nameAt(vm, index), jsNumber(index)));
-    for (unsigned index = 0; index < numberOfDeletions; ++index) {
-        DeletePropertySlot slot;
-        AOT_TEST_CHECK(object->methodTable()->deleteProperty(object, program.realm(), nameAt(vm, 2 * index), slot));
-    }
-    return object;
-}
-
-static void checkKeyListAfterDeletions(LoadedProgram& program, unsigned numberOfAdditions, unsigned numberOfDeletions, bool becomesDictionary)
-{
-    VM& vm = program.vm();
-    Object* object = createCounterAfterDeletions(program, numberOfAdditions, numberOfDeletions);
-    JSObject* extraProperties = object->extraProperties();
-    AOT_TEST_CHECK(extraProperties->structure()->isUncacheableDictionary() == becomesDictionary);
-
-    object->ensureStructureForExtraProperties(vm);
-    AOT_TEST_CHECK(!extraProperties->structure()->isDictionary() && object->keysDependOnlyOnStructureAndOrderWord());
-    unsigned numberOfProperties = 1 + numberOfAdditions - numberOfDeletions;
-    auto* listed = object->fieldsAndExtraPropertiesInKeyOrder(vm);
-    AOT_TEST_CHECK(listed && listed->size() == numberOfProperties && numberOfKeys(program, object) == numberOfProperties);
-    AOT_TEST_CHECK(listed->at(1).name == nameAt(vm, 1).impl() && object->readPropertyListEntry(listed->at(1), extraProperties) == jsNumber(1));
-    AOT_TEST_CHECK(listed->last().name == nameAt(vm, numberOfAdditions - 1).impl() && object->readPropertyListEntry(listed->last(), extraProperties) == jsNumber(numberOfAdditions - 1));
-}
-
-static void testDeletionsKeepKeyList(LoadedProgram& program)
-{
-    checkKeyListAfterDeletions(program, 12, 1, false);
-    checkKeyListAfterDeletions(program, 100, 40, true);
-}
-
-static void testSymbolsAndHiddenNamesHaveNoKeyList(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    Object* withSymbol = createCounterAfterDeletions(program, 12, 1);
-    AOT_TEST_CHECK(addWithoutNamingStructure(program, withSymbol, vm.propertyNames->iteratorSymbol, jsNumber(1)));
-    withSymbol->ensureStructureForExtraProperties(vm);
-    AOT_TEST_CHECK(!withSymbol->fieldsAndExtraPropertiesInKeyOrder(vm) && numberOfKeys(program, withSymbol) == 12);
-
-    Object* withHiddenName = createCounterAfterDeletions(program, 12, 1);
-    PropertyDescriptor hidden(jsNumber(1), static_cast<unsigned>(PropertyAttribute::DontEnum));
-    AOT_TEST_CHECK(withHiddenName->methodTable()->defineOwnProperty(withHiddenName, program.realm(), Identifier::fromString(vm, "hidden"_s), hidden, false));
-    withHiddenName->ensureStructureForExtraProperties(vm);
-    AOT_TEST_CHECK(!withHiddenName->fieldsAndExtraPropertiesInKeyOrder(vm) && numberOfKeys(program, withHiddenName) == 12);
-}
-
-static bool chainIsCacheableByStructures(LoadedProgram& program, JSObject* prototype)
-{
-    bool sawPolyProto;
-    return normalizePrototypeChain(program.realm(), constructEmptyObject(program.realm(), prototype), sawPolyProto) != InvalidPrototypeChain;
-}
-
-static void testChainThroughCompiledObjectIsNotCachedByStructures(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    AOT_TEST_CHECK(chainIsCacheableByStructures(program, constructEmptyObject(program.realm())));
-
-    Object* counter = allocateCounter(program);
-    AOT_TEST_CHECK(counter->store(vm, counter->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))) && !chainIsCacheableByStructures(program, counter));
-    Structure* structureBefore = counter->structure();
-    counter->setIntegrity(program.realm(), Object::Integrity::Frozen);
-    AOT_TEST_CHECK(counter->structure() == structureBefore && counter->isFrozen());
-
-    auto [object, extraProperties] = createCounterWithDictionary(program);
-    AOT_TEST_CHECK(!chainIsCacheableByStructures(program, object));
-    structureBefore = object->structure();
-    PropertyDescriptor readOnly(jsNumber(1), static_cast<unsigned>(PropertyAttribute::ReadOnly));
-    AOT_TEST_CHECK(object->methodTable()->defineOwnProperty(object, program.realm(), Identifier::fromString(vm, "late"_s), readOnly, false));
-    AOT_TEST_CHECK(isCompiledObject(object) && object->structure() == structureBefore);
-    ensureStillAliveHere(extraProperties);
-}
-
-static void testFirstAdditionNamesNoStructure(LoadedProgram& program)
-{
-    using Flag = Object::ExtraPropertyStoreFlag;
-    VM& vm = program.vm();
-    Identifier first = nameAt(vm, 0);
-    Identifier second = nameAt(vm, 1);
-    Object* object = allocateCounter(program);
-    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))) && !object->repeatsExtraPropertyStore(vm, first));
-    AOT_TEST_CHECK(object->tryStoreExtraProperty(vm, first, jsNumber(1), { Flag::IsKnownNotToBeField }).kind == Object::ExtraPropertyStore::Added);
-    AOT_TEST_CHECK(object->compiledStructure().hasExtraProperties() && !object->compiledStructure().extraPropertiesStructure());
-    AOT_TEST_CHECK(object->repeatsExtraPropertyStore(vm, first) && !object->repeatsExtraPropertyStore(vm, second));
-    AOT_TEST_CHECK(getAndCache(program, object, first) == jsNumber(1) && object->compiledStructure().extraPropertiesStructure() == object->extraProperties()->structure());
-}
-
-static void testSecondObjectRepeatsAddition(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    Identifier first = nameAt(vm, 0);
-    Identifier second = nameAt(vm, 1);
-    Object* object = allocateCounter(program);
-    AOT_TEST_CHECK(object->store(vm, object->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))));
-    putAndCache(program, object, first, jsNumber(1));
-
-    Object* other = allocateCounter(program);
-    AOT_TEST_CHECK(other->store(vm, other->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(0))));
-    AOT_TEST_CHECK(other->repeatsExtraPropertyStore(vm, first) && !other->repeatsExtraPropertyStore(vm, second));
-    putAndCache(program, other, first, jsNumber(2));
-    AOT_TEST_CHECK(other->structure() == object->structure() && !other->repeatsExtraPropertyStore(vm, second));
-
-    JSObject* ordinary = constructEmptyObject(program.realm());
-    AOT_TEST_CHECK(!repeatsPropertyAddition(ordinary->structure(), first.impl()));
-    ordinary->putDirect(vm, first, jsNumber(1));
-    AOT_TEST_CHECK(repeatsPropertyAddition(constructEmptyObject(program.realm())->structure(), first.impl()) && !repeatsPropertyAddition(ordinary->structure(), second.impl()));
+    checkOutputOfProgramInShell(programOfReadsByName,
+        "one behind the other, two extra properties: right\n"
+        "one behind the other, the second deleted: right\n"
+        "one behind the other, a field: right\n"
+        "one behind the other, an ordinary object: right\n"
+        "one behind the other, a getter first: right\n"
+        "one behind the other, a holder first: right\n"
+        "side by side, neither: right\n"
+        "side by side, two extra properties: right\n"
+        "side by side, the first deleted: right\n"
+        "side by side, a holder and an extra property: right\n"
+        "side by side, a field and nothing: right\n"
+        "a field in its slot: right\n"
+        "a field that became a getter: right\n"
+        "a field that became read only: right\n"
+        "a field that was deleted: right\n"
+        "a field that was added again: right\n"
+        "the field of another object of the layout: right\n"
+        "where most layouts have the name: right\n"
+        "its slot is empty: right\n"
+        "its slot is empty below a holder: right\n"
+        "its slot is filled again: right\n"
+        "an ordinary object: right\n"
+        "an ordinary object without the name: right\n"
+        "a text: right\n"
+        "a number: right\n"_s,
+        { }, statementsWithTwoReads);
 }
 
 template<LoadedProgramTest body>
@@ -401,18 +345,8 @@ static constexpr void (*withCounter)() = runNativeTestWithLoadedProgram<dictiona
 std::span<const NativeTest> dictionaryExtraPropertiesTests()
 {
     static constexpr NativeTest tests[] = {
-        { "dictionary-extra-properties/structure-names-dictionary"_s, withCounter<testStructureNamesDictionary> },
-        { "dictionary-extra-properties/present-names-have-slots"_s, withCounter<testPresentNamesHaveSlots> },
-        { "dictionary-extra-properties/absent-name-is-never-filed"_s, withCounter<testAbsentNameIsNeverFiled> },
-        { "dictionary-extra-properties/leaf-finds-inherited-property"_s, withCounter<testLeafFindsInheritedProperty> },
-        { "dictionary-extra-properties/keys-follow-dictionary"_s, withCounter<testKeysFollowDictionary> },
-        { "dictionary-extra-properties/deleted-name-loses-its-slot"_s, withCounter<testDeletedNameLosesItsSlot> },
-        { "dictionary-extra-properties/naming-flattens-dictionary-once"_s, withCounter<testNamingFlattensDictionaryOnce> },
-        { "dictionary-extra-properties/deletions-keep-key-list"_s, withCounter<testDeletionsKeepKeyList> },
-        { "dictionary-extra-properties/symbols-and-hidden-names-have-no-key-list"_s, withCounter<testSymbolsAndHiddenNamesHaveNoKeyList> },
-        { "dictionary-extra-properties/chain-through-compiled-object-is-not-cached-by-structures"_s, withCounter<testChainThroughCompiledObjectIsNotCachedByStructures> },
-        { "dictionary-extra-properties/first-addition-names-no-structure"_s, withCounter<testFirstAdditionNamesNoStructure> },
-        { "dictionary-extra-properties/second-object-repeats-addition"_s, withCounter<testSecondObjectRepeatsAddition> },
+        { "extra-properties/programs/reads-by-name-follow-every-change"_s, testReadsByNameFollowEveryChange },
+        { "extra-properties/programs/two-reads-by-name-follow-every-change"_s, testTwoReadsByNameFollowEveryChange },
     };
     return tests;
 }

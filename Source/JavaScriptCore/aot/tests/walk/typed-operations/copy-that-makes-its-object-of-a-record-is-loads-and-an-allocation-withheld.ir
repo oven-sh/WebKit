@@ -1,0 +1,10 @@
+# the same copy without guesses and with nothing at all: the operation stays as written, and makes its object in the run time
+# RUN: walk f1 mechanisms=all-Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: HasKeyOrder
+# CHECK: = CopyObject
+# RUN(NONE): walk f1 mechanisms=none
+# NONE-LABEL: code f1:Body
+# NONE-NOT: HasKeyOrder
+# NONE: = CopyObject
+# PROGRAM-OF: copy-that-makes-its-object-of-a-record-is-loads-and-an-allocation.ir

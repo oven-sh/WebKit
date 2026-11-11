@@ -70,6 +70,7 @@ b3/air/AirArg.cpp
 b3/air/AirBasicBlock.cpp
 b3/air/AirBlockEntryClobberSpecial.cpp @no-unify
 b3/air/AirBlockInsertionSet.cpp
+b3/air/AirCheckSpillSlots.cpp @no-unify
 b3/air/AirBreakCriticalEdges.cpp
 b3/air/AirCCallSpecial.cpp
 b3/air/AirCCallingConvention.cpp
@@ -81,6 +82,7 @@ b3/air/AirEliminateDeadCode.cpp
 b3/air/AirEmitShuffle.cpp
 b3/air/AirEnsureDedicatedLoopEntryExitBlocks.cpp
 b3/air/AirFixObviousSpills.cpp
+b3/air/AirReleaseDeadValues.cpp @no-unify
 b3/air/AirFixPartialRegisterStalls.cpp
 b3/air/AirFixSpillsAfterTerminals.cpp
 b3/air/AirForwardRegisterCopies.cpp @no-unify
@@ -125,6 +127,7 @@ b3/air/AirValidate.cpp
 
 b3/B3AbstractHeap.cpp
 b3/B3AbstractHeapRepository.cpp
+b3/B3AffineIndex.cpp @no-unify
 b3/B3Arena.cpp @no-unify
 b3/B3ArgumentRegValue.cpp
 b3/B3AtomicValue.cpp
@@ -212,6 +215,7 @@ b3/B3PhiChildren.cpp
 b3/B3PlaceConstantsByFrequency.cpp @no-unify
 b3/B3Policy.cpp @no-unify
 b3/B3Procedure.cpp
+b3/B3PromoteLoopMemory.cpp @no-unify
 b3/B3PureCSE.cpp
 b3/B3RangeReductions.cpp @no-unify
 b3/B3ReduceDoubleToFloat.cpp
@@ -234,6 +238,7 @@ b3/B3SwitchValue.cpp
 b3/B3TZoneImpls.cpp
 b3/B3ThreadJumps.cpp @no-unify
 b3/B3Type.cpp
+b3/B3UnrollLoops.cpp @no-unify
 b3/B3UpsilonValue.cpp
 b3/B3UseCounts.cpp
 b3/B3Validate.cpp
@@ -243,6 +248,7 @@ b3/B3ValueRep.cpp
 b3/B3Variable.cpp
 b3/B3VariableLiveness.cpp
 b3/B3VariableValue.cpp
+b3/B3VectorizeLoops.cpp @no-unify
 b3/B3VersionLoops.cpp @no-unify
 b3/B3WasmAddressValue.cpp
 b3/B3WasmBoundsCheckValue.cpp
@@ -1110,7 +1116,6 @@ runtime/PropertySlot.cpp
 runtime/PropertyTable.cpp
 runtime/ProxyConstructor.cpp
 runtime/ProxyObject.cpp
-runtime/ProxyRevoke.cpp
 runtime/RandomizingFuzzerAgent.cpp
 runtime/ShadowRealmObject.cpp
 runtime/ShadowRealmConstructor.cpp
@@ -1316,6 +1321,7 @@ wasm/js/WebAssemblyPromising.cpp
 wasm/js/JSWebAssemblyRuntimeError.cpp
 wasm/js/JSWebAssemblySuspendError.cpp
 wasm/js/JSWebAssemblyStruct.cpp
+wasm/js/JSWebAssemblySuspendingWrapper.cpp
 wasm/js/WebAssemblySuspending.cpp
 wasm/js/JSWebAssemblyTable.cpp
 wasm/js/JSWebAssemblyTag.cpp

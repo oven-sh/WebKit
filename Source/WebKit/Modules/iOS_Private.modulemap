@@ -1896,11 +1896,6 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module WKWebProcessPlugInNodeHandlePrivate {
-    header "WKWebProcessPlugInNodeHandlePrivate.h"
-    export *
-  }
-
   explicit module WKWebProcessPlugInPageGroup {
     header "WKWebProcessPlugInPageGroup.h"
     export *
@@ -2777,6 +2772,11 @@ framework module WebKit_Private [system] {
 
   explicit module _WKLinkIconParameters {
     header "_WKLinkIconParameters.h"
+    export *
+  }
+
+  explicit module _WKMediaCapturePermissionPromptConfiguration {
+    header "_WKMediaCapturePermissionPromptConfiguration.h"
     export *
   }
 

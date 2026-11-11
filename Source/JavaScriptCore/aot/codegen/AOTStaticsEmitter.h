@@ -15,15 +15,21 @@ class StaticsEmitter final : public OperationEmitter {
 public:
     explicit StaticsEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
-    TypedPointer inStatics(const B3::AbstractHeap& heap, uint32_t offsetInStatics) { return m_out.address(heap, m_statics, offsetInStatics); }
-    TypedPointer inStatics(const B3::AbstractHeap& heap, StaticsOffset offset) { return inStatics(heap, offset.value()); }
     TypedPointer addressOf(VariableID);
     Operand loadVariable(VariableID);
-    Operand loadEncodedVariable(VariableID);
-    void storeVariable(VariableID, Operand, const Type& storedType);
-    TypedPointer guardByteOf(GuardBitID);
-    uint8_t guardMaskOf(GuardBitID) const;
-    TypedPointer branchCounter(uint32_t number);
+    void storeVariable(VariableID, Operand, bool isUndoneAtRestart);
+    TypedPointer addressOfStaticField(VariableID);
+    bool holdsStaticField(VariableID) const;
+    void storeStaticField(VariableID, Boxed);
+    Operand loadFieldOfEnvironment(VariableID, LayoutID, uint32_t field);
+    void storeFieldOfEnvironment(VariableID, LayoutID, uint32_t field, Operand, const Type& storedType);
+    ClassGuardKey keyOfGuard(LayoutID classLayout, ClassSide);
+    ClassGuardKey keyOfGuard(LayoutID classLayout, ClassSide, PropertyKeyID name, AskerOfClassGuardOfName = AskerOfClassGuardOfName::Reads);
+    ClassGuardKey keyOfGuardOfNames(LayoutID classLayout, ClassSide, std::span<const PropertyKeyID> names);
+    TypedPointer guardByte(const ClassGuardKey&);
+    TypedPointer countOfGuards(std::span<const ClassGuardKey>);
+    TypedPointer rowOfCountsOfGuards(std::span<const Vector<ClassGuardKey, 4>> slots);
+    TypedPointer wordOfEnvironmentHandedBack(LayoutID);
 };
 
 } } } // namespace JSC::AOT::Typed

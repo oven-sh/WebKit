@@ -70,12 +70,12 @@
 
 namespace WebCore {
 
-static MediaTime LEGACY_NODELETE timestampToMediaTime(int64_t timestamp)
+NODELETE static MediaTime timestampToMediaTime(int64_t timestamp)
 {
     return MediaTime::createWithDouble(Seconds::fromMicroseconds(timestamp).value());
 }
 
-static int64_t LEGACY_NODELETE mediaTimeToTimestamp(MediaTime mediaTime)
+NODELETE static int64_t mediaTimeToTimestamp(MediaTime mediaTime)
 {
     return Seconds(mediaTime.toDouble()).microseconds();
 }
@@ -148,7 +148,7 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::createFromImageElemen
     //    animation.
     // 4. Let codedWidth and codedHeight be the width and height of resource.
     auto codedSize = VideoFrameImageSizing { }.resolve(naturalDimensions);
-    RefPtr resource = sourceImage->currentPreTransformedNativeImage(codedSize, orientation);
+    RefPtr resource = sourceImage->currentPreTransformedNativeImage(ImageDrawDescriptor { codedSize, orientation });
     if (!resource)
         return Exception { ExceptionCode::InvalidStateError, "Image has no video frame"_s };
 
@@ -341,6 +341,9 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::create(ScriptExecutio
     if (!videoFrame)
         return Exception { ExceptionCode::TypeError, "Unable to create internal resource from data"_s };
 
+    if (init.flip)
+        videoFrame = videoFrame->updateOrientation(rotation, true, VideoFrame::ShouldClone::No);
+
     transferList.detachAll(context.vm());
 
     // The default display size is the visible size, in the orientation of the rotated frame.
@@ -391,7 +394,7 @@ Ref<WebCodecsVideoFrame> WebCodecsVideoFrame::create(ScriptExecutionContext& con
     return result;
 }
 
-static VideoPixelFormat LEGACY_NODELETE computeVideoPixelFormat(VideoPixelFormat baseFormat, bool shouldDiscardAlpha)
+NODELETE static VideoPixelFormat computeVideoPixelFormat(VideoPixelFormat baseFormat, bool shouldDiscardAlpha)
 {
     if (!shouldDiscardAlpha)
         return baseFormat;
@@ -444,8 +447,9 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::initializeFrameFromOt
     result->m_data.duration = init.duration ? init.duration : videoFrame->m_data.duration;
     if (init.timestamp)
         result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateTimestamp(timestampToMediaTime(*init.timestamp), shouldCloneIfUpdating);
-    if (baseRotation != finalRotation)
-        result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateRotation(finalRotation, shouldCloneIfUpdating);
+    bool isMirrored = result->m_data.internalFrame->isMirrored() != init.flip;
+    if (baseRotation != finalRotation || init.flip)
+        result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateOrientation(finalRotation, isMirrored, shouldCloneIfUpdating);
     if (init.alpha == WebCodecsAlphaOption::Discard && format != initialFormat)
         result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateShouldIgnoreAlpha(true, shouldCloneIfUpdating);
     result->m_data.timestamp = mediaTimeToTimestamp(result->m_data.internalFrame->presentationTime());
@@ -476,8 +480,9 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::initializeFrameFromOt
     result->m_data.duration = init.duration;
     if (init.timestamp)
         result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateTimestamp(timestampToMediaTime(*init.timestamp), shouldCloneIfUpdating);
-    if (finalRotation != baseRotation)
-        result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateRotation(finalRotation, shouldCloneIfUpdating);
+    bool isMirrored = result->m_data.internalFrame->isMirrored() != init.flip;
+    if (finalRotation != baseRotation || init.flip)
+        result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateOrientation(finalRotation, isMirrored, shouldCloneIfUpdating);
     if (init.alpha == WebCodecsAlphaOption::Discard && format != initialFormat)
         result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateShouldIgnoreAlpha(true, shouldCloneIfUpdating);
     result->m_data.timestamp = mediaTimeToTimestamp(result->m_data.internalFrame->presentationTime());
@@ -513,8 +518,9 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::initializeFrameWithRe
     result->m_data.duration = init.duration;
     if (init.timestamp)
         result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateTimestamp(timestampToMediaTime(*init.timestamp), VideoFrame::ShouldClone::No);
-    if (finalRotation != baseRotation)
-        result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateRotation(finalRotation, VideoFrame::ShouldClone::No);
+    bool isMirrored = result->m_data.internalFrame->isMirrored() != init.flip;
+    if (finalRotation != baseRotation || init.flip)
+        result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateOrientation(finalRotation, isMirrored, VideoFrame::ShouldClone::No);
     if (init.alpha == WebCodecsAlphaOption::Discard && format != initialFormat)
         result->m_data.internalFrame = protect(result->m_data.internalFrame)->updateShouldIgnoreAlpha(true, VideoFrame::ShouldClone::No);
     result->m_data.timestamp = mediaTimeToTimestamp(result->m_data.internalFrame->presentationTime());
@@ -613,9 +619,22 @@ DOMRectReadOnly* WebCodecsVideoFrame::visibleRect() const
     return m_visibleRect.get();
 }
 
+RefPtr<VideoFrame> WebCodecsVideoFrame::internalFrameForRendering(ScriptExecutionContext& context) const
+{
+    RefPtr frame = m_data.internalFrame;
+    if (!frame || context.settingsValues().webCodecsVideoFrameRotationEnabled)
+        return frame;
+    return frame->updateOrientation(VideoFrameRotation::None, false, VideoFrame::ShouldClone::Yes);
+}
+
 double WebCodecsVideoFrame::rotation() const
 {
     return m_data.internalFrame ? static_cast<double>(m_data.internalFrame->rotation()) : 0;
+}
+
+bool WebCodecsVideoFrame::flip() const
+{
+    return m_data.internalFrame && m_data.internalFrame->isMirrored();
 }
 
 void WebCodecsVideoFrame::setDisplaySize(size_t width, size_t height)

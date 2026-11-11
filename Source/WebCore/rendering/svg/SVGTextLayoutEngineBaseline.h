@@ -32,7 +32,7 @@ namespace Style {
 class ComputedStyle;
 }
 
-// Helper class used by SVGTextLayoutEngine to handle 'alignment-baseline' / 'dominant-baseline' and 'baseline-shift'.
+// Helper class used by SVGTextLayoutAlgorithm to handle 'alignment-baseline' / 'dominant-baseline' and 'baseline-shift'.
 class SVGTextLayoutEngineBaseline {
     WTF_MAKE_NONCOPYABLE(SVGTextLayoutEngineBaseline);
 public:
@@ -44,7 +44,7 @@ public:
     float calculateGlyphAdvanceAndOrientation(bool isVerticalText, const SVGTextMetrics&, float angle, float& xOrientationShift, float& yOrientationShift) const;
 
 private:
-    AlignmentBaseline LEGACY_NODELETE dominantBaselineToAlignmentBaseline(bool isVerticalText, const Style::ComputedStyle&) const;
+    NODELETE AlignmentBaseline dominantBaselineToAlignmentBaseline(bool isVerticalText, const Style::ComputedStyle&) const;
 
     CheckedRef<const FontCascade> m_font;
 };

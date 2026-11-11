@@ -48,7 +48,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncExec);
+JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncExec);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncCompile);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncToString);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoGetterGlobal);
@@ -61,7 +61,7 @@ static JSC_DECLARE_HOST_FUNCTION(regExpProtoGetterUnicode);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoGetterUnicodeSets);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoGetterSource);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoGetterFlags);
-static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncTest);
+JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncTest);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncSearch);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncReplace);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncMatch);
@@ -819,11 +819,10 @@ static NEVER_INLINE JSArray* tryAddToRegExpSplitCache(JSGlobalObject* globalObje
 
     auto subject = inputString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!subject->impl() || !subject->impl()->isAtom())
-        return nullptr;
+    ASSERT(StringSplitCache::canBeKey(subject->impl()));
 
     constexpr unsigned atomStringsArrayLimit = 100;
-    bool makeAtomStringsArray = resultLength < atomStringsArrayLimit;
+    bool makeAtomStringsArray = subject->impl()->isAtom() && resultLength < atomStringsArrayLimit;
     Structure* cellButterflyStructure = makeAtomStringsArray ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
     auto* newButterfly = JSCellButterfly::tryCreate(vm, cellButterflyStructure, resultLength);
     if (!newButterfly)
@@ -932,7 +931,7 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
     bool cacheable = limit == 0xFFFFFFFFu && !globalObject->isHavingABadTime();
     if (cacheable) {
         StringImpl* impl = inputString->tryGetValueImpl();
-        cacheable = impl && impl->isAtom();
+        cacheable = StringSplitCache::canBeKey(impl);
     }
     if (cacheable) {
         auto subject = inputString->value(globalObject);
@@ -948,6 +947,7 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
             Structure* arrayStructure = globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous);
             return JSArray::createWithButterfly(vm, nullptr, arrayStructure, immutableButterfly->toButterfly());
         }
+        cacheable = StringSplitCache::isWorthCaching(*subject->impl());
     }
 
     auto input = inputString->view(globalObject);
@@ -1554,7 +1554,7 @@ static inline String getSubstitution(JSGlobalObject* globalObject, const String&
         return { };
     }
 
-    return result.toString();
+    return WTF::move(result).toString();
 }
 
 JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject, JSString* string, JSValue replaceValue)
@@ -1787,7 +1787,7 @@ JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject,
             throwOutOfMemoryError(globalObject, scope);
             return { };
         }
-        return jsString(vm, accumulatedResult.toString());
+        return jsString(vm, WTF::move(accumulatedResult).toString());
     }
 
     // 17. Return the string-concatenation of accumulatedResult and the substring of S from nextSourcePosition.
@@ -1796,7 +1796,7 @@ JSValue regExpReplaceGeneric(JSGlobalObject* globalObject, JSObject* thisObject,
         throwOutOfMemoryError(globalObject, scope);
         return { };
     }
-    return jsString(vm, accumulatedResult.toString());
+    return jsString(vm, WTF::move(accumulatedResult).toString());
 }
 
 // 22.2.6.11 RegExp.prototype [ %Symbol.replace% ] ( string, replaceValue )

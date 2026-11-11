@@ -1,0 +1,49 @@
+# An ES module that may be evicted is left to the host's loader from then on: the loader enters the body that was compiled at most once, and so whatever that body alone calls once.
+# main.js: once();  function once() { return 1 }
+# RUN: link functions mechanisms=all
+# CHECK: function f0 {{*}}runs-once
+# CHECK: function f1 {{*}}runs-once
+# A file that runs again, a file that a mock may stand for, a CommonJS file that may be evicted, which is loaded again, and the facade of that file, whose variables are then filled again
+# RUN(AGAIN): link functions mechanisms=all
+# AGAIN-NOT: function f2 {{*}}runs-once
+# AGAIN-NOT: function f3 {{*}}runs-once
+# AGAIN-NOT: function f4 {{*}}runs-once
+# AGAIN-NOT: function f5 {{*}}runs-once
+
+variable g0 name="once" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="exports" module=m3 declared={type=anything} initialization=Undefined
+variable g2 name="default" module=m4 declared={type=anything|absent}
+module m0 path="main.js" displayPath="main.js" flags=[MayBeEvicted] body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m4 completes=true}]
+module m1 path="again.js" displayPath="again.js" flags=[MayBeEvicted, MayBeReevaluated] body=f2
+module m2 path="mocked.js" displayPath="mocked.js" flags=[MayBeMocked, MayBeEvicted] body=f3
+module m3 path="/required.cjs" displayPath="required.cjs" kind=CommonJs flags=[CachesEvaluationError, MayBeEvicted] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g1
+module m4 path="#4" displayPath="required.cjs" flags=[CachesEvaluationError, MayBeEvicted] exportRule=CommonJs body=f5 requests=[{target=m3 kind=Require completes=true}] syntheticExports=[{name="default" variable=g2}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0 calleeName="once"
+    Return v1
+}
+function f1 name="once" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="required" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    Return
+}
+function f5 name="facadeOfRequired" module=m4 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m3 referrer=m4 [isBare]
+    Return
+}

@@ -6,7 +6,6 @@
 #pragma once
 
 #include "AOTBuiltinFeatures.h"
-#include "AOTThreshold.h"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -22,6 +21,11 @@
 #else
 #define JSC_CALL_WITHOUT_INLINING
 #endif
+
+namespace WTF {
+class StringImpl;
+}
+using WTF::StringImpl;
 
 namespace JSC {
 
@@ -44,7 +48,6 @@ FOR_EACH_ENGINE_REMOVABLE_FEATURE(JSC_CHECK_REMOVABLE_FEATURE)
 
 enum class RemovedFeatureStub : uint8_t { Abort, Throw, ReturnUndefined, ReturnDefault };
 enum class FeatureRemoval : uint8_t { Present, Unused, Requested };
-// Builtin: the record has the number of a built-in in the table. BuiltinNamedByEngine: it has the position of one in the engine's list of names, which is all that code compiled with the engine knows.
 enum class GuardOrigin : uint8_t { NativeCode, Builtin, Definition, BuiltinNamedByEngine };
 
 struct RemovableFeatureState {
@@ -65,7 +68,7 @@ struct RemovedRange {
 };
 static_assert(sizeof(RemovedRange) == 16 && alignof(RemovedRange) == 8);
 
-AOT_THRESHOLD(uint32_t, maxRemovedRanges, 32768);
+static constexpr uint32_t maxRemovedRanges = 32768;
 
 struct RemovableEntryPointRecord {
     uint64_t guardSite;
@@ -82,7 +85,6 @@ extern "C" const RemovableFeatureState Bun__removableFeatureState;
 extern "C" [[noreturn]] void Bun__abortForRemovedFeature(uint16_t feature);
 extern "C" EncodedJSValue Bun__throwForRemovedFeature(JSGlobalObject*, uint16_t feature);
 extern "C" EncodedJSValue Bun__throwForRemovedBuiltin(JSGlobalObject*, uint16_t feature, uint32_t builtin);
-// Without a name the error names the feature.
 extern "C" EncodedJSValue Bun__throwForRemovedFunction(JSGlobalObject*, uint16_t feature, StringImpl* name);
 
 ALWAYS_INLINE FeatureRemoval removalOf(RemovableFeature feature)
@@ -182,8 +184,6 @@ inline __attribute__((__always_inline__)) void recordRemovableDefinition()
     static_assert(stub == RemovedFeatureStub::Abort || stub == RemovedFeatureStub::Throw);
     static_assert(stub == RemovedFeatureStub::Throw || !builtin);
 #if COMPILER(CLANG) && (CPU(X86_64) || CPU(ARM64))
-    // A function that records itself stays until the linker collects sections. LLVM 23 crashes (GlobalDCE, under link-time optimization)
-    // when it removes a function that the constant of __builtin_function_start still names.
     [[gnu::used]] static const void* const start = __builtin_function_start(function);
 #endif
     JSC_EMIT_REMOVABLE_RECORD("771:\n", "771b", __builtin_function_start(function), GuardOrigin::Definition);
@@ -204,7 +204,6 @@ ALWAYS_INLINE EncodedJSValue throwForRemovedFeature(JSGlobalObject* realm)
         return Bun__throwForRemovedFeature(realm, index);
 }
 
-// A stub that throws finds the realm in the first argument.
 template<RemovableFeature feature, RemovedFeatureStub stub, typename Result, GuardOrigin origin = GuardOrigin::NativeCode, uint32_t builtin = 0, typename... Arguments>
 ALWAYS_INLINE Result resultForRemovedFeature([[maybe_unused]] Arguments&... arguments)
 {
@@ -301,11 +300,9 @@ ALWAYS_INLINE decltype(function) addressUnlessRemoved(decltype(function) replace
     return function;
 }
 
-// AOTRemovableFeature.cpp instantiates it for NativeFunction, GetValueFunc and PutValueFunc.
 template<typename FunctionPointer>
 FunctionPointer functionUnlessRemovedSlow(FunctionPointer);
 
-// No guard names a function of a hand-written table. Every place where such a pointer becomes callable passes it through here.
 template<typename FunctionPointer>
 ALWAYS_INLINE FunctionPointer functionUnlessRemoved(FunctionPointer function)
 {

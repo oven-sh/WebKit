@@ -63,7 +63,17 @@ RemoteScrollingCoordinatorProxyMac::RemoteScrollingCoordinatorProxyMac(WebPagePr
 
 RemoteScrollingCoordinatorProxyMac::~RemoteScrollingCoordinatorProxyMac()
 {
+    if (!m_isInvalidated)
+        m_eventDispatcher->invalidate();
+}
+
+void RemoteScrollingCoordinatorProxyMac::invalidate()
+{
+    if (m_isInvalidated)
+        return;
+
     m_eventDispatcher->invalidate();
+    RemoteScrollingCoordinatorProxy::invalidate();
 }
 
 void RemoteScrollingCoordinatorProxyMac::cacheWheelEventScrollingAccelerationCurve(const NativeWebWheelEvent& nativeWheelEvent)
@@ -284,6 +294,11 @@ void RemoteScrollingCoordinatorProxyMac::applyScrollingTreeLayerPositionsAfterCo
 {
     RemoteScrollingCoordinatorProxy::applyScrollingTreeLayerPositionsAfterCommit();
     m_eventDispatcher->renderingUpdateComplete();
+}
+
+void RemoteScrollingCoordinatorProxyMac::flushMainThreadTransactionIfNeeded()
+{
+    m_eventDispatcher->flushMainThreadTransactionIfNeeded();
 }
 
 #if ENABLE(THREADED_ANIMATIONS)

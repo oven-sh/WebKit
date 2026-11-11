@@ -8,9 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClosureTestEmitter.h"
 #include "AOTConstantEmitter.h"
-#include "AOTPlacement.h"
-#include "AOTRuntimeValidationEmitter.h"
+#include "AOTHintEmitter.h"
 #include "AOTSlotEmitter.h"
 #include "AOTStaticsEmitter.h"
 
@@ -27,19 +27,33 @@ void BindingEmitter::failAndDefineZero(const ValueContext& value, InternalErrorK
     define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
 }
 
+bool BindingEmitter::endsWayAtEnvironmentThatIsNeverMade(LayoutID layout)
+{
+    if (m_plan.isInUse(layout))
+        return false;
+    m_out.unreachable();
+    m_out.appendTo(newBlock());
+    return true;
+}
+
 void BindingEmitter::generateParameter(const ValueContext&)
 {
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+CellPointer BindingEmitter::singletonClosureOf(const ValueContext& value, FunctionID function)
+{
+    return emitter<ConstantEmitter>().singletonClosure(value, function);
 }
 
 void BindingEmitter::defineSingletonClosure(const ValueContext& value, FunctionID function)
 {
     switch (value.representation()) {
     case Representation::Cell:
-        define(value, emitter<ConstantEmitter>().singletonClosure(value, function));
+        define(value, singletonClosureOf(value, function));
         return;
     case Representation::JSValue:
-        define(value, boxCell(emitter<ConstantEmitter>().singletonClosure(value, function)));
+        define(value, boxCell(singletonClosureOf(value, function)));
         return;
     case Representation::Unchosen:
     case Representation::Void:
@@ -47,12 +61,9 @@ void BindingEmitter::defineSingletonClosure(const ValueContext& value, FunctionI
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         failAndDefineZero(value, InternalErrorKind::OpcodeWithoutCode);
         return;
@@ -63,22 +74,33 @@ void BindingEmitter::defineSingletonClosure(const ValueContext& value, FunctionI
 void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
 {
     VariableID variable = value->variable();
-    const PlacedVariable& placed = m_placement.variable(variable);
-    switch (placed.storage) {
+    PlannedVariable planned = m_plan.variable(variable);
+    if (value->returnsRawSlot()) {
+        if (planned.hasWordInStatics())
+            define(value, emitter<StaticsEmitter>().loadVariable(variable));
+        else if (m_plan.hasClosureCell(planned.function))
+            define(value, boxCell(emitter<ClosureTestEmitter>().closureIfCreated(planned.function)));
+        else
+            define(value, boxedConstant(JSValue()));
+        return;
+    }
+    switch (planned.storage) {
     case VariableStorage::Statics:
         break;
     case VariableStorage::ClosureTable:
-        defineSingletonClosure(value, placed.function);
+        defineSingletonClosure(value, planned.function);
         return;
-    case VariableStorage::None:
-        failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
+    }
+
+    if (Type read = typeOf(value.id()); planned.encoding == VariableEncoding::FunctionAsZero && !read.primitives && singleFunctionOf(types(), read) == planned.function) {
+        m_mentions.add(NumberSpace::Variable, variable);
+        defineSingletonClosure(value, planned.function);
         return;
     }
 
     Operand loaded = emitter<StaticsEmitter>().loadVariable(variable);
-    switch (placed.encoding) {
+    switch (planned.encoding) {
     case VariableEncoding::Plain:
-    case VariableEncoding::UndefinedAsZero:
         define(value, loaded);
         return;
     case VariableEncoding::FunctionAsZero: {
@@ -86,7 +108,7 @@ void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
         define(value, either<Boxed>(isNotEmpty(word), [&] {
             return word;
         }, [&] {
-            return boxCell(emitter<ConstantEmitter>().singletonClosure(value, placed.function));
+            return boxCell(singletonClosureOf(value, planned.function));
         }));
         return;
     }
@@ -94,44 +116,64 @@ void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void BindingEmitter::generateGetEncodedModuleVariable(const ValueContext& value)
-{
-    VariableID variable = value->variable();
-    if (m_placement.variable(variable).encoding != VariableEncoding::UndefinedAsZero) {
-        failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
-        return;
-    }
-    define(value, emitter<StaticsEmitter>().loadEncodedVariable(variable));
-}
-
 void BindingEmitter::generatePutModuleVariable(const ValueContext& value)
 {
     VariableID variable = value->variable();
-    switch (m_placement.variable(variable).storage) {
+    switch (m_plan.variable(variable).storage) {
     case VariableStorage::Statics:
-        emitter<StaticsEmitter>().storeVariable(variable, get(value->valueOperand()), typeOf(value->valueOperand()));
+        emitter<StaticsEmitter>().storeVariable(variable, get(value->valueOperand()), m_code.writesWhatTurnHasMade(value.id()));
         return;
     case VariableStorage::ClosureTable:
-    case VariableStorage::None:
         fail(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+void BindingEmitter::generateGetStaticFieldOrAbsent(const ValueContext& value)
+{
+    VariableID variable = value->variable();
+    StaticsEmitter& statics = emitter<StaticsEmitter>();
+    if (!statics.holdsStaticField(variable) || value.representation() != Representation::JSValue) {
+        failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
+        return;
+    }
+    CellPointer classObject = in<CellPointer>(value->classObjectOperand());
+    Boxed word = emitter<SlotEmitter>().load(statics.addressOfStaticField(variable), SlotRepresentation::JSValue).as<Boxed>();
+    Condition isBare(m_out.isNull(loadField<Pointer>(classObject, m_heaps.JSObject_butterfly).value()));
+    define(value, select(isBare, word, boxedConstant(JSValue())));
+}
+
+void BindingEmitter::generatePutStaticField(const ValueContext& value)
+{
+    VariableID variable = value->variable();
+    StaticsEmitter& statics = emitter<StaticsEmitter>();
+    if (!statics.holdsStaticField(variable)) {
+        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+        return;
+    }
+    statics.storeStaticField(variable, in<Boxed>(value->valueOperand()));
+}
+
 void BindingEmitter::generateGetEnvironmentField(const ValueContext& value)
 {
     LayoutID layout = value->layout();
     uint32_t field = value->field();
-    const PlacedSlot& slot = m_placement.slot(layout, field);
+    const PlacedSlot& slot = m_plan.slot(layout, field);
+    if (endsWayAtEnvironmentThatIsNeverMade(layout)) {
+        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
+        return;
+    }
     if (!isPlacedInEnvironment(slot)) {
         failAndDefineZero(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
     }
+    if (VariableID variable = m_plan.promotedEnvironments().variableOf(layout, field)) {
+        define(value, emitter<StaticsEmitter>().loadFieldOfEnvironment(variable, layout, field));
+        return;
+    }
     CellPointer environment = in<CellPointer>(value->environmentOperand());
-    bool isProvenToFollowStore = flowOf(m_program, FieldReference { layout, field }).location.initialization != InitializationState::Unknown;
-    if (generator().validates() && isProvenToFollowStore && !(typeOf(value.id()).primitives & Primitive::Absent))
-        emitter<RuntimeValidationEmitter>().checkBindingIsStored(value, emitter<SlotEmitter>().isFilled(environment, slot, MemoryLocation::environmentField(layout, field)));
+    emitter<HintEmitter>().crashIfLifetimeEnded(value, environment);
     define(value, emitter<SlotEmitter>().loadSlot(environment, slot, MemoryLocation::environmentField(layout, field)));
 }
 
@@ -139,16 +181,26 @@ void BindingEmitter::generatePutEnvironmentField(const ValueContext& value)
 {
     LayoutID layout = value->layout();
     uint32_t field = value->field();
-    const PlacedSlot& slot = m_placement.slot(layout, field);
+    const PlacedSlot& slot = m_plan.slot(layout, field);
+    if (endsWayAtEnvironmentThatIsNeverMade(layout)) {
+        m_generator.noteThatOwnerIsRememberedBehind(value.id());
+        return;
+    }
     if (!isPlacedInEnvironment(slot)) {
         fail(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
     }
+    if (VariableID variable = m_plan.promotedEnvironments().variableOf(layout, field)) {
+        emitter<StaticsEmitter>().storeFieldOfEnvironment(variable, layout, field, get(value->valueOperand()), typeOf(value->valueOperand()));
+        m_generator.noteThatOwnerIsRememberedBehind(value.id());
+        return;
+    }
     CellPointer environment = in<CellPointer>(value->environmentOperand());
+    emitter<HintEmitter>().crashIfLifetimeEnded(value, environment);
     ValueID storedValue = value->valueOperand();
     Operand stored = get(storedValue);
     emitter<SlotEmitter>().storeSlot(environment, slot, MemoryLocation::environmentField(layout, field), stored);
-    barrierAfterStore(value, environment, stored, typeOf(storedValue));
+    barrierAfterStore(value, environment, typeOf(storedValue));
 }
 
 void BindingEmitter::generateScopeHasBinding(const ValueContext& value)

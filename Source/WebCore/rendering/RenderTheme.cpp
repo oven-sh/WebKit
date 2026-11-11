@@ -22,7 +22,6 @@
 #include "config.h"
 #include "RenderTheme.h"
 
-#include "BitmapImage.h"
 #include "BorderShape.h"
 #include "ButtonPart.h"
 #include "CSSContrastColorResolver.h"
@@ -54,7 +53,6 @@
 #include "HTMLProgressElement.h"
 #include "HTMLSelectElement.h"
 #include "HTMLTextAreaElement.h"
-#include "ImageAdapter.h"
 #include "ImageControlsButtonPart.h"
 #include "InnerSpinButtonPart.h"
 #include "LocalFrame.h"
@@ -62,6 +60,7 @@
 #include "MenuListButtonPart.h"
 #include "MenuListPart.h"
 #include "MeterPart.h"
+#include "NativeImage.h"
 #include "Page.h"
 #include "PaintInfo.h"
 #include "PlatformRenderTheme.h"
@@ -223,7 +222,7 @@ StyleAppearance RenderTheme::adjustAppearanceForElement(Style::ComputedStyle& st
     return appearance;
 }
 
-static bool LEGACY_NODELETE isAppearanceAllowedForAllElements(StyleAppearance appearance)
+NODELETE static bool isAppearanceAllowedForAllElements(StyleAppearance appearance)
 {
 #if ENABLE(APPLE_PAY)
     if (appearance == StyleAppearance::ApplePayButton)
@@ -243,7 +242,7 @@ static bool devolvableWidgetsSupported()
 #endif
 }
 
-static bool LEGACY_NODELETE shouldCheckLegacyStylesForNativeAppearance(const Element* element)
+NODELETE static bool shouldCheckLegacyStylesForNativeAppearance(const Element* element)
 {
 #if PLATFORM(MAC)
 #if ENABLE(FORM_CONTROL_REFRESH)
@@ -401,7 +400,7 @@ StyleAppearance RenderTheme::autoAppearanceForElement(Style::ComputedStyle& styl
 
     Ref element = *elementPtr;
 
-    if (RefPtr input = dynamicDowncast<HTMLInputElement>(element)) {
+    if (auto* input = dynamicDowncast<HTMLInputElement>(element)) {
         if (input->isTextButton())
             return StyleAppearance::Button;
 
@@ -472,7 +471,7 @@ StyleAppearance RenderTheme::autoAppearanceForElement(Style::ComputedStyle& styl
     if (element->isInUserAgentShadowTree()) {
         auto& part = element->userAgentPart();
 
-        if (RefPtr button = dynamicDowncast<DataListButtonElement>(element)) {
+        if (auto* button = dynamicDowncast<DataListButtonElement>(element)) {
             ASSERT(part == UserAgentParts::webkitListButton());
             if (!button->canAdjustStyleForAppearance())
                 return StyleAppearance::None;
@@ -556,7 +555,7 @@ static void updateMeterPartForRenderer(MeterPart& meterPart, const RenderMeter& 
     meterPart.setMaximum(element->max());
 }
 
-static void LEGACY_NODELETE updateProgressBarPartForRenderer(ProgressBarPart& progressBarPart, const RenderProgress& renderProgress)
+NODELETE static void updateProgressBarPartForRenderer(ProgressBarPart& progressBarPart, const RenderProgress& renderProgress)
 {
     progressBarPart.setPosition(renderProgress.position());
     progressBarPart.setAnimationStartTime(renderProgress.animationStartTime().secondsSinceEpoch());
@@ -755,6 +754,16 @@ void RenderTheme::updateControlPartForRenderer(ControlPart& part, const RenderEl
 
 OptionSet<ControlStyle::State> RenderTheme::extractControlStyleStatesForRendererInternal(const RenderElement& renderer) const
 {
+    auto useDarkAppearance = [](const RenderElement& renderer) {
+        if (renderer.useDarkAppearance())
+            return true;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        auto options = renderer.styleColorOptions(StyleColorOptionsPurpose::Rendering);
+        if (options.contains(StyleColorOptions::UseDarkAppearance))
+            return true;
+#endif
+        return false;
+    };
     OptionSet<ControlStyle::State> states;
     if (isHovered(renderer)) {
         states.add(ControlStyle::State::Hovered);
@@ -782,7 +791,7 @@ OptionSet<ControlStyle::State> RenderTheme::extractControlStyleStatesForRenderer
         states.add(ControlStyle::State::Presenting);
     if (useFormSemanticContext())
         states.add(ControlStyle::State::FormSemanticContext);
-    if (renderer.useDarkAppearance())
+    if (useDarkAppearance(renderer))
         states.add(ControlStyle::State::DarkAppearance);
     if (renderer.writingMode().isInlineFlipped())
         states.add(ControlStyle::State::InlineFlippedWritingMode);
@@ -800,7 +809,7 @@ OptionSet<ControlStyle::State> RenderTheme::extractControlStyleStatesForRenderer
     return states;
 }
 
-static const RenderElement* LEGACY_NODELETE effectiveRendererForAppearance(const RenderObject& renderObject)
+NODELETE static const RenderElement* effectiveRendererForAppearance(const RenderObject& renderObject)
 {
     auto* renderer = dynamicDowncast<RenderElement>(renderObject);
     if (!renderer) {
@@ -860,7 +869,7 @@ bool RenderTheme::paint(const RenderBox& box, ControlPart& part, const PaintInfo
 
     updateControlPartForRenderer(part, box);
 
-    float deviceScaleFactor = protect(box.document())->deviceScaleFactor();
+    float deviceScaleFactor = box.document().deviceScaleFactor();
     auto zoomedRect = snapRectToDevicePixels(rect, deviceScaleFactor);
     auto borderShape = BorderShape::shapeForBorderRect(box.usedStyle(), LayoutRect(zoomedRect));
     auto controlStyle = extractControlStyleForRenderer(box);
@@ -888,7 +897,7 @@ bool RenderTheme::paint(const RenderBox& box, const PaintInfo& paintInfo, const 
     if (!canPaint(paintInfo, protect(box.settings()), appearance)) [[unlikely]]
         return false;
 
-    float deviceScaleFactor = protect(box.document())->deviceScaleFactor();
+    float deviceScaleFactor = box.document().deviceScaleFactor();
     FloatRect devicePixelSnappedRect = snapRectToDevicePixels(rect, deviceScaleFactor);
 
     switch (appearance) {
@@ -1007,7 +1016,7 @@ void RenderTheme::paintDecorations(const RenderBox& box, const PaintInfo& paintI
     if (paintInfo.context().paintingDisabled())
         return;
 
-    FloatRect devicePixelSnappedRect = snapRectToDevicePixels(rect, protect(box.document())->deviceScaleFactor());
+    FloatRect devicePixelSnappedRect = snapRectToDevicePixels(rect, box.document().deviceScaleFactor());
 
     // Call the appropriate paint method based off the appearance value.
     switch (box.style().usedAppearance()) {
@@ -1243,7 +1252,7 @@ bool RenderTheme::isFocused(const RenderElement& renderer) const
 
     Ref document = delegate->document();
     RefPtr frame = document->frame();
-    return delegate == document->focusedElement() && frame && protect(frame->selection())->isFocusedAndActive();
+    return delegate == document->focusedElement() && frame && frame->selection().isFocusedAndActive();
 }
 
 bool RenderTheme::isPressed(const RenderElement& renderer) const
@@ -1254,7 +1263,7 @@ bool RenderTheme::isPressed(const RenderElement& renderer) const
 
 bool RenderTheme::isSpinUpButtonPartPressed(const RenderElement& renderer) const
 {
-    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
+    if (auto* spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
         return spinButton->active() && spinButton->upDownState() == SpinButtonElement::Up;
     return false;
 }
@@ -1268,9 +1277,9 @@ bool RenderTheme::isReadOnlyControl(const RenderElement& renderer) const
 
 bool RenderTheme::isHovered(const RenderElement& renderer) const
 {
-    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
+    if (auto* spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
         return spinButton->hovered() && spinButton->upDownState() != SpinButtonElement::Indeterminate;
-    if (RefPtr element = renderer.element())
+    if (auto* element = renderer.element())
         return element->hovered();
     return false;
 }
@@ -1643,33 +1652,32 @@ void RenderTheme::paintSliderTicks(const RenderElement& renderer, const PaintInf
 
 void RenderTheme::paintPlatformResizer(const RenderLayerModelObject& renderer, GraphicsContext& context, const LayoutRect& resizerCornerRect)
 {
-    RefPtr<BitmapImage> resizeCornerImage;
-    FloatSize cornerResizerSize;
-    Ref document = renderer.document();
-    if (document->deviceScaleFactor() >= 2) {
-        static NeverDestroyed<BitmapImage*> resizeCornerImageHiRes(&ImageAdapter::loadPlatformResource("textAreaResizeCorner@2x").leakRef());
-        resizeCornerImage = resizeCornerImageHiRes;
-        cornerResizerSize = resizeCornerImage->size();
-        cornerResizerSize.scale(0.5f);
+    RefPtr<NativeImage> resizeCornerImage;
+    auto deviceScaleFactor = renderer.document().deviceScaleFactor();
+    if (deviceScaleFactor >= 2) {
+        static NeverDestroyed<RefPtr<NativeImage>> resizeCornerImageHiRes = NativeImage::createFromPlatformResource("textAreaResizeCorner@2x"_s);
+        resizeCornerImage = resizeCornerImageHiRes.get();
     } else {
-        static NeverDestroyed<BitmapImage*> resizeCornerImageLoRes(&ImageAdapter::loadPlatformResource("textAreaResizeCorner").leakRef());
-        resizeCornerImage = resizeCornerImageLoRes;
-        cornerResizerSize = resizeCornerImage->size();
+        static NeverDestroyed<RefPtr<NativeImage>> resizeCornerImageLoRes = NativeImage::createFromPlatformResource("textAreaResizeCorner"_s);
+        resizeCornerImage = resizeCornerImageLoRes.get();
     }
+    if (!resizeCornerImage)
+        return;
+
+    FloatSize cornerResizerSize = resizeCornerImage->size();
+    if (deviceScaleFactor >= 2)
+        cornerResizerSize.scale(0.5f);
 
     if (renderer.shouldPlaceVerticalScrollbarOnLeft()) {
         GraphicsContextStateSaver stateSaver(context);
         context.translate(resizerCornerRect.x() + cornerResizerSize.width(), resizerCornerRect.y() + resizerCornerRect.height() - cornerResizerSize.height());
         context.scale(FloatSize(-1.0, 1.0));
-        if (resizeCornerImage)
-            context.drawBitmapImage(*resizeCornerImage, FloatRect { FloatPoint { }, cornerResizerSize });
+        context.drawNativeImage(*resizeCornerImage, FloatRect { FloatPoint { }, cornerResizerSize });
         return;
     }
 
-    if (!resizeCornerImage)
-        return;
-    FloatRect imageRect = snapRectToDevicePixels(LayoutRect(resizerCornerRect.maxXMaxYCorner() - cornerResizerSize, cornerResizerSize), document->deviceScaleFactor());
-    context.drawBitmapImage(*resizeCornerImage, imageRect);
+    FloatRect imageRect = snapRectToDevicePixels(LayoutRect(resizerCornerRect.maxXMaxYCorner() - cornerResizerSize, cornerResizerSize), deviceScaleFactor);
+    context.drawNativeImage(*resizeCornerImage, imageRect);
 }
 
 void RenderTheme::paintPlatformResizerFrame(const RenderLayerModelObject&, GraphicsContext& context, const LayoutRect& resizerAbsRect)
@@ -2195,7 +2203,7 @@ String RenderTheme::fileListNameForWidth(const FileList* fileList, const FontCas
 }
 
 #if USE(SYSTEM_PREVIEW)
-void RenderTheme::paintSystemPreviewBadge(Image&, const PaintInfo& paintInfo, const FloatRect& rect)
+void RenderTheme::paintSystemPreviewBadge(RefPtr<NativeImage>&&, const PaintInfo& paintInfo, const FloatRect& rect)
 {
     paintSystemPreviewBadge(paintInfo, rect);
 }

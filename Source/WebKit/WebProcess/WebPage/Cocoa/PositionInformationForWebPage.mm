@@ -52,6 +52,7 @@
 #import <WebCore/HTMLImageElement.h>
 #import <WebCore/HTMLInputElement.h>
 #import <WebCore/HTMLModelElement.h>
+#import <WebCore/HTMLPlugInElement.h>
 #import <WebCore/HTMLSelectElement.h>
 #import <WebCore/HTMLTextAreaElement.h>
 #import <WebCore/HTMLVideoElement.h>
@@ -798,6 +799,11 @@ Variant<InteractionInformationAtPosition, WebCore::RemoteUserInputEventData> pos
             info.image = page.shareableBitmapSnapshotForNode(*element);
     }
 
+#if HAVE(APPKIT_GESTURES_SUPPORT) && ENABLE(TWO_PHASE_CLICKS)
+    if (hitTestNode)
+        info.isHoverActivatedByClick = page.isHoverActivatedByClick(*hitTestNode, request.point);
+#endif
+
 #if ENABLE(DATA_DETECTION) && PLATFORM(IOS_FAMILY)
     auto hitTestedImageOverlayHost = ([&]() -> RefPtr<WebCore::HTMLElement> {
         if (!hitTestNode || !info.isImageOverlayText)
@@ -866,6 +872,13 @@ Variant<InteractionInformationAtPosition, WebCore::RemoteUserInputEventData> pos
         info.isInPlugin = true;
     }
 #endif // ENABLE(PDF_PLUGIN) && PLATFORM(IOS_FAMILY)
+
+#if ENABLE(PDF_PLUGIN) && HAVE(APPKIT_GESTURES_SUPPORT) && ENABLE(TWO_PHASE_CLICKS)
+    if (RefPtr pluginElement = dynamicDowncast<WebCore::HTMLPlugInElement>(hitTestNode)) {
+        if (RefPtr pluginView = dynamicDowncast<PluginView>(pluginElement->pluginWidget(WebCore::HTMLPlugInElement::PluginLoadingPolicy::DoNotLoad)))
+            info.isOverSelectableText = info.isSelectable() && pluginView->hasSelectableTextAtPoint(request.point);
+    }
+#endif
 
     return info;
 }

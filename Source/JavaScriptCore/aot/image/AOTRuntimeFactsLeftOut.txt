@@ -1,50 +1,38 @@
-# An expression of the compiler's half that aot/image/AOTRuntimeFacts.def cannot evaluate, and why. aot/image/generator/runtime-facts.ts reads the part in front of the bar.
-AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator) | use of undeclared identifier 'kind'; did you mean 'find'?
-AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].header) | use of undeclared identifier 'kind'; did you mean 'find'?
-ExactAllocationCounts::offsetOfCellsOfAllocations() | use of undeclared identifier 'ExactAllocationCounts'
-Extension::offsetOfGranuleBits() | use of undeclared identifier 'Extension'; did you mean 'Exception'?
-MapBucket::offsetOfKey() | use of undeclared identifier 'MapBucket'
-MapBucket::offsetOfValue() | use of undeclared identifier 'MapBucket'
-OBJECT_OFFSETOF(AllocatorWithoutRoom, freeList) | unknown type name 'AllocatorWithoutRoom'
-OBJECT_OFFSETOF(BuiltinDirectFunctionBinding, function) | offsetof of incomplete type 'BuiltinDirectFunctionBinding'
-OBJECT_OFFSETOF(BuiltinNativeFunctionBinding, function) | offsetof of incomplete type 'BuiltinNativeFunctionBinding'
-OBJECT_OFFSETOF(CacheEntry, header) | unknown type name 'CacheEntry'
-OBJECT_OFFSETOF(CacheEntry, prototype) | unknown type name 'CacheEntry'
-OBJECT_OFFSETOF(ClassAccessorData, getter) | unknown type name 'ClassAccessorData'
-OBJECT_OFFSETOF(ClassPrototype, m_memberRow) | 'm_memberRow' is a private member of 'JSC::AOT::ClassPrototype'
-OBJECT_OFFSETOF(Closure, m_entry) | 'm_entry' is a private member of 'JSC::AOT::Closure'
-OBJECT_OFFSETOF(CompiledStructure, m_environmentShapePage) | 'm_environmentShapePage' is a private member of 'JSC::AOT::CompiledStructure'
-OBJECT_OFFSETOF(CompiledStructure, m_extensionSlot) | 'm_extensionSlot' is a private member of 'JSC::AOT::CompiledStructure'
-OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.extraPropertiesCellSize) | 'm_extraKeysAndCellSize' is a private member of 'JSC::AOT::CompiledStructure'
-OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.numberOfExtraKeys) | 'm_extraKeysAndCellSize' is a private member of 'JSC::AOT::CompiledStructure'
-OBJECT_OFFSETOF(CompiledStructure, m_extraPropertiesSlot) | 'm_extraPropertiesSlot' is a private member of 'JSC::AOT::CompiledStructure'
-OBJECT_OFFSETOF(CompiledStructure, m_flags) | 'm_flags' is a private member of 'JSC::AOT::CompiledStructure'
-OBJECT_OFFSETOF(CompiledStructure, m_layout) | 'm_layout' is a private member of 'JSC::AOT::CompiledStructure'
-OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.extraPropertiesStructureID) | 'm_namedStructureAndRareData' is a private member of 'JSC::AOT::CompiledStructure'
-OBJECT_OFFSETOF(Extension, m_granuleBits) | unknown type name 'Extension'; did you mean 'Exception'?
-OBJECT_OFFSETOF(Plan::FastField, acceptedValues) | use of undeclared identifier 'Plan'
-OBJECT_OFFSETOF(Plan::FastField, offset) | use of undeclared identifier 'Plan'
-OBJECT_OFFSETOF(Plan::FastField, representation) | use of undeclared identifier 'Plan'
-OBJECT_OFFSETOF(ProgramSymbol, number) | unknown type name 'ProgramSymbol'; did you mean 'ProgramSymbols'?
-OBJECT_OFFSETOF(ProgramSymbol, uid) | unknown type name 'ProgramSymbol'; did you mean 'ProgramSymbols'?
-OBJECT_OFFSETOF(ProgramSymbols, entries) | offsetof of incomplete type 'ProgramSymbols'
-OBJECT_OFFSETOF(ProgramSymbols, mask) | offsetof of incomplete type 'ProgramSymbols'
-OBJECT_OFFSETOF(SlimClosure, m_word) | 'm_word' is a private member of 'JSC::AOT::SlimClosure'
-OBJECT_OFFSETOF(StackStringBuilder, buffer) | unknown type name 'StackStringBuilder'; did you mean 'StringBuilder'?
-OBJECT_OFFSETOF(StackStringBuilder, lengthOrigin) | unknown type name 'StackStringBuilder'; did you mean 'StringBuilder'?
-OBJECT_OFFSETOF(StackStringBuilder, limit) | unknown type name 'StackStringBuilder'; did you mean 'StringBuilder'?
-SetBucket::offsetOfKey() | use of undeclared identifier 'SetBucket'
-Storage::offsetOfCharacters() | use of undeclared identifier 'Storage'
-Storage::offsetOfLengthOutsideBuffer() | use of undeclared identifier 'Storage'
-Storage::offsetOfLimit() | use of undeclared identifier 'Storage'
-Storage::offsetOfMinLengthAppendedByReference() | use of undeclared identifier 'Storage'
-Storage::offsetOfNextFree() | use of undeclared identifier 'Storage'
-Storage::offsetOfPosition() | use of undeclared identifier 'Storage'
-Yarr::BytecodePattern::offsetOfFlatProgram() | incomplete type 'JSC::Yarr::BytecodePattern' named in nested name specifier
-Yarr::MatchingContextHolder::offsetOfFreeList() | incomplete type 'JSC::Yarr::MatchingContextHolder' named in nested name specifier
-Yarr::MatchingContextHolder::offsetOfStackLimit() | incomplete type 'JSC::Yarr::MatchingContextHolder' named in nested name specifier
-EntryFrame::vmEntryRecordOffset() | static assertion expression is not an integral constant expression
-JSMap::offsetOfStorage() | static assertion expression is not an integral constant expression
-JSSet::offsetOfStorage() | static assertion expression is not an integral constant expression
-MutatorMarkStackLayout::offsetOfHeadSegment() | static assertion expression is not an integral constant expression
-MutatorMarkStackLayout::offsetOfTop() | static assertion expression is not an integral constant expression
+# An expression of the compiler's half that aot/image/AOTRuntimeFacts.def cannot evaluate, and what holds its value instead. aot/image/generator/runtime-facts.ts reads the part in front of the bar.
+AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator) | `kind` is a variable; the first element's two offsets and sizeof(InlineAllocationData) are among the facts
+AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].header) | `kind` is a variable; the first element's two offsets and sizeof(InlineAllocationData) are among the facts
+Extension::offsetOfGranuleBits() | a nested type; spelled in a static_assert alone, which holds it to offsetOfExtensionGranuleBits
+MapBucket::offsetOfKey() | a name that a function gives to WeakMapBucket<WeakMapBucketDataKeyValue>, whose offsetOfKey() and size are among the facts
+MapBucket::offsetOfValue() | a name that a function gives to WeakMapBucket<WeakMapBucketDataKeyValue>, whose offsetOfKey() and size are among the facts
+OBJECT_OFFSETOF(AllocatorWithoutRoom, freeList) | a nested type; spelled in a static_assert alone, which holds it to LocalAllocator::offsetOfFreeList()
+OBJECT_OFFSETOF(CacheEntry, header) | a name that a function gives to ObjectCreateCacheEntry, which static_asserts in AOTBuiltinWords.h hold to 16 bytes with the prototype first
+OBJECT_OFFSETOF(CacheEntry, prototype) | a name that a function gives to ObjectCreateCacheEntry, which static_asserts in AOTBuiltinWords.h hold to 16 bytes with the prototype first
+OBJECT_OFFSETOF(ClassPrototype, m_memberRow) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(Closure, m_entry) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_environmentShapePage) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_extensionSlot) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.extraPropertiesCellSize) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.numberOfExtraKeys) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_extraPropertiesSlot) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_flags) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_heldKeyOrder) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_layout) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.extraPropertiesStructureID) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(CompiledStructure, m_successorByPrivateName) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+OBJECT_OFFSETOF(Extension, m_granuleBits) | the body of Extension::offsetOfGranuleBits()
+OBJECT_OFFSETOF(Plan::FastField, acceptedValues) | a name that a function gives to ObjectBuilderPlan; spelled in a static_assert alone, which holds it to a number
+OBJECT_OFFSETOF(Plan::FastField, offset) | a name that a function gives to ObjectBuilderPlan; spelled in a static_assert alone, which holds it to a number
+OBJECT_OFFSETOF(Plan::FastField, representation) | a name that a function gives to ObjectBuilderPlan; spelled in a static_assert alone, which holds it to a number
+OBJECT_OFFSETOF(SlimClosure, m_word) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+SetBucket::offsetOfKey() | a name that a function gives to WeakMapBucket<WeakMapBucketDataKey>; spelled in static_asserts alone, which hold it to MapBucket's
+Storage::offsetOfCharacters() | a name that a function gives to StringBuilderStorage, whose offsetOfCharacters() is among the facts
+Storage::offsetOfLengthOutsideBuffer() | a name that a function gives to StringBuilderStorage, whose offsetOfLengthOutsideBuffer() is among the facts
+Storage::offsetOfLimit() | a name that a function gives to StringBuilderStorage, whose offsetOfLimit() is among the facts
+Storage::offsetOfNextFree() | a name that a function gives to StringBuilderStorage, whose offsetOfNextFree() is among the facts
+Storage::offsetOfPosition() | a name that a function gives to StringBuilderStorage, whose offsetOfPosition() is among the facts
+DirectArguments::storageOffset() | no constant expression; it is sizeof(DirectArguments) rounded up, which is among the facts
+EntryFrame::vmEntryRecordOffset() | no constant expression: the interpreter's assembly works it out of sizeof(VMEntryRecord), which is among the facts, and of the registers that the architecture saves
+JSMap::offsetOfDeletedPrefix() | no constant expression; OBJECT_OFFSETOF(JSMap, m_deletedPrefix) is among the facts
+JSMap::offsetOfStorage() | no constant expression; OBJECT_OFFSETOF(JSMap, m_storage) is among the facts
+JSSet::offsetOfStorage() | no constant expression; OBJECT_OFFSETOF(JSSet, m_storage) is among the facts
+WeakMapBucket<WeakMapBucketDataKeyValue>::offsetOfValue() | no constant expression; the bucket's offsetOfKey() and size are among the facts

@@ -144,6 +144,11 @@ inline bool ComputedStyleBase::hasExplicitlyInheritedProperties() const
     return m_nonInheritedFlags.hasExplicitlyInheritedProperties;
 }
 
+inline bool ComputedStyleBase::hasAuthorHighlightColors() const
+{
+    return m_nonInheritedFlags.hasAuthorHighlightColors;
+}
+
 inline bool ComputedStyleBase::disallowsFastPathInheritance() const
 {
     return m_nonInheritedFlags.disallowsFastPathInheritance;
@@ -188,6 +193,13 @@ inline bool ComputedStyleBase::isInSubtreeWithBlendMode() const
 inline bool ComputedStyleBase::isAffectedBySmartImageResizer() const
 {
     return m_inheritedRareData->isAffectedBySmartImageResizer;
+}
+#endif
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+inline AppleColorFilterOverride ComputedStyleBase::appleColorFilterOverride() const
+{
+    return static_cast<AppleColorFilterOverride>(m_inheritedRareData->appleColorFilterOverride);
 }
 #endif
 
@@ -342,6 +354,18 @@ inline const CustomPropertyData& ComputedStyleBase::nonInheritedCustomProperties
 inline bool ComputedStyleBase::useSVGZoomRulesForLength() const
 {
     return m_nonInheritedFlags.useSVGZoomRulesForLength;
+}
+
+inline bool ComputedStyleBase::hasZeroEffectiveBorderWidths() const
+{
+    ASSERT(m_nonInheritedFlags.hasZeroEffectiveBorderWidths == computeHasZeroEffectiveBorderWidths());
+    return m_nonInheritedFlags.hasZeroEffectiveBorderWidths;
+}
+
+inline bool ComputedStyleBase::hasZeroPadding() const
+{
+    ASSERT(m_nonInheritedFlags.hasZeroPadding == computeHasZeroPadding());
+    return m_nonInheritedFlags.hasZeroPadding;
 }
 
 inline float ComputedStyleBase::usedZoom() const

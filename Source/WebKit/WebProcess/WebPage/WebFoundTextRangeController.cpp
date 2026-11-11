@@ -94,7 +94,7 @@ static inline WebFoundTextRange createWebFoundTextRange(const SimpleRange& simpl
     };
 }
 
-static inline bool LEGACY_NODELETE canConvertToWebFoundTextRange(const SimpleRange& range)
+NODELETE static inline bool canConvertToWebFoundTextRange(const SimpleRange& range)
 {
     auto& document = range.startContainer().document();
 
@@ -421,7 +421,7 @@ void WebFoundTextRangeController::requestRectForFoundTextRange(const WebFoundTex
 #if ENABLE(VIDEO)
     if (std::holds_alternative<WebFoundTextRange::CueData>(range.data)) {
         RefPtr mediaElement = mediaElementForCueRange(range);
-        completionHandler(mediaElement ? WebCore::FloatRect { mediaElement->boundingBoxInRootViewCoordinates() } : WebCore::FloatRect { });
+        completionHandler(mediaElement ? WebCore::FloatRect { mediaElement->boundingBoxInMainFrameViewCoordinates() } : WebCore::FloatRect { });
         return;
     }
 #endif
@@ -433,7 +433,7 @@ void WebFoundTextRangeController::requestRectForFoundTextRange(const WebFoundTex
     }
 
     RefPtr frameView = simpleRange->startContainer().document().frame()->view();
-    completionHandler(frameView->contentsToRootView(unionRect(WebCore::RenderObject::absoluteTextRects(*simpleRange))));
+    completionHandler(frameView->contentsToMainFrameView(unionRect(WebCore::RenderObject::absoluteTextRects(*simpleRange))));
 }
 
 void WebFoundTextRangeController::redraw()
@@ -541,7 +541,7 @@ void WebFoundTextRangeController::drawRect(WebCore::PageOverlay&, WebCore::Graph
         for (const auto& path : paths)
             graphicsContext.fillPath(path);
 
-        graphicsContext.drawBitmapImage(*indicatorImage, textBoundingRectInRootViewCoordinates);
+        graphicsContext.drawNativeImage(*indicatorImage, textBoundingRectInRootViewCoordinates);
     }
 }
 

@@ -4,6 +4,7 @@ import {
   formatAggregate,
   formatId,
   formatUnlessZero,
+  hashOfText,
   joinBlocks,
   wrapFile,
   type AggregateMember,
@@ -20,7 +21,6 @@ import {
 import { compareBytes } from "./paths.ts";
 import type { CppClassRef, DirectEntrySpec, FeatureName, Origin } from "./vocabulary.ts";
 
-/** The statement that records an entry of one of the host's tables of functions for whoever links an executable without a feature. The host writes it. */
 export type FormatTableEntryRecord = (
   table: string,
   feature: FeatureName,
@@ -31,8 +31,8 @@ export type FormatTableEntryRecord = (
 
 interface BindingLists {
   classes: readonly string[];
+  instanceStructureLookup: string;
   cachedGetters: readonly string[];
-  customGetters: readonly string[];
   directFunctions: readonly string[];
   nativeFunctions: readonly string[];
   hostNumbers: readonly string[];
@@ -48,11 +48,6 @@ interface DirectFunctionEntry {
   directEntry: DirectEntrySpec;
 }
 
-interface CppSignature {
-  result: string;
-  parameters: readonly string[];
-}
-
 type SwitchCase = readonly [label: string, result: string];
 
 const engineHeaders: readonly string[] = [
@@ -64,6 +59,7 @@ const engineHeaders: readonly string[] = [
 ];
 
 const checkedExpressionHeaders: readonly string[] = [
+  "AOTLimits.h",
   "AbstractModuleRecord.h",
   "IterationKind.h",
   "JSArrayIterator.h",
@@ -109,12 +105,10 @@ const checkedNumberAssertions = [
   "#undef CHECK_NUMBER",
 ].join("\n");
 
-// A symbol of `$newCppFunction` is written for GeneratedJS2Native.h, which looks names up in these.
 const namespacesOfHostFunctions = ["Bun", "Bun::Bindgen::Generated", "JSC", "WebCore"]
   .map(namespace => `using namespace ${namespace};`)
   .join("\n");
 
-// The declaration of a thunk spells the types of its parameters with these.
 const headersOfDirectFunctions = ["Bindgen/ExternTraits.h", "Bindgen/IDLConvert.h"];
 
 function inTokenOrder<Item extends { token: string }>(items: readonly Item[]): Item[] {
@@ -134,7 +128,9 @@ function findClassesWithBindings(model: TableModel, origin: Origin): ModelClass[
   return model.classes.filter(
     builtinClass =>
       builtinClass.origin === origin &&
-      (builtinClass.instanceTest === "ClassInfoInherits" || builtinClass.pristineTest === "InstanceStructure"),
+      (builtinClass.instanceTest === "ClassInfoInherits" ||
+        builtinClass.pristineTest === "InstanceStructure" ||
+        builtinClass.prototypeCppExpression !== null),
   );
 }
 
@@ -159,8 +155,21 @@ function formatClassBinding(builtinClass: ModelClass, id: string): string {
     ["builtinClass", id],
     ["instanceClassInfo", builtinClass.instanceCppClass === null ? null : `${cppClassOf(builtinClass).name}::info()`],
     ["findPrototype", formatRealmLookup("JSC::JSObject*", builtinClass.prototypeCppExpression)],
-    ["findInstanceStructure", formatRealmLookup("JSC::Structure*", builtinClass.instanceStructureCppExpression)],
+    ["namesInstanceStructure", builtinClass.instanceStructureCppExpression === null ? null : "true"],
   ]);
+}
+
+function emitInstanceStructureLookup(classes: readonly ModelClass[]): string {
+  return [
+    "static void findInstanceStructures(JSC::JSGlobalObject* realm, std::span<JSC::Structure*> structures)",
+    "{",
+    `    RELEASE_ASSERT(structures.size() == ${classes.length});`,
+    "    [[maybe_unused]] auto* globalObject = defaultGlobalObject(realm);",
+    ...classes.flatMap(({ instanceStructureCppExpression }, index) =>
+      instanceStructureCppExpression === null ? [] : [`    structures[${index}] = ${instanceStructureCppExpression};`],
+    ),
+    "}",
+  ].join("\n");
 }
 
 function formatCachedGetterBinding(overload: ModelOverload): string[] {
@@ -171,21 +180,6 @@ function formatCachedGetterBinding(overload: ModelOverload): string[] {
     formatAggregate([
       ["overload", formatId("BuiltinOverloadID", overload)],
       ["offsetOfCachedValue", `static_cast<uint32_t>(${offset})`],
-    ]),
-  ];
-}
-
-function customGetterOf({ code: { implementation } }: ModelOverload): string | null {
-  return implementation.how === "HostCall" ? implementation.customGetter : null;
-}
-
-function formatCustomGetterBinding(overload: ModelOverload): string[] {
-  const symbol = customGetterOf(overload);
-  if (symbol === null) return [];
-  return [
-    formatAggregate([
-      ["overload", formatId("BuiltinOverloadID", overload)],
-      ["function", symbol],
     ]),
   ];
 }
@@ -201,11 +195,10 @@ function findFeatureOfHolders(builtin: ModelBuiltin): FeatureName | undefined {
 function formatHostEntryPointRecord(
   table: string,
   builtin: ModelBuiltin,
-  symbol: string | null,
+  symbol: string,
   formatRecord: FormatTableEntryRecord,
   stub: "Throw" | "Abort" = "Throw",
 ): string[] {
-  if (symbol === null) return [];
   const guard = builtin.attachments.featureUses.find(use => use.isGuard);
   if (guard !== undefined)
     return [formatRecord(`Bun::AOTHostBindings::${table}`, guard.feature, stub, symbol, builtin.id)];
@@ -213,11 +206,9 @@ function formatHostEntryPointRecord(
   return feature === undefined ? [] : [formatRecord(`Bun::AOTHostBindings::${table}`, feature, stub, symbol)];
 }
 
-// What stands in for a function of a removed feature throws in the realm that it takes first.
 const stubOfDirectFunction = ({ parameters }: DirectEntrySpec) =>
   parameters[0]?.value === "Realm" ? "Throw" : "Abort";
 
-// Nobody calls a native binding. The entry of the function that it makes has the same overloads.
 function findDirectFunctions(model: TableModel): DirectFunctionEntry[] {
   return model.overloads.flatMap(overload => {
     const { directEntry } = overload.code;
@@ -226,14 +217,14 @@ function findDirectFunctions(model: TableModel): DirectFunctionEntry[] {
 }
 
 function formatDirectFunctionBinding({ overload, directEntry }: DirectFunctionEntry): string {
-  const { symbol, parameters, offsetOfNativeObject = null, returnsFields = false } = directEntry;
+  const { symbol, parameters, offsetOfNativeObject = null, returnsNumber = false } = directEntry;
   const values = parameters.map(({ value }) => `BuiltinDirectValue::${value}`);
   return formatAggregate([
     ["overload", formatId("BuiltinOverloadID", overload)],
     ["function", `reinterpret_cast<const void*>(${symbol})`],
     ["parameters", values.length === 0 ? null : `{ ${values.join(", ")} }`],
     ["parameterCount", formatUnlessZero(values.length)],
-    ["returnsFields", returnsFields ? "true" : null],
+    ["returnsNumber", returnsNumber ? "true" : null],
     ["offsetOfNativeObject", offsetOfNativeObject],
   ]);
 }
@@ -262,15 +253,16 @@ function emitBindings(declaration: string, lists: BindingLists): string {
   const arrays = [
     ["classes", "static constexpr BuiltinClassBinding", lists.classes],
     ["cachedGetters", "static constexpr BuiltinCachedGetterBinding", lists.cachedGetters],
-    ["customGetters", "static constexpr BuiltinCustomGetterBinding", lists.customGetters],
     ["directFunctions", "static const BuiltinDirectFunctionBinding", lists.directFunctions],
     ["nativeFunctions", "static constexpr BuiltinNativeFunctionBinding", lists.nativeFunctions],
     ["hostNumbers", "static constexpr BuiltinHostNumberBinding", lists.hostNumbers],
   ] as const;
-  const bindingSet = formatAggregate(
-    arrays.map(([name, , elements]): AggregateMember => [name, elements.length === 0 ? null : name]),
+  const [classes, ...others] = arrays.map(
+    ([name, , elements]): AggregateMember => [name, elements.length === 0 ? null : name],
   );
+  const bindingSet = formatAggregate([classes, ["findInstanceStructures", "findInstanceStructures"], ...others]);
   return joinBlocks([
+    lists.instanceStructureLookup,
     ...arrays.map(([name, qualifiedType, elements]) => emitArray(`${qualifiedType} ${name}`, elements)),
     `${declaration} = ${bindingSet};`,
   ]);
@@ -316,7 +308,6 @@ function emitEngineBindingLists(
   ]);
 }
 
-// Compiled with the engine, so it names an entry by its constant and has none of the table's numbers.
 export function emitEngineBindings(model: TableModel): string {
   const classes = findClassesWithBindings(model, "Engine");
   const nativeFunctions = findNativeFunctions(model, "Engine");
@@ -407,12 +398,11 @@ function emitCallListReference(stamp: string): string {
   return `[[maybe_unused]] __attribute__((used)) static const uint8_t* const nativeCallListStamp = &Bun__js2nativeList_${stamp};`;
 }
 
-// Compiled code enters these the way it enters an operation of the engine, so they have the calling convention of one.
 function emitDirectFormAssertions(directFunctions: readonly DirectFunctionEntry[]): string {
   return sortUnique(
-    directFunctions.map(({ directEntry: { symbol, parameters, returnsFields = false } }) => {
+    directFunctions.map(({ directEntry: { symbol, parameters, returnsNumber = false } }) => {
       const types = parameters.map(({ cppType }) => cppType);
-      const result = returnsFields ? "JSC::AOT::BuiltinDirectFields" : "JSC::EncodedJSValue";
+      const result = returnsNumber ? "double" : "JSC::EncodedJSValue";
       return `static_assert(std::is_same_v<decltype(&${symbol}), ${result} (SYSV_ABI*)(${types.join(", ")})>);`;
     }),
   ).join("\n");
@@ -432,6 +422,22 @@ function formatHostNumberBinding(builtin: ModelBuiltin): string[] {
   ];
 }
 
+function listHostBindings(model: TableModel): BindingLists {
+  const classes = findClassesWithBindings(model, "Host");
+  return {
+    classes: classes.map(builtinClass => formatClassBinding(builtinClass, formatId("BuiltinClassID", builtinClass))),
+    instanceStructureLookup: emitInstanceStructureLookup(classes),
+    cachedGetters: model.overloads.flatMap(formatCachedGetterBinding),
+    directFunctions: findDirectFunctions(model).map(formatDirectFunctionBinding),
+    nativeFunctions: findNativeFunctions(model, "Host").map(formatHostNativeFunction),
+    hostNumbers: model.builtins.flatMap(formatHostNumberBinding),
+  };
+}
+
+export function hashOfHostBindings(model: TableModel): number {
+  return hashOfText(Object.values(listHostBindings(model)).flat().join("\0"));
+}
+
 export function emitHostBindings(
   model: TableModel,
   formatRecord: FormatTableEntryRecord,
@@ -440,7 +446,6 @@ export function emitHostBindings(
   const classes = findClassesWithBindings(model, "Host");
   const nativeFunctions = findNativeFunctions(model, "Host");
   const directFunctions = findDirectFunctions(model);
-  const customGetters = sortUnique(model.overloads.flatMap(overload => customGetterOf(overload) ?? []));
   const symbolsWithoutHeader = collectNativeFunctionSymbols(
     nativeFunctions.filter(({ nativeFunction }) => nativeFunction.header === null),
   );
@@ -460,10 +465,6 @@ export function emitHostBindings(
     ...nativeFunctions.flatMap(({ builtin, nativeFunction }) =>
       formatHostEntryPointRecord("nativeFunctions", builtin, nativeFunction.symbol, formatRecord),
     ),
-    ...model.overloads.flatMap(overload => {
-      const symbol = customGetterOf(overload);
-      return formatHostEntryPointRecord("customGetters", overload.builtin, symbol, formatRecord);
-    }),
   ];
   const blocks = [
     `${fileHeader}#include "root.h"`,
@@ -475,19 +476,11 @@ export function emitHostBindings(
       nativeCallListStamp,
     ),
     emitHostFunctionDeclarations(symbolsWithoutHeader.filter(isInNamespace)),
-    customGetters.map(symbol => `JSC_DECLARE_CUSTOM_GETTER(${symbol});`).join("\n"),
     "namespace Bun::AOTHostBindings {",
     `using namespace JSC::AOT;\n${namespacesOfHostFunctions}`,
     emitCallListReference(nativeCallListStamp),
     emitDirectFormAssertions(directFunctions),
-    emitBindings("static constinit const BuiltinBindingSet hostBindings", {
-      classes: classes.map(builtinClass => formatClassBinding(builtinClass, formatId("BuiltinClassID", builtinClass))),
-      cachedGetters: model.overloads.flatMap(formatCachedGetterBinding),
-      customGetters: model.overloads.flatMap(formatCustomGetterBinding),
-      directFunctions: directFunctions.map(formatDirectFunctionBinding),
-      nativeFunctions: nativeFunctions.map(formatHostNativeFunction),
-      hostNumbers: model.builtins.flatMap(formatHostNumberBinding),
-    }),
+    emitBindings("static constinit const BuiltinBindingSet hostBindings", listHostBindings(model)),
     "}",
     [
       'extern "C" void Bun__AOT__registerHostBindings()',

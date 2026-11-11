@@ -1,0 +1,37 @@
+# If the exports stayed in sight where the namespace object goes to code that nobody has seen, a function that such code calls by name would have been left out of the executable, and the process would end there
+# library.js: export function one() { return 1 } export function two() { return 2 }
+# main.js: import * as ns from "./library.js"; function hand() { return ns } takeAnything(hand())
+# `takeAnything` is read off the global object: nobody knows what it is.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: unreached
+# RUN(SUMMARY): summary f4
+# SUMMARY-NOT: hands-out
+
+module m0 path="/library.js" displayPath="library.js" body=f1 exports=[{name="one" variable=g0}, {name="two" variable=g1}]
+module m1 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}]
+entry module=m1
+variable g0 name="one" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="two" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+function f0 name="main" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="takeAnything" [isFreeName]
+    v2 = NewClosure function=f4
+    v3 = Call v2
+    v4 = Call v1, -, v3
+    Return
+}
+function f1 name="library" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="one" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="two" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f4 name="hand" module=m1 results=[{type=anything}] {
+    v0 = ModuleNamespace module=m0
+    Return v0
+}

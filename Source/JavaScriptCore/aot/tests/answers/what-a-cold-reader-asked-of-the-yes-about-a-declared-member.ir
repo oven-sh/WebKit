@@ -1,0 +1,280 @@
+# WHAT A REVIEWER ASKED OF THE YES ABOUT A DECLARED MEMBER (behind-the-yes-about-a-declared-member-the-next-question-asks-its-guard-alone.ir): he found no wrong answer, and said what its runs shared:
+# never a second name for the object, never a second cell of the class, never `instanceof` behind a yes, never a fresh object.
+# function Meter(level) { this.level = level; }
+# Meter.prototype.read = function () { return "read"; };
+# Meter.prototype.step = function () { return "step"; };
+# function alias(object, same, link) { if (!$findsDeclaredMember(object, "read")) return "-"; Object.setPrototypeOf(same, link); if ($findsDeclaredMember(object, "step")) return "both " + object.step(); return "first " + object.step(); }
+# function two(object, other) { if (!$findsDeclaredMember(object, "step")) return "-"; return other.step(); }
+# function kind(object, link) { if (!$findsDeclaredMember(object, "read")) return "-"; const before = object instanceof Meter; Object.setPrototypeOf(object, link); return before + " " + (object instanceof Meter); }
+# function fresh() { const object = new Meter(20); if ($findsDeclaredMember(object, "step")) return "fresh " + object.step(); return "- " + object.step(); }
+# amid(new Meter(13));
+# const twin = new Meter(14);
+# print(alias(twin, twin, above()), alias(new Meter(14), new Meter(15), above()));
+# const loose = new Meter(17);
+# Object.setPrototypeOf(loose, above());
+# print(two(new Meter(17), loose));
+# print(kind(new Meter(16), above()));
+# print(fresh());
+# f2 = alias . f3 = two . f4 = kind . f5 = fresh
+# OPTIONS: mechanisms=all
+# The relink goes through another name that may be the object: the whole question comes back.
+# RUN(ALIAS): walk f2
+# ALIAS: = FindsDeclaredMember {{*}}key="read"
+# ALIAS: overload=ObjectSetPrototypeOf
+# ALIAS: = FindsDeclaredMember {{*}}key="step"
+# `instanceof` behind the yes leaves the test of the object's own link out, and asks it again behind the relink.
+# RUN(KIND): walk f4
+# KIND: = FindsDeclaredMember {{*}}key="read"
+# KIND-NOT: = HasLayoutPrototype
+# KIND: overload=ObjectSetPrototypeOf
+# KIND: = HasLayoutPrototype
+# UNDER THE WORD the link that `instanceof` leaves out is asked again.
+# RUN(KINDNET): walk f4 mechanisms=all testing=CheckProofsAtRunTime
+# KINDNET: = FindsDeclaredMember {{*}}key="read"
+# KINDNET: = HasLayoutPrototype
+# KINDNET-NEXT: CheckProof
+# KINDNET: overload=ObjectSetPrototypeOf
+# An object that the asker's own text has made comes out of the arms of its birth: it is asked like any other.
+# RUN(FRESH): walk f5
+# FRESH: = NewObject
+# FRESH: = FindsDeclaredMember {{*}}key="step" conditions=[{layout=L0 key="step"}] receivers=[L0]
+# RUN(NOTHING): run-in-shell above = function () { return { step() { return "other"; } }; }; amid = function () { };
+# NOTHING: first other both step
+# NOTHING-NEXT: other
+# NOTHING-NEXT: true false
+# NOTHING-NEXT: fresh step
+# NOTHING-NEXT: exited with 0
+# RUN(HIDDEN): run-in-shell above = function () { return { step() { return "other"; } }; }; amid = function (made) { made.step = function () { return "own"; }; };
+# HIDDEN: first other first step
+# HIDDEN-NEXT: -
+# HIDDEN-NEXT: true false
+# HIDDEN-NEXT: - step
+# HIDDEN-NEXT: exited with 0
+# RUN(OVERWRITTEN): run-in-shell above = function () { return { step() { return "other"; } }; }; amid = function (made) { Object.getPrototypeOf(made).step = function () { return "new"; }; };
+# OVERWRITTEN: first other first new
+# OVERWRITTEN-NEXT: -
+# OVERWRITTEN-NEXT: true false
+# OVERWRITTEN-NEXT: - new
+# OVERWRITTEN-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime above = function () { return { step() { return "other"; } }; }; amid = function () { };
+# CHECKED: first other both step
+# CHECKED-NEXT: other
+# CHECKED-NEXT: true false
+# CHECKED-NEXT: fresh step
+# CHECKED-NEXT: exited with 0
+
+module m0 path="asked.js" displayPath="asked.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Meter" module=m0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+variable g0 name="Meter" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = GetModuleVariable variable=g0 @46
+    v9 = PropGet v8 key="prototype" @46
+    v10 = NewClosure function=f6 @69
+    PropSet v9, v10 key="read" @52
+    v12 = GetModuleVariable variable=g0 @101
+    v13 = PropGet v12 key="prototype" @101
+    v14 = NewClosure function=f7 @124
+    PropSet v13, v14 key="step" @107
+    v16 = Builtin builtin=GlobalThis @868
+    v17 = PropGet v16 key="amid" [isFreeName] @868
+    v18 = GetModuleVariable variable=g0 @877
+    v19 = Integer integer=13 @883
+    v20 = Construct v18, -, v19 calleeName="Meter" @877
+    v21 = Call v17, -, v20 calleeName="amid" @868
+    v22 = GetModuleVariable variable=g0 @906
+    v23 = Integer integer=14 @912
+    v24 = Construct v22, -, v23 calleeName="Meter" @906
+    v25 = Builtin builtin=GlobalThis @917
+    v26 = PropGet v25 key="print" [isFreeName] @917
+    v27 = Builtin builtin=GlobalThis @941
+    v28 = PropGet v27 key="above" [isFreeName] @941
+    v29 = Call v28 calleeName="above" @941
+    v30 = Call v1, -, v24, v24, v29 calleeName="alias" @923
+    v31 = GetModuleVariable variable=g0 @961
+    v32 = Integer integer=14 @967
+    v33 = Construct v31, -, v32 calleeName="Meter" @961
+    v34 = GetModuleVariable variable=g0 @976
+    v35 = Integer integer=15 @982
+    v36 = Construct v34, -, v35 calleeName="Meter" @976
+    v37 = Builtin builtin=GlobalThis @987
+    v38 = PropGet v37 key="above" [isFreeName] @987
+    v39 = Call v38 calleeName="above" @987
+    v40 = Call v1, -, v33, v36, v39 calleeName="alias" @951
+    v41 = Call v26, -, v30, v40 calleeName="print" @917
+    v42 = GetModuleVariable variable=g0 @1016
+    v43 = Integer integer=17 @1022
+    v44 = Construct v42, -, v43 calleeName="Meter" @1016
+    v45 = Builtin builtin=Object @1027
+    v46 = Builtin builtin=ObjectSetPrototypeOf @1027
+    v47 = Builtin builtin=GlobalThis @1056
+    v48 = PropGet v47 key="above" [isFreeName] @1056
+    v49 = Call v48 calleeName="above" @1056
+    v50 = Call v46, v45, v44, v49 calleeName="Object.setPrototypeOf" @1034
+    v51 = Builtin builtin=GlobalThis @1066
+    v52 = PropGet v51 key="print" [isFreeName] @1066
+    v53 = GetModuleVariable variable=g0 @1080
+    v54 = Integer integer=17 @1086
+    v55 = Construct v53, -, v54 calleeName="Meter" @1080
+    v56 = Call v3, -, v55, v44 calleeName="two" @1072
+    v57 = Call v52, -, v56 calleeName="print" @1066
+    v58 = Builtin builtin=GlobalThis @1100
+    v59 = PropGet v58 key="print" [isFreeName] @1100
+    v60 = GetModuleVariable variable=g0 @1115
+    v61 = Integer integer=16 @1121
+    v62 = Construct v60, -, v61 calleeName="Meter" @1115
+    v63 = Builtin builtin=GlobalThis @1126
+    v64 = PropGet v63 key="above" [isFreeName] @1126
+    v65 = Call v64 calleeName="above" @1126
+    v66 = Call v5, -, v62, v65 calleeName="kind" @1106
+    v67 = Call v59, -, v66 calleeName="print" @1100
+    v68 = Builtin builtin=GlobalThis @1137
+    v69 = PropGet v68 key="print" [isFreeName] @1137
+    v70 = Call v7 calleeName="fresh" @1143
+    v71 = Call v69, -, v70 calleeName="print" @1137
+    v72 = Undefined @1137
+    Return v72 @1137
+}
+function f1 name="Meter" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @24
+    v3 = Undefined @24
+    Return v3 @24
+}
+function f2 name="alias" module=m2 position=156 role=Library flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything}, {type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0, v1: anything, v2: undefined|null|object):
+    v3 = Undefined @198
+    v4 = Undefined @198
+    v5 = String string="read" @227
+    v6 = FindsDeclaredMember v0 key="read" @198
+    v7 = ToBoolean v6 @198
+    Branch v7 -> taken b1(| 0), notTaken b4(| 0) @198
+  b1(v8):
+    v9 = Builtin builtin=Object @248
+    v10 = Builtin builtin=ObjectSetPrototypeOf @248
+    v11 = Call v10, v9, v1, v2 calleeName="Object.setPrototypeOf" @255
+    v12 = Undefined @287
+    v13 = Undefined @287
+    v14 = String string="step" @316
+    v15 = FindsDeclaredMember v0 key="step" @287
+    v16 = ToBoolean v15 @287
+    Branch v16 -> taken b2(| 0), notTaken b3(| 0) @287
+  b2(v17):
+    v18 = String string="both " @332
+    v19 = PropGet v0 key="step" @342
+    v20 = Call v19, v0 calleeKey="step" calleeName="object.step" @349
+    v21 = Add v18, v20 @342
+    Return v21 @342
+  b3(v22):
+    v23 = String string="first " @364
+    v24 = PropGet v0 key="step" @375
+    v25 = Call v24, v0 calleeKey="step" calleeName="object.step" @382
+    v26 = Add v23, v25 @375
+    Return v26 @375
+  b4(v27):
+    v28 = String string="-" @243
+    Return v28 @243
+}
+function f3 name="two" module=m2 position=392 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0, v1: anything):
+    v2 = Undefined @427
+    v3 = Undefined @427
+    v4 = String string="step" @456
+    v5 = FindsDeclaredMember v0 key="step" @427
+    v6 = ToBoolean v5 @427
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0) @427
+  b1(v7):
+    v8 = PropGet v1 key="step" @484
+    v9 = Call v8, v1 calleeKey="step" calleeName="other.step" @490
+    ReturnCall v9 @490
+  b2(v10):
+    v11 = String string="-" @472
+    Return v11 @472
+}
+function f4 name="kind" module=m2 position=500 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|L0, v1: undefined|null|object):
+    v2 = Undefined @535
+    v3 = Undefined @535
+    v4 = String string="read" @564
+    v5 = FindsDeclaredMember v0 key="read" @535
+    v6 = ToBoolean v5 @535
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0) @535
+  b1(v7):
+    v8 = GetModuleVariable variable=g0 @618
+    v9 = InstanceOf v0, v8 @607
+    v10 = Builtin builtin=Object @625
+    v11 = Builtin builtin=ObjectSetPrototypeOf @625
+    v12 = Call v11, v10, v0, v1 calleeName="Object.setPrototypeOf" @632
+    v13 = String string=" " @678
+    v14 = Add v9, v13 @678
+    v15 = GetModuleVariable variable=g0 @703
+    v16 = InstanceOf v0, v15 @692
+    v17 = Add v14, v16 @692
+    Return v17 @692
+  b2(v18):
+    v19 = String string="-" @580
+    Return v19 @580
+}
+function f5 name="fresh" module=m2 position=713 role=Library flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @751
+    v1 = Integer integer=20 @757
+    v2 = Construct v0, -, v1 calleeName="Meter" @751
+    v3 = Undefined @766
+    v4 = Undefined @766
+    v5 = String string="step" @795
+    v6 = FindsDeclaredMember v2 key="step" @766
+    v7 = ToBoolean v6 @766
+    Branch v7 -> taken b1(| 0), notTaken b2(| 0) @766
+  b1(v8):
+    v9 = String string="fresh " @811
+    v10 = PropGet v2 key="step" @822
+    v11 = Call v10, v2 calleeKey="step" calleeName="object.step" @829
+    v12 = Add v9, v11 @822
+    Return v12 @822
+  b2(v13):
+    v14 = String string="- " @844
+    v15 = PropGet v2 key="step" @851
+    v16 = Call v15, v2 calleeKey="step" calleeName="object.step" @858
+    v17 = Add v14, v16 @851
+    Return v17 @851
+}
+function f6 module=m2 position=69 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="read" @90
+    Return v0 @90
+}
+function f7 module=m2 position=124 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="step" @145
+    Return v0 @145
+}
+function f8 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private

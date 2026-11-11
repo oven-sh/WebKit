@@ -38,6 +38,11 @@ public:
     void add(MarkedBlock*);
     void remove(MarkedBlock*);
 
+    // Grows the set once it has room for fewer than capacity / 8 more blocks. Returns false if the allocation fails; the remaining room is still usable.
+    bool tryGrowEarly();
+    // Returns false if add() has to grow the set and the allocation fails.
+    bool tryReserveCapacityForAdd();
+
     TinyBloomFilter<uintptr_t> filter() const;
     const UncheckedKeyHashSet<MarkedBlock*>& set() const;
 
@@ -52,6 +57,16 @@ inline void MarkedBlockSet::add(MarkedBlock* block)
 {
     m_filter.add(reinterpret_cast<uintptr_t>(block));
     m_set.add(block);
+}
+
+inline bool MarkedBlockSet::tryGrowEarly()
+{
+    return m_set.tryReserveCapacityForAdd(std::max(m_set.capacity() / 8, 1u));
+}
+
+inline bool MarkedBlockSet::tryReserveCapacityForAdd()
+{
+    return m_set.tryReserveCapacityForAdd();
 }
 
 inline void MarkedBlockSet::remove(MarkedBlock* block)

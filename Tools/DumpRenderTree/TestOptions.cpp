@@ -69,6 +69,7 @@ const TestFeatures& TestOptions::defaults()
             { "AllowsInlineMediaPlayback", true },
             { "CanvasUsesAcceleratedDrawing", true },
             { "ColorFilterEnabled", true },
+            { "ContentSizeCategoryTextScaleEnabled", true },
             { "CustomPasteboardDataEnabled", true },
             { "DOMAudioSessionEnabled", true },
             { "DOMPasteAllowed", true },
@@ -202,6 +203,7 @@ const std::unordered_map<std::string, TestHeaderKeyType>& TestOptions::keyTypeMa
     static const std::unordered_map<std::string, TestHeaderKeyType> map {
         GENERATED_WEB_PREFERENCE_KEY_TYPE_MAPPINGS
 
+        { "dumpCSSPageBoxes", TestHeaderKeyType::BoolTestRunner },
         { "dumpJSConsoleLogInStdErr", TestHeaderKeyType::BoolTestRunner },
         { "dumpResourceLoadCallbacks", TestHeaderKeyType::BoolTestRunner },
         { "dumpResourceResponseMIMETypes", TestHeaderKeyType::StringTestRunner },

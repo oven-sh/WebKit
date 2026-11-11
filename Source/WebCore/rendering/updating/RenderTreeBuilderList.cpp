@@ -26,7 +26,6 @@
 
 #include "RenderBlockFlow.h"
 #include "RenderChildIterator.h"
-#include "RenderCombineText.h"
 #include "RenderElementInlines.h"
 #include "RenderImage.h"
 #include "RenderListOutsideMarker.h"
@@ -48,7 +47,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderTreeBuilder::List);
 
-static RenderObject* LEGACY_NODELETE firstNonMarkerChild(RenderBlock& parent)
+NODELETE static RenderObject* firstNonMarkerChild(RenderBlock& parent)
 {
     RenderObject* child = parent.firstChild();
     while (is<RenderListOutsideMarker>(child))
@@ -79,7 +78,7 @@ static MarkerParentSearchResult parentCandidateForMarker(RenderListItem& listIte
 // An inside marker among the list item's own inline content is not a box of its own: it is an anonymous inline box
 // holding the marker's content renderers, so that they are inline content of the list item's formatting context and are
 // laid out, reordered and painted with the rest of the line.
-static void LEGACY_NODELETE adjustStyleForInlineMarker(Style::ComputedStyle& markerStyle)
+NODELETE static void adjustStyleForInlineMarker(Style::ComputedStyle& markerStyle)
 {
     markerStyle.setDisplay(Style::DisplayType::InlineFlow);
 }
@@ -122,7 +121,7 @@ void RenderTreeBuilder::List::updateItemMarker(RenderListItem& listItemRenderer)
     auto shouldBuildInlineMarker = newStyle.listStylePosition() == ListStylePosition::Inside;
 
     if (WeakPtr inlineMarker = listItemRenderer.markerRenderer(); inlineMarker && !listItemRenderer.markerBox()) {
-        auto contentChanged = inlineMarker->style().content() != newStyle.content() || inlineMarker->style().textCombine() != newStyle.textCombine();
+        auto contentChanged = inlineMarker->style().content() != newStyle.content();
         if (shouldBuildInlineMarker && !contentChanged) {
             adjustStyleForInlineMarker(newStyle);
             inlineMarker->setStyle(WTF::move(newStyle));
@@ -138,8 +137,7 @@ void RenderTreeBuilder::List::updateItemMarker(RenderListItem& listItemRenderer)
 
     if (auto* markerRenderer = listItemRenderer.markerBox()) {
         auto contentChanged = markerRenderer->style().content() != newStyle.content() || markerRenderer->style().unicodeBidi() != newStyle.unicodeBidi()
-            || markerRenderer->style().listStyleType() != newStyle.listStyleType() || markerRenderer->style().listStyleImage() != newStyle.listStyleImage()
-            || markerRenderer->style().textCombine() != newStyle.textCombine();
+            || markerRenderer->style().listStyleType() != newStyle.listStyleType() || markerRenderer->style().listStyleImage() != newStyle.listStyleImage();
         markerRenderer->setStyle(WTF::move(newStyle));
         // list-style-type, the counter style it resolves to and the writing mode all decide the marker's text.
         m_builder.addListItemNeedingMarkerUpdate(listItemRenderer);
@@ -206,16 +204,14 @@ void RenderTreeBuilder::List::updateItemMarker(RenderListItem& listItemRenderer)
     buildMarkerContentRenderers(*listItemRenderer.markerBox());
 }
 
-static RenderPtr<RenderText> createMarkerTextRenderer(Document& document, const Style::ComputedStyle& markerStyle)
+static RenderPtr<RenderText> createMarkerTextRenderer(Document& document)
 {
-    if (markerStyle.textCombine() != TextCombine::None)
-        return WebCore::createRenderer<RenderCombineText>(document, emptyString());
     return WebCore::createRenderer<RenderText>(RenderObject::Type::Text, document, emptyString());
 }
 
 static CheckedRef<RenderBlock> parentForInlineMarker(RenderListItem& listItemRenderer, const RenderBoxModelObject& marker)
 {
-    if (CheckedPtr firstChild = dynamicDowncast<RenderBlock>(firstNonMarkerChild(listItemRenderer)); firstChild && !firstChild->isAnonymous())
+    if (auto* firstChild = dynamicDowncast<RenderBlock>(firstNonMarkerChild(listItemRenderer)); firstChild && !firstChild->isAnonymous())
         return listItemRenderer;
     auto firstFormattedLineRoot = RenderListItem::firstFormattedLineRootFor(listItemRenderer, marker);
     if (firstFormattedLineRoot.parent)
@@ -249,7 +245,7 @@ void RenderTreeBuilder::List::buildInlineMarker(RenderListItem& listItemRenderer
         return;
     }
 
-    m_builder.attach(marker.get(), createMarkerTextRenderer(listItemRenderer.document(), marker->style()));
+    m_builder.attach(marker.get(), createMarkerTextRenderer(listItemRenderer.document()));
 }
 
 void RenderTreeBuilder::List::buildMarkerContentRenderers(RenderListOutsideMarker& marker)
@@ -277,7 +273,7 @@ void RenderTreeBuilder::List::buildMarkerContentRenderers(RenderListOutsideMarke
         // list-style-type text that needs renderers of its own, so inline layout can bidi-resolve it.
         // The text itself is only known once counter values resolve, so start empty and let
         // RenderListOutsideMarker::updateContent() fill it in at layout time.
-        m_builder.attach(container.get(), createMarkerTextRenderer(marker.document(), marker.style()));
+        m_builder.attach(container.get(), createMarkerTextRenderer(marker.document()));
         return;
     }
 

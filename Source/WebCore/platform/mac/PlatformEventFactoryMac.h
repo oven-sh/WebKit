@@ -50,7 +50,7 @@ public:
 // FIXME: This function doesn't really belong in this header.
 WEBCORE_EXPORT NSPoint globalPoint(const NSPoint& windowPoint, NSWindow *);
 
-WEBCORE_EXPORT MouseButton mouseButtonForEvent(NSEvent *);
+WEBCORE_EXPORT std::expected<MouseButton, MouseButtonState> mouseButtonForEvent(NSEvent *);
 WEBCORE_EXPORT unsigned short currentlyPressedMouseButtons();
 WEBCORE_EXPORT PlatformEvent::Type mouseEventTypeForEvent(NSEvent *);
 WEBCORE_EXPORT int clickCountForEvent(NSEvent *);
@@ -70,7 +70,7 @@ WEBCORE_EXPORT bool isKeypadEvent(NSEvent *);
 WEBCORE_EXPORT DoublePoint unadjustedMovementForEvent(NSEvent *);
 
 WEBCORE_EXPORT OptionSet<PlatformEvent::Modifier> modifiersForEvent(NSEvent *);
-WEBCORE_EXPORT OptionSet<PlatformEvent::Modifier> LEGACY_NODELETE modifiersForModifierFlags(NSEventModifierFlags);
+NODELETE WEBCORE_EXPORT OptionSet<PlatformEvent::Modifier> modifiersForModifierFlags(NSEventModifierFlags);
 
 WEBCORE_EXPORT void getWheelEventDeltas(NSEvent *, float& deltaX, float& deltaY, BOOL& continuous);
 

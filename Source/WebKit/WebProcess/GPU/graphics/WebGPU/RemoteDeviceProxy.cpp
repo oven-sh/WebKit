@@ -59,17 +59,6 @@ static ::WebGPU::PipelineError invalidDescriptorError(String&& message)
     return { .reason = ::WebGPU::PipelineErrorReason::Validation, .message = WTF::move(message) };
 }
 
-static ::WebGPU::Error convertFromBacking(Error&& error)
-{
-    return WTF::switchOn(WTF::move(error), [](OutOfMemoryError&&) {
-        return ::WebGPU::Error { .type = ::WebGPU::ErrorType::OutOfMemory, .message = { } };
-    }, [](ValidationError&& validationError) {
-        return ::WebGPU::Error { .type = ::WebGPU::ErrorType::Validation, .message = WTF::move(validationError.message) };
-    }, [](InternalError&& internalError) {
-        return ::WebGPU::Error { .type = ::WebGPU::ErrorType::Internal, .message = WTF::move(internalError.message) };
-    });
-}
-
 RemoteDeviceProxy::RemoteDeviceProxy(Vector<::WebGPU::FeatureName>&& features, const ::WebGPU::Limits& limits, RemoteAdapterProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier, WebGPUIdentifier queueIdentifier)
     : m_backing(identifier)
     , m_features(WTF::move(features))
@@ -159,7 +148,7 @@ RefPtr<::WebGPU::ExternalTexture> RemoteDeviceProxy::importExternalTexture(const
     if (!convertedDescriptor->mediaIdentifier) {
         auto* videoFrame = std::get_if<RefPtr<WebCore::VideoFrame>>(&descriptor.videoBacking);
         if (videoFrame && videoFrame->get()) {
-            convertedDescriptor->sharedFrame = m_sharedVideoFrameWriter.write(*videoFrame->get(), [this, protectedThis = protect(*this)](auto& semaphore) {
+            convertedDescriptor->sharedFrame = m_sharedVideoFrameWriter.write(*videoFrame->get(), protect(root().gpuProcessIPCConnection()), [this, protectedThis = protect(*this)](auto& semaphore) {
                 auto sendResult = send(Messages::RemoteDevice::SetSharedVideoFrameSemaphore { semaphore });
                 UNUSED_VARIABLE(sendResult);
             }, [this, protectedThis = protect(*this)](WebCore::SharedMemory::Handle&& handle) {
@@ -431,12 +420,7 @@ void RemoteDeviceProxy::pushErrorScope(::WebGPU::ErrorFilter errorFilter)
 void RemoteDeviceProxy::popErrorScope(CompletionHandler<void(bool, std::optional<::WebGPU::Error>&&)>&& callback)
 {
     auto sendResult = sendWithAsyncReply(Messages::RemoteDevice::PopErrorScope(), [callback = WTF::move(callback)](bool success, auto error) mutable {
-        if (!error) {
-            callback(success, std::nullopt);
-            return;
-        }
-
-        callback(success, convertFromBacking(WTF::move(*error)));
+        callback(success, WTF::move(error));
     });
     UNUSED_PARAM(sendResult);
 }
@@ -444,12 +428,7 @@ void RemoteDeviceProxy::popErrorScope(CompletionHandler<void(bool, std::optional
 void RemoteDeviceProxy::resolveUncapturedErrorEvent(CompletionHandler<void(bool, std::optional<::WebGPU::Error>&&)>&& callback)
 {
     auto sendResult = sendWithAsyncReply(Messages::RemoteDevice::ResolveUncapturedErrorEvent(), [callback = WTF::move(callback)](bool success, auto error) mutable {
-        if (!error) {
-            callback(success, std::nullopt);
-            return;
-        }
-
-        callback(success, convertFromBacking(WTF::move(*error)));
+        callback(success, WTF::move(error));
     });
     UNUSED_PARAM(sendResult);
 }

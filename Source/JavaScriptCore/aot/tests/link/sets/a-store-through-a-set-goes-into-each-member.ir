@@ -1,0 +1,43 @@
+# If a store through a set of layouts missed a member, that member's field would be proven a type that it no longer holds. If it reached every layout with the name, one parameter at which two records meet would spoil the fields of the whole program
+# function put(o) { o.x = true; }  put({ x: "a", p: "a" });  put({ x: "a", q: "a" });  const apart = { x: "a", r: "a" };
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: function f1 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1
+# CHECK: field L0.0 "x" proven=true|string writers-known
+# CHECK-NOT: written-at-construction-alone
+# CHECK: field L0.1 "p"
+# CHECK: field L1.0 "x" proven=true|string writers-known
+# CHECK-NOT: written-at-construction-alone
+# CHECK: field L1.1 "q"
+# CHECK: field L2.0 "x" proven=string writers-known written-at-construction-alone
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+# CHECK: layout L2 changes=[] stays-with-compiled-code
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v2 calleeName="put"
+    v9 = Call v7, -, v4 calleeName="put"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="put" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Boolean boolean=true
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}

@@ -337,7 +337,6 @@ static void testVersionLoopsExcursionBeforeTopTestReturnsToFastLoop()
 {
     constexpr int64_t iterations = 3 * longRun + 100;
     for (RarePathBeforeTest rarePath : { RarePathBeforeTest::OnlyComputes, RarePathBeforeTest::WritesHoistedLocation }) {
-        bool returnsToFastLoop = rarePath == RarePathBeforeTest::OnlyComputes;
         Procedure proc(loopPolicy());
         Graph graph { proc };
         PollState state;
@@ -345,7 +344,8 @@ static void testVersionLoopsExcursionBeforeTopTestReturnsToFastLoop()
 
         CHECK(versionLoopsAndValidate(proc));
         CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
-        CHECK_EQ(numberOfRarePathCopies(proc), returnsToFastLoop ? 2u : 1u);
+        // What the path writes is read again in front of the fast loop when the turn comes back.
+        CHECK_EQ(numberOfRarePathCopies(proc), 2u);
         auto code = compileProc(proc);
         int64_t memory[2] = { 7, iterations };
 
@@ -456,7 +456,8 @@ static void testVersionLoopsRarePathWithOtherBoundLeavesFastLoop()
 
         CHECK(versionLoopsAndValidate(proc));
         CHECK_EQ(proc.report().countOf(Counter::LoopBoundsClamped), 1u);
-        CHECK_EQ(numberOfRarePathCopies(proc), 1u);
+        // The fast loop has no copy of the path. The turn that takes it ends in a copy of the whole turn, and the guards are asked again behind it.
+        CHECK_EQ(numberOfRarePathCopies(proc), 2u);
         auto code = compileProc(proc);
         int64_t memory[2] = { 7, iterations };
 
@@ -465,6 +466,77 @@ static void testVersionLoopsRarePathWithOtherBoundLeavesFastLoop()
         int64_t bodyRunsOnRareIteration = position == LoopTestPosition::Top ? 0 : 1;
         for (int64_t rareIteration : { static_cast<int64_t>(1), rareIndex, longRun - 1, longRun, longRun + 1 })
             CHECK_EQ(run(*code, iterations, memory, rareIteration), (rareIteration + bodyRunsOnRareIteration) * 7 + rareSummand);
+    }
+}
+
+// for (;;) { sum += i < *bound ? 1 : 1000; if (!(++i < *bound)) break; if (i == rare) *bound = lower; }
+// The test says that the comparison at the head of the next turn holds. A path behind the test that lowers the bound takes that back.
+static int64_t sumOfLoopWithBoundLoweredBehindTest(int64_t bound, int64_t rareIteration, int64_t lowerBound)
+{
+    int64_t sum = 0;
+    if (bound <= 0)
+        return sum;
+    for (int64_t index = 0;;) {
+        sum += index < bound ? 1 : 1000;
+        if (!(++index < bound))
+            return sum;
+        if (index == rareIteration) {
+            bound = lowerBound;
+            sum += rareSummand;
+        }
+    }
+}
+
+static void testVersionLoopsAsksLoopTestAgainBehindRarePathThatLowersBound()
+{
+    Procedure proc(loopPolicy());
+    Graph graph { proc };
+    PollState state;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* behindTest = proc.addBlock();
+    BasicBlock* rare = proc.addBlock();
+    BasicBlock* latch = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Variable* index = proc.addVariable(Int64);
+    Variable* sum = proc.addVariable(Int64);
+    auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
+    Value* lowerBound = arguments[0];
+    Value* pointer = arguments[1];
+    Value* rareIteration = arguments[2];
+    graph.set(root, index, graph.int64(root, 0));
+    graph.set(root, sum, graph.int64(root, 0));
+    graph.branch(root, graph.make(root, LessThan, graph.int64(root, 0), graph.load(root, Int64, pointer, 0, firstHeap)), header, exit);
+    appendPoll(graph, header, state);
+    Value* isBelowBound = graph.make(header, LessThan, graph.get(header, index), graph.load(header, Int64, pointer, 0, firstHeap));
+    graph.increase(header, sum, graph.select(header, isBelowBound, graph.int64(header, 1), graph.int64(header, 1000)));
+    Value* nextIndex = increaseCounter(graph, header, index, graph.int64(header, 1));
+    Value* continues = graph.make(header, LessThan, nextIndex, graph.load(header, Int64, pointer, 0, firstHeap));
+    graph.branch(header, continues, behindTest, exit);
+    graph.branch(behindTest, graph.make(behindTest, Equal, graph.get(behindTest, index), rareIteration), rarely(rare), FrequentedBlock(latch));
+    graph.store(rare, lowerBound, pointer, 0, firstHeap);
+    graph.increase(rare, sum, rareSummand);
+    graph.jump(rare, latch);
+    graph.jump(latch, header);
+    graph.ret(exit, graph.get(exit, sum));
+    proc.resetReachability();
+    proc.setKnownInduction(DemotedInduction { index, header, nextIndex, continues, 1, false });
+    fixSSA(proc);
+    validate(proc);
+
+    CHECK(versionLoopsAndValidate(proc));
+    // The comparison at the head of the turn is gone from the fast loop, and the turn that takes the path comes back in front of it.
+    CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
+    CHECK_EQ(numberOfRarePathCopies(proc), 2u);
+    auto code = compileProc(proc);
+    constexpr int64_t iterations = 2 * longRun + 100;
+    for (int64_t bound : { static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(9), iterations }) {
+        for (int64_t rareAt : { static_cast<int64_t>(-1), static_cast<int64_t>(1), static_cast<int64_t>(5), rareIndex, longRun }) {
+            for (int64_t lower : { static_cast<int64_t>(0), static_cast<int64_t>(3), rareAt, rareAt + 1, rareAt + 2, rareAt + 500, iterations + 7 }) {
+                int64_t memory[1] = { bound };
+                CHECK_EQ(run(*code, lower, memory, rareAt), sumOfLoopWithBoundLoweredBehindTest(bound, rareAt, lower));
+            }
+        }
     }
 }
 
@@ -528,7 +600,7 @@ static void testVersionLoopsRarePathWithOtherConditionLeavesFastLoop()
 
     CHECK(versionLoopsAndValidate(proc));
     CHECK_EQ(proc.report().countOf(Counter::LoopBoundsClamped), 1u);
-    CHECK_EQ(numberOfRarePathCopies(proc), 1u);
+    CHECK_EQ(numberOfRarePathCopies(proc), 2u);
     auto code = compileProc(proc);
     int64_t memory[5] = { 0, 7, 0, iterations, 0 };
 
@@ -551,7 +623,8 @@ static void testVersionLoopsDoesNotCountLoopWithoutRecord()
     CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 0u);
     CHECK_EQ(numberOfRarePathCopies(proc), 2u);
     checkValueCountInEachLoop(proc, isLoopPoll, "polls"_s, { 1, 1 });
-    checkValueCountInEachLoop(proc, Below, { 1, 2 });
+    // A turn of the original loop ends in front of the guards, one of which is the hoisted comparison.
+    checkValueCountInEachLoop(proc, Below, { 1, 3 });
     auto code = compileProc(proc);
     constexpr int64_t bound = 2000;
     constexpr int64_t restarts = 200;
@@ -755,6 +828,7 @@ void addBunCountedLoopVersioningTests(const TestConfig* config, BunTestTasks& ta
     RUN(testVersionLoopsExcursionBeforeTopTestReturnsToFastLoop());
     RUN(testLoopPhasesKeepFastLoopAfterRarePathBeforeTopTest());
     RUN(testVersionLoopsRarePathWithOtherBoundLeavesFastLoop());
+    RUN(testVersionLoopsAsksLoopTestAgainBehindRarePathThatLowersBound());
     RUN(testVersionLoopsRarePathWithOtherConditionLeavesFastLoop());
     RUN(testVersionLoopsDoesNotCountLoopWithoutRecord());
     RUN(testVersionLoopsKeepsPollWithRedundantLoopTest());

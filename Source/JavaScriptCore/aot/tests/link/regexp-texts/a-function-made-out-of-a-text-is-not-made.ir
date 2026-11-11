@@ -1,0 +1,39 @@
+# The list follows from the program alone, and no text is evaluated to find it, by whatever road the text comes to the built-in that would make a function of it.
+# const made = Function.call(null, "return 'a+'"); new RegExp(made()); new RegExp("z+" + 1);   const other = Reflect.construct(Function, ["return 'b+'"]); new RegExp(other());   const third = Reflect.apply(Function, null, ["return 'c+'"]); new RegExp(third());
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /z+1/
+# CHECK-NOT: text /
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=Function
+    v2 = PropGet v1 key="call"
+    v3 = Null
+    v4 = String string="return 'a+'"
+    v5 = Call v2, v1, v3, v4 calleeKey="call"
+    v6 = Call v5, -
+    v7 = Construct v0, -, v6
+    v8 = String string="z+"
+    v9 = Integer integer=1
+    v10 = Add v8, v9
+    v11 = Construct v0, -, v10
+    v12 = Builtin builtin=Reflect
+    v13 = PropGet v12 key="construct"
+    v14 = String string="return 'b+'"
+    v15 = NewArray v14 contents=anything
+    v16 = Call v13, v12, v1, v15 calleeKey="construct"
+    v17 = Call v16, -
+    v18 = Construct v0, -, v17
+    v19 = PropGet v12 key="apply"
+    v20 = String string="return 'c+'"
+    v21 = NewArray v20 contents=anything
+    v22 = Call v19, v12, v1, v3, v21 calleeKey="apply"
+    v23 = Call v22, -
+    v24 = Construct v0, -, v23
+    v25 = NewArray v7, v11, v18, v24 contents=anything
+    Return v25
+}

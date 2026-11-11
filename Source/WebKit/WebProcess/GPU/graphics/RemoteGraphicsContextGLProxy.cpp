@@ -130,6 +130,7 @@ void RemoteGraphicsContextGLProxy::initializeIPC(Ref<IPC::StreamClientConnection
         lazyInitialize(m_sharedResourceCache, gpuProcessConnection->sharedResourceCache());
 #if ENABLE(VIDEO)
         lazyInitialize(m_videoFrameObjectHeapProxy, Ref { gpuProcessConnection->videoFrameObjectHeapProxy() });
+        lazyInitialize(m_gpuProcessIPCConnection, Ref { gpuProcessConnection->connection() });
 #endif
     });
 
@@ -226,7 +227,8 @@ RefPtr<WebCore::VideoFrame> RemoteGraphicsContextGLProxy::surfaceBufferToVideoFr
     ASSERT(isMainRunLoop());
     if (isContextLost())
         return nullptr;
-    auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::SurfaceBufferToVideoFrame(buffer));
+    auto reference = RemoteVideoFrameReference::generateForAdd();
+    auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::SurfaceBufferToVideoFrame(buffer, reference));
     if (!sendResult.succeeded()) {
         markContextLost();
         return nullptr;
@@ -234,18 +236,22 @@ RefPtr<WebCore::VideoFrame> RemoteGraphicsContextGLProxy::surfaceBufferToVideoFr
     auto [result] = sendResult.takeReply();
     if (!result)
         return nullptr;
-    return RemoteVideoFrameProxy::create(protect(WebProcess::singleton().ensureGPUProcessConnection().connection()), protect(protect(WebProcess::singleton().ensureGPUProcessConnection())->videoFrameObjectHeapProxy()), WTF::move(*result));
+    return RemoteVideoFrameProxy::create(*m_gpuProcessIPCConnection, *m_videoFrameObjectHeapProxy, reference, WTF::move(*result));
 }
 #endif
 
 #if ENABLE(VIDEO)
-bool RemoteGraphicsContextGLProxy::copyTextureFromVideoFrame(WebCore::VideoFrame& videoFrame, PlatformGLObject texture, GCGLenum target, GCGLint level, GCGLenum internalFormat, GCGLenum format, GCGLenum type, bool premultiplyAlpha, bool flipY)
+bool RemoteGraphicsContextGLProxy::copyTextureFromVideoFrame(WebCore::VideoFrame& videoFrame, PlatformGLObject texture, GCGLenum target, GCGLint level, GCGLenum internalFormat, GCGLenum type, bool unpackFlipY, bool unpackPremultiplyAlpha)
 {
 #if PLATFORM(COCOA)
-    if (isContextLost())
+    recordVideoUploadForTesting(VideoUploadOutcome::NotTransferable, videoFrame.pixelFormat());
+    m_lastVideoUploadWasSentForTesting = false;
+    if (isContextLost()) {
+        m_lastVideoUploadForTesting.outcome = VideoUploadOutcome::ContextLost;
         return false;
+    }
 
-    auto sharedVideoFrame = m_sharedVideoFrameWriter.write(videoFrame, [this, protectedThis = protect(*this)](auto& semaphore) {
+    auto sharedVideoFrame = m_sharedVideoFrameWriter.write(videoFrame, *m_gpuProcessIPCConnection, [this, protectedThis = protect(*this)](auto& semaphore) {
         auto sendResult = send(Messages::RemoteGraphicsContextGL::SetSharedVideoFrameSemaphore { semaphore });
         if (sendResult != IPC::Error::NoError)
             markContextLost();
@@ -254,10 +260,15 @@ bool RemoteGraphicsContextGLProxy::copyTextureFromVideoFrame(WebCore::VideoFrame
         if (sendResult != IPC::Error::NoError)
             markContextLost();
     });
-    if (!sharedVideoFrame || isContextLost())
+    if (!sharedVideoFrame || isContextLost()) {
+        if (isContextLost())
+            m_lastVideoUploadForTesting.outcome = VideoUploadOutcome::ContextLost;
         return false;
+    }
 
-    auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::CopyTextureFromVideoFrame(WTF::move(*sharedVideoFrame), texture, target, level, internalFormat, format, type, premultiplyAlpha, flipY));
+    m_lastVideoUploadWasSentForTesting = true;
+    ++m_videoUploadsSentForTesting;
+    auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::CopyTextureFromVideoFrame(WTF::move(*sharedVideoFrame), texture, target, level, internalFormat, type, unpackFlipY, unpackPremultiplyAlpha));
     if (!sendResult.succeeded()) {
         markContextLost();
         return false;
@@ -266,7 +277,32 @@ bool RemoteGraphicsContextGLProxy::copyTextureFromVideoFrame(WebCore::VideoFrame
     auto [result] = sendResult.takeReply();
     return result;
 #else
+    recordVideoUploadForTesting(VideoUploadOutcome::Unsupported, 0);
     return false;
+#endif
+}
+
+std::optional<GraphicsContextGL::VideoUploadRecord> RemoteGraphicsContextGLProxy::lastVideoUploadForTesting()
+{
+#if PLATFORM(COCOA)
+    if (!m_lastVideoUploadWasSentForTesting)
+        return m_lastVideoUploadForTesting;
+    // The GPU process rejects the test-only messages, and the sender with them, unless AllowTestOnlyIPC is set.
+    if (isContextLost() || !WebProcess::singleton().sharedPreferencesForWebProcessValue().allowTestOnlyIPC)
+        return std::nullopt;
+    auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::GetLastVideoUploadForTesting());
+    if (!sendResult.succeeded()) {
+        markContextLost();
+        return std::nullopt;
+    }
+    auto [record] = sendResult.takeReply();
+    // The stream is ordered, so the GPU process has handled every call sent so far.
+    if (record.sequence != m_videoUploadsSentForTesting)
+        return std::nullopt;
+    record.sequence = m_lastVideoUploadForTesting.sequence;
+    return record;
+#else
+    return GraphicsContextGL::lastVideoUploadForTesting();
 #endif
 }
 
@@ -278,7 +314,8 @@ RefPtr<NativeImage> RemoteGraphicsContextGLProxy::videoFrameToNativeImage(WebCor
 #if PLATFORM(COCOA)
     RefPtr<NativeImage> nativeImage;
     callOnMainRunLoopAndWait([&] {
-        nativeImage = m_videoFrameObjectHeapProxy->getNativeImage(frame);
+        // FIXME: WebGL uploads the native image as is, so the rotation has to be applied in GPU process. Apply the rotation when drawing instead.
+        nativeImage = m_videoFrameObjectHeapProxy->getNativeImage(frame, ShouldApplyRotation::Yes);
     });
     return nativeImage;
 #else

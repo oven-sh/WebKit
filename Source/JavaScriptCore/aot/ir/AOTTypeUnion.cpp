@@ -4,190 +4,98 @@
  */
 
 #include "config.h"
-#include "AOTType.h"
+#include "AOTTypeArena.h"
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
-#include "AOTIRProgram.h"
-#include "AOTLayout.h"
-#include "AOTTypeArena.h"
-#include "AOTVector.h"
-#include <algorithm>
-
 namespace JSC { namespace AOT { namespace Typed {
 
-static Type uniteInternalValues(const Type& a, const Type& b)
-{
-    bool usesFirst = !a.isJavaScriptValue();
-    Type result = usesFirst ? a : b;
-    const Type& other = usesFirst ? b : a;
-    result.primitives |= other.primitives;
-    bool isSameValue = a.opaque == b.opaque && a.environment == b.environment;
-    if (!isSameValue && !other.hasOnlyPrimitives(Primitive::Absent))
-        result.anyObject = true;
-    result.canonicalize();
-    return result;
-}
+using ClassPartsToUnite = Vector<ClassPart, 8>;
+using UnitedClassParts = Vector<ClassPart, 16>;
 
-static ClassPart uniteParts(const ClassPart& a, const ClassPart& b, TypeArena& arena)
+static TypeID uniteWrittenContents(TypeArena& arena, TypeID first, TypeID second)
 {
-    ClassPart result = a;
-    result.contentsAreProven = a.contentsAreProven && b.contentsAreProven;
-    result.provenPristine = a.provenPristine & b.provenPristine;
-    if (a.arrayStorage != b.arrayStorage)
-        result.arrayStorage = ArrayStorage::Other;
-    size_t numberOfContents = std::max(a.writtenContents.size(), b.writtenContents.size());
-    result.writtenContents.grow(numberOfContents);
-    for (unsigned index = 0; index < numberOfContents; ++index)
-        result.writtenContents[index] = arena.unionOf(a.writtenContentsAt(index), b.writtenContentsAt(index));
-    return result;
-}
-
-static ClassParts uniteClasses(const ClassParts& a, const ClassParts& b, TypeArena& arena)
-{
-    ClassParts result;
-    result.reserveInitialCapacity(a.size() + b.size());
-    size_t indexInA = 0;
-    size_t indexInB = 0;
-    while (indexInA < a.size() && indexInB < b.size()) {
-        if (a[indexInA].builtinClass < b[indexInB].builtinClass)
-            result.append(a[indexInA++]);
-        else if (b[indexInB].builtinClass < a[indexInA].builtinClass)
-            result.append(b[indexInB++]);
-        else
-            result.append(uniteParts(a[indexInA++], b[indexInB++], arena));
-    }
-    result.append(a.subspan(indexInA));
-    result.append(b.subspan(indexInB));
-    return result;
-}
-
-static SortedSet<RegExpLiteralInType> uniteRegExpLiterals(const Type& a, const Type& b)
-{
-    const SortedSet<RegExpLiteralInType>& first = a.regExpLiteralSet;
-    const SortedSet<RegExpLiteralInType>& second = b.regExpLiteralSet;
-    if (first.isEmpty() && second.isEmpty())
-        return { };
-    if (!a.findClassPart(BuiltinClasses::RegExp))
-        return second;
-    if (!b.findClassPart(BuiltinClasses::RegExp))
+    if (first == second)
         return first;
-    if (first.isEmpty() || second.isEmpty())
+    if (!first || !second)
         return { };
-    SortedSet<RegExpLiteralInType> united = first;
-    united.unite(second);
+    TypeID united = arena.unionOf(first, second);
+    if (!holdsOnlyPrimitives(united) && arena.at(united).isAnything())
+        return { };
     return united;
 }
 
-Type Type::unionWith(const Type& other, TypeArena& arena) const
+static ClassPart unitePartsOfOneClass(TypeArena& arena, const ClassPart& first, const ClassPart& second)
 {
-    if (*this == other || other.isNever())
-        return *this;
-    if (isNever())
-        return other;
-    if (!isJavaScriptValue() || !other.isJavaScriptValue())
-        return uniteInternalValues(*this, other);
-
-    Type result = *this;
-    result.primitives |= other.primitives;
-    result.integers = integers.unionWith(other.integers);
-    result.stringLiterals.unite(other.stringLiterals);
-    result.symbolLiterals.unite(other.symbolLiterals);
-    result.anyObject |= other.anyObject;
-    result.anyFunction |= other.anyFunction;
-    result.functions.unite(other.functions);
-    result.builtins.unite(other.builtins);
-    if (!other.classes.isEmpty())
-        result.classes = uniteClasses(classes, other.classes, arena);
-    result.regExpLiteralSet = uniteRegExpLiterals(*this, other);
-    result.layouts = arena.unionOf(layouts, other.layouts);
-    result.canonicalize();
-    return result;
+    ASSERT(first.builtinClass == second.builtinClass);
+    ClassPart united;
+    united.builtinClass = first.builtinClass;
+    for (unsigned position = 0; position < mostContentsOfClass; ++position)
+        united.writtenContents[position] = uniteWrittenContents(arena, first.writtenContents[position], second.writtenContents[position]);
+    return united;
 }
 
-static bool liesInsideDeclaredFamily(const WideningContext& context, const Type& type)
+static ClassPartsID uniteClassParts(TypeArena& arena, ClassPartsID classesOfFirst, ClassPartsID classesOfSecond)
 {
-    const Program& program = context.program;
-    std::span<const LayoutID> members = membersOf(context.types.table(), type);
-    if (members.empty())
-        return false;
+    if (classesOfFirst == classesOfSecond || !classesOfSecond)
+        return classesOfFirst;
+    if (!classesOfFirst)
+        return classesOfSecond;
 
-    Vector<LayoutID, 16> visited { declaredLayoutOf(program, members[0]) };
-    auto visit = [&](LayoutID above) {
-        if (above && !visited.contains(above))
-            visited.append(above);
-    };
-    for (size_t index = 0; index < visited.size(); ++index) {
-        std::span<const LayoutID> family = program.at(program.declaredMembersOf(visited[index])).completeMembers();
-        if (family.size() >= members.size() && std::ranges::includes(family, members))
-            return true;
-        const Layout& layout = program.at(visited[index]);
-        visit(layout.base);
-        for (LayoutID supertype : layout.supertypes)
-            visit(supertype);
-    }
-    return false;
-}
+    ClassPartsToUnite first(arena.at(classesOfFirst));
+    ClassPartsToUnite second(arena.at(classesOfSecond));
 
-static bool widenGrownLists(Type& type, const Type& first, const Type& second, const WideningContext& context)
-{
-    std::optional<bool> liesInsideTypeBefore;
-    auto exceeds = [&](LimitID limit, const Invocable<size_t(const Type&)> auto& sizeIn) {
-        size_t size = sizeIn(type);
-        if (size <= std::max(sizeIn(first), sizeIn(second)) || size <= context.build.limit(limit))
-            return false;
-        if (context.typeBefore && size <= sizeIn(*context.typeBefore)) {
-            if (!liesInsideTypeBefore)
-                liesInsideTypeBefore = type.isSubsetOf(*context.typeBefore, context.program);
-            if (*liesInsideTypeBefore) {
-                if (context.didKeepListsOfTypeBefore)
-                    *context.didKeepListsOfTypeBefore = true;
-                return false;
-            }
+    UnitedClassParts united;
+    size_t indexInFirst = 0;
+    size_t indexInSecond = 0;
+    while (indexInFirst < first.size() && indexInSecond < second.size()) {
+        const ClassPart& partOfFirst = first[indexInFirst];
+        const ClassPart& partOfSecond = second[indexInSecond];
+        if (partOfFirst.builtinClass < partOfSecond.builtinClass) {
+            united.append(partOfFirst);
+            ++indexInFirst;
+        } else if (partOfSecond.builtinClass < partOfFirst.builtinClass) {
+            united.append(partOfSecond);
+            ++indexInSecond;
+        } else {
+            united.append(unitePartsOfOneClass(arena, partOfFirst, partOfSecond));
+            ++indexInFirst;
+            ++indexInSecond;
         }
-        return context.build.exceeds(limit, size, context.subject);
-    };
-    auto sizeOf = [](auto Type::* list) {
-        return [list](const Type& listed) -> size_t {
-            return (listed.*list).size();
-        };
-    };
-    bool widensStrings = exceeds(LimitID::MaxLiteralsInType, sizeOf(&Type::stringLiterals));
-    bool widensSymbols = exceeds(LimitID::MaxSymbolLiteralsInType, sizeOf(&Type::symbolLiterals));
-    auto numberOfLayouts = [&](const Type& listed) -> size_t {
-        return membersOf(context.types.table(), listed).size();
-    };
-    bool widensLayouts = numberOfLayouts(type) > context.build.limit(LimitID::MaxLayoutsInType) && !liesInsideDeclaredFamily(context, type) && exceeds(LimitID::MaxLayoutsInType, numberOfLayouts);
-    bool widensClasses = exceeds(LimitID::MaxClassesInType, sizeOf(&Type::classes));
-    bool widensFunctions = exceeds(LimitID::MaxFunctionsInType, sizeOf(&Type::functions));
-    bool widensBuiltins = exceeds(LimitID::MaxBuiltinsInType, sizeOf(&Type::builtins));
-    bool widensRegExpLiterals = exceeds(LimitID::MaxRegExpLiteralsInType, sizeOf(&Type::regExpLiteralSet));
-
-    if (widensStrings)
-        type.primitives |= Primitive::String;
-    if (widensSymbols)
-        type.primitives |= Primitive::Symbol;
-    if (widensLayouts || widensClasses || widensBuiltins)
-        type.anyObject = true;
-    if (widensFunctions) {
-        type.anyFunction = true;
-        type.functions.clear();
     }
-    if (widensRegExpLiterals)
-        type.regExpLiteralSet.clear();
-    return widensStrings || widensSymbols || widensLayouts || widensClasses || widensFunctions || widensBuiltins || widensRegExpLiterals;
+    united.append(first.subspan(indexInFirst));
+    united.append(second.subspan(indexInSecond));
+    return arena.internClassParts(united.span());
 }
 
-Type Type::unionWideningWith(const Type& other, const WideningContext& context) const
+static bool unionHoldsTwoInternalValues(const Type& first, const Type& second)
 {
-    Type result = unionWith(other, context.types);
-    if (widenGrownLists(result, *this, other, context)) {
-        result.canonicalize();
-        if (context.didWiden)
-            *context.didWiden = true;
-    }
-    return result;
+    return (first.opaque && second.opaque && first.opaque != second.opaque)
+        || (first.environment && second.environment && first.environment != second.environment);
+}
+
+TypeParts uniteTypes(TypeArena& arena, const Type& first, const Type& second)
+{
+    TypeParts united;
+    united.primitives = first.primitives | second.primitives;
+    united.seeds = first.seeds | second.seeds;
+    united.anyObject = first.anyObject || second.anyObject;
+    united.anyFunction = first.anyFunction || second.anyFunction;
+    united.integers = first.integers.unionWith(second.integers);
+    if (!first.holdsFractionsWithoutBounds() && !second.holdsFractionsWithoutBounds())
+        united.boundsOfFractions = first.boundsOfFractions.unionWith(second.boundsOfFractions);
+
+    united.opaque = first.opaque ? first.opaque : second.opaque;
+    united.environment = first.environment ? first.environment : second.environment;
+    if (unionHoldsTwoInternalValues(first, second))
+        united.anyObject = true;
+
+    united.stringLiterals = arena.stringSets().unionOf(first.stringLiterals, second.stringLiterals);
+    united.symbolLiterals = arena.keySets().unionOf(first.symbolLiterals, second.symbolLiterals);
+    united.objects = arena.objectSets().unionOf(first.objects, second.objects);
+    united.unnamedLayouts = arena.layoutSets().unionOf(first.unnamedLayouts, second.unnamedLayouts);
+    united.unnamedClasses = uniteClassParts(arena, first.unnamedClasses, second.unnamedClasses);
+    return united;
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -69,7 +69,7 @@ public:
         ~WeakListHashSetIteratorBase() = default;
 
         T* get() LIFETIME_BOUND { return m_position->get(); }
-        const T* get() const { return get(); }
+        const T* get() const { return m_position->get(); }
         T& operator*() { return *get(); }
         const T& operator*() const { return *get(); }
         T* operator->() { return get(); }
@@ -308,6 +308,9 @@ public:
 
     unsigned capacity() const { return m_set.capacity(); }
 
+    // Reclaims null references as a side effect, so this must not be called concurrently. Callers
+    // that may race with each other (e.g. GC marker threads) must use
+    // isEmptyIgnoringNullReferencesWithoutCleanup() instead.
     bool isEmptyIgnoringNullReferences() const
     {
         if (m_set.isEmpty())
@@ -317,6 +320,14 @@ public:
         if (onlyContainsNullReferences) [[unlikely]]
             const_cast<WeakListHashSet&>(*this).clear();
         return onlyContainsNullReferences;
+    }
+
+    bool isEmptyIgnoringNullReferencesWithoutCleanup() const
+    {
+        if (m_set.isEmpty())
+            return true;
+
+        return begin() == end();
     }
 
     bool hasNullReferences() const

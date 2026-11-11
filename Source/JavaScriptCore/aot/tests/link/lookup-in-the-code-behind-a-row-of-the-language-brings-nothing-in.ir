@@ -1,0 +1,33 @@
+# [1].map(f)        Array.prototype.map: function map(callback) { return this.filter(callback); }
+# The code behind a built-in of the language is entered from outside, with `anything` for every parameter, so each of its lookups goes off a value that nobody knows. The row of the built-in says what it does with its operands.
+# If its lookups counted beside the row, one `constructor` and one key that nobody knows in the code behind `map` would find a member on every prototype that is looked through, and a program of one line would hold the library
+# `filter` stands for what such a lookup finds. The control: Bun's test/aot/engine-tests/link/lookup-in-code-of-the-hosts-library-finds-what-it-names.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeFilter function=f2
+runtimefunction id=ArrayPrototypeMap function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeMap
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="list" [isFreeName]
+    v3 = PropGet v1 key="f" [isFreeName]
+    v4 = Call v0, v2, v3
+    Return v4
+}
+function f1 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="filter"
+    v3 = Call v2, v0, v1 calleeKey="filter"
+    Return v3
+}
+function f2 name="filter" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

@@ -278,6 +278,20 @@ JSPromise* ModuleRegistryEntry::loadedPromise(JSGlobalObject* globalObject)
     }
     return m_loadPromise.get();
 }
+
+// The entry holds the record of a CommonJS module as the module was when a load that it started came back to it. Whoever asks from now on gets the record of the whole module.
+void ModuleRegistryEntry::replaceRecord(JSGlobalObject* globalObject, AbstractModuleRecord* record)
+{
+    if (m_status == Status::FetchFailed)
+        return;
+    VM& vm = globalObject->vm();
+    m_record.set(vm, this, record);
+    m_status = Status::Fetched;
+    JSPromise* modulePromise = JSPromise::create(vm, globalObject->promiseStructure());
+    modulePromise->markAsHandled();
+    modulePromise->fulfill(vm, record);
+    m_modulePromise.set(vm, this, modulePromise);
+}
 #endif
 
 void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractModuleRecord* record)
@@ -287,7 +301,12 @@ void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractMo
         return;
     }
     VM& vm = globalObject->vm();
+#if USE(BUN_JSC_ADDITIONS)
+    // Two loads of one key can be in flight (a mock laid over a mock whose factory is pending), and the other one may have failed first.
+    ASSERT(m_status == Status::Fetching || m_status == Status::EvaluationFailed);
+#else
     ASSERT(m_status == Status::Fetching);
+#endif
     m_record.set(vm, this, record);
     m_status = Status::Fetched;
 }

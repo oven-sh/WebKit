@@ -12,6 +12,11 @@
             "behaviors": [{ "id": "ShouldEnableLegacyGetUserMediaQuirk" }]
         },
         {
+            "bugs": ["rdar://190768633"],
+            "matches": ["*://*.affirm.com/*"],
+            "behaviors": [{ "id": "NeedsFormControlToBeMouseFocusableQuirk" }]
+        },
+        {
             "bugs": ["https://webkit.org/b/317375"],
             "matches": ["*://*.airindiaexpress.com/*"],
             "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }]
@@ -107,6 +112,11 @@
             "behaviors": [{ "id": "ReturnNullPictureInPictureElementDuringFullscreenChangeQuirk" }]
         },
         {
+            "bugs": ["rdar://162447105"],
+            "matches": ["*://*.bbc.co.uk/*", "*://*.bbc.com/*"],
+            "behaviors": [{ "id": "NeedsDarkAppearanceWithoutColorSchemeQuirk" }]
+        },
+        {
             "bugs": ["rdar://136235936"],
             "matches": ["*://*.bestbuy.com/*"],
             "behaviors": [
@@ -145,6 +155,13 @@
                     "bugs": ["rdar://126573838"]
                 }
             ]
+        },
+        {
+            "bugs": ["rdar://133423460"],
+            "matches": ["*://*.bing.com/*"],
+            "available": "appleTV",
+            "environment": "HomeView",
+            "behaviors": [{ "id": "ShouldPreventOrientationMediaQueryFromEvaluatingToLandscapeQuirk" }]
         },
         {
             "bugs": ["rdar://187475153"],
@@ -205,6 +222,16 @@
             "behaviors": [{ "id": "ShouldOmitTouchEventDOMAttributesForDesktopWebsiteQuirk" }]
         },
         {
+            "bugs": ["rdar://190449381"],
+            "matches": ["*://*.chatgpt.com/*"],
+            "behaviors": [{ "id": "ShouldUseLayoutViewportForClientRectsQuirk" }]
+        },
+        {
+            "bugs": ["rdar://189766320", "rdar://191470125"],
+            "matches": ["*://*.chatgpt.com/*", "*://*.grok.com/*"],
+            "behaviors": [{ "id": "NeedsMarginTrimInlineSupportsQuirk" }]
+        },
+        {
             "matches": ["*://*.chess.com/*"],
             "environment": "SmallScreen",
             "available": "iOS",
@@ -234,6 +261,15 @@
                 { "id": "NeedsCNNCaptionQuirk" },
                 { "id": "ShouldDisableThreadedAnimationsQuirk", "bugs": ["rdar://176539646"] }
             ]
+        },
+        {
+            "bugs": ["rdar://190735753"],
+            "matches": ["*://*.cnn.com/*"],
+            "behaviors": [{ "id": "NeedsFormControlToBeMouseFocusableQuirk" }]
+        },
+        {
+            "matches": ["*://*.cnn.com/*"],
+            "behaviors": [{ "id": "RequiresUserGestureToPauseInFullscreenAfterOrientationChangeQuirk" }]
         },
         {
             "matches": ["*://codepen.io/*"],
@@ -323,8 +359,21 @@
         {
             "bugs": ["rdar://151715964"],
             "matches": ["*://*.disneyplus.com/*"],
-            "available": "iOSFamily && desktopContentModeQuirks",
+            "available": "appleTV",
+            "environment": "HomeView",
             "behaviors": [{ "id": "NeedsZeroMaxTouchPointsQuirk" }]
+        },
+        {
+            "bugs": ["rdar://188849586"],
+            "matches": ["*://*.disneyplus.com/*"],
+            "available": "iOS",
+            "environment": "Desktop",
+            "behaviors": [{ "id": "NeedsZeroMaxTouchPointsQuirk" }]
+        },
+        {
+            "bugs": ["rdar://190675819"],
+            "matches": ["*://englishtest.duolingo.com/*", "*://englishtest.duolingo.cn/*"],
+            "behaviors": [{ "id": "NeedsChromeCompatibilityUserAgentQuirk", "chromeCompatibilityVersion": "157" }]
         },
         {
             "matches": ["*://*.ea.com/*"],
@@ -395,6 +444,12 @@
         },
         {
             "matches": ["*://*.facebook.com/*"],
+            "available": "appleTV",
+            "environment": "HomeView",
+            "behaviors": [{ "id": "ShouldFlipScreenDimensionsQuirk", "bugs": ["rdar://133768147"] }]
+        },
+        {
+            "matches": ["*://*.facebook.com/*"],
             "behaviors": [
                 { "id": "NeedsFacebookRemoveNotSupportedQuirk", "bugs": ["rdar://100871402"] },
                 {
@@ -441,8 +496,10 @@
             "behaviors": [{ "id": "RequiresUserGestureToPauseInPictureInPictureQuirk" }]
         },
         {
+            "bugs": ["https://webkit.org/b/303622"],
+            "comment": "FIXME: Remove as soon as nvidia adjusts the site for Safari. https://webkit.org/b/303718",
             "matches": ["*://play.geforcenow.com/*"],
-            "behaviors": [{ "id": "NeedsGeforcenowWarningDisplayNoneQuirk" }]
+            "behaviors": [{ "id": "NeedsStyleSheetInjectedQuirk", "styleSheet": "div.cdk-overlay-container, div.unsupported-scenario-container { display: none !important; }" }]
         },
         {
             "bugs": ["https://webkit.org/b/319011", "rdar://181825035"],
@@ -490,6 +547,11 @@
             "behaviors": [{ "id": "NeedsGoogleMapsEmbedManipulationSurfaceQuirk" }]
         },
         {
+            "bugs": ["rdar://190477522"],
+            "matches": ["*://gemini.google.com/*"],
+            "behaviors": [{ "id": "ShouldIgnoreViewportInteractiveWidgetQuirk" }]
+        },
+        {
             "matches": ["*://docs.google.com/*"],
             "behaviors": [
                 { "id": "InputMethodUsesCorrectKeyEventOrder" },
@@ -522,6 +584,17 @@
         {
             "matches": ["*://docs.google.com/presentation/*"],
             "behaviors": [{ "id": "ShouldIgnoreInputModeNone" }]
+        },
+        {
+            "bugs": ["rdar://191131755"],
+            "comment": "accounts.youtube.com resolves through a CNAME to google.com. Capping the expiry of the cookies it sets on youtube.com signs users out of YouTube.",
+            "matches": ["*://*.youtube.com/*", "*://*.google.com/*"],
+            "behaviors": [
+                {
+                    "id": "NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk",
+                    "secondaryURL": ["*://*.youtube.com/*", "*://*.google.com/*"]
+                }
+            ]
         },
         {
             "bugs": ["rdar://49403416"],
@@ -563,6 +636,11 @@
             ]
         },
         {
+            "bugs": ["rdar://158560192"],
+            "matches": ["*://*.gradescope.com/*"],
+            "behaviors": [{ "id": "NeedsPartitionedCookiesQuirk" }]
+        },
+        {
             "bugs": ["rdar://157388533"],
             "matches": ["*://*.gunbroker.com/*"],
             "behaviors": [
@@ -579,16 +657,16 @@
         },
         {
             "matches": ["*://play.hbomax.com/*"],
-            "behaviors": [
-                { "id": "ShouldDisableAdSkippingInPip", "bugs": ["rdar://158430821"] },
-                { "id": "ShouldSupportHoverMediaQueriesQuirk", "bugs": ["rdar://138806698"] }
-            ]
+            "behaviors": [{ "id": "ShouldDisableAdSkippingInPip", "bugs": ["rdar://158430821"] }]
         },
         {
-            "bugs": ["rdar://138424489"],
             "matches": ["*://play.hbomax.com/*"],
-            "available": "desktopContentModeQuirks",
-            "behaviors": [{ "id": "NeedsZeroMaxTouchPointsQuirk" }]
+            "available": "appleTV",
+            "environment": "HomeView",
+            "behaviors": [
+                { "id": "NeedsZeroMaxTouchPointsQuirk", "bugs": ["rdar://138424489"] },
+                { "id": "ShouldSupportHoverMediaQueriesQuirk", "bugs": ["rdar://138806698"] }
+            ]
         },
         {
             "bugs": ["rdar://61788722"],
@@ -668,7 +746,6 @@
             "matches": ["*://*.imdb.com/*"],
             "behaviors": [
                 { "id": "NeedsChromeMediaControlsPseudoElementQuirk", "bugs": ["rdar://137991466"] },
-                { "id": "NeedsWebKitMediaTextTrackDisplayQuirk", "bugs": ["rdar://137012134"] },
                 { "id": "NeedsZeroMaxTouchPointsQuirk", "bugs": ["rdar://162684936"] }
             ]
         },
@@ -814,6 +891,11 @@
             "behaviors": [{ "id": "IsNeverRichlyEditableForTouchBarQuirk" }]
         },
         {
+            "bugs": ["rdar://189705627"],
+            "matches": ["*://*.openrice.com/*"],
+            "behaviors": [{ "id": "NeedsOpenRiceAdPopupHeightQuirk", "elementSelector": ".popup-ad-subview-container" }]
+        },
+        {
             "bugs": ["https://webkit.org/b/296989"],
             "matches": ["*://*.madisoncity.k12.al.us/*"],
             "behaviors": [{ "id": "NeedsFormControlToBeMouseFocusableQuirk" }]
@@ -919,10 +1001,6 @@
         {
             "matches": ["*://*.nfl.com/*"],
             "behaviors": [{ "id": "ShouldSuppressHLSSubtitles" }]
-        },
-        {
-            "matches": ["*://*.nhl.com/*"],
-            "behaviors": [{ "id": "NeedsWebKitMediaTextTrackDisplayQuirk" }]
         },
         {
             "bugs": ["rdar://5976384"],
@@ -1036,11 +1114,14 @@
                 { "id": "NeedsBodyScrollbarWidthNoneDisabledQuirk" },
                 { "id": "ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor" },
                 { "id": "ShouldLimitHLSPlaybackRate" },
-                { "id": "NeedsWebKitMediaTextTrackDisplayQuirk" },
                 { "id": "ShouldDeferIntersectionObserversDuringResize" },
                 { "id": "ShouldBlockAudiblePlaybackWhileAudioIsPlaying" },
                 { "id": "NeedsWebKitMediaKeysTransportStreamIsTypeSupportedQuirk" }
             ]
+        },
+        {
+            "matches": ["*://*.spotify.com/*"],
+            "behaviors": [{ "id": "ShouldFlipScreenDimensionsQuirk", "bugs": ["rdar://133423460"] }]
         },
         {
             "bugs": ["rdar://142573562"],
@@ -1244,7 +1325,8 @@
         },
         {
             "matches": ["*://*.webex.com/*"],
-            "available": "iOSFamily && desktopContentModeQuirks",
+            "available": "appleTV",
+            "environment": "HomeView",
             "behaviors": [
                 {
                     "id": "NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk",
@@ -1343,6 +1425,12 @@
             ]
         },
         {
+            "bugs": ["rdar://177395486"],
+            "comment": "FIXME: Remove once Yelp stops covering the top of the video lightbox with a pointer-event-eating Share/Report bar.",
+            "matches": ["*://*.yelp.com/*"],
+            "behaviors": [{ "id": "NeedsStyleSheetInjectedQuirk", "styleSheet": "div:has(button[aria-label=\"Share\"]):has(button[aria-label=\"Report\"]):not(:has(video)) { pointer-events: none; } button[aria-label=\"Share\"], button[aria-label=\"Report\"] { pointer-events: auto; }" }]
+        },
+        {
             "bugs": ["rdar://127246368"],
             "matches": ["*://news.ycombinator.com/*"],
             "behaviors": [{ "id": "ShouldIgnoreTextAutoSizingQuirk" }]
@@ -1358,8 +1446,7 @@
                 { "id": "HasBrokenEncryptedMediaAPISupportQuirk", "bugs": ["https://webkit.org/b/195598"] },
                 { "id": "NeedsScrollbarWidthThinDisabledQuirk", "bugs": ["rdar://135886305"] },
                 { "id": "NeedsYouTubeCaptionQuirk" },
-                { "id": "ShouldSilenceResizeObservers", "bugs": ["rdar://110097836"] },
-                { "id": "ShouldDisableThreadedAnimationsQuirk", "bugs": ["https://webkit.org/b/325264"] }
+                { "id": "ShouldSilenceResizeObservers", "bugs": ["rdar://110097836"] }
             ]
         },
         {

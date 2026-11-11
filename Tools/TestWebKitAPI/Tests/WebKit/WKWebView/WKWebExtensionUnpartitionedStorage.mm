@@ -29,6 +29,7 @@
 
 #import "Helpers/Utilities.h"
 #import "Helpers/cocoa/HTTPServer.h"
+#import "Helpers/cocoa/TestCocoa.h"
 #import "Helpers/cocoa/TestUIDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
 #import "Helpers/cocoa/WebExtensionUtilities.h"
@@ -661,8 +662,7 @@ static TestWebKitAPI::HTTPServer storageTestServer(NSString *frameScript, NSStri
 
 static WKWebExtensionControllerConfiguration *controllerConfigurationWithPersistentDataStore()
 {
-    RetainPtr identifier = adoptNS([[NSUUID alloc] initWithUUIDString:@"3f2b8c1e-5a47-4d0e-9b6a-2c81e4f7d913"]);
-    auto *dataStore = [WKWebsiteDataStore dataStoreForIdentifier:identifier.get()];
+    auto *dataStore = Util::temporaryPersistentDataStore();
 
     __block bool removedData = false;
     [dataStore removeDataOfTypes:WKWebsiteDataStore.allWebsiteDataTypes modifiedSince:NSDate.distantPast completionHandler:^{
@@ -822,7 +822,7 @@ TEST(WKWebExtensionUnpartitionedStorage, SessionStorageIsUnpartitionedInHostPerm
     [manager.get().defaultTab changeWebViewIfNeededForURL:extensionPageURL forExtensionContext:manager.get().context];
 
     for (NSURLRequest *request in @[ server.requestWithLocalhost(), server.request() ]) {
-        auto firstPartyWebView = loadFirstPartyPage(manager.get(), request, @"sessionStorage.setItem('key', 'session-storage-value')");
+        auto firstPartyWebView = loadFirstPartyPage(manager.get(), request, @"sessionStorage.setItem('key', 'session-storage-value'); await navigator.storage.estimate()");
         copySessionStorage(firstPartyWebView.get(), manager.get().defaultTab.webView);
     }
 

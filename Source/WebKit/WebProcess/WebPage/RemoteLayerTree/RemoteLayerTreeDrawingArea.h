@@ -73,9 +73,6 @@ protected:
     void updateRendering();
 
 private:
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    DrawingAreaType type() const final { return DrawingAreaType::RemoteLayerTree; }
-#endif
 
     // DrawingArea
     void setNeedsDisplay() final;
@@ -90,6 +87,7 @@ private:
     void triggerRenderingUpdate() final;
     bool scheduleRenderingUpdate() final;
     void renderingUpdateFramesPerSecondChanged() final;
+    bool usesRenderingUpdateBackpressure() const final { return false; }
     void attachViewOverlayGraphicsLayer(WebCore::FrameIdentifier, WebCore::GraphicsLayer*) final;
 
     void dispatchAfterEnsuringDrawing(IPC::AsyncReplyID) final;
@@ -185,7 +183,6 @@ private:
     Markable<MonotonicTime> m_updateStartTime;
     bool m_isRenderingSuspended { false };
     bool m_hasDeferredRenderingUpdate { false };
-    bool m_shouldStartRenderingUpdateBeforeDueTimers { false };
     bool m_inUpdateRendering { false };
 
     bool m_waitingForBackingStoreSwap { false };

@@ -67,7 +67,20 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             // A PropertyCallback builder can enter JS; defer termination (like
             // LazyProperty::callFunc) so it can't return with one pending.
             DeferTerminationForAWhile deferScope(vm);
-            reifyStaticProperty(vm, classInfo, propertyName, *entry, *thisObject);
+#if ENABLE(AOT)
+            std::optional<AOT::MemberReificationScope> reificationScope;
+            if (vm.hasCompiledCode()) [[unlikely]]
+                reificationScope.emplace(slot.internalMethodType() != PropertySlot::InternalMethodType::Get);
+#endif
+#if ENABLE(AOT)
+            // Compiled code may already hold the object for this property. If so, store that same object.
+            JSObject* preallocated = vm.hasCompiledCode() && !isAccessor ? AOT::RuntimeHooks::takePreallocatedStaticProperty(thisObject, propertyName.uid()) : nullptr;
+            if (preallocated) [[unlikely]] {
+                AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+                thisObject->putDirect(vm, propertyName, preallocated, attributesForStructure(entry->attributes()));
+            } else
+#endif
+                reifyStaticProperty(vm, classInfo, propertyName, *entry, *thisObject);
         }
         // The builder may still throw a non-termination exception; report the
         // slot as not found so JSValue::get / getOwnPropertyDescriptor's
@@ -76,11 +89,12 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
         // lookup, and callers of getOwnPropertySlot don't check for one.
         if (vm.exceptionForInspection()) [[unlikely]] {
 #if ENABLE(AOT)
-            JSValue standIn = vm.hasCompiledCode() && !isAccessor ? AOT::takeStandInForMemberLeftOut(thisObject->realm(), String(propertyName.uid())) : JSValue();
-            if (!standIn)
+            JSValue placeholder = vm.hasCompiledCode() && !isAccessor ? AOT::takeOmittedMemberPlaceholder(thisObject->realm(), String(propertyName.uid())) : JSValue();
+            if (!placeholder)
                 return false;
-            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-            thisObject->putDirect(vm, propertyName, standIn, attributesForStructure(entry->attributes()));
+            // Nothing is stored. The property stays unreified, and the next read calls its builder again.
+            slot.setValue(thisObject, attributesForStructure(entry->attributes()), placeholder);
+            return true;
 #else
             return false;
 #endif

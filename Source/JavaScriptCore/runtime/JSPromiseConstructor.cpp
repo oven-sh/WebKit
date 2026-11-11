@@ -50,7 +50,7 @@
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSPromiseConstructor);
-static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncResolve);
+JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncResolve);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncReject);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncWithResolvers);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncAny);
@@ -178,7 +178,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncWithResolvers, (JSGlobalObject* g
     return JSValue::encode(JSPromise::createNewPromiseCapability(globalObject, thisValue));
 }
 
-static bool LEGACY_NODELETE isFastPromiseConstructor(JSGlobalObject* globalObject, JSValue value)
+NODELETE static bool isFastPromiseConstructor(JSGlobalObject* globalObject, JSValue value)
 {
     if (value != globalObject->promiseConstructor()) [[unlikely]]
         return false;

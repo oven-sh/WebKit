@@ -10,12 +10,17 @@
 
 #include "B3BasicBlockInlines.h"
 #include "B3Limits.h"
+#include "B3LoopUtilities.h"
 #include "B3MemoryValue.h"
 #include "B3NaturalLoops.h"
+#include "B3PatchpointValue.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
+#include "B3RegisterPressure.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/IndexSet.h>
 
 namespace JSC { namespace B3 {
@@ -31,35 +36,44 @@ public:
 
     bool run()
     {
-        NaturalLoops& loops = m_proc.naturalLoops();
-        if (!loops.numLoops())
-            return false;
+        NaturalLoops* loops = m_proc.hasCycle() ? &m_proc.naturalLoops() : nullptr;
         Vector<BasicBlock*, 8> heads;
-        IndexSet<Value*> branchesOnLoadedValues;
+        IndexSet<Value*> hardToPredictBranches;
         bool didResetValueOwners = false;
         for (BasicBlock* block : m_proc) {
             if (block->last()->opcode() != Branch || block->taken().isRare() || block->notTaken().isRare())
                 continue;
             if (block->taken().block()->numPredecessors() != 1 && block->notTaken().block()->numPredecessors() != 1)
                 continue;
-            const NaturalLoop* loop = loops.innerMostLoopOf(block);
-            if (!loop)
+            bool mayBeMinOrMax = hasOnlyUpsilonsInArms(block) && isOrderingComparison(block->last()->child(0)->opcode());
+            bool mayChooseZeroOrOne = handsOnOnlyZeroOrOneInArms(block);
+            const NaturalLoop* loop = loops ? loops->innerMostLoopOf(block) : nullptr;
+            if (!loop && !mayBeMinOrMax && !mayChooseZeroOrOne)
                 continue;
             if (!std::exchange(didResetValueOwners, true))
                 m_proc.resetValueOwners();
-            if (dependsOnValueLoadedInLoop(loops, *loop, block->last()->child(0))) {
+            bool isHardToPredict = (mayBeMinOrMax && isMinOrMax(block)) || (loop && dependsOnValueLoadedInLoop(*loops, *loop, block->last()->child(0)));
+            if (isHardToPredict || (mayChooseZeroOrOne && choosesOnlyZeroOrOne(block))) {
                 heads.append(block);
-                branchesOnLoadedValues.add(block->last());
+                hardToPredictBranches.add(block->last());
+                if (isHardToPredict && loop && keepsEveryRegister(*loops, *loop))
+                    m_branchesInLoopsThatKeepConstantsInRegisters.add(block->last());
             }
         }
         bool changed = false;
         for (BasicBlock* head : heads) {
-            while (!m_removedBlocks.contains(head) && branchesOnLoadedValues.contains(head->last())) {
+            while (!m_removedBlocks.contains(head) && hardToPredictBranches.contains(head->last())) {
                 Region region;
                 unsigned cost = 0;
                 if (!analyze(head, 0, cost, region))
                     break;
-                convert(head, region);
+                // A branch that mostly goes one way costs little, and what its unlikely side computes is seldom computed. Without the branch it is computed every time.
+                bool hasUnlikelySide = head->taken().frequency() != head->notTaken().frequency();
+                if (hasUnlikelySide && cost + numberOfSelects(region) > Limits::maxValuesInPlaceOfBranchWithUnlikelySide)
+                    break;
+                if (loops && wouldChainRunsOfLoop(*loops, head, region))
+                    break;
+                convert(head, region, m_branchesInLoopsThatKeepConstantsInRegisters.contains(head->last()));
                 changed = true;
             }
         }
@@ -77,16 +91,169 @@ private:
         BasicBlock* join { nullptr };
         std::array<BasicBlock*, 2> arms { };
         std::array<std::unique_ptr<Region>, 2> nested;
+        unsigned numberOfSelects { 0 };
     };
+
+    static unsigned numberOfSelects(const Region& region)
+    {
+        unsigned result = region.numberOfSelects;
+        for (auto& nested : region.nested) {
+            if (nested)
+                result += numberOfSelects(*nested);
+        }
+        return result;
+    }
+
+    static bool isOrderingComparison(Opcode opcode)
+    {
+        switch (opcode) {
+        case LessThan:
+        case GreaterThan:
+        case LessEqual:
+        case GreaterEqual:
+        case Above:
+        case Below:
+        case AboveEqual:
+        case BelowEqual:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static bool hasOnlyUpsilonsInArms(BasicBlock* head)
+    {
+        for (BasicBlock* successor : head->successorBlocks()) {
+            if (successor->numPredecessors() != 1)
+                continue;
+            if (successor->size() != 2 || successor->at(0)->opcode() != Upsilon || successor->last()->opcode() != Jump)
+                return false;
+        }
+        return true;
+    }
+
+    static bool isZeroOrOne(Value* value)
+    {
+        return value->isInt(0) || value->isInt(1);
+    }
+
+    static bool handsOnOnlyZeroOrOneInArms(BasicBlock* head)
+    {
+        for (BasicBlock* successor : head->successorBlocks()) {
+            if (successor->numPredecessors() != 1)
+                continue;
+            if (successor->last()->opcode() != Jump)
+                return false;
+            for (unsigned i = 0; i + 1 < successor->size(); ++i) {
+                Value* value = successor->at(i);
+                bool isAllowed = value->opcode() == Nop || value->opcode() == Const32 || value->opcode() == Const64 || (value->opcode() == Upsilon && isZeroOrOne(value->child(0)));
+                if (!isAllowed)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    static bool isSameValue(Value* a, Value* b)
+    {
+        return a == b || (a->isConstant() && a->key() == b->key());
+    }
+
+    static bool areComparisonOperands(Value* condition, const std::array<Value*, 2>& values)
+    {
+        return (isSameValue(condition->child(0), values[0]) && isSameValue(condition->child(1), values[1]))
+            || (isSameValue(condition->child(0), values[1]) && isSameValue(condition->child(1), values[0]));
+    }
+
+    static std::array<Value*, 2> incomingValuesFor(Value* phi, BasicBlock* head, const Region& region)
+    {
+        std::array<Value*, 2> result { };
+        for (unsigned i = 0; i < 2; ++i) {
+            UpsilonValue* upsilon = region.arms[i] ? lastUpsilonFor(region.arms[i], phi) : nullptr;
+            if (!upsilon)
+                upsilon = lastUpsilonFor(head, phi);
+            result[i] = upsilon ? upsilon->child(0) : nullptr;
+        }
+        return result;
+    }
+
+    // min(a, b) or max(a, b). The outcome depends on the data, so the branch predicts poorly.
+    bool isMinOrMax(BasicBlock* head)
+    {
+        Region region;
+        unsigned cost = 0;
+        if (!analyze(head, 0, cost, region) || region.numberOfSelects != 1)
+            return false;
+        for (Value* phi : *region.join) {
+            if (phi->opcode() != Phi)
+                continue;
+            if ((region.arms[0] && lastUpsilonFor(region.arms[0], phi)) || (region.arms[1] && lastUpsilonFor(region.arms[1], phi)))
+                return areComparisonOperands(head->last()->child(0), incomingValuesFor(phi, head, region));
+        }
+        return false;
+    }
+
+    bool keepsEveryRegister(NaturalLoops& loops, const NaturalLoop& loop)
+    {
+        if (m_loopsKeepEveryRegister.isEmpty())
+            m_loopsKeepEveryRegister.resize(loops.numLoops());
+        std::optional<bool>& result = m_loopsKeepEveryRegister[loop.index()];
+        if (result)
+            return *result;
+        RegisterBudget all = allocatableRegisters(m_proc);
+        RegisterBudget kept = all;
+        IndexSet<BasicBlock*> likelyBlocks = findLikelyBlocks(loops, loop);
+        for (unsigned index = loop.size(); index--;) {
+            if (!likelyBlocks.contains(loop.at(index)))
+                continue;
+            for (Value* value : *loop.at(index))
+                kept.restrictTo(registersPreservedBy(m_proc, value));
+        }
+        result = kept.of(GP) == all.of(GP);
+        return *result;
+    }
+
+    bool choosesOnlyZeroOrOne(BasicBlock* head)
+    {
+        Region region;
+        unsigned cost = 0;
+        if (!analyze(head, 0, cost, region) || !region.numberOfSelects)
+            return false;
+        for (Value* phi : *region.join) {
+            if (phi->opcode() != Phi || (!isWrittenInArm(region, 0, phi) && !isWrittenInArm(region, 1, phi)))
+                continue;
+            std::array<Value*, 2> values = incomingValuesFor(phi, head, region);
+            if (!values[0] || !values[1] || !isZeroOrOne(values[0]) || !isZeroOrOne(values[1]))
+                return false;
+        }
+        return true;
+    }
+
+    // ARM64 has fcsel. x86 has no floating-point conditional move, but minsd and maxsd handle min and max.
+    static bool canSelectWithoutBranch(Value* phi, BasicBlock* head, const Region& region)
+    {
+        if (phi->type().isInt())
+            return true;
+        if (!phi->type().isFloat() || region.nested[0] || region.nested[1])
+            return false;
+        if (isARM64())
+            return true;
+        Value* condition = head->last()->child(0);
+        return (condition->opcode() == LessThan || condition->opcode() == GreaterThan) && areComparisonOperands(condition, incomingValuesFor(phi, head, region));
+    }
 
     bool dependsOnValueLoadedInLoop(NaturalLoops& loops, const NaturalLoop& loop, Value* condition)
     {
         Vector<Value*, 16> worklist;
-        IndexSet<Value*> seen;
+        // A set indexed by value would cost as much as the procedure has values, for every branch.
+        Vector<Value*, 16> seen;
         worklist.append(condition);
         while (!worklist.isEmpty() && seen.size() < m_proc.limit(Limit::MaxValuesSearchedForDominatingLoad)) {
             Value* value = worklist.takeLast();
-            if (!seen.add(value) || value->opcode() == Phi || !loops.belongsTo(value->owner, loop))
+            if (seen.contains(value))
+                continue;
+            seen.append(value);
+            if (value->opcode() == Phi || !loops.belongsTo(value->owner, loop))
                 continue;
             if (isLoad(value->opcode()))
                 return true;
@@ -98,6 +265,141 @@ private:
         return false;
     }
 
+    using IncomingValues = UncheckedKeyHashMap<Value*, Vector<Value*, 2>>;
+
+    static void collectIncomingValuesAndStores(const NaturalLoop& loop, IncomingValues& incomingValues, Vector<MemoryValue*, 8>& stores)
+    {
+        for (unsigned i = loop.size(); i--;) {
+            for (Value* value : *loop.at(i)) {
+                if (auto* upsilon = value->as<UpsilonValue>())
+                    incomingValues.add(upsilon->phi(), Vector<Value*, 2>()).iterator->value.append(upsilon->child(0));
+                else if (isStore(value->opcode()))
+                    stores.append(value->as<MemoryValue>());
+            }
+        }
+    }
+
+    static bool isAnyComputedFrom(Vector<Value*, 16> worklist, const Vector<Value*, 4>& sources, NaturalLoops& loops, const NaturalLoop& loop, const IncomingValues& incomingValues)
+    {
+        UncheckedKeyHashSet<Value*> seen;
+        while (!worklist.isEmpty()) {
+            Value* value = worklist.takeLast();
+            if (!loops.belongsTo(value->owner, loop) || !seen.add(value).isNewEntry)
+                continue;
+            if (sources.contains(value))
+                return true;
+            if (value->opcode() != Phi) {
+                for (Value* child : value->children())
+                    worklist.append(child);
+                continue;
+            }
+            if (auto iterator = incomingValues.find(value); iterator != incomingValues.end())
+                worklist.appendVector(iterator->value);
+        }
+        return false;
+    }
+
+    static Vector<Value*, 4> basesOf(Value* address, const IncomingValues& incomingValues)
+    {
+        Vector<Value*, 4> bases;
+        Vector<Value*, 4> worklist { address };
+        while (!worklist.isEmpty()) {
+            Value* value = worklist.takeLast();
+            switch (value->opcode()) {
+            case Add:
+                worklist.append(value->child(0));
+                worklist.append(value->child(1));
+                break;
+            case Phi:
+                if (bases.contains(value))
+                    break;
+                if (auto iterator = incomingValues.find(value); iterator != incomingValues.end())
+                    worklist.appendVector(iterator->value);
+                [[fallthrough]];
+            case Load:
+            case ArgumentReg:
+            case Patchpoint:
+                bases.append(value);
+                break;
+            default:
+                break;
+            }
+        }
+        return bases;
+    }
+
+    static bool readSamePlace(Value* a, Value* b)
+    {
+        while (a != b) {
+            if (a->opcode() != Load || b->opcode() != Load || a->as<MemoryValue>()->offset() != b->as<MemoryValue>()->offset())
+                return false;
+            a = a->lastChild();
+            b = b->lastChild();
+        }
+        return true;
+    }
+
+    static bool haveSameBase(const Vector<Value*, 4>& bases, const Vector<Value*, 4>& otherBases)
+    {
+        return bases.containsIf([&](Value* base) {
+            return otherBases.containsIf([&](Value* otherBase) { return readSamePlace(base, otherBase); });
+        });
+    }
+
+    // A binary search for the place to store into the list that it searches. With selects for its bounds, each load waits for the comparison before it and each search for the store before it.
+    bool wouldChainRunsOfLoop(NaturalLoops& loops, BasicBlock* head, const Region& region)
+    {
+        const NaturalLoop* loop = loops.innerMostLoopOf(head);
+        const NaturalLoop* outerLoop = loop ? loops.innerMostOuterLoop(*loop) : nullptr;
+        if (!outerLoop)
+            return false;
+        while (const NaturalLoop* next = loops.innerMostOuterLoop(*outerLoop))
+            outerLoop = next;
+
+        Vector<Value*, 4> selected;
+        for (Value* phi : *region.join) {
+            if (phi->opcode() == Phi && (isWrittenInArm(region, 0, phi) || isWrittenInArm(region, 1, phi)))
+                selected.append(phi);
+        }
+
+        Vector<MemoryValue*, 4> loads;
+        Vector<Value*, 16> loadAddresses;
+        Vector<Value*, 16> worklist { head->last()->child(0) };
+        UncheckedKeyHashSet<Value*> seen;
+        while (!worklist.isEmpty()) {
+            Value* value = worklist.takeLast();
+            if (value->opcode() == Phi || !loops.belongsTo(value->owner, *loop) || !seen.add(value).isNewEntry)
+                continue;
+            if (isLoad(value->opcode())) {
+                loads.append(value->as<MemoryValue>());
+                loadAddresses.append(value->lastChild());
+            }
+            for (Value* child : value->children())
+                worklist.append(child);
+        }
+
+        IncomingValues incomingValues;
+        Vector<MemoryValue*, 8> stores;
+        collectIncomingValuesAndStores(*loop, incomingValues, stores);
+        if (!isAnyComputedFrom(WTF::move(loadAddresses), selected, loops, *loop, incomingValues))
+            return false;
+
+        incomingValues.clear();
+        stores.shrink(0);
+        collectIncomingValuesAndStores(*outerLoop, incomingValues, stores);
+        auto basesOfLoads = loads.map<Vector<Vector<Value*, 4>, 4>>([&](MemoryValue* load) { return basesOf(load->lastChild(), incomingValues); });
+        Vector<Value*, 16> storeAddresses;
+        for (MemoryValue* store : stores) {
+            for (unsigned i = 0; i < loads.size(); ++i) {
+                if (loads[i]->range().overlaps(store->range()) && haveSameBase(basesOfLoads[i], basesOf(store->lastChild(), incomingValues))) {
+                    storeAddresses.append(store->lastChild());
+                    break;
+                }
+            }
+        }
+        return isAnyComputedFrom(WTF::move(storeAddresses), selected, loops, *outerLoop, incomingValues);
+    }
+
     bool isSpeculated(Value* value, unsigned& cost)
     {
         switch (value->opcode()) {
@@ -106,6 +408,8 @@ private:
         case Const32:
         case Const64:
             return true;
+        case Patchpoint:
+            return value->as<PatchpointValue>()->onlyKeepsChildrenAlive;
         case Add:
         case Sub:
         case Neg:
@@ -177,6 +481,11 @@ private:
         return nullptr;
     }
 
+    static bool isWrittenInArm(const Region& region, unsigned arm, Value* phi)
+    {
+        return region.arms[arm] && (lastUpsilonFor(region.arms[arm], phi) || (region.nested[arm] && lastUpsilonFor(region.nested[arm]->join, phi)));
+    }
+
     bool analyze(BasicBlock* head, unsigned depth, unsigned& cost, Region& region)
     {
         if (head->last()->opcode() != Branch || head->taken().isRare() || head->notTaken().isRare() || head->taken().block() == head->notTaken().block())
@@ -233,20 +542,21 @@ private:
                 continue;
             bool isWritten = false;
             for (unsigned i = 0; i < 2; ++i) {
-                bool isWrittenInArm = region.arms[i] && (lastUpsilonFor(region.arms[i], phi) || (region.nested[i] && lastUpsilonFor(region.nested[i]->join, phi)));
-                isWritten |= isWrittenInArm;
-                if (!isWrittenInArm && !lastUpsilonFor(head, phi))
+                bool isWrittenHere = isWrittenInArm(region, i, phi);
+                isWritten |= isWrittenHere;
+                if (!isWrittenHere && !lastUpsilonFor(head, phi))
                     return false;
             }
             if (!isWritten)
                 continue;
-            if (!phi->type().isInt())
+            if (!canSelectWithoutBranch(phi, head, region))
                 return false;
             if (++numberOfSelects > m_proc.limit(Limit::MaxSelectsPerJoin)) {
                 m_proc.didReachLimit(Limit::MaxSelectsPerJoin, head->last()->origin());
                 return false;
             }
         }
+        region.numberOfSelects = numberOfSelects;
         return true;
     }
 
@@ -281,12 +591,29 @@ private:
         m_removedBlocks.add(successor);
     }
 
-    void convert(BasicBlock* head, Region& region)
+    Value* appendChoice(BasicBlock* head, Origin origin, Value* condition, Value* taken, Value* notTaken, bool keepsConstantsInRegisters)
+    {
+        if (taken == notTaken)
+            return taken;
+        bool isAnswer = taken->isInt(1) && notTaken->isInt(0);
+        bool isOppositeOfAnswer = taken->isInt(0) && notTaken->isInt(1);
+        if (keepsConstantsInRegisters || (!isAnswer && !isOppositeOfAnswer))
+            return head->appendNew<Value>(m_proc, Select, origin, condition, taken, notTaken);
+        Value* answer = condition;
+        if (Value* opposite = isOppositeOfAnswer ? condition->invertedCompare(m_proc) : nullptr) {
+            head->append(opposite);
+            answer = opposite;
+        } else if (isOppositeOfAnswer || !condition->returnsBool())
+            answer = head->appendNew<Value>(m_proc, isAnswer ? NotEqual : Equal, origin, condition, head->appendIntConstant(m_proc, origin, condition->type(), 0));
+        return taken->type() == Int64 ? head->appendNew<Value>(m_proc, ZExt32, origin, answer) : answer;
+    }
+
+    void convert(BasicBlock* head, Region& region, bool keepsConstantsInRegisters)
     {
         for (unsigned i = 0; i < 2; ++i) {
             if (!region.nested[i])
                 continue;
-            convert(region.arms[i], *region.nested[i]);
+            convert(region.arms[i], *region.nested[i], keepsConstantsInRegisters);
             RELEASE_ASSERT(m_removedBlocks.contains(region.nested[i]->join));
         }
         Value* branch = head->last();
@@ -338,8 +665,7 @@ private:
                 if (upsilon && upsilon->phi() == entry.phi)
                     upsilon->replaceWithNop();
             }
-            Value* chosen = entry.values[0] == entry.values[1] ? entry.values[0] : head->appendNew<Value>(m_proc, Select, origin, condition, entry.values[0], entry.values[1]);
-            head->appendNew<UpsilonValue>(m_proc, origin, chosen, entry.phi);
+            head->appendNew<UpsilonValue>(m_proc, origin, appendChoice(head, origin, condition, entry.values[0], entry.values[1], keepsConstantsInRegisters), entry.phi);
         }
         head->appendNew<Value>(m_proc, Jump, origin);
         head->setSuccessors(FrequentedBlock(region.join));
@@ -350,6 +676,8 @@ private:
 
     Procedure& m_proc;
     IndexSet<BasicBlock*> m_removedBlocks;
+    IndexSet<Value*> m_branchesInLoopsThatKeepConstantsInRegisters;
+    Vector<std::optional<bool>> m_loopsKeepEveryRegister;
 };
 
 } // anonymous namespace

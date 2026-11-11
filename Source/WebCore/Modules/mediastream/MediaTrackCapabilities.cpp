@@ -32,7 +32,7 @@
 
 namespace WebCore {
 
-static DoubleRange LEGACY_NODELETE capabilityDoubleRange(const DoubleCapabilityRange& value)
+NODELETE static DoubleRange capabilityDoubleRange(const DoubleCapabilityRange& value)
 {
     auto min = value.min();
     auto max = value.max();
@@ -48,7 +48,7 @@ static DoubleRange LEGACY_NODELETE capabilityDoubleRange(const DoubleCapabilityR
     return range;
 }
 
-static LongRange LEGACY_NODELETE capabilityLongRange(const LongCapabilityRange& value)
+NODELETE static LongRange capabilityLongRange(const LongCapabilityRange& value)
 {
     return { value.max(), value.min() };
 }
@@ -69,8 +69,7 @@ static Vector<String> capabilityStringVector(const Vector<MeteringMode>& modes)
 
 static Vector<bool> capabilityBooleanVector(RealtimeMediaSourceCapabilities::EchoCancellation cancellation)
 {
-    Vector<bool> result;
-    result.reserveInitialCapacity(2);
+    Vector<bool> result(ReserveCapacityTag { }, 2);
     switch (cancellation) {
     case RealtimeMediaSourceCapabilities::EchoCancellation::On:
         result.append(true);
@@ -88,8 +87,7 @@ static Vector<bool> capabilityBooleanVector(RealtimeMediaSourceCapabilities::Ech
 
 static Vector<bool> capabilityBooleanVector(RealtimeMediaSourceCapabilities::BackgroundBlur backgroundBlur)
 {
-    Vector<bool> result;
-    result.reserveInitialCapacity(2);
+    Vector<bool> result(ReserveCapacityTag { }, 2);
     switch (backgroundBlur) {
     case RealtimeMediaSourceCapabilities::BackgroundBlur::On:
         result.append(true);
@@ -107,8 +105,7 @@ static Vector<bool> capabilityBooleanVector(RealtimeMediaSourceCapabilities::Bac
 
 static Vector<bool> powerEfficientCapabilityVector(bool powerEfficient)
 {
-    Vector<bool> result;
-    result.reserveInitialCapacity(2);
+    Vector<bool> result(ReserveCapacityTag { }, 2);
     result.append(false);
     if (powerEfficient)
         result.append(true);

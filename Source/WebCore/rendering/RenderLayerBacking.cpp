@@ -195,7 +195,7 @@ public:
     }
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
-    void LEGACY_NODELETE setDetectsHDRContent()
+    NODELETE void setDetectsHDRContent()
     {
         m_hdrContent = RequestState::Unknown;
         m_rendererHDRContent = RequestState::Unknown;
@@ -210,7 +210,7 @@ public:
     }
 
 
-    bool LEGACY_NODELETE isPaintsContentSatisfied() const
+    NODELETE bool isPaintsContentSatisfied() const
     {
 #if HAVE(SUPPORT_HDR_DISPLAY)
         if (m_hdrContent == RequestState::Unknown)
@@ -234,7 +234,7 @@ public:
     }
 #endif
 
-    bool LEGACY_NODELETE isContentsTypeSatisfied() const
+    NODELETE bool isContentsTypeSatisfied() const
     {
 #if HAVE(SUPPORT_HDR_DISPLAY)
         if (m_rendererHDRContent == RequestState::Unknown)
@@ -573,8 +573,14 @@ void RenderLayerBacking::setTiledBackingHasMargins(BoxSideSet margins)
 
 void RenderLayerBacking::updateDebugIndicators(bool showBorder, bool showRepaintCounter)
 {
+    // The remote frame's process draws its own repaint counter at the same corner.
+    auto hostsRemoteFrame = [&] {
+        CheckedPtr renderWidget = dynamicDowncast<RenderWidget>(renderer());
+        return renderWidget && renderWidget->remoteFrame();
+    };
+
     m_graphicsLayer->setShowDebugBorder(showBorder);
-    m_graphicsLayer->setShowRepaintCounter(showRepaintCounter);
+    m_graphicsLayer->setShowRepaintCounter(showRepaintCounter && !hostsRemoteFrame());
 
     // m_viewportAnchorLayer can't show layer borders because it's a structural layer.
 
@@ -788,6 +794,8 @@ static LayoutRect clippingLayerBox(const RenderLayerModelObject& renderer)
             result = box->overflowClipRect({ });
         else if (CheckedPtr modelObject = dynamicDowncast<RenderSVGModelObject>(renderer))
             result = modelObject->overflowClipRect({ });
+        // overflow: clip on one axis only leaves the other axis infinite.
+        result.makeRenderable();
     }
 
     if (renderer.hasClip()) {
@@ -943,10 +951,12 @@ static IntOutsets filterSamplingOutsets(const RenderLayer& layer)
     if (auto* backing = layer.backing(); backing && !filter.isNone() && !backing->canCompositeFilters())
         return { };
 
-    if (!filter.hasFilterThatMovesPixels())
-        return { };
-
-    return clampedFilterSamplingOutsets(renderer.computeFilterOutsets()).xyFlippedCopy();
+    IntOutsets outsets;
+    if (auto* backing = layer.backing())
+        outsets = backing->filterAnimationOutsets();
+    if (filter.hasFilterThatMovesPixels())
+        outsets = max(outsets, renderer.computeFilterOutsets());
+    return clampedFilterSamplingOutsets(outsets).xyFlippedCopy();
 }
 
 static void expandClipRectByFilterSamplingOutsets(LayoutRect& clipRect, const IntOutsets& outsets)
@@ -994,6 +1004,24 @@ void RenderLayerBacking::updateFilters(const Style::ComputedStyle& style)
     bool hasReferenceFilter = style.filter().hasReferenceFilter();
     m_canCompositeFilters = m_graphicsLayer->setFilters(hasReferenceFilter ? FilterOperations { } : Style::toPlatform(style.filter(), style)) && !hasReferenceFilter;
     m_graphicsLayer->setFilterSamplingOutsets(filterSamplingOutsets(m_owningLayer));
+}
+
+void RenderLayerBacking::updateFilterAnimationOutsets()
+{
+    IntOutsets outsets;
+    for (auto& animationOutsets : m_filterAnimationOutsetsByName.values())
+        outsets = max(outsets, animationOutsets);
+#if ENABLE(THREADED_ANIMATIONS)
+    outsets = max(outsets, m_filterAnimationOutsetsFromAcceleratedEffects);
+#endif
+    if (outsets == m_filterAnimationOutsets)
+        return;
+
+    m_filterAnimationOutsets = outsets;
+    m_graphicsLayer->setFilterSamplingOutsets(filterSamplingOutsets(m_owningLayer));
+    m_owningLayer.setDescendantsNeedUpdateBackingAndHierarchyTraversal();
+    m_owningLayer.setSubsequentLayersNeedCompositingRequirementsTraversal();
+    compositor().scheduleCompositingLayerUpdate();
 }
 
 void RenderLayerBacking::updateBackdropFilters(const Style::ComputedStyle& style)
@@ -1147,7 +1175,7 @@ void RenderLayerBacking::updateAppleVisualEffect(const Style::ComputedStyle& sty
 }
 #endif
 
-static bool LEGACY_NODELETE layerOrAncestorIsTransformedOrUsingCompositedScrolling(RenderLayer& layer)
+NODELETE static bool layerOrAncestorIsTransformedOrUsingCompositedScrolling(RenderLayer& layer)
 {
     for (auto* curr = &layer; curr; curr = curr->parent()) {
         if (curr->isTransformed() || curr->hasCompositedScrollableOverflow())
@@ -1179,7 +1207,7 @@ bool RenderLayerBacking::shouldClipCompositedBounds() const
     return true;
 }
 
-static bool LEGACY_NODELETE hasNonZeroTransformOrigin(const RenderLayerModelObject& renderer)
+NODELETE static bool hasNonZeroTransformOrigin(const RenderLayerModelObject& renderer)
 {
     auto& style = renderer.style();
     auto fixedTransformOriginX = style.transformOriginX().tryFixed();
@@ -1474,7 +1502,7 @@ bool RenderLayerBacking::updateConfiguration(const RenderLayer* compositingAnces
         case PluginLayerHostingStrategy::None:
             break;
         case PluginLayerHostingStrategy::PlatformLayer:
-            m_graphicsLayer->setContentsToPlatformLayer(pluginViewBase->platformLayer(), GraphicsLayer::ContentsLayerPurpose::Plugin);
+            SUPPRESS_FORWARD_DECL_ARG m_graphicsLayer->setContentsToPlatformLayer(pluginViewBase->platformLayer(), GraphicsLayer::ContentsLayerPurpose::Plugin);
             break;
         case PluginLayerHostingStrategy::GraphicsLayer:
             // layer is parented in RenderLayerCompositor::updateBackingAndHierarchy().
@@ -2809,6 +2837,8 @@ void RenderLayerBacking::updateClippingStackLayerGeometry(LayerAncestorClippingS
             entry.shapeMaskLayer->setPosition(FloatPoint());
             entry.shapeMaskLayer->setShapeLayerPath(shapePath);
             entry.shapeMaskLayer->setShapeLayerWindRule(WindRule::NonZero);
+        } else if (CheckedPtr clippingLayer = entry.clipData.clippingLayer.get(); clippingLayer && clippingLayer->renderer().style().border().hasNonRoundCornerShape()) {
+            entry.clippingLayer->setContentsClippingRect(contentsClippingRectForCornerShape(FloatRoundedRect(roundedClipRect), clippingLayer->renderer().style()));
         } else
             entry.clippingLayer->setContentsClippingRect(FloatRoundedRect(roundedClipRect));
         entry.clippingLayer->setContentsRectClipsDescendants(true);
@@ -3074,7 +3104,7 @@ void RenderLayerBacking::positionOverflowControlsLayers()
     }
 }
 
-static bool LEGACY_NODELETE ancestorLayerWillCombineTransform(const RenderLayer* compositingAncestor)
+NODELETE static bool ancestorLayerWillCombineTransform(const RenderLayer* compositingAncestor)
 {
     if (!compositingAncestor)
         return false;
@@ -3595,7 +3625,7 @@ static bool hasPaintedBoxDecorationsOrBackgroundImage(const RenderElement& rende
     return !canDirectlyCompositeBackgroundBackgroundImage(renderer);
 }
 
-static inline bool LEGACY_NODELETE hasPerspectiveOrPreserves3D(const Style::ComputedStyle& style)
+NODELETE static inline bool hasPerspectiveOrPreserves3D(const Style::ComputedStyle& style)
 {
     return !style.perspective().isNone() || style.usedTransformStyle3D() == TransformStyle3D::Preserve3D;
 }
@@ -4030,14 +4060,6 @@ bool RenderLayerBacking::isDirectlyCompositedImage() const
     if (m_owningLayer.behavesAsFixed() && m_graphicsLayer->allowsBackingStoreDetaching())
         return false;
 
-#if (PLATFORM(GTK) || PLATFORM(WPE))
-        // GTK and WPE ports don't support rounded rect clipping at TextureMapper level, so they cannot
-        // directly composite images that have border-radius propery. Draw them as non directly composited
-        // content instead. See https://bugs.webkit.org/show_bug.cgi?id=174157.
-        if (renderer().style().border().hasBorderRadius())
-            return false;
-#endif
-
     if (auto* viewTransitionCapture = dynamicDowncast<RenderViewTransitionCapture>(renderer())) {
         auto image = viewTransitionCapture->image();
         if (!image)
@@ -4051,6 +4073,12 @@ bool RenderLayerBacking::isDirectlyCompositedImage() const
 
 #if ENABLE(VIDEO)
     if (is<RenderMedia>(renderer()))
+        return false;
+#endif
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    // A directly composited image is never painted, so it could not be inverted.
+    if (RefPtr styleImage = imageRenderer->imageResource().styleImage(); styleImage && AXCustomColorModeController::shouldForceInvertBitmapImage(*imageRenderer, *styleImage))
         return false;
 #endif
 
@@ -5144,7 +5172,7 @@ void RenderLayerBacking::verifyNotPainting()
 }
 #endif
 
-bool RenderLayerBacking::startAnimation(double timeOffset, const GraphicsLayerAnimation& animation, const BlendingKeyframes& keyframes)
+bool RenderLayerBacking::startAnimation(double timeOffset, const GraphicsLayerAnimation& animation, const BlendingKeyframes& keyframes, const IntOutsets& filterAnimationOutsets)
 {
     if (renderer().capturedInViewTransition())
         return false;
@@ -5225,7 +5253,8 @@ bool RenderLayerBacking::startAnimation(double timeOffset, const GraphicsLayerAn
     if (hasOpacity && m_graphicsLayer->addAnimation(opacityVector, &animation, keyframes.acceleratedAnimationName(), timeOffset))
         didAnimate = true;
 
-    if (hasFilter && m_graphicsLayer->addAnimation(filterVector, &animation, keyframes.acceleratedAnimationName(), timeOffset))
+    bool didAnimateFilter = hasFilter && m_graphicsLayer->addAnimation(filterVector, &animation, keyframes.acceleratedAnimationName(), timeOffset);
+    if (didAnimateFilter)
         didAnimate = true;
 
     if (hasBackdropFilter && m_graphicsLayer->addAnimation(backdropFilterVector, &animation, keyframes.acceleratedAnimationName(), timeOffset))
@@ -5235,6 +5264,12 @@ bool RenderLayerBacking::startAnimation(double timeOffset, const GraphicsLayerAn
         m_owningLayer.setNeedsPostLayoutCompositingUpdate();
         m_owningLayer.setNeedsCompositingGeometryUpdate();
     }
+
+    if (didAnimateFilter && !filterAnimationOutsets.isZero()) {
+        m_filterAnimationOutsetsByName.set(keyframes.acceleratedAnimationName(), filterAnimationOutsets);
+        updateFilterAnimationOutsets();
+    } else if (m_filterAnimationOutsetsByName.remove(keyframes.acceleratedAnimationName()))
+        updateFilterAnimationOutsets();
 
     return didAnimate;
 }
@@ -5283,6 +5318,7 @@ void RenderLayerBacking::updateAcceleratedEffectsAndBaseValues(HashSet<Ref<Accel
     OptionSet<AcceleratedEffectProperty> replacedAcceleratedProperties;
 
     AcceleratedEffects acceleratedEffects;
+    Vector<std::pair<Ref<AcceleratedEffect>, Ref<KeyframeEffect>>> filterEffects;
     HashSet<Ref<AcceleratedTimeline>> effectTimelines;
     if (auto* effectStack = target->keyframeEffectStack()) {
         if (effectStack->allowsAcceleration()) {
@@ -5329,15 +5365,17 @@ void RenderLayerBacking::updateAcceleratedEffectsAndBaseValues(HashSet<Ref<Accel
                 // because of the complexities involved with possibly blending across multiple filter types. Since
                 // this is bound to be rare, it's a lot easier to simply disallow acceleration in this case.
                 if (acceleratedProperties.contains(AcceleratedEffectProperty::Filter)) {
-                    if (hasEffectAffectingFilter && !replacedAcceleratedProperties.contains(AcceleratedEffectProperty::Filter))
+                    if (hasEffectAffectingFilter)
                         disallowedAcceleratedProperties.add(AcceleratedEffectProperty::Filter);
                     hasEffectAffectingFilter = true;
                 }
                 if (acceleratedProperties.contains(AcceleratedEffectProperty::BackdropFilter)) {
-                    if (hasEffectAffectingBackdropFilter && !replacedAcceleratedProperties.contains(AcceleratedEffectProperty::BackdropFilter))
+                    if (hasEffectAffectingBackdropFilter)
                         disallowedAcceleratedProperties.add(AcceleratedEffectProperty::BackdropFilter);
                     hasEffectAffectingBackdropFilter = true;
                 }
+                if (acceleratedProperties.contains(AcceleratedEffectProperty::Filter))
+                    filterEffects.append(std::pair { acceleratedEffect, Ref { *effect } });
                 effectTimelines.add(Ref { *acceleratedEffect->timeline() });
                 acceleratedEffects.append(WTF::move(acceleratedEffect));
             }
@@ -5409,7 +5447,18 @@ void RenderLayerBacking::updateAcceleratedEffectsAndBaseValues(HashSet<Ref<Accel
             effect->makeForwardsFilling();
     }
 
+    IntOutsets filterAnimationOutsetsFromAcceleratedEffects;
+    for (auto& [acceleratedEffect, effect] : filterEffects) {
+        if (!acceleratedEffect->animatedProperties().contains(AcceleratedEffectProperty::Filter))
+            continue;
+        if (acceleratedEffects.containsIf([&](auto& remainingEffect) { return remainingEffect.ptr() == acceleratedEffect.ptr(); }))
+            filterAnimationOutsetsFromAcceleratedEffects = max(filterAnimationOutsetsFromAcceleratedEffects, effect->computeExtentOfFilterAnimation());
+    }
+
     m_graphicsLayer->setAcceleratedEffectsAndBaseValues(WTF::move(acceleratedEffects), WTF::move(baseValues));
+
+    m_filterAnimationOutsetsFromAcceleratedEffects = filterAnimationOutsetsFromAcceleratedEffects;
+    updateFilterAnimationOutsets();
 
     if (!renderer.view().needsLayout() && !m_owningLayer.normalFlowListDirty() && !m_owningLayer.zOrderListsDirty())
         updateAnimationExtent();
@@ -5429,6 +5478,8 @@ void RenderLayerBacking::animationFinished(const String& animationName)
     m_graphicsLayer->removeAnimation(animationName, std::nullopt);
     m_owningLayer.setNeedsPostLayoutCompositingUpdate();
     m_owningLayer.setNeedsCompositingGeometryUpdate();
+    if (m_filterAnimationOutsetsByName.remove(animationName))
+        updateFilterAnimationOutsets();
 }
 
 void RenderLayerBacking::transformRelatedPropertyDidChange()

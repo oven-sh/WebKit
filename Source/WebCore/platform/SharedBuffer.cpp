@@ -108,8 +108,7 @@ FragmentedSharedBuffer::FragmentedSharedBuffer(size_t size, const DataSegmentVec
 
 static Vector<uint8_t> combineSegmentsData(const FragmentedSharedBuffer::DataSegmentVector& segments, size_t size)
 {
-    Vector<uint8_t> combinedData;
-    combinedData.reserveInitialCapacity(size);
+    Vector<uint8_t> combinedData(ReserveCapacityTag { }, size);
     for (auto& segment : segments)
         combinedData.append(segment.segment->span());
     ASSERT(combinedData.size() == size);
@@ -118,8 +117,7 @@ static Vector<uint8_t> combineSegmentsData(const FragmentedSharedBuffer::DataSeg
 
 Ref<SharedBuffer> FragmentedSharedBuffer::makeContiguous() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST if (RefPtr sharedBuffer = dynamicDowncast<SharedBuffer>(*const_cast<FragmentedSharedBuffer*>(this)))
+    if (RefPtr sharedBuffer = dynamicDowncast<SharedBuffer>(*const_cast<FragmentedSharedBuffer*>(this)))
         return sharedBuffer.releaseNonNull();
     if (!m_segments.size())
         return SharedBuffer::create();
@@ -154,8 +152,7 @@ auto FragmentedSharedBuffer::toIPCData() const -> IPCData
 
 Vector<uint8_t> FragmentedSharedBuffer::copyData() const
 {
-    Vector<uint8_t> data;
-    data.reserveInitialCapacity(size());
+    Vector<uint8_t> data(ReserveCapacityTag { }, size());
     forEachSegment([&data](auto span) {
         data.append(span);
     });
@@ -194,8 +191,7 @@ Ref<SharedBuffer> FragmentedSharedBuffer::getContiguousData(size_t position, siz
     ASSERT(element.segment->size() > offsetInSegment);
     if (element.segment->size() - offsetInSegment >= length)
         return SharedBufferDataView { element.segment.copyRef(), offsetInSegment, length }.createSharedBuffer();
-    Vector<uint8_t> combinedData;
-    combinedData.reserveInitialCapacity(length);
+    Vector<uint8_t> combinedData(ReserveCapacityTag { }, length);
     combinedData.append(element.segment->span().subspan(offsetInSegment));
 
     for (skip(elements, 1); combinedData.size() < length && !elements.empty(); skip(elements, 1)) {

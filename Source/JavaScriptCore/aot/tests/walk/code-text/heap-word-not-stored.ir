@@ -1,0 +1,28 @@
+# a read of a heap word stands behind a store on every way
+# RUN: verify-code
+# CHECK: TypeOutOfDate: f0 CoroutineBody b3 v6 GetHeapFrameWord: the read names undefined, and on some way to a read of the word under that type nothing was stored into the word
+# -- code
+# code f0:CoroutineBody {
+#   v0: undefined @JSValue = Undefined
+#   b0(v1: anything @JSValue, v2: anything @JSValue) entry=0:
+#     v3: anything?UndescribedNativeResult @JSValue = NewHeapWords numberOfWords=1 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v4: boolean @Boolean = TypeTest v1 testedType=undefined
+#     Branch v4 -> taken b1(), notTaken b2()
+#   b1():
+#     v5 @Void = PutHeapFrameWord v3, v0 traits=[mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b3()
+#   b2():
+#     Jump -> next b3()
+#   b3():
+#     v6: undefined @JSValue = GetHeapFrameWord v3 valueType=undefined traits=[mayTouchMemory]
+#     Return v6
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+entry module=m0

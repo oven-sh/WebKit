@@ -1,0 +1,87 @@
+# function total(list: unknown[]) { let sum = 0; for (let i = 0; i < list.length; i++) { const x = list[i]; if (typeof x === "number") sum += x; } return sum; }
+# function handOn(list: unknown[]) { for (let i = 0; i < list.length; i++) sink(list[i]); }
+# Behind the guard both parameters are lists; nothing is declared or proven of what they hold, so the read gives a box and names no storage. In line it knew boxed elements alone: a list of doubles took the stub at every turn.
+# Where an operation of the read's own block reckons with the element (an operator, a relation, an unboxing, a test for a number) the read has an arm for raw doubles too, on the rare edge: the way of boxed elements keeps its branch.
+# Where the turn only hands the element on there is none: those are most of the loops of an application, and the arm would be bytes for nothing.
+# RUN: emit f1:Body mechanisms=all-LoopInvariants
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Load({{*}}indexedDoubleProperties
+# RUN(ON): emit f2:Body mechanisms=all-LoopInvariants
+# ON-LABEL: unit f2:Body
+# ON-NOT: indexedDoubleProperties
+# RUN(ANSWER): run-in-shell globalThis.sink = (...given) => { if (typeof given[0] !== "function") return print(String(given[0])); const [total, handOn] = given; print(total([0.5, 1.25])); print(total([1, 2])); print(total(["a", 2.5, {}])); print(total([0.5, , 1.5])); print(total([0.5, NaN])); print(Object.is(total([-0]), 0)); handOn([0.5, -0, , 2]); };
+# ANSWER: 1.75
+# ANSWER-NEXT: 3
+# ANSWER-NEXT: 2.5
+# ANSWER-NEXT: 2
+# ANSWER-NEXT: NaN
+# ANSWER-NEXT: true
+# ANSWER-NEXT: 0.5
+# ANSWER-NEXT: 0
+# ANSWER-NEXT: undefined
+# ANSWER-NEXT: 2
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v0, v1 calleeName="sink"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+  b0(v0: undefined|null|Array):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: number, v6: number):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b5()
+  b2():
+    v10 = ElemGet v0, v6
+    v11 = TypeTest v10 testedType=number
+    Branch v11 -> taken b3(| 0), notTaken b4(v5)
+  b3(v12):
+    v13 = NarrowByTest v10, v12
+    v14 = Add v5, v13
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b4(v15)
+  b4(v16: number):
+    v17 = Increment v6
+    v18 = Convert v17 declared={type=number}
+    Jump -> next b1(v16, v18)
+  b5():
+    v19 = Convert v5 declared={type=number}
+    Return v19
+}
+function f2 name="handOn" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    Jump -> next b1(v2)
+  b1(v3: number):
+    LoopHint
+    v5 = PropGet v0 key="length"
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName]
+    v9 = ElemGet v0, v3
+    v10 = Call v8, -, v9 calleeName="sink"
+    v11 = Increment v3
+    v12 = Convert v11 declared={type=number}
+    Jump -> next b1(v12)
+  b3():
+    v13 = Undefined
+    Return v13
+}

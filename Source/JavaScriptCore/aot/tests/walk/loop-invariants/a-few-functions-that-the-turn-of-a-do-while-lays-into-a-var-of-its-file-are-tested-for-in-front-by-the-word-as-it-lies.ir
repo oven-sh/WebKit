@@ -1,0 +1,66 @@
+# main.cjs    var pick; let total = 0; let turn = 0; do { pick = turn => turn + 1; pick = turn => turn + 2; total += pick(turn); turn++; } while (turn < Number("3")); sink(total); function peek() { return pick; } sink(typeof peek());
+# The sister of a-few-functions-of-another-file-that-a-loop-calls-are-tested-for-in-front-of-the-loop-though-the-file-may-not-have-run.ir in ONE file.
+# Link calls the variable filled: its first store lies on every way to the returns, for the body of a do-while dominates the exit, and no read of the text stands in front of it. That speaks of the reads of the text.
+# The read that asks in front of the loop which of the few functions lies there is no read of the text, and no store is seen on the way to it: the word is undefined. So it gives the word as it lies, and a TEST stands behind it, no check.
+# An executable died of it (139; with the proofs checked: "what a variable holds is not of the type that the compiler has proven of it. It is: undefined").
+# RUN(LINK): link variables mechanisms=all
+# LINK: variable g0 {{*}}filled
+# RUN(WALK): walk f0 mechanisms=all
+# WALK-LABEL: code f0:
+# WALK: = GetModuleVariable variable=g0 [returnsRawSlot]
+# WALK: isLoopHead=true
+# RUN(SHELL): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.sink = value => print("said " + value);
+# SHELL: said 9
+# SHELL-NEXT: said function
+
+variable g0 name="pick" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0
+entry module=m0
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: anything, v4: anything):
+    LoopHint
+    v6 = NewClosure function=f1
+    PutModuleVariable v6 variable=g0
+    v8 = NewClosure function=f3
+    PutModuleVariable v8 variable=g0
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v4 calleeName="pick"
+    v12 = Add v3, v11
+    v13 = Increment v4
+    v14 = Builtin builtin=Number
+    v15 = String string="3"
+    v16 = Call v14, -, v15 calleeName="Number"
+    v17 = Less v13, v16
+    Branch v17 -> taken b1(v12, v13), notTaken b2()
+  b2():
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="sink" [isFreeName]
+    v20 = Call v19, -, v12 calleeName="sink"
+    v21 = Call v0 calleeName="peek"
+    v22 = TypeOf v21
+    v23 = Call v19, -, v22 calleeName="sink"
+    v24 = Undefined
+    Return v24
+}
+function f1 name="pick" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="peek" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f3 name="pick" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Add v0, v1
+    Return v2
+}

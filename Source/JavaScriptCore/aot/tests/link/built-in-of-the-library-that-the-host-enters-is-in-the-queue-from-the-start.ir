@@ -1,0 +1,34 @@
+# A built-in that is written in the library and has a function object is compiled whoever mentions it: it is in the queue from the start, and whoever calls it brings nothing.
+# With one node that every function names and that names each such built-in, whatever a built-in leads to stood in one cycle with everything that is reached from there:
+# `helper`, which `map` alone calls, took nothing of what `map` leaves. In a server nearly every function of the library stood in that cycle, by way of a built-in that requires node:net.
+# export const map = Array.prototype.map;  in the library: function map(callback) { return helper(callback); }  function helper(value) { return value; }
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}} in-queue-from-start
+# CHECK-NOT: referrers anybody
+# CHECK: function f2 callers-known one-callee {{*}} takes-arrivals
+# CHECK: referrers f1
+# CHECK-NOT: group
+
+variable g0 name="map" module=m0 declared={type=anything} initialization=Uninitialized
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="map" variable=g0}]
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeMap function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeMap
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f1 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f2
+    v3 = Call v2, -, v1 calleeName="helper" [isNeverInlined]
+    Return v3
+}
+function f2 name="helper" module=m1 role=Library length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

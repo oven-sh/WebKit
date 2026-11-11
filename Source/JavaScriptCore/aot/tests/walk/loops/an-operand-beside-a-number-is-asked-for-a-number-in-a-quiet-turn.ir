@@ -1,0 +1,99 @@
+# `var result = $newArrayLike(length); for (; i < length && $hasContiguousIndex(array, i); i++) if (!$tryPutByValDirect(result, i, tell($getOwnContiguousIndex(array, i)))) break;` with `tell = (crate: Crate) => ({ positive: crate.stock > 0 })`
+# and `interface Crate { stock: number }`. The leaf is copied into the turn. The crates have been in the hands of code that nobody has seen, so nothing is proven of the field: the relation beside the number takes any value, and a
+# value that is an object runs its valueOf. That has no place in a quiet turn: every turn left there, without a test, and the typed copy was thrown away. A NUMBER IS EXPECTED of the field, and the turns store at a position of a
+# list, so source and target are asked once in front of the typed copy: there the operand is asked for a number: where it is one the relation is one of numbers, and where it is none the turn begins again in the other copy, in
+# front of the valueOf. Nothing is asked where nothing or something else is expected (Bun's from-source/walk/guesses/no-copy-of-a-loop-leaves-at-the-first-element-that-is-no-number.ir), nor in other loops: a typed copy is a bet
+# on every guess in its turn.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: isLoopHead=true
+# CHECK-NOT: isLoopHead=true
+# RUN(ASKED): walk f1 mechanisms=all
+# ASKED-LABEL: code f1:Body
+# ASKED: [[isNumber]]: boolean @Boolean = TypeTest [[operand]] testedType=number
+# ASKED: = Narrowed [[operand]], [[isNumber]]
+# ASKED-NOT: form=NumberAndValue
+# RUN(COUNTED): compile NumberOperandsGuardedInIterations mechanisms=all
+# COUNTED: statistic NumberOperandsGuardedInIterations 1
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.after = () => { const list = [crate(3), crate(3), crate(-3), crate(-3)]; print(JSON.stringify(tellAll.call(list))); list[1].stock = { valueOf() { list.length = 2; return 4; } }; print(JSON.stringify(tellAll.call(list)), list.length); };
+# SHELL: [{"positive":true},{"positive":true},{"positive":false},{"positive":false}]
+# SHELL-NEXT: [{"positive":true},{"positive":true},null,null] 2
+# SHELL-NEXT: exited with 0
+
+layout L0 module=m1 position=10 fields=[{key="positive" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m1 position=11 fields=[{key="stock" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+module m1 path="/$bun/js/engine/Made.ts" displayPath="/$bun/js/engine/Made.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="tellAll"
+    v3 = NewClosure function=f3
+    PropSet v1, v3 key="crate"
+    v5 = PropGet v1 key="after"
+    v6 = Call v5, -
+    v7 = Undefined
+    Return v7
+}
+function f1 name="tellAll" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = ToObject v0 message="no object"
+    v2 = Integer
+    v3 = Convert v2 declared={type=undefined|number}
+    v4 = HasJSType v1
+    v5 = ToBoolean v4
+    Branch v5 -> taken b2(| 0), notTaken b10(| 0)
+  b2(v6):
+    v7 = Convert v1 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+    v8 = PropGet v7 key="length"
+    v9 = ToLength v8
+    v10 = Convert v9 declared={type=int flags=[IsFromCompiler, IsClaim]}
+    v11 = NewArrayLike v10
+    v12 = NewClosure function=f2
+    Jump -> next b3(v3)
+  b3(v13: undefined|number):
+    LoopHint
+    v15 = Less v13, v9
+    Branch v15 -> taken b4(), notTaken b9()
+  b4():
+    v16 = Convert v13 declared={type=int flags=[IsFromCompiler, IsClaim]}
+    v17 = HasContiguousIndex v7, v16
+    v18 = ToBoolean v17
+    Branch v18 -> taken b5(| 0), notTaken b8(| 0)
+  b5(v19):
+    v20 = GetOwnContiguousIndex v7, v16
+    v21 = Call v12, -, v20
+    v22 = TryPutByValDirect v11, v16, v21
+    v23 = ToBoolean v22
+    Branch v23 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v24):
+    v25 = Increment v13
+    v26 = Convert v25 declared={type=undefined|number}
+    Jump -> next b3(v26)
+  b7(v27):
+    Jump -> next b9()
+  b8(v28):
+    Jump -> next b9()
+  b9():
+    Return v11
+  b10(v29):
+    v30 = Undefined
+    Return v30
+}
+function f2 name="tell" module=m0 position=20 length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1):
+    v1 = PropGet v0 key="stock" @21
+    v2 = Integer
+    v3 = Greater v1, v2 @22
+    v4 = NewObject -, v3 layout=L0 fields=[0] @23
+    Return v4
+}
+function f3 name="crate" module=m0 position=30 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0] @31
+    Return v1
+}

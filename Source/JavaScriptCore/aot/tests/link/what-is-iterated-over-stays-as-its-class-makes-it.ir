@@ -1,0 +1,92 @@
+# `for (const x of kept)`, `[...kept]`, `const [a] = kept`: all that arrives to be iterated over is a list out of a family of sites that has not escaped and under whose unknown names nothing lies.
+# The tables of the reading that proves list the operation that iterates by its place. Nothing is asked there of the iterator or of what its steps answer with, which the protocol looks at under the same place.
+# function own() { const kept = [1]; for (const x of kept) { } [...kept]; }
+# function handed() { const list = [1]; sink(list); for (const x of list) { } [...list]; }       unseen code has the list
+# function named() { const list = [1]; list[sink()] = 1; for (const x of list) { } [...list]; }  something lies under its unknown names
+# RUN: link accesses mechanisms=all
+# CHECK: iterable-as-made f1 v2
+# CHECK-NEXT: iterable-as-made f1 v8
+# CHECK-NOT: iterable-as-made
+# RUN(HELD): link held accesses mechanisms=all
+# HELD-NOT: iterable-as-made
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, - calleeName="own"
+    v2 = NewClosure function=f2
+    v3 = Call v2, - calleeName="handed"
+    v4 = NewClosure function=f3
+    v5 = Call v4, - calleeName="named"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="own" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v7 = NewArray contents=anything
+    AppendSpread v7, v1
+    v9 = Undefined
+    Return v9
+  b3():
+    Jump -> next b1()
+}
+function f2 name="handed" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v1 calleeName="sink"
+    v5 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v10 = NewArray contents=anything
+    AppendSpread v10, v1
+    v12 = Undefined
+    Return v12
+  b3():
+    Jump -> next b1()
+}
+function f3 name="named" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, - calleeName="sink"
+    ElemSet v1, v4, v0
+    v6 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v8 = IteratorResume v6
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v11 = NewArray contents=anything
+    AppendSpread v11, v1
+    v13 = Undefined
+    Return v13
+  b3():
+    Jump -> next b1()
+}

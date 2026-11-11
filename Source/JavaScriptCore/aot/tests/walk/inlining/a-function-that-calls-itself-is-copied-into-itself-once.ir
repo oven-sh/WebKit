@@ -1,0 +1,68 @@
+# function fib(n) { if (n < 2) return n; return fib(n - 1) + fib(n - 2); }
+# function down(n) { if (n < 1) return 0; return down(n - 1); }
+# A function that calls itself is a loop written as calls. Where the unit walks its own body a written call of itself is copied in by the rule of calls that stand in loops: half of fib's calls are leaves, and they are gone.
+# Only the unit's own body copies: in a copy the calls of itself stay calls, so there is one level and no more.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame 1 callee=f1
+# CHECK: frame 2 callee=f1
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK: = CallDirect {{*}}function=f1
+# RUN(ONCE): walk f1 mechanisms=all
+# ONCE-NOT: frame 3
+# A call of itself whose answer is returned at once is the back edge of the loop: a copy would write the body twice and leave the call.
+# RUN(BACK): walk f2 mechanisms=all
+# BACK-LABEL: code f2:Body
+# BACK-NOT: frame 1
+# RUN(WITHOUT): walk f1 mechanisms=all-Inlining
+# WITHOUT-NOT: frame 1
+
+variable g0 name="fib" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="down" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=10
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="fib"
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v3, -, v2 calleeName="down"
+    Return v4
+}
+function f1 name="fib" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = GetModuleVariable variable=g0
+    v4 = Integer integer=1
+    v5 = Sub v0, v4
+    v6 = Call v3, -, v5 calleeName="fib"
+    v7 = GetModuleVariable variable=g0
+    v8 = Integer integer=2
+    v9 = Sub v0, v8
+    v10 = Call v7, -, v9 calleeName="fib"
+    v11 = Add v6, v10
+    Return v11
+}
+function f2 name="down" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g1
+    v5 = Integer integer=1
+    v6 = Sub v0, v5
+    v7 = Call v4, -, v6 calleeName="down"
+    Return v7
+}

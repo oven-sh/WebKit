@@ -8,46 +8,75 @@
 #if ENABLE(AOT)
 
 #include "AOTRealmStartup.h"
+#include <atomic>
 
 namespace JSC {
 
+class InlineWatchpointSet;
+class JSArray;
+class JSCell;
+class InternalFunction;
+class JSFunction;
+class JSValue;
+class ObjectPropertyCondition;
 class PropertyName;
 
 namespace AOT {
 
-enum class RefusedChange : uint8_t { Store, Definition, Deletion, Prototype };
+enum class RejectedWrite : uint8_t { Store, Definition, Deletion, Prototype };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
 
 } // namespace AOT
 
-// What the engine outside aot/ calls.
 namespace AOT::RuntimeHooks {
 
 using AOT::didCreateClass;
 using AOT::didCreateStaticProperty;
-using AOT::didRefuseChange;
-// Null for an object that start-up has not locked.
-using AOT::messageOfRefusalByLockedObject;
+using AOT::didRejectWrite;
+using AOT::isReportedAsReadOnly;
+using AOT::lockedObjectErrorMessage;
+using AOT::reflectThrowsOnLockedProperty;
+using AOT::takePreallocatedStaticProperty;
 
 void willInitializeRealm(JSGlobalObject*);
-// The Structure that every host function of the realm is born with, made of the one that the engine would give them.
-Structure* structureOfHostFunctions(JSGlobalObject*, Structure*);
-// A native constructor is called like every built-in function. It has a Structure of its own, so it refuses by itself what that Structure refuses: nothing is done for it at start.
-bool refusesNameOnNativeConstructor(JSGlobalObject*, PropertyName);
-inline bool keepsPrototypeOfNativeConstructors(JSGlobalObject* realm) { return locksBuiltins(realm); }
-String messageOfNameRefusedOnBuiltinFunction(PropertyName);
-String messageOfPrototypeRefusedOnBuiltinFunction();
+Structure* structureForHostFunctions(JSGlobalObject*, Structure*);
+bool rejectsNativeConstructorProperty(JSGlobalObject*, PropertyName);
+bool acceptsHasInstanceOfHost(InternalFunction*, PropertyName, JSValue method);
+inline bool locksNativeConstructorPrototypes(JSGlobalObject* realm) { return locksBuiltins(realm); }
+String lockedBuiltinPropertyErrorMessage(PropertyName);
+String lockedBuiltinPrototypeErrorMessage();
 void didCreateRealm(JSGlobalObject*);
+enum class DeferredWatchpointKind : bool { Structure, PropertyChange };
+void willWatchBuiltins(JSGlobalObject*);
+void didWatchBuiltins(JSGlobalObject*);
+bool defersWatchpoints(JSGlobalObject*);
+bool deferWatchpoint(JSGlobalObject*, const ObjectPropertyCondition&, InlineWatchpointSet&, DeferredWatchpointKind);
+void installDeferredWatchpoints(JSGlobalObject*);
+[[noreturn]] void crashOnHavingABadTime();
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
-// A cacheable dictionary becomes an ordinary object: every name finds what it found, at the offset where it lay, and the prototype stays.
-void didFlattenObjectOnPrototypeChain(VM&, JSObject* flattened);
-void didFlattenStructure(VM&, Structure*);
-// From now on a store that replaces a value of some Structure has somebody to tell.
+bool shouldUseDictionaryForAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);
+void didCreateAdditionTransition(VM&, Structure* made);
+Structure* addBrandForSuperCall(VM&, JSFunction* newTarget, Structure*);
+void finishFillingObjects(VM&);
+void transferEagerLoadsToLoader(VM&);
 void didStartWatchingReplacements(VM&);
 void didChangeMicrotaskQueueing(VM&);
 void didChangeGlobalLexicalBindings(JSGlobalObject*);
 void setLoopPollsEnabled(VM&, bool);
+JSObject* proxyDefinePropertyTarget(VM&, JSValue receiver);
+
+JSArray* tryCreateArrayOfPairs(JSGlobalObject*, JSCell* items);
+
+class NoHelperThreadsScope {
+    WTF_MAKE_NONCOPYABLE(NoHelperThreadsScope);
+public:
+    NoHelperThreadsScope();
+    ~NoHelperThreadsScope();
+};
+extern std::atomic<bool> wasNoHelperThreadsScopeEntered;
+bool isThreadInNoHelperThreadsScope();
+ALWAYS_INLINE bool isInNoHelperThreadsScope() { return wasNoHelperThreadsScopeEntered.load(std::memory_order_relaxed) && isThreadInNoHelperThreadsScope(); }
 
 } } // namespace JSC::AOT::RuntimeHooks
 

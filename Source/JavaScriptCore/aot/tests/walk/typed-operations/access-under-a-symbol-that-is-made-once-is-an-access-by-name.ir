@@ -1,0 +1,19 @@
+# `point[depth]`, where all that `depth` can be is one symbol that is made once, is `point.depth`: every tier of a read by name applies. Built by the value of the key it is a call into the run time at each access.
+# PROGRAM-OF: ../../link/access-under-a-symbol-that-is-made-once.ir
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: ElemGet
+# CHECK: GetSlotOrUndefined {{*}} key=symbol("depth")@m0:0 receivers=[L0] level=Proven
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: ElemSet
+# CHECK: PutSlotOrAdd {{*}} key=symbol("depth")@m0:0 receivers=[L0] level=Proven
+# Where typed operations are withheld Link's key at the access is still asked, and the variable bears it out: it holds the one symbol for good, which is a constant of the program and no memory. The access is the closed form by name.
+# RUN(WITHHELD): walk f1 mechanisms=all-TypedOperations
+# WITHHELD-NOT: ElemGet
+# WITHHELD: PropGet {{*}} key=symbol("depth")@m0:0
+# With every mechanism withheld the walk still puts the symbol in the place of the call that makes it, and an access whose key is that constant is the closed form by name.
+# RUN(NONE): walk f0 f1 mechanisms=none
+# NONE-LABEL: code f0:Body
+# NONE: PropDefine {{*}} key=symbol("depth")@m0:0
+# NONE-LABEL: code f1:Body
+# NONE: ElemGet

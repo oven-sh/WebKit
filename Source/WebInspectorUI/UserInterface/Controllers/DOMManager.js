@@ -787,6 +787,22 @@ WI.DOMManager = class DOMManager extends WI.Object
         return InspectorBackend.hasCommand("DOM.setBreakpointForEventListener", "options");
     }
 
+    static supportsBreakpointForEventListener(eventListener)
+    {
+        // Listener ids are only unique per agent, and frame targets have no event listener breakpoints.
+        // FIXME: <https://webkit.org/b/298980> Add DOM support for FrameTarget.
+        return DOMManager.supportsEventListenerBreakpoints() && !eventListener.owningTarget;
+    }
+
+    static scriptForEventListener(eventListener)
+    {
+        // Resolve a listener's script on its owning target, using the main-frame fallback for listeners
+        // delivered on the page target, as with stack traces delivered on that target.
+        // FIXME: <https://webkit.org/b/326433> Resolve handler scripts owned by other frame targets in the same process.
+        let target = eventListener.owningTarget || WI.assumingMainTarget();
+        return WI.debuggerManager.scriptForStackTraceIdentifier(eventListener.location.scriptId, target, {deliveredOnTarget: true});
+    }
+
     static supportsEditingUserAgentShadowTrees({frontendOnly, target} = {})
     {
         target = target || InspectorBackend;
@@ -1630,12 +1646,15 @@ WI.DOMManager = class DOMManager extends WI.Object
 
     setEventListenerDisabled(eventListener, disabled)
     {
-        let target = WI.assumingMainTarget();
+        let target = eventListener.owningTarget || WI.assumingMainTarget();
         target.DOMAgent.setEventListenerDisabled(eventListener.eventListenerId, disabled);
     }
 
     setBreakpointForEventListener(eventListener)
     {
+        if (!DOMManager.supportsBreakpointForEventListener(eventListener))
+            return;
+
         let breakpoint = this._breakpointsForEventListeners.get(eventListener.eventListenerId);
         if (breakpoint) {
             console.assert(breakpoint.disabled);
@@ -1662,6 +1681,9 @@ WI.DOMManager = class DOMManager extends WI.Object
 
     removeBreakpointForEventListener(eventListener)
     {
+        if (!DOMManager.supportsBreakpointForEventListener(eventListener))
+            return;
+
         let breakpoint = this._breakpointsForEventListeners.take(eventListener.eventListenerId);
         if (!breakpoint)
             return;

@@ -1,0 +1,47 @@
+# all that a program prints or hands to an emitter meets in the nodes of the library. No type says there that it holds lost built-ins, so a store of the library under a key that nobody can read opens nothing
+# in the library: function keep(value, name) { value[name] = 1 }      in the program: keep(new Date().constructor); keep(new Map().constructor); keep(seed); Date.now(); Date.parse("0"); Map.groupBy("0", f);
+# RUN: locks open
+# CHECK: locked DateNow constant
+# CHECK: locked DateParse constant
+# CHECK: locked MapGroupBy constant
+# CHECK-NOT: open Date
+# CHECK-NOT: open Map
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v1 key="now"
+    v3 = Call v2, v1
+    v4 = PropGet v1 key="parse"
+    v5 = String string="0"
+    v6 = Call v4, v1, v5
+    v7 = PropGet v0 key="Map" [isFreeName]
+    v8 = PropGet v7 key="groupBy"
+    v9 = NewClosure function=f2
+    v10 = Call v8, v7, v5, v9
+    v11 = Construct v1, -
+    v12 = PropGet v11 key="constructor"
+    v13 = Construct v7, -
+    v14 = PropGet v13 key="constructor"
+    v15 = NewClosure function=f1
+    v16 = PropGet v0 key="seed" [isFreeName]
+    v17 = Call v15, -, v12, v16
+    v18 = Call v15, -, v14, v16
+    v19 = Call v15, -, v16, v16
+    Return v3
+}
+function f1 name="keep" module=m1 role=Library length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    ElemSet v0, v1, v2
+    Return v2
+}
+function f2 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

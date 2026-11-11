@@ -9,7 +9,6 @@
 
 #include "AOTLimits.h"
 #include "AOTPropertyCachesWords.h"
-#include "AOTVector.h"
 #include "CollectionScope.h"
 #include "RememberedSlot.h"
 #include "Structure.h"
@@ -17,8 +16,8 @@
 #include <bit>
 #include <memory>
 #include <span>
-#include <wtf/BitVector.h>
-#include <wtf/SegmentedVector.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
 #include <wtf/TZoneMalloc.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -29,6 +28,7 @@ class CacheRegistry;
 class CustomAccessorTable;
 
 class StructureRows {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(StructureRows);
     WTF_MAKE_NONCOPYABLE(StructureRows);
 public:
     static StructureRows& singleton();
@@ -55,7 +55,7 @@ class RowDisplacementTable {
     WTF_MAKE_NONCOPYABLE(RowDisplacementTable);
     WTF_MAKE_TZONE_ALLOCATED(RowDisplacementTable);
 public:
-    static constexpr uint32_t numberOfColumns = 1u << 15;
+    static constexpr uint32_t numberOfColumns = UINT16_MAX;
     static constexpr uint32_t maxColumn = numberOfColumns - 1;
     static constexpr uint32_t maxNumberOfBases = 1u << 21;
     static constexpr uint32_t initialNumberOfBases = 1u << 15;
@@ -64,6 +64,7 @@ public:
     static constexpr unsigned regionShift = 12;
     static constexpr uint32_t numberOfHotNames = 1u << 11;
     static constexpr uint32_t hotNameMultiplier = 1779;
+    static size_t sizeOfPagesAtStart(uint64_t valueOfLimitOfBases);
 
     static constexpr bool hasColumn(uint32_t identifierNumber) { return identifierNumber != rowMarkerColumn && identifierNumber <= maxColumn; }
     static constexpr uint32_t numberForRank(uint32_t rankByUse, uint32_t numberOfNames)
@@ -76,7 +77,6 @@ public:
     ~RowDisplacementTable();
 
     const PackedSlot* plane(SlotAccess access) const { return &m_planes[static_cast<unsigned>(access)]->get(); }
-    // Whoever keeps the addresses of the planes reads them again.
     bool takeDidMovePlanes() { return std::exchange(m_didMovePlanes, false); }
 
     bool trySet(Structure*, uint32_t column, SlotAccess, const Slot&);
@@ -104,7 +104,8 @@ private:
         std::span<const uint16_t> span() const { return { const_cast<RowColumns*>(this)->storage(), m_size }; }
         const uint16_t* begin() const { return span().data(); }
         const uint16_t* end() const { return span().data() + m_size; }
-        void append(uint16_t);
+        bool tryMakeRoomForOneMore();
+        bool tryAppend(uint16_t);
         void clear();
 
     private:
@@ -128,6 +129,46 @@ private:
         RowColumns columns;
     };
     static_assert(sizeof(Row) == 16);
+
+    class Rows {
+        WTF_MAKE_NONCOPYABLE(Rows);
+    public:
+        Rows() = default;
+        ~Rows();
+        uint32_t size() const { return m_size; }
+        Row& operator[](uint32_t number) { ASSERT(number < m_size); return m_segments[number / rowsInSegment][number % rowsInSegment]; }
+        const Row& operator[](uint32_t number) const { ASSERT(number < m_size); return m_segments[number / rowsInSegment][number % rowsInSegment]; }
+        bool tryAlloc();
+
+    private:
+        static constexpr uint32_t rowsInSegment = 128;
+        Vector<Row*> m_segments;
+        uint32_t m_size { 0 };
+    };
+
+    class Bits {
+    public:
+        size_t size() const { return m_words.size() * 64; }
+        bool tryMakeRoomFor(size_t number);
+        bool get(size_t number) const { return number < size() && (m_words[number / 64] >> (number % 64) & 1); }
+        void set(size_t number) { ASSERT(number < size()); m_words[number / 64] |= 1ull << (number % 64); }
+        void clear(size_t number)
+        {
+            if (number < size())
+                m_words[number / 64] &= ~(1ull << (number % 64));
+        }
+        void clearAll() { zeroSpan(m_words.mutableSpan()); }
+        template<typename Functor> void forEachSetBit(const Functor& functor) const
+        {
+            for (size_t word = 0; word < m_words.size(); ++word) {
+                for (uint64_t left = m_words[word]; left; left &= left - 1)
+                    functor(word * 64 + std::countr_zero(left));
+            }
+        }
+
+    private:
+        Vector<uint64_t> m_words;
+    };
 
     struct RecentRow {
         uint16_t column { 0 };
@@ -153,6 +194,7 @@ private:
     bool tryGrow();
     void reserve(uint32_t index, PackedSlot);
     void vacate(uint32_t index);
+    bool tryAddRow();
     uint32_t createRow(Structure*, uint16_t column);
     uint32_t moveRow(uint32_t base, std::optional<uint16_t> columnToAdd);
     uint32_t ensureIndex(Structure*, uint16_t column);
@@ -171,24 +213,22 @@ private:
     uint64_t* m_occupied { nullptr };
     uint32_t m_limitOfBases { 0 };
     uint32_t m_capacityOfBases { 0 };
-    // Of each plane, and of the occupied bits.
     std::array<uint32_t, numberOfSlotAccesses + 1> m_numbersOfBasesWithPages { };
     bool m_didMovePlanes { false };
     uint32_t m_nextBase { firstBase };
     uint32_t m_endOfBases { firstBase };
-    SegmentedVector<Row, 128> m_rows;
+    Rows m_rows;
     Vector<uint32_t> m_freeRows;
-    BitVector m_rowsThatCanOutliveWhatTheyName;
-    BitVector m_rowsWrittenSinceLastSweep;
+    Bits m_rowsThatCanOutliveWhatTheyName;
+    Bits m_rowsWrittenSinceLastSweep;
     std::array<RecentRow, 256> m_recentRows { };
-    std::array<BitVector, numberOfSlotAccesses> m_dependsOnChain;
+    std::array<Bits, numberOfSlotAccesses> m_dependsOnChain;
     std::array<std::unique_ptr<RememberedSlotSet>, numberOfSlotAccesses> m_writtenRegions;
     uint32_t m_evictionHand { firstBase };
 };
 
 static_assert(RowDisplacementTable::rowMarkerColumn == PackedSlot::noName && RowDisplacementTable::maxColumn < RowDisplacementTable::rowMarkerTag && RowDisplacementTable::rowMarkerTag <= PackedSlot::maxName);
 static_assert(defaultLimitValue(LimitID::LookupTableNames, Architecture::ARM64) == RowDisplacementTable::maxColumn && defaultLimitValue(LimitID::LookupTableNames, Architecture::X86_64) == RowDisplacementTable::maxColumn);
-static_assert(defaultLimitValue(LimitID::LookupTableBases, Architecture::ARM64) == RowDisplacementTable::maxNumberOfBases && defaultLimitValue(LimitID::LookupTableBases, Architecture::X86_64) == RowDisplacementTable::maxNumberOfBases);
 static_assert(hasOneBitSet(RowDisplacementTable::initialNumberOfBases) && RowDisplacementTable::initialNumberOfBases <= RowDisplacementTable::maxNumberOfBases);
 static_assert(RowDisplacementTable::hotNameMultiplier % 2 && !RowDisplacementTable::numberForRank(0, 5000));
 static_assert(RowDisplacementTable::numberForRank(1, 5000) == RowDisplacementTable::hotNameMultiplier && RowDisplacementTable::numberForRank(2048, 5000) == 2048);

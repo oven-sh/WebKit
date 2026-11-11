@@ -8,44 +8,35 @@
 
 #if ENABLE(AOT)
 
-#include "AOTEdgeResults.h"
-#include "AOTIRPrinter.h"
+#include "AOTFamilies.h"
+#include "AOTIRProgram.h"
+#include "AOTLayout.h"
 #include "AOTRepresentation.h"
 #include "AOTSchemaEnums.h"
-#include "AOTSortedSet.h"
 #include "AOTSupportTestCommands.h"
+#include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTTypeNarrowing.h"
 #include "AOTTypeRelations.h"
+#include "AOTTypeText.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 #include <utility>
+#include <wtf/BitVector.h>
 #include <wtf/CommaPrinter.h>
+#include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/StringPrintStream.h>
+#include <wtf/WeakRandom.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-using NumberSet = SortedSet<uint32_t>;
-
-struct TypeText {
-    const Program& program;
-    const Type& type;
-
-    void dump(PrintStream& out) const { printType(out, program, type); }
-};
-
-struct LayoutText {
-    const Program& program;
-    LayoutID layout;
-
-    void dump(PrintStream& out) const { IRPrinter(out, program).print(layout); }
-};
-
-struct LayoutSetText {
-    const Program& program;
+struct LayoutSetInBrackets {
+    TypeReader types;
     LayoutSetID set;
 
     void dump(PrintStream& out) const
@@ -54,15 +45,14 @@ struct LayoutSetText {
             out.print("[]"_s);
             return;
         }
-        IRPrinter(out, program).print(set);
+        printLayoutSet(out, types, set);
     }
 };
 
-struct FieldText {
-    const Program& program;
+struct FieldOfLayoutText {
     FieldReference field;
 
-    void dump(PrintStream& out) const { out.print(LayoutText { program, field.layout }, '.', field.field); }
+    void dump(PrintStream& out) const { out.print('L', field.layout.index(), '.', field.field); }
 };
 
 struct LegalRepresentationsText {
@@ -80,25 +70,10 @@ struct LegalRepresentationsText {
     }
 };
 
-struct NumberSetText {
-    const NumberSet& set;
-
-    void dump(PrintStream& out) const
-    {
-        if (set.isEmpty()) {
-            out.print('-');
-            return;
-        }
-        CommaPrinter comma(","_s);
-        for (uint32_t number : set)
-            out.print(comma, number);
-    }
-};
-
-class LawChecker {
-    WTF_MAKE_NONCOPYABLE(LawChecker);
+class TypeLawChecker {
+    WTF_MAKE_NONCOPYABLE(TypeLawChecker);
 public:
-    explicit LawChecker(PrintStream& out)
+    explicit TypeLawChecker(PrintStream& out)
         : m_out(out)
     {
     }
@@ -129,9 +104,9 @@ private:
 };
 
 template<typename T>
-class PairTable {
+class TypePairTable {
 public:
-    PairTable(size_t size, NOESCAPE const Invocable<T(unsigned, unsigned)> auto& compute)
+    TypePairTable(size_t size, NOESCAPE const Invocable<T(unsigned, unsigned)> auto& compute)
         : m_size(size)
     {
         m_entries.reserveInitialCapacity(size * size);
@@ -148,35 +123,35 @@ private:
     Vector<T> m_entries;
 };
 
-struct ElementOperation {
-    ASCIILiteral name;
-    void (*run)(PrintStream&, NumberSet&, uint32_t);
-};
-
-struct SetOperation {
-    ASCIILiteral name;
-    void (*run)(PrintStream&, NumberSet&, const NumberSet&);
-};
+using OperationOnTypes = TypeID (*)(TypeArena&, TypeID, TypeID);
 
 } // anonymous namespace
 
-static std::optional<LayoutID> parseLayout(StringView text, const Program& program)
+static unsigned numberOfLayoutsInTypeTest(const Program& program)
+{
+    auto firstAdded = std::ranges::find_if(program.layouts, [](const Layout& layout) {
+        return layout.builtinLayout || layout.namespaceOf;
+    });
+    return static_cast<unsigned>(firstAdded - program.layouts.begin());
+}
+
+static std::optional<LayoutID> layoutNamedInTypeTest(StringView text, const Program& program)
 {
     if (!text.startsWith('L'))
         return std::nullopt;
     auto index = parseTestNumber<uint32_t>(text.substring(1));
-    if (!index || *index >= program.numberOfLayoutsAsRead())
+    if (!index || *index >= numberOfLayoutsInTypeTest(program))
         return std::nullopt;
     return LayoutID(*index);
 }
 
-static std::optional<Vector<LayoutID>> parseLayoutList(StringView text, const Program& program)
+static std::optional<Vector<LayoutID>> layoutsNamedInTypeTest(StringView text, const Program& program)
 {
     Vector<LayoutID> layouts;
     if (text == "-"_s)
         return layouts;
     for (StringView entry : text.splitAllowingEmptyEntries(',')) {
-        auto layout = parseLayout(entry, program);
+        auto layout = layoutNamedInTypeTest(entry, program);
         if (!layout)
             return std::nullopt;
         layouts.append(*layout);
@@ -184,7 +159,7 @@ static std::optional<Vector<LayoutID>> parseLayoutList(StringView text, const Pr
     return layouts;
 }
 
-static PropertyKeyID findKey(const Program& program, PropertyKeyKind kind, StringView text, LayoutID owner)
+static PropertyKeyID findKeyForTypeTest(const Program& program, PropertyKeyKind kind, StringView text, LayoutID owner)
 {
     StringID string = program.strings.find(encodeProgramString(text).span());
     if (!string)
@@ -192,236 +167,308 @@ static PropertyKeyID findKey(const Program& program, PropertyKeyKind kind, Strin
     return program.types.find(PropertyKey { .kind = kind, .text = string, .owner = owner }).value_or(PropertyKeyID());
 }
 
-static std::optional<PropertyKeyID> parseKey(StringView word, const Program& program)
+static std::optional<PropertyKeyID> keyNamedInTypeTest(StringView word, const Program& program)
 {
     if (word == "-"_s)
         return PropertyKeyID();
     if (!word.startsWith('#'))
-        return findKey(program, PropertyKeyKind::Text, word, { });
+        return findKeyForTypeTest(program, PropertyKeyKind::Text, word, { });
     size_t ownerMark = word.reverseFind('@');
     if (ownerMark == notFound)
         return std::nullopt;
-    auto owner = parseLayout(word.substring(ownerMark + 1), program);
+    auto owner = layoutNamedInTypeTest(word.substring(ownerMark + 1), program);
     if (!owner)
         return std::nullopt;
-    return findKey(program, PropertyKeyKind::PrivateName, word.substring(1, ownerMark - 1), *owner);
+    return findKeyForTypeTest(program, PropertyKeyKind::PrivateName, word.substring(1, ownerMark - 1), *owner);
 }
 
-static std::optional<BaseChain> parseBaseChain(StringView word)
+static std::optional<Vector<TypeID>> typesOfTypeTest(TestCommandContext& context)
 {
-    if (word == "proven"_s)
-        return BaseChain::Proven;
-    if (word == "expected"_s)
-        return BaseChain::Predicted;
-    return std::nullopt;
-}
-
-static std::optional<Vector<Type>> typesUnderTest(TestCommandContext& context)
-{
-    if (!context.arguments.empty()) {
-        printBadArgument(context.out, context.arguments[0]);
-        return std::nullopt;
-    }
-    const Program& program = *context.program;
-    if (program.functions.isEmpty()) {
+    Program& program = *context.program;
+    if (context.functionOfTypesLine.value_or(FunctionID(0u)).index() >= program.functions.size()) {
         context.out.println("no function"_s);
         return std::nullopt;
     }
-    return program.functions[0].parameters.map([&](const DeclaredType& parameter) {
-        return program.at(parameter.written());
-    });
+    Vector<TypeID> types = typesNamedBy(program, context.functionOfTypesLine);
+    TypeArena arena(program.types, ArenaKeeps::InProgram);
+    for (const String& argument : context.arguments) {
+        unsigned offset = 0;
+        String error;
+        std::optional<TypeID> type = parseType(arena, argument, offset, error);
+        if (!type || offset != argument.length()) {
+            printBadArgument(context.out, argument);
+            return std::nullopt;
+        }
+        types.append(*type);
+    }
+    return types;
 }
 
-static bool hasUpperBound(const Type& a, const Type& b)
+static TypeID unionUnderTest(TypeArena& arena, TypeID a, TypeID b) { return arena.unionOf(a, b); }
+static TypeID intersectionUnderTest(TypeArena& arena, TypeID a, TypeID b) { return arena.intersectionOf(a, b); }
+static TypeID differenceUnderTest(TypeArena& arena, TypeID a, TypeID b) { return arena.differenceOf(a, b); }
+static TypeID castUnderTest(TypeArena& arena, TypeID a, TypeID b) { return arena.castTo(a, b); }
+
+static bool typesHaveUpperBound(const Type& a, const Type& b)
 {
     if (a.isJavaScriptValue() && b.isJavaScriptValue())
         return true;
     if (a.opaque == b.opaque && a.environment == b.environment)
         return true;
-    return a.hasOnlyPrimitives(Primitive::Absent) || b.hasOnlyPrimitives(Primitive::Absent);
+    constexpr uint16_t markers = Primitive::Absent | Primitive::Unspecified;
+    return a.hasOnlyPrimitives(markers) || b.hasOnlyPrimitives(markers);
 }
 
-static bool isCanonical(const Type& type)
+static bool isCanonicalType(TypeArena& arena, TypeID type)
 {
-    Type copy = type;
-    copy.canonicalize();
-    return copy == type;
+    return arena.intern(arena.at(type)) == type;
 }
 
-static bool hasSameValues(const Type& a, const Type& b, const Program& program)
+static bool typesHaveSameValues(TypeArena& arena, TypeID a, TypeID b)
 {
-    return a.isSubsetOf(b, program) && b.isSubsetOf(a, program);
+    return arena.isSubset(a, b) && arena.isSubset(b, a);
 }
 
-static Type withoutExpectedContents(const Type& type)
+static std::span<const ClassPart> unnamedClassPartsOfType(const TypeArena& arena, const Type& type)
 {
-    Type result = type;
-    for (ClassPart& part : result.classes) {
-        if (part.contentsAreProven)
-            continue;
-        part.writtenContents.clear();
-        part.arrayStorage = ArrayStorage::Other;
+    return type.unnamedClasses ? arena.at(type.unnamedClasses) : std::span<const ClassPart>();
+}
+
+static const ClassPart* findClassPartIn(std::span<const ClassPart> parts, BuiltinClassID builtinClass)
+{
+    auto part = std::ranges::find(parts, builtinClass, &ClassPart::builtinClass);
+    return part == parts.end() ? nullptr : &*part;
+}
+
+static TypeID typeWithoutWrittenContents(TypeArena& arena, TypeID type)
+{
+    TypeParts parts = arena.at(type);
+    if (!parts.unnamedClasses)
+        return type;
+    Vector<ClassPart> bareParts;
+    for (const ClassPart& part : arena.at(parts.unnamedClasses))
+        bareParts.append(ClassPart { part.builtinClass, { } });
+    parts.unnamedClasses = arena.internClassParts(bareParts.span());
+    return arena.intern(parts);
+}
+
+static bool operationIgnoresWrittenContents(OperationOnTypes operation, TypeID a, TypeID b, TypeID result, TypeArena& arena)
+{
+    TypeID resultWithoutThem = operation(arena, typeWithoutWrittenContents(arena, a), typeWithoutWrittenContents(arena, b));
+    return typeWithoutWrittenContents(arena, result) == typeWithoutWrittenContents(arena, resultWithoutThem);
+}
+
+static bool agreeOnPartsDeterminedByValues(const Type& a, const Type& b)
+{
+    return a.primitives == b.primitives && a.integers.isSubsetOf(b.integers) && b.integers.isSubsetOf(a.integers) && a.boundsOfFractions == b.boundsOfFractions
+        && a.stringLiterals == b.stringLiterals && a.symbolLiterals == b.symbolLiterals
+        && a.opaque == b.opaque && a.environment == b.environment && a.anyObject == b.anyObject;
+}
+
+static bool partHoldsContentsOf(const ClassPart& holder, const ClassPart& part)
+{
+    for (unsigned position = 0; position < mostContentsOfClass; ++position) {
+        if (holder.writtenContents[position] && holder.writtenContents[position] != part.writtenContents[position])
+            return false;
     }
-    return result;
+    return true;
 }
 
-using TypeOperation = Type (Type::*)(const Type&, TypeArena&) const;
-
-static bool ignoresExpectedContents(TypeOperation operation, const Type& a, const Type& b, const Type& result, TypeArena& arena)
+static bool objectPartsAreContainedPartByPart(TypeArena& arena, const Type& type, const Type& holder)
 {
-    Type resultWithoutThem = (withoutExpectedContents(a).*operation)(withoutExpectedContents(b), arena);
-    return withoutExpectedContents(result) == withoutExpectedContents(resultWithoutThem);
+    if (!arena.objectSets().isSubset(type.objects, holder.objects))
+        return false;
+    if (holder.anyObject)
+        return true;
+    if (type.anyObject || (type.anyFunction && !holder.anyFunction))
+        return false;
+    if (!arena.layoutSets().isSubset(type.unnamedLayouts, holder.unnamedLayouts))
+        return false;
+    std::span<const ClassPart> partsOfHolder = unnamedClassPartsOfType(arena, holder);
+    return std::ranges::all_of(unnamedClassPartsOfType(arena, type), [&](const ClassPart& part) {
+        const ClassPart* partOfHolder = findClassPartIn(partsOfHolder, part.builtinClass);
+        return partOfHolder && partHoldsContentsOf(*partOfHolder, part);
+    });
 }
 
-// Types with the same values may differ in declared parts, in the types their contents name, and in a callable built-in listed beside `function`.
-static Type topLevelPartsOf(const Type& type, const BuiltinTable& builtins)
+static bool mayHoldPartsOfType(TypeArena& arena, const Type& holder, const Type& type)
 {
-    Type result = withoutExpectedContents(type);
-    for (ClassPart& part : result.classes)
-        part.writtenContents.clear();
-    if (result.anyFunction) {
-        removeAllMatching(result.builtins, [&](BuiltinID builtin) {
-            return isCallableBuiltin(builtins, builtin);
-        });
-    }
-    return result;
-}
-
-static bool hasFunctionClass(const BuiltinTable& builtins, const Type& type)
-{
-    return std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+    const BuiltinTable& builtins = arena.builtins();
+    std::span<const ClassPart> partsOfHolder = classPartsOf(arena, holder);
+    bool holderHasFunctionClass = std::ranges::any_of(partsOfHolder, [&](const ClassPart& part) {
         return isFunctionClass(builtins, part.builtinClass);
     });
+    if (type.mayBeFunction() && holderHasFunctionClass)
+        return true;
+
+    SetView<ObjectID, ObjectSetID> namedByHolder;
+    if (holder.objects)
+        namedByHolder = arena.at(holder.objects);
+    bool namesObjectThatOnlyMayBeHeld = type.objects && arena.at(type.objects).anyOf([&](ObjectID object) {
+        if (namedByHolder.contains(object) || surelyFitsUnknownOf(arena, object, holder))
+            return false;
+        return overlap(arena, arena.at(arena.forObject(object)), holder);
+    });
+    if (namesObjectThatOnlyMayBeHeld)
+        return true;
+
+    bool hasLayoutThatOnlyMayBeHeld = type.unnamedLayouts && arena.at(type.unnamedLayouts).anyOf([&](LayoutID layout) {
+        return mayBeInsideSomeClassPart(arena, layout, partsOfHolder) && !isInsideSomeClassPart(arena, layout, partsOfHolder);
+    });
+    if (hasLayoutThatOnlyMayBeHeld)
+        return true;
+
+    return std::ranges::any_of(classPartsOf(arena, type), [&](const ClassPart& part) {
+        return overlapsAnotherClass(arena, part.builtinClass, holder);
+    });
 }
 
-// No type says that a function or a built-in is an instance of a class, that a built-in is a closure of a function, or that an object is an instance of two classes.
-static bool mayContainPartsOf(const Type& container, const Type& type, const TypeTable& types)
+static bool typesHaveIncomparableParts(TypeArena& arena, const Type& a, const Type& b)
 {
-    const BuiltinTable& builtins = types.builtins();
-    if (hasCallableParts(type) && hasFunctionClass(builtins, container))
-        return true;
-    bool mayContainUnlistedBuiltin = std::ranges::any_of(type.builtins, [&](BuiltinID builtin) {
-        return !includesBuiltin(container, builtin, builtins) && mayContainBuiltin(types, container, builtin);
-    });
-    if (mayContainUnlistedBuiltin)
-        return true;
-    return std::ranges::any_of(type.classes, [&](const ClassPart& part) {
-        return overlapsAnotherClass(builtins, part.builtinClass, container);
-    });
-}
-
-static bool hasIncomparableParts(const Type&, const Type&, const TypeTable&);
-
-static bool hasIncomparableContents(const ClassPart& a, const ClassPart& b, const TypeTable& types)
-{
-    if (!a.contentsAreProven || !b.contentsAreProven)
+    if ((a.anyObject && !a.objects) || (b.anyObject && !b.objects))
         return false;
-    if (a.arrayStorage != b.arrayStorage && a.arrayStorage != ArrayStorage::Other && b.arrayStorage != ArrayStorage::Other)
-        return true;
-    for (unsigned index = 0; index < std::max(a.writtenContents.size(), b.writtenContents.size()); ++index) {
-        if (hasIncomparableParts(types.at(a.writtenContentsAt(index)), types.at(b.writtenContentsAt(index)), types))
-            return true;
+    return mayHoldPartsOfType(arena, a, b) || mayHoldPartsOfType(arena, b, a);
+}
+
+static bool namesOnlyObjectsOfOperands(TypeArena& arena, const Type& result, const Type& a, const Type& b)
+{
+    return arena.objectSets().isSubset(result.objects, arena.objectSets().unionOf(a.objects, b.objects));
+}
+
+static void freezeTypesOfTypeTest(Program& program)
+{
+    if (!program.types.isFrozen())
+        program.types.freeze();
+}
+
+static Range rangeThatNoTypeTestWrites(unsigned index)
+{
+    int64_t bound = 100003 + index;
+    return { -bound, bound };
+}
+
+static void checkTypeRelationsInThreadArena(TypeLawChecker& laws, Program& program, std::span<const TypeID> types, const TypePairTable<bool>& isInside, const TypePairTable<bool>& overlaps)
+{
+    freezeTypesOfTypeTest(program);
+    TypeArena arena(program.types, ArenaKeeps::UntilReset);
+    unsigned size = types.size();
+    for (bool isAfterReset : { false, true }) {
+        if (isAfterReset)
+            arena.reset();
+        for (unsigned i = 0; i < size; ++i) {
+            for (unsigned j = 0; j < size; ++j)
+                laws.check(arena.isSubset(types[i], types[j]) == isInside(i, j) && arena.overlap(types[i], types[j]) == overlaps(i, j), "same-in-both-arenas"_s, i, j);
+        }
     }
-    return false;
 }
 
-static bool hasIncomparableParts(const Type& a, const Type& b, const TypeTable& types)
+static void checkTypeOperationInThreadArena(TypeLawChecker& laws, Program& program, std::span<const TypeID> types, OperationOnTypes operation, const TypePairTable<TypeID>& results)
 {
-    if (a.anyObject || b.anyObject)
-        return false;
-    if (mayContainPartsOf(a, b, types) || mayContainPartsOf(b, a, types))
-        return true;
-    return std::ranges::any_of(a.classes, [&](const ClassPart& part) {
-        const ClassPart* partner = b.findClassPart(part.builtinClass);
-        return partner && hasIncomparableContents(part, *partner, types);
-    });
+    freezeTypesOfTypeTest(program);
+    TypeArena arena(program.types, ArenaKeeps::UntilReset);
+    unsigned size = types.size();
+    Vector<String> textsBeforeReset;
+    for (bool isAfterReset : { false, true }) {
+        if (isAfterReset)
+            arena.reset();
+        for (unsigned i = 0; i < size; ++i) {
+            TypeID newRange = arena.integer(rangeThatNoTypeTestWrites(i));
+            laws.check(liesInThread(newRange), "new-type-lies-in-thread"_s, i, i);
+            TypeID newType = arena.unionOf(types[i], newRange);
+            for (unsigned j = 0; j < size; ++j) {
+                laws.check(operation(arena, types[i], types[j]) == results(i, j), "same-id-in-both-arenas"_s, i, j);
+                String text = WTF::toString(TypeInText { arena, operation(arena, newType, types[j]) });
+                if (isAfterReset)
+                    laws.check(text == textsBeforeReset[i * size + j], "same-text-after-reset"_s, i, j);
+                else
+                    textsBeforeReset.append(WTF::move(text));
+            }
+        }
+    }
 }
 
-// The first type is a copy: the relation answers early when the two types are one object.
-static bool computeIsSubset(Type a, const Type& b, const Program& program)
+static void checkSubsetLaws(TypeLawChecker& laws, TypeArena& arena, std::span<const TypeID> types, const TypePairTable<bool>& isInside, const TypePairTable<bool>& overlaps)
 {
-    return a.isSubsetOf(b, program);
-}
-
-static void checkSubsetLaws(LawChecker& laws, const Program& program, std::span<const Type> types, const PairTable<bool>& isSubset, const PairTable<bool>& overlaps)
-{
-    const BuiltinTable& builtins = program.builtins();
     unsigned size = types.size();
     for (unsigned i = 0; i < size; ++i) {
-        laws.check(isSubset(i, i), "reflexive"_s, i, i);
-        laws.check(computeIsSubset(Type::never(), types[i], program), "never"_s, i, i);
-        if (types[i].isJavaScriptValue() && !(types[i].primitives & Primitive::Absent))
-            laws.check(types[i].isSubsetOf(Type::anything(), program), "anything"_s, i, i);
+        Type a = arena.at(types[i]);
+        laws.check(isInside(i, i), "reflexive"_s, i, i);
+        laws.check(arena.isSubset(TypeTable::never, types[i]), "never"_s, i, i);
+        if (a.isJavaScriptValue() && !(a.primitives & (Primitive::Absent | Primitive::Unspecified)))
+            laws.check(arena.isSubset(types[i], TypeTable::anything), "anything"_s, i, i);
         for (unsigned j = 0; j < size; ++j) {
+            Type b = arena.at(types[j]);
+            laws.check(isInside(i, j) == isSubset(arena, a, b) && overlaps(i, j) == overlap(arena, a, b), "same-by-records"_s, i, j);
             laws.check(overlaps(i, j) == overlaps(j, i), "overlap-symmetric"_s, i, j);
-            laws.check(!isSubset(i, j) || overlaps(i, j) || types[i].isNever(), "subset-overlaps"_s, i, j);
-            laws.check(isSubset(i, j) == withoutExpectedContents(types[i]).isSubsetOf(withoutExpectedContents(types[j]), program), "ignores-expected-contents"_s, i, j);
-            if (!isSubset(i, j))
+            laws.check(!isInside(i, j) || overlaps(i, j) || a.isNever(), "subset-overlaps"_s, i, j);
+            laws.check(isInside(i, j) == arena.isSubset(typeWithoutWrittenContents(arena, types[i]), typeWithoutWrittenContents(arena, types[j])), "ignores-written-contents"_s, i, j);
+            if (!isInside(i, j))
                 continue;
-            if (isSubset(j, i))
-                laws.check(topLevelPartsOf(types[i], builtins) == topLevelPartsOf(types[j], builtins), "antisymmetric"_s, i, j);
+            if (isInside(j, i))
+                laws.check(a.hasUnknown() || b.hasUnknown() ? agreeOnPartsDeterminedByValues(a, b) : types[i] == types[j], "antisymmetric"_s, i, j);
             for (unsigned k = 0; k < size; ++k)
-                laws.check(!isSubset(j, k) || isSubset(i, k), "transitive"_s, i, j, k);
+                laws.check(!isInside(j, k) || isInside(i, k), "transitive"_s, i, j, k);
         }
     }
 }
 
 static void runSubset(TestCommandContext& context)
 {
-    auto types = typesUnderTest(context);
+    auto types = typesOfTypeTest(context);
     if (!types)
         return;
-    const Program& program = *context.program;
+    Program& program = *context.program;
     unsigned size = types->size();
 
-    PairTable<bool> isSubset(size, [&](unsigned i, unsigned j) {
-        return computeIsSubset(types->at(i), types->at(j), program);
+    TypeArena arena(program.types, ArenaKeeps::InProgram);
+    TypePairTable<bool> isInside(size, [&](unsigned i, unsigned j) {
+        return arena.isSubset(types->at(i), types->at(j));
     });
-    PairTable<bool> overlaps(size, [&](unsigned i, unsigned j) {
-        return types->at(i).overlaps(types->at(j), program);
+    TypePairTable<bool> overlaps(size, [&](unsigned i, unsigned j) {
+        return arena.overlap(types->at(i), types->at(j));
     });
     for (unsigned i = 0; i < size; ++i) {
         for (unsigned j = 0; j < size; ++j)
-            context.out.println("t"_s, i, " <= t"_s, j, ": "_s, yesOrNo(isSubset(i, j)), " overlaps: "_s, yesOrNo(overlaps(i, j)));
+            context.out.println("t"_s, i, " <= t"_s, j, ": "_s, yesOrNo(isInside(i, j)), " overlaps: "_s, yesOrNo(overlaps(i, j)));
     }
 
-    LawChecker laws(context.out);
-    checkSubsetLaws(laws, program, types->span(), isSubset, overlaps);
+    TypeLawChecker laws(context.out);
+    checkSubsetLaws(laws, arena, types->span(), isInside, overlaps);
+    checkTypeRelationsInThreadArena(laws, program, types->span(), isInside, overlaps);
     laws.finish();
 }
 
-static void printUnions(PrintStream& out, const Program& program, unsigned size, const PairTable<Type>& unions)
-{
-    for (unsigned i = 0; i < size; ++i) {
-        for (unsigned j = i; j < size; ++j)
-            out.println("t"_s, i, " | t"_s, j, " = "_s, TypeText { program, unions(i, j) });
-    }
-}
-
-static void checkUnionLaws(LawChecker& laws, const Program& program, std::span<const Type> types, const PairTable<Type>& unions, TypeArena& arena)
+static void checkUnionLaws(TypeLawChecker& laws, TypeArena& arena, std::span<const TypeID> types, const TypePairTable<TypeID>& unions)
 {
     unsigned size = types.size();
-    PairTable<bool> isSubset(size, [&](unsigned i, unsigned j) {
-        return types[i].isSubsetOf(types[j], program);
+    TypePairTable<bool> isInside(size, [&](unsigned i, unsigned j) {
+        return arena.isSubset(types[i], types[j]);
     });
     for (unsigned i = 0; i < size; ++i) {
-        const Type& a = types[i];
-        laws.check(unions(i, i) == a, "idempotent"_s, i, i);
+        Type a = arena.at(types[i]);
+        laws.check(unions(i, i) == types[i], "idempotent"_s, i, i);
         for (unsigned j = 0; j < size; ++j) {
-            const Type& b = types[j];
-            const Type& united = unions(i, j);
+            Type b = arena.at(types[j]);
+            TypeID united = unions(i, j);
             laws.check(united == unions(j, i), "commutative"_s, i, j);
-            laws.check(isCanonical(united), "canonical"_s, i, j);
-            laws.check(ignoresExpectedContents(&Type::unionWith, a, b, united, arena), "ignores-expected-contents"_s, i, j);
-            if (!hasUpperBound(a, b))
+            laws.check(isCanonicalType(arena, united), "canonical"_s, i, j);
+            laws.check(operationIgnoresWrittenContents(unionUnderTest, types[i], types[j], united, arena), "ignores-written-contents"_s, i, j);
+            if (!typesHaveUpperBound(a, b))
                 continue;
-            laws.check(a.isSubsetOf(united, program) && b.isSubsetOf(united, program), "upper-bound"_s, i, j);
+            laws.check(arena.isSubset(types[i], united) && arena.isSubset(types[j], united), "upper-bound"_s, i, j);
+
+            bool bringsNoValueAndNoSeed = isInside(j, i) && a.seeds.containsAll(b.seeds);
+            if (united == types[i])
+                laws.check(bringsNoValueAndNoSeed, "unchanged-only-by-subset"_s, i, j);
+            else if (bringsNoValueAndNoSeed)
+                laws.check(!objectPartsAreContainedPartByPart(arena, b, a), "subset-leaves-unchanged"_s, i, j);
+
             for (unsigned k = 0; k < size; ++k) {
-                const Type& c = types[k];
-                if (isSubset(i, k) && isSubset(j, k))
-                    laws.check(united.isSubsetOf(c, program), "least"_s, i, j, k);
-                if (hasUpperBound(a, c) && hasUpperBound(b, c))
-                    laws.check(united.unionWith(c, arena) == a.unionWith(unions(j, k), arena), "associative"_s, i, j, k);
+                Type c = arena.at(types[k]);
+                if (isInside(i, k) && isInside(j, k))
+                    laws.check(arena.isSubset(united, types[k]), "least"_s, i, j, k);
+                if (typesHaveUpperBound(a, c) && typesHaveUpperBound(b, c))
+                    laws.check(arena.unionOf(united, types[k]) == arena.unionOf(types[i], unions(j, k)), "associative"_s, i, j, k);
             }
         }
     }
@@ -429,89 +476,51 @@ static void checkUnionLaws(LawChecker& laws, const Program& program, std::span<c
 
 static void runUnion(TestCommandContext& context)
 {
-    auto types = typesUnderTest(context);
+    auto types = typesOfTypeTest(context);
     if (!types)
         return;
-    const Program& program = *context.program;
+    Program& program = *context.program;
     unsigned size = types->size();
 
-    TypeArena arena(context.program->types);
-    PairTable<Type> unions(size, [&](unsigned i, unsigned j) {
-        return types->at(i).unionWith(types->at(j), arena);
+    TypeArena arena(program.types, ArenaKeeps::InProgram);
+    TypePairTable<TypeID> unions(size, [&](unsigned i, unsigned j) {
+        return arena.unionOf(types->at(i), types->at(j));
     });
-    printUnions(context.out, program, size, unions);
-
-    LawChecker laws(context.out);
-    checkUnionLaws(laws, program, types->span(), unions, arena);
-    laws.finish();
-}
-
-static void checkWideningLaws(LawChecker& laws, const Program& program, std::span<const Type> types, const PairTable<Type>& unions, TypeArena& arena)
-{
-    unsigned size = types.size();
     for (unsigned i = 0; i < size; ++i) {
-        for (unsigned j = 0; j < size; ++j) {
-            const Type& a = types[i];
-            const Type& b = types[j];
-            const Type& widened = unions(i, j);
-            laws.check(widened == unions(j, i), "commutative"_s, i, j);
-            laws.check(isCanonical(widened), "canonical"_s, i, j);
-            laws.check(a.unionWith(b, arena).isSubsetOf(widened, program), "covers-union"_s, i, j);
-            laws.check(i != j || widened == a, "idempotent"_s, i, j);
-            if (hasUpperBound(a, b))
-                laws.check(a.isSubsetOf(widened, program) && b.isSubsetOf(widened, program), "upper-bound"_s, i, j);
-        }
+        for (unsigned j = i; j < size; ++j)
+            context.out.println("t"_s, i, " | t"_s, j, " = "_s, TypeInText { arena, unions(i, j) });
     }
-}
 
-static void runUnionWidening(TestCommandContext& context)
-{
-    auto types = typesUnderTest(context);
-    if (!types)
-        return;
-    const Program& program = *context.program;
-    unsigned size = types->size();
-
-    TypeArena arena(context.program->types);
-    WideningContext widening { program, arena, context.build, Subject { .function = FunctionID(0u) } };
-    PairTable<Type> unions(size, [&](unsigned i, unsigned j) {
-        return types->at(i).unionWideningWith(types->at(j), widening);
-    });
-    printUnions(context.out, program, size, unions);
-
-    context.losses = context.build.takeLosses(context.program.get());
-    for (const Wire::LossRecord& loss : context.losses)
-        context.out.println("loss "_s, nameOf(loss.limit), " x"_s, loss.count);
-
-    LawChecker laws(context.out);
-    checkWideningLaws(laws, program, types->span(), unions, arena);
+    TypeLawChecker laws(context.out);
+    checkUnionLaws(laws, arena, types->span(), unions);
+    checkTypeOperationInThreadArena(laws, program, types->span(), unionUnderTest, unions);
     laws.finish();
 }
 
-static void checkIntersectLaws(LawChecker& laws, const Program& program, std::span<const Type> types, const PairTable<Type>& intersections, const PairTable<Type>& differences, TypeArena& arena)
+static void checkIntersectLaws(TypeLawChecker& laws, TypeArena& arena, std::span<const TypeID> types, const TypePairTable<TypeID>& intersections, const TypePairTable<TypeID>& differences)
 {
     unsigned size = types.size();
     for (unsigned i = 0; i < size; ++i) {
         for (unsigned j = 0; j < size; ++j) {
-            const Type& a = types[i];
-            const Type& b = types[j];
-            const Type& intersection = intersections(i, j);
-            const Type& difference = differences(i, j);
-            if (!hasIncomparableParts(a, b, program.types)) {
-                laws.check(intersection.isSubsetOf(a, program) && intersection.isSubsetOf(b, program), "lower-bound"_s, i, j);
-                laws.check(!a.isSubsetOf(b, program) || hasSameValues(intersection, a, program), "subset-unchanged"_s, i, j);
+            Type a = arena.at(types[i]);
+            Type b = arena.at(types[j]);
+            TypeID intersection = intersections(i, j);
+            TypeID difference = differences(i, j);
+            if (!typesHaveIncomparableParts(arena, a, b)) {
+                laws.check(arena.isSubset(intersection, types[i]) && arena.isSubset(intersection, types[j]), "lower-bound"_s, i, j);
+                laws.check(!arena.isSubset(types[i], types[j]) || typesHaveSameValues(arena, intersection, types[i]), "subset-unchanged"_s, i, j);
             }
-            laws.check(a.overlaps(b, program) || intersection.isNever(), "disjoint"_s, i, j);
-            laws.check(difference.isSubsetOf(a, program), "difference-inside"_s, i, j);
-            laws.check(a.isSubsetOf(difference.unionWith(intersection, arena), program), "difference-covers"_s, i, j);
-            if (hasUpperBound(a, b))
-                laws.check(a.isSubsetOf(difference.unionWith(b, arena), program), "difference-complete"_s, i, j);
-            laws.check(isCanonical(intersection) && isCanonical(difference), "canonical"_s, i, j);
-            laws.check(ignoresExpectedContents(&Type::intersectWith, a, b, intersection, arena), "ignores-expected-contents"_s, i, j);
+            laws.check(arena.overlap(types[i], types[j]) || isNeverType(intersection), "disjoint"_s, i, j);
+            laws.check(namesOnlyObjectsOfOperands(arena, arena.at(intersection), a, b), "names-no-new-object"_s, i, j);
+            laws.check(arena.isSubset(difference, types[i]), "difference-inside"_s, i, j);
+            laws.check(arena.isSubset(types[i], arena.unionOf(difference, intersection)), "difference-covers"_s, i, j);
+            if (typesHaveUpperBound(a, b))
+                laws.check(arena.isSubset(types[i], arena.unionOf(difference, types[j])), "difference-complete"_s, i, j);
+            laws.check(isCanonicalType(arena, intersection) && isCanonicalType(arena, difference), "canonical"_s, i, j);
+            laws.check(operationIgnoresWrittenContents(intersectionUnderTest, types[i], types[j], intersection, arena), "ignores-written-contents"_s, i, j);
             for (unsigned k = 0; k < size; ++k) {
-                const Type& c = types[k];
-                if (c.isSubsetOf(a, program) && c.isSubsetOf(b, program))
-                    laws.check(c.isSubsetOf(intersection, program), "greatest"_s, i, j, k);
+                if (arena.isSubset(types[k], types[i]) && arena.isSubset(types[k], types[j]))
+                    laws.check(arena.isSubset(types[k], intersection), "greatest"_s, i, j, k);
             }
         }
     }
@@ -519,241 +528,237 @@ static void checkIntersectLaws(LawChecker& laws, const Program& program, std::sp
 
 static void runIntersect(TestCommandContext& context)
 {
-    auto types = typesUnderTest(context);
+    auto types = typesOfTypeTest(context);
     if (!types)
         return;
-    const Program& program = *context.program;
+    Program& program = *context.program;
     unsigned size = types->size();
 
-    TypeArena arena(context.program->types);
-    PairTable<Type> intersections(size, [&](unsigned i, unsigned j) {
-        return types->at(i).intersectWith(types->at(j), arena);
+    TypeArena arena(program.types, ArenaKeeps::InProgram);
+    TypePairTable<TypeID> intersections(size, [&](unsigned i, unsigned j) {
+        return arena.intersectionOf(types->at(i), types->at(j));
     });
-    PairTable<Type> differences(size, [&](unsigned i, unsigned j) {
-        return types->at(i).without(types->at(j), arena);
+    TypePairTable<TypeID> differences(size, [&](unsigned i, unsigned j) {
+        return arena.differenceOf(types->at(i), types->at(j));
     });
     for (unsigned i = 0; i < size; ++i) {
         for (unsigned j = 0; j < size; ++j) {
             if (i == j)
                 continue;
-            context.out.println("t"_s, i, " & t"_s, j, " = "_s, TypeText { program, intersections(i, j) });
-            context.out.println("t"_s, i, " - t"_s, j, " = "_s, TypeText { program, differences(i, j) });
+            context.out.println("t"_s, i, " & t"_s, j, " = "_s, TypeInText { arena, intersections(i, j) });
+            context.out.println("t"_s, i, " - t"_s, j, " = "_s, TypeInText { arena, differences(i, j) });
         }
     }
 
-    LawChecker laws(context.out);
-    checkIntersectLaws(laws, program, types->span(), intersections, differences, arena);
+    TypeLawChecker laws(context.out);
+    checkIntersectLaws(laws, arena, types->span(), intersections, differences);
+    checkTypeOperationInThreadArena(laws, program, types->span(), intersectionUnderTest, intersections);
+    checkTypeOperationInThreadArena(laws, program, types->span(), differenceUnderTest, differences);
     laws.finish();
 }
 
-static bool hasExpectedDeclaredParts(const Type& cast, const Type& source, const Type& castType)
+static bool keepsContentsOfCastType(TypeArena& arena, const Type& cast, const Type& source, const Type& castType)
 {
-    return std::ranges::all_of(cast.classes, [&](const ClassPart& part) {
-        const ClassPart* sourcePart = source.findClassPart(part.builtinClass);
-        const ClassPart* castPart = castType.findClassPart(part.builtinClass);
-        if (!sourcePart || !castPart || (sourcePart->contentsAreProven && castPart->contentsAreProven))
+    std::span<const ClassPart> partsOfSource = unnamedClassPartsOfType(arena, source);
+    std::span<const ClassPart> partsOfCastType = unnamedClassPartsOfType(arena, castType);
+    return std::ranges::all_of(unnamedClassPartsOfType(arena, cast), [&](const ClassPart& part) {
+        const ClassPart* sourcePart = findClassPartIn(partsOfSource, part.builtinClass);
+        const ClassPart* castPart = findClassPartIn(partsOfCastType, part.builtinClass);
+        if (!sourcePart || !castPart)
             return true;
-        bool usesSource = sourcePart->contentsAreProven || (!castPart->contentsAreProven && castPart->writtenContents.isEmpty());
-        const ClassPart& expected = usesSource ? *sourcePart : *castPart;
-        return part.contentsAreProven == expected.contentsAreProven && part.arrayStorage == expected.arrayStorage && part.writtenContents == expected.writtenContents;
+        const ClassPart& expected = castPart->hasWrittenContents() ? *castPart : *sourcePart;
+        return part.writtenContents == expected.writtenContents;
     });
 }
 
-static bool namesClassesAsCastType(const TypeTable& types, const Type& cast, const Type& castType)
+static bool namesOnlyClassesThatCastTypeMayHold(TypeArena& arena, const Type& cast, const Type& castType)
 {
-    const BuiltinTable& builtins = types.builtins();
-    return castType.anyObject || std::ranges::all_of(cast.classes, [&](const ClassPart& part) {
+    const BuiltinTable& builtins = arena.builtins();
+    std::span<const ClassPart> partsOfCastType = unnamedClassPartsOfType(arena, castType);
+    return castType.anyObject || std::ranges::all_of(unnamedClassPartsOfType(arena, cast), [&](const ClassPart& part) {
         if (isFunctionClass(builtins, part.builtinClass))
             return true;
-        return std::ranges::any_of(castType.classes, [&](const ClassPart& castPart) {
-            return builtins.isSameOrSubclassOf(part.builtinClass, castPart.builtinClass);
+        return std::ranges::any_of(partsOfCastType, [&](const ClassPart& castPart) {
+            return builtins.isSameOrSubclassOf(part.builtinClass, castPart.builtinClass)
+                || relate(builtins, part.builtinClass, castPart.builtinClass) == ClassRelation::Unknown;
         });
     });
 }
 
-static bool namesBuiltinsAsCastType(const TypeTable& types, const Type& cast, const Type& castType)
-{
-    return castType.anyObject || std::ranges::all_of(cast.builtins, [&](BuiltinID builtin) {
-        return includesBuiltin(castType, builtin, types.builtins());
-    });
-}
-
-static void checkCastLaws(LawChecker& laws, const Program& program, std::span<const Type> types, const PairTable<Type>& casts, TypeArena& arena)
+static void checkCastLaws(TypeLawChecker& laws, TypeArena& arena, std::span<const TypeID> types, const TypePairTable<TypeID>& casts)
 {
     unsigned size = types.size();
     for (unsigned i = 0; i < size; ++i) {
         for (unsigned j = 0; j < size; ++j) {
-            const Type& a = types[i];
-            const Type& b = types[j];
-            const Type& cast = casts(i, j);
-            laws.check(hasSameValues(cast, a.intersectWith(b, arena), program), "same-values"_s, i, j);
-            laws.check(namesClassesAsCastType(program.types, cast, b), "names-classes-as-cast-type"_s, i, j);
-            laws.check(namesBuiltinsAsCastType(program.types, cast, b), "names-builtins-as-cast-type"_s, i, j);
-            laws.check(isCanonical(cast), "canonical"_s, i, j);
-            laws.check(ignoresExpectedContents(&Type::castTo, a, b, cast, arena), "ignores-expected-contents"_s, i, j);
-            if (!hasIncomparableParts(a, b, program.types))
-                laws.check(hasExpectedDeclaredParts(cast, a, b), "declared-parts"_s, i, j);
+            Type a = arena.at(types[i]);
+            Type b = arena.at(types[j]);
+            Type cast = arena.at(casts(i, j));
+            laws.check(typesHaveSameValues(arena, casts(i, j), arena.intersectionOf(types[i], types[j])), "same-values"_s, i, j);
+            laws.check(namesOnlyClassesThatCastTypeMayHold(arena, cast, b), "names-only-classes-cast-type-may-hold"_s, i, j);
+            laws.check(namesOnlyObjectsOfOperands(arena, cast, a, b), "names-no-new-object"_s, i, j);
+            laws.check(isCanonicalType(arena, casts(i, j)), "canonical"_s, i, j);
+            laws.check(operationIgnoresWrittenContents(castUnderTest, types[i], types[j], casts(i, j), arena), "ignores-written-contents"_s, i, j);
+            if (!typesHaveIncomparableParts(arena, a, b))
+                laws.check(keepsContentsOfCastType(arena, cast, a, b), "written-contents"_s, i, j);
         }
     }
 }
 
 static void runCast(TestCommandContext& context)
 {
-    auto types = typesUnderTest(context);
+    auto types = typesOfTypeTest(context);
     if (!types)
         return;
-    const Program& program = *context.program;
+    Program& program = *context.program;
     unsigned size = types->size();
 
-    TypeArena arena(context.program->types);
-    PairTable<Type> casts(size, [&](unsigned i, unsigned j) {
-        return types->at(i).castTo(types->at(j), arena);
+    TypeArena arena(program.types, ArenaKeeps::InProgram);
+    TypePairTable<TypeID> casts(size, [&](unsigned i, unsigned j) {
+        return arena.castTo(types->at(i), types->at(j));
     });
     for (unsigned i = 0; i < size; ++i) {
         for (unsigned j = 0; j < size; ++j) {
             if (i != j)
-                context.out.println("t"_s, i, " as t"_s, j, " = "_s, TypeText { program, casts(i, j) });
+                context.out.println("t"_s, i, " as t"_s, j, " = "_s, TypeInText { arena, casts(i, j) });
         }
     }
 
-    LawChecker laws(context.out);
-    checkCastLaws(laws, program, types->span(), casts, arena);
+    TypeLawChecker laws(context.out);
+    checkCastLaws(laws, arena, types->span(), casts);
+    checkTypeOperationInThreadArena(laws, program, types->span(), castUnderTest, casts);
     laws.finish();
 }
 
-static Type uniteWithoutCanonicalizing(std::span<const Type> types, TypeArena& arena)
+static ClassPartsID unitedClassPartsOfTypes(TypeArena& arena, ClassPartsID a, ClassPartsID b)
 {
-    Type raw;
-    Vector<LayoutID> layouts;
-    bool hasUnrestrictedRegExp = false;
-    for (const Type& type : types | std::views::reverse) {
+    TypeParts first;
+    first.unnamedClasses = a;
+    TypeParts second;
+    second.unnamedClasses = b;
+    return arena.at(arena.unionOf(arena.intern(first), arena.intern(second))).unnamedClasses;
+}
+
+static TypeParts unitePartsWithoutCanonicalizing(TypeArena& arena, std::span<const TypeID> types)
+{
+    TypeParts raw;
+    for (TypeID id : types | std::views::reverse) {
+        Type type = arena.at(id);
         raw.primitives |= type.primitives;
+        raw.seeds.add(type.seeds);
         raw.integers = raw.integers.unionWith(type.integers);
         raw.anyObject |= type.anyObject;
         raw.anyFunction |= type.anyFunction;
-        raw.stringLiterals.unite(type.stringLiterals);
-        raw.symbolLiterals.unite(type.symbolLiterals);
-        raw.functions.unite(type.functions);
-        raw.builtins.unite(type.builtins);
-        raw.regExpLiteralSet.unite(type.regExpLiteralSet);
-        raw.classes.appendVector(type.classes);
-        layouts.append(membersOf(arena.table(), type));
-        hasUnrestrictedRegExp |= type.regExpLiteralSet.isEmpty() && type.findClassPart(BuiltinClasses::RegExp);
+        raw.stringLiterals = arena.stringSets().unionOf(raw.stringLiterals, type.stringLiterals);
+        raw.symbolLiterals = arena.keySets().unionOf(raw.symbolLiterals, type.symbolLiterals);
+        raw.objects = arena.objectSets().unionOf(raw.objects, type.objects);
+        raw.unnamedLayouts = arena.layoutSets().unionOf(raw.unnamedLayouts, type.unnamedLayouts);
+        raw.unnamedClasses = unitedClassPartsOfTypes(arena, raw.unnamedClasses, type.unnamedClasses);
         if (type.environment)
             raw.environment = type.environment;
         if (type.opaque)
             raw.opaque = type.opaque;
     }
-    if (hasUnrestrictedRegExp)
-        raw.regExpLiteralSet.clear();
-    if (!layouts.isEmpty())
-        raw.layouts = arena.intern(LayoutSet::complete(WTF::move(layouts)));
     return raw;
 }
 
-static void checkCanonicalLaws(LawChecker& laws, const Program& program, std::span<const Type> types, std::span<const Type> canonicalPrefixes, TypeArena& arena)
+static void checkCanonicalLaws(TypeLawChecker& laws, TypeArena& arena, std::span<const TypeID> types, std::span<const TypeID> canonicalPrefixes)
 {
-    const BuiltinTable& builtins = program.builtins();
-    for (unsigned last = 0; last < types.size(); ++last)
-        laws.check(isCanonical(canonicalPrefixes[last]), "idempotent"_s, 0, last);
+    for (unsigned last = 0; last < types.size(); ++last) {
+        laws.check(isCanonicalType(arena, types[last]), "canonical"_s, last, last);
+        laws.check(isCanonicalType(arena, canonicalPrefixes[last]), "idempotent"_s, 0, last);
+    }
 
-    Type united;
-    for (unsigned last = 0; last < types.size() && hasUpperBound(united, types[last]); ++last) {
-        const Type& canonical = canonicalPrefixes[last];
-        united = united.unionWith(types[last], arena);
+    TypeID united = TypeTable::never;
+    for (unsigned last = 0; last < types.size() && typesHaveUpperBound(arena.at(united), arena.at(types[last])); ++last) {
+        TypeID canonical = canonicalPrefixes[last];
+        united = arena.unionOf(united, types[last]);
         for (unsigned i = 0; i <= last; ++i)
-            laws.check(types[i].isSubsetOf(canonical, program), "covers"_s, i, last);
-        laws.check(united.isSubsetOf(canonical, program), "covers-union"_s, 0, last);
-        laws.check(topLevelPartsOf(united, builtins) == topLevelPartsOf(canonical, builtins), "equals-union"_s, 0, last);
+            laws.check(arena.isSubset(types[i], canonical), "covers"_s, i, last);
+        laws.check(arena.isSubset(united, canonical), "covers-union"_s, 0, last);
+        laws.check(united == canonical, "equals-union"_s, 0, last);
     }
 }
 
 static void runCanonical(TestCommandContext& context)
 {
-    auto types = typesUnderTest(context);
+    auto types = typesOfTypeTest(context);
     if (!types)
         return;
-    const Program& program = *context.program;
 
-    TypeArena arena(context.program->types);
-    Vector<Type> canonicalPrefixes;
+    TypeArena arena(context.program->types, ArenaKeeps::InProgram);
+    Vector<TypeID> canonicalPrefixes;
     for (unsigned last = 0; last < types->size(); ++last) {
-        Type prefix = uniteWithoutCanonicalizing(types->span().first(last + 1), arena);
-        prefix.canonicalize();
-        context.out.println("t0..t"_s, last, " = "_s, TypeText { program, prefix });
-        canonicalPrefixes.append(WTF::move(prefix));
+        TypeID prefix = arena.intern(unitePartsWithoutCanonicalizing(arena, types->span().first(last + 1)));
+        context.out.println("t0..t"_s, last, " = "_s, TypeInText { arena, prefix });
+        canonicalPrefixes.append(prefix);
     }
 
-    LawChecker laws(context.out);
-    checkCanonicalLaws(laws, program, types->span(), canonicalPrefixes.span(), arena);
+    TypeLawChecker laws(context.out);
+    checkCanonicalLaws(laws, arena, types->span(), canonicalPrefixes.span());
     laws.finish();
 }
 
-static void checkRepresentationLaws(LawChecker& laws, const Program& program, std::span<const Type> types)
+static void checkRepresentationLaws(TypeLawChecker& laws, TypeArena& arena, std::span<const TypeID> types)
 {
     for (unsigned i = 0; i < types.size(); ++i) {
-        const Type& type = types[i];
-        Representation representation = defaultRepresentationOf(type);
+        Type type = arena.at(types[i]);
+        Representation representation = representationOf(type);
         laws.check(isLegalRepresentation(type, representation), "default-legal"_s, i, i);
-        RepresentationSet legal = legalRepresentationsOf(type);
-        for (Representation candidate : allMembersOf<Representation>)
-            laws.check(legal.contains(candidate) == isLegalRepresentation(type, candidate), "legal-set"_s, i, i);
+        laws.check(representationOf(arena, types[i]) == representation, "same-by-id"_s, i, i);
         for (unsigned j = 0; j < types.size(); ++j) {
-            if (type.isJavaScriptValue() == types[j].isJavaScriptValue() && type.isSubsetOf(types[j], program))
-                laws.check(isLegalRepresentation(type, defaultRepresentationOf(types[j])), "subset-legal"_s, i, j);
+            Type other = arena.at(types[j]);
+            if (type.isJavaScriptValue() == other.isJavaScriptValue() && arena.isSubset(types[i], types[j]))
+                laws.check(isLegalRepresentation(type, representationOf(other)), "subset-legal"_s, i, j);
         }
         if (!type.isJavaScriptValue())
             continue;
         if (representation != Representation::Void)
-            laws.check(type.isSubsetOf(widestTypeOf(representation), program), "widest"_s, i, i);
-        laws.check(isLegalRepresentation(type, representationOf(defaultSlotRepresentationOf(type))), "slot-legal"_s, i, i);
+            laws.check(arena.isSubset(arena.withoutPrimitives(types[i], Primitive::Unspecified), widestTypeOf(representation)), "widest"_s, i, i);
     }
 }
 
 static void runRepresentation(TestCommandContext& context)
 {
-    auto types = typesUnderTest(context);
+    auto types = typesOfTypeTest(context);
     if (!types)
         return;
-    const Program& program = *context.program;
 
+    TypeArena arena(context.program->types, ArenaKeeps::InProgram);
     for (unsigned i = 0; i < types->size(); ++i) {
-        const Type& type = types->at(i);
-        Representation representation = defaultRepresentationOf(type);
-        context.out.println("t"_s, i, ": rep "_s, nameOf(representation), " slot "_s, nameOf(defaultSlotRepresentationOf(type)),
+        Type type = arena.at(types->at(i));
+        Representation representation = representationOf(type);
+        context.out.println("t"_s, i, ": rep "_s, nameOf(representation),
             " cells "_s, yesOrNo(holdsCells(representation)), " legal "_s, LegalRepresentationsText { type });
     }
     for (Representation representation : allMembersOf<Representation>) {
         if (representation == Representation::Unchosen)
             continue;
-        Type widest = widestTypeOf(representation);
-        context.out.println(nameOf(representation), ": "_s, TypeText { program, widest });
+        context.out.println(nameOf(representation), ": "_s, TypeInText { arena, widestTypeOf(representation) });
     }
     for (OpaqueKind kind : allMembersOf<OpaqueKind>) {
-        Type type = Type::forOpaque(kind);
-        context.out.println(TypeText { program, type }, ": "_s, nameOf(representationOf(kind)), " legal "_s, LegalRepresentationsText { type });
+        TypeID id = arena.forOpaque(kind);
+        Type type = arena.at(id);
+        context.out.println(TypeInText { arena, id }, ": "_s, nameOf(representationOf(kind)), " legal "_s, LegalRepresentationsText { type });
     }
 
-    LawChecker laws(context.out);
-    checkRepresentationLaws(laws, program, types->span());
+    TypeLawChecker laws(context.out);
+    checkRepresentationLaws(laws, arena, types->span());
     laws.finish();
 }
 
 static void runMembers(TestCommandContext& context)
 {
-    auto types = typesUnderTest(context);
+    auto types = typesOfTypeTest(context);
     if (!types)
         return;
     const Program& program = *context.program;
     PrintStream& out = context.out;
 
-    for (unsigned index = 0; index < program.numberOfLayoutsAsRead(); ++index) {
-        LayoutID layout(index);
-        out.println(LayoutText { program, layout }, ": members "_s, LayoutSetText { program, program.declaredMembersOf(layout) });
-    }
+    for (unsigned index = 0; index < numberOfLayoutsInTypeTest(program); ++index)
+        out.println('L', index, ": members "_s, LayoutSetInBrackets { program.types, program.declaredMembersOf(LayoutID(index)) });
     for (unsigned i = 0; i < types->size(); ++i) {
-        const Type& type = types->at(i);
-        out.println('t', i, ": members "_s, LayoutSetText { program, type.layouts }, " only-layouts: "_s, yesOrNo(type.hasOnlyLayouts()));
+        Type type = program.at(types->at(i));
+        out.println('t', i, ": members "_s, LayoutSetInBrackets { program.types, type.layouts }, " only-layouts: "_s, yesOrNo(type.hasOnlyLayouts()));
     }
 }
 
@@ -764,21 +769,14 @@ static void runFindField(TestCommandContext& context)
     if (words.size() < 2)
         return printMissingArgument(out);
     Program& program = *context.program;
-    auto layout = parseLayout(words[0], program);
+    auto layout = layoutNamedInTypeTest(words[0], program);
     if (!layout)
         return printBadArgument(out, words[0]);
-    auto key = parseKey(words[1], program);
+    auto key = keyNamedInTypeTest(words[1], program);
     if (!key)
         return printBadArgument(out, words[1]);
 
     std::span<const String> options = words.subspan(2);
-    BaseChain chain = BaseChain::Proven;
-    if (!options.empty()) {
-        if (auto parsedChain = parseBaseChain(options[0])) {
-            chain = *parsedChain;
-            options = options.subspan(1);
-        }
-    }
     bool shouldAppendInheritedFields = !options.empty() && options[0] == "append-inherited"_s;
     if (shouldAppendInheritedFields)
         options = options.subspan(1);
@@ -787,10 +785,17 @@ static void runFindField(TestCommandContext& context)
 
     if (shouldAppendInheritedFields)
         appendInheritedFields(program, *layout);
-    auto field = findField(program, *layout, *key, chain);
+    auto field = findField(program, *layout, *key);
     if (!field)
         return out.println("field: none"_s);
-    out.println("field: "_s, FieldText { program, *field }, " declaration: "_s, FieldText { program, declarationOf(program, *field) });
+    out.println("field: "_s, FieldOfLayoutText { *field }, " declaration: "_s, FieldOfLayoutText { declarationOf(program, *field) });
+}
+
+static Vector<LayoutID> layoutsSortedWithoutRepeats(Vector<LayoutID> layouts)
+{
+    std::ranges::sort(layouts);
+    layouts.shrink(std::ranges::unique(layouts).begin() - layouts.begin());
+    return layouts;
 }
 
 static void runLayoutSet(TestCommandContext& context)
@@ -803,175 +808,690 @@ static void runLayoutSet(TestCommandContext& context)
 
     Vector<Vector<LayoutID>> lists;
     for (const String& word : words) {
-        auto list = parseLayoutList(word, program);
+        auto list = layoutsNamedInTypeTest(word, program);
         if (!list)
             return printBadArgument(out, word);
         lists.append(WTF::move(*list));
     }
 
-    TypeArena arena(program.types);
+    TypeArena arena(program.types, ArenaKeeps::InProgram);
     Vector<LayoutSetID> sets = lists.map([&](const Vector<LayoutID>& list) {
-        return arena.completeLayoutSet(list.span());
+        return arena.layoutSets().ofUnsorted(list.span());
     });
     for (unsigned i = 0; i < sets.size(); ++i)
-        out.println(words[i], ": set "_s, sets[i].index(), ' ', LayoutSetText { program, sets[i] });
+        out.println(words[i], ": set "_s, sets[i].bits(), ' ', LayoutSetInBrackets { arena, sets[i] });
 
-    LawChecker laws(out);
+    Vector<Vector<LayoutID>> members = lists.map([](const Vector<LayoutID>& list) {
+        return layoutsSortedWithoutRepeats(list);
+    });
+    TypeLawChecker laws(out);
     for (unsigned i = 0; i < sets.size(); ++i) {
-        for (unsigned j = 0; j < sets.size(); ++j) {
-            bool hasEqualMembers = SortedSet<LayoutID>(lists[i].span()) == SortedSet<LayoutID>(lists[j].span());
-            laws.check((sets[i] == sets[j]) == hasEqualMembers, "one-id"_s, i, j);
-        }
+        laws.check(sets[i] ? std::ranges::equal(arena.listOf(sets[i]), members[i]) : members[i].isEmpty(), "holds-its-members"_s, i, i);
+        for (unsigned j = 0; j < sets.size(); ++j)
+            laws.check((sets[i] == sets[j]) == (members[i] == members[j]), "one-id"_s, i, j);
     }
+
+    freezeTypesOfTypeTest(program);
+    TypeArena threadArena(program.types, ArenaKeeps::UntilReset);
+    for (unsigned i = 0; i < sets.size(); ++i)
+        laws.check(threadArena.layoutSets().ofUnsorted(lists[i].span()) == sets[i], "same-id-in-both-arenas"_s, i, i);
     laws.finish();
 }
 
-static uint16_t unsplittablePrimitivesOf(const Type& type)
+static uint16_t primitivesOnBothSidesOfBranch(const Type& type)
 {
-    uint16_t primitives = Primitive::WholeNumber | Primitive::AnyString | Primitive::BigInt | Primitive::Absent;
+    uint16_t primitives = Primitive::WholeNumber | Primitive::AnyString | Primitive::BigInt | Primitive::Absent | Primitive::Unspecified;
     if (type.integers.minimum < 0 && type.integers.maximum > 0)
         primitives |= Primitive::Integer;
     return primitives;
 }
 
-static void checkTruthinessLaws(LawChecker& laws, const Program& program, std::span<const Type> types, std::span<const Type> truthyParts, std::span<const Type> falsyParts, TypeArena& arena)
+static void checkTruthinessLaws(TypeLawChecker& laws, TypeArena& arena, std::span<const TypeID> types, std::span<const TypeID> truthyParts, std::span<const TypeID> falsyParts)
 {
     for (unsigned i = 0; i < types.size(); ++i) {
-        const Type& type = types[i];
-        const Type& truthy = truthyParts[i];
-        const Type& falsy = falsyParts[i];
-        laws.check(truthy.isSubsetOf(type, program) && falsy.isSubsetOf(type, program), "inside"_s, i, i);
-        laws.check(truthy.unionWith(falsy, arena) == type, "complete"_s, i, i);
-        laws.check(isCanonical(truthy) && isCanonical(falsy), "canonical"_s, i, i);
+        Type type = arena.at(types[i]);
+        TypeID truthy = truthyParts[i];
+        TypeID falsy = falsyParts[i];
+        laws.check(arena.isSubset(truthy, types[i]) && arena.isSubset(falsy, types[i]), "inside"_s, i, i);
+        laws.check(arena.unionOf(truthy, falsy) == types[i], "complete"_s, i, i);
+        laws.check(isCanonicalType(arena, truthy) && isCanonicalType(arena, falsy), "canonical"_s, i, i);
         if (type.isJavaScriptValue())
-            laws.check(truthy.intersectWith(falsy, arena).hasOnlyPrimitives(unsplittablePrimitivesOf(type)), "disjoint"_s, i, i);
+            laws.check(arena.at(arena.intersectionOf(truthy, falsy)).hasOnlyPrimitives(primitivesOnBothSidesOfBranch(type)), "disjoint"_s, i, i);
     }
 }
 
 static void runTruthy(TestCommandContext& context)
 {
-    auto types = typesUnderTest(context);
+    auto types = typesOfTypeTest(context);
+    if (!types)
+        return;
+
+    TypeArena arena(context.program->types, ArenaKeeps::InProgram);
+    Vector<TypeID> truthyParts = types->map([&](TypeID type) {
+        return truthyPartOf(arena, type);
+    });
+    Vector<TypeID> falsyParts = types->map([&](TypeID type) {
+        return falsyPartOf(arena, type);
+    });
+    for (unsigned i = 0; i < types->size(); ++i) {
+        context.out.println("t"_s, i, " truthy = "_s, TypeInText { arena, truthyParts[i] });
+        context.out.println("t"_s, i, " falsy = "_s, TypeInText { arena, falsyParts[i] });
+    }
+
+    TypeLawChecker laws(context.out);
+    checkTruthinessLaws(laws, arena, types->span(), truthyParts.span(), falsyParts.span());
+    laws.finish();
+}
+
+static void runEdges(TestCommandContext& context)
+{
+    auto types = typesOfTypeTest(context);
     if (!types)
         return;
     const Program& program = *context.program;
 
-    TypeArena arena(context.program->types);
-    Vector<Type> truthyParts = types->map([&](const Type& type) {
-        return truthyPartOf(type, arena);
-    });
-    Vector<Type> falsyParts = types->map([&](const Type& type) {
-        return falsyPartOf(type, arena);
-    });
+    TypeArena arena(context.program->types, ArenaKeeps::InProgram);
+    TypingContext typing { program, arena, PositionTypes::knowingNothing() };
+    TypeLawChecker laws(context.out);
     for (unsigned i = 0; i < types->size(); ++i) {
-        context.out.println("t"_s, i, " truthy = "_s, TypeText { program, truthyParts[i] });
-        context.out.println("t"_s, i, " falsy = "_s, TypeText { program, falsyParts[i] });
+        for (unsigned j = 0; j < types->size(); ++j) {
+            TypeID source = types->at(i);
+            if (!arena.at(source).isJavaScriptValue() || !arena.at(types->at(j)).isJavaScriptValue())
+                continue;
+            TypeID tested = arena.testablePartOf(types->at(j));
+            TypeID passing = narrowByTest(typing, source, tested, EdgeSide::Taken);
+            TypeID failing = narrowByTest(typing, source, tested, EdgeSide::NotTaken);
+            context.out.println("t"_s, i, " passing t"_s, j, " = "_s, TypeInText { arena, passing });
+            context.out.println("t"_s, i, " failing t"_s, j, " = "_s, TypeInText { arena, failing });
+            if (tested != types->at(j)) {
+                context.out.println("t"_s, i, " passing t"_s, j, " as written = "_s, TypeInText { arena, narrowByTest(typing, source, types->at(j), EdgeSide::Taken) });
+                context.out.println("t"_s, i, " failing t"_s, j, " as written = "_s, TypeInText { arena, narrowByTest(typing, source, types->at(j), EdgeSide::NotTaken) });
+            }
+            TypeID equal = narrowByComparison(typing, Opcode::StrictEq, true, source, types->at(j), EdgeSide::Taken);
+            TypeID unequal = narrowByComparison(typing, Opcode::StrictEq, true, source, types->at(j), EdgeSide::NotTaken);
+            context.out.println("t"_s, i, " equal to t"_s, j, " = "_s, TypeInText { arena, equal });
+            context.out.println("t"_s, i, " unequal to t"_s, j, " = "_s, TypeInText { arena, unequal });
+
+            if (!typesHaveIncomparableParts(arena, arena.at(types->at(j)), arena.at(tested)))
+                laws.check(arena.isSubset(types->at(j), tested), "test-admits-its-type"_s, i, j);
+            laws.check(arena.isSubset(source, arena.unionOf(passing, failing)), "complete"_s, i, j);
+            laws.check(arena.isSubset(passing, source), "passing-inside"_s, i, j);
+            laws.check(arena.isSubset(failing, source), "failing-inside"_s, i, j);
+            laws.check(arena.isSubset(arena.differenceOf(source, tested), failing), "removes-only-what-surely-passes"_s, i, j);
+            laws.check(arena.overlap(source, tested) || isNeverType(passing), "disjoint"_s, i, j);
+            laws.check(isCanonicalType(arena, passing) && isCanonicalType(arena, failing), "canonical"_s, i, j);
+            laws.check(arena.isSubset(equal, source) && arena.isSubset(unequal, source), "comparison-inside"_s, i, j);
+            laws.check(isNeverType(types->at(j)) || arena.isSubset(source, arena.unionOf(equal, unequal)), "comparison-complete"_s, i, j);
+        }
     }
 
-    LawChecker laws(context.out);
-    checkTruthinessLaws(laws, program, types->span(), truthyParts.span(), falsyParts.span(), arena);
+    freezeTypesOfTypeTest(*context.program);
+    TypeArena threadArena(context.program->types, ArenaKeeps::UntilReset);
+    TypingContext typingOfCompile { program, threadArena, PositionTypes::knowingNothing() };
+    for (unsigned i = 0; i < types->size(); ++i) {
+        for (unsigned j = 0; j < types->size(); ++j) {
+            TypeID source = types->at(i);
+            if (!threadArena.at(source).isJavaScriptValue() || !threadArena.at(types->at(j)).isJavaScriptValue())
+                continue;
+            TypeID tested = threadArena.testablePartOf(types->at(j));
+            TypeID passing = narrowByTest(typingOfCompile, source, tested, EdgeSide::Taken);
+            if (threadArena.isSubset(passing, source))
+                continue;
+            context.out.println("t"_s, i, " passing t"_s, j, " in Compile = "_s, TypeInText { threadArena, passing });
+            laws.check(threadArena.isSubset(passing, tested), "passing-inside-what-is-tested"_s, i, j);
+        }
+    }
     laws.finish();
 }
 
-static std::optional<NumberSet> parseNumberSet(StringView text)
-{
-    if (text == "-"_s)
-        return NumberSet();
-    Vector<uint32_t> numbers;
-    for (StringView entry : text.splitAllowingEmptyEntries(',')) {
-        auto number = parseTestNumber<uint32_t>(entry);
-        if (!number)
-            return std::nullopt;
-        numbers.append(*number);
-    }
-    return NumberSet(numbers.span());
-}
+#define FOR_EACH_LAW_OF_TYPES(v) \
+    v(SubsetHoldsItself) \
+    v(MeetLiesInFirst) \
+    v(MeetLiesInSecond) \
+    v(MeetIsTheSameBothWays) \
+    v(MeetIsWrittenTheSameBothWays) \
+    v(MeetWithItselfIsItself) \
+    v(MeetHoldsWhatLiesInBoth) \
+    v(CastLiesInFirst) \
+    v(CastLiesInSecond) \
+    v(CastWithItselfIsItself) \
+    v(CastHoldsWhatLiesInBoth) \
+    v(JoinHoldsFirst) \
+    v(JoinHoldsSecond) \
+    v(JoinIsTheSameBothWays) \
+    v(JoinIsWrittenTheSameBothWays) \
+    v(JoinWithItselfIsItself) \
+    v(JoinLiesInWhatHoldsBoth) \
+    v(DifferenceLiesInFirst) \
+    v(DifferenceMeetsSecondNowhere) \
+    v(DifferenceWithItselfIsNever) \
+    v(DifferenceHoldsWhatSecondLacks) \
+    v(DifferenceAndSecondHoldFirst) \
+    v(OverlapIsTheSameBothWays) \
+    v(WhatLiesInsideOverlaps) \
+    v(WhatDoesNotOverlapMeetsNowhere) \
+    v(WhatOverlapsMeetsSomewhere)
 
-static void printChange(PrintStream& out, const NumberSet& set, bool changed)
-{
-    out.println(NumberSetText { set }, ' ', changed ? "changed"_s : "unchanged"_s);
-}
-
-template<typename Operation, size_t size>
-static const Operation* findOperation(const Operation (&operations)[size], StringView name)
-{
-    for (const Operation& operation : operations) {
-        if (name == operation.name)
-            return &operation;
-    }
-    return nullptr;
-}
-
-static constexpr ElementOperation elementOperations[] = {
-    { "add"_s, [](PrintStream& out, NumberSet& set, uint32_t number) { printChange(out, set, set.add(number)); } },
-    { "remove"_s, [](PrintStream& out, NumberSet& set, uint32_t number) { printChange(out, set, set.remove(number)); } },
-    { "contains"_s, [](PrintStream& out, NumberSet& set, uint32_t number) { out.println(yesOrNo(set.contains(number))); } },
+enum class LawOfTypes : uint8_t {
+#define DECLARE_LAW_OF_TYPES(name) name,
+    FOR_EACH_LAW_OF_TYPES(DECLARE_LAW_OF_TYPES)
+#undef DECLARE_LAW_OF_TYPES
 };
 
-static constexpr SetOperation setOperations[] = {
-    { "unite"_s, [](PrintStream& out, NumberSet& set, const NumberSet& other) { printChange(out, set, set.unite(other)); } },
-    { "intersect"_s, [](PrintStream& out, NumberSet& set, const NumberSet& other) {
-        set.intersect(other);
-        out.println(NumberSetText { set });
-    } },
-    { "subtract"_s, [](PrintStream& out, NumberSet& set, const NumberSet& other) {
-        set.subtract(other);
-        out.println(NumberSetText { set });
-    } },
-    { "subset"_s, [](PrintStream& out, NumberSet& set, const NumberSet& other) { out.println(yesOrNo(set.isSubsetOf(other))); } },
-    { "overlaps"_s, [](PrintStream& out, NumberSet& set, const NumberSet& other) { out.println(yesOrNo(set.overlaps(other))); } },
+static ASCIILiteral nameOf(LawOfTypes law)
+{
+    switch (law) {
+#define NAME_LAW_OF_TYPES(name) case LawOfTypes::name: return #name ## _s;
+    FOR_EACH_LAW_OF_TYPES(NAME_LAW_OF_TYPES)
+#undef NAME_LAW_OF_TYPES
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+class LawsOfTypes {
+    WTF_MAKE_NONCOPYABLE(LawsOfTypes);
+public:
+    LawsOfTypes(PrintStream& out, Program& program, Vector<TypeID>&& corpus)
+        : m_out(out)
+        , m_types(program.types, arenaKeepsFor(program.types))
+        , m_corpus(WTF::move(corpus))
+        , m_numberOfTypes(m_corpus.size())
+    {
+    }
+
+    LawsOfTypes(PrintStream& out, Program& program, unsigned mostTypes)
+        : m_out(out)
+        , m_types(program.types, arenaKeepsFor(program.types))
+    {
+        std::span<const TypeID> typesOfProgram = program.types.typesOfWireIndexes();
+        m_numberOfTypes = typesOfProgram.size();
+        SetOfShapes shapes;
+        for (bool acceptsRepeatedShapes : { false, true }) {
+            for (TypeID type : typesOfProgram) {
+                if (m_corpus.size() >= mostTypes)
+                    break;
+                if (!m_types.at(type).isJavaScriptValue())
+                    continue;
+                if (acceptsRepeatedShapes ? m_corpus.contains(type) : !shapes.add(shapeOf(type)).isNewEntry)
+                    continue;
+                m_corpus.append(type);
+            }
+        }
+    }
+
+    unsigned run()
+    {
+        size_t size = m_corpus.size();
+        Vector<BitVector> inside(size);
+        Vector<BitVector> overlaps(size);
+        for (size_t a = 0; a < size; ++a) {
+            for (size_t b = 0; b < size; ++b) {
+                if (liesIn(m_corpus[a], m_corpus[b]))
+                    inside[a].set(b);
+                if (m_types.overlap(m_corpus[a], m_corpus[b]))
+                    overlaps[a].set(b);
+            }
+        }
+        for (size_t a = 0; a < size; ++a) {
+            TypeID first = m_corpus[a];
+            expect(LawOfTypes::SubsetHoldsItself, inside[a].get(a), first, first, { }, first);
+            expect(LawOfTypes::MeetWithItselfIsItself, m_types.intersectionOf(first, first) == first, first, first, { }, m_types.intersectionOf(first, first));
+            expect(LawOfTypes::CastWithItselfIsItself, m_types.castTo(first, first) == first, first, first, { }, m_types.castTo(first, first));
+            expect(LawOfTypes::JoinWithItselfIsItself, m_types.unionOf(first, first) == first, first, first, { }, m_types.unionOf(first, first));
+            expect(LawOfTypes::DifferenceWithItselfIsNever, isNeverType(m_types.differenceOf(first, first)), first, first, { }, m_types.differenceOf(first, first));
+            for (size_t b = 0; b < size; ++b) {
+                TypeID second = m_corpus[b];
+                TypeID meet = m_types.intersectionOf(first, second);
+                TypeID cast = m_types.castTo(first, second);
+                TypeID join = m_types.unionOf(first, second);
+                TypeID difference = m_types.differenceOf(first, second);
+
+                expect(LawOfTypes::MeetLiesInFirst, liesIn(meet, first), first, second, { }, meet);
+                expect(LawOfTypes::MeetLiesInSecond, liesIn(meet, second), first, second, { }, meet);
+                expect(LawOfTypes::CastLiesInFirst, liesIn(cast, first), first, second, { }, cast);
+                expect(LawOfTypes::CastLiesInSecond, liesIn(cast, second), first, second, { }, cast);
+                expect(LawOfTypes::JoinHoldsFirst, liesIn(first, join), first, second, { }, join);
+                expect(LawOfTypes::JoinHoldsSecond, liesIn(second, join), first, second, { }, join);
+                expect(LawOfTypes::DifferenceLiesInFirst, liesIn(difference, first), first, second, { }, difference);
+                expect(LawOfTypes::DifferenceMeetsSecondNowhere, isNeverType(m_types.intersectionOf(difference, second)), first, second, { }, difference);
+                expect(LawOfTypes::DifferenceAndSecondHoldFirst, liesIn(first, m_types.unionOf(difference, second)), first, second, { }, difference);
+                expect(LawOfTypes::OverlapIsTheSameBothWays, overlaps[a].get(b) == overlaps[b].get(a), first, second, { }, meet);
+                expect(LawOfTypes::WhatLiesInsideOverlaps, !inside[a].get(b) || isNeverType(first) || overlaps[a].get(b), first, second, { }, meet);
+                expect(LawOfTypes::WhatDoesNotOverlapMeetsNowhere, overlaps[a].get(b) || isNeverType(meet), first, second, { }, meet);
+                expect(LawOfTypes::WhatOverlapsMeetsSomewhere, !overlaps[a].get(b) || !isNeverType(meet), first, second, { }, meet);
+                if (a < b) {
+                    TypeID meetTurned = m_types.intersectionOf(second, first);
+                    bool isTheSame = liesIn(meet, meetTurned) && liesIn(meetTurned, meet);
+                    expect(LawOfTypes::MeetIsTheSameBothWays, isTheSame, first, second, meetTurned, meet);
+                    expect(LawOfTypes::MeetIsWrittenTheSameBothWays, !isTheSame || meet == meetTurned, first, second, meetTurned, meet);
+                    TypeID joinTurned = m_types.unionOf(second, first);
+                    isTheSame = liesIn(join, joinTurned) && liesIn(joinTurned, join);
+                    expect(LawOfTypes::JoinIsTheSameBothWays, isTheSame, first, second, joinTurned, join);
+                    expect(LawOfTypes::JoinIsWrittenTheSameBothWays, !isTheSame || join == joinTurned, first, second, joinTurned, join);
+                }
+                for (size_t c = 0; c < size; ++c) {
+                    TypeID third = m_corpus[c];
+                    if (inside[a].get(c) && inside[b].get(c))
+                        expect(LawOfTypes::JoinLiesInWhatHoldsBoth, liesIn(join, third), first, second, third, join);
+                    if (!inside[c].get(a))
+                        continue;
+                    if (inside[c].get(b)) {
+                        expect(LawOfTypes::MeetHoldsWhatLiesInBoth, liesIn(third, meet), first, second, third, meet);
+                        expect(LawOfTypes::CastHoldsWhatLiesInBoth, liesIn(third, cast), first, second, third, cast);
+                    }
+                    if (!overlaps[c].get(b) && !overlaps[b].get(c))
+                        expect(LawOfTypes::DifferenceHoldsWhatSecondLacks, liesIn(third, difference), first, second, third, difference);
+                }
+            }
+        }
+
+        unsigned shapes = 0;
+        unsigned numberThatHold = 0;
+        m_out.println("laws of types: "_s, size, " of "_s, m_numberOfTypes, " types"_s);
+        for (size_t law = 0; law < numberOfLaws; ++law) {
+            if (m_broken[law])
+                m_out.println("sum "_s, nameOf(static_cast<LawOfTypes>(law)), ": "_s, m_broken[law], " times in "_s, m_shapes[law], " shapes"_s);
+            else
+                ++numberThatHold;
+            shapes += m_shapes[law];
+        }
+        m_out.println(numberThatHold, " of "_s, numberOfLaws, " laws hold"_s);
+        return shapes;
+    }
+
+private:
+    using SetOfShapes = HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+
+    static constexpr size_t numberOfLaws = static_cast<size_t>(LawOfTypes::WhatOverlapsMeetsSomewhere) + 1;
+
+    static ArenaKeeps arenaKeepsFor(const TypeTable& table) { return table.isFrozen() ? ArenaKeeps::UntilReset : ArenaKeeps::InProgram; }
+
+    bool liesIn(TypeID inner, TypeID outer) { return m_types.isSubset(inner, outer); }
+
+    static uint64_t mix(uint64_t hash, uint64_t word) { return (hash ^ word) * 1099511628211ull; }
+
+    uint64_t shapeOf(TypeID id) const
+    {
+        Type type = m_types.at(id);
+        uint64_t hash = mix(14695981039346656037ull, type.primitives);
+        hash = mix(hash, type.anyObject | type.anyFunction << 1 | !!type.unnamedLayouts << 2 | !!type.stringLiterals << 3 | !!type.symbolLiterals << 4 | type.integers.isSubsetOf(Range::int32()) << 5);
+        hash = mix(hash, type.traitsOfNamed.toRaw());
+        for (const ClassPart& part : classPartsOf(m_types, type)) {
+            hash = mix(hash, part.builtinClass.index());
+            hash = mix(hash, !!part.writtenContents[0] | !!part.writtenContents[1] << 1 | !!part.writtenContents[2] << 2);
+        }
+        return hash;
+    }
+
+    void expect(LawOfTypes law, bool holds, TypeID first, TypeID second, TypeID third, TypeID result)
+    {
+        if (holds)
+            return;
+        size_t index = static_cast<size_t>(law);
+        ++m_broken[index];
+        uint64_t shape = mix(mix(mix(mix(index, shapeOf(first)), shapeOf(second)), third ? shapeOf(third) : 0), shapeOf(result));
+        if (!m_seen.add(shape).isNewEntry)
+            return;
+        ++m_shapes[index];
+        m_out.print("broken "_s, nameOf(law), " | a: "_s, TypeInText { m_types, first }, " | b: "_s, TypeInText { m_types, second });
+        if (third)
+            m_out.print(" | c: "_s, TypeInText { m_types, third });
+        m_out.println(" | gives: "_s, TypeInText { m_types, result });
+    }
+
+    PrintStream& m_out;
+    TypeArena m_types;
+    Vector<TypeID> m_corpus;
+    size_t m_numberOfTypes { 0 };
+    uint64_t m_broken[numberOfLaws] { };
+    unsigned m_shapes[numberOfLaws] { };
+    SetOfShapes m_seen;
 };
 
-static void runSortedSet(TestCommandContext& context)
+static_assert(mostContentsOfClass == 3);
+
+unsigned listBrokenLawsOfTypes(PrintStream& out, Program& program, unsigned mostTypes)
 {
-    PrintStream& out = context.out;
-    std::span<const String> words = context.arguments;
-    if (words.empty())
-        return printMissingArgument(out);
+    return LawsOfTypes(out, program, mostTypes).run();
+}
 
-    const ElementOperation* elementOperation = findOperation(elementOperations, words[0]);
-    const SetOperation* setOperation = findOperation(setOperations, words[0]);
-    if (!elementOperation && !setOperation && words[0] != "list"_s)
-        return printBadArgument(out, words[0]);
-    size_t numberOfWords = elementOperation || setOperation ? 3 : 2;
-    if (words.size() < numberOfWords)
-        return printMissingArgument(out);
-    if (words.size() > numberOfWords)
-        return printBadArgument(out, words[numberOfWords]);
-
-    auto set = parseNumberSet(words[1]);
-    if (!set)
-        return printBadArgument(out, words[1]);
-    if (elementOperation) {
-        auto number = parseTestNumber<uint32_t>(words[2]);
-        if (!number)
-            return printBadArgument(out, words[2]);
-        return elementOperation->run(out, *set, *number);
+static void runLawsOfTypes(TestCommandContext& context)
+{
+    auto types = typesOfTypeTest(context);
+    if (!types)
+        return;
+    Program& program = *context.program;
+    Vector<TypeID> corpus;
+    for (TypeID type : *types) {
+        if (program.at(type).isJavaScriptValue() && !corpus.contains(type))
+            corpus.append(type);
     }
-    if (!setOperation)
-        return out.println(NumberSetText { *set });
-    if (words[2] == "self"_s)
-        return setOperation->run(out, *set, *set);
-    auto other = parseNumberSet(words[2]);
-    if (!other)
-        return printBadArgument(out, words[2]);
-    setOperation->run(out, *set, *other);
+    LawsOfTypes(context.out, program, WTF::move(corpus)).run();
+}
+
+static bool someMemberMayBeObject(TypeReader reader, const SetView<ObjectID, ObjectSetID>& members, ObjectID object)
+{
+    return members.anyOf([&](ObjectID member) {
+        return mayBeSameObject(reader, object, member);
+    });
+}
+
+static void runAliases(TestCommandContext& context)
+{
+    Program& program = *context.program;
+    auto types = typesOfTypeTest(context);
+    if (!types)
+        return;
+
+    const ObjectTable& objects = program.types.objects();
+    TypeArena arena(program.types, ArenaKeeps::InProgram);
+    Vector<ObjectID> corpus;
+    for (unsigned i = 0; i < types->size(); ++i) {
+        ObjectSetID named = arena.at(types->at(i)).objects;
+        arena.at(named).forEach([&](ObjectID object) {
+            corpus.append(object);
+        });
+        for (unsigned j = 0; j < types->size(); ++j) {
+            ObjectSetID namedByOther = arena.at(types->at(j)).objects;
+            if (i == j || !named || !namedByOther)
+                continue;
+            ObjectSetAliasIndex index(arena, arena.at(namedByOther));
+            Vector<ObjectID> withAlias;
+            size_t numberOfPairs = 0;
+            arena.objectSets().forEachAdded(named, namedByOther, [&](ObjectID object) {
+                numberOfPairs += arena.at(namedByOther).size();
+                if (index.namesAliasOf(object))
+                    withAlias.append(object);
+            });
+            ObjectSetID listed = arena.objectSets().ofSorted(withAlias.span());
+            context.out.print("t"_s, i, " in t"_s, j, " = "_s);
+            printObjectSet(context.out, arena, listed);
+            context.out.println(", "_s, index.numberOfPairsAsked(), " of "_s, numberOfPairs, " pairs asked"_s);
+            if (arena.membersWithAliasIn(named, namedByOther) != listed || arena.membersWithAliasIn(named, namedByOther) != listed)
+                context.out.println("the arena answers otherwise: t"_s, i, " t"_s, j);
+        }
+    }
+
+    for (uint32_t function = 0; function < program.functions.size(); ++function) {
+        FunctionID id(function);
+        corpus.appendList({ objects.closureOf(id), objects.coroutineResultOf(id), objects.restArrayOf(id), objects.prototypeObjectOf(id), objects.constructedObjectOf(id) });
+    }
+    for (uint32_t module = 0; module < program.modules.size(); ++module)
+        corpus.append(objects.namespaceOf(ModuleID(module)));
+    for (unsigned layout = 0; layout < numberOfLayoutsInTypeTest(program); ++layout)
+        corpus.appendList({ objects.instanceOf(LayoutID(layout)), objects.prototypeOf(LayoutID(layout)), objects.escapedOf(LayoutID(layout)) });
+    const BuiltinTable& builtins = arena.builtins();
+    for (uint32_t ofModule = objects.firstOf(ObjectKind::ModuleBuiltin); ofModule < objects.endOf(ObjectKind::ModuleBuiltin); ++ofModule)
+        corpus.appendList({ ObjectID(ofModule), objects.objectOf(objects.builtinOf(ObjectID(ofModule))) });
+    for (uint32_t index = 0; index < builtins.hostObjects().size(); ++index) {
+        corpus.append(objects.hostObject(index));
+        if (BuiltinID holder = builtins.hostObjects()[index].holder)
+            corpus.append(objects.objectOf(holder));
+    }
+    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
+        if (!builtins.contains(entry.id))
+            continue;
+        for (BuiltinID implemented : builtins.at(entry.id).implements)
+            corpus.appendList({ objects.objectOf(implemented), objects.mergedFormOf(objects.objectOf(implemented)) });
+    }
+    std::ranges::sort(corpus);
+    corpus.shrink(std::ranges::unique(corpus).begin() - corpus.begin());
+
+    ObjectSetID everyObject = arena.objectSets().ofSorted(corpus.span());
+    Vector<TypeID> typesOfObjects = corpus.map([&](ObjectID object) {
+        return arena.forObjects(ObjectSets::of(object));
+    });
+    unsigned numberOfSets = 0;
+    unsigned numberThatDiffer = 0;
+    size_t numberOfPairsAsked = 0;
+
+    auto holdTypesAgainstEachPair = [&](TypeID first, TypeID second) {
+        Type a = arena.at(first);
+        Type b = arena.at(second);
+        bool somePairMayBeOneObject = arena.at(a.objects).anyOf([&](ObjectID ofFirst) {
+            return arena.at(b.objects).anyOf([&](ObjectID ofSecond) {
+                return mayBeSameObject(arena, ofFirst, ofSecond);
+            });
+        });
+        bool saysYesToMore = mayContainAnyClosure(arena, a) || mayContainAnyClosure(arena, b);
+        for (bool answer : { mayBeSameObject(arena, a, b), mayBeSameObject(arena, b, a) }) {
+            if (answer == somePairMayBeOneObject || (answer && saysYesToMore))
+                continue;
+            if (++numberThatDiffer > 20)
+                continue;
+            context.out.print("two types differ from mayBeSameObject() of their members, which says "_s, somePairMayBeOneObject ? "yes"_s : "no"_s, ": "_s);
+            printObjectSet(context.out, arena, a.objects);
+            context.out.print(" "_s);
+            printObjectSet(context.out, arena, b.objects);
+            context.out.println();
+        }
+    };
+
+    auto holdIndexAgainstEachMember = [&](std::span<const ObjectID> members, bool holdsTypesToo) {
+        unsigned set = numberOfSets++;
+        ObjectSetID setOfMembers = arena.objectSets().ofSorted(members);
+        TypeID typeOfSet = arena.forObjects(setOfMembers);
+        auto view = arena.at(setOfMembers);
+        ObjectSetAliasIndex askedAscending(arena, view);
+        ObjectSetAliasIndex askedDescending(arena, view);
+        for (ObjectID object : corpus | std::views::reverse) {
+            if (!view.contains(object))
+                askedDescending.namesAliasOf(object);
+        }
+        Vector<ObjectID> withAlias;
+        for (size_t index = 0; index < corpus.size(); ++index) {
+            ObjectID object = corpus[index];
+            if (view.contains(object))
+                continue;
+            if (holdsTypesToo)
+                holdTypesAgainstEachPair(typesOfObjects[index], typeOfSet);
+            bool hasAlias = someMemberMayBeObject(arena, view, object);
+            if (hasAlias)
+                withAlias.append(object);
+            if (askedAscending.namesAliasOf(object) == hasAlias && askedDescending.namesAliasOf(object) == hasAlias)
+                continue;
+            if (++numberThatDiffer > 20)
+                continue;
+            context.out.print("the index differs from mayBeSameObject(), which says "_s, hasAlias ? "yes"_s : "no"_s, ", in set "_s, set, ": "_s);
+            printObject(context.out, arena, object);
+            view.forEach([&](ObjectID member) {
+                if (!mayBeSameObject(arena, object, member))
+                    return;
+                context.out.print(" = "_s);
+                printObject(context.out, arena, member);
+            });
+            context.out.println();
+        }
+        numberOfPairsAsked += askedAscending.numberOfPairsAsked() + askedDescending.numberOfPairsAsked();
+        ObjectSetID expected = arena.objectSets().ofSorted(withAlias.span());
+        if (arena.membersWithAliasIn(everyObject, setOfMembers) != expected || arena.membersWithAliasIn(everyObject, setOfMembers) != expected) {
+            ++numberThatDiffer;
+            context.out.println("the arena answers otherwise for set "_s, set);
+        }
+        return setOfMembers;
+    };
+
+    constexpr unsigned numberOfSeededSets = 24;
+    WeakRandom random(20261102);
+    Vector<ObjectSetID> seededSets;
+    for (unsigned set = 0; set < numberOfSeededSets; ++set) {
+        unsigned oneIn = 2 + set % 12;
+        Vector<ObjectID> members;
+        for (ObjectID object : corpus) {
+            if (!random.getUint32(oneIn))
+                members.append(object);
+        }
+        seededSets.append(holdIndexAgainstEachMember(members.span(), oneIn >= 8));
+        if (!set)
+            continue;
+        if (ObjectSetID rest = arena.objectSets().differenceOf(seededSets[set - 1], seededSets[set]))
+            holdTypesAgainstEachPair(arena.forObjects(rest), arena.forObjects(seededSets[set]));
+    }
+
+    for (size_t index = 0; index < corpus.size(); ++index)
+        holdIndexAgainstEachMember(corpus.span().subspan(index, 1), true);
+
+    Vector<Vector<ObjectID>> expectedInThread;
+    for (unsigned set = 1; set < numberOfSeededSets; ++set) {
+        auto view = arena.at(seededSets[set]);
+        Vector<ObjectID> withAlias;
+        arena.objectSets().forEachAdded(seededSets[set - 1], seededSets[set], [&](ObjectID object) {
+            if (someMemberMayBeObject(arena, view, object))
+                withAlias.append(object);
+        });
+        expectedInThread.append(WTF::move(withAlias));
+    }
+    freezeTypesOfTypeTest(program);
+    TypeArena arenaOfThread(program.types, ArenaKeeps::UntilReset);
+    unsigned numberOfAnswersInThread = 0;
+    for (bool isAfterReset : { false, true }) {
+        if (isAfterReset)
+            arenaOfThread.reset();
+        for (unsigned set = 1; set < numberOfSeededSets; ++set) {
+            for (bool isRemembered : { false, true }) {
+                ObjectSetID answer = arenaOfThread.membersWithAliasIn(seededSets[set - 1], seededSets[set]);
+                numberOfAnswersInThread += liesInThread(answer);
+                Vector<ObjectID> members;
+                arenaOfThread.at(answer).forEach([&](ObjectID object) {
+                    members.append(object);
+                });
+                if (members == expectedInThread[set - 1])
+                    continue;
+                ++numberThatDiffer;
+                context.out.println("the arena of a thread answers otherwise for sets "_s, set - 1, " and "_s, set, isAfterReset ? " behind reset()"_s : ""_s, isRemembered ? ", asked again"_s : ""_s);
+            }
+        }
+    }
+    if (!numberOfAnswersInThread) {
+        ++numberThatDiffer;
+        context.out.println("no answer lay in the thread"_s);
+    }
+
+    context.out.println("in all "_s, numberOfPairsAsked, " pairs asked about "_s, corpus.size(), " objects and "_s, numberOfSets, " sets"_s);
+    if (!numberThatDiffer)
+        context.out.println("the index answers as mayBeSameObject() does"_s);
+}
+
+template<bool tellsTable>
+static void runMemosAtRest(TestCommandContext& context)
+{
+    auto types = typesOfTypeTest(context);
+    if (!types)
+        return;
+    Program& program = *context.program;
+    if (program.layouts.isEmpty())
+        return printMissingArgument(context.out);
+
+    auto answers = [&] {
+        TypeArena arena(program.types, ArenaKeeps::InProgram);
+        return types->map([&](TypeID type) {
+            return std::pair(arena.testablePartOf(type), arena.describedByShape(type));
+        });
+    };
+    program.types.beginKeepingMemosAtRest();
+    auto before = answers();
+    if constexpr (tellsTable) {
+        BitVector layoutsOfDictionaries(program.layouts.size());
+        layoutsOfDictionaries.quickSet(0);
+        noteLayoutsOfDictionaries(program, layoutsOfDictionaries);
+    } else
+        program.layouts[0].holdsOrdinaryObjects = true;
+    auto after = answers();
+    for (unsigned i = 0; i < types->size(); ++i)
+        context.out.println("t"_s, i, " is tested "_s, after[i].first == before[i].first ? "as before"_s : "otherwise"_s, " and described "_s, after[i].second == before[i].second ? "as before"_s : "otherwise"_s);
+}
+
+static void runJoin(TestCommandContext& context)
+{
+    auto types = typesOfTypeTest(context);
+    if (!types)
+        return;
+    Program& program = *context.program;
+    SetsOfLayoutsWritten everySetOfWire;
+    for (TypeID type : program.types.typesOfWireIndexes()) {
+        if (LayoutSetID set = type && !holdsOnlyPrimitives(type) ? program.at(type).unnamedLayouts : LayoutSetID(); set && !holdsOneMember(set))
+            everySetOfWire.add(set.bits());
+    }
+    Families families(program, everySetOfWire, { }, context.build.parallelLoops());
+    TypeArena arena(program.types, ArenaKeeps::InProgram);
+
+    unsigned numberThatHangOnOrder = 0;
+    auto joinedInOrder = [&](std::span<const unsigned> order, bool inPairs) {
+        if (inPairs)
+            return joinOf(arena, families, joinOf(arena, families, types->at(order[0]), types->at(order[1])), joinOf(arena, families, types->at(order[2]), types->at(order[3])));
+        TypeID joined = types->at(order[0]);
+        for (unsigned place : order.subspan(1))
+            joined = joinOf(arena, families, joined, types->at(place));
+        return joined;
+    };
+    auto forEachOrder = [&](std::span<const unsigned> chosen, const auto& functor) {
+        Vector<unsigned, 4> order(chosen);
+        do {
+            functor(order.span(), false);
+            if (order.size() == 4)
+                functor(order.span(), true);
+        } while (std::ranges::next_permutation(order).found);
+    };
+    auto printOrder = [&](std::span<const unsigned> order, bool inPairs) {
+        for (size_t place = 0; place < order.size(); ++place)
+            context.out.print(place ? (inPairs && place == 2 ? " | "_s : " "_s) : ""_s, "t"_s, order[place]);
+    };
+    auto judge = [&](std::span<const unsigned> chosen) {
+        TypeID first = joinedInOrder(chosen, false);
+        bool hangsOnOrder = false;
+        forEachOrder(chosen, [&](std::span<const unsigned> order, bool inPairs) {
+            hangsOnOrder |= joinedInOrder(order, inPairs) != first;
+        });
+        if (!hangsOnOrder) {
+            printOrder(chosen, false);
+            context.out.println(" = "_s, TypeInText { arena, first });
+            return;
+        }
+        ++numberThatHangOnOrder;
+        forEachOrder(chosen, [&](std::span<const unsigned> order, bool inPairs) {
+            context.out.print("HANGS ON THE ORDER: "_s);
+            printOrder(order, inPairs);
+            context.out.println(" = "_s, TypeInText { arena, joinedInOrder(order, inPairs) });
+        });
+    };
+    Vector<unsigned, 4> chosen;
+    auto choose = [&](auto& self, unsigned from) -> void {
+        if (chosen.size() >= 2)
+            judge(chosen.span());
+        if (chosen.size() == 4)
+            return;
+        for (unsigned next = from; next < types->size(); ++next) {
+            chosen.append(next);
+            self(self, next + 1);
+            chosen.removeLast();
+        }
+    };
+    choose(choose, 0);
+    if (numberThatHangOnOrder)
+        context.out.println(numberThatHangOnOrder, " joins hang on the order"_s);
+    else
+        context.out.println("every order ends alike"_s);
 }
 
 std::span<const TestCommand> typeTestCommands()
 {
     static constexpr TestCommand commands[] = {
-        { "subset"_s, IRForm::Prepared, runSubset },
-        { "union"_s, IRForm::Prepared, runUnion },
-        { "union-widening"_s, IRForm::Prepared, runUnionWidening },
-        { "intersect"_s, IRForm::Prepared, runIntersect },
-        { "cast"_s, IRForm::Prepared, runCast },
-        { "canonical"_s, IRForm::Prepared, runCanonical },
-        { "rep"_s, IRForm::Prepared, runRepresentation },
-        { "members"_s, IRForm::Prepared, runMembers },
-        { "find-field"_s, IRForm::Prepared, runFindField },
-        { "layout-set"_s, IRForm::Prepared, runLayoutSet },
-        { "truthy"_s, IRForm::Prepared, runTruthy },
-        { "sorted-set"_s, std::nullopt, runSortedSet },
+        { "subset"_s, runSubset, ProgramOfCommand::AsWritten, ""_s },
+        { "union"_s, runUnion, ProgramOfCommand::AsWritten, ""_s },
+        { "intersect"_s, runIntersect, ProgramOfCommand::AsWritten, ""_s },
+        { "join"_s, runJoin, ProgramOfCommand::AsWritten, ""_s },
+        { "cast"_s, runCast, ProgramOfCommand::AsWritten, ""_s },
+        { "canonical"_s, runCanonical, ProgramOfCommand::AsWritten, ""_s },
+        { "rep"_s, runRepresentation, ProgramOfCommand::AsWritten, ""_s },
+        { "members"_s, runMembers, ProgramOfCommand::AsWritten, ""_s },
+        { "find-field"_s, runFindField, ProgramOfCommand::AsWritten, "L<n> <key>|#<key>@L<n>|- [append-inherited]"_s },
+        { "layout-set"_s, runLayoutSet, ProgramOfCommand::AsWritten, "{ L<n>,L<n>.. | - }"_s },
+        { "truthy"_s, runTruthy, ProgramOfCommand::AsWritten, ""_s },
+        { "edges"_s, runEdges, ProgramOfCommand::AsWritten, ""_s },
+        { "laws-of-types"_s, runLawsOfTypes, ProgramOfCommand::AsWritten, ""_s },
+        { "aliases"_s, runAliases, ProgramOfCommand::AsWritten, ""_s },
+        { "memos-at-rest"_s, runMemosAtRest<true>, ProgramOfCommand::AsWritten, ""_s },
+        { "memos-at-rest-untold"_s, runMemosAtRest<false>, ProgramOfCommand::AsWritten, ""_s },
     };
     return commands;
 }

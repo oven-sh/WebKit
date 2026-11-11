@@ -1,0 +1,32 @@
+# function first() { return 1; }
+# function second() { return 2; }
+# take(first, second);
+# The test "is this closure one of these functions" in compiled code sorts the functions by their numbers, joins neighbors into runs in the plan and branches on the closure numbers.
+# It is correct only while closure numbers increase with the function numbers. The image numbers the closure entries in that order, and verifies the order in every build.
+# Fault injection, testing=SwapClosureNumbers: the first two closure entries are numbered in the opposite order. The build fails with a named internal error and writes no image.
+# RUN: image testing=SwapClosureNumbers
+# DIAGNOSTIC: PlacementCheckFailed
+# CHECK: image empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="take" [isFreeName]
+    v4 = Call v3, -, v0, v1 calleeName="take"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="first" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="second" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

@@ -74,8 +74,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(FindController);
 #if ENABLE(VIDEO)
 static Vector<FindMatch> mergeByDocumentOrder(Page& page, Vector<SimpleRange>&& domRanges, Vector<CueMatch>&& cueMatches)
 {
-    Vector<FindMatch> merged;
-    merged.reserveInitialCapacity(domRanges.size() + cueMatches.size());
+    Vector<FindMatch> merged(ReserveCapacityTag { }, domRanges.size() + cueMatches.size());
 
     Borrow borrowedDomRanges = domRanges;
     Borrow borrowedCueMatches = cueMatches;
@@ -257,8 +256,7 @@ uint32_t FindController::replaceMatches(const Vector<uint32_t>& matchIndices, co
     // periodically update an NSProgress in the UI process when a batch of find-in-page matches are replaced.
     constexpr uint32_t maximumNumberOfMatchesToReplace = 1000;
 
-    Vector<SimpleRange> rangesToReplace;
-    rangesToReplace.reserveInitialCapacity(std::min<uint32_t>(maximumNumberOfMatchesToReplace, matchIndices.size()));
+    Vector<SimpleRange> rangesToReplace(ReserveCapacityTag { }, std::min<uint32_t>(maximumNumberOfMatchesToReplace, matchIndices.size()));
     Borrow borrowedFindMatches = m_findMatches;
     for (auto index : matchIndices) {
         if (index < m_findMatches.size())
@@ -501,9 +499,52 @@ void FindController::findString(const String& string, OptionSet<FindOptions> opt
     findString(string, options, maxMatchCount, ShouldReuseLastFoundRange::No, WTF::move(completionHandler));
 }
 
+void FindController::countStringMatchesByFrame(const String& string, OptionSet<FindOptions> options, unsigned maxMatchCount, CompletionHandler<void(Vector<std::pair<FrameIdentifier, uint32_t>>&&)>&& completionHandler)
+{
+    RefPtr webPage { m_webPage };
+    auto result = protect(webPage->corePage())->findTextMatches(string, core(options), maxMatchCount, false);
+
+    Vector<std::pair<FrameIdentifier, uint32_t>> counts;
+    for (auto& range : borrow(result.ranges)) {
+        auto frameID = protect(range.start.document().frame())->frameID();
+        if (counts.isEmpty() || counts.last().first != frameID)
+            counts.append({ frameID, 0 });
+        ++counts.last().second;
+    }
+    completionHandler(WTF::move(counts));
+}
+
+std::optional<int32_t> FindController::indexOfSelectedMatchInFrame(const String& string, OptionSet<FindOptions> options)
+{
+    RefPtr webPage { m_webPage };
+    RefPtr selectedFrame = frameWithSelection(protect(webPage->corePage()).get());
+    if (!selectedFrame)
+        return std::nullopt;
+    auto selectedRange = selectedFrame->selection().selection().range();
+    if (!selectedRange)
+        return std::nullopt;
+
+    auto result = protect(webPage->corePage())->findTextMatches(string, core(options), 0, false);
+    int32_t indexInFrame = 0;
+    for (auto& range : borrow(result.ranges)) {
+        if (range.start.document().frame() != selectedFrame.get())
+            continue;
+        if (range.start == selectedRange->start && range.end == selectedRange->end)
+            return indexInFrame;
+        ++indexInFrame;
+    }
+    return std::nullopt;
+}
+
 void FindController::selectLastFoundRange(const String& string, OptionSet<FindOptions> options, unsigned maxMatchCount, CompletionHandler<void(std::optional<FrameIdentifier>, Vector<IntRect>&&, int32_t, bool)>&& completionHandler)
 {
-    findString(string, options, maxMatchCount, ShouldReuseLastFoundRange::Yes, [completionHandler = WTF::move(completionHandler)](std::optional<FrameIdentifier> frameID, Vector<IntRect>&& matchRects, uint32_t, int32_t matchIndex, bool didWrap) mutable {
+    findString(string, options, maxMatchCount, ShouldReuseLastFoundRange::Yes, [weakPage = m_webPage, string, options, completionHandler = WTF::move(completionHandler)](std::optional<FrameIdentifier> frameID, Vector<IntRect>&& matchRects, uint32_t, int32_t matchIndex, bool didWrap) mutable {
+        if (frameID && options.contains(FindOptions::DetermineMatchIndex)) {
+            if (RefPtr webPage = weakPage) {
+                if (auto indexInFrame = webPage->findController().indexOfSelectedMatchInFrame(string, options))
+                    matchIndex = *indexInFrame;
+            }
+        }
         completionHandler(frameID, WTF::move(matchRects), matchIndex, didWrap);
     });
 }

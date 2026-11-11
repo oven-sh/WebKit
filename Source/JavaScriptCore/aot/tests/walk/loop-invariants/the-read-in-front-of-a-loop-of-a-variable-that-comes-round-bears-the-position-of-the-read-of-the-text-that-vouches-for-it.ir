@@ -1,0 +1,60 @@
+# main.cjs    var count = 0; function run(turns) { let turn = 0; do { count = (count + (turn & 3)) | 0; turn++; } while (turn < turns); return count; } function peek() { return count; } sink(run(5)); sink(peek());
+# A variable that quiet turns store and that every turn reads comes round as a parameter of the head, and what enters is read in front of the loop. That read is none of the reads of the text.
+# Here every turn reads the variable AHEAD of its store: what Link has proven of that read of the text holds of what lies in the variable in front of the first turn too. So the read in front keeps the proof,
+# and it says who vouches for it: it bears the position of that read of the text (@73). Without a voucher a read in front of a loop gives the word as it lies.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:
+# WALK-NOT: isLoopHead=true
+# WALK: = GetModuleVariable variable=g0 [isKnownInitialized] {{*}}@73
+# WALK: isLoopHead=true
+# RUN(SHELL): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.sink = value => print("said " + value);
+# SHELL: said 6
+# SHELL-NEXT: said 6
+
+variable g0 name="count" module=m0 declared={type=undefined|i32 flags=[IsExpected]} initialization=Undefined
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0
+entry module=m0
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Integer
+    PutModuleVariable v2 variable=g0
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Integer integer=5
+    v7 = Call v0, -, v6 calleeName="run"
+    v8 = Call v5, -, v7 calleeName="sink"
+    v9 = Call v1 calleeName="peek"
+    v10 = Call v5, -, v9 calleeName="sink"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="run" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer @50
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @50
+    Jump -> next b1(v2) @55
+  b1(v3):
+    LoopHint @55
+    v5 = GetModuleVariable variable=g0 @73
+    v6 = Integer integer=3 @89
+    v7 = BitAnd v3, v6 @89
+    v8 = Add v5, v7 @89
+    v9 = Integer @95
+    v10 = BitOr v8, v9 @95
+    v11 = Convert v10 declared={type=undefined|i32 flags=[IsExpected]} @64
+    PutModuleVariable v11 variable=g0 @64
+    v13 = Increment v3 @102
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @102
+    v15 = Less v14, v0 @128
+    Branch v15 -> taken b1(v14), notTaken b2() @128
+  b2():
+    v16 = GetModuleVariable variable=g0 @145
+    Return v16 @145
+}
+function f2 name="peek" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

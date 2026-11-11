@@ -48,11 +48,14 @@ class RemoteLayerTreeNode;
 
 class RemoteScrollingCoordinatorProxyIOS final : public RemoteScrollingCoordinatorProxy {
     WTF_MAKE_TZONE_ALLOCATED(RemoteScrollingCoordinatorProxyIOS);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteScrollingCoordinatorProxyIOS);
 public:
     explicit RemoteScrollingCoordinatorProxyIOS(WebPageProxy&);
 
     UIScrollView *scrollViewForScrollingNodeID(std::optional<WebCore::ScrollingNodeID>) const;
+
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+    Vector<RetainPtr<UIScrollView>> scrollViewsHidingInteractionRegions() const;
+#endif
 
     OptionSet<WebCore::TouchAction> activeTouchActionsForTouchIdentifier(unsigned touchIdentifier) const;
     void setTouchActionsForTouchIdentifier(OptionSet<WebCore::TouchAction>, unsigned);

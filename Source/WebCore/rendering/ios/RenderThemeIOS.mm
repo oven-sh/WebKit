@@ -31,7 +31,6 @@
 
 #import "ARKitBadgeSystemImage.h"
 #import "AttachmentLayout.h"
-#import "BitmapImage.h"
 #import "BorderShape.h"
 #import "CSSToLengthConversionData.h"
 #import "CSSValueKey.h"
@@ -67,6 +66,7 @@
 #import "LocalFrame.h"
 #import "LocalFrameView.h"
 #import "LocalizedDateCache.h"
+#import "NativeImage.h"
 #import "NodeRenderStyle.h"
 #import "PaintInfo.h"
 #import "PathUtilities.h"
@@ -1344,13 +1344,7 @@ LayoutSize RenderThemeIOS::attachmentIntrinsicSize(const RenderAttachment&) cons
 
 static void paintAttachmentIcon(GraphicsContext& context, AttachmentLayout& info)
 {
-    RefPtr<BitmapImage> iconImage;
-    if (info.thumbnailIcon)
-        iconImage = info.thumbnailIcon;
-    else if (info.icon)
-        iconImage = info.icon;
-    
-    context.drawBitmapImage(*iconImage, info.iconRect, FloatRect { { }, iconImage->size() });
+    context.drawNativeImage(protect(*info.icon), info.iconRect);
 }
 
 static void paintAttachmentProgress(GraphicsContext& context, AttachmentLayout& info)
@@ -1415,7 +1409,7 @@ bool RenderThemeIOS::paintAttachment(const RenderElement& renderer, const PaintI
 
     if (info.hasProgress)
         paintAttachmentProgress(context, info);
-    else if (info.icon || info.thumbnailIcon)
+    else if (info.icon)
         paintAttachmentIcon(context, info);
 
     paintAttachmentText(context, &info);
@@ -1441,9 +1435,9 @@ String RenderThemeIOS::extraDefaultStyleSheet()
 #endif
 
 #if USE(SYSTEM_PREVIEW)
-void RenderThemeIOS::paintSystemPreviewBadge(Image& image, const PaintInfo& paintInfo, const FloatRect& rect)
+void RenderThemeIOS::paintSystemPreviewBadge(RefPtr<NativeImage>&& image, const PaintInfo& paintInfo, const FloatRect& rect)
 {
-    paintInfo.context().drawSystemImage(ARKitBadgeSystemImage::create(image), rect);
+    paintInfo.context().drawSystemImage(ARKitBadgeSystemImage::create(WTF::move(image)), rect);
 }
 
 void RenderThemeIOS::paintSystemPreviewBadge(const PaintInfo& paintInfo, const FloatRect& rect)

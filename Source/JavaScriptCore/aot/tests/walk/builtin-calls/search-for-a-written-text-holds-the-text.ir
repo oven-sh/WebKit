@@ -1,0 +1,221 @@
+# startsWith, endsWith, indexOf, lastIndexOf and includes of a text that is written, on a proven text: the operation holds the text, so no cell is loaded for it and no call by a row is left
+# function isFlag(s) { if (typeof s === "string") return [s.startsWith("--")]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = StringStartsWithLiteral {{*}}literal="--"
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: inlineBuiltin=StringStartsWith
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = StringStartsWithLiteral {{*}}literal="--"
+# function isScript(s) { if (typeof s === "string") return [s.endsWith(".ts")]; }
+# RUN(ENDS): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# ENDS-LABEL: code f2:Body
+# ENDS: = StringEndsWithLiteral {{*}}literal=".ts"
+# function slash(s) { if (typeof s === "string") return [s.indexOf("/")]; }
+# RUN(UNIT): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# UNIT-LABEL: code f3:Body
+# UNIT: = StringIndexOfCharacter {{*}}codeUnit=47
+# the search begins at the position clamped into the text: function next(s, i) { if (typeof s === "string" && (i | 0) === i) return [s.indexOf("ab", i)]; }
+# RUN(FROM): walk f4 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# FROM-LABEL: code f4:Body
+# FROM: = StringRange
+# FROM: = StringIndexOfLiteral {{*}}literal="ab"
+# function lastSlash(s) { if (typeof s === "string") return [s.lastIndexOf("/")]; }
+# RUN(LAST): walk f5 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# LAST-LABEL: code f5:Body
+# LAST: = StringLastIndexOfLiteral {{*}}literal="/"
+# function has(s) { if (typeof s === "string") return [s.includes("ab")]; }
+# RUN(HAS): walk f6 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# HAS-LABEL: code f6:Body
+# HAS: = StringIndexOfLiteral {{*}}literal="ab"
+# HAS: = LogicalNot
+# nobody knows the text that is looked for: function place(s, t) { if (typeof s === "string" && typeof t === "string") return [s.indexOf(t)]; }
+# RUN(UNKNOWN): walk f7 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# UNKNOWN-LABEL: code f7:Body
+# UNKNOWN-NOT: = StringIndexOfLiteral
+# UNKNOWN-NOT: = StringIndexOfCharacter
+# UNKNOWN: = NewArray
+# a position behind the text that is looked for moves where the test begins, which the operation does not say: function flagAt(s, i) { if (typeof s === "string" && (i | 0) === i) return [s.startsWith("--", i)]; }
+# RUN(MOVED): walk f8 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# MOVED-LABEL: code f8:Body
+# MOVED-NOT: = StringStartsWithLiteral
+# MOVED: = NewArray
+# a RegExp that is one text, written for the one call: function named(s) { if (typeof s === "string") return [/abc/.test(s)]; }
+# RUN(ATOM): walk f9 mechanisms=all
+# ATOM-LABEL: code f9:Body
+# ATOM: = StringIndexOfLiteral {{*}}literal="abc"
+# ATOM: = GreaterEq
+# under i the match is no search for the text: function namedAnyCase(s) { if (typeof s === "string") return [/abc/i.test(s)]; }
+# RUN(CASE): walk f10 mechanisms=all
+# CASE-LABEL: code f10:Body
+# CASE-NOT: = StringIndexOfLiteral
+# CASE: = NewArray
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = NewClosure function=f9
+    v11 = NewClosure function=f10
+    v12 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11
+    Return v12
+}
+function f1 name="isFlag" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="startsWith"
+    v4 = String string="--"
+    v5 = Call v3, v2, v4 calleeKey="startsWith"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f2 name="isScript" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="endsWith"
+    v4 = String string=".ts"
+    v5 = Call v3, v2, v4 calleeKey="endsWith"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f3 name="slash" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="indexOf"
+    v4 = String string="/"
+    v5 = Call v3, v2, v4 calleeKey="indexOf"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f4 name="next" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="indexOf"
+    v7 = String string="ab"
+    v8 = Call v6, v3, v7, v5 calleeKey="indexOf"
+    v9 = NewArray v8 contents=anything
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f5 name="lastSlash" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="lastIndexOf"
+    v4 = String string="/"
+    v5 = Call v3, v2, v4 calleeKey="lastIndexOf"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f6 name="has" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="includes"
+    v4 = String string="ab"
+    v5 = Call v3, v2, v4 calleeKey="includes"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f7 name="place" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=string
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="indexOf"
+    v7 = Call v6, v3, v5 calleeKey="indexOf"
+    v8 = NewArray v7 contents=anything
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f8 name="flagAt" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="startsWith"
+    v7 = String string="--"
+    v8 = Call v6, v3, v7, v5 calleeKey="startsWith"
+    v9 = NewArray v8 contents=anything
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f9 name="named" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = NewRegExp pattern="abc"
+    v4 = PropGet v3 key="test"
+    v5 = Call v4, v3, v2 calleeKey="test"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f10 name="namedAnyCase" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = NewRegExp pattern="abc" regExpFlags=[IgnoreCase]
+    v4 = PropGet v3 key="test"
+    v5 = Call v4, v3, v2 calleeKey="test"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}

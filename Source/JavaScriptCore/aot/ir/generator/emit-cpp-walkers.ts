@@ -8,6 +8,7 @@ import {
 } from "./cpp-types.ts";
 import {
   blocks,
+  constexprSwitch,
   cppHeader,
   groupedCases,
   inNamespace,
@@ -20,6 +21,53 @@ import type { Entry, Field, IdKind, Kind, Member, Schema, SchemaRecord, SchemaTy
 import { fieldsOf, functionLocalIdKinds, innermostKindOf, recordsOf, roleEnumNames } from "./model.ts";
 import { cppIdTypeName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
+
+interface HolderKind {
+  readonly concept: "HoldsOpcode" | "HoldsTerminatorKind";
+  readonly enumName: "Opcode" | "TerminatorKind";
+  readonly tag: "opcode" | "kind";
+  readonly tagOf: "opcodeOf" | "terminatorKindOf";
+  readonly referenceWalker: "walkValue" | "walkTerminator";
+  readonly placedWordWalker: "walkPlacedWordsOfValue" | "walkPlacedWordsOfTerminator";
+  readonly entriesIn: (schema: Schema) => readonly Entry[];
+}
+
+type PayloadConcept = "HoldsPayloadWords" | "HoldsMutablePayloadWords";
+
+const holderKinds: readonly HolderKind[] = [
+  {
+    concept: "HoldsOpcode",
+    enumName: "Opcode",
+    tag: "opcode",
+    tagOf: "opcodeOf",
+    referenceWalker: "walkValue",
+    placedWordWalker: "walkPlacedWordsOfValue",
+    entriesIn: schema => schema.operations,
+  },
+  {
+    concept: "HoldsTerminatorKind",
+    enumName: "TerminatorKind",
+    tag: "kind",
+    tagOf: "terminatorKindOf",
+    referenceWalker: "walkTerminator",
+    placedWordWalker: "walkPlacedWordsOfTerminator",
+    entriesIn: schema => schema.terminators,
+  },
+];
+
+const payloadConcepts = `// Records and variants of the schema have members named kind, so HoldsTerminatorKind alone would take them.
+// The cursors of AOTBody.h hold no payload words: they have forEachReference() of their own.
+template<typename Holder>
+concept HoldsPayloadWords = requires(const Holder& holder, unsigned word) {
+    { holder.payloadWordAt(word) } -> std::same_as<uint32_t>;
+    { holder.payloadListFrom(word) } -> std::same_as<std::span<const uint32_t>>;
+};
+
+template<typename Holder>
+concept HoldsMutablePayloadWords = HoldsPayloadWords<Holder> && requires(Holder& holder, unsigned word, uint32_t value, std::span<const uint32_t> words) {
+    holder.setPayloadWordAt(word, value);
+    holder.setPayloadListFrom(word, words);
+};`.split("\n");
 
 function walkedTypes(schema: Schema): SchemaType[] {
   return engineTypesInDependencyOrder(schema);
@@ -46,9 +94,23 @@ function forEachReferenceDeclarations(typeName: string): string[] {
   ];
 }
 
+function holderHead(holder: HolderKind, payload: PayloadConcept): string {
+  return `template<${holder.concept} Holder, typename Visitor> requires ${payload}<Holder>`;
+}
+
+function forEachReferenceDeclarationsOfHolder(holder: HolderKind): string[] {
+  return [
+    holderHead(holder, "HoldsMutablePayloadWords"),
+    "void forEachReference(Holder&, Visitor&&);",
+    holderHead(holder, "HoldsPayloadWords"),
+    "void forEachReference(const Holder&, Visitor&&);",
+  ];
+}
+
 function walkersHeader(schema: Schema): string[] {
   const declarations = blocks(
-    ["Value", "Terminator"].flatMap(forEachReferenceDeclarations),
+    payloadConcepts,
+    holderKinds.flatMap(holder => forEachReferenceDeclarationsOfHolder(holder)),
     walkedTypes(schema).flatMap(type => forEachReferenceDeclarations(engineStructNameOf(type))),
     [
       ...referenceKindsWithoutRoles(schema).map(
@@ -57,19 +119,28 @@ function walkersHeader(schema: Schema): string[] {
       ),
       "template<typename Subject, typename Functor> void forEachFunctionReference(const Subject&, const Functor&);",
       "template<typename Subject, typename Functor> void forEachModuleReference(const Subject&, const Functor&);",
+      "template<typename Subject, typename Visitor> void forEachReferenceWithRole(const Subject&, Visitor&&);",
     ],
-    [
-      "template<typename Visitor> void forEachPlacedWord(const Value&, Visitor&&);",
-      "template<typename Visitor> void forEachPlacedWord(const Terminator&, Visitor&&);",
-    ],
+    holderKinds.flatMap(holder => [
+      holderHead(holder, "HoldsPayloadWords"),
+      "void forEachPlacedWord(const Holder&, Visitor&&);",
+    ]),
   );
   return cppHeader(
-    ['"AOTIRFunction.h"', '"AOTLayout.h"', "<wtf/Hasher.h>"],
+    [
+      '"AOTIRFunction.h"',
+      '"AOTLayout.h"',
+      '"AOTOpcode.h"',
+      '"AOTSchemaSupport.h"',
+      "<concepts>",
+      "<span>",
+      "<wtf/Hasher.h>",
+    ],
     [...inNamespace("Typed", declarations), "", '#include "AOTSchemaWalkersInlines.h"'],
   );
 }
 
-function isReference(kind: Kind): boolean {
+export function isReference(kind: Kind): boolean {
   return kind.tag === "Id" && !functionLocalIdKinds.has(kind.id.name);
 }
 
@@ -79,14 +150,14 @@ function lastMemberOf(schema: Schema, enumName: string): Member {
   return type.members[type.members.length - 1];
 }
 
-function roleArgument(schema: Schema, kind: Kind): string {
+export function roleArgument(schema: Schema, kind: Kind): string {
   if (kind.tag !== "Id") return "";
   const enumName = roleEnumNames.get(kind.id.name);
   if (enumName === undefined) return "";
   return `, ${enumName}::${(kind.role ?? lastMemberOf(schema, enumName)).name}`;
 }
 
-function holdsReferences(kind: Kind, seen: Set<SchemaRecord | Variant> = new Set()): boolean {
+export function holdsReferences(kind: Kind, seen: Set<SchemaRecord | Variant> = new Set()): boolean {
   const inner = innermostKindOf(kind);
   if (isReference(inner)) return true;
   if (inner.tag !== "Record" && inner.tag !== "Variant") return false;
@@ -126,11 +197,26 @@ function bothConstnesses(typeName: string, walkerName: string, isPublic = true):
   ];
 }
 
-function walker(name: string, parameter: string, indentedBody: Lines): string[] {
+function holderWalkers(holder: HolderKind): string[] {
+  const mutableHead = holderHead(holder, "HoldsMutablePayloadWords");
+  const constHead = holderHead(holder, "HoldsPayloadWords");
+  return [
+    mutableHead,
+    `void walkReferences(Holder& subject, Visitor& visitor) { ${holder.referenceWalker}(subject, visitor); }`,
+    constHead,
+    `void walkReferences(const Holder& subject, Visitor& visitor) { ${holder.referenceWalker}(subject, visitor); }`,
+    mutableHead,
+    "void forEachReference(Holder& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }",
+    constHead,
+    "void forEachReference(const Holder& subject, Visitor&& visitor) { walkWithoutRoles(subject, visitor); }",
+  ];
+}
+
+function walker(name: string, parameter: string, indentedBody: Lines, subjectConstraint = "typename"): string[] {
   const body =
     indentedBody.length > 0 ? indentedBody : indent([`UNUSED_PARAM(${parameter});`, "UNUSED_PARAM(visitor);"]);
   return [
-    "template<typename Subject, typename Visitor>",
+    `template<${subjectConstraint} Subject, typename Visitor>`,
     `void ${name}(Subject& ${parameter}, Visitor& visitor)`,
     "{",
     ...body,
@@ -209,8 +295,12 @@ void visitPayloadReferenceList(Holder& holder, unsigned firstWord, Visitor& visi
         for (const uint32_t& word : holder.payloadListFrom(firstWord))
             visitReferenceWord<Reference>(word, visitor, role...);
     } else {
-        for (uint32_t& word : holder.mutablePayloadListFrom(firstWord))
+        Vector<uint32_t, 16> words(holder.payloadListFrom(firstWord));
+        if (words.isEmpty())
+            return;
+        for (uint32_t& word : words)
             visitReferenceWord<Reference>(word, visitor, role...);
+        holder.setPayloadListFrom(firstWord, words.span());
     }
 }
 
@@ -227,12 +317,23 @@ template<typename Record, typename Holder, typename Visitor>
 void visitPayloadRecordList(Holder& holder, unsigned firstWord, Visitor& visitor)
 {
     constexpr unsigned wordsPerElement = PayloadWords<Record>::count;
-    size_t numberOfWords = holder.payloadListFrom(firstWord).size();
-    for (size_t offset = 0; offset < numberOfWords; offset += wordsPerElement) {
-        Record record = PayloadWords<Record>::decode(holder.payloadListFrom(firstWord).subspan(offset).template first<wordsPerElement>());
-        walkReferences(record, visitor);
-        if constexpr (!std::is_const_v<Holder>)
-            PayloadWords<Record>::encode(record, holder.mutablePayloadListFrom(firstWord).subspan(offset).template first<wordsPerElement>());
+    if constexpr (std::is_const_v<Holder>) {
+        std::span<const uint32_t> words = holder.payloadListFrom(firstWord);
+        for (size_t offset = 0; offset < words.size(); offset += wordsPerElement) {
+            Record record = PayloadWords<Record>::decode(words.subspan(offset).template first<wordsPerElement>());
+            walkReferences(record, visitor);
+        }
+    } else {
+        Vector<uint32_t, 16> words(holder.payloadListFrom(firstWord));
+        if (words.isEmpty())
+            return;
+        for (size_t offset = 0; offset < words.size(); offset += wordsPerElement) {
+            std::span<uint32_t, wordsPerElement> element = words.mutableSpan().subspan(offset).template first<wordsPerElement>();
+            Record record = PayloadWords<Record>::decode(element);
+            walkReferences(record, visitor);
+            PayloadWords<Record>::encode(record, element);
+        }
+        holder.setPayloadListFrom(firstWord, words.span());
     }
 }
 
@@ -299,15 +400,31 @@ function placedWordsOfEntry(entry: Entry): string[] {
   return [...statements, "return;"];
 }
 
-function entryWalker(
-  name: string,
-  entries: readonly Entry[],
-  tag: string,
-  enumName: string,
-  bodyOf: (entry: Entry) => Lines,
-): string[] {
-  const cases = entries.map(entry => ({ label: entry.name, body: bodyOf(entry) }));
-  return walker(name, "subject", exhaustiveSwitch(`subject.${tag}`, enumName, cases));
+function entryWalker(name: string, holder: HolderKind, schema: Schema, bodyOf: (entry: Entry) => Lines): string[] {
+  const { enumName, tag } = holder;
+  const groups = [...Map.groupBy(holder.entriesIn(schema), entry => bodyOf(entry).join("\n")).values()];
+  if (groups.length > 256) throw new Error(`${name} has more cases than a byte can number`);
+  const bodies = groups.map(group => bodyOf(group[0]));
+  const caseOf = `caseOf${name[0].toUpperCase()}${name.slice(1)}`;
+  const cases = groups.flatMap((group, index) => group.map(entry => ({ label: entry.name, value: String(index) })));
+  const signature = `uint8_t ${caseOf}(${enumName} ${tag})`;
+  return [
+    ...constexprSwitch({ signature, subject: tag, enumName, cases, defaultValue: null }),
+    "",
+    ...walker(
+      name,
+      "subject",
+      indent([
+        ...(bodies.every(body => body.length === 1) ? ["UNUSED_PARAM(visitor);"] : []),
+        `switch (CaseTable<${enumName}, ${caseOf}>::at(${holder.tagOf}(subject))) {`,
+        ...bodies.flatMap((body, index) => [`case ${index}:`, ...indent(body)]),
+        "default:",
+        ...indent(["WTF_UNREACHABLE();"]),
+        "}",
+      ]),
+      holder.concept,
+    ),
+  ];
 }
 
 function filteredWalk(name: string, idKind: string): string[] {
@@ -330,20 +447,23 @@ function walkersInlines(schema: Schema): string[] {
     ...walkedTypes(schema).map(type =>
       type.tag === "Record" ? recordWalker(schema, type.record) : variantWalker(schema, type.variant),
     ),
-    entryWalker("walkValue", schema.operations, "opcode", "Opcode", referencesOf),
-    bothConstnesses("Value", "walkValue"),
-    entryWalker("walkTerminator", schema.terminators, "kind", "TerminatorKind", referencesOf),
-    bothConstnesses("Terminator", "walkTerminator"),
+    ...holderKinds.flatMap(holder => [
+      entryWalker(holder.referenceWalker, holder, schema, referencesOf),
+      holderWalkers(holder),
+    ]),
     referenceKindsWithoutRoles(schema).flatMap(kind => filteredWalk(`forEach${kind.name}`, kind.name)),
     [...filteredWalk("forEachFunctionReference", "Function"), ...filteredWalk("forEachModuleReference", "Module")],
-    entryWalker("walkPlacedWordsOfValue", schema.operations, "opcode", "Opcode", placedWordsOfEntry),
-    entryWalker("walkPlacedWordsOfTerminator", schema.terminators, "kind", "TerminatorKind", placedWordsOfEntry),
     [
-      "template<typename Visitor> void forEachPlacedWord(const Value& value, Visitor&& visitor) { walkPlacedWordsOfValue(value, visitor); }",
-      "template<typename Visitor> void forEachPlacedWord(const Terminator& terminator, Visitor&& visitor) { walkPlacedWordsOfTerminator(terminator, visitor); }",
+      "template<typename Subject, typename Visitor>",
+      "void forEachReferenceWithRole(const Subject& subject, Visitor&& visitor) { walkReferences(subject, visitor); }",
     ],
+    ...holderKinds.map(holder => entryWalker(holder.placedWordWalker, holder, schema, placedWordsOfEntry)),
+    holderKinds.flatMap(holder => [
+      holderHead(holder, "HoldsPayloadWords"),
+      `void forEachPlacedWord(const Holder& subject, Visitor&& visitor) { ${holder.placedWordWalker}(subject, visitor); }`,
+    ]),
   );
-  return cppHeader(["<type_traits>"], inNamespace("Typed", body));
+  return cppHeader(['"AOTVector.h"', "<type_traits>"], inNamespace("Typed", body));
 }
 
 export function emitCppWalkers(context: EmitContext): OutputFile[] {

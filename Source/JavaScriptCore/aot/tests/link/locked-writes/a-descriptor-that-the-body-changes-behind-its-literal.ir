@@ -1,0 +1,33 @@
+# const first = { value: one }; delete first.value; Object.defineProperty(Date.prototype, "getTime", first);
+# const second = { value: one }; second.value = Date.prototype.getDate; Object.defineProperty(Date.prototype, "getDate", second);
+# the first definition asks for nothing: no word of it. What the second asks for nobody here has followed: it may throw, and a build does not stop on that
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks
+
+layout L0 module=m0 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Object @1
+    v1 = Builtin builtin=ObjectDefineProperty @1
+    v2 = Builtin builtin=DatePrototype @1
+    v3 = NewClosure function=f1 @1
+    v4 = NewObject -, v3 layout=L0 fields=[0] @1
+    v5 = FinishObject v4 @1
+    v6 = PropDelete v5 key="value" @2
+    v7 = String string="getTime" @3
+    v8 = Call v1, v0, v2, v7, v5 @3
+    v9 = NewObject -, v3 layout=L0 fields=[0] @4
+    v10 = FinishObject v9 @4
+    v11 = Builtin builtin=DatePrototypeGetDate @5
+    PropSet v10, v11 key="value" @5
+    v13 = String string="getDate" @6
+    v14 = Call v1, v0, v2, v13, v10 @6
+    Return v14 @7
+}
+function f1 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

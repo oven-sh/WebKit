@@ -1,0 +1,24 @@
+# the word `mechanisms=` is no argument of a command and no option of a build. Its words are applied from left to right, those of the OPTIONS line first.
+# `none` and `all` set the whole, `+name` adds a mechanism, and `-name` withholds one with all that leans on it
+# OPTIONS: mechanisms=none+Folding
+# RUN: walk f0
+# CHECK: mechanisms Folding
+# RUN(NONE): walk f0 mechanisms=none
+# NONE: mechanisms none
+# RUN(ALL): walk f0 mechanisms=all
+# ALL: mechanisms all
+# RUN(MORE): walk mechanisms=+TypedOperations f0
+# MORE: mechanisms TypedOperations,Folding
+# MORE: code f0:Body
+# RUN(BUT): walk f0 mechanisms=all-TypedOperations
+# BUT: mechanisms Arrivals,DirectCalls,Inlining,Folding,Handlers,BuiltinCalls
+# RUN(LAST): walk f0 mechanisms=all mechanisms=none
+# LAST: mechanisms none
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -4,11 +4,10 @@
  */
 
 #include "config.h"
-#include "AOTTestCommand.h"
+#include "AOTTestHarness.h"
 
 #if ENABLE(AOT)
 
-#include "AOTSchemaEnums.h"
 #include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -45,8 +44,12 @@ void checkTestCommandNames()
 void listTestCommands(PrintStream& out)
 {
     for (auto provider : testCommandProviders()) {
-        for (const TestCommand& command : provider())
-            out.println(command.name, " ", command.defaultForm ? nameOf(*command.defaultForm) : "-"_s);
+        for (const TestCommand& command : provider()) {
+            if (command.synopsis.isEmpty())
+                out.println(command.name);
+            else
+                out.println(command.name, " ", command.synopsis);
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -490,7 +490,7 @@ void WebFrameLoaderClient::willCacheResponse(WebCore::DocumentLoader* loader, We
 #if PLATFORM(IOS_FAMILY)
     if (implementations->webThreadWillCacheResponseFunc) {
         if (id resource = [webView.get() _objectForIdentifier:identifier])
-            return completionHandler(protect(CallResourceLoadDelegateInWebThread(implementations->webThreadWillCacheResponseFunc, webView.get(), @selector(webThreadWebView:resource:willCacheResponse:fromDataSource:), resource, response, protect(dataSource(loader)))));
+            return completionHandler(dynamic_objc_cast<NSCachedURLResponse>(protect(CallResourceLoadDelegateInWebThread(implementations->webThreadWillCacheResponseFunc, webView.get(), @selector(webThreadWebView:resource:willCacheResponse:fromDataSource:), resource, response, protect(dataSource(loader))))));
     } else
 #endif
     if (implementations->willCacheResponseFunc) {
@@ -1350,7 +1350,8 @@ void WebFrameLoaderClient::savePlatformDataToCachedFrame(WebCore::CachedFrame* c
 
 void WebFrameLoaderClient::transitionToCommittedFromCachedFrame(WebCore::CachedFrame* cachedFrame)
 {
-    WebCachedFramePlatformData* platformData = static_cast<WebCachedFramePlatformData*>(cachedFrame->cachedFramePlatformData());
+    // Only subclass of CachedFramePlatformData in WebKitLegacy is WebCachedFramePlatformData.
+    SUPPRESS_MEMORY_UNSAFE_CAST WebCachedFramePlatformData* platformData = static_cast<WebCachedFramePlatformData*>(cachedFrame->cachedFramePlatformData());
     RetainPtr<NSView<WebDocumentView>> cachedView = platformData->webDocumentView();
     ASSERT(cachedView);
     ASSERT(cachedFrame->documentLoader());
@@ -1543,7 +1544,11 @@ NSDictionary *WebFrameLoaderClient::actionDictionary(const WebCore::NavigationAc
         RetainPtr element = adoptNS([[WebElementDictionary alloc] initWithHitTestResult:protect(core(m_webFrame.get())->eventHandler())->hitTestResultAtPoint(mouseEventData->absoluteLocation, hitType)]);
         [result setObject:element.get() forKey:WebActionElementKey];
 
-        auto button = std::to_underlying(mouseEventData->isTrusted ? mouseEventData->button : MouseButton::None);
+        int button = std::to_underlying(MouseButtonState::None);
+        if (mouseEventData->isTrusted) {
+            auto eventButton = mouseEventData->button;
+            button = eventButton ? std::to_underlying(*eventButton) : std::to_underlying(eventButton.error());
+        }
         [result setObject:@(button) forKey:WebActionButtonKey];
     }
 
@@ -1653,7 +1658,7 @@ WebCore::ObjectContentType WebFrameLoaderClient::objectContentType(const URL& ur
     return WebCore::ObjectContentType::None;
 }
 
-static AtomString LEGACY_NODELETE parameterValue(const Vector<AtomString>& paramNames, const Vector<AtomString>& paramValues, ASCIILiteral name)
+NODELETE static AtomString parameterValue(const Vector<AtomString>& paramNames, const Vector<AtomString>& paramValues, ASCIILiteral name)
 {
     size_t size = paramNames.size();
     ASSERT(size == paramValues.size());
@@ -2015,16 +2020,22 @@ void WebFrameLoaderClient::getLoadDecisionForIcons(const Vector<std::pair<WebCor
 
 #if !PLATFORM(IOS_FAMILY)
     ASSERT(!m_loadingIcon);
-    // WebKit 1, which only supports one icon per page URL, traditionally has preferred the last icon in case of multiple icons listed.
-    // To preserve that behavior we walk the list backwards.
-    for (auto icon = icons.rbegin(); icon != icons.rend(); ++icon) {
-        if (icon->first.type != WebCore::LinkIconType::Favicon || m_loadingIcon) {
-            documentLoader->didGetLoadDecisionForIcon(false, icon->second, [](auto) { });
+    // WebKit 1 supports one icon per page URL. Load the smallest favicon, and the last declared of those.
+    std::optional<size_t> iconToLoad;
+    for (size_t i = 0; i < icons.size(); ++i) {
+        auto& icon = icons[i].first;
+        if (icon.type == WebCore::LinkIconType::Favicon && (!iconToLoad || icon.size.value_or(0) < icons[*iconToLoad].first.size.value_or(0)))
+            iconToLoad = i;
+    }
+
+    for (size_t i = 0; i < icons.size(); ++i) {
+        if (i != iconToLoad || m_loadingIcon) {
+            documentLoader->didGetLoadDecisionForIcon(false, icons[i].second, [](auto) { });
             continue;
         }
 
         m_loadingIcon = true;
-        documentLoader->didGetLoadDecisionForIcon(true, icon->second, [weakThis = WeakPtr { *this }] (WebCore::FragmentedSharedBuffer* buffer) {
+        documentLoader->didGetLoadDecisionForIcon(true, icons[i].second, [weakThis = WeakPtr { *this }](WebCore::FragmentedSharedBuffer* buffer) {
             if (RefPtr protectedThis = weakThis.get())
                 protectedThis->finishedLoadingIcon(buffer);
         });
@@ -2036,26 +2047,6 @@ void WebFrameLoaderClient::getLoadDecisionForIcons(const Vector<std::pair<WebCor
 #endif
 }
 
-#if !PLATFORM(IOS_FAMILY)
-static NSImage *webGetNSImage(WebCore::Image* image, NSSize size)
-{
-    ASSERT(size.width);
-    ASSERT(size.height);
-
-    // FIXME: We're doing the resize here for now because WebCore::Image doesn't yet support resizing/multiple representations
-    // This makes it so there's effectively only one size of a particular icon in the system at a time. We should move this
-    // to WebCore::Image at some point.
-    if (!image)
-        return nil;
-    RetainPtr nsImage = image->adapter().nsImage();
-    if (!nsImage)
-        return nil;
-    if (!NSEqualSizes([nsImage.get() size], size))
-        [nsImage.get() setSize:size];
-    return nsImage.autorelease();
-}
-#endif // !PLATFORM(IOS_FAMILY)
-
 void WebFrameLoaderClient::finishedLoadingIcon(WebCore::FragmentedSharedBuffer* iconData)
 {
 #if !PLATFORM(IOS_FAMILY)
@@ -2066,13 +2057,18 @@ void WebFrameLoaderClient::finishedLoadingIcon(WebCore::FragmentedSharedBuffer* 
     if (!webView)
         return;
 
-    auto image = WebCore::BitmapImage::create();
+    Ref image = WebCore::BitmapImage::create();
     if (image->setData(iconData, true) < WebCore::EncodedDataStatus::SizeAvailable)
         return;
 
-    RetainPtr icon = webGetNSImage(image.ptr(), NSMakeSize(16, 16));
-    if (icon)
-        [webView.get() _setMainFrameIcon:icon.get()];
+    WebCore::FloatSize size { 16, 16 };
+    RetainPtr icon = image->adapter().nsImage(WebCore::ImageDrawDescriptor { WebCore::ConcreteObjectSize::fixed(size) });
+    if (!icon)
+        return;
+    if (!NSEqualSizes([icon size], size))
+        [icon setSize:size];
+
+    [webView.get() _setMainFrameIcon:icon.get()];
 #else
     UNUSED_PARAM(iconData);
 #endif

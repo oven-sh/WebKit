@@ -1,0 +1,54 @@
+# the cells of `counter`'s scope are handed back. The closure that is returned is a cell of the heap and holds the environment: ITS OWN CODE sets the mark in the header of the scope, in front of the stub that makes it, so the walk builds no operation for that: a closure that nobody needs in the end leaves no mark behind. On the way that keeps nothing the cell is proposed for the next call. Nothing clears the mark: a cell that bears it is never taken again.
+# function counter(keep) { let id = 0; function bump() { id++; } bump(); if (keep) return () => ++id; return id; }  sink(counter);
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject {{*}}layout=L0
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: = NewClosure {{*}}function=f2
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL-NOT: MarkEnvironmentEscaped
+# ALL: = NewClosure {{*}}function=f2
+# RUN(EMIT): emit f1 mechanisms=all
+# EMIT: Store8({{*}}collectorState
+
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="id"}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="sink"
+    Return v3
+}
+function f1 name="counter" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = CallDirect v2 function=f3
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = NewClosure v2 function=f2
+    Return v5
+  b2():
+    v6 = GetEnvironmentField v2 layout=L0
+    Return v6
+}
+function f2 name="next" module=m0 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = Increment v1
+    PutEnvironmentField v0, v2 layout=L0
+    Return v2
+}
+function f3 name="bump" module=m0 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = Increment v1
+    PutEnvironmentField v0, v2 layout=L0
+    v4 = Undefined
+    Return v4
+}

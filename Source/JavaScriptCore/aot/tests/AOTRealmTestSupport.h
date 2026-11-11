@@ -24,11 +24,9 @@ namespace JSC::AOT {
             ::JSC::AOT::failNativeTest(__FILE__, __LINE__, (source).characters()); \
     } while (false)
 
-enum class RuntimeValidation : bool { Off, On };
-
 class Realms {
 public:
-    explicit Realms(RuntimeValidation = RuntimeValidation::Off);
+    Realms();
     ~Realms();
 
     VM& vm() { return *m_vm; }

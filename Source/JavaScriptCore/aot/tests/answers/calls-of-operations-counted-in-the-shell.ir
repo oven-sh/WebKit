@@ -1,0 +1,24 @@
+# The shell says how often compiled code called an operation of the run time. Only a run that counts is answered, and a name that nothing counts is refused: it would answer 0 for ever.
+# RUN: run-in-shell --aotCountsPath=/dev/null const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const before = aotOperationCount("operationAOTValueAdd"); const result = start(entry); Promise.resolve(result).then(() => { print("additions", aotOperationCount("operationAOTValueAdd") - before); for (const name of ["operationAOTNoSuchOperation", "HandleException"]) { try { print("answered", aotOperationCount(name)); } catch (error) { print(String(error)); } } print("lines", /^0\tcounter:DirectEvalsParsed$/m.test(aotRuntimeCounters()), /^1\toperation:operationAOTValueAdd$/m.test(aotRuntimeCounters()), /^0\toperation:operationAOTValueSub$/m.test(aotRuntimeCounters())); }); return result; };
+# CHECK: additions 1
+# CHECK-NEXT: Error: there is no operation operationAOTNoSuchOperation
+# CHECK-NEXT: Error: the calls of HandleException are not counted
+# CHECK-NEXT: lines true true true
+# CHECK: exited with 0
+# RUN(OFF): run-in-shell print(aotOperationCount("operationAOTValueAdd"), JSON.stringify(aotRuntimeCounters()));
+# OFF: null ""
+# OFF: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b2():
+    v0 = BigInt digits="12345678901234567890123"
+    v1 = Add v0, v0
+    Jump -> next b1(v1)
+  b1(v2):
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return
+}

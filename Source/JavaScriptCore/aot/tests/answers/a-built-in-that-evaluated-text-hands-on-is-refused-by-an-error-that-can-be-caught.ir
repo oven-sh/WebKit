@@ -1,0 +1,26 @@
+# A program that evaluates text which the build never saw. Nobody can tell who chose a built-in that the image lacks: the text may have handed it on as a value, and it is gone from the stack when a job calls what it handed over. In an image that admits such text the refusal stays the error that can be caught, whoever stands on the stack
+# (0, eval)(given); print("went on");
+# given: Promise.resolve([["k", 1]]).then(Object.fromEntries).then(made => print("made " + JSON.stringify(made)), error => print("caught " + error.message));
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage,LibraryText
+# RUN: run-in-shell globalThis.given = 'Promise.resolve([["k", 1]]).then(Object.fromEntries).then(made => print("made " + JSON.stringify(made)), error => print("caught " + error.message));';
+# CHECK: went on
+# CHECK-NEXT: caught Object.fromEntries was not compiled into this executable
+# CHECK-NEXT: exited with 0
+# RUN(IMAGE): image
+# IMAGE: flags {{*}}AdmitsUnknownJavaScript {{*}}IsBuiltWithLibrary
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Builtin builtin=Eval
+    v3 = Call v2, -, v1
+    v4 = PropGet v0 key="print" [isFreeName]
+    v5 = String string="went on"
+    v6 = Call v4, -, v5 calleeName="print"
+    v7 = Undefined
+    Return v7
+}

@@ -1,0 +1,56 @@
+# a branch asks a negation, and each side reads the proof that its edge hands on, so the walk leaves the negation where it is (Walker::branchOnTestBelowNegations()). The test below the negation is written again on each side
+# function pick(x) { const no = !x; if (no) return x ? "no and yes" : no; return x ? no : "neither"; }
+# what holds today is that the test is found again and asked once, and that each side still branches on it. It is not decided, whatever the name of this file says. The condition in Code is the written ToBoolean of the negation, which stays a record
+# (form=Generic, with TypedOperations form=Booleans), and recordEdgeOutcome() passes no ToBoolean on its way down, so it notes the outcome of that record alone
+# the answers are what counts. Whoever teaches that way down to pass a ToBoolean of a boolean reaches the negation, and with the two sides confused pick(0) answers "no and yes" and pick(1) "neither"
+# the records are written by hand, because no front end reads the proof of an edge
+# RUN(SHELL): run-in-shell globalThis.sink = pick => { print(pick(0)); print(pick(1)); print(pick("")); print(pick("a")); print(pick(null)); print(pick({})); };
+# SHELL: true
+# SHELL-NEXT: false
+# SHELL-NEXT: true
+# SHELL-NEXT: false
+# SHELL-NEXT: true
+# SHELL-NEXT: false
+# SHELL-NEXT: exited with 0
+# RUN(FORM): walk f1 mechanisms=none+Folding
+# FORM-LABEL: code f1:Body
+# FORM: = LogicalNot
+# FORM: Branch {{*}} -> taken
+# FORM-NOT: = ToBoolean
+# RUN(WITHHELD): walk f1 mechanisms=none
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD-COUNT-4: = ToBoolean
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="pick" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    v2 = LogicalNot v1
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b4(| 0)
+  b1(v4):
+    v5 = ToBoolean v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = String string="no and yes"
+    Return v6
+  b3():
+    Return v4
+  b4(v7):
+    v8 = ToBoolean v0
+    Branch v8 -> taken b5(), notTaken b6()
+  b5():
+    Return v7
+  b6():
+    v9 = String string="neither"
+    Return v9
+}

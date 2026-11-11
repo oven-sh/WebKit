@@ -1,0 +1,121 @@
+# a store that may add a field makes room without collecting and cannot throw: where there is no memory the error is left owed. Under a handler a poll stands at once behind the store, so the error comes to that handler and to no later one
+# three stores in a row have one poll, behind the last. Outside of every handler the error waits for the next poll. A callee that is copied under the handler of its caller is polled like the caller's own code
+# class P { constructor(v) { if (typeof v === "number") { this.x = v; this.y = v; this.z = v; } } }
+# function fill(p, v) { try { p.x = v; p.y = v; p.z = v; } catch (e) { return e; } }
+# function free(p, v) { p.x = v; p.y = v; p.z = v; }
+# function outer(p, v) { try { free(p, v); } catch (e) { return e; } }
+# function between(p, v) { try { p.x = v; seen = v; p.y = v; } catch (e) { return e; } }: what is seen stands between the two stores, so each keeps its poll
+# each is called with an object that the program makes, so Link proves the receiver
+# RUN: walk f2 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Handlers+Folding
+# CHECK-LABEL: code f2:Body
+# CHECK: PutSlotOrAdd {{*}}key="x"
+# CHECK-NOT: LoopHint
+# CHECK: PutSlotOrAdd {{*}}key="y"
+# CHECK-NOT: LoopHint
+# CHECK: PutSlotOrAdd {{*}}key="z"
+# CHECK: = LoopHint [throwsOwedError]
+# CHECK-NOT: LoopHint
+# CHECK: role=CatchHandler
+# RUN(FREE): walk f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Handlers+Folding
+# FREE-LABEL: code f3:Body
+# FREE: PutSlotOrAdd {{*}}key="z"
+# RUN(NEVER): walk f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Handlers+Folding
+# NEVER-NOT: LoopHint
+# RUN(COPIED): walk f4 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Inlining+Handlers+Folding
+# COPIED-LABEL: code f4:Body
+# COPIED: PutSlotOrAdd {{*}}key="z"
+# COPIED: = LoopHint [throwsOwedError]
+# RUN(ALL): walk f2 mechanisms=all
+# ALL-LABEL: code f2:Body
+# ALL: PutSlotOrAdd {{*}}key="z"
+# ALL: = LoopHint [throwsOwedError]
+# RUN(BETWEEN): walk f5 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Handlers+Folding
+# BETWEEN-LABEL: code f5:Body
+# BETWEEN: PutSlotOrAdd {{*}}key="x"
+# BETWEEN: = LoopHint [throwsOwedError]
+# BETWEEN: PutSlotOrAdd {{*}}key="y"
+# BETWEEN: = LoopHint [throwsOwedError]
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}, {key="z" declared={type=anything}}]
+variable g0 name="free" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g1 name="seen" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = String string="a"
+    v4 = Construct v2, -, v3
+    v5 = NewClosure function=f2
+    v6 = String string="b"
+    v7 = Call v5, -, v4, v6 calleeName="fill"
+    v8 = GetModuleVariable variable=g0
+    v9 = Call v8, -, v4, v6 calleeName="free"
+    v10 = NewClosure function=f4
+    v11 = Call v10, -, v4, v6 calleeName="outer"
+    v12 = NewClosure function=f5
+    v13 = Call v12, -, v4, v6 calleeName="between"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="P" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v1 key="x"
+    PropSet v3, v1 key="y"
+    PropSet v3, v1 key="z"
+    Jump -> next b2()
+  b2():
+    Return v3
+}
+function f2 name="fill" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    PropSet v0, v1 key="x"
+    PropSet v0, v1 key="y"
+    PropSet v0, v1 key="z"
+    v5 = Undefined
+    Return v5
+  b2() role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+}
+function f3 name="free" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="x"
+    PropSet v0, v1 key="y"
+    PropSet v0, v1 key="z"
+    v5 = Undefined
+    Return v5
+}
+function f4 name="outer" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v0, v1 calleeName="free"
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+function f5 name="between" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    PropSet v0, v1 key="x"
+    PutModuleVariable v1 variable=g1
+    PropSet v0, v1 key="y"
+    v5 = Undefined
+    Return v5
+  b2() role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+}

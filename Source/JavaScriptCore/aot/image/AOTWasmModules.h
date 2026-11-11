@@ -8,15 +8,14 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeTemplates.h"
-#include "AOTCompiledCode.h"
 #include "AOTDiagnostics.h"
 #include "AOTImageBuilder.h"
 #include "AOTRelocation.h"
 #include "AOTWasmInterface.h"
+#include <array>
 #include <expected>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/StdLibExtras.h>
 
 namespace JSC {
 
@@ -24,15 +23,10 @@ class VM;
 
 namespace AOT {
 
-class BuildContext;
-
 namespace Typed {
 class Program;
 }
 
-// The modules that the program imports, and the ones whose bytes stand in a string constant as base64 text, alone or behind the head of a data: URL.
-JS_EXPORT_PRIVATE WebAssemblyImageInputs compileWebAssemblyModules(VM&, const Typed::Program&, const CodeTemplates&, BuildContext&, const BitVector* stringsInImage = nullptr);
-// False where compileWebAssemblyModules() finds no module, whichever strings the image holds.
 JS_EXPORT_PRIVATE bool mayHaveWebAssemblyModules(const Typed::Program&);
 
 #if ENABLE(WEBASSEMBLY)
@@ -42,24 +36,19 @@ JS_EXPORT_PRIVATE UserDiagnosticKind diagnosticKindOf(Wasm::ImageDeclineReason);
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 
 struct WasmFunctionCode {
-    bool hasCode() const { return declineReason == Wasm::ImageDeclineReason::None; }
-
-    void decline(Wasm::ImageDeclineReason reason)
-    {
-        bool vectors = usesVectors;
-        *this = { };
-        usesVectors = vectors;
-        declineReason = reason;
-    }
-
     RelocatableCode code;
-    Vector<Wasm::ImageCallTarget> callTargets;
-    Vector<ConstantData> constants;
-    Vector<JumpTable> jumpTables;
+    Vector<Wasm::HandlerInImage> handlers;
+    BitVector directCallees;
     Wasm::SavedRegistersInImage savedRegisters { 0, 0, 0 };
+    Vector<Wasm::FramelessRangeInImage> framelessRanges;
     uint16_t savedRegistersIndex { 0 };
     bool usesVectors { false };
-    Wasm::ImageDeclineReason declineReason { Wasm::ImageDeclineReason::None };
+    bool dependsOnFlavor { false };
+    bool isOptimized { false };
+    unsigned threadedJumps { 0 };
+    unsigned firstStateTests { 0 };
+    uint32_t directEntry { 0 };
+    uint32_t directEntryWithZero { 0 };
 };
 
 struct WasmJSEntrypointCode {
@@ -70,30 +59,30 @@ struct WasmJSEntrypointCode {
 struct WasmModuleCode {
     std::array<uint8_t, 20> digest { };
     uint32_t sourceSize { 0 };
-    bool isForSignalingMemory { false };
-    Vector<uint8_t> throwStub;
+    std::array<RelocatableCode, Wasm::numberOfImageStubs> stubs;
     Vector<Vector<uint8_t>> importStubs;
+    Vector<Vector<uint8_t>> javaScriptImportStubs;
     Vector<WasmJSEntrypointCode> jsEntrypoints;
     Vector<WasmFunctionCode> functions;
-    WTF::Vector<Wasm::SavedRegistersInImage> savedRegisters;
+    Vector<WasmFunctionCode> functionsThatCheck;
+    Vector<Wasm::SavedRegistersInImage> savedRegisters;
 };
 
 using WasmModuleOrDecline = std::expected<Wasm::ModuleForImage, Wasm::ImageDeclineReason>;
 
-JS_EXPORT_PRIVATE WasmModuleOrDecline compileWasmModule(VM&, std::span<const uint8_t> source, const CodeTemplates&, BuildContext&);
+JS_EXPORT_PRIVATE WasmModuleOrDecline compileWasmModule(VM&, std::span<const uint8_t> source, const CodeTemplates&, BuildContext&, SourceLocation = noSourceLocation);
 JS_EXPORT_PRIVATE WasmModuleOrDecline linkWasmModule(WasmModuleCode&&, const CodeTemplates&, BuildContext&);
 
 class WasmSectionBuilder {
     WTF_MAKE_NONCOPYABLE(WasmSectionBuilder);
 public:
-    // AddressFar is page relative on ARM64, and a module is linked as if it were loaded at offset 0.
     static constexpr size_t codeAlignment = 4 * KB;
 
     WasmSectionBuilder() = default;
 
     [[nodiscard]] JS_EXPORT_PRIVATE bool append(Wasm::ModuleForImage&&);
     JS_EXPORT_PRIVATE void appendDeclined(const Wasm::DeclinedModuleInImage&);
-    JS_EXPORT_PRIVATE WebAssemblyImageInputs finish();
+    JS_EXPORT_PRIVATE WebAssemblyImageInputs finish(BuildContext&);
 
 private:
     struct PlacedModule {

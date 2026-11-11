@@ -190,6 +190,11 @@
 #import <WebCore/CaptionUserPreferencesMediaAF.h>
 #endif
 
+#if ENABLE(NOTIFY_BLOCKING)
+#import <notify.h>
+#endif
+
+
 #if ENABLE(DATA_DETECTION) && PLATFORM(IOS_FAMILY)
 #import <pal/spi/ios/DataDetectorsUISoftLink.h>
 #endif
@@ -209,6 +214,10 @@
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
 SOFT_LINK_FRAMEWORK_IN_UMBRELLA(ApplicationServices, HIServices)
 SOFT_LINK_FUNCTION_MAY_FAIL_FOR_SOURCE(WebKit, HIServices, _AXSetAuditTokenIsAuthenticatedCallback, void, (AXAuditTokenIsAuthenticatedCallback callback), (callback))
+#endif
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebProcessCocoaAdditionsBefore.mm>)
+#import <WebKitAdditions/WebProcessCocoaAdditionsBefore.mm>
 #endif
 
 namespace WebKit {
@@ -330,18 +339,42 @@ void WebProcess::setAllowAXAuthenticationForTesting(bool allow)
     allowAllAXAuthenticationForTesting = allow;
 }
 
-static Boolean isAXAuthenticatedCallback(audit_token_t auditToken)
+// The decision is opaque to WebKit: it's handed to HIServices, so WebKitAdditions defines its values.
+static uint32_t axAuthenticationDecision(bool allowed)
+{
+#if ENABLE(AX_ENHANCED_AUTHENTICATION)
+    return axAuthenticationDecisionForAllowedAdditions(allowed);
+#else
+    return allowed;
+#endif
+}
+
+static bool axAuthenticationDecisionIsAllowed(uint32_t decision)
+{
+#if ENABLE(AX_ENHANCED_AUTHENTICATION)
+    return axAuthenticationDecisionIsAllowedAdditions(decision);
+#else
+    return decision == axAuthenticationDecision(true);
+#endif
+}
+
+static uint32_t requestAXAuthenticationDecision(audit_token_t requester)
 {
     if (allowAllAXAuthenticationForTesting) [[unlikely]]
-        return true;
+        return axAuthenticationDecision(true);
 
-    bool authenticated = false;
+    uint32_t decision = axAuthenticationDecision(false);
     // IPC must be done on the main runloop, so dispatch it to avoid crashes when the secondary AX thread handles this callback.
-    callOnMainRunLoopAndWait([&authenticated, auditToken] {
-        auto sendResult = protect(WebProcess::singleton().parentProcessConnection())->sendSync(Messages::WebProcessProxy::IsAXAuthenticated(auditToken), 0);
-        std::tie(authenticated) = sendResult.takeReplyOr(false);
+    callOnMainRunLoopAndWait([&decision, requester] {
+        auto sendResult = protect(WebProcess::singleton().parentProcessConnection())->sendSync(Messages::WebProcessProxy::RequestAXAuthenticationDecision(requester), 0);
+        std::tie(decision) = sendResult.takeReplyOr(axAuthenticationDecision(false));
     });
-    return authenticated;
+    return decision;
+}
+
+static Boolean isAXAuthenticatedCallback(audit_token_t auditToken)
+{
+    return axAuthenticationDecisionIsAllowed(requestAXAuthenticationDecision(auditToken));
 }
 #endif
 
@@ -610,6 +643,10 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
     scrollerStylePreferenceChanged(parameters.useOverlayScrollbars);
 #endif
 
+#if HAVE(TEXT_SCALE_FACTOR)
+    setTextScaleFactor(parameters.textScaleFactor);
+#endif
+
 #if PLATFORM(VISION)
     SandboxExtension::consumePermanently(parameters.metalCacheDirectoryExtensionHandles);
 #endif
@@ -636,7 +673,11 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
 #endif
 
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
-    if (canLoad_HIServices__AXSetAuditTokenIsAuthenticatedCallback())
+    bool installedAuthenticationCallback = false;
+#if ENABLE(AX_ENHANCED_AUTHENTICATION)
+    installedAuthenticationCallback = installAXAuthenticationDecisionCallbackAdditions(requestAXAuthenticationDecision);
+#endif
+    if (!installedAuthenticationCallback && canLoad_HIServices__AXSetAuditTokenIsAuthenticatedCallback())
         softLink_HIServices__AXSetAuditTokenIsAuthenticatedCallback(isAXAuthenticatedCallback);
 #endif
 
@@ -771,10 +812,10 @@ void WebProcess::updateProcessName(IsInProcessInitialization isInProcessInitiali
 #if ENABLE(SET_WEBCONTENT_PROCESS_INFORMATION_IN_NETWORK_PROCESS)
     // During WebProcess initialization, we are still able to talk to LaunchServices to set the process name so there is no need to go
     // via the NetworkProcess. Prewarmed WebProcesses also do not have a network process connection until they are actually used by
-    // a page.
+    // a page, and the print process never has one.
 
     String displayName = applicationName.get();
-    if (m_sessionID) {
+    if (m_sessionID && !m_isPrintProcess) {
         auto auditToken = auditTokenForSelf();
         if (!auditToken)
             return;
@@ -1229,6 +1270,16 @@ void WebProcess::scrollerStylePreferenceChanged(bool useOverlayScrollbars)
     [NSScrollerImpPair _updateAllScrollerImpPairsForNewRecommendedScrollerStyle:style];
 }
 
+#endif
+
+#if HAVE(TEXT_SCALE_FACTOR)
+void WebProcess::setTextScaleFactor(std::optional<float> textScaleFactor)
+{
+    if (textScaleFactor == WebCore::textScaleFactor())
+        return;
+    WebCore::setTextScaleFactor(textScaleFactor);
+    Page::updateStyleForAllPagesAfterGlobalChangeInEnvironment();
+}
 #endif
 
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)

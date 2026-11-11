@@ -34,13 +34,16 @@ namespace JSC {
 inline JSCellButterfly* StringSplitCache::getForString(const String& subject, const String& separator)
 {
     AssertNoGC assertNoGC;
-    if (!subject.impl() || !subject.impl()->isAtom())
+    if (!canBeKey(subject.impl()))
         return nullptr;
-    if (!separator.impl() || !separator.impl()->isAtom())
+    if (!canBeKey(separator.impl()))
         return nullptr;
+    return getForKeys(subject.impl(), separator.impl());
+}
 
-    auto* subjectImpl = static_cast<AtomStringImpl*>(subject.impl());
-    auto* separatorImpl = static_cast<AtomStringImpl*>(separator.impl());
+inline JSCellButterfly* StringSplitCache::getForKeys(StringImpl* subjectImpl, StringImpl* separatorImpl)
+{
+    ASSERT(canBeKey(subjectImpl) && canBeKey(separatorImpl));
     size_t index = subjectImpl->hash() & (m_stringEntries.size() - 1);
     {
         auto& entry = m_stringEntries[index];
@@ -58,13 +61,12 @@ inline JSCellButterfly* StringSplitCache::getForString(const String& subject, co
 inline void StringSplitCache::setForString(const String& subject, const String& separator, JSCellButterfly* butterfly)
 {
     AssertNoGC assertNoGC;
-    if (!subject.impl() || !subject.impl()->isAtom())
-        return;
-    if (!separator.impl() || !separator.impl()->isAtom())
+    ASSERT(canBeKey(subject.impl()));
+    if (!canBeKey(separator.impl()))
         return;
 
-    auto* subjectImpl = static_cast<AtomStringImpl*>(subject.impl());
-    auto* separatorImpl = static_cast<AtomStringImpl*>(separator.impl());
+    auto* subjectImpl = subject.impl();
+    auto* separatorImpl = separator.impl();
     size_t index = subjectImpl->hash() & (m_stringEntries.size() - 1);
     {
         auto& entry1 = m_stringEntries[index];
@@ -92,12 +94,11 @@ inline void StringSplitCache::setForString(const String& subject, const String& 
 inline JSCellButterfly* StringSplitCache::getForRegExp(const String& subject, RegExp* regExp, MatchResult& lastMatch)
 {
     AssertNoGC assertNoGC;
-    if (!subject.impl() || !subject.impl()->isAtom())
-        return nullptr;
+    ASSERT(canBeKey(subject.impl()));
     if (!regExp)
         return nullptr;
 
-    auto* subjectImpl = static_cast<AtomStringImpl*>(subject.impl());
+    auto* subjectImpl = subject.impl();
     size_t index = regExpEntryIndex(subjectImpl, regExp);
     {
         auto& entry = m_regExpEntries[index];
@@ -119,12 +120,11 @@ inline JSCellButterfly* StringSplitCache::getForRegExp(const String& subject, Re
 inline void StringSplitCache::setForRegExp(const String& subject, RegExp* regExp, JSCellButterfly* butterfly, MatchResult lastMatch)
 {
     AssertNoGC assertNoGC;
-    if (!subject.impl() || !subject.impl()->isAtom())
-        return;
+    ASSERT(canBeKey(subject.impl()));
     if (!regExp)
         return;
 
-    auto* subjectImpl = static_cast<AtomStringImpl*>(subject.impl());
+    auto* subjectImpl = subject.impl();
     size_t index = regExpEntryIndex(subjectImpl, regExp);
     auto store = [&](RegExpEntry& entry) {
         entry.m_subject = subjectImpl;

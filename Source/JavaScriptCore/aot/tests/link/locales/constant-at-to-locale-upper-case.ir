@@ -1,0 +1,18 @@
+# a written tag at a method of a text
+# "i".toLocaleUpperCase("tr");
+# RUN: locales
+# CHECK: locale constant "tr" StringPrototypeToLocaleUpperCase
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: efault
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="i"
+    v1 = String string="tr"
+    v2 = PropGet v0 key="toLocaleUpperCase"
+    v3 = Call v2, v0, v1 calleeKey="toLocaleUpperCase"
+    Return v3
+}

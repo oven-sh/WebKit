@@ -42,7 +42,11 @@ overhead this project exists to avoid. Here ninja stays the build system;
 Xcode is purely the debugger frontend.
 
 Usage:
+    ninja -C <build-dir> xcode-project   # builds the products, then generates
     Tools/Scripts/generate-cmake-xcode-project [build-dir]
+
+Neither a CMake configure nor the default build generates this project: it is
+a debugging aid, so it is produced only when one of the above asks for it.
 
 Output:
     <build-dir>/WebKit.xcodeproj
@@ -107,7 +111,18 @@ def find_ninja():
     for candidate in ("/opt/homebrew/bin/ninja", "/usr/local/bin/ninja"):
         if os.path.exists(candidate):
             return candidate
-    sys.exit("error: ninja not found on PATH")
+    # Xcode ships one, and Source/cmake/ninja-wrapper already falls back to
+    # it, so a build machine whose only ninja is in Xcode builds WebKit but
+    # could not generate this project.
+    try:
+        p = subprocess.run(["/usr/bin/xcrun", "-f", "ninja"], text=True,
+                           capture_output=True, check=True).stdout.strip()
+        if p:
+            return p
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    sys.exit("error: ninja not found on PATH, in /opt/homebrew, in "
+             "/usr/local or in Xcode")
 
 
 @functools.lru_cache(maxsize=None)
@@ -212,8 +227,7 @@ def generate_ninja_wrapper(build_dir: Path, ninja_path: str) -> Path:
     lines.append(f'exec "{ninja_path}" "$@"')
 
     wrapper = build_dir / "ninja-xcode-wrapper"
-    wrapper.write_text("\n".join(lines) + "\n")
-    wrapper.chmod(0o755)
+    write_if_changed(wrapper, "\n".join(lines) + "\n", mode=0o755)
     return wrapper
 
 
@@ -230,7 +244,7 @@ def is_macho_executable(path: Path) -> bool:
 
 def discover_executables(build_dir: Path):
     """Yield (scheme_name, absolute_path, is_bundle) for every launchable
-    product directly under build_dir. Re-run after building new targets."""
+    product directly under build_dir."""
     for app in sorted(build_dir.glob("*.app")):
         yield app.stem, app, True
     for exe in sorted(build_dir.iterdir()):
@@ -395,7 +409,7 @@ def generate_pbxproj(build_dir: Path, source_dir: Path, ninja_path: str) -> str:
 
 def asan_options(build_dir: Path) -> str:
     """ASAN_OPTIONS for any process built with -fsanitize=address.
-    allocator_may_return_null=1 matches Tools/Scripts/webkitpy/port/driver.py.
+    allocator_may_return_null=1 matches Tools/Scripts/webkitpy/port/base.py.
     The sandbox profiles allow ASan's sigaltstack/socketpair calls when
     preprocessed with -fsanitize=address (see PlatformMac.cmake), so no
     use_sigaltstack workaround is needed."""
@@ -561,8 +575,25 @@ def generate_lldbinit(source_dir: Path, build_dir: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+def write_if_changed(path: Path, text: str, mode: int = 0o644) -> None:
+    """Write only what moved, and through a rename. A build regenerates these
+    files from inside itself, so rewriting ninja-xcode-wrapper in place would
+    truncate the script the shell is still executing, and a fresh mtime would
+    make an open Xcode reload the project for nothing. The pid in the
+    temporary name keeps concurrent writers apart."""
+    try:
+        if path.read_text() == text:
+            return
+    except OSError:
+        pass
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    tmp.chmod(mode)
+    os.replace(tmp, path)
+
+
 def default_build_dir(source_dir: Path) -> Path:
-    for cfg in ("Debug", "RelWithDebInfo", "Release"):
+    for cfg in ("ASan", "Debug", "RelWithDebInfo", "TSan", "Release"):
         candidate = source_dir / "WebKitBuild" / "cmake-mac" / cfg
         if (candidate / "CMakeCache.txt").exists():
             return candidate
@@ -577,7 +608,10 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("build_dir", nargs="?",
                     help="CMake binary dir (default: first configured "
-                         "WebKitBuild/cmake-mac/{Debug,RelWithDebInfo,Release})")
+                         "WebKitBuild/cmake-mac/{ASan,Debug,RelWithDebInfo,"
+                         "TSan,Release})")
+    ap.add_argument("--quiet", action="store_true",
+                    help="Report in one line, for the build-time invocation")
     args = ap.parse_args()
 
     if args.build_dir:
@@ -589,23 +623,23 @@ def main():
 
     if not (build_dir / "CMakeCache.txt").exists():
         sys.exit(f"error: {build_dir}/CMakeCache.txt not found -- run "
-                 f"'cmake --preset mac-dev-release' first")
-
-    ninja_path = find_ninja()
-    wrapper = generate_ninja_wrapper(build_dir, ninja_path)
+                 f"'cmake --preset <preset>' (see 'cmake --list-presets') first")
 
     proj = build_dir / f"{PROJECT_NAME}.xcodeproj"
-    proj.mkdir(exist_ok=True)
-    (proj / "project.pbxproj").write_text(
-        generate_pbxproj(build_dir, source_dir, str(wrapper)))
-
     schemes_dir = proj / "xcshareddata" / "xcschemes"
+    schemes = list(discover_executables(build_dir))
+
+    wrapper = generate_ninja_wrapper(build_dir, find_ninja())
+
+    proj.mkdir(exist_ok=True)
+    write_if_changed(proj / "project.pbxproj",
+                     generate_pbxproj(build_dir, source_dir, str(wrapper)))
+
     schemes_dir.mkdir(parents=True, exist_ok=True)
 
-    schemes = list(discover_executables(build_dir))
     for name, path, is_bundle in schemes:
-        (schemes_dir / f"{name}.xcscheme").write_text(
-            generate_scheme(name, path, is_bundle, build_dir))
+        write_if_changed(schemes_dir / f"{name}.xcscheme",
+                         generate_scheme(name, path, is_bundle, build_dir))
 
     # Xcode selects the alphabetically-first scheme by default; pin MiniBrowser
     # (or the first .app bundle) to orderHint 0 so a fresh open lands on the
@@ -622,7 +656,8 @@ def main():
             f"\t\t<dict><key>orderHint</key><integer>{i}</integer></dict>"
             for i, n in enumerate(ordered)
         )
-        (mgmt_dir / "xcschememanagement.plist").write_text(
+        write_if_changed(
+            mgmt_dir / "xcschememanagement.plist",
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
             '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
@@ -632,11 +667,16 @@ def main():
             '\t</dict>\n</dict>\n</plist>\n'
         )
 
-    (build_dir / "lldbinit").write_text(generate_lldbinit(source_dir, build_dir))
+    write_if_changed(build_dir / "lldbinit",
+                     generate_lldbinit(source_dir, build_dir))
+
+    if args.quiet:
+        print(f"Generated {proj}: {len(schemes)} scheme(s).")
+        return
 
     print(f"Generated {proj}")
     print(f"  {len(schemes)} scheme(s): "
-          f"{', '.join(n for n, _, _ in schemes) or '(none yet -- build first, then re-run)'}")
+          f"{', '.join(n for n, _, _ in schemes) or '(none yet -- the next build adds one per product)'}")
     print(f"  lldbinit: {build_dir}/lldbinit")
     print()
     print(f"  open {proj}")

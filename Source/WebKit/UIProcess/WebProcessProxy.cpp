@@ -116,6 +116,7 @@
 #include <ranges>
 #include <stdio.h>
 #include <wtf/Borrow.h>
+#include <wtf/FileSystem.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessPrivilege.h>
 #include <wtf/RunLoop.h>
@@ -1092,7 +1093,8 @@ WebPageProxy* WebProcessProxy::webPageWithActiveXRSession()
 {
     for (WeakRef weakPage : globalPageMap().values()) {
         Ref page = weakPage.get();
-        if (page->xrSystem() && page->xrSystem()->hasActiveSession())
+        RefPtr xrSystem = page->xrSystem();
+        if (xrSystem && xrSystem->hasActiveSession())
             return weakPage.ptr();
     }
     return nullptr;
@@ -1481,7 +1483,7 @@ bool WebProcessProxy::hasAssumedReadAccessToURL(const URL& url) const
     auto startsWithURLPath = [&path, protectedThis = RefPtr { this }](const String& assumedAccessPath) {
         // There are no ".." components, because URL removes those.
         WEBPROCESSPROXY_RELEASE_LOG_WITH_THIS(Sandbox, protectedThis, "hasAssumedReadAccessToURL: checking if url is contained in url(%u) with assumed access", WTF::URLHash::hash(URL::fileURLWithFileSystemPath(assumedAccessPath)));
-        return path.startsWith(assumedAccessPath);
+        return FileSystem::pathIsSameOrDescendantOf(path, assumedAccessPath);
     };
 
     auto& platformPaths = platformPathsWithAssumedReadAccess();
@@ -1547,15 +1549,12 @@ bool WebProcessProxy::fullKeyboardAccessEnabled()
 {
     return false;
 }
-
-bool WebProcessProxy::shouldDisableJITCage() const
-{
-    return false;
-}
 #endif // !PLATFORM(COCOA)
 
 void WebProcessProxy::getNetworkProcessConnection(CompletionHandler<void(NetworkProcessConnectionInfo&&)>&& reply)
 {
+    MESSAGE_CHECK_COMPLETION(!m_isPrintProcess, reply({ }));
+
     RefPtr dataStore = websiteDataStore();
     if (!dataStore) {
         ASSERT_NOT_REACHED();
@@ -1600,7 +1599,7 @@ void WebProcessProxy::gpuProcessConnectionDidBecomeUnresponsive(GPUProcessConnec
 // A frame hosted in another process was painted into a snapshot here. Received by the process rather
 // than a page, because the frame may be going away along with the last of this process's frames in
 // the page, and a request that reached nothing would leave the snapshot waiting for it.
-void WebProcessProxy::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const WebCore::IntRect& rect, RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode)
+void WebProcessProxy::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode)
 {
     MESSAGE_CHECK(renderingMode == WebCore::RenderingMode::DisplayList || renderingMode == WebCore::RenderingMode::PDFDocument);
 
@@ -1637,7 +1636,7 @@ void WebProcessProxy::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, cons
     gpuProcess->snapshotFrameWillBeDrawnByProcess(snapshotIdentifier, frameID, frameProcess->coreProcessIdentifier());
     // Also while the frame's process is waiting on this one, as it does for alert(), since this
     // process may itself be blocked waiting for the snapshot.
-    frameProcess->send(Messages::WebProcess::DrawFrameToSnapshot(frameID, rect, snapshotIdentifier, renderingMode), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForUnboundedSyncReply);
+    frameProcess->send(Messages::WebProcess::DrawFrameToSnapshot(frameID, rectRelativeToVisibleContent, snapshotIdentifier, renderingMode), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForUnboundedSyncReply);
 }
 
 #if HAVE(IOSURFACE)
@@ -1705,7 +1704,7 @@ void WebProcessProxy::gpuProcessExited(ProcessTerminationReason reason)
 void WebProcessProxy::createModelProcessConnection(IPC::Connection::Handle&& connectionIdentifier)
 {
     bool anyPageHasModelProcessEnabled = false;
-    for (auto& page : m_pageMap.values())
+    for (Ref page : pages())
         anyPageHasModelProcessEnabled |= page->preferences().modelElementEnabled() && page->preferences().modelProcessEnabled();
     MESSAGE_CHECK(anyPageHasModelProcessEnabled);
 
@@ -1720,7 +1719,7 @@ void WebProcessProxy::createModelProcessConnection(IPC::Connection::Handle&& con
 
 void WebProcessProxy::modelProcessDidFinishLaunching()
 {
-    for (auto& page : m_pageMap.values())
+    for (Ref page : pages())
         page->modelProcessDidFinishLaunching();
 }
 
@@ -1728,7 +1727,7 @@ void WebProcessProxy::modelProcessExited(ProcessTerminationReason reason)
 {
     WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "modelProcessExited: reason=%" PUBLIC_LOG_STRING, processTerminationReasonToString(reason).characters());
 
-    for (auto& page : m_pageMap.values())
+    for (Ref page : pages())
         page->modelProcessExited(reason);
 }
 
@@ -1816,8 +1815,6 @@ bool WebProcessProxy::dispatchMessage(IPC::Connection& connection, IPC::Decoder&
     if (messageName == Messages::WebFrameProxy::messageReceiverName()) {
         if (RefPtr frame = FrameIdentifier::isValidIdentifier(decoder.destinationID()) ? WebFrameProxy::webFrame(FrameIdentifier(decoder.destinationID())) : nullptr)
             frame->didReceiveMessage(connection, decoder);
-        else
-            WebFrameProxy::sendCancelReply(connection, decoder);
         return true;
     }
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
@@ -2187,6 +2184,11 @@ void WebProcessProxy::didDestroyUserGestureToken(PageIdentifier pageID, UserGest
 
 bool WebProcessProxy::canBeAddedToWebProcessCache() const
 {
+    if (m_isPrintProcess) {
+        WEBPROCESSPROXY_RELEASE_LOG(Process, "canBeAddedToWebProcessCache: Not adding to process cache because the process is the print process");
+        return false;
+    }
+
     if (isRunningServiceWorkers()) {
         WEBPROCESSPROXY_RELEASE_LOG(Process, "canBeAddedToWebProcessCache: Not adding to process cache because the process is running workers");
         return false;
@@ -2425,7 +2427,7 @@ RefPtr<API::Object> WebProcessProxy::transformHandlesToObjects(API::Object* obje
             }
         }
 
-        WebProcessProxy& LEGACY_NODELETE process() const { return m_webProcessProxy; }
+        NODELETE WebProcessProxy& process() const { return m_webProcessProxy; }
 
         WeakRef<WebProcessProxy> m_webProcessProxy;
     };
@@ -2911,6 +2913,9 @@ void WebProcessProxy::didCommitMainFrameLoad(const URL& url)
 
 void WebProcessProxy::updateSiteForMainFrameNavigation(const URL& url)
 {
+    if (firstPartyAccessIsAnswerable(*this))
+        return;
+
     // This process has been used for several registrable domains already.
     if (!m_site && m_site.error() == SiteState::MultipleSites)
         return;
@@ -3352,8 +3357,7 @@ void WebProcessProxy::updateRemoteWorkerProcessAssertion(RemoteWorkerType worker
 
     WEBPROCESSPROXY_RELEASE_LOG(ProcessSuspension, "updateRemoteWorkerProcessAssertion: workerType=%" PUBLIC_LOG_STRING, workerType == RemoteWorkerType::SharedWorker ? "shared" : "service");
 
-    // FIXME: Drop SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE once <rdar://150855062> is fixed.
-    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE bool shouldTakeForegroundActivity = std::ranges::any_of(workerInformation->clientProcesses, [&](auto& process) {
+    bool shouldTakeForegroundActivity = std::ranges::any_of(workerInformation->clientProcesses, [&](auto& process) {
         return &process != this && !!process.m_foregroundToken;
     });
     if (shouldTakeForegroundActivity) {
@@ -3362,8 +3366,7 @@ void WebProcessProxy::updateRemoteWorkerProcessAssertion(RemoteWorkerType worker
         return;
     }
 
-    // FIXME: Drop SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE once <rdar://150855062> is fixed.
-    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE bool shouldTakeBackgroundActivity = std::ranges::any_of(workerInformation->clientProcesses, [&](auto& process) {
+    bool shouldTakeBackgroundActivity = std::ranges::any_of(workerInformation->clientProcesses, [&](auto& process) {
         return &process != this && !!process.m_backgroundToken;
     });
     if (shouldTakeBackgroundActivity) {
@@ -3583,6 +3586,10 @@ void WebProcessProxy::unwrapCryptoKey(WrappedCryptoKey&& wrappedKey, CompletionH
 
 WebProcessProxy::FirstPartyAccessResult WebProcessProxy::allowsFirstPartyAccess(const WebCore::RegistrableDomain& domain) const
 {
+    // A web archive's documents have whatever origins the archive claims, which the UI process cannot verify.
+    if (hasCommittedWebArchive())
+        return FirstPartyAccessResult::Pass;
+
     if (m_site)
         return domain == m_site->domain() ? FirstPartyAccessResult::Pass : FirstPartyAccessResult::HardFailure;
 
@@ -3603,6 +3610,10 @@ WebProcessProxy::FirstPartyAccessResult WebProcessProxy::allowsFirstPartyAccess(
 
 void WebProcessProxy::setAppBadgeFromWorker(IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, std::optional<uint64_t> badge)
 {
+    // A web archive can claim any origin, so it must not badge the app of one.
+    if (hasCommittedWebArchive())
+        return;
+
     EXTRACT_WITH_MESSAGE_CHECK(origin, untrustedOrigin, ProcessSpeaksForDomain { *this, ShouldCheckWithoutSiteIsolation::Yes });
     if (RefPtr dataStore = websiteDataStore())
         dataStore->workerUpdatedAppBadge(origin, badge);

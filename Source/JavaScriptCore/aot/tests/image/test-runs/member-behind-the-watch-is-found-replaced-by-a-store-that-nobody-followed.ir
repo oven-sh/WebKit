@@ -1,0 +1,55 @@
+# wipe(hidden()); climb(hidden()); print(size(view)); replace(); print(size(view)); restore(); print(size(view))   with   function size(view: Int32Array) { return view.length; }
+# `length` is written through a value that nobody knows and prototypes are climbed to from such values, so the getter above all views is open in this test run, and the code of the shell really replaces it between
+# two reads. The getter lies two steps above a view: the read is GetTypedArrayLength behind the cell alone, the byte of the member and the byte of the holder below it; the store sets the byte of the member, that test fails from
+# then on, and the read by name finds what the test run has laid.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell const above = Object.getPrototypeOf(Int32Array.prototype), original = Object.getOwnPropertyDescriptor(above, "length"); globalThis.hidden = () => [1]; globalThis.replace = () => { Object.defineProperty(above, "length", { configurable: true, get() { return 7; } }); }; globalThis.restore = () => { Object.defineProperty(above, "length", original); };
+# CHECK: 3
+# CHECK-NEXT: 7
+# CHECK-NEXT: 3
+# CHECK-NEXT: exited with 0
+# RUN(LOCKS): locks open
+# LOCKS: open TypedArrayPrototypeLength spelled-through-unseen
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: = IsPristine {{*}}builtinClass=Int32Array aspects=[{{*}}CellAlone]
+# WALK: = IsMemberAsBuilt builtin=TypedArrayPrototypeLength
+# WALK: = PropGet {{*}}key="length"
+# WALK: = IsHolderWithoutAddedNames builtin=Int32ArrayPrototype
+# WALK: = GetTypedArrayLength
+
+module m0 path="/a.test.ts" displayPath="a.test.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = PropGet v0 key="hidden" [isFreeName]
+    v3 = Call v2, -
+    v4 = Integer integer=0
+    PropSet v3, v4 key="length"
+    v6 = Call v2, -
+    v7 = PropGet v0 key="Object" [isFreeName]
+    v8 = PropGet v7 key="getPrototypeOf"
+    v9 = Call v8, v7, v6 calleeKey="getPrototypeOf"
+    v10 = Builtin builtin=Int32Array
+    v11 = Integer integer=3
+    v12 = Construct v10, -, v11 calleeName="Int32Array"
+    v13 = PropGet v0 key="print" [isFreeName]
+    v14 = Call v1, -, v12
+    v15 = Call v13, -, v14
+    v16 = PropGet v0 key="replace" [isFreeName]
+    v17 = Call v16, -
+    v18 = Call v1, -, v12
+    v19 = Call v13, -, v18
+    v20 = PropGet v0 key="restore" [isFreeName]
+    v21 = Call v20, -
+    v22 = Call v1, -, v12
+    v23 = Call v13, -, v22
+    Return v23
+}
+function f1 name="size" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Int32Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}

@@ -1,0 +1,55 @@
+# function cuts(text: string, operand: () => number) { return text.substring(operand(), 4); }
+# function adds(list: number[], operand: () => number) { return list.push(operand()); }      sink(cuts, adds);
+# Under the word that checks the walk when the code runs, the stubs ask the object again what it finds under the name. The look in front of the operands has read nothing:
+# it is asked as a call by name is: does the receiver find the built-in? My first text handed over whatever lay in the register of the callee for "the method that was read", and the check stopped a right program.
+# OPTIONS: testing=CheckWalkAtRunTime
+# RUN(SHELL): run-in-shell const says = f => { try { print(String(f())); } catch (e) { print(e.name); } }; globalThis.sink = (cuts, adds) => { const turnsBack = { substring(left) { "use strict"; return left > 0 ? cuts(turnsBack, () => left - 1) : "back"; } }; for (let turn = 0; turn < 2; turn++) { says(() => cuts("alphabet", () => 1)); says(() => cuts(new String("alphabet"), () => 2)); says(() => cuts({ substring: (a, b) => a + b }, () => 1)); says(() => cuts(12, () => 1)); says(() => cuts(null, () => { print("ran"); return 1; })); says(() => cuts({ get substring() { print("getter"); return () => "got"; } }, () => { print("operand"); return 1; })); says(() => cuts(turnsBack, () => 100000)); const list = [1, 2]; says(() => adds(list, () => { list.push = () => "mine"; return 3; })); says(() => adds(list, () => 4)); } };
+# SHELL: lph
+# SHELL: ph
+# SHELL: 5
+# SHELL: TypeError
+# SHELL: TypeError
+# SHELL: getter
+# SHELL: operand
+# SHELL: got
+# SHELL: back
+# SHELL: 3
+# SHELL: mine
+# SHELL: lph
+# SHELL: ph
+# SHELL: 5
+# SHELL: TypeError
+# SHELL: TypeError
+# SHELL: getter
+# SHELL: operand
+# SHELL: got
+# SHELL: back
+# SHELL: 3
+# SHELL: mine
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="cuts" module=m0 length=2 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = PropGet v0 key="substring" @110
+    v3 = Call v1, - @120
+    v4 = Integer integer=4
+    v5 = Call v2, v0, v3, v4 calleeKey="substring" calleeName="text.substring" @130
+    ReturnCall v5
+}
+function f2 name="adds" module=m0 length=2 thisType={type=anything} parameters=[{type=Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: anything):
+    v2 = PropGet v0 key="push" @140
+    v3 = Call v1, - @150
+    v4 = Call v2, v0, v3 calleeKey="push" calleeName="list.push" @160
+    ReturnCall v4
+}

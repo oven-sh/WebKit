@@ -1,0 +1,95 @@
+# THE STORE OF "FILLED" IS THE LITERAL. Link's word that a field of a record is filled chooses the reads that ask nothing, and proves nothing: each maker shows it where it is through with the object.
+# function listed(v) { return { a: v, b: 1 } }       the allocation lists both: nothing is asked
+# function behind(v) { return { a: v, <b defined behind a call of unseen code> } }       the walk has seen the definition, or asks the slot at the FinishObject: at an empty one the program stops, and says where
+# function later(v) { const o = {}; o.a = v; o.b = 2; return o }       what is stored straight behind the literal, in front of the place where it first leaves, counts: the maker ends there
+# function empty(v) { const o = {}; o.a = v; o.b = 3; return o }       the same: the empty literal is written as a constant, whose own place is its finish
+# function read(o) { return o.b }       a plain load
+# If no maker showed anything, as none did, a construction that Link has followed wrongly would hand the mark of an empty slot to `read` as a value.
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.0 "a" {{*}}filled
+# LINK: field L0.1 "b" {{*}}filled
+# RUN(LISTED): walk f1 mechanisms=all
+# LISTED-LABEL: code f1:
+# LISTED-NOT: IsSlotFilled
+# RUN(BEHIND): walk f2 mechanisms=none+TypedOperations
+# BEHIND-LABEL: code f2:
+# BEHIND: [[asked]]: boolean {{*}} = IsSlotFilled {{*}}key="a"
+# BEHIND-NEXT: CheckProof [[asked]] {{*}}source=Field
+# RUN(LATER): summary f4
+# LATER: ends-where-it-leaves v1 b0 at 6
+# LATER-NOT: leaves-empty
+# RUN(SHOWN): walk f4 mechanisms=all
+# SHOWN-LABEL: code f4:
+# SHOWN-NOT: IsSlotFilled
+# RUN(EMPTY): summary f5
+# EMPTY: ends-where-it-leaves v1 b0 at 5
+# EMPTY-NOT: leaves-empty
+# RUN(CONSTANT): walk f5 mechanisms=all
+# CONSTANT-LABEL: code f5:
+# CONSTANT-NOT: CheckProof
+# RUN(READ): walk f3 mechanisms=all
+# READ-LABEL: code f3:
+# READ: = GetSlot {{*}}key="b" receivers=[L0] level=Proven
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+data d0 root=Object{layout=L0 members=[]} module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Integer integer=7
+    v4 = Call v0, -, v3 calleeName="listed"
+    v5 = Call v1, -, v3 calleeName="behind"
+    v6 = Call v2, -, v4 calleeName="read"
+    v7 = Call v2, -, v5 calleeName="read"
+    v8 = NewClosure function=f4
+    v9 = Call v8, -, v3 calleeName="later"
+    v10 = Call v2, -, v9 calleeName="read"
+    v11 = NewClosure function=f5
+    v12 = Call v11, -, v3 calleeName="empty"
+    v13 = Call v2, -, v12 calleeName="read"
+    Return v13
+}
+function f1 name="listed" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="behind" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    PropDefine v1, v0 key="a"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="host" [isFreeName]
+    v5 = Call v4 calleeName="host"
+    PropDefine v1, v5 key="b"
+    v7 = FinishObject v1
+    Return v7
+}
+function f3 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="b"
+    Return v1
+}
+function f4 name="later" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = FinishObject v1
+    PropSet v2, v0 key="a"
+    v4 = Integer integer=2
+    PropSet v2, v4 key="b"
+    Return v2
+}
+function f5 name="empty" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Data data=d0
+    PropSet v1, v0 key="a"
+    v3 = Integer integer=3
+    PropSet v1, v3 key="b"
+    Return v1
+}

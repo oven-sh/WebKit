@@ -4,71 +4,86 @@
  */
 
 #include "config.h"
-#include "AOTTestSubcommands.h"
+#include "AOTTestHarness.h"
 
 #if ENABLE(AOT)
 
-#include "AOTCompile.h"
+#include "AOTBodyVerifier.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTDiagnostics.h"
-#include "AOTIRParser.h"
+#include "AOTDriver.h"
 #include "AOTIRPrinter.h"
-#include "AOTPass.h"
-#include "AOTPassID.h"
-#include "AOTPipeline.h"
+#include "AOTMechanismWords.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
-#include "AOTReaderInternal.h"
+#include "AOTProgramVerifier.h"
 #include "AOTSchemaEnums.h"
+#include "AOTStages.h"
+#include "AOTTestFile.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
-#include "AOTVerifier.h"
+#include "Options.h"
+#include <algorithm>
 #include <expected>
-#include <wtf/ASCIICType.h>
+#include <initializer_list>
 #include <wtf/FilePrintStream.h>
 #include <wtf/FileSystem.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
-#include <wtf/text/StringToIntegerConversion.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct Flag {
+struct SubcommandFlag {
     StringView name;
     StringView value;
 };
 
 struct ProgramArguments {
     String programPath;
-    Wire::CompileOptions options { makeDefaultCompileOptions() };
-    Vector<Flag> flags;
+    Vector<String> words;
+    Vector<SubcommandFlag> flags;
 };
 
-struct PrintFlags {
-    std::optional<PassID> until;
-    Vector<uint32_t> functionIndices;
-    bool isWire { false };
+struct FlagsOfProgramSubcommand {
+    String outputPath;
+    SchemaHashCheck schemaHashCheck { SchemaHashCheck::Required };
+};
+
+struct InputsOfCommand {
+    Wire::CompileOptions options { makeOptionsOfTestedProgram() };
+    Vector<String> arguments;
+    Vector<TestSection> sections;
+    std::optional<FunctionID> functionOfTypesLine;
+    Mechanisms mechanisms { mechanismsOfProcess() };
 };
 
 } // anonymous namespace
 
-static constexpr ASCIILiteral untilFlag = "--until"_s;
-static constexpr ASCIILiteral functionFlag = "--function"_s;
 static constexpr ASCIILiteral wireFlag = "--wire"_s;
 static constexpr ASCIILiteral outputFlag = "--output"_s;
+static constexpr ASCIILiteral programOfTagFlag = "--program-of-tag"_s;
+
+static constexpr ASCIILiteral checksOfEveryTestRun = "check=VerifyEachStage"_s;
 
 static String unknownFlagSentence(StringView name)
 {
     return makeString("unknown flag "_s, name);
 }
 
-static String repeatedFlagSentence(ASCIILiteral name)
+static String repeatedFlagSentence(StringView name)
 {
     return makeString(name, " may be specified only once"_s);
 }
 
-static Flag splitFlag(StringView word)
+static String missingValueSentence(StringView name)
+{
+    return makeString(name, " needs a value"_s);
+}
+
+static SubcommandFlag splitSubcommandFlag(StringView word)
 {
     size_t equalsSign = word.find('=');
     if (equalsSign == notFound)
@@ -80,87 +95,79 @@ static std::expected<ProgramArguments, String> parseProgramArguments(std::span<c
 {
     ProgramArguments arguments;
     for (const String& word : words) {
-        if (word.startsWith("--"_s)) {
-            arguments.flags.append(splitFlag(word));
-            continue;
-        }
-        if (arguments.programPath.isNull()) {
+        if (word.startsWith("--"_s))
+            arguments.flags.append(splitSubcommandFlag(word));
+        else if (arguments.programPath.isNull())
             arguments.programPath = word;
-            continue;
-        }
-        if (std::optional<String> sentence = applyOptionWord(arguments.options, word))
-            return makeUnexpected(makeString(word, ": "_s, *sentence));
+        else
+            arguments.words.append(word);
     }
     if (arguments.programPath.isNull())
         return makeUnexpected(String("missing program"_s));
     return arguments;
 }
 
-static String missingValueSentence(StringView name)
+static std::expected<FlagsOfProgramSubcommand, String> parseFlagsOfProgramSubcommand(std::span<const SubcommandFlag> flags, std::initializer_list<ASCIILiteral> flagsOfSubcommand)
 {
-    return makeString(name, " needs a value"_s);
-}
+    FlagsOfProgramSubcommand result;
+    for (const SubcommandFlag& flag : flags) {
+        bool isFlagOfSubcommand = std::ranges::any_of(flagsOfSubcommand, [&](ASCIILiteral name) {
+            return flag.name == name;
+        });
+        if (!isFlagOfSubcommand)
+            return makeUnexpected(unknownFlagSentence(flag.name));
 
-static std::optional<uint32_t> parseFunctionIndex(StringView id)
-{
-    if (!id.startsWith('f'))
-        return std::nullopt;
-    StringView digits = id.substring(1);
-    if (!digits.containsOnly<isASCIIDigit>())
-        return std::nullopt;
-    return parseInteger<uint32_t>(digits, 10, WTF::ParseIntegerWhitespacePolicy::Disallow);
-}
-
-static std::expected<PrintFlags, String> parsePrintFlags(std::span<const Flag> flags)
-{
-    PrintFlags result;
-    for (const Flag& flag : flags) {
-        if (flag.name == wireFlag) {
+        if (flag.name == wireFlag || flag.name == programOfTagFlag) {
             if (!flag.value.isEmpty())
-                return makeUnexpected(makeString(wireFlag, " takes no value"_s));
-            result.isWire = true;
+                return makeUnexpected(makeString(flag.name, " takes no value"_s));
+            if (flag.name == programOfTagFlag)
+                result.schemaHashCheck = SchemaHashCheck::Skipped;
             continue;
         }
-        if (flag.name != functionFlag && flag.name != untilFlag)
-            return makeUnexpected(unknownFlagSentence(flag.name));
+
+        String& path = result.outputPath;
         if (flag.value.isEmpty())
             return makeUnexpected(missingValueSentence(flag.name));
-        if (flag.name == functionFlag) {
-            std::optional<uint32_t> index = parseFunctionIndex(flag.value);
-            if (!index)
-                return makeUnexpected(makeString(functionFlag, " takes a function id such as f12, not "_s, flag.value));
-            result.functionIndices.append(*index);
-            continue;
-        }
-        if (result.until)
-            return makeUnexpected(repeatedFlagSentence(untilFlag));
-        result.until = passNamed(flag.value);
-        if (!result.until)
-            return makeUnexpected(makeString("unknown pass "_s, flag.value));
+        if (!path.isNull())
+            return makeUnexpected(repeatedFlagSentence(flag.name));
+        path = flag.value.toString();
     }
-    if (result.isWire && (result.until || !result.functionIndices.isEmpty()))
-        return makeUnexpected(makeString(wireFlag, " takes no other flag"_s));
     return result;
 }
 
-static std::expected<String, String> parseOutputPath(std::span<const Flag> flags)
+static Wire::CompileOptions optionsToCompileBy(const ProgramFile& file, const String& path, PrintStream& errors)
 {
-    String outputPath;
-    for (const Flag& flag : flags) {
-        if (flag.name != outputFlag)
-            return makeUnexpected(unknownFlagSentence(flag.name));
-        if (flag.value.isEmpty())
-            return makeUnexpected(missingValueSentence(flag.name));
-        if (!outputPath.isNull())
-            return makeUnexpected(repeatedFlagSentence(outputFlag));
-        outputPath = flag.value.toString();
+    Wire::CompileOptions ofTest = makeOptionsOfTestedProgram();
+    if (file.options) {
+        Wire::CompileOptions ofBuild = *file.options;
+        ofBuild.threadCount = ofTest.threadCount;
+        ofBuild.executableIdentity = ofTest.executableIdentity;
+        return ofBuild;
     }
-    if (outputPath.isNull())
-        return makeUnexpected(makeString(outputFlag, " is required"_s));
-    return outputPath;
+    if (file.kind == ProgramFile::Kind::Bytes)
+        errors.println(path, " brings no options of its build: it is compiled as if code from disk were allowed and nothing were left out");
+    return ofTest;
 }
 
-static int reportInvalidCommandLine(ASCIILiteral subcommand, const String& sentence, PrintStream& errors)
+static std::optional<String> applyWordsOfCommandLine(Wire::CompileOptions& options, Mechanisms& mechanisms, std::span<const String> words, Vector<String>* argumentsOfCommand)
+{
+    for (const String& word : words) {
+        if (isMechanismsWord(word)) {
+            if (std::optional<String> sentence = applyMechanismsWordOfTest(mechanisms, word))
+                return makeString(word, ": "_s, *sentence);
+            continue;
+        }
+        std::optional<String> sentence = applyOptionWord(options, word);
+        if (!sentence)
+            continue;
+        if (!argumentsOfCommand || word.contains('='))
+            return makeString(word, ": "_s, *sentence);
+        argumentsOfCommand->append(word);
+    }
+    return std::nullopt;
+}
+
+static int reportInvalidCommandLine(StringView subcommand, const String& sentence, PrintStream& errors)
 {
     errors.println("testaot ", subcommand, ": ", sentence);
     return exitCodeForInvalidCommandLine;
@@ -172,176 +179,196 @@ static int reportDiagnostics(const Diagnostics& diagnostics, PrintStream& errors
     return exitCodeForFailure;
 }
 
-static std::unique_ptr<Program> computeProgramAfterPass(PassID last, std::unique_ptr<Program> program, BuildContext& build)
+static bool saysWhatTestsOfFrontEndWaitFor(const CompileOutput& output)
 {
-    std::unique_ptr<PipelineOutput> output = runPipelineUntil(last, WTF::move(program), build);
-    if (!output)
-        return nullptr;
-    return WTF::move(output->program);
-}
-
-static std::unique_ptr<CompileOutput> compileParsed(std::unique_ptr<Program> program, BuildContext& build)
-{
-    return compileParsedProgram(WTF::move(program), build);
-}
-
-static std::optional<uint32_t> findMissingFunction(const Program& program, std::span<const uint32_t> functionIndices)
-{
-    for (uint32_t index : functionIndices) {
-        if (index >= program.functions.size())
-            return index;
+    for (const Wire::UserDiagnosticRecord& record : output.records<Wire::UserDiagnosticRecord>(Wire::ResultSection::UserDiagnostics)) {
+        if (failsBuild(record.kind) || record.kind == UserDiagnosticKind::UnprovenDependencyInt32)
+            return true;
     }
-    return std::nullopt;
+    return !output.section(Wire::ResultSection::InternalErrors).empty();
 }
 
-static void printSelectedFunctions(PrintStream& out, const Program& program, std::span<const uint32_t> functionIndices, BuildContext& build)
+static bool takeDirectivesOfProgramText(const TestCommand& command, const ProgramFile& file, const String& path, InputsOfCommand& inputs, PrintStream& errors)
 {
-    if (functionIndices.empty() && !build.options().logging.functionToDump.span().empty()) {
-        build.resolveFunctionToDump(program);
-        for (uint32_t index = 0; index < program.functions.size(); ++index) {
-            FunctionID id(index);
-            if (program.at(id).hasBody() && build.shouldDump(id))
-                printFunction(out, program, id, program.at(id));
+    TestFile test = parseTestFile(makeString(String::fromUTF8(file.bytes.span()), "\n# RUN: "_s, command.name, '\n'), hostArchitecture(), FileSystem::parentPath(path));
+    for (const TestFileError& error : test.errors)
+        errors.println(path, ":", error.line, ": ", error.message);
+    if (!test.errors.isEmpty())
+        return false;
+
+    bool isUsable = true;
+    for (const OptionWord& optionWord : test.optionWords) {
+        std::optional<String> sentence = isMechanismsWord(optionWord.word) ? applyMechanismsWordOfTest(inputs.mechanisms, optionWord.word) : applyOptionWord(inputs.options, optionWord.word);
+        if (sentence) {
+            errors.println(path, ":", optionWord.line, ": ", *sentence);
+            isUsable = false;
         }
-        return;
     }
-    if (functionIndices.empty()) {
-        printProgram(out, program);
-        return;
+    for (const OptionWord& option : test.jscOptions) {
+        if (!Options::setOption(byteCast<char>(option.word.utf8().span().subspan(2).data()), false)) {
+            errors.println(path, ":", option.line, ": unknown JSC option ", option.word);
+            isUsable = false;
+        }
     }
-    for (uint32_t index : functionIndices) {
-        FunctionID id(index);
-        printFunction(out, program, id, program.at(id));
-    }
+
+    inputs.sections = WTF::move(test.sections);
+    inputs.functionOfTypesLine = test.functionOfTypesLine;
+    return isUsable;
 }
 
-static std::unique_ptr<Program> createProgramWithLibrary(const ProgramFile& file, BuildContext& build)
+static bool isHandedUnverifiedProgram(const TestCommand& command)
 {
-    if (file.kind == ProgramFile::Kind::Text)
-        return parseProgram(withStandInLibrary(file.text), IRForm::AsRead, build);
-    return createProgram(file, build);
+    return command.name == "verify"_s || command.name == "print"_s;
 }
 
-static bool hasDiagnostics(const Diagnostics& diagnostics)
-{
-    return !diagnostics.userDiagnostics().isEmpty() || !diagnostics.internalErrors().isEmpty();
-}
-
-// The program as it arrived: a type names `L5`, whatever set of layouts the compiler takes `L5` for. Encoded again, the text gives the bytes that were read.
-static std::unique_ptr<Program> createProgramAsWritten(const ProgramFile& file, BuildContext& build)
-{
-    if (file.kind != ProgramFile::Kind::Bytes)
-        return createProgram(file, build);
-    auto program = makeUnique<Program>(BuiltinTable::singleton());
-    program->borrowBuffer(file.bytes.span());
-    Reader reader(*program, IRForm::AsRead, build);
-    reader.keepLayoutsAsWritten();
-    if (!reader.run())
-        return nullptr;
-    return program;
-}
-
-static int printWire(const ProgramFile& file, Wire::CompileOptions options)
+static int runCommandOnProgramFile(const TestCommand& command, ProgramFile&& file, SchemaHashCheck schemaHashCheck, const InputsOfCommand& inputs)
 {
     FilePrintStream out(stdout, FilePrintStream::Borrow);
     FilePrintStream errors(stderr, FilePrintStream::Borrow);
 
-    options.action = Wire::CompileAction::VerifyOnly;
-    StringPrintStream text;
-    {
-        BuildContext build(options);
-        std::unique_ptr<Program> arrived = createProgramAsWritten(file, build);
-        if (!arrived) {
-            build.diagnostics().finish(nullptr);
+    BuildContext build(inputs.options);
+    String programText;
+    std::unique_ptr<Program> program;
+    if (command.program != ProgramOfCommand::None) {
+        if (command.program == ProgramOfCommand::WithLibrary && file.kind == ProgramFile::Kind::Text)
+            file.text = withStandInLibrary(file.text);
+        programText = file.text;
+        program = createProgram(WTF::move(file), build, schemaHashCheck);
+        bool mayBeHandedOver = program && (isHandedUnverifiedProgram(command) || (verifyRecords(*program, build) && verifyBodies(*program, build)));
+        if (!mayBeHandedOver) {
+            build.diagnostics().finish(program.get());
             return reportDiagnostics(build.diagnostics(), errors);
         }
-        printProgram(text, *arrived, PrintedFields::WireOnly);
     }
 
-    BuildContext build(options);
-    std::unique_ptr<Program> program = createProgram(file, build);
-    if (!program) {
-        build.diagnostics().finish(nullptr);
-        return reportDiagnostics(build.diagnostics(), errors);
-    }
-
-    std::unique_ptr<CompileOutput> output = compileParsed(WTF::move(program), build);
-    if (hasDiagnostics(output->diagnostics))
-        return reportDiagnostics(output->diagnostics, errors);
-    out.print(text.toUTF8CString());
-    return exitCodeForSuccess;
-}
-
-static int printProgramFile(const ProgramFile& file, const ProgramArguments& arguments, const PrintFlags& flags)
-{
-    FilePrintStream out(stdout, FilePrintStream::Borrow);
-    FilePrintStream errors(stderr, FilePrintStream::Borrow);
-
-    BuildContext build(arguments.options);
-    std::unique_ptr<Program> program = flags.until ? createProgramWithLibrary(file, build) : createProgram(file, build);
-    if (!program) {
-        build.diagnostics().finish(nullptr);
-        return reportDiagnostics(build.diagnostics(), errors);
-    }
-    build.resolveFunctionToDump(*program);
-
-    if (flags.until) {
-        program = computeProgramAfterPass(*flags.until, WTF::move(program), build);
-        if (!program)
-            return reportDiagnostics(build.diagnostics(), errors);
-    }
-
-    if (std::optional<uint32_t> missingIndex = findMissingFunction(*program, flags.functionIndices.span()))
-        return reportInvalidCommandLine("print"_s, makeString("there is no f"_s, *missingIndex), errors);
-    printSelectedFunctions(out, *program, flags.functionIndices.span(), build);
+    TestCommandContext context { WTF::move(program), inputs.arguments.span(), out, build };
+    context.options = &inputs.options;
+    context.sections = inputs.sections.span();
+    context.functionOfTypesLine = inputs.functionOfTypesLine;
+    context.programText = programText;
+    context.mechanisms = inputs.mechanisms;
+    command.run(context);
     out.flush();
+    for (const String& note : context.notesForFailure)
+        errors.println(note);
 
-    build.diagnostics().finish(program.get());
-    if (!hasDiagnostics(build.diagnostics()))
-        return exitCodeForSuccess;
+    build.diagnostics().finish(context.program.get());
     printDiagnostics(build.diagnostics(), errors);
     return build.diagnostics().hasErrors() ? exitCodeForFailure : exitCodeForSuccess;
+}
+
+int runCommandSubcommand(StringView name, std::span<const String> arguments)
+{
+    FilePrintStream errors(stderr, FilePrintStream::Borrow);
+
+    const TestCommand* command = findTestCommand(name);
+    if (!command)
+        return reportInvalidCommandLine(name, "no command has this name: `testaot list commands` prints them all"_s, errors);
+
+    auto programArguments = parseProgramArguments(arguments);
+    if (!programArguments)
+        return reportInvalidCommandLine(name, programArguments.error(), errors);
+    auto flags = parseFlagsOfProgramSubcommand(programArguments->flags.span(), { programOfTagFlag });
+    if (!flags)
+        return reportInvalidCommandLine(name, flags.error(), errors);
+
+    const String& path = programArguments->programPath;
+    std::optional<ProgramFile> file = readProgramFile(path, errors);
+    if (!file)
+        return exitCodeForFailure;
+
+    InputsOfCommand inputs;
+    inputs.options = optionsToCompileBy(*file, path, errors);
+    RELEASE_ASSERT(!applyOptionWord(inputs.options, checksOfEveryTestRun));
+    if (file->kind == ProgramFile::Kind::Text && !takeDirectivesOfProgramText(*command, *file, path, inputs, errors))
+        return exitCodeForFailure;
+    if (std::optional<String> sentence = applyWordsOfCommandLine(inputs.options, inputs.mechanisms, programArguments->words.span(), &inputs.arguments))
+        return reportInvalidCommandLine(name, *sentence, errors);
+
+    int exitCode = exitCodeForFailure;
+    runOnBuildThread([&] {
+        exitCode = runCommandOnProgramFile(*command, WTF::move(*file), flags->schemaHashCheck, inputs);
+    });
+    return exitCode;
+}
+
+static int printWire(ProgramFile&& file, Wire::CompileOptions options, Mechanisms mechanisms, SchemaHashCheck schemaHashCheck)
+{
+    FilePrintStream out(stdout, FilePrintStream::Borrow);
+    FilePrintStream errors(stderr, FilePrintStream::Borrow);
+
+    options.action = Wire::CompileAction::CheckOnly;
+    BuildContext build(options);
+    std::unique_ptr<Program> program = createProgram(WTF::move(file), build, schemaHashCheck);
+    if (!program || !verifyRecords(*program, build) || !verifyBodies(*program, build)) {
+        build.diagnostics().finish(program.get());
+        return reportDiagnostics(build.diagnostics(), errors);
+    }
+    StringPrintStream text;
+    printProgram(text, *program, PrintedFields::WireOnly);
+
+    std::unique_ptr<CompileOutput> output = compileWithMechanisms(WTF::move(program), build, mechanisms);
+    if (saysWhatTestsOfFrontEndWaitFor(*output)) {
+        printDiagnosticsOf(*output, errors);
+        return exitCodeForFailure;
+    }
+
+    out.print(text.toUTF8CString());
+    out.flush();
+    return exitCodeForSuccess;
 }
 
 int runPrintSubcommand(std::span<const String> arguments)
 {
     FilePrintStream errors(stderr, FilePrintStream::Borrow);
 
+    bool isWire = std::ranges::any_of(arguments, [](const String& argument) {
+        return splitSubcommandFlag(argument).name == wireFlag;
+    });
+    if (!isWire)
+        return runCommandSubcommand("print"_s, arguments);
+
     auto programArguments = parseProgramArguments(arguments);
     if (!programArguments)
         return reportInvalidCommandLine("print"_s, programArguments.error(), errors);
-    auto flags = parsePrintFlags(programArguments->flags.span());
+    auto flags = parseFlagsOfProgramSubcommand(programArguments->flags.span(), { wireFlag, programOfTagFlag });
     if (!flags)
         return reportInvalidCommandLine("print"_s, flags.error(), errors);
-
     std::optional<ProgramFile> file = readProgramFile(programArguments->programPath, errors);
     if (!file)
         return exitCodeForFailure;
+    Wire::CompileOptions options = optionsToCompileBy(*file, programArguments->programPath, errors);
+    Mechanisms mechanisms = mechanismsOfProcess();
+    if (std::optional<String> sentence = applyWordsOfCommandLine(options, mechanisms, programArguments->words.span(), nullptr))
+        return reportInvalidCommandLine("print"_s, *sentence, errors);
 
     int exitCode = exitCodeForFailure;
     runOnBuildThread([&] {
-        exitCode = flags->isWire ? printWire(*file, programArguments->options) : printProgramFile(*file, *programArguments, *flags);
+        exitCode = printWire(WTF::move(*file), options, mechanisms, flags->schemaHashCheck);
     });
     return exitCode;
 }
 
-static std::unique_ptr<CompileOutput> compileProgramFile(const ProgramFile& file, const Wire::CompileOptions& options, PrintStream& errors)
+static std::unique_ptr<CompileOutput> compileProgramFile(ProgramFile&& file, const Wire::CompileOptions& options, Mechanisms mechanisms, SchemaHashCheck schemaHashCheck, PrintStream& errors)
 {
     switch (file.kind) {
     case ProgramFile::Kind::Bytes:
-        return compileProgram(file.bytes.span(), options);
-    case ProgramFile::Kind::Text: {
-        BuildContext build(options);
-        std::unique_ptr<Program> program = createProgramWithLibrary(file, build);
-        if (!program) {
-            build.diagnostics().finish(nullptr);
-            printDiagnostics(build.diagnostics(), errors);
-            return nullptr;
-        }
-        return compileParsed(WTF::move(program), build);
+        if (schemaHashCheck == SchemaHashCheck::Required)
+            return compileProgramWithMechanisms(file.bytes.span(), options, mechanisms);
+        break;
+    case ProgramFile::Kind::Text:
+        file.text = withStandInLibrary(file.text);
+        break;
     }
+
+    BuildContext build(options);
+    std::unique_ptr<Program> program = createProgram(WTF::move(file), build, schemaHashCheck);
+    if (!program) {
+        build.diagnostics().finish(program.get());
+        printDiagnostics(build.diagnostics(), errors);
+        return nullptr;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    return compileWithMechanisms(WTF::move(program), build, mechanisms);
 }
 
 int runCompileSubcommand(std::span<const String> arguments)
@@ -352,30 +379,50 @@ int runCompileSubcommand(std::span<const String> arguments)
     auto programArguments = parseProgramArguments(arguments);
     if (!programArguments)
         return reportInvalidCommandLine("compile"_s, programArguments.error(), errors);
-    auto outputPath = parseOutputPath(programArguments->flags.span());
-    if (!outputPath)
-        return reportInvalidCommandLine("compile"_s, outputPath.error(), errors);
-
+    auto flags = parseFlagsOfProgramSubcommand(programArguments->flags.span(), { outputFlag, programOfTagFlag });
+    if (!flags)
+        return reportInvalidCommandLine("compile"_s, flags.error(), errors);
+    if (flags->outputPath.isNull())
+        return reportInvalidCommandLine("compile"_s, makeString(outputFlag, " is required"_s), errors);
     std::optional<ProgramFile> file = readProgramFile(programArguments->programPath, errors);
     if (!file)
         return exitCodeForFailure;
+    Wire::CompileOptions options = optionsToCompileBy(*file, programArguments->programPath, errors);
+    Vector<String> namesOfStatistics;
+    Mechanisms mechanisms = mechanismsOfProcess();
+    if (std::optional<String> sentence = applyWordsOfCommandLine(options, mechanisms, programArguments->words.span(), &namesOfStatistics))
+        return reportInvalidCommandLine("compile"_s, *sentence, errors);
+    Vector<StatisticID> printedStatistics;
+    for (const String& word : namesOfStatistics) {
+        std::optional<StatisticID> statistic = parseEnum<StatisticID>(word);
+        if (!statistic || *statistic == StatisticID::None)
+            return reportInvalidCommandLine("compile"_s, makeString("unknown statistic "_s, word), errors);
+        printedStatistics.append(*statistic);
+    }
 
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
-        output = compileProgramFile(*file, programArguments->options, errors);
+        output = compileProgramFile(WTF::move(*file), options, mechanisms, flags->schemaHashCheck, errors);
     });
     if (!output)
         return exitCodeForFailure;
 
-    printDiagnostics(output->diagnostics, errors);
-    if (output->image.isEmpty())
+    printDiagnosticsOf(*output, errors);
+    std::span<const uint64_t> statistics = output->records<uint64_t>(Wire::ResultSection::Statistics);
+    for (StatisticID statistic : printedStatistics) {
+        size_t index = static_cast<size_t>(statistic);
+        out.println("statistic ", nameOf(statistic), " ", index < statistics.size() ? statistics[index] : 0);
+    }
+    std::span<const uint8_t> image = output->section(Wire::ResultSection::Image);
+    if (image.empty())
         return exitCodeForFailure;
-    if (FileSystem::overwriteEntireFile(*outputPath, output->image.span()) != output->image.size()) {
-        errors.println("cannot write ", *outputPath);
+    if (FileSystem::overwriteEntireFile(flags->outputPath, image) != image.size()) {
+        errors.println("cannot write ", flags->outputPath);
         return exitCodeForFailure;
     }
-    for (size_t index = 0; index < output->entryModuleIDs.size(); ++index)
-        out.println("entry ", index, " ", output->entryModuleIDs[index]);
+    std::span<const uint32_t> entryModuleIDs = output->records<uint32_t>(Wire::ResultSection::EntryModuleIds);
+    for (size_t index = 0; index < entryModuleIDs.size(); ++index)
+        out.println("entry ", index, " ", entryModuleIDs[index]);
     return exitCodeForSuccess;
 }
 

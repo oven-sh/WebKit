@@ -1,0 +1,45 @@
+# As in unreached-edge-into-loop-is-ignored.ir, and here b2 leads into b6 and brings the counter's start.
+# RUN: verify-grounds access=v14 view=v0 position=v13 length=v8 below=v12 from-zero-up=v7 counter=v11 start=v1 length-holds-bound=v10 passed=v7 passed=v10 passed=v12
+# CHECK: verified
+# -- code
+# code f1:Body {
+#   constants:
+#     v4: 0 @Int32 = Integer integer=0
+#     v5: -1 @Int32 = Integer integer=-1
+#     v6: undefined @JSValue = Undefined
+#   b0(v0: Int32Array @Cell, v1: int[-2, 10] @Int32, v2: int[0, 40] @Int32, v3: boolean @Boolean) entry=0:
+#     v7: boolean @Boolean = GreaterEq v1, v4 form=Integers
+#     Branch v7 -> taken b1(), notTaken b5()
+#   b1():
+#     v8: int[0, 17179869184] @Int64 = GetTypedArrayLength v0 traits=[mayTouchMemory]
+#     v9: int[0, 40] @Int64 = WidenInteger v2
+#     v10: boolean @Boolean = LessEq v9, v8 form=Integers
+#     Branch v10 -> taken b2(), notTaken b5()
+#   b2():
+#     Branch v3 -> taken b3(v1), notTaken b6(v1)
+#   b3(v11: int[-2, 40] @Int32) isInLoop=true isLoopHead=true:
+#     v12: boolean @Boolean = Less v11, v2 form=Integers
+#     Branch v12 -> taken b4(), notTaken b5()
+#   b4() isInLoop=true:
+#     v13: int[-2, 39] @Int32 = Narrowed v11, v12 [isOnTakenEdge]
+#     v14: i32 @Int32 = GetTypedArrayElement v0, v13 typedArrayType=6 level=Proven [keyIsIntegral, isInsideView] traits=[mayTouchMemory]
+#     v15: int[-1, 40] @Int32 = Increment v13 form=Integers
+#     Jump -> next b3(v15)
+#   b5():
+#     Return v6
+#   b6(v16: int[-2, 40] @Int32):
+#     Jump -> next b3(v16)
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="asked" module=m0 length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}

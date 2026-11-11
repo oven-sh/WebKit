@@ -1,0 +1,40 @@
+# a turn that reads a name of the module which may not be there yet can leave the loop only in its first turn, and only where the name is not there when the loop begins: the name is read in front of the loop and handed to the reservation, which asks for nothing where it is absent
+# let word; function fill(n) { const list = []; for (let i = 0; i < n; i++) list[i] = word + i; return list; }  sink(fill);  word = "w";
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetModuleVariable
+# CHECK: ReserveArrayCapacity {{*}}, {{*}}, v
+# CHECK: LoopHint
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="word" module=m0 declared={type=absent|string}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = String string="w"
+    PutModuleVariable v4 variable=g0
+    Return v3
+}
+function f1 name="fill" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewArray contents=string
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = GetModuleVariable variable=g0
+    v7 = CheckInitialized v6 name="word"
+    v8 = Add v7, v3
+    ElemSet v1, v3, v8
+    v10 = Increment v3
+    Jump -> next b1(v10)
+  b3():
+    Return v1
+}

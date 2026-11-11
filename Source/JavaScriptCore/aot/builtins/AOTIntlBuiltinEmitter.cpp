@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTDateBuiltinEmitter.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 IntlBuiltinEmitter::IntlBuiltinEmitter(CodeGenerator& generator)
@@ -17,12 +19,13 @@ IntlBuiltinEmitter::IntlBuiltinEmitter(CodeGenerator& generator)
 
 void IntlBuiltinEmitter::finishWithTextOrMiss(const InlineCall& call, CellPointer textOrNull)
 {
-    missUnless(call, Condition(m_out.notNull(textOrNull.value())));
+    missUnless(call, isNotZero(Integer(textOrNull.value())));
     finish(call, textOrNull);
 }
 
 void IntlBuiltinEmitter::generateFormatNumber(const InlineCall& call)
 {
+    RELEASE_ASSERT(call.numberOfArguments());
     Boxed formatter = boxedOperand(call.context(), call.receiver());
     Number number = numberOperand(call.argument(0));
     finishWithTextOrMiss(call, callOperation<CellPointer>(call.context(), RuntimeOperation::FormatNumber, { formatter, number }));
@@ -32,7 +35,8 @@ void IntlBuiltinEmitter::generateFormatDateTime(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments());
     Boxed formatter = boxedOperand(call.context(), call.receiver());
-    Number timeValue = numberOperand(call.argument(0));
+    ValueID formatted = call.argument(0);
+    Number timeValue = typeOf(formatted).isNumber() ? numberOperand(formatted) : emitter<DateBuiltinEmitter>().timeValueOf(cellOperand(formatted));
     finishWithTextOrMiss(call, callOperation<CellPointer>(call.context(), RuntimeOperation::FormatDateTime, { formatter, timeValue }));
 }
 

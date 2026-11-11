@@ -27,6 +27,7 @@
 #include "PlatformWebViewClientWPE.h"
 
 #if ENABLE(WPE_PLATFORM)
+#include <drm_fourcc.h>
 #include <wpe/wpe-platform.h>
 #include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GSpanExtras.h>
@@ -47,7 +48,6 @@ PlatformWebViewClientWPE::PlatformWebViewClientWPE(WKPageConfigurationRef config
     m_view = WKViewCreate(display, configuration);
     auto* wpeView = WKViewGetView(m_view);
     m_toplevel = wpe_view_get_toplevel(wpeView);
-    wpe_view_focus_in(wpeView);
     wpe_toplevel_resize(m_toplevel.get(), 800, 600);
     g_signal_connect(wpeView, "buffer-rendered", G_CALLBACK(+[](WPEView*, WPEBuffer* buffer, gpointer userData) {
         auto& view = *static_cast<PlatformWebViewClientWPE*>(userData);
@@ -128,7 +128,12 @@ PlatformImage PlatformWebViewClientWPE::snapshot()
 
     auto width = wpe_buffer_get_width(m_buffer.get());
     auto height = wpe_buffer_get_height(m_buffer.get());
-    auto info = SkImageInfo::MakeN32Premul(width, height, SkColorSpace::MakeSRGB());
+    auto alphaType = [&] {
+        if (WPE_IS_BUFFER_DMA_BUF(m_buffer.get()) && wpe_buffer_dma_buf_get_format(WPE_BUFFER_DMA_BUF(m_buffer.get())) == DRM_FORMAT_XRGB8888)
+            return kOpaque_SkAlphaType;
+        return kPremul_SkAlphaType;
+    }();
+    auto info = SkImageInfo::Make(width, height, kBGRA_8888_SkColorType, alphaType, SkColorSpace::MakeSRGB());
     SkPixmap pixmap(info, g_bytes_get_data(bytes.get(), nullptr), info.minRowBytes());
     return SkImages::RasterFromPixmap(pixmap, [](const void*, void* context) {
         g_bytes_unref(static_cast<GBytes*>(context));

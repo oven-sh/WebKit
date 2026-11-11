@@ -1,0 +1,6 @@
+# the same functions with folding withheld: the branch on the constant stays, its edge comes round, and the poll stays
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = LoopHint
+# CHECK: Branch
+# PROGRAM-OF: poll-of-a-loop-that-never-turns-goes.ir

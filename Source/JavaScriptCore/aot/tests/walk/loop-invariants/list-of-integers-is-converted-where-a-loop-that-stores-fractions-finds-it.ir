@@ -1,0 +1,141 @@
+# function scale(list: number[], by: number) { for (let i = 0; i < list.length; i++) list[i] = list[i] * by; }
+# What the loop stores may be a fraction, so its typed copy asks for double storage that may be written. A list that has held integers alone so far has int32 storage, and where the products stay whole it keeps it:
+# the test would fail in front of every run of the loop, for ever, and all turns would run in the other copy. So a list that has int32 storage of its own is converted, once in its life, in front of that test:
+# it passes, and the same run of the loop takes the typed copy. Converted behind the failed test, a fresh list paid the conversion and then the other copy over doubles, at every call.
+# A front is three rows. Every list is asked whether it is as made: one that is not (an heir of Array) goes to the other copy as it is, and keeps its integers. Then the conversions. Then every list is asked for its kind of storage.
+# No operation that changes a list may lie BETWEEN the tests for the kind: one list under two names could pass a test for int32 storage, be converted under its other name and pass the test for doubles:
+# that one list cannot pass both is all that keeps two names apart: both(). That a list is as made holds across a conversion.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine v0 builtinClass=Array
+# CHECK-NEXT: Branch {{*}}notTaken [[other]]()
+# CHECK: ConvertToDoubleStorage [[list]]
+# CHECK-NEXT: [[holds]]: boolean @Boolean = HasArrayStorage [[list]] arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch [[holds]] -> taken [[passed]](), notTaken [[other]]()
+# CHECK-NOT: ConvertToDoubleStorage
+# CHECK: PutDoubleIndex
+# function both(read: number[], written: number[], by: number) { let sum = 0; for (let i = 0; i < written.length; i++) { sum += read[i] | 0; written[i] = written[i] * by; } return sum; }
+# RUN(BOTH): walk f3 mechanisms=all
+# BOTH-LABEL: code f3:Body
+# BOTH: = IsPristine
+# BOTH: = IsPristine
+# BOTH: ConvertToDoubleStorage
+# BOTH: = HasArrayStorage
+# BOTH-NOT: ConvertToDoubleStorage
+# BOTH: = HasArrayStorage
+# BOTH: PutDoubleIndex
+# RUN(COUNTED): compile ArraysConvertedToDoubleStorage mechanisms=all
+# COUNTED: statistic ArraysConvertedToDoubleStorage 2
+# A loop that only reads takes either kind and converts nothing: function sum(list: number[]) { let total = 0; for (let i = 0; i < list.length; i++) total += list[i]; return total; }
+# RUN(READ): walk f2 mechanisms=all
+# READ-LABEL: code f2:Body
+# READ-NOT: ConvertToDoubleStorage
+# RUN(SHELL): run-in-shell globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: 6 2 4 6 12 1 2 3 6 0.5 1 1.5 3
+# SHELL-NEXT: 6 6 2 0.5 1 3
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Integer integer=1
+    v3 = Integer integer=2
+    v4 = Integer integer=3
+    v5 = NewArray v2, v3, v4 contents=number
+    v6 = Double number=0.5
+    v7 = Integer
+    v8 = Call v1, -, v5
+    v9 = Call v0, -, v5, v3
+    v10 = ElemGet v5, v7
+    v11 = ElemGet v5, v2
+    v12 = ElemGet v5, v3
+    v13 = Call v1, -, v5
+    v14 = Call v0, -, v5, v6
+    v15 = ElemGet v5, v7
+    v16 = ElemGet v5, v2
+    v17 = ElemGet v5, v3
+    v18 = Call v1, -, v5
+    v19 = Call v0, -, v5, v6
+    v20 = ElemGet v5, v7
+    v21 = ElemGet v5, v2
+    v22 = ElemGet v5, v3
+    v23 = Call v1, -, v5
+    v24 = Builtin builtin=GlobalThis
+    v25 = PropGet v24 key="sink" [isFreeName]
+    v26 = Call v25, -, v8, v10, v11, v12, v13, v15, v16, v17, v18, v20, v21, v22, v23
+    v27 = NewClosure function=f3
+    v28 = NewArray v2, v3, v4 contents=number
+    v29 = NewArray v2, v3, v4 contents=number
+    v30 = NewArray v2, v3, v4 contents=number
+    v31 = Call v27, -, v28, v29, v6
+    v32 = Call v27, -, v30, v30, v6
+    v33 = Call v27, -, v30, v30, v3
+    v34 = ElemGet v29, v7
+    v35 = ElemGet v30, v7
+    v36 = ElemGet v30, v3
+    v37 = Call v25, -, v31, v32, v33, v34, v35, v36
+    Return v37
+}
+function f1 name="scale" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3: number):
+    LoopHint
+    v5 = PropGet v0 key="length"
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = ElemGet v0, v3
+    v8 = Mul v7, v1
+    ElemSet v0, v3, v8 mode=Strict
+    v10 = Increment v3
+    Jump -> next b1(v10)
+  b3():
+    v11 = Undefined
+    Return v11
+}
+function f2 name="sum" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: number, v4: number):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = Add v3, v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v3
+}
+function f3 name="both" module=m0 length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>, v2: number):
+    v3 = Integer
+    v4 = Integer
+    Jump -> next b1(v3, v4)
+  b1(v5: number, v6: number):
+    LoopHint
+    v8 = PropGet v1 key="length"
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = ElemGet v0, v6
+    v11 = Integer
+    v12 = BitOr v10, v11
+    v13 = Add v5, v12
+    v14 = ElemGet v1, v6
+    v15 = Mul v14, v2
+    ElemSet v1, v6, v15 mode=Strict
+    v17 = Increment v6
+    Jump -> next b1(v13, v17)
+  b3():
+    Return v5
+}

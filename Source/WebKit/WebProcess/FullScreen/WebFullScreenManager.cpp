@@ -36,6 +36,7 @@
 #include "WebFullScreenManagerProxyMessages.h"
 #include "WebPage.h"
 #include <WebCore/AbortSignal.h>
+#include <WebCore/BitmapImage.h>
 #include <WebCore/Color.h>
 #include <WebCore/ContainerNodeInlines.h>
 #include <WebCore/DocumentFullscreen.h>
@@ -269,16 +270,14 @@ FullScreenMediaDetails WebFullScreenManager::getImageMediaDetails(CheckedPtr<Ren
     if (!(image->isMaybePanoramic() || image->isSpatial() || updating == IsUpdating::Yes))
         return { };
 
-    auto imageSize = image->size();
-
     FullScreenMediaDetails mediaDetails;
     mediaDetails.type = FullScreenMediaDetails::Type::Image;
-    mediaDetails.mediaDimensions = imageSize;
 
     if (image->isSpatial()) {
         RefPtr bitmapImage = dynamicDowncast<BitmapImage>(cachedImage->image());
         if (bitmapImage) {
-            if (auto spatialImage = ShareableSpatialImage::create(*bitmapImage)) {
+            if (auto spatialImage = bitmapImage->createShareableSpatialImage()) {
+                mediaDetails.mediaDimensions = bitmapImage->size();
                 mediaDetails.imageData = WTF::move(*spatialImage);
                 m_willUseQuickLookForFullscreen = true;
                 return mediaDetails;
@@ -286,11 +285,7 @@ FullScreenMediaDetails WebFullScreenManager::getImageMediaDetails(CheckedPtr<Ren
         }
     }
 
-    RefPtr nativeImage = image->nativeImage(ConcreteObjectSize::fixed(image->size()));
-    if (!nativeImage)
-        return { };
-
-    RefPtr shareableBitmap = ShareableBitmap::createFromImagePixels(*nativeImage);
+    RefPtr shareableBitmap = renderImage->createShareableBitmapForFullScreen();
     if (!shareableBitmap)
         return { };
 
@@ -298,6 +293,7 @@ FullScreenMediaDetails WebFullScreenManager::getImageMediaDetails(CheckedPtr<Ren
     if (!bitmapHandle)
         return { };
 
+    mediaDetails.mediaDimensions = shareableBitmap->size();
     mediaDetails.imageData = WTF::move(*bitmapHandle);
     m_willUseQuickLookForFullscreen = true;
 
@@ -604,9 +600,15 @@ void WebFullScreenManager::willEnterFullScreen(Element& element, CompletionHandl
     m_page->sendWithAsyncReply(Messages::WebFullScreenManagerProxy::BeganEnterFullScreen(frame->frameID(), m_initialFrameInMainFrameCoordinates, m_finalFrameInMainFrameCoordinates), [
         this,
         protectedThis = Ref { *this },
+        element = Ref { element },
         mode,
         completionHandler = WTF::move(didEnterFullscreenCallback)
     ] (bool success) mutable {
+        // A later request may have replaced the element while this one was in flight.
+        if (m_element != element.ptr()) {
+            completionHandler(false);
+            return;
+        }
         if (!success && mode != WebCore::HTMLMediaElementEnums::VideoFullscreenModeInWindow) {
             completionHandler(false);
             return;

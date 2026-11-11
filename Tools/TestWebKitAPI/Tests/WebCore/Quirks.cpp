@@ -29,12 +29,10 @@
 
 #include <WebCore/DocumentQuirks.h>
 #include <WebCore/NodeInlines.h>
-#include <WebCore/QuirkBehaviorDefinitions.h>
-#include <WebCore/QuirkBehaviors.h>
 #include <WebCore/QuirkSelectors.h>
+#include <WebCore/QuirkTable.h>
 #include <WebCore/Quirks.h>
 #include <WebCore/ResourceRequest.h>
-#include <WebCore/RuntimeQuirkTable.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/Settings.h>
 #include <array>
@@ -45,6 +43,10 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
+
+#if PLATFORM(APPLETV)
+#include <pal/system/ios/Device.h>
+#endif
 
 #if PLATFORM(COCOA)
 #include <wtf/RetainPtr.h>
@@ -86,12 +88,12 @@ static Vector<WebCore::QuirkMatchPattern> patterns(const Vector<ASCIILiteral>& s
     });
 }
 
-static bool matchesTopURL(const WebCore::RuntimeQuirk& quirk, ASCIILiteral urlString)
+static bool matchesTopURL(const WebCore::Quirk& quirk, ASCIILiteral urlString)
 {
     return quirk.appliesTo(WebCore::URLMatchContext { URL { urlString } }, WebCore::URLMatchContext { URL { urlString } }, WebCore::IsTopDocument::Yes);
 }
 
-static bool matchesEmbeddedDocument(const WebCore::RuntimeQuirk& quirk, ASCIILiteral topURLString, ASCIILiteral documentURLString)
+static bool matchesEmbeddedDocument(const WebCore::Quirk& quirk, ASCIILiteral topURLString, ASCIILiteral documentURLString)
 {
     return quirk.appliesTo(WebCore::URLMatchContext { URL { topURLString } }, WebCore::URLMatchContext { URL { documentURLString } }, WebCore::IsTopDocument::No);
 }
@@ -100,7 +102,7 @@ static const Vector<ASCIILiteral> youTubeEmbedPatterns { "*://*.youtube.com/*"_s
 
 TEST_F(QuirksTest, TopURLMatchIgnoresTheDocumentURL)
 {
-    WebCore::RuntimeQuirk match { };
+    WebCore::Quirk match { };
     match.matches = patterns({ "*://*.theguardian.com/*"_s });
 
     EXPECT_TRUE(matchesTopURL(match, "https://www.theguardian.com/film"_s));
@@ -112,7 +114,7 @@ TEST_F(QuirksTest, TopURLMatchIgnoresTheDocumentURL)
 
 TEST_F(QuirksTest, EmbeddedDocumentMatchesTheDocumentURLNotTheTopURL)
 {
-    WebCore::RuntimeQuirk match { };
+    WebCore::Quirk match { };
     match.embeddedMatches = patterns(youTubeEmbedPatterns);
 
     EXPECT_TRUE(matchesEmbeddedDocument(match, "https://www.theguardian.com/film"_s, "https://www.youtube.com/embed/abc"_s));
@@ -128,7 +130,7 @@ TEST_F(QuirksTest, EmbeddedDocumentMatchesTheDocumentURLNotTheTopURL)
 
 TEST_F(QuirksTest, EmbeddedDocumentInTopMatchRequiresBothURLsToMatch)
 {
-    WebCore::RuntimeQuirk match { };
+    WebCore::Quirk match { };
     match.matches = patterns({ "*://*.theguardian.*/*"_s });
     match.embeddedMatches = patterns(youTubeEmbedPatterns);
 
@@ -142,7 +144,7 @@ TEST_F(QuirksTest, EmbeddedDocumentInTopMatchRequiresBothURLsToMatch)
 
 TEST_F(QuirksTest, EmbeddedMatchesNeverApplyToTheTopDocument)
 {
-    WebCore::RuntimeQuirk match { };
+    WebCore::Quirk match { };
     match.matches = patterns({ "*://*/*"_s });
     match.embeddedMatches = patterns({ "*://*.youtube.com/*"_s });
 
@@ -165,6 +167,27 @@ TEST_F(QuirksTest, EmbeddedQuirksResolveFromTheDocumentURL)
     EXPECT_FALSE(resolveQuirksForTopURL("https://www.example.com/"_s).isBehaviorEnabled(WebCore::QuirkBehaviorID::NeedsYouTubeCaptionQuirk));
 
     EXPECT_FALSE(resolveQuirksForTopURL("https://www.youtube-nocookie.com/embed/abc"_s).isBehaviorEnabled(WebCore::QuirkBehaviorID::NeedsYouTubeCaptionQuirk));
+}
+
+static bool cnameCloakingCookieCapExempt(ASCIILiteral firstPartyURLString, ASCIILiteral cnameHostName)
+{
+    auto patterns = WebCore::Quirks::cnameCloakingCookieCapExemptTargetPatterns(URL { firstPartyURLString });
+    return WebCore::Quirks::anyPatternMatchesCNAMETarget(patterns, String { cnameHostName });
+}
+
+TEST_F(QuirksTest, CNAMECloakingCookieCapIsSkippedOnlyBetweenDomainsOfOneOwner)
+{
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "www3.l.google.com"_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "www3.l.google.com."_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://music.youtube.com/"_s, "www3.l.google.com"_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.google.com/"_s, "www3.l.google.com"_s));
+    EXPECT_TRUE(cnameCloakingCookieCapExempt("https://www.google.com/"_s, "youtube.com"_s));
+
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "tracker.example"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.google.com/"_s, "tracker.example"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.example.com/"_s, "www3.l.google.com"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.youtube.com/"_s, "evilgoogle.com"_s));
+    EXPECT_FALSE(cnameCloakingCookieCapExempt("https://www.google.de/"_s, "www3.l.google.com"_s));
 }
 #endif
 
@@ -461,6 +484,20 @@ TEST_F(QuirksTest, BaiduChatInputScriptGetsAChromeTokenInTheUserAgent)
         EXPECT_TRUE(scriptsForScriptURL(resolveQuirksForTopURL(topURL), chatInputScriptURL).isEmpty()) << topURL.characters();
 }
 
+TEST_F(QuirksTest, DuolingoEnglishTestGetsAChromeTokenInTheUserAgent)
+{
+    for (auto url : { "https://englishtest.duolingo.com/practice"_s, "https://englishtest.duolingo.com/test/practice"_s, "https://englishtest.duolingo.cn/practice"_s }) {
+#if PLATFORM(COCOA)
+        EXPECT_EQ(customUserAgentFor(url), String { "TestBase/1.0 (KHTML, like Gecko, like Chrome/157.) Trailer/1.0"_s }) << url.characters();
+#else
+        EXPECT_FALSE(customUserAgentFor(url).has_value()) << url.characters();
+#endif
+    }
+
+    for (auto url : { "https://www.duolingo.com/"_s, "https://duolingo.com/"_s, "https://www.duolingo.cn/"_s, "https://englishtest.duolingo.com.attacker.com/"_s, "https://notenglishtest.duolingo.com/"_s })
+        EXPECT_FALSE(customUserAgentFor(url).has_value()) << url.characters();
+}
+
 TEST_F(QuirksTest, DocumentsWithoutAScriptQuirkGetNoParameters)
 {
     auto quirks = resolveQuirksForTopURL("https://www.example.com/"_s);
@@ -468,11 +505,24 @@ TEST_F(QuirksTest, DocumentsWithoutAScriptQuirkGetNoParameters)
     EXPECT_TRUE(scriptsForScriptURL(quirks, "https://www.example.com/app.js"_s).isEmpty());
 }
 
+static WebCore::QuirkBehavior behaviorWithScript(ASCIILiteral script, ASCIILiteral secondaryURL = { })
+{
+    WebCore::QuirkBehavior behavior { .id = WebCore::QuirkBehaviorID::NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk, .script = String { script } };
+    if (!secondaryURL.isNull())
+        behavior.secondaryURL = { *WebCore::QuirkMatchPattern::parse(secondaryURL) };
+    return behavior;
+}
+
+static WebCore::QuirkBehavior behaviorWithElementSelector(ASCIILiteral selector)
+{
+    return { .id = WebCore::QuirkBehaviorID::ShouldDispatchSimulatedMouseEventsQuirk, .elementSelector = String { selector } };
+}
+
 TEST_F(QuirksTest, ParametersAreOnlyReturnedForTheBehaviorThatSuppliedThem)
 {
-    static constexpr auto behaviors = WTF::toArray({
-        WebCore::QuirkBehaviors::needsAirIndiaExpressLayeringQuirk,
-        WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("script"_s)),
+    const auto behaviors = WTF::toArray({
+        WebCore::QuirkBehavior { .id = WebCore::QuirkBehaviorID::NeedsAirIndiaExpressLayeringQuirk },
+        behaviorWithScript("script"_s),
     });
 
     WebCore::QuirksData quirks;
@@ -487,13 +537,12 @@ TEST_F(QuirksTest, ParametersAreOnlyReturnedForTheBehaviorThatSuppliedThem)
 
 TEST_F(QuirksTest, OneQuirkCanCarryDifferentParametersForDifferentScriptURLs)
 {
-    using namespace WebCore::QuirkBehaviorConditions;
     static constexpr auto firstScriptURL = "*://first.example.com/*"_s;
     static constexpr auto secondScriptURL = "*://second.example.com/*"_s;
 
-    static constexpr auto behaviors = WTF::toArray({
-        WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("firstScript"_s)).when(secondaryURLMatches(firstScriptURL)),
-        WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("secondScript"_s)).when(secondaryURLMatches(secondScriptURL)),
+    const auto behaviors = WTF::toArray({
+        behaviorWithScript("firstScript"_s, firstScriptURL),
+        behaviorWithScript("secondScript"_s, secondScriptURL),
     });
 
     WebCore::QuirksData quirks;
@@ -510,18 +559,17 @@ TEST_F(QuirksTest, OneQuirkCanCarryDifferentParametersForDifferentScriptURLs)
     EXPECT_TRUE(quirks.behaviorAppliesToURL(id, URL { "https://second.example.com/b.js"_s }));
     EXPECT_FALSE(quirks.behaviorAppliesToURL(id, URL { "https://third.example.com/c.js"_s }));
 
-    quirks.addBehavior(WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("unscopedScript"_s)));
+    quirks.addBehavior(behaviorWithScript("unscopedScript"_s));
     EXPECT_TRUE(quirks.behaviorAppliesToURL(id, URL { "https://third.example.com/c.js"_s }));
 }
 
 TEST_F(QuirksTest, EveryMatchingRowContributesWhenSeveralSupplyTheSameBehavior)
 {
-    using namespace WebCore::QuirkBehaviorConditions;
     static constexpr auto anyScriptURL = "*://*/*"_s;
 
-    static constexpr auto behaviors = WTF::toArray({
-        WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("firstScript"_s)).when(secondaryURLMatches(anyScriptURL)),
-        WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("secondScript"_s)).when(secondaryURLMatches(anyScriptURL)),
+    const auto behaviors = WTF::toArray({
+        behaviorWithScript("firstScript"_s, anyScriptURL),
+        behaviorWithScript("secondScript"_s, anyScriptURL),
     });
 
     WebCore::QuirksData quirks;
@@ -534,9 +582,8 @@ TEST_F(QuirksTest, EveryMatchingRowContributesWhenSeveralSupplyTheSameBehavior)
 
 TEST_F(QuirksTest, IdenticalBehaviorsWithParametersAreRecordedOnce)
 {
-    using namespace WebCore::QuirkBehaviorConditions;
     static constexpr auto anyScriptURL = "*://*/*"_s;
-    static constexpr auto behavior = WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("script"_s)).when(secondaryURLMatches(anyScriptURL));
+    const auto behavior = behaviorWithScript("script"_s, anyScriptURL);
 
     WebCore::QuirksData quirks;
     quirks.addBehavior(behavior);
@@ -577,37 +624,22 @@ static Vector<String> elementSelectorsFor(const WebCore::QuirksData& quirks, Web
     });
 }
 
-TEST_F(QuirksTest, AnElementSelectorConditionIsRecordedOnTheBehavior)
-{
-    using namespace WebCore::QuirkBehaviorConditions;
-    static constexpr auto behavior = WebCore::QuirkBehaviors::shouldDispatchSimulatedMouseEventsQuirk.when(elementMatchesSelector(".target, .target *"_s));
-
-    ASSERT_TRUE(behavior.conditions.elementSelector.has_value());
-    EXPECT_EQ(String { *behavior.conditions.elementSelector }, ".target, .target *"_str);
-    EXPECT_FALSE(behavior.parameters.has_value());
-}
-
 TEST_F(QuirksTest, ASecondaryURLConditionIsRecordedOnTheBehavior)
 {
-    using namespace WebCore::QuirkBehaviorConditions;
-    static constexpr auto scriptURL = "*://cdn.example.com/*"_s;
-    static constexpr auto behavior = WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("script"_s)).when(secondaryURLMatches(scriptURL));
+    auto scoped = behaviorWithScript("script"_s, "*://cdn.example.com/*"_s);
+    ASSERT_FALSE(scoped.secondaryURL.isEmpty());
+    EXPECT_TRUE(scoped.secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://cdn.example.com/a.js"_s } }));
+    EXPECT_FALSE(scoped.secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://other.example.com/a.js"_s } }));
 
-    ASSERT_TRUE(behavior.parameters.has_value());
-    ASSERT_FALSE(behavior.conditions.secondaryURL.isEmpty());
-    auto resolved = WebCore::RuntimeQuirkBehavior::from(behavior);
-    EXPECT_TRUE(resolved.secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://cdn.example.com/a.js"_s } }));
-    EXPECT_FALSE(resolved.secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://other.example.com/a.js"_s } }));
-
-    static constexpr auto unscoped = WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("script"_s));
-    EXPECT_TRUE(unscoped.conditions.secondaryURL.isEmpty());
-    EXPECT_TRUE(WebCore::RuntimeQuirkBehavior::from(unscoped).secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://other.example.com/a.js"_s } }));
+    auto unscoped = behaviorWithScript("script"_s);
+    EXPECT_TRUE(unscoped.secondaryURL.isEmpty());
+    EXPECT_TRUE(unscoped.secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://other.example.com/a.js"_s } }));
 }
 
 TEST_F(QuirksTest, BehaviorAppliesToURLRequiresTheBehaviorToBeEnabled)
 {
     WebCore::QuirksData quirks;
-    quirks.addBehavior(WebCore::QuirkBehaviors::needsAirIndiaExpressLayeringQuirk);
+    quirks.addBehavior(WebCore::QuirkBehavior { .id = WebCore::QuirkBehaviorID::NeedsAirIndiaExpressLayeringQuirk });
 
     EXPECT_FALSE(quirks.behaviorAppliesToURL(WebCore::QuirkBehaviorID::NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk, URL { "https://www.example.com/a.js"_s }));
     EXPECT_TRUE(quirks.behaviorAppliesToURL(WebCore::QuirkBehaviorID::NeedsAirIndiaExpressLayeringQuirk, URL { "https://www.example.com/a.js"_s }));
@@ -691,9 +723,8 @@ TEST_F(QuirksTest, ChromeOSUserAgentAppliesOnlyToTheWordEditorScriptInItsFrame)
 
 TEST_F(QuirksTest, AddingAndRemovingBehaviorsKeepsTheEnabledFlagInSync)
 {
-    using namespace WebCore::QuirkBehaviorConditions;
-    static constexpr auto onFirst = WebCore::QuirkBehaviors::shouldDispatchSimulatedMouseEventsQuirk.when(elementMatchesSelector(".first"_s));
-    static constexpr auto onSecond = WebCore::QuirkBehaviors::shouldDispatchSimulatedMouseEventsQuirk.when(elementMatchesSelector(".second"_s));
+    const auto onFirst = behaviorWithElementSelector(".first"_s);
+    const auto onSecond = behaviorWithElementSelector(".second"_s);
 
     WebCore::QuirksData quirks;
     EXPECT_FALSE(quirks.hasBehaviors());
@@ -705,28 +736,27 @@ TEST_F(QuirksTest, AddingAndRemovingBehaviorsKeepsTheEnabledFlagInSync)
     EXPECT_TRUE(quirks.isBehaviorEnabled(WebCore::QuirkBehaviorID::ShouldDispatchSimulatedMouseEventsQuirk));
     EXPECT_EQ(elementSelectorsFor(quirks, WebCore::QuirkBehaviorID::ShouldDispatchSimulatedMouseEventsQuirk), (Vector<String> { ".first"_str, ".second"_str }));
 
-    quirks.setEnabled(onFirst, false);
+    quirks.setEnabled(onFirst.id, false);
     EXPECT_FALSE(quirks.isBehaviorEnabled(WebCore::QuirkBehaviorID::ShouldDispatchSimulatedMouseEventsQuirk));
     EXPECT_TRUE(quirks.behaviors().isEmpty());
     EXPECT_FALSE(quirks.hasBehaviors());
 
-    quirks.setEnabled(onSecond, true);
+    quirks.addBehavior(onSecond);
     EXPECT_TRUE(quirks.isBehaviorEnabled(WebCore::QuirkBehaviorID::ShouldDispatchSimulatedMouseEventsQuirk));
     EXPECT_EQ(elementSelectorsFor(quirks, WebCore::QuirkBehaviorID::ShouldDispatchSimulatedMouseEventsQuirk), Vector<String> { ".second"_str });
 }
 
 TEST_F(QuirksTest, MergeUnionsFlagsAndConcatenatesBehaviors)
 {
-    using namespace WebCore::QuirkBehaviorConditions;
-    static constexpr auto onFirst = WebCore::QuirkBehaviors::shouldDispatchSimulatedMouseEventsQuirk.when(elementMatchesSelector(".first"_s));
-    static constexpr auto onSecond = WebCore::QuirkBehaviors::shouldDispatchSimulatedMouseEventsQuirk.when(elementMatchesSelector(".second"_s));
+    const auto onFirst = behaviorWithElementSelector(".first"_s);
+    const auto onSecond = behaviorWithElementSelector(".second"_s);
 
     WebCore::QuirksData quirks;
     quirks.addBehavior(onFirst);
 
     WebCore::QuirksData other;
     other.addBehavior(onSecond);
-    other.addBehavior(WebCore::QuirkBehaviors::needsAirIndiaExpressLayeringQuirk);
+    other.addBehavior(WebCore::QuirkBehavior { .id = WebCore::QuirkBehaviorID::NeedsAirIndiaExpressLayeringQuirk });
 
     quirks.merge(other);
 
@@ -758,6 +788,40 @@ TEST_F(QuirksTest, SitesThatNeedSimulatedMouseEventsEverywhereCarryNoSelector)
     }
 }
 #endif // ENABLE(TOUCH_EVENTS) || ENABLE(TOUCH_EVENT_REGIONS)
+
+// On iOS, ENABLE(TOUCH_EVENTS) and ENABLE(IOS_TOUCH_EVENTS) are on only with the Apple internal SDK, so
+// fast/quirks/active-quirks-by-domain.html leaves these quirks out and they are checked here instead.
+TEST_F(QuirksTest, TouchEventQuirksFollowTheirBuildConditions)
+{
+    constexpr auto nativeTaps = WebCore::QuirkBehaviorID::ShouldAllowNativeTapsOnMediaElementsQuirk;
+    constexpr auto pointerOut = WebCore::QuirkBehaviorID::ShouldDispatchPointerOutAndLeaveAfterHandlingSyntheticClick;
+    constexpr auto touchMove = WebCore::QuirkBehaviorID::ShouldPreventTouchMoveDispatchQuirk;
+    constexpr auto touchEnd = WebCore::QuirkBehaviorID::ShouldPreventTouchEndDispatchQuirk;
+
+    auto linkedIn = resolveQuirksForTopURL("https://www.linkedin.com/"_s);
+    auto outlook = resolveQuirksForTopURL("https://outlook.live.com/"_s);
+    auto netflix = resolveQuirksForTopURL("https://www.netflix.com/"_s);
+    auto soylent = resolveQuirksForTopURL("https://soylent.com/"_s);
+    auto yahoo = resolveQuirksForTopURL("https://www.yahoo.com/"_s);
+
+#if PLATFORM(IOS_FAMILY) && ENABLE(IOS_TOUCH_EVENTS)
+    EXPECT_EQ(elementSelectorsFor(linkedIn, nativeTaps), Vector<String> { "video.vjs-tech, audio.vjs-tech"_str });
+#else
+    EXPECT_FALSE(linkedIn.isBehaviorEnabled(nativeTaps));
+#endif
+
+#if ENABLE(TOUCH_EVENTS)
+    EXPECT_TRUE(netflix.isBehaviorEnabled(pointerOut));
+    EXPECT_TRUE(soylent.isBehaviorEnabled(pointerOut));
+    EXPECT_EQ(elementSelectorsFor(outlook, touchMove), Vector<String> { ".ms-Suggestions, .ms-Suggestions *"_str });
+    EXPECT_EQ(elementSelectorsFor(yahoo, touchEnd), Vector<String> { ".DPvwYc.sm8sCf, .vjs-subs-cap-button.vjs-menu-button"_str });
+#else
+    EXPECT_FALSE(netflix.isBehaviorEnabled(pointerOut));
+    EXPECT_FALSE(soylent.isBehaviorEnabled(pointerOut));
+    EXPECT_FALSE(outlook.isBehaviorEnabled(touchMove));
+    EXPECT_FALSE(yahoo.isBehaviorEnabled(touchEnd));
+#endif
+}
 
 static bool matchesSelector(ASCIILiteral selector, const WebCore::Node* node)
 {
@@ -1207,10 +1271,14 @@ TEST_F(QuirksTest, NeedsPartitionedCookies)
     };
 
     EXPECT_TRUE(needsPartitionedCookies("https://biller.billpaysite.com/pay"_s, false));
+    EXPECT_TRUE(needsPartitionedCookies("https://www.gradescope.com/courses/1"_s, false));
 
     EXPECT_FALSE(needsPartitionedCookies("https://biller.billpaysite.com/pay"_s, true));
     EXPECT_FALSE(needsPartitionedCookies("https://notbillpaysite.com/"_s, false));
     EXPECT_FALSE(needsPartitionedCookies("https://billpaysite.com.example.com/"_s, false));
+    EXPECT_FALSE(needsPartitionedCookies("https://www.gradescope.com/courses/1"_s, true));
+    EXPECT_FALSE(needsPartitionedCookies("https://notgradescope.com/"_s, false));
+    EXPECT_FALSE(needsPartitionedCookies("https://gradescope.com.example.com/"_s, false));
     EXPECT_FALSE(needsPartitionedCookies("https://www.example.com/"_s, false));
 }
 
@@ -1394,6 +1462,13 @@ TEST_F(QuirksTest, ClaudeSidebarQuirkCarriesTheSidebarSelector)
     EXPECT_EQ(elementSelectorsFor(quirks, WebCore::QuirkBehaviorID::NeedsClaudeSidebarViewportUnitQuirk), Vector<String> { String { onClaudeSidebar } });
 }
 
+TEST_F(QuirksTest, OpenRiceAdPopupQuirkIsScopedToOpenRiceAndCarriesTheContainerSelector)
+{
+    auto quirks = resolveQuirksForTopURL("https://www.openrice.com/"_s);
+    EXPECT_EQ(elementSelectorsFor(quirks, WebCore::QuirkBehaviorID::NeedsOpenRiceAdPopupHeightQuirk), Vector<String> { ".popup-ad-subview-container"_s });
+    EXPECT_FALSE(resolveQuirksForTopURL("https://www.notopenrice.com/"_s).isBehaviorEnabled(WebCore::QuirkBehaviorID::NeedsOpenRiceAdPopupHeightQuirk));
+}
+
 TEST_F(QuirksTest, OnlyGoogleDocsOpensAboutURLsAsAboutBlank)
 {
     EXPECT_TRUE(resolveQuirksForTopURL("https://docs.google.com/"_s).isBehaviorEnabled(WebCore::QuirkBehaviorID::ShouldOpenAsAboutBlankQuirk));
@@ -1524,7 +1599,7 @@ TEST_F(QuirksTest, InstagramReelsGrowToFillTheirFlexContainerOnlyWhenTheyContain
 
 static bool hasActiveQuirk(WebCore::Document& document, ASCIILiteral quirkName)
 {
-    return document.quirks().activeQuirks().contains(String { quirkName });
+    return document.quirks().activeQuirkNames().contains(String { quirkName });
 }
 
 static TestPageHarness createPageWithQuirksEnabled()
@@ -1549,5 +1624,68 @@ TEST_F(QuirksTest, SameDocumentNavigationReresolvesQuirks)
     document->updateURLForPushOrReplaceState(URL { "https://www.apple.com/"_s });
     EXPECT_FALSE(hasActiveQuirk(document, "ShouldDisableScrollAnchoringQuirk"_s));
 }
+
+#if PLATFORM(APPLETV)
+
+class ScopedHomeViewOverride {
+public:
+    explicit ScopedHomeViewOverride(bool isHomeView)
+    {
+        PAL::setDeviceClassIsHomeViewForTesting(isHomeView);
+    }
+
+    ~ScopedHomeViewOverride()
+    {
+        PAL::setDeviceClassIsHomeViewForTesting(std::nullopt);
+    }
+};
+
+static bool hasBehavior(ASCIILiteral urlString, WebCore::QuirkBehaviorID id)
+{
+    return resolveQuirksForTopURL(urlString).isBehaviorEnabled(id);
+}
+
+TEST_F(QuirksTest, HomeViewTableQuirksApplyOnlyOnHomeView)
+{
+    using enum WebCore::QuirkBehaviorID;
+
+    {
+        ScopedHomeViewOverride homeView { true };
+        EXPECT_TRUE(hasBehavior("https://play.hbomax.com/"_s, NeedsZeroMaxTouchPointsQuirk));
+        EXPECT_TRUE(hasBehavior("https://play.hbomax.com/"_s, ShouldSupportHoverMediaQueriesQuirk));
+        EXPECT_TRUE(hasBehavior("https://disneyplus.com/"_s, NeedsZeroMaxTouchPointsQuirk));
+        EXPECT_TRUE(hasBehavior("https://www.disneyplus.com/"_s, NeedsZeroMaxTouchPointsQuirk));
+        EXPECT_TRUE(hasBehavior("https://webex.com/"_s, NeedsWebExScrollabilityQuirk));
+        EXPECT_TRUE(hasBehavior("https://www.webex.com/"_s, NeedsWebExScrollabilityQuirk));
+        EXPECT_TRUE(hasBehavior("https://bing.com/"_s, ShouldPreventOrientationMediaQueryFromEvaluatingToLandscapeQuirk));
+        EXPECT_TRUE(hasBehavior("https://www.bing.com/"_s, ShouldPreventOrientationMediaQueryFromEvaluatingToLandscapeQuirk));
+        EXPECT_TRUE(hasBehavior("https://facebook.com/"_s, ShouldFlipScreenDimensionsQuirk));
+        EXPECT_TRUE(hasBehavior("https://www.facebook.com/"_s, ShouldFlipScreenDimensionsQuirk));
+    }
+
+    {
+        ScopedHomeViewOverride notHomeView { false };
+        EXPECT_FALSE(hasBehavior("https://play.hbomax.com/"_s, NeedsZeroMaxTouchPointsQuirk));
+        EXPECT_FALSE(hasBehavior("https://play.hbomax.com/"_s, ShouldSupportHoverMediaQueriesQuirk));
+        EXPECT_FALSE(hasBehavior("https://www.disneyplus.com/"_s, NeedsZeroMaxTouchPointsQuirk));
+        EXPECT_FALSE(hasBehavior("https://www.webex.com/"_s, NeedsWebExScrollabilityQuirk));
+        EXPECT_FALSE(hasBehavior("https://www.bing.com/"_s, ShouldPreventOrientationMediaQueryFromEvaluatingToLandscapeQuirk));
+        EXPECT_FALSE(hasBehavior("https://www.facebook.com/"_s, ShouldFlipScreenDimensionsQuirk));
+    }
+}
+
+TEST_F(QuirksTest, HomeViewTableQuirksDoNotLeakOntoOtherSites)
+{
+    using enum WebCore::QuirkBehaviorID;
+
+    ScopedHomeViewOverride homeView { true };
+    EXPECT_FALSE(hasBehavior("https://www.example.com/"_s, NeedsZeroMaxTouchPointsQuirk));
+    EXPECT_FALSE(hasBehavior("https://www.example.com/"_s, ShouldSupportHoverMediaQueriesQuirk));
+    EXPECT_FALSE(hasBehavior("https://www.example.com/"_s, NeedsWebExScrollabilityQuirk));
+    EXPECT_FALSE(hasBehavior("https://www.example.com/"_s, ShouldPreventOrientationMediaQueryFromEvaluatingToLandscapeQuirk));
+    EXPECT_FALSE(hasBehavior("https://www.example.com/"_s, ShouldFlipScreenDimensionsQuirk));
+}
+
+#endif // PLATFORM(APPLETV)
 
 } // namespace TestWebKitAPI

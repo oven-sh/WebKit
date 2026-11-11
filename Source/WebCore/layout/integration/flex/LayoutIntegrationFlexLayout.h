@@ -45,7 +45,7 @@ public:
 
     void layout(RelayoutChildren);
 
-    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths();
 
     // The container's in-flow children in order-modified document order, rebuilt every layout. Weak pointers because
     // painting/hit-testing/baseline queries read the list after layout, when a child may have been removed.
@@ -56,7 +56,7 @@ public:
 
     // Widens the container's allowed layout overflow by how far content-alignment pushed the items past the
     // content-box start edges. Takes RenderBox's writing-mode-only allowance, which only the renderer can compute.
-    LayoutOptionalOutsets LEGACY_NODELETE adjustAllowedLayoutOverflow(LayoutOptionalOutsets) const;
+    NODELETE LayoutOptionalOutsets adjustAllowedLayoutOverflow(LayoutOptionalOutsets) const;
 
     std::optional<LayoutUnit> firstLineBaseline() const;
     std::optional<LayoutUnit> lastLineBaseline() const;
@@ -71,7 +71,7 @@ public:
     // Whether the item's height is definite by the phase the flex algorithm is in (9.8: the used sizes become
     // definite as the steps that produce them run). Absent when the algorithm is not running -- only
     // RenderFlexibleBox knows which of its own layout passes is then in play.
-    std::optional<bool> LEGACY_NODELETE isFlexItemHeightDefiniteInLayoutPhase(const RenderBox& flexItem) const;
+    NODELETE std::optional<bool> isFlexItemHeightDefiniteInLayoutPhase(const RenderBox& flexItem) const;
 
     // CSS Flexbox 9.8: whether the item's post-flexing size is definite, which is what makes a percentage
     // resolved against it meaningful.
@@ -82,6 +82,11 @@ public:
     void flexItemWillBeRemoved(const RenderBox& flexItem);
 
 private:
+    std::pair<LayoutUnit, LayoutUnit> intrinsicLogicalWidthsForFlexItem(RenderBox&) const;
+    // CSS Flexbox 9.9.2; std::nullopt when the largest contribution is the answer.
+    std::optional<LayoutUnit> maximumContentSizeForMultilineColumn();
+    class FlexItemsAtMaxContentWidthScope;
+
     void buildFlexItemList();
     FlexLayoutItems buildFlexLayoutItems(RelayoutChildren, const FlexLayoutConstraints&);
     FlexLayoutConstraints flexLayoutConstraints() const;

@@ -34,6 +34,16 @@ symbols = [
 ]
 
 [[temporary-usage]]
+request = "rdar://190661952"
+cleanup = "rdar://190661878"
+symbols = [
+    "CGImageGetIdentifier",
+    "CGImageNotificationCenter",
+    "CGNotificationCenterAddCallback",
+    "kCGImageWillDeallocate",
+]
+
+[[temporary-usage]]
 request = "rdar://186571377"
 cleanup = "rdar://186571467"
 symbols = [
@@ -213,3 +223,13 @@ cleanup = "rdar://190550227"
 symbols = [
     "CABackingStoreCollectBlocking",
 ]
+
+[[not-web-essential]]
+# This is not really a permanent exception request; it's a bug to change
+# audit-spi to stop tracking WebPrivacy as SPI and instead treat it as a
+# component of the engine.
+request = "rdar://157886589"
+symbols = [
+    "WPDisabledSecurityFlagsChangedNotificationName",
+]
+requires = ["ENABLE_ADVANCED_PRIVACY_PROTECTIONS"]

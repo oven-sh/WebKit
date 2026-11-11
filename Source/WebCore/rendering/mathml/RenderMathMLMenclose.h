@@ -42,11 +42,11 @@ public:
 
 private:
     ASCIILiteral renderName() const final { return "RenderMathMLMenclose"_s; }
-    void computeIntrinsicLogicalWidthContributions() final;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() final;
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) final;
     void paint(PaintInfo&, const LayoutPoint&) final;
 
-    LayoutUnit LEGACY_NODELETE ruleThickness() const;
+    NODELETE LayoutUnit ruleThickness() const;
     bool hasNotation(MathMLMencloseElement::MencloseNotationFlag notationFlag) const { return protect(downcast<MathMLMencloseElement>(element()))->hasNotation(notationFlag); }
 
     struct SpaceAroundContent {

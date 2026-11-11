@@ -1,0 +1,56 @@
+# The list follows from the program alone. Whether a match is entered at all hangs on the most that it could cost, and that counts the ways through the choices of the pattern:
+# the alternatives of a group once where it stands once, once for each character where it is repeated.
+# new RegExp("a" + /^(?:a|aa)+b/.test("a".repeat(30))): two to the power of thirty ways: not entered . ("b" + /^(?:a|aa)+b/.test("aaaab")): entered
+# ("c" + /^(?:a|aa)(?:a|aa) .. 34 in a row .. b/.test("a".repeat(50))): not entered . ("d" + /^(?:get|put)-(?:one|all)$/.test("put-all")): entered
+# ("e" + /^(?:a|a) .. 32 in a row .. (?:(?:a|a) .. 32 more ..)b/.test("b")): two to the power of 64 ways, which is more than a word holds: not entered
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /afalse/
+# CHECK: text /btrue/
+# CHECK-NOT: text /cfalse/
+# CHECK: text /dtrue/
+# CHECK-NOT: text /efalse/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = NewRegExp pattern="^(?:a|aa)+b"
+    v2 = String string="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    v3 = PropGet v1 key="test"
+    v4 = Call v3, v1, v2 calleeKey="test"
+    v5 = String string="a"
+    v6 = Add v5, v4
+    v7 = Construct v0, -, v6
+    v8 = NewRegExp pattern="^(?:a|aa)+b"
+    v9 = String string="aaaab"
+    v10 = PropGet v8 key="test"
+    v11 = Call v10, v8, v9 calleeKey="test"
+    v12 = String string="b"
+    v13 = Add v12, v11
+    v14 = Construct v0, -, v13
+    v15 = NewRegExp pattern="^(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)b"
+    v16 = String string="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    v17 = PropGet v15 key="test"
+    v18 = Call v17, v15, v16 calleeKey="test"
+    v19 = String string="c"
+    v20 = Add v19, v18
+    v21 = Construct v0, -, v20
+    v22 = NewRegExp pattern="^(?:get|put)-(?:one|all)$"
+    v23 = String string="put-all"
+    v24 = PropGet v22 key="test"
+    v25 = Call v24, v22, v23 calleeKey="test"
+    v26 = String string="d"
+    v27 = Add v26, v25
+    v28 = Construct v0, -, v27
+    v29 = NewRegExp pattern="^(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a)(?:a|a))b"
+    v30 = String string="b"
+    v31 = PropGet v29 key="test"
+    v32 = Call v31, v29, v30 calleeKey="test"
+    v33 = String string="e"
+    v34 = Add v33, v32
+    v35 = Construct v0, -, v34
+    v36 = NewArray v7, v14, v21, v28, v35 contents=anything
+    Return v36
+}

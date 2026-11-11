@@ -92,13 +92,11 @@
 #include "RenderImage.h"
 #include "RenderLayer.h"
 #include "RenderTheme.h"
-#include "SVGImage.h"
 #include "SVGImageElement.h"
 #include "ScriptDisallowedScope.h"
 #include "ScriptTrackingPrivacyCategory.h"
 #include "SecurityOrigin.h"
 #include "Settings.h"
-#include "SizedImage.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleLengthResolution.h"
 #include "StyleProperties.h"
@@ -132,7 +130,7 @@ static constexpr ASCIILiteral DefaultFont = "10px sans-serif"_s;
 // putImageData data smaller than this is cached in anticipation for next getImageData.
 static constexpr unsigned putImageDataCacheAreaLimit = 60 * 60;
 
-static CanvasLineCap LEGACY_NODELETE toCanvasLineCap(LineCap lineCap)
+NODELETE static CanvasLineCap toCanvasLineCap(LineCap lineCap)
 {
     switch (lineCap) {
     case LineCap::Butt:
@@ -146,7 +144,7 @@ static CanvasLineCap LEGACY_NODELETE toCanvasLineCap(LineCap lineCap)
     return CanvasLineCap::Butt;
 }
 
-static LineCap LEGACY_NODELETE fromCanvasLineCap(CanvasLineCap canvasLineCap)
+NODELETE static LineCap fromCanvasLineCap(CanvasLineCap canvasLineCap)
 {
     switch (canvasLineCap) {
     case CanvasLineCap::Butt:
@@ -160,7 +158,7 @@ static LineCap LEGACY_NODELETE fromCanvasLineCap(CanvasLineCap canvasLineCap)
     return LineCap::Butt;
 }
 
-static CanvasLineJoin LEGACY_NODELETE toCanvasLineJoin(LineJoin lineJoin)
+NODELETE static CanvasLineJoin toCanvasLineJoin(LineJoin lineJoin)
 {
     switch (lineJoin) {
     case LineJoin::Round:
@@ -174,7 +172,7 @@ static CanvasLineJoin LEGACY_NODELETE toCanvasLineJoin(LineJoin lineJoin)
     return CanvasLineJoin::Round;
 }
 
-static LineJoin LEGACY_NODELETE fromCanvasLineJoin(CanvasLineJoin canvasLineJoin)
+NODELETE static LineJoin fromCanvasLineJoin(CanvasLineJoin canvasLineJoin)
 {
     switch (canvasLineJoin) {
     case CanvasLineJoin::Round:
@@ -188,7 +186,7 @@ static LineJoin LEGACY_NODELETE fromCanvasLineJoin(CanvasLineJoin canvasLineJoin
     return LineJoin::Round;
 }
 
-static CanvasTextAlign LEGACY_NODELETE toCanvasTextAlign(TextAlign textAlign)
+NODELETE static CanvasTextAlign toCanvasTextAlign(TextAlign textAlign)
 {
     switch (textAlign) {
     case StartTextAlign:
@@ -206,7 +204,7 @@ static CanvasTextAlign LEGACY_NODELETE toCanvasTextAlign(TextAlign textAlign)
     return CanvasTextAlign::Start;
 }
 
-static TextAlign LEGACY_NODELETE fromCanvasTextAlign(CanvasTextAlign canvasTextAlign)
+NODELETE static TextAlign fromCanvasTextAlign(CanvasTextAlign canvasTextAlign)
 {
     switch (canvasTextAlign) {
     case CanvasTextAlign::Start:
@@ -224,7 +222,7 @@ static TextAlign LEGACY_NODELETE fromCanvasTextAlign(CanvasTextAlign canvasTextA
     return StartTextAlign;
 }
 
-static CanvasTextBaseline LEGACY_NODELETE toCanvasTextBaseline(TextBaseline textBaseline)
+NODELETE static CanvasTextBaseline toCanvasTextBaseline(TextBaseline textBaseline)
 {
     switch (textBaseline) {
     case TopTextBaseline:
@@ -244,7 +242,7 @@ static CanvasTextBaseline LEGACY_NODELETE toCanvasTextBaseline(TextBaseline text
     return CanvasTextBaseline::Top;
 }
 
-static TextBaseline LEGACY_NODELETE fromCanvasTextBaseline(CanvasTextBaseline canvasTextBaseline)
+NODELETE static TextBaseline fromCanvasTextBaseline(CanvasTextBaseline canvasTextBaseline)
 {
     switch (canvasTextBaseline) {
     case CanvasTextBaseline::Top:
@@ -368,6 +366,7 @@ void CanvasRenderingContext2DBase::didUpdateCanvasSizeProperties(bool sizeChange
         restore();
     m_stateStack.first() = State();
     m_path.clear();
+    m_hasInvertibleTransform = state().transformInverse.has_value();
     m_bufferNativeImage = nullptr;
     m_cachedContents.emplace<CachedContentsTransparent>();
     m_hasDeferredOperations = false;
@@ -414,17 +413,30 @@ CanvasRenderingContext2DBase::State::State()
     , filter { CSS::Keyword::None { } }
     , letterSpacing("0px"_s)
     , wordSpacing("0px"_s)
+    , lang("inherit"_s)
     , unparsedFont(DefaultFont)
+    , font(FontProxy::create())
 {
+}
+
+auto CanvasRenderingContext2DBase::State::clone() const -> State
+{
+    State cloned = *this;
+
+    // FIXME: implement copy-on-write so we only clone when it's changed.
+    cloned.font = protect(this->font)->clone();
+
+    return cloned;
 }
 
 String CanvasRenderingContext2DBase::State::fontString() const
 {
-    if (!font.realized())
+    Ref fontProxy = this->font;
+    if (!fontProxy->realized())
         return DefaultFont;
 
     StringBuilder serializedFont;
-    const auto& font = this->font.fontDescription();
+    const auto& font = fontProxy->fontDescription();
 
     auto italic = font.fontStyleSlope() ? "italic "_s : ""_s;
     auto smallCaps = font.variantCaps() == FontVariantCaps::Small ? "small-caps "_s : ""_s;
@@ -627,30 +639,34 @@ static CanvasTextRendering toCanvasTextRendering(TextRenderingMode textRendering
 
 CanvasFontKerning CanvasRenderingContext2DBase::State::canvasFontKerning() const
 {
-    if (!font.realized())
+    Ref font = this->font;
+    if (!font->realized())
         return CanvasFontKerning::Auto;
-    return toCanvasFontKerning(font.fontDescription().kerning());
+    return toCanvasFontKerning(font->fontDescription().kerning());
 }
 
 CanvasTextRendering CanvasRenderingContext2DBase::State::canvasTextRendering() const
 {
-    if (!font.realized())
+    Ref font = this->font;
+    if (!font->realized())
         return CanvasTextRendering::Auto;
-    return toCanvasTextRendering(font.fontDescription().textRenderingMode());
+    return toCanvasTextRendering(font->fontDescription().textRenderingMode());
 }
 
 CanvasFontStretch CanvasRenderingContext2DBase::State::canvasFontStretch() const
 {
-    if (!font.realized())
+    Ref font = this->font;
+    if (!font->realized())
         return CanvasFontStretch::Normal;
-    return toCanvasFontStretch(font.fontDescription().width());
+    return toCanvasFontStretch(font->fontDescription().width());
 }
 
 CanvasFontVariantCaps CanvasRenderingContext2DBase::State::canvasFontVariantCaps() const
 {
-    if (!font.realized())
+    Ref font = this->font;
+    if (!font->realized())
         return CanvasFontVariantCaps::Normal;
-    return toCanvasFontVariantCaps(font.fontDescription().variantCaps());
+    return toCanvasFontVariantCaps(font->fontDescription().variantCaps());
 }
 
 String CanvasRenderingContext2DBase::State::globalCompositeOperationString() const
@@ -661,6 +677,16 @@ String CanvasRenderingContext2DBase::State::globalCompositeOperationString() con
 String CanvasRenderingContext2DBase::State::shadowColorString() const
 {
     return serializationForHTML(shadowColor);
+}
+
+Ref<CanvasRenderingContext2DBase::FontProxy> CanvasRenderingContext2DBase::FontProxy::create()
+{
+    return adoptRef(*new CanvasRenderingContext2DBase::FontProxy());
+}
+
+Ref<CanvasRenderingContext2DBase::FontProxy> CanvasRenderingContext2DBase::FontProxy::clone() const
+{
+    return adoptRef(*new CanvasRenderingContext2DBase::FontProxy(*this));
 }
 
 CanvasRenderingContext2DBase::FontProxy::~FontProxy()
@@ -720,7 +746,7 @@ void CanvasRenderingContext2DBase::FontProxy::initialize(FontSelector& fontSelec
     protect(m_font.fontSelector())->registerForInvalidationCallbacks(*this);
 }
 
-void CanvasRenderingContext2DBase::FontProxy::update(NOESCAPE const Invocable<void(FontCascadeDescription&)> auto& function)
+void CanvasRenderingContext2DBase::FontProxy::update(NOESCAPE const ScopedLambda<void(FontCascadeDescription&)>& function)
 {
     ASSERT(realized());
     RefPtr fontSelector = m_font.fontSelector();
@@ -772,7 +798,7 @@ void CanvasRenderingContext2DBase::realizeSavesLoop()
     do {
         if (m_stateStack.size() > MaxSaveCount)
             break;
-        m_stateStack.append(state());
+        m_stateStack.append(state().clone());
         if (context)
             context->save();
     } while (--m_unrealizedSaveCount);
@@ -787,7 +813,8 @@ void CanvasRenderingContext2DBase::restore()
     ASSERT(m_stateStack.size() >= 1);
     if (m_stateStack.size() <= 1)
         return;
-    m_path.transform(state().transform);
+    if (hasInvertibleTransform())
+        m_path.transform(state().transform);
     m_stateStack.removeLast();
     auto& state = this->state();
     m_hasInvertibleTransform = state.transformInverse.has_value();
@@ -998,7 +1025,7 @@ void CanvasRenderingContext2DBase::setShadowColor(const String& colorString)
     applyShadow();
 }
 
-static bool LEGACY_NODELETE lineDashSequenceIsValid(const Vector<double>& dash)
+NODELETE static bool lineDashSequenceIsValid(const Vector<double>& dash)
 {
     for (size_t i = 0; i < dash.size(); i++) {
         if (!std::isfinite(dash[i]) || dash[i] < 0)
@@ -1317,7 +1344,7 @@ void CanvasRenderingContext2DBase::beginPath()
     m_path.clear();
 }
 
-static bool LEGACY_NODELETE validateRectForCanvas(double& x, double& y, double& width, double& height)
+NODELETE static bool validateRectForCanvas(double& x, double& y, double& width, double& height)
 {
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(width) || !std::isfinite(height))
         return false;
@@ -1338,7 +1365,7 @@ static bool LEGACY_NODELETE validateRectForCanvas(double& x, double& y, double& 
     return true;
 }
 
-static bool LEGACY_NODELETE isFullCanvasCompositeMode(CompositeOperator op)
+NODELETE static bool isFullCanvasCompositeMode(CompositeOperator op)
 {
     // See 4.8.11.1.3 Compositing
     // CompositeOperator::SourceAtop and CompositeOperator::DestinationOut are not listed here as the platforms already
@@ -1346,7 +1373,7 @@ static bool LEGACY_NODELETE isFullCanvasCompositeMode(CompositeOperator op)
     return op == CompositeOperator::SourceIn || op == CompositeOperator::SourceOut || op == CompositeOperator::DestinationIn || op == CompositeOperator::DestinationAtop;
 }
 
-static WindRule LEGACY_NODELETE toWindRule(CanvasFillRule rule)
+NODELETE static WindRule toWindRule(CanvasFillRule rule)
 {
     return rule == CanvasFillRule::Nonzero ? WindRule::NonZero : WindRule::EvenOdd;
 }
@@ -1781,7 +1808,7 @@ static ConcreteObjectSize size(SVGImageElement& element, FloatSize outputBitmapS
     return imageElementSize(element, outputBitmapSize, applyImageDevicePixelRatio);
 }
 
-static inline FloatSize LEGACY_NODELETE size(CanvasBase& canvas)
+NODELETE static inline FloatSize size(CanvasBase& canvas)
 {
     return canvas.size();
 }
@@ -1831,7 +1858,7 @@ static inline ConcreteObjectSize size(CSSStyleImageValue& image, FloatSize outpu
 }
 
 #if ENABLE(WEB_CODECS)
-static inline FloatSize LEGACY_NODELETE size(const WebCodecsVideoFrame& frame)
+NODELETE static inline FloatSize size(const WebCodecsVideoFrame& frame)
 {
     return FloatSize { static_cast<float>(frame.displayWidth()), static_cast<float>(frame.displayHeight()) };
 }
@@ -1988,25 +2015,48 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(WebCodecsVideoFrame& f
     if (!context)
         return { };
 
-    auto internalFrame = frame.internalFrame();
+    RefPtr scriptContext = protect(canvasBase())->scriptExecutionContext();
+    if (!scriptContext)
+        return { };
+
+    RefPtr internalFrame = frame.internalFrameForRendering(*scriptContext);
     if (!internalFrame)
         return { };
 
     auto normalizedDstRect = normalizeRect(dstRect);
-    // FIXME: Can we avoid post-processing in any cases?
-    if (rectContainsCanvas(normalizedDstRect))
-        willUpdateEntireContents();
-    else
-        willUpdateContents(normalizedDstRect);
+    auto compositeOperator = state().globalComposite;
 
-    ImageDrawingOptions options = {
+    RasterDrawingOptions options = {
+        internalFrame->orientation(),
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
-        (isHDR() && usesITUR2100TF(internalFrame->colorSpace())) ? DrawsHDRContent::Yes : DrawsHDRContent::No
+        (isHDR() && usesITUR2100TF(internalFrame->colorSpace())) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
 #endif
+        compositeOperator,
+        state().globalBlend
     };
 
-    // FIXME: Add support for srcRect
-    context->drawVideoFrame(*internalFrame, dstRect, ShouldDiscardAlpha::No, options);
+    auto draw = [&](GraphicsContext& drawingContext, const FloatRect& destination, RasterDrawingOptions drawingOptions) {
+        // FIXME: Add support for srcRect
+        drawingContext.drawVideoFrame(*internalFrame, destination, ShouldDiscardAlpha::No, drawingOptions);
+    };
+
+    // FIXME: Can we avoid post-processing in any cases?
+    if (rectContainsCanvas(normalizedDstRect)) {
+        willUpdateEntireContents();
+        draw(*context, normalizedDstRect, options);
+    } else if (isFullCanvasCompositeMode(compositeOperator)) {
+        willUpdateEntireContents();
+        fullCanvasCompositedDraw(normalizedDstRect, compositeOperator, [&](GraphicsContext& bufferContext, const FloatRect& destination) {
+            draw(bufferContext, destination, { options, CompositeOperator::SourceOver, BlendMode::Normal });
+        });
+    } else if (compositeOperator == CompositeOperator::Copy) {
+        willUpdateEntireContents();
+        clearCanvas();
+        draw(*context, normalizedDstRect, options);
+    } else {
+        willUpdateContents(normalizedDstRect);
+        draw(*context, normalizedDstRect, options);
+    }
 
     return { };
 }
@@ -2041,62 +2091,90 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Im
     if (!hasInvertibleTransform()) [[unlikely]]
         return { };
 
-    RefPtr<Image> image = &sourceImage;
+    ImageObserverDisableScope imageObserverDisabler(sourceImage, sourceImage.isSVGImage());
 
-    ImageObserverDisableScope imageObserverDisabler(*image, image->isSVGImage());
+    RefPtr<NativeImage> firstFrame;
     auto shouldPostProcess { true };
 
-    if (RefPtr bitmapImage = dynamicDowncast<BitmapImage>(*image)) {
+    if (RefPtr bitmapImage = dynamicDowncast<BitmapImage>(sourceImage)) {
         // Drawing an animated image to a canvas should draw the first frame (except for a few layout tests)
-        if (image->isAnimated() && !document.settings().animatedImageDebugCanvasDrawingEnabled()) {
-            // FIXME: This draws the SDR base image, so an animated HDR image loses its HDR
-            // content: the copy is backed by a NativeImageSource, which never reports a gain
-            // map and always prefers DecodingDestination::Base.
-            bitmapImage = BitmapImage::create(bitmapImage->nativeImage());
-            if (!bitmapImage)
+        if (bitmapImage->isAnimated() && !document.settings().animatedImageDebugCanvasDrawingEnabled()) {
+            // FIXME: This draws the SDR base image, so an animated HDR image loses its HDR content.
+            firstFrame = bitmapImage->nativeImage();
+            if (!firstFrame)
                 return { };
-            image = bitmapImage.copyRef();
+
+            // FIXME: This ignores the orientation of the first frame.
+            if (orientation == ImageOrientation::Orientation::FromImage)
+                orientation = ImageOrientation::Orientation::None;
         }
 
         shouldPostProcess = false;
     }
 
-    ImageDrawingOptions options = {
+    ImageDrawDescriptor descriptor {
+        concreteObjectSize,
+        ImageRenditionOptions::forDocument(document),
         op,
         blendMode,
         orientation,
         document.settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
-        document.settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No
+        document.settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No,
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-        ,
-        InvertContent::No
+        InvertContent::No,
 #endif
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
-        ,
-        (isHDR() && image->hasHDRContent()) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
-        document.settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No
+        (isHDR() && !firstFrame && sourceImage.hasHDRContent()) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
+        document.settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No,
 #endif
+    };
+
+    auto draw = [&](GraphicsContext& context, const FloatRect& destination, const ImageDrawDescriptor& descriptor) {
+        if (!firstFrame)
+            sourceImage.draw(context, descriptor, destination, normalizedSrcRect);
+        else if (auto color = firstFrame->singlePixelSolidColor())
+            Image::fillWithSolidColor(context, destination, *color, descriptor.compositeOperator);
+        else
+            context.drawNativeImage(*firstFrame, destination, normalizedSrcRect, descriptor.rasterDrawingOptions());
     };
 
     auto willUpdateContentsOptions = shouldPostProcess ? defaultWillUpdateContentsOptions() : defaultWillUpdateContentsOptionsWithoutPostProcessing();
 
     if (rectContainsCanvas(normalizedDstRect)) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        c->drawImage(*image, concreteObjectSize, normalizedDstRect, normalizedSrcRect, options);
+        draw(*c, normalizedDstRect, descriptor);
     } else if (isFullCanvasCompositeMode(op)) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        auto sizedImage = SizedImage { *image, concreteObjectSize };
-        fullCanvasCompositedDrawImage(sizedImage, normalizedDstRect, normalizedSrcRect, op, options);
+        fullCanvasCompositedDraw(normalizedDstRect, op, [&](GraphicsContext& context, const FloatRect& destination) {
+            draw(context, destination, { descriptor, CompositeOperator::SourceOver });
+        });
     } else if (op == CompositeOperator::Copy) {
         willUpdateEntireContents(willUpdateContentsOptions);
         clearCanvas();
-        c->drawImage(*image, concreteObjectSize, normalizedDstRect, normalizedSrcRect, options);
+        draw(*c, normalizedDstRect, descriptor);
     } else {
         willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : normalizedDstRect, willUpdateContentsOptions);
-        c->drawImage(*image, concreteObjectSize, normalizedDstRect, normalizedSrcRect, options);
+        draw(*c, normalizedDstRect, descriptor);
     }
 
     return { };
+}
+
+// "When the source rectangle is outside the source image, the source rectangle must be clipped to the source image
+// and the destination rectangle must be clipped in the same proportion."
+// Both rects must be normalized. Returns false if the source rect is entirely outside the source image.
+static bool clipToSourceImage(FloatRect& srcRect, FloatRect& dstRect, const FloatSize& sourceImageSize)
+{
+    auto clippedSrcRect = intersection(srcRect, FloatRect { { }, sourceImageSize });
+    if (clippedSrcRect.isEmpty())
+        return false;
+    if (clippedSrcRect == srcRect)
+        return true;
+
+    auto scale = dstRect.size() / srcRect.size();
+    dstRect = { dstRect.location() + (clippedSrcRect.location() - srcRect.location()) * scale, clippedSrcRect.size() * scale };
+    srcRect = clippedSrcRect;
+    return true;
 }
 
 ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(CanvasBase& sourceCanvas, const FloatRect& srcRect, const FloatRect& dstRect)
@@ -2122,6 +2200,9 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(CanvasBase& sourceCanv
     if (normalizedDstRect.isEmpty())
         return { };
 
+    if (!clipToSourceImage(normalizedSrcRect, normalizedDstRect, FloatSize { sourceCanvas.size() }))
+        return { };
+
     auto targetSwitcher = CanvasFilterContextSwitcher::create(*this, normalizedDstRect);
 
     GraphicsContext* c = effectiveDrawingContext();
@@ -2145,7 +2226,7 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(CanvasBase& sourceCanv
         copy = createCompatibleImageBuffer(*c, normalizedSrcRect.size());
         if (!copy)
             return { };
-        copy->context().drawNativeImage(*image, { -normalizedSrcRect.location(), FloatSize { image->size() } }, { { }, FloatSize { image->size() } });
+        copy->context().drawNativeImage(*image, FloatRect { -normalizedSrcRect.location(), FloatSize { image->size() } }, FloatRect { { }, FloatSize { image->size() } });
         image = copy->copyNativeImage();
         if (!image)
             return { };
@@ -2161,7 +2242,9 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(CanvasBase& sourceCanv
         c->drawNativeImage(*image, normalizedDstRect, normalizedImageSrcRect, { state().globalComposite, state().globalBlend });
     } else if (isFullCanvasCompositeMode(state().globalComposite)) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        fullCanvasCompositedDrawImage(*image, normalizedDstRect, normalizedImageSrcRect, state().globalComposite);
+        fullCanvasCompositedDraw(normalizedDstRect, state().globalComposite, [&](GraphicsContext& context, const FloatRect& destination) {
+            context.drawNativeImage(*image, destination, normalizedImageSrcRect);
+        });
     } else if (state().globalComposite == CompositeOperator::Copy) {
         willUpdateEntireContents(willUpdateContentsOptions);
         clearCanvas();
@@ -2215,27 +2298,58 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(HTMLVideoElement& vide
 
     checkOrigin(&video);
 
-    if (rectContainsCanvas(normalizedDstRect))
-        willUpdateEntireContents(defaultWillUpdateContentsOptionsWithoutPostProcessing());
-    else
-        willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : normalizedDstRect, defaultWillUpdateContentsOptionsWithoutPostProcessing());
-
+    auto draw = [&](GraphicsContext& drawingContext, const FloatRect& destination, RasterDrawingOptions options) {
 #if USE(CG)
-    if (c->hasPlatformContext() && video.shouldGetNativeImageForCanvasDrawing()) {
-        if (auto image = video.nativeImageForCurrentTime()) {
-            c->drawNativeImage(*image, normalizedDstRect, normalizedSrcRect);
-            return { };
+        if (drawingContext.hasPlatformContext() && video.shouldGetNativeImageForCanvasDrawing()) {
+            if (auto image = video.nativeImageForCurrentTime()) {
+                drawingContext.drawNativeImage(*image, destination, normalizedSrcRect, options);
+                return;
+            }
         }
-    }
 #endif
 
-    GraphicsContextStateSaver stateSaver(*c);
-    c->clip(normalizedDstRect);
-    c->translate(normalizedDstRect.location());
-    c->scale(FloatSize(normalizedDstRect.width() / normalizedSrcRect.width(), normalizedDstRect.height() / normalizedSrcRect.height()));
-    c->translate(-normalizedSrcRect.location());
-    video.paintCurrentFrameInContext(*c, FloatRect(FloatPoint(), size(video)));
-    stateSaver.restore();
+        auto paintCurrentFrame = [&](GraphicsContext& targetContext, const FloatRect& targetDestination) {
+            GraphicsContextStateSaver stateSaver(targetContext);
+            targetContext.clip(targetDestination);
+            targetContext.translate(targetDestination.location());
+            targetContext.scale(FloatSize(targetDestination.width() / normalizedSrcRect.width(), targetDestination.height() / normalizedSrcRect.height()));
+            targetContext.translate(-normalizedSrcRect.location());
+            video.paintCurrentFrameInContext(targetContext, FloatRect(FloatPoint(), size(video)));
+        };
+
+        if (options.compositeOperator() == CompositeOperator::SourceOver && options.blendMode() == BlendMode::Normal) {
+            paintCurrentFrame(drawingContext, destination);
+            return;
+        }
+
+        // paintCurrentFrameInContext() always draws with source-over, so draw the frame into a buffer, and draw that with options.
+        auto bufferSize = destination.size().expandedTo({ 1, 1 });
+        RefPtr buffer = createCompatibleImageBuffer(drawingContext, bufferSize);
+        if (!buffer)
+            return;
+        paintCurrentFrame(buffer->context(), FloatRect { { }, bufferSize });
+        drawingContext.drawImageBuffer(*buffer, destination, FloatRect { { }, bufferSize }, options);
+    };
+
+    auto compositeOperator = state().globalComposite;
+    RasterDrawingOptions options = { compositeOperator, state().globalBlend };
+
+    if (rectContainsCanvas(normalizedDstRect)) {
+        willUpdateEntireContents(defaultWillUpdateContentsOptionsWithoutPostProcessing());
+        draw(*c, normalizedDstRect, options);
+    } else if (isFullCanvasCompositeMode(compositeOperator)) {
+        willUpdateEntireContents(defaultWillUpdateContentsOptionsWithoutPostProcessing());
+        fullCanvasCompositedDraw(normalizedDstRect, compositeOperator, [&](GraphicsContext& bufferContext, const FloatRect& destination) {
+            draw(bufferContext, destination, { });
+        });
+    } else if (compositeOperator == CompositeOperator::Copy) {
+        willUpdateEntireContents(defaultWillUpdateContentsOptionsWithoutPostProcessing());
+        clearCanvas();
+        draw(*c, normalizedDstRect, options);
+    } else {
+        willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : normalizedDstRect, defaultWillUpdateContentsOptionsWithoutPostProcessing());
+        draw(*c, normalizedDstRect, options);
+    }
 
     return { };
 }
@@ -2254,16 +2368,18 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(ImageBitmap& imageBitm
         return { };
 
     auto normalizedSrcRect = normalizeRect(srcRect);
+    auto normalizedDstRect = normalizeRect(dstRect);
 
     if (normalizedSrcRect.isEmpty())
         return { };
 
-    FloatRect srcBitmapRect = FloatRect(FloatPoint(), FloatSize(imageBitmap.width(), imageBitmap.height()));
-
-    if (!srcBitmapRect.contains(normalizedSrcRect) || !dstRect.width() || !dstRect.height())
+    if (normalizedDstRect.isEmpty())
         return { };
 
-    auto targetSwitcher = CanvasFilterContextSwitcher::create(*this, dstRect);
+    if (!clipToSourceImage(normalizedSrcRect, normalizedDstRect, FloatSize(imageBitmap.width(), imageBitmap.height())))
+        return { };
+
+    auto targetSwitcher = CanvasFilterContextSwitcher::create(*this, normalizedDstRect);
 
     GraphicsContext* c = effectiveDrawingContext();
     if (!c)
@@ -2277,19 +2393,21 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(ImageBitmap& imageBitm
 
     checkOrigin(&imageBitmap);
 
-    if (rectContainsCanvas(dstRect)) {
+    if (rectContainsCanvas(normalizedDstRect)) {
         willUpdateEntireContents(defaultWillUpdateContentsOptionsWithoutPostProcessing());
-        c->drawImageBuffer(*buffer, dstRect, srcRect, { state().globalComposite, state().globalBlend });
+        c->drawImageBuffer(*buffer, normalizedDstRect, normalizedSrcRect, { state().globalComposite, state().globalBlend });
     } else if (isFullCanvasCompositeMode(state().globalComposite)) {
         willUpdateEntireContents(defaultWillUpdateContentsOptionsWithoutPostProcessing());
-        fullCanvasCompositedDrawImage(*buffer, dstRect, srcRect, state().globalComposite);
+        fullCanvasCompositedDraw(normalizedDstRect, state().globalComposite, [&](GraphicsContext& context, const FloatRect& destination) {
+            context.drawImageBuffer(*buffer, destination, normalizedSrcRect);
+        });
     } else if (state().globalComposite == CompositeOperator::Copy) {
         willUpdateEntireContents(defaultWillUpdateContentsOptionsWithoutPostProcessing());
         clearCanvas();
-        c->drawImageBuffer(*buffer, dstRect, srcRect, { state().globalComposite, state().globalBlend });
+        c->drawImageBuffer(*buffer, normalizedDstRect, normalizedSrcRect, { state().globalComposite, state().globalBlend });
     } else {
-        willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : dstRect, defaultWillUpdateContentsOptionsWithoutPostProcessing());
-        c->drawImageBuffer(*buffer, dstRect, srcRect, { state().globalComposite, state().globalBlend });
+        willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : normalizedDstRect, defaultWillUpdateContentsOptionsWithoutPostProcessing());
+        c->drawImageBuffer(*buffer, normalizedDstRect, normalizedSrcRect, { state().globalComposite, state().globalBlend });
     }
 
     return { };
@@ -2458,22 +2576,7 @@ void CanvasRenderingContext2DBase::compositeBuffer(ImageBuffer& buffer, const In
     c->restore();
 }
 
-static void drawImageToContext(const SizedImage& sizedImage, GraphicsContext& context, const FloatRect& dest, const FloatRect& src, ImageDrawingOptions options)
-{
-    context.drawImage(sizedImage.image, sizedImage.concreteObjectSize, dest, src, options);
-}
-
-static void drawImageToContext(ImageBuffer& imageBuffer, GraphicsContext& context, const FloatRect& dest, const FloatRect& src, ImageDrawingOptions options)
-{
-    context.drawImageBuffer(imageBuffer, dest, src, options);
-}
-
-static void drawImageToContext(NativeImage& image, GraphicsContext& context, const FloatRect& dest, const FloatRect& src, ImageDrawingOptions options)
-{
-    context.drawNativeImage(image, dest, src, options);
-}
-
-template<class T> void CanvasRenderingContext2DBase::fullCanvasCompositedDrawImage(T& image, const FloatRect& dest, const FloatRect& src, CompositeOperator op, ImageDrawingOptions options)
+void CanvasRenderingContext2DBase::fullCanvasCompositedDraw(const FloatRect& dest, CompositeOperator op, const auto& draw)
 {
     ASSERT(isFullCanvasCompositeMode(op));
 
@@ -2499,7 +2602,7 @@ template<class T> void CanvasRenderingContext2DBase::fullCanvasCompositedDrawIma
     buffer->context().translate(-transformedAdjustedRect.location());
     buffer->context().translate(croppedOffset);
     buffer->context().concatCTM(effectiveTransform);
-    drawImageToContext(image, buffer->context(), adjustedDest, src, { options, CompositeOperator::SourceOver });
+    draw(buffer->context(), adjustedDest);
 
     compositeBuffer(*buffer, bufferRect, op);
 }
@@ -2642,7 +2745,7 @@ ExceptionOr<RefPtr<CanvasPattern>> CanvasRenderingContext2DBase::createPattern(I
     if (image.isSVGImage())
         originClean = false;
 
-    RefPtr nativeImage = image.nativeImage(concreteObjectSize);
+    RefPtr nativeImage = image.nativeImage(ImageDrawDescriptor { concreteObjectSize });
     if (!nativeImage)
         return Exception { ExceptionCode::InvalidStateError };
 
@@ -3159,7 +3262,7 @@ FloatRect CanvasRenderingContext2DBase::inflatedStrokeRect(const FloatRect& rect
     return inflatedStrokeRect;
 }
 
-static inline InterpolationQuality LEGACY_NODELETE smoothingToInterpolationQuality(ImageSmoothingQuality quality)
+NODELETE static inline InterpolationQuality smoothingToInterpolationQuality(ImageSmoothingQuality quality)
 {
     switch (quality) {
     case ImageSmoothingQuality::Low:
@@ -3240,7 +3343,7 @@ void CanvasRenderingContext2DBase::setDirection(Direction direction)
 
 bool CanvasRenderingContext2DBase::canDrawText(double x, double y, bool fill, std::optional<double> maxWidth)
 {
-    if (!fontProxy()->realized())
+    if (!protect(fontProxy())->realized())
         return false;
 
     auto* c = effectiveDrawingContext();
@@ -3261,7 +3364,7 @@ bool CanvasRenderingContext2DBase::canDrawText(double x, double y, bool fill, st
     return true;
 }
 
-static inline bool LEGACY_NODELETE isSpaceThatNeedsReplacing(char16_t c)
+NODELETE static inline bool isSpaceThatNeedsReplacing(char16_t c)
 {
     // According to specification all space characters should be replaced with 0x0020 space character.
     // http://www.whatwg.org/specs/web-apps/current-work/multipage/the-canvas-element.html#text-preparation-algorithm
@@ -3314,17 +3417,19 @@ static bool canUseCachedShapedText(const TextRun& textRun)
 
 void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, double x, double y, bool fill, std::optional<double> maxWidth)
 {
+    RefPtr fontProxy = this->fontProxy();
+    CheckedRef fontCascade = fontProxy->fontCascade();
+
     auto* cachedShapedText = [&]() -> TextShapingResultAndDisplayList* {
         if (!canUseCachedShapedText(textRun))
             return nullptr;
 
-        CheckedRef fontCascade = fontProxy()->fontCascade();
         RefPtr fonts = fontCascade->fonts();
         ASSERT(fonts);
         return fonts->getOrCreateCachedShapedText(textRun, fontCascade, 0, std::nullopt, ForTextEmphasis::No);
     }();
 
-    float fontWidth = cachedShapedText ? cachedShapedText->textShapingResult.width : protect(fontProxy()->fontCascade())->width(textRun);
+    float fontWidth = cachedShapedText ? cachedShapedText->textShapingResult.width : fontCascade->width(textRun);
 
     bool useMaxWidth = maxWidth && maxWidth.value() < fontWidth;
     float width = useMaxWidth ? maxWidth.value() : fontWidth;
@@ -3333,7 +3438,7 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
 
     // The slop built in to this mask rect matches the heuristic used in FontCGWin.cpp for GDI text.
     FloatRect textRect = [&] () {
-        const auto& fontMetrics = fontProxy()->metricsOfPrimaryFont();
+        const auto& fontMetrics = fontProxy->metricsOfPrimaryFont();
         return FloatRect(
             location.x() - fontMetrics.intHeight() / 2,
             location.y() - fontMetrics.intAscent() - fontMetrics.intLineGap(),
@@ -3351,7 +3456,7 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
     bool cachedDisplayListNeedsStateSave = false;
     // Any shadow could add display list items to draw glyphs a 2nd time with different context attributes.
     if (cachedShapedText && !cachedShapedText->displayList && !cachedShapedText->textShapingResult.glyphBuffer.isEmpty() && !c->dropShadow()) {
-        cachedShapedText->displayList = protect(fontProxy()->fontCascade())->displayListForGlyphBuffer(*c, cachedShapedText->textShapingResult.glyphBuffer, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
+        cachedShapedText->displayList = fontCascade->displayListForGlyphBuffer(*c, cachedShapedText->textShapingResult.glyphBuffer, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
 
         if (cachedShapedText->displayList) {
             for (auto& item : cachedShapedText->displayList->items()) {
@@ -3380,45 +3485,17 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
                     }
                 } else {
                     FloatPoint startPoint = point + WebCore::size(glyphBuffer.initialAdvance());
-                    protect(fontProxy()->fontCascade())->drawGlyphBuffer(context, glyphBuffer, startPoint, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
+                    fontCascade->drawGlyphBuffer(context, glyphBuffer, startPoint, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
                 }
             }
         } else
-            fontProxy()->drawBidiText(context, textRun, point, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
+            fontProxy->drawBidiText(context, textRun, point, FontCascade::CustomFontNotReadyAction::UseFallbackIfFontNotReady);
     };
 
 #if USE(CG)
     const CanvasStyle& drawStyle = fill ? state().fillStyle : state().strokeStyle;
     if (drawStyle.isGradientOrPattern()) {
         IntRect maskRect = enclosingIntRect(textRect);
-
-        willUpdateContents(FloatRect { maskRect });
-
-        // If we have a shadow, we need to draw it before the mask operation.
-        // Follow a procedure similar to paintTextWithShadows in TextPainter.
-
-        if (shouldDrawShadows()) {
-            GraphicsContextStateSaver stateSaver(*c);
-
-            FloatSize offset(0, 2 * maskRect.height());
-
-            auto shadow = c->dropShadow();
-            ASSERT(shadow);
-
-            FloatRect shadowRect(maskRect);
-            shadowRect.inflate(shadow->radius * 1.4);
-            shadowRect.move(shadow->offset * -1);
-            c->clip(shadowRect);
-
-            c->setDropShadow({ shadow->offset + offset, shadow->radius, shadow->color, ShadowRadiusMode::Legacy });
-
-            if (fill)
-                c->setFillColor(Color::black);
-            else
-                c->setStrokeColor(Color::black);
-
-            drawText(*c, location + offset);
-        }
 
         auto maskImage = c->createAlignedImageBuffer(maskRect.size());
         if (!maskImage)
@@ -3445,13 +3522,55 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
             drawText(maskImageContext, location);
         }
 
-        GraphicsContextStateSaver stateSaver(*c);
-        c->clipToImageBuffer(*maskImage, maskRect);
-        if (RefPtr gradient = drawStyle.canvasGradient())
-            c->setFillGradient(gradient->gradient());
-        else
-            c->setFillPattern(drawStyle.canvasPattern()->pattern());
-        c->fillRect(maskRect);
+        auto drawShadowAndMaskedFill = [&] {
+            // If we have a shadow, we need to draw it before the mask operation.
+            // Follow a procedure similar to paintTextWithShadows in TextPainter.
+
+            if (shouldDrawShadows()) {
+                GraphicsContextStateSaver stateSaver(*c);
+
+                FloatSize offset(0, 2 * maskRect.height());
+
+                auto shadow = c->dropShadow();
+                ASSERT(shadow);
+
+                FloatRect shadowRect(maskRect);
+                shadowRect.inflate(shadow->radius * 1.4);
+                shadowRect.move(shadow->offset * -1);
+                c->clip(shadowRect);
+
+                c->setDropShadow({ shadow->offset + offset, shadow->radius, shadow->color, ShadowRadiusMode::Legacy });
+
+                if (fill)
+                    c->setFillColor(Color::black);
+                else
+                    c->setStrokeColor(Color::black);
+
+                drawText(*c, location + offset);
+            }
+
+            GraphicsContextStateSaver stateSaver(*c);
+            c->clipToImageBuffer(*maskImage, maskRect);
+            if (RefPtr gradient = drawStyle.canvasGradient())
+                c->setFillGradient(gradient->gradient());
+            else
+                c->setFillPattern(drawStyle.canvasPattern()->pattern());
+            c->fillRect(maskRect);
+        };
+
+        if (isFullCanvasCompositeMode(state().globalComposite)) {
+            willUpdateEntireContents();
+            beginCompositeLayer();
+            drawShadowAndMaskedFill();
+            endCompositeLayer();
+        } else if (state().globalComposite == CompositeOperator::Copy) {
+            willUpdateEntireContents();
+            clearCanvas();
+            drawShadowAndMaskedFill();
+        } else {
+            willUpdateContents(FloatRect { maskRect });
+            drawShadowAndMaskedFill();
+        }
         return;
     }
 #endif
@@ -3484,14 +3603,6 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
     }
 }
 
-Ref<TextMetrics> CanvasRenderingContext2DBase::measureTextInternal(const String& text)
-{
-    String normalizedText = normalizeSpaces(text);
-    auto direction = (state().direction == Direction::Rtl) ? TextDirection::RTL : TextDirection::LTR;
-    TextRun textRun(normalizedText, 0, 0, ExpansionBehavior::allowRightOnly(), direction, false, true);
-    return measureTextInternal(textRun);
-}
-
 static std::pair<float, float> emHeightAscentAndDescent(const FontCascade& font)
 {
     auto& fontMetrics = font.metricsOfPrimaryFont();
@@ -3506,20 +3617,20 @@ Ref<TextMetrics> CanvasRenderingContext2DBase::measureTextInternal(const TextRun
 {
     Ref<TextMetrics> metrics = TextMetrics::create();
 
-    auto* fontProxy = this->fontProxy();
+    RefPtr fontProxy = this->fontProxy();
     if (!fontProxy->realized())
         return metrics;
 
-    auto& font = *fontProxy;
-    auto& fontMetrics = font.metricsOfPrimaryFont();
-
     GlyphOverflow glyphOverflow;
     glyphOverflow.computeBounds = true;
-    float fontWidth = font.width(textRun, &glyphOverflow);
+    float fontWidth = fontProxy->width(textRun, &glyphOverflow);
     metrics->setWidth(fontWidth);
 
     FloatPoint offset = textOffset(fontWidth, textRun.direction());
-    auto [emHeightAscent, emHeightDescent] = emHeightAscentAndDescent(protect(font.fontCascade()));
+    auto [emHeightAscent, emHeightDescent] = emHeightAscentAndDescent(protect(fontProxy->fontCascade()));
+
+    // Bind the primary font's metrics only after width() has run, since it can rebuild the font cache.
+    auto& fontMetrics = fontProxy->metricsOfPrimaryFont();
 
     metrics->setActualBoundingBoxAscent(glyphOverflow.top - offset.y());
     metrics->setActualBoundingBoxDescent(glyphOverflow.bottom + offset.y());
@@ -3540,14 +3651,19 @@ Ref<TextMetrics> CanvasRenderingContext2DBase::measureTextInternal(const TextRun
 void CanvasRenderingContext2DBase::updateStateTransform(const AffineTransform& transform)
 {
     auto& state = modifiableState();
+    auto inverse = transform.inverse();
+    // m_path is kept in user space while the transform is invertible, and in device space otherwise.
+    if (m_hasInvertibleTransform && !inverse)
+        m_path.transform(state.transform);
     state.transform = transform;
-    state.transformInverse = transform.inverse();
-    m_hasInvertibleTransform = state.transformInverse.has_value();
+    state.transformInverse = inverse;
+    m_hasInvertibleTransform = inverse.has_value();
 }
 
 FloatPoint CanvasRenderingContext2DBase::textOffset(float width, TextDirection direction)
 {
-    auto [emHeightAscent, emHeightDescent] = emHeightAscentAndDescent(protect(fontProxy()->fontCascade()));
+    auto [emHeightAscent, emHeightDescent] = emHeightAscentAndDescent(protect(protect(fontProxy())->fontCascade()));
+
     FloatPoint offset;
 
     switch (state().textBaseline) {
@@ -3601,7 +3717,7 @@ PixelFormat CanvasRenderingContext2DBase::pixelFormat() const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static constexpr AllowExtendedColorSpace LEGACY_NODELETE allowExtendedColorSpace(CanvasRenderingContext2DSettings::ColorType colorType)
+NODELETE static constexpr AllowExtendedColorSpace allowExtendedColorSpace(CanvasRenderingContext2DSettings::ColorType colorType)
 {
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     if (colorType == CanvasRenderingContext2DSettings::ColorType::Float16)
@@ -3654,7 +3770,7 @@ std::optional<double> CanvasRenderingContext2DBase::getEffectiveDynamicRangeLimi
     return effectiveDynamicRangeLimit(m_dynamicRangeLimit, displayEDRState(protect(canvasBase())).suppressEDR).value();
 }
 
-ImageDrawingOptions CanvasRenderingContext2DBase::drawingOptionsForDisplay() const
+RasterDrawingOptions CanvasRenderingContext2DBase::drawingOptionsForDisplay() const
 {
     if (!isHDR() || m_dynamicRangeLimit == PlatformDynamicRangeLimit::noLimit())
         return { };
@@ -3686,7 +3802,7 @@ std::optional<CanvasRenderingContext2DBase::RenderingMode> CanvasRenderingContex
 
 // FIXME: The HTML spec currently doesn't define how <length> units should be resolved, so we only
 // allow units where the resolution is straightforward. See https://github.com/whatwg/html/issues/10893.
-static bool LEGACY_NODELETE unitAllowedForSpacing(CSS::LengthUnit lenghtUnit)
+NODELETE static bool unitAllowedForSpacing(CSS::LengthUnit lenghtUnit)
 {
     using enum CSS::LengthUnit;
 
@@ -3770,11 +3886,15 @@ void CanvasRenderingContext2DBase::setLetterSpacing(const String& letterSpacing)
     if (!unitAllowedForSpacing(rawLength->unit))
         return;
 
-    CheckedRef fontCascade = fontProxy()->fontCascade();
-    double pixels = Style::resolveLength(rawLength->value, rawLength->unit, CSSPropertyID::LetterSpacing, fontCascade, nullptr);
+    RefPtr fontProxy = this->fontProxy();
+    CheckedRef fontCascade = fontProxy->fontCascade();
+    // FIXME: Passing the context's font as the root font means root font relative units ('rem', 'rex', ...) still
+    //        resolve against the font of the context here, even though unitAllowedForSpacing() admits
+    //        them. Fixing it needs this setter to update style first, so it is done separately.
+    double pixels = Style::resolveLength(rawLength->value, rawLength->unit, CSSPropertyID::LetterSpacing, fontCascade, fontCascade, nullptr);
 
     modifiableState().letterSpacing = CSS::serializationForCSS(CSS::defaultSerializationContext(), *rawLength);
-    modifiableState().font.setLetterSpacing(pixels);
+    protect(modifiableState().font)->setLetterSpacing(pixels);
 }
 
 void CanvasRenderingContext2DBase::setWordSpacing(const String& wordSpacing)
@@ -3798,11 +3918,15 @@ void CanvasRenderingContext2DBase::setWordSpacing(const String& wordSpacing)
     if (!unitAllowedForSpacing(rawLength->unit))
         return;
 
-    CheckedRef fontCascade = fontProxy()->fontCascade();
-    double pixels = Style::resolveLength(rawLength->value, rawLength->unit, CSSPropertyID::WordSpacing, fontCascade, nullptr);
+    RefPtr fontProxy = this->fontProxy();
+    CheckedRef fontCascade = fontProxy->fontCascade();
+    // FIXME: Passing the context's font as the root font means root font relative units ('rem', 'rex', ...) still
+    //        resolve against the font of the context here, even though unitAllowedForSpacing() admits
+    //        them. Fixing it needs this setter to update style first, so it is done separately.
+    double pixels = Style::resolveLength(rawLength->value, rawLength->unit, CSSPropertyID::WordSpacing, fontCascade, fontCascade, nullptr);
 
     modifiableState().wordSpacing = CSS::serializationForCSS(CSS::defaultSerializationContext(), *rawLength);
-    modifiableState().font.setWordSpacing(pixels);
+    protect(modifiableState().font)->setWordSpacing(pixels);
 }
 
 void CanvasRenderingContext2DBase::carryOverKerningAndTextRendering(FontCascadeDescription& description) const
@@ -3811,14 +3935,36 @@ void CanvasRenderingContext2DBase::carryOverKerningAndTextRendering(FontCascadeD
     description.setTextRenderingMode(toTextRenderingMode(state().canvasTextRendering()));
 }
 
+AtomString CanvasRenderingContext2DBase::effectiveLanguage() const
+{
+    return state().lang == "inherit"_s ? inheritedLanguage() : AtomString { state().lang };
+}
+
+void CanvasRenderingContext2DBase::setLang(const String& lang)
+{
+    if (state().lang == lang)
+        return;
+
+    realizeSaves();
+    modifiableState().lang = lang;
+    if (!protect(state().font)->realized())
+        return;
+
+    protect(modifiableState().font)->update([language = effectiveLanguage()](FontCascadeDescription& description) {
+        description.setComputedLocale(language);
+    });
+}
+
 void CanvasRenderingContext2DBase::setFontKerning(CanvasFontKerning fontKerning)
 {
     if (state().canvasFontKerning() == fontKerning)
         return;
-    if (!fontProxy()->realized())
+
+    if (!protect(fontProxy())->realized())
         return;
+
     realizeSaves();
-    modifiableState().font.update([&](FontCascadeDescription& description) {
+    protect(modifiableState().font)->update([&](FontCascadeDescription& description) {
         description.setKerning(toKerning(fontKerning));
     });
 }
@@ -3827,10 +3973,12 @@ void CanvasRenderingContext2DBase::setTextRendering(CanvasTextRendering textRend
 {
     if (state().canvasTextRendering() == textRendering)
         return;
-    if (!fontProxy()->realized())
+
+    if (!protect(fontProxy())->realized())
         return;
+
     realizeSaves();
-    modifiableState().font.update([&](FontCascadeDescription& description) {
+    protect(modifiableState().font)->update([&](FontCascadeDescription& description) {
         description.setTextRenderingMode(toTextRenderingMode(textRendering));
     });
 }
@@ -3839,10 +3987,13 @@ void CanvasRenderingContext2DBase::setFontStretch(CanvasFontStretch fontStretch)
 {
     if (state().canvasFontStretch() == fontStretch)
         return;
-    if (!fontProxy()->realized())
+
+    if (!protect(fontProxy())->realized())
         return;
+
     realizeSaves();
-    modifiableState().font.update([&](FontCascadeDescription& description) {
+
+    protect(modifiableState().font)->update([&](FontCascadeDescription& description) {
         description.setWidth(fontSelectionWidthValue(fontStretch));
     });
 }
@@ -3851,10 +4002,12 @@ void CanvasRenderingContext2DBase::setFontVariantCaps(CanvasFontVariantCaps font
 {
     if (state().canvasFontVariantCaps() == fontVariantCaps)
         return;
-    if (!fontProxy()->realized())
+
+    if (!protect(fontProxy())->realized())
         return;
+
     realizeSaves();
-    modifiableState().font.update([&](FontCascadeDescription& description) {
+    protect(modifiableState().font)->update([&](FontCascadeDescription& description) {
         description.setVariantCaps(toFontVariantCaps(fontVariantCaps));
     });
 }

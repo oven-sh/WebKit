@@ -1,0 +1,222 @@
+# WHATEVER LIES BETWEEN AN OBJECT AND THE PROTOTYPE OF ITS CLASS UNDER THE NAME OF A FIELD ENDS `$isPlainInstanceOf`, A PLAIN WRITABLE VALUE TOO. Such a value catches no store, BUT A READ OF THE FIELD WHERE IT IS ABSENT FINDS IT,
+# and the contract promises that nothing is added above the object under the name of a field: the library reads behind the yes without another look. The guard "stores pass" that the door lists under every field's name holds that promise.
+# The guards are the class's: the door falls for every object. `type` is a field of Response by a store that never runs.
+# function Response() { this.code = 1; }
+# Response.prototype.end = function () { return 1; };
+# function stamp(response, value) { response.type = value; return response; }
+# function ask(response) { return $isPlainInstanceOf(response, Response) ? "yes " + response.code + " " + typeof response.type : "no " + typeof response.type; }            in a file of the library
+# const Responses = keep(Response), asks = keep(ask), stamps = keep(stamp);
+# if (never()) stamp(new Response(), 1);
+# const response = new Responses();
+# print(asks(response), "|", asks(new Responses()));
+# lay(response, Responses.prototype);
+# print(asks(response), "|", asks(new Responses()));
+# later(response);
+# print(asks(response), "|", asks(new Responses()));
+# stamps(response, 5);
+# print(asks(response), "|", asks(new Responses()), "|", seen());
+# OPTIONS: mechanisms=all
+# RUN(FORM): walk f3
+# FORM: = IsPlainInstanceOf v0 conditions=[{{*}}kind=MemberPassedByStores layout=L0 key="type"
+# RUN(QUIET): run-in-shell keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function () { }; later = function () { };
+# QUIET: yes 1 undefined | yes 1 undefined
+# QUIET-NEXT: yes 1 undefined | yes 1 undefined
+# QUIET-NEXT: yes 1 undefined | yes 1 undefined
+# QUIET-NEXT: yes 1 number | yes 1 undefined | nothing caught
+# QUIET-NEXT: exited with 0
+# RUN(NOTHINGBETWEEN): run-in-shell keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above);  const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; Object.setPrototypeOf(response, lower); }; later = function () { };
+# NOTHINGBETWEEN: yes 1 undefined | yes 1 undefined
+# NOTHINGBETWEEN-NEXT: yes 1 undefined | yes 1 undefined
+# NOTHINGBETWEEN-NEXT: yes 1 undefined | yes 1 undefined
+# NOTHINGBETWEEN-NEXT: yes 1 number | yes 1 undefined | nothing caught
+# RUN(OTHERNAME): run-in-shell keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.send = function () { }; const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; Object.setPrototypeOf(response, lower); }; later = function () { };
+# OTHERNAME: yes 1 undefined | yes 1 undefined
+# OTHERNAME-NEXT: yes 1 undefined | yes 1 undefined
+# OTHERNAME-NEXT: yes 1 undefined | yes 1 undefined
+# OTHERNAME-NEXT: yes 1 number | yes 1 undefined | nothing caught
+# RUN(PLAINVALUE): run-in-shell keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.type = function () { }; const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; Object.setPrototypeOf(response, lower); }; later = function () { };
+# PLAINVALUE: yes 1 undefined | yes 1 undefined
+# PLAINVALUE-NEXT: no function | no undefined
+# PLAINVALUE-NEXT: no function | no undefined
+# PLAINVALUE-NEXT: no number | no undefined | nothing caught
+# RUN(GETTER): run-in-shell keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); Object.defineProperty(upper, "type", { get() { return "got"; }, configurable: true }); const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; Object.setPrototypeOf(response, lower); }; later = function () { };
+# GETTER: yes 1 undefined | yes 1 undefined
+# GETTER-NEXT: no string | no undefined
+# GETTER-NEXT: no string | no undefined
+# GETTER-NEXT: TypeError
+# RUN(SETTER): run-in-shell keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); Object.defineProperty(upper, "type", { set(value) { caught = "caught " + value; }, configurable: true }); const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; Object.setPrototypeOf(response, lower); }; later = function () { };
+# SETTER: yes 1 undefined | yes 1 undefined
+# SETTER-NEXT: no undefined | no undefined
+# SETTER-NEXT: no undefined | no undefined
+# SETTER-NEXT: no undefined | no undefined | caught 5
+# RUN(READONLY): run-in-shell keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); Object.defineProperty(upper, "type", { value: "fixed", writable: false, configurable: true }); const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; Object.setPrototypeOf(response, lower); }; later = function () { };
+# READONLY: yes 1 undefined | yes 1 undefined
+# READONLY-NEXT: no string | no undefined
+# READONLY-NEXT: no string | no undefined
+# READONLY-NEXT: TypeError
+# RUN(HIDESAMEMBER): run-in-shell keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.end = function () { return 2; }; const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; Object.setPrototypeOf(response, lower); }; later = function () { };
+# HIDESAMEMBER: yes 1 undefined | yes 1 undefined
+# HIDESAMEMBER-NEXT: no undefined | yes 1 undefined
+# HIDESAMEMBER-NEXT: no undefined | yes 1 undefined
+# HIDESAMEMBER-NEXT: no number | yes 1 undefined | nothing caught
+# RUN(PLAINTHENSETTER): run-in-shell keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.type = function () { }; const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; Object.setPrototypeOf(response, lower); }; later = function () { Object.defineProperty(held, "type", { set(value) { caught = "caught " + value; }, configurable: true }); };
+# PLAINTHENSETTER: yes 1 undefined | yes 1 undefined
+# PLAINTHENSETTER-NEXT: no function | no undefined
+# PLAINTHENSETTER-NEXT: no undefined
+# PLAINTHENSETTER-NEXT: no undefined
+# RUN(PLAINTHENREADONLY): run-in-shell keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above); upper.type = function () { }; const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; Object.setPrototypeOf(response, lower); }; later = function () { Object.defineProperty(held, "type", { writable: false }); };
+# PLAINTHENREADONLY: yes 1 undefined | yes 1 undefined
+# PLAINTHENREADONLY-NEXT: no function | no undefined
+# PLAINTHENREADONLY-NEXT: no function
+# PLAINTHENREADONLY-NEXT: TypeError
+# RUN(NOTHINGTHENSETTER): run-in-shell keep = x => x; never = () => false; caught = "nothing caught"; seen = () => caught; lay = function (response, above) { const upper = Object.create(above);  const lower = Object.create(upper, { app: { value: 1, writable: true, enumerable: true, configurable: true } }); held = upper; Object.setPrototypeOf(response, lower); }; later = function () { Object.defineProperty(held, "type", { set(value) { caught = "caught " + value; }, configurable: true }); };
+# NOTHINGTHENSETTER: yes 1 undefined | yes 1 undefined
+# NOTHINGTHENSETTER-NEXT: yes 1 undefined | yes 1 undefined
+# NOTHINGTHENSETTER-NEXT: no undefined
+# NOTHINGTHENSETTER-NEXT: no undefined
+
+module m0 path="word.js" displayPath="word.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Response" module=m0 constructor=f1 fields=[{key="code" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=0 ownFieldCount=1
+variable g0 name="Response" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = GetModuleVariable variable=g0 @39
+    v5 = PropGet v4 key="prototype" @39
+    v6 = NewClosure function=f4 @64
+    PropSet v5, v6 key="end" @48
+    v8 = Builtin builtin=GlobalThis @344
+    v9 = PropGet v8 key="keep" [isFreeName] @344
+    v10 = GetModuleVariable variable=g0 @349
+    v11 = Call v9, -, v10 calleeName="keep" @344
+    v12 = Builtin builtin=GlobalThis @367
+    v13 = PropGet v12 key="keep" [isFreeName] @367
+    v14 = Call v13, -, v3 calleeName="keep" @367
+    v15 = Builtin builtin=GlobalThis @387
+    v16 = PropGet v15 key="keep" [isFreeName] @387
+    v17 = Call v16, -, v1 calleeName="keep" @387
+    v18 = Builtin builtin=GlobalThis @404
+    v19 = PropGet v18 key="never" [isFreeName] @404
+    v20 = Call v19 calleeName="never" @404
+    v21 = ToBoolean v20 @404
+    Branch v21 -> taken b1(| 0), notTaken b2() @404
+  b1(v22):
+    v23 = GetModuleVariable variable=g0 @423
+    v24 = Construct v23 calleeName="Response" @423
+    v25 = Integer integer=1 @435
+    v26 = Call v1, -, v24, v25 calleeName="stamp" @413
+    Jump -> next b2() @413
+  b2():
+    v27 = Construct v11 calleeName="Responses" @460
+    v28 = Builtin builtin=GlobalThis @473
+    v29 = PropGet v28 key="print" [isFreeName] @473
+    v30 = Call v14, -, v27 calleeName="asks" @479
+    v31 = String string="|" @495
+    v32 = Construct v11 calleeName="Responses" @509
+    v33 = Call v14, -, v32 calleeName="asks" @500
+    v34 = Call v29, -, v30, v31, v33 calleeName="print" @473
+    v35 = Builtin builtin=GlobalThis @524
+    v36 = PropGet v35 key="lay" [isFreeName] @524
+    v37 = PropGet v11 key="prototype" @538
+    v38 = Call v36, -, v27, v37 calleeName="lay" @524
+    v39 = Builtin builtin=GlobalThis @560
+    v40 = PropGet v39 key="print" [isFreeName] @560
+    v41 = Call v14, -, v27 calleeName="asks" @566
+    v42 = String string="|" @582
+    v43 = Construct v11 calleeName="Responses" @596
+    v44 = Call v14, -, v43 calleeName="asks" @587
+    v45 = Call v40, -, v41, v42, v44 calleeName="print" @560
+    v46 = Builtin builtin=GlobalThis @611
+    v47 = PropGet v46 key="later" [isFreeName] @611
+    v48 = Call v47, -, v27 calleeName="later" @611
+    v49 = Builtin builtin=GlobalThis @628
+    v50 = PropGet v49 key="print" [isFreeName] @628
+    v51 = Call v14, -, v27 calleeName="asks" @634
+    v52 = String string="|" @650
+    v53 = Construct v11 calleeName="Responses" @664
+    v54 = Call v14, -, v53 calleeName="asks" @655
+    v55 = Call v50, -, v51, v52, v54 calleeName="print" @628
+    v56 = Integer integer=5 @696
+    v57 = Call v17, -, v27, v56 calleeName="stamps" @679
+    v58 = Builtin builtin=GlobalThis @700
+    v59 = PropGet v58 key="print" [isFreeName] @700
+    v60 = Call v14, -, v27 calleeName="asks" @706
+    v61 = String string="|" @722
+    v62 = Construct v11 calleeName="Responses" @736
+    v63 = Call v14, -, v62 calleeName="asks" @727
+    v64 = String string="|" @750
+    v65 = Builtin builtin=GlobalThis @755
+    v66 = PropGet v65 key="seen" [isFreeName] @755
+    v67 = Call v66 calleeName="seen" @755
+    v68 = Call v59, -, v60, v61, v63, v64, v67 calleeName="print" @700
+    v69 = Undefined @700
+    Return v69 @700
+}
+function f1 name="Response" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1 @34
+    PropSet v0, v1 key="code" @22
+    v3 = Undefined @22
+    Return v3 @22
+}
+function f2 name="stamp" module=m0 position=91 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="type" @125
+    Return v0 @155
+}
+function f3 name="ask" module=m2 position=167 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @199
+    v2 = Undefined @199
+    v3 = GetModuleVariable variable=g0 @228
+    v4 = IsPlainInstanceOf v0, v3 @199
+    v5 = ToBoolean v4 @199
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @199
+  b1(v6):
+    v7 = String string="yes " @240
+    v8 = PropGet v0 key="code" @249
+    v9 = Add v7, v8 @249
+    v10 = String string=" " @265
+    v11 = Add v9, v10 @265
+    v12 = PropGet v0 key="type" @278
+    v13 = TypeOf v12 @271
+    v14 = Add v11, v13 @271
+    Jump -> next b3(v14) @271
+  b2(v15):
+    v16 = String string="no " @294
+    v17 = PropGet v0 key="type" @309
+    v18 = TypeOf v17 @302
+    v19 = Add v16, v18 @302
+    Jump -> next b3(v19) @302
+  b3(v20):
+    Return v20 @302
+}
+function f4 module=m2 position=64 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Integer integer=1 @85
+    Return v0 @85
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

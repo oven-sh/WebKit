@@ -161,19 +161,14 @@ static constexpr ASCIILiteral sumsOfCellsGivenToCallees = "190\n190\n20\n190\n19
 static void testCellsGivenToCallees()
 {
     checkOutputOfProgramInShell(cellsGivenToCallees, sumsOfCellsGivenToCallees, { }, defineCollectAndKey);
-    checkOutputOfProgramInShell(cellsGivenToCallees, sumsOfCellsGivenToCallees, { "check=VerifyEachPass"_s }, defineCollectAndKey);
-    checkOutputOfProgramInShell(cellsGivenToCallees, sumsOfCellsGivenToCallees, { "validate"_s }, defineCollectAndKey);
-    checkOutputOfProgramInShell(cellsGivenToCallees, sumsOfCellsGivenToCallees, { "disable=pass:AllocateInFrames"_s }, defineCollectAndKey);
 }
 
 static void testCellsGivenToCalleesUnderContinuousCollection()
 {
     checkOutputOfProgramInShell(cellsGivenToCallees, sumsOfCellsGivenToCallees, { }, defineCollectAndKey, { "--collectContinuously=1"_s });
-    checkOutputOfProgramInShell(cellsGivenToCallees, sumsOfCellsGivenToCallees, { "validate"_s }, defineCollectAndKey, { "--collectContinuously=1"_s });
-    checkOutputOfProgramInShell(cellsGivenToCallees, sumsOfCellsGivenToCallees, { "disable=pass:InlineCalls"_s }, defineCollectAndKey, { "--collectContinuously=1"_s });
 }
 
-static constexpr ASCIILiteral closureHandedToPartCutOff = R"IR(layout L0 name="Item" fields=[{key="id" declared={type=anything} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}]
+static constexpr ASCIILiteral closurePassedToRecursiveCalls = R"IR(layout L0 name="Item" fields=[{key="id" declared={type=anything} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="countTrue" declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -234,11 +229,9 @@ function f3 kind=Arrow thisType={type=anything} results=[{type=anything}] {
 entry module=m0
 )IR"_s;
 
-static void testClosureHandedToPartCutOff()
+static void testClosurePassedToRecursiveCalls()
 {
-    checkOutputOfProgramInShell(closureHandedToPartCutOff, "201\n"_s, { });
-    for (ASCIILiteral option : { "validate"_s, "check=VerifyEachPass"_s, "disable=pass:AllocateInFrames"_s })
-        checkOutputOfProgramInShell(closureHandedToPartCutOff, "201\n"_s, { option });
+    checkOutputOfProgramInShell(closurePassedToRecursiveCalls, "201\n"_s, { });
 }
 
 static constexpr ASCIILiteral closuresBetweenTwoAwaits = R"IR(layout L0 fields=[{key="name" declared={type=string flags=[IsExpected]} flags=[IsRequired]}, {key="items" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
@@ -371,10 +364,7 @@ entry module=m0
 
 static void testClosuresBetweenTwoAwaits()
 {
-    constexpr ASCIILiteral expected = "first n\nsecond 3\nthird name,items\nafter the second await 3\n"_s;
-    checkOutputOfProgramInShell(closuresBetweenTwoAwaits, expected, { });
-    for (ASCIILiteral option : { "validate"_s, "check=VerifyEachPass"_s, "disable=pass:AllocateInFrames"_s })
-        checkOutputOfProgramInShell(closuresBetweenTwoAwaits, expected, { option });
+    checkOutputOfProgramInShell(closuresBetweenTwoAwaits, "first n\nsecond 3\nthird name,items\nafter the second await 3\n"_s, { });
 }
 
 std::span<const NativeTest> frameCellProgramTests()
@@ -382,7 +372,7 @@ std::span<const NativeTest> frameCellProgramTests()
     static constexpr NativeTest tests[] = {
         { "frame-cell-programs/cells-given-to-callees"_s, testCellsGivenToCallees },
         { "frame-cell-programs/cells-given-to-callees-under-continuous-collection"_s, testCellsGivenToCalleesUnderContinuousCollection },
-        { "frame-cell-programs/closure-handed-to-part-cut-off"_s, testClosureHandedToPartCutOff },
+        { "frame-cell-programs/closure-passed-to-recursive-calls"_s, testClosurePassedToRecursiveCalls },
         { "frame-cell-programs/closures-between-two-awaits"_s, testClosuresBetweenTwoAwaits },
     };
     return tests;

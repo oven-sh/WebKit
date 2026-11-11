@@ -1,0 +1,47 @@
+# THE LAST WAY OF WALKING A UNIT HOLDS NO CLAIM ABOUT MEMORY. A unit that the judge refuses is walked again with less, and at last closed: what stands in a variable, in a slot of a scope, in a slot of
+# an object or in a list is read where the program reads it, no operation is taken for an equal one built before, and no answer of an earlier test is kept. Constants are still followed: the scan has passed
+# over the blocks that constants rule out, and a walk that enters one stops.
+# let last; function kept(v) { last = v; const one = last; const other = last; if (1 < 2) return one === other; return never(); }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: PutModuleVariable
+# CHECK-NOT: GetModuleVariable
+# RUN(CLOSED): walk f1 mechanisms=all testing=ForceWalkMode:Closed
+# CLOSED-LABEL: code f1:Body
+# CLOSED: PutModuleVariable
+# CLOSED: [[one]]: {{*}} = GetModuleVariable {{*}}variable=g0
+# CLOSED: [[other]]: {{*}} = GetModuleVariable {{*}}variable=g0
+# CLOSED: = StrictEq [[one]], [[other]]
+# RUN(CONSTANTS): walk f1 mechanisms=all testing=ForceWalkMode:Closed
+# CONSTANTS-NOT: key="never"
+# CONSTANTS-NOT: = Less
+
+variable g0 name="last" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="kept" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g0
+    v3 = GetModuleVariable variable=g0
+    v4 = Integer integer=1
+    v5 = Integer integer=2
+    v6 = Less v4, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = StrictEq v2, v3
+    Return v7
+  b2():
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="never" [isFreeName]
+    v10 = Call v9, -
+    Return v10
+}

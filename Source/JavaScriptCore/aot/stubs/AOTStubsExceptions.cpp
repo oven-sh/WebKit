@@ -40,7 +40,6 @@ static_assert(exists(throwStackOverflow(false)) && exists(throwStackOverflow(tru
 static_assert(descriptorOf(StubFamily::ThrowStackOverflow).numberOfForms == static_cast<unsigned>(StackOverflowForm::AtPrologue) + 1);
 static_assert(descriptorOf(StubFamily::RejectInFrame).numberOfForms == static_cast<unsigned>(RejectedFrameForm::BelowSpilledArguments) + 1);
 
-// The VM is in T10, the function in T11. Afterwards the VM is in savedVM.
 static void callLookupExceptionHandler(StubAssembler& jit)
 {
 #if ASSERT_ENABLED
@@ -54,8 +53,6 @@ static void callLookupExceptionHandler(StubAssembler& jit)
     jit.call(T11, OperationPtrTag);
 }
 
-// The buffer lies on the stack, which the collector reads for references. Left as it is, it would hold whatever the frame of the handler had in its registers until the next throw:
-// behind an error for lack of memory, the very objects that filled the heap.
 static void restoreCalleeSavesAndClearBuffer(StubAssembler& jit, GPRReg vm, GPRReg scratch)
 {
     jit.restoreCalleeSavesFromVMEntryFrameCalleeSavesBuffer(vm, scratch);
@@ -84,41 +81,13 @@ static void jumpToGenericUnwindTarget(StubAssembler& jit)
     jit.farJump(GPRInfo::regT1, ExceptionHandlerPtrTag);
 }
 
-// The callee-saved registers are those of the frame of the handler, so the instance is the one that unwinding has left the word in.
 static void loadStackPointerOfHandler(StubAssembler& jit)
 {
 #if CPU(X86_64)
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.stackPointerOfHandler)), CCallHelpers::stackPointerRegister);
 #else
-    // A landing pad takes the stack pointer from the frame pointer.
     UNUSED_PARAM(jit);
 #endif
-}
-
-// Where unwinding has left a number of bytes in the word: clear() finds the stack pointer of the handler in end, and that many bytes below it in lowest.
-template<typename Functor>
-static void clearDeadStack(StubAssembler& jit, GPRReg lowest, GPRReg end, const Functor& clear)
-{
-    Address bytes(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.bytesOfDeadStackBelowHandler));
-    jit.load32(bytes, lowest);
-    Jump hasNone = jit.branchTest32(CCallHelpers::Zero, lowest);
-    jit.store32(TrustedImm32(0), bytes);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.stackPointerOfHandler)), end);
-    jit.neg64(lowest);
-    jit.add64(end, lowest);
-    clear();
-    hasNone.link(&jit);
-}
-
-// From the top, as a stack grows.
-static void clearDownTo(StubAssembler& jit, GPRReg lowest, GPRReg cursor)
-{
-    Jump isEmpty = jit.branchPtr(CCallHelpers::BelowOrEqual, cursor, lowest);
-    CCallHelpers::Label next = jit.label();
-    jit.subPtr(TrustedImm32(sizeof(void*)), cursor);
-    jit.store64(TrustedImm32(0), Address(cursor));
-    jit.branchPtr(CCallHelpers::Above, cursor, lowest).linkTo(next, &jit);
-    isEmpty.link(&jit);
 }
 
 void emitUnwind(StubAssembler& jit)
@@ -131,10 +100,6 @@ void emitUnwind(StubAssembler& jit)
     jit.move(GPRInfo::returnValueGPR2, GPRInfo::callFrameRegister);
     restoreCalleeSavesAndClearBuffer(jit, savedVM, A2);
     loadStackPointerOfHandler(jit);
-    static_assert(noOverlap(T10, T11, GPRInfo::returnValueGPR, GPRInfo::callFrameRegister, instanceGPR));
-    clearDeadStack(jit, T10, T11, [&] {
-        clearDownTo(jit, T10, T11);
-    });
     jit.farJump(GPRInfo::returnValueGPR, NoPtrTag);
     isNotInCompiledCallers.link(&jit);
     jumpToGenericUnwindTarget(jit);
@@ -155,6 +120,7 @@ StubSignature signatureOfHandleExceptionAtPrologue(StubKey) { return { }; }
 StubSignature signatureOfThrowStackOverflow(StubKey) { return { }; }
 StubSignature signatureOfCatch(StubKey) { return { }; }
 StubSignature signatureOfRejectInFrame(StubKey) { return { }; }
+StubSignature signatureOfRejectAwaitedCall(StubKey) { return { }; }
 
 void generateHandleException(StubAssembler& jit)
 {
@@ -190,23 +156,11 @@ void generateHandleExceptionPreservingRegisters(StubAssembler& jit)
     jit.move(GPRInfo::returnValueGPR, landingPad);
     jit.move(GPRInfo::returnValueGPR2, GPRInfo::callFrameRegister);
     restoreCalleeSavesAndClearBuffer(jit, savedVM, A2);
-    // Around the registers that are kept here.
-    static_assert(noOverlap(T10, A1, A2, landingPad, GPRInfo::callFrameRegister, instanceGPR));
-    clearDeadStack(jit, T10, A2, [&] {
-        jit.addPtr(TrustedImm32(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(registers.size() * sizeof(CPURegister))), sp, A1);
-        clearDownTo(jit, A1, A2);
-        jit.move(sp, A1);
-        clearDownTo(jit, T10, A1);
-    });
     for (unsigned i = 0; i < registers.size(); ++i) {
         if (registers[i].isGPR())
             jit.loadPtr(Address(sp, i * sizeof(CPURegister)), registers[i].gpr());
         else
             jit.loadDouble(Address(sp, i * sizeof(CPURegister)), registers[i].fpr());
-    }
-    for (unsigned i = 0; i < registers.size(); ++i) {
-        if (registers[i].isGPR())
-            jit.store64(TrustedImm32(0), Address(sp, i * sizeof(CPURegister)));
     }
     loadStackPointerOfHandler(jit);
     jit.farJump(landingPad, NoPtrTag);
@@ -262,6 +216,29 @@ void generateRejectInFrame(StubAssembler& jit)
     jit.emitFunctionEpilogue();
     if (liesBelowSpilledArguments)
         emitDropSpilledArgumentRegisters(jit);
+    jit.ret();
+}
+
+void generateRejectAwaitedCall(StubAssembler& jit)
+{
+    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
+    static_assert(stackAlignmentBytes() == 2 * sizeof(void*));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.stackPointerOfHandler)), T9);
+    jit.move(T9, sp);
+#if CPU(X86_64)
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.returnAddressOfAwaitedCall)), T9);
+    jit.push(T9);
+#else
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.returnAddressOfAwaitedCall)), CCallHelpers::linkRegister);
+#endif
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(stackAlignmentBytes()), sp);
+    jit.storePtr(GPRInfo::callFrameRegister, Address(sp));
+    jit.storePtr(GPRInfo::callFrameRegister, Address(sp, sizeof(void*)));
+    jit.move(instanceGPR, A0);
+    jit.move(sp, A1);
+    jit.callOperation(Entry::operationAOTRejectWithException, T9);
+    jit.emitFunctionEpilogue();
     jit.ret();
 }
 

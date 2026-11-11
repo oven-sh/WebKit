@@ -148,7 +148,7 @@ public:
     // By default you only receive paint events for the area that is visible. In the case of using a
     // tiled backing store, this function can be set, so that the view paints the entire contents.
     bool paintsEntireContents() const { return m_paintsEntireContents; }
-    WEBCORE_EXPORT void LEGACY_NODELETE setPaintsEntireContents(bool);
+    NODELETE WEBCORE_EXPORT void setPaintsEntireContents(bool);
 
     // By default scrolling is handled by WebCore, but some WebKit implementations take over scrolling,
     // delegating it to a native scrolling widget or the UI process.
@@ -214,14 +214,16 @@ public:
 #endif
 
     // This is the area that is partially or fully exposed, and may extend under overlapping UI elements.
-    WEBCORE_EXPORT FloatRect exposedContentRect() const;
+    WEBCORE_EXPORT ViewFloatRect exposedViewRect() const;
+    WEBCORE_EXPORT ContentsFloatRect exposedContentRect() const;
 
-    // The given rects are only used if there is no platform widget.
-    WEBCORE_EXPORT void LEGACY_NODELETE setExposedContentRect(const FloatRect&);
+    // The given rect is only used if there is no platform widget, and is in view space. View space is the same as contents
+    // space only when scrolling is delegated to the native view.
+    NODELETE WEBCORE_EXPORT void setExposedViewRect(const ViewFloatRect&);
 
     void adjustExposedContentRectForProgrammaticScroll(ScrollPosition);
 
-    WEBCORE_EXPORT FloatSize LEGACY_NODELETE unobscuredContentSize() const;
+    NODELETE WEBCORE_EXPORT FloatSize unobscuredContentSize() const;
     WEBCORE_EXPORT void setUnobscuredContentSize(const FloatSize&);
 
 #if PLATFORM(IOS_FAMILY)
@@ -240,9 +242,9 @@ public:
     int layoutWidth() const { return layoutSize().width(); }
     int layoutHeight() const { return layoutSize().height(); }
 
-    WEBCORE_EXPORT IntSize LEGACY_NODELETE fixedLayoutSize() const;
+    NODELETE WEBCORE_EXPORT IntSize fixedLayoutSize() const;
     WEBCORE_EXPORT void setFixedLayoutSize(const IntSize&);
-    WEBCORE_EXPORT bool LEGACY_NODELETE useFixedLayout() const;
+    NODELETE WEBCORE_EXPORT bool useFixedLayout() const;
     WEBCORE_EXPORT void setUseFixedLayout(bool enable);
 
     // Functions for getting/setting the size of the document contained inside the ScrollView (as an IntSize or as individual width and height
@@ -341,7 +343,7 @@ public:
     IntRect contentsToView(IntRect) const;
 
     FloatRect viewToContents(FloatRect) const;
-    FloatRect contentsToView(FloatRect) const;
+    WEBCORE_EXPORT FloatRect contentsToView(FloatRect) const;
 
     // The part of the view-to-contents translation that is not scaled by visibleContentScaleFactor().
     IntSize viewToContentsInsetOffset() const;
@@ -371,6 +373,7 @@ public:
 
     template<typename RectType> ViewCoordinateSpaceRect<ViewCoordinateSpace::RootView, RectType> contentsToRootView(const ViewCoordinateSpaceRect<ViewCoordinateSpace::Contents, RectType>& rect) const { return inRootViewSpace(contentsToRootView(rect.raw())); }
     template<typename RectType> ViewCoordinateSpaceRect<ViewCoordinateSpace::Contents, RectType> rootViewToContents(const ViewCoordinateSpaceRect<ViewCoordinateSpace::RootView, RectType>& rect) const { return inContentsSpace(rootViewToContents(rect.raw())); }
+    template<typename RectType> ViewCoordinateSpaceRect<ViewCoordinateSpace::View, RectType> contentsToView(const ViewCoordinateSpaceRect<ViewCoordinateSpace::Contents, RectType>& rect) const { return inViewSpace(contentsToView(rect.raw())); }
     template<typename RectType> ViewCoordinateSpaceRect<ViewCoordinateSpace::Contents, RectType> viewToContents(const ViewCoordinateSpaceRect<ViewCoordinateSpace::View, RectType>& rect) const { return inContentsSpace(viewToContents(rect.raw())); }
 
     // The purpose of this function is to answer whether or not the scroll view is currently visible. Animations and painting updates can be suspended if
@@ -430,7 +433,7 @@ public:
     void setAllowsUnclampedScrollPositionForTesting(bool allowsUnclampedScrollPosition) { m_allowsUnclampedScrollPosition = allowsUnclampedScrollPosition; }
     bool allowsUnclampedScrollPosition() const { return m_allowsUnclampedScrollPosition; }
 
-    bool LEGACY_NODELETE managesScrollbars() const;
+    NODELETE bool managesScrollbars() const;
     virtual void updateScrollbarSteps();
 
     // Called to update the scrollbars to accurately reflect the state of the view.
@@ -486,7 +489,7 @@ public:
     WEBCORE_EXPORT NSView* documentView() const;
 
 private:
-    PlatformScrollView* LEGACY_NODELETE scrollView() const;
+    NODELETE PlatformScrollView* scrollView() const;
 #endif
 
 protected:
@@ -534,7 +537,7 @@ private:
     IntPoint platformScreenToContents(const IntPoint&) const;
 
     void platformSetScrollPosition(const IntPoint&);
-    bool LEGACY_NODELETE platformScroll(ScrollDirection, ScrollGranularity);
+    NODELETE bool platformScroll(ScrollDirection, ScrollGranularity);
     void platformSetScrollbarsSuppressed(bool repaintOnUnsuppress);
     void platformRepaintContentRectangle(const IntRect&);
     bool platformIsOffscreen() const;
@@ -567,7 +570,8 @@ private:
     // FIXME: More things will move into here.
     struct DelegatedScrollingGeometry {
         FloatSize unobscuredContentSize;
-        FloatRect exposedContentRect;
+        // In view space, since the embedder of a root frame with a remote parent doesn't know its scroll position.
+        ViewFloatRect exposedViewRect;
     };
     std::optional<DelegatedScrollingGeometry> m_delegatedScrollingGeometry;
 

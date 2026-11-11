@@ -1,0 +1,108 @@
+# const reply = { get code() { return this.out; }, get sent() { return this.done; } };
+# class Server { constructor() { this.reply = Object.create(reply); } make(out) { const made = Object.create(this.reply); made.out = out; made.done = false; return made; } }
+# const server = new Server();
+# function turn(out) { const made = server.make(out); return made.code + " " + made.sent; }
+# globalThis.report(turn(1));
+# When the first object is linked below `this.reply`, the run time asks the literal for each accessor that the record names: two questions, one behind the other.
+# The literal's getOwnPropertySlot() declares a scope that may throw, so somebody has to look at that scope behind each question. Under the option of the run below an engine built
+# with assertions checks that, and aborts at the second question where nobody looked behind the first. Any other engine takes the option and checks nothing.
+# RUN(MEMBERS): link members held mechanisms=all
+# MEMBERS: above-created L2 Getter "code" function=f4
+# MEMBERS-NEXT: above-created L2 Getter "sent" function=f5
+# RUN: run-in-shell --validateExceptionChecks=1 mechanisms=all globalThis.report = value => print(String(value));
+# CHECK: 1 false
+# CHECK-NEXT: exited with 0
+
+layout L0 kind=Instance name="Server" module=m0 position=91 constructor=f2 fields=[{key="reply" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=14 fields=[{key="code" declared={type=anything} flags=[IsRequired]}, {key="sent" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L2 kind=Instance module=m0 position=178 flags=[IsOfCreatedObject]
+variable g0 name="reply" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="server" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="/$bunfs/root/checked.js" displayPath="checked.js" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 85, 257, 286, 376, 404] quotedSources=[{position=36 start=168 end=176}, {position=69 start=176 end=185}, {position=116 start=79 end=112}, {position=136 start=92 end=112}, {position=185 start=112 end=137}, {position=192 start=126 end=136}, {position=205 start=137 end=151}, {position=221 start=151 end=168}, {position=276 end=10}, {position=320 start=36 end=47}, {position=327 start=36 end=52}, {position=345 start=52 end=61}, {position=363 start=70 end=79}, {position=376 start=10 end=27}, {position=387 start=10 end=36}, {position=394 start=28 end=35}] quotedSourceText="new ServerglobalThis.report(turn(1))server.make(out)made.code + \x22 \x22 + made.sentthis.reply = Object.create(reply)Object.create(this.reply)made.out = outmade.done = falsethis.outthis.done"} functionSource="const reply = { get code() { return this.out; }, get sent() { return this.done; } };\x0aclass Server { constructor() { this.reply = Object.create(reply); } make(out) { const made = Object.create(this.reply); made.out = out; made.done = false; return made; } }\x0aconst server = new Server();\x0afunction turn(out) { const made = server.make(out); return made.code + \x22 \x22 + made.sent; }\x0aglobalThis.report(turn(1));\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @85
+    v3 = NewClass v2 layout=L0 @85
+    PutModuleVariable v3 variable=g2 @85
+    v5 = NewClosure function=f3 @153
+    DefineMethod v3, v5 layout=L0 key="make" @153
+    v7 = FinishClass v3 layout=L0 @85
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @85
+    v9 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @85
+    v10 = NewObject layout=L1 @20
+    v11 = NewClosure function=f4 @20
+    DefineGetter v10, v11 key="code" @20
+    v13 = NewClosure function=f5 @53
+    DefineGetter v10, v13 key="sent" @53
+    v15 = FinishObject v10 @14
+    PutModuleVariable v15 variable=g0 @6
+    v17 = Construct v9 calleeName="Server" @276
+    PutModuleVariable v17 variable=g1 @263
+    v19 = Builtin builtin=GlobalThis @376
+    v20 = PropGet v19 key="globalThis" [isFreeName] @376
+    v21 = Convert v20 declared={type=builtin(GlobalThis) flags=[IsExpected]} @376
+    v22 = PropGet v21 key="report" @376
+    v23 = Integer integer=1 @399
+    v24 = Call v1, -, v23 calleeName="turn" @394
+    v25 = Call v22, v21, v24 calleeKey="report" calleeName="globalThis.report" @387
+    v26 = Undefined @376
+    Return v26 @376
+}
+function f1 name="turn" module=m0 position=286 sourceRange={start=286 end=375} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1 @320
+    v2 = CheckInitialized v1 name="server" @320
+    v3 = PropGet v2 key="make" @320
+    v4 = Call v3, v2, v0 calleeKey="make" calleeName="server.make" @327
+    v5 = PropGet v4 key="code" @345
+    v6 = String string=" " @357
+    v7 = Add v5, v6 @357
+    v8 = PropGet v4 key="sent" @363
+    v9 = Add v7, v8 @363
+    Return v9 @363
+}
+function f2 name="Server" module=m0 position=111 sourceRange={start=85 end=256} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @111
+    v2 = NewObject v1 layout=L0 @111
+    v3 = Convert v2 declared={type=L0} @111
+    v4 = Builtin builtin=Object @129
+    v5 = Builtin builtin=ObjectCreate @129
+    v6 = GetModuleVariable variable=g0 @143
+    v7 = CheckInitialized v6 name="reply" @143
+    v8 = Call v5, v4, v7 calleeName="Object.create" @136
+    PropSet v3, v8 key="reply" @116
+    v10 = Undefined @116
+    v11 = TypeTest v10 testedType=object @116
+    Branch v11 -> taken b1(| 0), notTaken b2(v3) @116
+  b1(v12):
+    Jump -> next b2(v12) @116
+  b2(v13):
+    Return v13 @116
+}
+function f3 name="make" module=m0 position=153 sourceRange={start=153 end=254} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    v2 = Builtin builtin=ObjectCreate @178
+    v3 = PropGet v0 key="reply" @192
+    v4 = NewObject layout=L2 @185
+    SetLiteralPrototype v4, v3 [refusesOtherValues] @185
+    v6 = FinishObject v4 @185
+    PropSet v6, v1 key="out" @205
+    v8 = Boolean @233
+    PropSet v6, v8 key="done" @221
+    Return v6 @247
+}
+function f4 name="code" module=m0 position=16 sourceRange={start=16 end=47} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="out" @36
+    Return v1 @36
+}
+function f5 name="sent" module=m0 position=49 sourceRange={start=49 end=81} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="done" @69
+    Return v1 @69
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

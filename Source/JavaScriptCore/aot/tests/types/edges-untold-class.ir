@@ -1,0 +1,11 @@
+# No test tells an arguments object, so for all that the types say it may be an array, and what may be both names both classes. What passes a test for arrays is an array for life, so in Compile the tested class alone is left. Facts and Plan keep the objects that they had, and no number passes. A map is told by its cell, and never passes
+# RUN: edges
+# CHECK: t0 passing t1 = Arguments
+# CHECK: t2 passing t1 = never
+# CHECK: t0 passing t1 in Compile = Array
+# CHECK-NOT: t2 passing t1 in Compile
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" role=Signature parameters=[{type=number|Arguments}, {type=Array}, {type=number|Map}] results=[{type=undefined}]
+entry module=m0

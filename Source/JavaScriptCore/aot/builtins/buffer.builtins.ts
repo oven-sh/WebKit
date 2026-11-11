@@ -4,7 +4,6 @@ type ParameterList = Readonly<Record<string, b.TableType>>;
 
 const bytes = "TypedArrayElements";
 const storage = "TypedArrayStorage";
-// No value of the language lies among the bytes.
 const rawBytes = b.state(bytes, b.never);
 const otherAgents = "ExternalState";
 
@@ -12,6 +11,7 @@ const byteCount = b.int(0, b.checked(2 ** 32, "MAX_ARRAY_BUFFER_SIZE"));
 const anyArrayBuffer = b.union(b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"));
 const readsState = [b.readsContents()];
 const changesState = [b.readsContents(), b.writesContents()];
+const fixedAtCreation = b.inspected;
 
 const requiresNew = {
   returns: b.never,
@@ -72,7 +72,6 @@ const bufferSlice = (className: string) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// A buffer of a fixed length is refused before the length is converted.
 const lengthChange = {
   args: { newLength: b.index.loose },
   capability: "heap",
@@ -205,16 +204,20 @@ export default b.declarations(
       isView: {
         args: { arg: b.any },
         returns: b.bool,
+        answersWhetherInstance: { arg: b.union(b.instance("TypedArray"), b.instance("DataView")) },
         capability: "heap",
         uses: { arg: b.inspected },
         implementation: b.hostCall,
       },
     },
     proto: {
-      byteLength: bufferGetter(byteCount, readsState),
+      byteLength: {
+        ...bufferGetter(byteCount, readsState),
+        implementation: b.inline("ArrayBufferByteLength", { otherwise: b.hostCall }),
+      },
       detached: bufferGetter(b.bool, readsState),
       maxByteLength: bufferGetter(byteCount, readsState),
-      resizable: bufferGetter(b.bool, b.inspected),
+      resizable: bufferGetter(b.bool, fixedAtCreation),
       resize: lengthChange,
       slice: bufferSlice("ArrayBuffer"),
       transfer: bufferTransfer,
@@ -235,8 +238,8 @@ export default b.declarations(
     static: { "@@species": speciesGetter },
     proto: {
       byteLength: { ...bufferGetter(byteCount, readsState), reads: [otherAgents], writes: [otherAgents] },
-      growable: bufferGetter(b.bool, b.inspected),
-      maxByteLength: bufferGetter(byteCount, b.inspected),
+      growable: bufferGetter(b.bool, fixedAtCreation),
+      maxByteLength: bufferGetter(byteCount, fixedAtCreation),
       grow: { ...lengthChange, reads: [otherAgents], writes: [otherAgents] },
       slice: bufferSlice("SharedArrayBuffer"),
     },
@@ -251,6 +254,7 @@ export default b.declarations(
     usesFeature: "DataView",
     nativeSymbols: ["callDataView", "constructDataView"],
     prototypeTable: b.staticTable("runtime/JSDataViewPrototype.cpp", "dataViewTable"),
+    static: { BYTES_PER_ELEMENT: b.constant(1) },
     call: requiresNew,
     construct: {
       args: { buffer: anyArrayBuffer, byteOffset: b.index.loose.optional, byteLength: b.index.loose.optional },
@@ -275,26 +279,26 @@ export default b.declarations(
         implementation: b.inline("DataViewByteLength", { otherwise: b.hostCall }),
       },
       byteOffset: { ...viewExtent, implementation: b.generic },
-      getInt8: viewRead("TypeInt8", b.int(-128, 127), singleByte),
-      getUint8: viewRead("TypeUint8", b.int(0, 255), singleByte),
-      getInt16: viewRead("TypeInt16", b.int(-32768, 32767)),
-      getUint16: viewRead("TypeUint16", b.int(0, 65535)),
-      getInt32: viewRead("TypeInt32", b.i32),
-      getUint32: viewRead("TypeUint32", b.u32),
+      getInt8: { ...viewRead("TypeInt8", b.int(-128, 127), singleByte), boxedCallStub: "DataViewGetInt8" },
+      getUint8: { ...viewRead("TypeUint8", b.int(0, 255), singleByte), boxedCallStub: "DataViewGetUint8" },
+      getInt16: { ...viewRead("TypeInt16", b.int(-32768, 32767)), boxedCallStub: "DataViewGetInt16" },
+      getUint16: { ...viewRead("TypeUint16", b.int(0, 65535)), boxedCallStub: "DataViewGetUint16" },
+      getInt32: { ...viewRead("TypeInt32", b.i32), boxedCallStub: "DataViewGetInt32" },
+      getUint32: { ...viewRead("TypeUint32", b.u32), boxedCallStub: "DataViewGetUint32" },
       getFloat16: viewRead("TypeFloat16", b.f64),
-      getFloat32: viewRead("TypeFloat32", b.f64),
-      getFloat64: viewRead("TypeFloat64", b.f64),
+      getFloat32: { ...viewRead("TypeFloat32", b.f64), boxedCallStub: "DataViewGetFloat32" },
+      getFloat64: { ...viewRead("TypeFloat64", b.f64), boxedCallStub: "DataViewGetFloat64" },
       getBigInt64: viewRead("TypeBigInt64", b.bigint),
       getBigUint64: viewRead("TypeBigUint64", b.bigint),
-      setInt8: viewWrite("TypeInt8", numberToStore, singleByte),
-      setUint8: viewWrite("TypeUint8", numberToStore, singleByte),
-      setInt16: viewWrite("TypeInt16", numberToStore),
-      setUint16: viewWrite("TypeUint16", numberToStore),
-      setInt32: viewWrite("TypeInt32", numberToStore),
-      setUint32: viewWrite("TypeUint32", numberToStore),
+      setInt8: { ...viewWrite("TypeInt8", numberToStore, singleByte), boxedCallStub: "DataViewSetInt8" },
+      setUint8: { ...viewWrite("TypeUint8", numberToStore, singleByte), boxedCallStub: "DataViewSetUint8" },
+      setInt16: { ...viewWrite("TypeInt16", numberToStore), boxedCallStub: "DataViewSetInt16" },
+      setUint16: { ...viewWrite("TypeUint16", numberToStore), boxedCallStub: "DataViewSetUint16" },
+      setInt32: { ...viewWrite("TypeInt32", numberToStore), boxedCallStub: "DataViewSetInt32" },
+      setUint32: { ...viewWrite("TypeUint32", numberToStore), boxedCallStub: "DataViewSetUint32" },
       setFloat16: viewWrite("TypeFloat16", numberToStore),
-      setFloat32: viewWrite("TypeFloat32", numberToStore),
-      setFloat64: viewWrite("TypeFloat64", numberToStore),
+      setFloat32: { ...viewWrite("TypeFloat32", numberToStore), boxedCallStub: "DataViewSetFloat32" },
+      setFloat64: { ...viewWrite("TypeFloat64", numberToStore), boxedCallStub: "DataViewSetFloat64" },
       setBigInt64: viewWrite("TypeBigInt64", bigIntToStore),
       setBigUint64: viewWrite("TypeBigUint64", bigIntToStore),
     },

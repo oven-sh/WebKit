@@ -1,0 +1,140 @@
+# class Store {
+#   entries = new Map;
+#   score(key) { const entry = this.entries.get(key); if (entry === undefined) return 0; return entry.weight * 2 + entry.bias; }
+# }
+# function sweep(store, rounds) { let total = 0; for (let round = 0; round < rounds; round++) for (let key = 0; key < 4; key++) total += store.score(key); return total; }
+# const store = new Store;
+# for (let i = 0; i < 4; i++) store.entries.set(i, { weight: i, bias: 1 });
+# globalThis.store = store;
+# print(sweep(store, 2));
+# The store goes to globalThis, so unseen code may put anything into its Map: nothing is proven of what `get` gives. WHAT IS EXPECTED is the union of what the sites in sight put in: the reading of Link in which unseen code only reads and calls lists it at the Map's operations, and the guess at what `get` gave goes by it: the reads of `weight` and `bias` test for the literal's layout themselves and no longer go by name.
+# RUN(FORM): walk f1 mechanisms=all
+# FORM: [[given]]: {{*}} = CallInline {{*}} inlineBuiltin=MapGet
+# FORM: = ShapeTest {{*}}layouts=[L1]
+# FORM: GetSlot {{*}} key="weight" receivers=[L1] level=Proven
+# FORM: GetSlot {{*}} key="bias" receivers=[L1] level=Proven
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 32
+# RUN(CALLS): run-in-shell mechanisms=-Inlining
+# CALLS: 32
+
+layout L0 kind=Instance name="Store" module=m0 constructor=f2 fields=[{key="entries" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="bias" declared={type=anything} flags=[IsRequired]}, {key="weight" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f3
+    DefineMethod v3, v5 layout=L0 key="score"
+    v7 = FinishClass v3 layout=L0
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]}
+    v9 = Convert v7 declared={type=f2 flags=[IsFromCompiler]}
+    v10 = Construct v9 calleeName="Store"
+    v11 = Integer
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v12)
+  b1(v13):
+    LoopHint
+    v15 = Integer integer=4
+    v16 = Less v13, v15
+    Branch v16 -> taken b2(), notTaken b3()
+  b2():
+    v17 = PropGet v10 key="entries"
+    v18 = PropGet v17 key="set"
+    v19 = Integer integer=1
+    v20 = NewObject -, v13, v19 layout=L1 fields=[1, 0]
+    v21 = FinishObject v20
+    v22 = Call v18, v17, v13, v21 calleeKey="set" calleeName="store.entries.set"
+    v23 = Increment v13
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v24)
+  b3():
+    v25 = Builtin builtin=GlobalThis
+    v26 = PropGet v25 key="globalThis" [isFreeName]
+    v27 = Convert v26 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    PropSet v27, v10 key="store"
+    v29 = Builtin builtin=GlobalThis
+    v30 = PropGet v29 key="print" [isFreeName]
+    v31 = Integer integer=2
+    v32 = Call v1, -, v10, v31 calleeName="sweep"
+    v33 = Call v30, -, v32 calleeName="print"
+    v34 = Undefined
+    Return v34
+}
+function f1 name="sweep" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(), notTaken b6()
+  b2():
+    v10 = Integer
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    Jump -> next b3(v6, v11)
+  b3(v12, v13):
+    LoopHint
+    v15 = Integer integer=4
+    v16 = Less v13, v15
+    Branch v16 -> taken b4(), notTaken b5()
+  b4():
+    v17 = PropGet v0 key="score"
+    v18 = Call v17, v0, v13 calleeKey="score" calleeName="store.score"
+    v19 = Add v12, v18
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = Increment v13
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    Jump -> next b3(v20, v22)
+  b5():
+    v23 = Increment v7
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v12, v24)
+  b6():
+    Return v6
+}
+function f2 name="Store" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0}
+    v4 = CallDirect v3 function=f4
+    Return v3
+}
+function f3 name="score" module=m0 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="entries"
+    v3 = PropGet v2 key="get"
+    v4 = Call v3, v2, v1 calleeKey="get" calleeName="this.entries.get"
+    v5 = TypeTest v4 testedType=undefined
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6):
+    v7 = Integer
+    Return v7
+  b2(v8):
+    v9 = NarrowByTest v4, v8
+    v10 = PropGet v9 key="weight"
+    v11 = Integer integer=2
+    v12 = Mul v10, v11
+    v13 = PropGet v9 key="bias"
+    v14 = Add v12, v13
+    Return v14
+}
+function f4 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Builtin builtin=Map
+    v3 = Construct v2 calleeName="Map"
+    PropDefine v1, v3 key="entries"
+    v5 = Undefined
+    Return v5
+}
+entry module=m0

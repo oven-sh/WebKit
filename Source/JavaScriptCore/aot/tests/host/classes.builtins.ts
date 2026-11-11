@@ -82,6 +82,12 @@ export default b.declarations(
     },
   }),
   b.namespace("Bun", {
+    main: {
+      getter: b.any,
+      capability: "heap",
+      implementation: b.generic,
+      setter: { value: b.any, capability: "heap", throws: true, uses: { value: [b.retained] }, implementation: b.generic },
+    },
     serve: {
       args: { options: b.object },
       returns: b.object.fresh,
@@ -99,8 +105,8 @@ export default b.declarations(
       implementation: b.hostCall,
     },
   }),
+  b.extend("Bun.main", { marks: ["HoldsPathOfMainModule"] }),
   b.namespace("Bun.FFI", {}),
-  b.namespace("%JSONText%", {}),
   b.namespace("%bun:bundle%", {
     feature: {
       args: { flag: b.string },
@@ -127,7 +133,7 @@ export default b.declarations(
           returns: b.int(0, 3 * (2 ** 31 - 1)),
           capability: "heap",
           throws: true,
-          uses: { string: [b.readAsCharacters], encoding: b.inspected },
+          uses: { string: b.inspected, encoding: b.inspected },
           implementation: b.inline("StringUTF8ByteLength", { otherwise: b.hostCall }),
         },
         {
@@ -153,6 +159,5 @@ export default b.declarations(
       },
     },
   }),
-  // As in Bun. File says nothing.
   b.instancesWithoutOwnNames("Buffer", "TextEncoder", "URL", "URLSearchParams"),
 );

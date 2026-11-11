@@ -117,10 +117,15 @@ void XRSubImage::update(const XRProjectionLayer& projectionLayer)
     } else
         texture->updateCompletionEvent(sharedEvent);
 
+    if (!targetDepthStencilFormat) {
+        m_depthTextures.remove(currentTextureIndex);
+        return;
+    }
+
     if (texture = this->depthTexture(); !texture || texture->texture() != depthTexture) {
         auto depthFormat = Texture::textureFormat(depthTexture.pixelFormat);
-        if (targetDepthStencilFormat && targetDepthStencilFormat != depthFormat) {
-            depthFormat = targetDepthStencilFormat;
+        if (*targetDepthStencilFormat != depthFormat) {
+            depthFormat = *targetDepthStencilFormat;
             depthTexture = [depthTexture newTextureViewWithPixelFormat:Texture::pixelFormat(*depthFormat)];
         }
         if (!depthFormat)
@@ -148,6 +153,12 @@ RefPtr<WebGPU::Texture> XRSubImage::depthStencilTexture()
 Texture* XRSubImage::depthTexture()
 {
     return m_depthTextures.get(m_currentTextureIndex);
+}
+
+void XRSubImage::releaseTextures()
+{
+    m_colorTextures.clear();
+    m_depthTextures.clear();
 }
 
 RefPtr<XRSubImage> XRBinding::getViewSubImage(XRProjectionLayer& projectionLayer)

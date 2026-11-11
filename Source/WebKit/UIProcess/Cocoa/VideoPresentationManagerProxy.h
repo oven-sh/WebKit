@@ -145,7 +145,7 @@ private:
     const Logger* loggerPtr() const final;
 
     ASCIILiteral logClassName() const { return "VideoPresentationModelContext"_s; };
-    WTFLogChannel& LEGACY_NODELETE logChannel() const;
+    NODELETE WTFLogChannel& logChannel() const;
 #endif
 
     WeakPtr<VideoPresentationManagerProxy> m_manager;
@@ -183,7 +183,7 @@ public:
     void invalidate();
 
     void requestHideAndExitFullscreen();
-    bool LEGACY_NODELETE hasMode(WebCore::HTMLMediaElementEnums::VideoFullscreenMode) const;
+    NODELETE bool hasMode(WebCore::HTMLMediaElementEnums::VideoFullscreenMode) const;
     bool mayAutomaticallyShowVideoPictureInPicture() const;
     void applicationDidBecomeActive();
     bool isVisible() const;
@@ -196,6 +196,7 @@ public:
     bool isPlayingVideoInPictureInPicture() const;
 
     RefPtr<WebCore::PlatformVideoPresentationInterface> controlsManagerInterface();
+    NODELETE RefPtr<WebCore::PlatformVideoPresentationInterface> findInterface(PlaybackSessionContextIdentifier) const;
     using VideoInPictureInPictureDidChangeObserver = WTF::Observer<void(bool)>;
     void addVideoInPictureInPictureDidChangeObserver(const VideoInPictureInPictureDidChangeObserver&);
 
@@ -232,7 +233,7 @@ private:
     typedef std::pair<Ref<VideoPresentationModelContext>, Ref<WebCore::PlatformVideoPresentationInterface>> ModelInterfacePair;
     ModelInterfacePair createModelAndInterface(PlaybackSessionContextIdentifier);
     const ModelInterfacePair& ensureModelAndInterface(PlaybackSessionContextIdentifier);
-    const ModelInterfacePair* LEGACY_NODELETE findModelAndInterface(PlaybackSessionContextIdentifier) const;
+    NODELETE const ModelInterfacePair* findModelAndInterface(PlaybackSessionContextIdentifier) const;
     Ref<VideoPresentationModelContext> ensureModel(PlaybackSessionContextIdentifier);
     Ref<WebCore::PlatformVideoPresentationInterface> ensureInterface(PlaybackSessionContextIdentifier);
 
@@ -240,7 +241,6 @@ private:
     PlaybackSessionContextIdentifier contextIdForConnection(IPC::Connection&, WebCore::HTMLMediaElementIdentifier) const;
     Ref<VideoPresentationModelContext> ensureModel(IPC::Connection&, WebCore::HTMLMediaElementIdentifier);
     Ref<WebCore::PlatformVideoPresentationInterface> ensureInterface(IPC::Connection&, WebCore::HTMLMediaElementIdentifier);
-    RefPtr<WebCore::PlatformVideoPresentationInterface> LEGACY_NODELETE findInterface(PlaybackSessionContextIdentifier) const;
     void ensureClientForContext(PlaybackSessionContextIdentifier);
     void addClientForContext(PlaybackSessionContextIdentifier);
     void removeClientForContext(PlaybackSessionContextIdentifier);
@@ -317,10 +317,10 @@ private:
     void videosInElementFullscreenChanged();
 
 #if !RELEASE_LOG_DISABLED
-    const Logger& LEGACY_NODELETE logger() const;
-    uint64_t LEGACY_NODELETE logIdentifier() const;
+    NODELETE const Logger& logger() const;
+    NODELETE uint64_t logIdentifier() const;
     ASCIILiteral logClassName() const;
-    WTFLogChannel& LEGACY_NODELETE logChannel() const;
+    NODELETE WTFLogChannel& logChannel() const;
 #endif
 
     bool m_mockVideoPresentationModeEnabled { false };

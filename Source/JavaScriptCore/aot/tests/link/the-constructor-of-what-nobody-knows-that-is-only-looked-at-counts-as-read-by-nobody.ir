@@ -1,0 +1,31 @@
+# What a read of `constructor` or `prototype` off a value that nobody knows answers has not left: the program holds it, and what the program does with it is in sight.
+# function look(value) { return typeof value; } const kept = given.constructor; sink(typeof kept, look(kept), look(kept.prototype), kept.name);
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD-NOT: lookup name-read "constructor"
+# TOLD-NOT: lookup name-read "prototype"
+# TOLD: lookup name-read "name"
+# TOLD-NOT: lookup let-go
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = PropGet v0 key="given" [isFreeName]
+    v3 = PropGet v2 key="constructor"
+    v4 = TypeOf v3
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v3
+    v7 = PropGet v3 key="prototype"
+    v8 = Call v5, -, v7
+    v9 = PropGet v3 key="name"
+    v10 = Call v1, -, v4, v6, v8, v9
+    v11 = Undefined
+    Return v11
+}
+function f1 name="look" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeOf v0
+    Return v1
+}

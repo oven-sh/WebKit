@@ -1,0 +1,242 @@
+# `const key = source.id + "," + target.id; visited && visited.get(key)`: A TEXT THAT IS JOINED TO BE THE KEY OF A Map. The engine has a stub that finds the key of two parts in a cache by their bits (about twenty instructions),
+# and the walk never marked this join: the Map is read BEHIND the join, and the first join's only taker is the second. So each call made two texts of numbers and two ropes, and the Map resolved, hashed and copied the rope.
+# A join is a likely key where its text goes into a Map or a Set as the first argument, whether the collection is read in front of the join or behind it (then by what is expected of it), and where its only taker is such a join.
+# class Kind { id: number; constructor(id: number) { this.id = id; } }
+# let visited: Map<string, number> | undefined;
+# let hits = 0;
+# function once(source: Kind, target: Kind): void {
+#   const key = source.id + "," + target.id;
+#   const status = visited && visited.get(key);
+#   if (status !== undefined) { hits += status; return; }
+#   (visited || (visited = new Map<string, number>())).set(key, 1);
+# }
+# keep(once);
+# const kinds = [new Kind(1), new Kind(23), new Kind(-4)];
+# for (let round = 0; round < 3; round++) for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) once(kinds[a]!, kinds[b]!);
+# print(hits, visited!.size, visited!.has("23,-4"), visited!.has("4,4"));
+# f1 = once
+# OPTIONS: mechanisms=all
+# LIBRARY: own
+# RUN(FORM): walk f1
+# FORM: = Strcat {{*}}[isLikelyKey]
+# FORM: = Strcat {{*}}[isLikelyKey]
+# FORM-NOT: form=StringAndPrimitive
+# RUN: run-in-shell keep = x => x;
+# CHECK: 18 9 true false
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/MapIteratorPrototype.ts" displayPath="/$bun/js/engine/MapIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Kind" module=m0 position=103 constructor=f2 fields=[{key="id" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="visited" module=m0 declared={type=undefined|null|absent|Map<undefined|null|string, number> flags=[OmitsNull]}
+variable g1 name="hits" module=m0 declared={type=number|absent}
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @97
+    v3 = NewClass v2 layout=L0 @97
+    PutModuleVariable v3 variable=g2 @97
+    v5 = FinishClass v3 layout=L0 @97
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @97
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @97
+    v8 = Undefined @166
+    v9 = Convert v8 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull]} @166
+    PutModuleVariable v9 variable=g0 @166
+    v11 = Integer @223
+    v12 = Convert v11 declared={type=number} @223
+    PutModuleVariable v12 variable=g1 @216
+    v14 = Builtin builtin=GlobalThis @489
+    v15 = PropGet v14 key="keep" [isFreeName] @489
+    v16 = Call v15, -, v1 calleeName="keep" @489
+    v17 = Integer integer=1 @525
+    v18 = Construct v7, -, v17 calleeName="Kind" @520
+    v19 = Integer integer=23 @538
+    v20 = Construct v7, -, v19 calleeName="Kind" @533
+    v21 = Integer integer=-4 @552
+    v22 = Construct v7, -, v21 calleeName="Kind" @547
+    v23 = NewArray v18, v20, v22 contents=anything @515
+    v24 = Integer @575
+    v25 = Convert v24 declared={type=number} @575
+    Jump -> next b1(v25) @567
+  b1(v26: number):
+    LoopHint @567
+    v28 = Integer integer=3 @586
+    v29 = Less v26, v28 @586
+    Branch v29 -> taken b2(), notTaken b9() @586
+  b2():
+    v30 = Integer @611
+    v31 = Convert v30 declared={type=number} @611
+    Jump -> next b3(v31) @607
+  b3(v32: number):
+    LoopHint @607
+    v34 = Integer integer=3 @618
+    v35 = Less v32, v34 @618
+    Branch v35 -> taken b4(), notTaken b8() @618
+  b4():
+    v36 = Integer @639
+    v37 = Convert v36 declared={type=number} @639
+    Jump -> next b5(v37) @635
+  b5(v38: number):
+    LoopHint @635
+    v40 = Integer integer=3 @646
+    v41 = Less v38, v40 @646
+    Branch v41 -> taken b6(), notTaken b7() @646
+  b6():
+    v42 = ElemGet v23, v32 @659
+    v43 = ElemGet v23, v38 @670
+    v44 = Call v1, -, v42, v43 calleeName="once" @654
+    v45 = Increment v38 @649
+    v46 = Convert v45 declared={type=number} @649
+    Jump -> next b5(v46) @649
+  b7():
+    v47 = Increment v32 @621
+    v48 = Convert v47 declared={type=number} @621
+    Jump -> next b3(v48) @621
+  b8():
+    v49 = Increment v26 @589
+    v50 = Convert v49 declared={type=number} @589
+    Jump -> next b1(v50) @589
+  b9():
+    v51 = Builtin builtin=GlobalThis @682
+    v52 = PropGet v51 key="print" [isFreeName] @682
+    v53 = GetModuleVariable variable=g1 @688
+    v54 = CheckInitialized v53 name="hits" @688
+    v55 = GetModuleVariable variable=g0 @694
+    v56 = CheckInitialized v55 name="visited" @694
+    v57 = PropGet v56 key="size" @694
+    v58 = GetModuleVariable variable=g0 @709
+    v59 = CheckInitialized v58 name="visited" @709
+    v60 = PropGet v59 key="has" @709
+    v61 = String string="23,-4" @722
+    v62 = Call v60, v59, v61 calleeKey="has" calleeName="visited.has" @718
+    v63 = Convert v62 declared={type=boolean} illTypedCause=DeclarationWithoutBody @709
+    v64 = GetModuleVariable variable=g0 @732
+    v65 = CheckInitialized v64 name="visited" @732
+    v66 = PropGet v65 key="has" @732
+    v67 = String string="4,4" @745
+    v68 = Call v66, v65, v67 calleeKey="has" calleeName="visited.has" @741
+    v69 = Convert v68 declared={type=boolean} illTypedCause=DeclarationWithoutBody @732
+    v70 = Call v52, -, v54, v57, v63, v69 calleeName="print" @682
+    v71 = Undefined @682
+    Return v71 @682
+}
+function f1 name="once" module=m0 position=226 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    v2 = PropGet v0 key="id" @290
+    v3 = String string="," @302
+    v4 = Add v2, v3 @302
+    v5 = PropGet v1 key="id" @308
+    v6 = Add v4, v5 @308
+    v7 = GetModuleVariable variable=g0 @336
+    v8 = CheckInitialized v7 name="visited" @336
+    v9 = ToBoolean v8 @336
+    Branch v9 -> taken b1(| 0), notTaken b2(| 0) @336
+  b1(v10):
+    v11 = GetModuleVariable variable=g0 @347
+    v12 = CheckInitialized v11 name="visited" @347
+    v13 = PropGet v12 key="get" @347
+    v14 = Call v13, v12, v6 calleeKey="get" calleeName="visited.get" @355
+    v15 = Convert v14 declared={type=undefined|number} illTypedCause=FromLooseType @347
+    Jump -> next b3(v15) @347
+  b2(v16):
+    Jump -> next b3(v16) @336
+  b3(v17):
+    v18 = TypeTest v17 testedType=undefined @371
+    Branch v18 -> taken b4(| 0), notTaken b8(| 0) @371
+  b4(v19):
+    v20 = GetModuleVariable variable=g0 @424
+    v21 = CheckInitialized v20 name="visited" @424
+    v22 = ToBoolean v21 @424
+    Branch v22 -> taken b5(| 0), notTaken b6(| 0) @424
+  b5(v23):
+    Jump -> next b7(v23) @424
+  b6(v24):
+    v25 = GetModuleVariable variable=g0 @436
+    v26 = CheckInitialized v25 name="visited" @436
+    v27 = Builtin builtin=Map @450
+    v28 = Construct v27 calleeName="Map" @450
+    v29 = Convert v28 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @446
+    PutModuleVariable v29 variable=g0 @436
+    Jump -> next b7(v29) @436
+  b7(v31):
+    v32 = PropGet v31 key="set" @470
+    v33 = Integer integer=1 @483
+    v34 = Call v32, v31, v6, v33 calleeKey="set" calleeName="set" @474
+    v35 = Convert v34 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @423
+    v36 = Undefined @423
+    Return v36 @423
+  b8(v37):
+    v38 = NarrowByTest v17, v37 @371
+    v39 = GetModuleVariable variable=g1 @395
+    v40 = CheckInitialized v39 name="hits" @395
+    v41 = Add v40, v38 @403
+    v42 = Convert v41 declared={type=number} @395
+    v43 = GetModuleVariable variable=g1 @395
+    v44 = CheckInitialized v43 name="hits" @395
+    PutModuleVariable v42 variable=g1 @395
+    v46 = Undefined @411
+    Return v46 @411
+}
+function f2 name="Kind" module=m0 position=133 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0 @133
+    v3 = NewObject v2 layout=L0 @133
+    v4 = Convert v3 declared={type=L0} @133
+    v5 = CallDirect v4 function=f3 @133
+    PropSet v4, v1 key="id" @148
+    v7 = Undefined @148
+    v8 = TypeTest v7 testedType=object @148
+    Branch v8 -> taken b1(| 0), notTaken b2(v4) @148
+  b1(v9):
+    Jump -> next b2(v9) @148
+  b2(v10):
+    Return v10 @148
+}
+function f3 module=m0 position=103 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @103
+    v2 = Undefined @103
+    PropDefine v1, v2 key="id" @110
+    v4 = Undefined @103
+    Return v4 @103
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f5 name="next" module=m2 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=MapIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=7 last=7 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @222
+    v5 = StepMapIterator v4 @222
+    v6 = ResultAt v5 index=1 @277
+    v7 = ResultAt v5 @325
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @257
+    v9 = CreateIteratorResult v6, v8 @257
+    Return v9 @257
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%MapIteratorPrototype%.next requires that |this| be a Map Iterator instance" @108
+    Unreachable @108
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
+runtimefunction id=MapIteratorPrototypeNext function=f5 visibility=Private

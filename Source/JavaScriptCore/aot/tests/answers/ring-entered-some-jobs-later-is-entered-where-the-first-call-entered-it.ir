@@ -1,0 +1,104 @@
+# const first = import("./a.js"); await null; const second = import("./b.js")        a.js: import "./b.js"        b.js: import "./a.js"
+# A ring is entered where the first call enters it, so b.js runs ahead of a.js, however many jobs lie between the two calls: here one, two and seven.
+# The two loads go on side by side. The job that links and evaluates the second graph comes again when the first graph is loaded.
+# RUN: run-in-shell globalThis.report = name => print(name + " runs"); globalThis.register = (...closures) => { globalThis.registered = closures; }; const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const result = start(entry); Promise.resolve(result).then(async () => { const jobsBetween = [1, 2, 7]; for (let ring = 0; ring < jobsBetween.length; ++ring) { const first = registered[2 * ring](); first.then(() => print("first settled")); for (let job = 0; job < jobsBetween[ring]; ++job) await null; const second = registered[2 * ring + 1](); second.then(() => print("second settled")); await Promise.all([first, second]); } }); return result; };
+# CHECK: b1.js runs
+# CHECK-NEXT: a1.js runs
+# CHECK-NEXT: first settled
+# CHECK-NEXT: second settled
+# CHECK-NEXT: b2.js runs
+# CHECK-NEXT: a2.js runs
+# CHECK-NEXT: first settled
+# CHECK-NEXT: second settled
+# CHECK-NEXT: b3.js runs
+# CHECK-NEXT: a3.js runs
+# CHECK-NEXT: first settled
+# CHECK-NEXT: second settled
+# CHECK: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/a1.js" displayPath="a1.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/b1.js" displayPath="b1.js" body=f2 requests=[{target=m1 completes=true}]
+module m3 path="/a2.js" displayPath="a2.js" body=f3 requests=[{target=m4 completes=true}]
+module m4 path="/b2.js" displayPath="b2.js" body=f4 requests=[{target=m3 completes=true}]
+module m5 path="/a3.js" displayPath="a3.js" body=f5 requests=[{target=m6 completes=true}]
+module m6 path="/b3.js" displayPath="b3.js" body=f6 requests=[{target=m5 completes=true}]
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f7
+    v1 = NewClosure function=f8
+    v2 = NewClosure function=f9
+    v3 = NewClosure function=f10
+    v4 = NewClosure function=f11
+    v5 = NewClosure function=f12
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="register" [isFreeName]
+    v8 = Call v7, -, v0, v1, v2, v3, v4, v5
+    Return
+}
+function f1 name="a1" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="a1.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f2 name="b1" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="b1.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f3 name="a2" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="a2.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f4 name="b2" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="b2.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f5 name="a3" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="a3.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f6 name="b3" module=m6 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="b3.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f7 name="import1" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+function f8 name="import2" results=[{type=anything}] {
+    v0 = ImportModule module=m2 referrer=m0
+    Return v0
+}
+function f9 name="import3" results=[{type=anything}] {
+    v0 = ImportModule module=m3 referrer=m0
+    Return v0
+}
+function f10 name="import4" results=[{type=anything}] {
+    v0 = ImportModule module=m4 referrer=m0
+    Return v0
+}
+function f11 name="import5" results=[{type=anything}] {
+    v0 = ImportModule module=m5 referrer=m0
+    Return v0
+}
+function f12 name="import6" results=[{type=anything}] {
+    v0 = ImportModule module=m6 referrer=m0
+    Return v0
+}

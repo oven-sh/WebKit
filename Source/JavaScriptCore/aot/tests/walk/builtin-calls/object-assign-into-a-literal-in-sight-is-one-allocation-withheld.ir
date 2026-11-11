@@ -1,0 +1,8 @@
+# the same calls with the calls of built-ins withheld, and without escape analysis, which is what sees the literal: Object.assign is called
+# RUN: walk f1 mechanisms=all-BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# RUN(FRESH): walk f1 mechanisms=all-EscapeAnalysis
+# FRESH-LABEL: code f1:Body
+# FRESH: = Call
+# PROGRAM-OF: object-assign-into-a-literal-in-sight-is-one-allocation.ir

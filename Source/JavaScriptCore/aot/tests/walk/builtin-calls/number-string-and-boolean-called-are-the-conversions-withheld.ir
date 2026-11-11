@@ -1,0 +1,11 @@
+# the same calls with unboxed numbers withheld: each goes by its row. The row of Boolean converts its argument itself, so the conversion stands there, and the call stays behind it
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# RUN(TRUTH): walk f2 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations
+# TRUTH-LABEL: code f2:Body
+# TRUTH: = ToBoolean
+# TRUTH: = CallBuiltin {{*}}overload=Boolean/0
+# RUN(NEVER): walk f1 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations
+# NEVER-NOT: = ToNumber
+# PROGRAM-OF: number-string-and-boolean-called-are-the-conversions.ir

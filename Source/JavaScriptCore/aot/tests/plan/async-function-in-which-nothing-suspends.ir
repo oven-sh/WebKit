@@ -1,0 +1,76 @@
+# an async function in whose body nothing suspends has a body that saves no frame: by the operations of the body alone, as the scan has read them
+# async function plain(a) { return a; }  async function waits(p) { return await p; }  async function* yields() { }
+# async function holds(p) { return async () => await p; }  async function never(p) { if (1 !== 1) await p; return p; }
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:CoroutineBody (JSValue, JSValue) -> (JSValue) {{*}}never-suspends
+# CHECK: unit f4:CoroutineBody (JSValue, JSValue) -> (JSValue) {{*}}never-suspends
+# CHECK: unit f6:CoroutineBody (JSValue, JSValue) -> (JSValue) {{*}}never-suspends
+# RUN(SUSPEND): plan units mechanisms=all
+# SUSPEND-NOT: f2:CoroutineBody {{*}} never-suspends
+# SUSPEND-NOT: f3:CoroutineBody {{*}} never-suspends
+# SUSPEND-NOT: f5:CoroutineBody {{*}} never-suspends
+# RUN(FEWEST): plan units mechanisms=none+TypedOperations
+# FEWEST: unit f1:CoroutineBody (JSValue, JSValue) -> (JSValue) {{*}}never-suspends
+# FEWEST: unit f4:CoroutineBody (JSValue, JSValue) -> (JSValue) {{*}}never-suspends
+# with Folding withheld the scan reads the block behind the branch, and so does the walk
+# RUN(READ): plan units mechanisms=none+TypedOperations
+# READ-NOT: f6:CoroutineBody {{*}} never-suspends
+# with typed operations withheld every async function has a body that can save its frame
+# RUN(NONE): plan units mechanisms=none
+# NONE-NOT: never-suspends
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key="p" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f6
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="plain" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="waits" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+function f3 name="yields" module=m0 flags=[IsAsync, IsGenerator, TakesCallee] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    InitialYield
+    v2 = Undefined
+    Return v2
+}
+function f4 name="holds" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f5
+    Return v2
+}
+function f5 module=m0 kind=Arrow flags=[IsAsync] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = Await v1
+    Return v2
+}
+function f6 name="never" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    v4 = LogicalNot v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Await v0
+    Jump -> next b2()
+  b2():
+    Return v0
+}

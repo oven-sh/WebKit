@@ -1,17 +1,21 @@
 # Lists of literals unite and stay beside every other part. Only string and symbol absorb them.
-# RUN: union
+# The wire has no list of symbols: t7 and t8 are arguments, and the layout is there for its keys alone.
+# RUN: union symbol("p")@m0:10 symbol("q")@m0:20
 # CHECK: t0 | t1 = "a"|"b"
 # CHECK: t0 | t2 = undefined|"a"
 # CHECK: t0 | t3 = number|"a"
 # CHECK: t0 | t4 = string
 # CHECK-NOT: "a"
-# CHECK: t0 | t5 = "a"|symbol("p")@m0:10
-# CHECK: t0 | t8 = object|"a"
-# CHECK: t5 | t6 = symbol("p")@m0:10|symbol("q")@m0:20
+# CHECK: t0 | t5 = symbol|"a"
+# CHECK: t0 | t6 = "a"|object
+# CHECK: t0 | t7 = "a"|symbol("p")@m0:10
 # CHECK: t5 | t7 = symbol
 # CHECK-NOT: @
-# CHECK: t5 | t8 = object|symbol("p")@m0:10
+# CHECK: t6 | t7 = symbol("p")@m0:10|object
+# CHECK: t7 | t8 = symbol("p")@m0:10|symbol("q")@m0:20
 # CHECK: laws hold
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="types" parameters=[{type="a"}, {type="b"}, {type=undefined}, {type=number}, {type=string}, {type=symbol("p")@m0:10}, {type=symbol("q")@m0:20}, {type=symbol}, {type=object}] results=[{type=undefined}]
+layout L0 kind=Instance name="Keys" fields=[{key=symbol("p")@m0:10 declared={type=number}}, {key=symbol("q")@m0:20 declared={type=number}}]
+function f0 name="types" role=Signature parameters=[{type="a"}, {type="b"}, {type=undefined}, {type=number}, {type=string}, {type=symbol}, {type=object}] results=[{type=undefined}]
+entry module=m0

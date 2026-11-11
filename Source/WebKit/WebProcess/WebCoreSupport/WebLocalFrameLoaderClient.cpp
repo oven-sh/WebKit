@@ -42,6 +42,7 @@
 #include "NavigationActionData.h"
 #include "NetworkConnectionToWebProcessMessages.h"
 #include "NetworkProcessConnection.h"
+#include "PageScaleFactor.h"
 #include "PluginView.h"
 #include "SessionState.h"
 #include "SessionStateConversion.h"
@@ -213,7 +214,7 @@ void WebLocalFrameLoaderClient::detachedFromParent2()
         return;
 
     if (RefPtr backend = webPage->inspector(WebPage::LazyCreationPolicy::UseExistingOnly))
-        backend->removeInstrumentationForFrame(m_frame->frameID());
+        backend->removeInstrumentationForFrame(protect(m_localFrame));
 
     removeStorageAccess();
 
@@ -519,6 +520,7 @@ void WebLocalFrameLoaderClient::didSameDocumentNavigationForFrameViaJS(SameDocum
         false, /* isInitialFrameSrcLoad */
         false, /* isContentRuleListRedirect */
         { }, /* openedMainFrameName */
+        { }, /* openedByScriptDomain */
         std::nullopt, /* targetBackForwardItemIdentifier */
         std::nullopt, /* sourceBackForwardItemIdentifier */
         WebCore::LockHistory::No,
@@ -1074,6 +1076,7 @@ void WebLocalFrameLoaderClient::dispatchDecidePolicyForNewWindowAction(const Nav
         navigationAction.isInitialFrameSrcLoad(),
         navigationAction.isContentRuleListRedirect(),
         { }, /* openedMainFrameName */
+        { }, /* openedByScriptDomain */
         std::nullopt, /* targetBackForwardItemIdentifier */
         std::nullopt, /* sourceBackForwardItemIdentifier */
         WebCore::LockHistory::No,
@@ -1642,8 +1645,9 @@ void WebLocalFrameLoaderClient::restoreViewState()
     double scaleFactor = m_localFrame->loader().history().currentItem()->pageScaleFactor();
 
     // A scale factor of 0 means the history item has the default scale factor, thus we do not need to update it.
+    // Session state supplied by the client can also hold values the UI process would reject.
     RefPtr page = m_frame->page();
-    if (page && scaleFactor)
+    if (page && isValidScaleFactor(scaleFactor))
         page->send(Messages::WebPageProxy::DidSetPageScaleFactor(scaleFactor));
 
     // FIXME: This should not be necessary. WebCore should be correctly invalidating
@@ -1828,6 +1832,10 @@ void WebLocalFrameLoaderClient::transitionToCommittedForNewPage(InitializingIfra
 void WebLocalFrameLoaderClient::didRestoreFromBackForwardCache()
 {
     m_frameCameFromBackForwardCache = true;
+
+    // Schedule a full editor state update in case the secure input state needs to be updated.
+    if (RefPtr webPage = m_frame->page())
+        webPage->scheduleFullEditorStateUpdate();
 }
 
 void WebLocalFrameLoaderClient::didCacheBackForwardItem(BackForwardItemIdentifier itemID, BackForwardFrameItemIdentifier frameItemID)
@@ -2125,7 +2133,7 @@ void WebLocalFrameLoaderClient::sendH2Ping(const URL& url, CompletionHandler<voi
 #if ENABLE(APP_BOUND_DOMAINS)
     isNavigatingToAppBoundDomain = m_frame->isTopFrameNavigatingToAppBoundDomain();
 #endif
-    protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::SendH2Ping(url, webPage->webPageProxyIdentifier(), webPage->identifier(), m_frame->frameID(), isNavigatingToAppBoundDomain), WTF::move(completionHandler));
+    protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::SendH2Ping(url, webPage->webPageProxyIdentifier(), webPage->identifier(), m_frame->frameID(), isNavigatingToAppBoundDomain, m_frame->advancedPrivacyProtections()), WTF::move(completionHandler));
 }
 
 void WebLocalFrameLoaderClient::didRestoreScrollPosition()
@@ -2143,11 +2151,10 @@ void WebLocalFrameLoaderClient::getLoadDecisionForIcons(const Vector<std::pair<W
     if (!webPage)
         return;
 
-    HashMap<CallbackID, WebCore::LinkIcon> callbackIdIconMap;
-    for (auto& icon : borrow(icons))
-        callbackIdIconMap.add(CallbackID::fromInteger(icon.second), icon.first);
-
-    webPage->send(Messages::WebPageProxy::GetLoadDecisionForIcons(WTF::move(callbackIdIconMap)));
+    // Keep LinkIconCollector's order, most appropriate first.
+    webPage->send(Messages::WebPageProxy::GetLoadDecisionForIcons(WTF::map(icons, [](auto& icon) -> std::pair<CallbackID, WebCore::LinkIcon> {
+        return { CallbackID::fromInteger(icon.second), icon.first };
+    })));
 }
 
 void WebLocalFrameLoaderClient::didFinishServiceWorkerPageRegistration(bool success)

@@ -40,9 +40,9 @@ struct FileSystemHandleRecord;
 class IDBValue {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(IDBValue, WEBCORE_EXPORT);
 public:
-    WEBCORE_EXPORT IDBValue();
+    NODELETE WEBCORE_EXPORT IDBValue();
     IDBValue(const SerializedScriptValue&);
-    WEBCORE_EXPORT IDBValue(const ThreadSafeDataBuffer&);
+    NODELETE WEBCORE_EXPORT IDBValue(const ThreadSafeDataBuffer&);
     IDBValue(const SerializedScriptValue&, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths);
     WEBCORE_EXPORT IDBValue(const ThreadSafeDataBuffer&, Vector<String>&& blobURLs, Vector<String>&& blobFilePaths, Vector<FileSystemHandleGlobalIdentifier>&& fileSystemHandleGlobalIdentifiers = { });
     IDBValue(const ThreadSafeDataBuffer&, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, const Vector<FileSystemHandleGlobalIdentifier>& fileSystemHandleGlobalIdentifiers = { });
@@ -61,12 +61,12 @@ public:
     const Vector<String>& blobFilePaths() const LIFETIME_BOUND { return m_blobFilePaths; }
     const Vector<FileSystemHandleGlobalIdentifier>& fileSystemHandleGlobalIdentifiers() const LIFETIME_BOUND { return m_fileSystemHandleGlobalIdentifiers; }
 
-    WEBCORE_EXPORT const Vector<FileSystemHandleRecord>& LEGACY_NODELETE fileSystemHandleRecords() const LIFETIME_BOUND;
+    NODELETE WEBCORE_EXPORT const Vector<FileSystemHandleRecord>& fileSystemHandleRecords() const LIFETIME_BOUND;
     WEBCORE_EXPORT void setFileSystemHandleRecords(Vector<FileSystemHandleRecord>&&) const;
 
     WEBCORE_EXPORT void attachStorageKeepAlive(RefPtr<FileSystemHandleStorageKeepAlive>&&) const;
 
-    size_t LEGACY_NODELETE size() const;
+    NODELETE size_t size() const;
 private:
     ThreadSafeDataBuffer m_data;
     Vector<String> m_blobURLs;

@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTStatistics.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <mutex>
 #include <stdio.h>
 #include <wtf/CPUTime.h>
@@ -19,7 +21,11 @@
 #include <wtf/PageBlock.h>
 #include <wtf/StringPrintStream.h>
 
-#if OS(LINUX) && CPU(X86_64) && __has_include(<linux/perf_event.h>)
+#if OS(UNIX)
+#include <sys/resource.h>
+#endif
+
+#if OS(LINUX) && __has_include(<linux/perf_event.h>)
 #define AOT_HAS_INSTRUCTION_COUNTERS 1
 #include <linux/perf_event.h>
 #include <sys/mman.h>
@@ -32,6 +38,18 @@
 namespace JSC { namespace AOT {
 
 std::atomic<bool> InstructionCounts::s_hasBegun { false };
+
+static thread_local uint64_t t_instructionsSpentInsideLoops = 0;
+
+void InstructionCounts::noteSpentInsideLoop(uint64_t instructions)
+{
+    t_instructionsSpentInsideLoops += instructions;
+}
+
+uint64_t InstructionCounts::spentInsideLoopsOnCurrentThread()
+{
+    return t_instructionsSpentInsideLoops;
+}
 
 #if AOT_HAS_INSTRUCTION_COUNTERS
 
@@ -54,7 +72,7 @@ CountersOfThreads& countersOfThreads()
     return counters;
 }
 
-std::optional<uint64_t> readWithSystemCall(int file)
+std::optional<uint64_t> readCounterOfThread(int file)
 {
     uint64_t count = 0;
     if (read(file, &count, sizeof(count)) != sizeof(count))
@@ -79,9 +97,11 @@ public:
             counters.isRefused.store(true, std::memory_order_relaxed);
             return;
         }
+#if CPU(X86_64)
         void* page = mmap(nullptr, pageSize(), PROT_READ, MAP_SHARED, m_file, 0);
         if (page != MAP_FAILED)
-            m_page = static_cast<const volatile perf_event_mmap_page*>(page);
+            m_page = static_cast<const perf_event_mmap_page*>(page);
+#endif
         Locker locker { counters.lock };
         counters.files.append(m_file);
     }
@@ -93,7 +113,7 @@ public:
         CountersOfThreads& counters = countersOfThreads();
         {
             Locker locker { counters.lock };
-            counters.instructionsOfEndedThreads += readWithSystemCall(m_file).value_or(0);
+            counters.instructionsOfEndedThreads += readCounterOfThread(m_file).value_or(0);
             counters.files.removeFirst(m_file);
         }
         if (m_page)
@@ -101,34 +121,49 @@ public:
         close(m_file);
     }
 
-    // As perf_event_open(2) says it: the kernel changes `lock` around every change of the page.
     std::optional<uint64_t> read() const
     {
         if (m_file < 0)
             return std::nullopt;
-        while (m_page && m_page->cap_user_rdpmc) {
-            uint32_t sequence = m_page->lock;
-            std::atomic_signal_fence(std::memory_order_seq_cst);
-            uint32_t index = m_page->index;
-            int64_t count = m_page->offset;
-            // The counter is not on the processor at this moment.
-            if (!index)
-                break;
-            unsigned unusedBits = 64 - m_page->pmc_width;
-            count += static_cast<int64_t>(__builtin_ia32_rdpmc(index - 1) << unusedBits) >> unusedBits;
-            std::atomic_signal_fence(std::memory_order_seq_cst);
-            if (m_page->lock == sequence)
-                return static_cast<uint64_t>(count);
-        }
-        return readWithSystemCall(m_file);
+        if (std::optional<uint64_t> count = readWithoutSystemCall())
+            return count;
+        return readCounterOfThread(m_file);
     }
 
 private:
+    std::optional<uint64_t> readWithoutSystemCall() const
+    {
+#if CPU(X86_64)
+        if (!m_page)
+            return std::nullopt;
+        const volatile perf_event_mmap_page& page = *m_page;
+        for (;;) {
+            uint32_t sequence = page.lock;
+            std::atomic_signal_fence(std::memory_order_seq_cst);
+            uint32_t index = page.index;
+            int64_t count = page.offset;
+            if (!page.cap_user_rdpmc || !index)
+                return std::nullopt;
+            unsigned unusedBits = 64 - page.pmc_width;
+            uint32_t low;
+            uint32_t high;
+            asm volatile("rdpmc" : "=a"(low), "=d"(high) : "c"(index - 1));
+            std::atomic_signal_fence(std::memory_order_seq_cst);
+            if (page.lock != sequence)
+                continue;
+            uint64_t sinceOffset = static_cast<uint64_t>(high) << 32 | low;
+            return static_cast<uint64_t>(count + (static_cast<int64_t>(sinceOffset << unusedBits) >> unusedBits));
+        }
+#else
+        return std::nullopt;
+#endif
+    }
+
     int m_file { -1 };
-    const volatile perf_event_mmap_page* m_page { nullptr };
+    const perf_event_mmap_page* m_page { nullptr };
 };
 
-const CounterOfThread& counterOfCurrentThread()
+CounterOfThread& counterOfCurrentThread()
 {
     WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local CounterOfThread counter;
     return counter;
@@ -154,7 +189,7 @@ std::optional<uint64_t> InstructionCounts::ofAllThreads()
     Locker locker { counters.lock };
     uint64_t instructions = counters.instructionsOfEndedThreads;
     for (int file : counters.files)
-        instructions += readWithSystemCall(file).value_or(0);
+        instructions += readCounterOfThread(file).value_or(0);
     return instructions;
 }
 
@@ -178,11 +213,6 @@ static Seconds processSystemTime()
     return time ? time->systemTime : 0_s;
 }
 
-static Seconds serialCPUTimeOfCurrentThread()
-{
-    return CPUTime::forCurrentThread() - ParallelRegionScope::cpuTimeOfCurrentThread();
-}
-
 size_t PhaseTimes::residentMegabytes()
 {
 #if OS(LINUX)
@@ -199,37 +229,90 @@ size_t PhaseTimes::residentMegabytes()
 #endif
 }
 
-PhaseTimes::PhaseTimes(BuildContext& build, ASCIILiteral namePrefix, ASCIILiteral name, std::optional<Stage> timedStage, PassID pass)
+static constinit Lock peakBeforeResetsLock;
+static size_t peakBeforeResets WTF_GUARDED_BY_LOCK(peakBeforeResetsLock) { 0 };
+
+PhaseTimes::PeakResidentMegabytes PhaseTimes::takePeakResidentMegabytes()
+{
+    Locker locker { peakBeforeResetsLock };
+    size_t sinceLastTaken = takePeakResidentMegabytesSinceLastTaken();
+#if OS(LINUX)
+    size_t sinceLastReset = sinceLastTaken;
+#else
+    size_t sinceLastReset = peakResidentMegabytes();
+#endif
+    peakBeforeResets = std::max(sinceLastReset, peakBeforeResets);
+    return { peakBeforeResets, sinceLastTaken };
+}
+
+size_t PhaseTimes::takePeakResidentMegabytesSinceLastTaken()
+{
+#if OS(LINUX)
+    size_t peak = peakResidentMegabytes();
+    if (FILE* file = fopen("/proc/self/clear_refs", "w")) {
+        fputs("5", file);
+        fclose(file);
+    }
+    return peak;
+#else
+    return 0;
+#endif
+}
+
+size_t PhaseTimes::peakResidentMegabytes()
+{
+#if OS(LINUX)
+    size_t peakKilobytes = 0;
+    if (FILE* file = fopen("/proc/self/status", "r")) {
+        char line[256];
+        while (fgets(line, sizeof(line), file)) {
+            unsigned long value = 0;
+            if (sscanf(line, "VmHWM: %lu kB", &value) == 1) {
+                peakKilobytes = value;
+                break;
+            }
+        }
+        fclose(file);
+    }
+    return peakKilobytes / KB;
+#elif OS(UNIX)
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage))
+        return 0;
+#if OS(DARWIN)
+    return usage.ru_maxrss / MB;
+#else
+    return usage.ru_maxrss / KB;
+#endif
+#else
+    return 0;
+#endif
+}
+
+PhaseTimes::PhaseTimes(BuildContext& build, ASCIILiteral name, std::optional<Stage> timedStage)
     : m_build(build)
-    , m_namePrefix(namePrefix)
     , m_name(name)
     , m_timedStage(timedStage)
     , m_start(MonotonicTime::now())
-    , m_currentWork(timedStage, pass, m_start)
+    , m_currentWork(name)
     , m_phaseStart(m_start)
 {
-    if (m_build.recordedOptions().sabotage) [[unlikely]]
-        stopWhereSabotaged(m_build, timedStage, pass);
     if (!m_build.options().logging.logsPhaseTimes) [[likely]]
         return;
     m_processCPUTimeAtPhaseStart = processCPUTime();
-    m_serialCPUTimeAtPhaseStart = serialCPUTimeOfCurrentThread();
-    BusyThreads::countCurrentThread();
-    m_busyThreadsTimesAtPhaseStart = BusyThreads::times();
     InstructionCounts::begin();
     InstructionCounts::countOnCurrentThread();
     m_instructionsAtPhaseStart = InstructionCounts::ofAllThreads();
 }
 
 PhaseTimes::PhaseTimes(BuildContext& build, Stage stage)
-    : PhaseTimes(build, ""_s, nameOf(stage), stage, PassID::None)
+    : PhaseTimes(build, nameOf(stage), stage)
 {
 }
 
-PhaseTimes::PhaseTimes(BuildContext& build, PassID pass)
-    : PhaseTimes(build, "pass "_s, nameOf(pass), std::nullopt, pass)
+PhaseTimes::PhaseTimes(BuildContext& build, ASCIILiteral name)
+    : PhaseTimes(build, name, std::nullopt)
 {
-    ASSERT(pass != PassID::None);
 }
 
 PhaseTimes::~PhaseTimes()
@@ -240,34 +323,63 @@ PhaseTimes::~PhaseTimes()
 
 void PhaseTimes::didFinish(ASCIILiteral phase)
 {
-    currentWork().setFinishedPart(phase);
     if (!m_build.options().logging.logsPhaseTimes) [[likely]]
         return;
     Seconds wallTime = MonotonicTime::now() - m_phaseStart;
     Seconds cpuTime = processCPUTime() - m_processCPUTimeAtPhaseStart;
-    Seconds serialCPUTime = serialCPUTimeOfCurrentThread() - m_serialCPUTimeAtPhaseStart;
-    StringPrintStream instructions;
     std::optional<uint64_t> instructionsNow = InstructionCounts::ofAllThreads();
+    PeakResidentMegabytes peak = takePeakResidentMegabytes();
+    StringPrintStream line;
+    line.print("AOT phase times: ", m_name, " | ", phase, " | wall ", wallTime.milliseconds(), " ms | cpu ", cpuTime.milliseconds(), " ms | resident ", residentMegabytes(), " MB | peak ", peak.ofProcess, " MB | peak since the last line ", peak.sinceLastTaken, " MB | in the kernel so far ", processSystemTime().milliseconds(), " ms");
     if (instructionsNow && m_instructionsAtPhaseStart)
-        instructions.print(" | instructions ", static_cast<double>(*instructionsNow - *m_instructionsAtPhaseStart) / 1e6, " M");
+        line.print(" | instructions ", static_cast<double>(*instructionsNow - *m_instructionsAtPhaseStart) / 1e6, " M");
+    line.println();
+    dataLog(line.toUTF8CString());
     m_instructionsAtPhaseStart = instructionsNow;
-    BusyThreads::Times busyThreadsTimes = BusyThreads::times();
-    StringPrintStream busyThreads;
-    unsigned minThreads = 0;
-    for (unsigned bucket = 0; bucket < BusyThreads::numberOfBuckets; ++bucket) {
-        busyThreads.print(bucket ? ", " : "", minThreads);
-        if (bucket + 1 < BusyThreads::numberOfBuckets)
-            busyThreads.print("-", BusyThreads::maxThreadsOfBucket[bucket]);
-        else
-            busyThreads.print("+");
-        busyThreads.print(": ", (busyThreadsTimes[bucket] - m_busyThreadsTimesAtPhaseStart[bucket]).milliseconds());
-        minThreads = BusyThreads::maxThreadsOfBucket[bucket] + 1;
-    }
-    m_busyThreadsTimesAtPhaseStart = busyThreadsTimes;
-    dataLogLn("AOT phase times: ", m_namePrefix, m_name, " | ", phase, " | wall ", wallTime.milliseconds(), " ms | cpu ", cpuTime.milliseconds(), " ms | resident ", residentMegabytes(), " MB | in the kernel so far ", processSystemTime().milliseconds(), " ms", instructions.toString(), " | outside parallel loops ", serialCPUTime.milliseconds(), " ms | ms by busy threads ", busyThreads.toString());
-    m_serialCPUTimeAtPhaseStart = serialCPUTimeOfCurrentThread();
     m_phaseStart = MonotonicTime::now();
     m_processCPUTimeAtPhaseStart = processCPUTime();
+}
+
+StepTimes::StepTimes(const BuildContext& build, ASCIILiteral name)
+    : m_logs(build.options().logging.logsPhaseTimes)
+    , m_name(name)
+    , m_stepStart(MonotonicTime::now())
+    , m_threadCPUTimeAtStepStart(m_logs ? CPUTime::forCurrentThread() : Seconds())
+    , m_instructionsOfThreadAtStepStart(m_logs ? InstructionCounts::ofCurrentThread() : std::nullopt)
+    , m_instructionsInsideLoopsAtStepStart(InstructionCounts::spentInsideLoopsOnCurrentThread())
+{
+}
+
+void StepTimes::didFinish(ASCIILiteral step)
+{
+    if (!m_logs) [[likely]]
+        return;
+    MonotonicTime now = MonotonicTime::now();
+    Seconds threadCPUTime = CPUTime::forCurrentThread();
+    std::optional<uint64_t> instructionsOfThread = InstructionCounts::ofCurrentThread();
+    uint64_t instructionsInsideLoops = InstructionCounts::spentInsideLoopsOnCurrentThread();
+    double instructionsOfStep = instructionsOfThread && m_instructionsOfThreadAtStepStart ? static_cast<double>(*instructionsOfThread - *m_instructionsOfThreadAtStepStart) : static_cast<double>(instructionsInsideLoops - m_instructionsInsideLoopsAtStepStart);
+    dataLog(toUTF8CString("AOT phase times: ", m_name, " | ", step, " | wall ", (now - m_stepStart).milliseconds(), " ms | this thread ", (threadCPUTime - m_threadCPUTimeAtStepStart).milliseconds(), " ms | instructions of this thread ", instructionsOfStep / 1e6, " M | outside loops ", (instructionsOfStep - static_cast<double>(instructionsInsideLoops - m_instructionsInsideLoopsAtStepStart)) / 1e6, " M\n"));
+    m_instructionsOfThreadAtStepStart = instructionsOfThread;
+    m_instructionsInsideLoopsAtStepStart = instructionsInsideLoops;
+    m_stepStart = now;
+    m_threadCPUTimeAtStepStart = threadCPUTime;
+}
+
+void StepTimes::didFinish(ASCIILiteral step, const UTF8CString& note)
+{
+    if (!m_logs) [[likely]]
+        return;
+    MonotonicTime now = MonotonicTime::now();
+    Seconds threadCPUTime = CPUTime::forCurrentThread();
+    std::optional<uint64_t> instructionsOfThread = InstructionCounts::ofCurrentThread();
+    uint64_t instructionsInsideLoops = InstructionCounts::spentInsideLoopsOnCurrentThread();
+    double instructionsOfStep = instructionsOfThread && m_instructionsOfThreadAtStepStart ? static_cast<double>(*instructionsOfThread - *m_instructionsOfThreadAtStepStart) : static_cast<double>(instructionsInsideLoops - m_instructionsInsideLoopsAtStepStart);
+    dataLog(toUTF8CString("AOT phase times: ", m_name, " | ", step, ": ", note, " | wall ", (now - m_stepStart).milliseconds(), " ms | this thread ", (threadCPUTime - m_threadCPUTimeAtStepStart).milliseconds(), " ms | instructions of this thread ", instructionsOfStep / 1e6, " M | outside loops ", (instructionsOfStep - static_cast<double>(instructionsInsideLoops - m_instructionsInsideLoopsAtStepStart)) / 1e6, " M\n"));
+    m_instructionsOfThreadAtStepStart = instructionsOfThread;
+    m_instructionsInsideLoopsAtStepStart = instructionsInsideLoops;
+    m_stepStart = now;
+    m_threadCPUTimeAtStepStart = threadCPUTime;
 }
 
 } } // namespace JSC::AOT

@@ -30,6 +30,7 @@
 #include "JSArrayBufferPrototype.h"
 #include "JSArrayBufferView.h"
 #include "JSCInlines.h"
+#include "MarkedBlockCage.h"
 
 namespace JSC {
 
@@ -128,6 +129,10 @@ EncodedJSValue JSGenericArrayBufferConstructor<sharingMode>::constructImpl(JSGlo
     }
 
     ASSERT(sharingMode == buffer->sharingMode());
+
+    // The heap's entry for the buffer is reserved before the object is created.
+    if (MarkedBlockCage::isRequired() && !vm.heap.tryReserveCapacityForNewArrayBuffer()) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
 
     return JSValue::encode(JSArrayBuffer::create(vm, structure, WTF::move(buffer)));
 }

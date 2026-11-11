@@ -1,0 +1,174 @@
+# charCodeAt, codePointAt, charAt and at on a proven text and a proven number are the tests of the bounds, the read inside, and what the language gives outside: no call is left
+# function codeAt(s, i) { if (typeof s === "string" && (i | 0) === i) return [s.charCodeAt(i)]; }
+# as an unsigned word a negative position lies behind every length, so one test asks both bounds
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetStringLength
+# CHECK: = URShift
+# CHECK: = Less
+# CHECK: = GetStringCodeUnit
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: = CallInline
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = GetStringCodeUnit
+# function pointAt(s, i) { if (typeof s === "string" && (i | 0) === i) return [s.codePointAt(i)]; }
+# RUN(POINT): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# POINT-LABEL: code f2:Body
+# POINT: = GetStringCodeUnit
+# POINT: = GetStringCodeUnit
+# POINT: = LShift
+# function letterAt(s, i) { if (typeof s === "string" && (i | 0) === i) return [s.charAt(i)]; }
+# RUN(LETTER): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# LETTER-LABEL: code f3:Body
+# LETTER: = Less
+# LETTER: = Substring
+# function last(s) { if (typeof s === "string") return [s.at(-1)]; }
+# RUN(LAST): walk f4 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# LAST-LABEL: code f4:Body
+# LAST: = GetStringLength
+# LAST: = Add
+# LAST: = Substring
+# the one way into the block leads over `i < s.length`, and no i is negative, so nothing is asked again: function inside(s, i) { if (typeof s === "string" && i is 0 .. 1000 && i < s.length) return [s.charCodeAt(i)]; }
+# RUN(INSIDE): walk f5 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# INSIDE-LABEL: code f5:Body
+# INSIDE: = Less
+# INSIDE-NOT: = Less
+# INSIDE: = GetStringCodeUnit
+# nobody knows what the receiver is, so nobody knows what is called: function ofAnything(s, i) { return [s.charCodeAt(i)]; }
+# RUN(ANY): walk f6 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# ANY-LABEL: code f6:Body
+# ANY-NOT: GetStringCodeUnit
+# ANY: = Call v
+# the characters of a piece are read where they lie, and the piece that nobody else reads is never cut: function firstOfRest(s, a) { if (typeof s === "string" && (a | 0) === a) return [s.slice(a).charCodeAt(0)]; }
+# RUN(PIECE): walk f7 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# PIECE-LABEL: code f7:Body
+# PIECE: = StringRange
+# PIECE: = GetStringCodeUnit
+# RUN(UNCUT): walk f7 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# UNCUT-NOT: = Substring
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = Call v1, -, v2, v3, v4, v5, v6, v7, v8
+    Return v9
+}
+function f1 name="codeAt" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="charCodeAt"
+    v7 = Call v6, v3, v5 calleeKey="charCodeAt"
+    v8 = NewArray v7 contents=anything
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f2 name="pointAt" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="codePointAt"
+    v7 = Call v6, v3, v5 calleeKey="codePointAt"
+    v8 = NewArray v7 contents=anything
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f3 name="letterAt" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="charAt"
+    v7 = Call v6, v3, v5 calleeKey="charAt"
+    v8 = NewArray v7 contents=anything
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f4 name="last" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="at"
+    v4 = Integer integer=-1
+    v5 = Call v3, v2, v4 calleeKey="at"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f5 name="inside" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = TypeTest v1 testedType=int[0, 1000]
+    Branch v4 -> taken b2(| 0), notTaken b4()
+  b2(v5):
+    v6 = PropGet v3 key="length"
+    v7 = Less v5, v6
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = PropGet v3 key="charCodeAt"
+    v9 = Call v8, v3, v5 calleeKey="charCodeAt"
+    v10 = NewArray v9 contents=anything
+    Return v10
+  b4():
+    v11 = Undefined
+    Return v11
+}
+function f6 name="ofAnything" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="charCodeAt"
+    v3 = Call v2, v0, v1 calleeKey="charCodeAt"
+    v4 = NewArray v3 contents=anything
+    Return v4
+}
+function f7 name="firstOfRest" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="slice"
+    v7 = Call v6, v3, v5 calleeKey="slice"
+    v8 = PropGet v7 key="charCodeAt"
+    v9 = Integer
+    v10 = Call v8, v7, v9 calleeKey="charCodeAt"
+    v11 = NewArray v10 contents=anything
+    Return v11
+  b3():
+    v12 = Undefined
+    Return v12
+}

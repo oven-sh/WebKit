@@ -65,7 +65,6 @@
 #import "WebContextMenuProxy.h"
 #import "WebEventModifier.h"
 #import "WebFrameProxy.h"
-#import "WebPage.h"
 #import "WebPageLoadTiming.h"
 #import "WebPageMessages.h"
 #import "WebPageProxyInternals.h"
@@ -92,6 +91,8 @@
 #import <WebCore/NotImplemented.h>
 #import <WebCore/NowPlayingInfo.h>
 #import <WebCore/NullPlaybackSessionInterface.h>
+#import <WebCore/PageColorSampler.h>
+#import <WebCore/PlatformPasteboard.h>
 #import <WebCore/PlatformPlaybackSessionInterface.h>
 #import <WebCore/PlatformRenderTheme.h>
 #import <WebCore/PlaybackSessionInterfaceAVKitLegacy.h>
@@ -113,6 +114,8 @@
 #import <pal/spi/mac/QuarantineSPI.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/Borrow.h>
+#import <wtf/Box.h>
+#import <wtf/CallbackAggregator.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/cf/TypeCastsCF.h>
 #import <wtf/cf/VectorCF.h>
@@ -191,7 +194,7 @@ void WebPageProxy::didGeneratePageLoadTiming(const WebPageLoadTiming& timing)
         state->didGeneratePageLoadTiming(timing);
 }
 
-static bool LEGACY_NODELETE exceedsRenderTreeSizeSizeThreshold(uint64_t thresholdSize, uint64_t committedSize)
+NODELETE static bool exceedsRenderTreeSizeSizeThreshold(uint64_t thresholdSize, uint64_t committedSize)
 {
     const double thesholdSizeFraction = 0.5; // Empirically-derived.
     return committedSize > thresholdSize * thesholdSizeFraction;
@@ -238,8 +241,125 @@ void WebPageProxy::didCommitMainFrameData(const MainFrameData& mainFrameData, co
     if (std::exchange(internals().needsFixedContainerEdgesUpdateAfterNextCommit, false))
         protect(legacyMainFrameProcess())->send(Messages::WebPage::SetNeedsFixedContainerEdgesUpdate(), webPageIDInMainFrameProcess());
 
+    if (mainFrameData.fixedContainerEdges)
+        updateFixedContainerEdgeSampling(*mainFrameData.fixedContainerEdges, mainFrameData.topFixedContainerEdgeIsLocked);
+}
+
+static HashMap<FrameIdentifier, RectEdges<bool>> fixedContainerEdgeSamplingSides(const WebPageProxy& page, const FixedContainerEdges& edges, bool topIsLocked)
+{
+    HashMap<FrameIdentifier, RectEdges<bool>> sidesByFrame;
+    for (auto side : allBoxSides) {
+        if (side == BoxSide::Top && topIsLocked)
+            continue;
+
+        auto* frameID = std::get_if<FrameIdentifier>(&edges.colors.at(side));
+        if (!frameID)
+            continue;
+
+        RefPtr frame = WebFrameProxy::webFrame(*frameID);
+        RefPtr parentFrame = frame ? frame->parentFrame() : nullptr;
+        if (!parentFrame || frame->page() != &page || !parentFrame->isMainFrame() || &frame->process() == &parentFrame->process())
+            continue;
+
+        sidesByFrame.add(*frameID, RectEdges<bool> { }).iterator->value.setAt(side, true);
+    }
+    return sidesByFrame;
+}
+
+void WebPageProxy::updateFixedContainerEdgeSampling(const FixedContainerEdges& edges, bool topIsLocked)
+{
+    auto previousSides = fixedContainerEdgeSamplingSides(*this, internals().mainFrameFixedContainerEdges, internals().topFixedContainerEdgeIsLocked);
+    internals().mainFrameFixedContainerEdges = edges;
+    internals().topFixedContainerEdgeIsLocked = topIsLocked;
+
+    auto sidesByFrame = fixedContainerEdgeSamplingSides(*this, edges, topIsLocked);
+    auto previousFrames = std::exchange(internals().fixedContainerEdgeSamplingFrames, { });
+    for (auto& [frameID, sides] : sidesByFrame) {
+        auto previous = previousSides.find(frameID);
+        if (previous != previousSides.end() && previous->value == sides && previousFrames.contains(frameID)) {
+            internals().fixedContainerEdgeSamplingFrames.add(frameID, previousFrames.get(frameID));
+            continue;
+        }
+
+        internals().fixedContainerEdgeSamplingFrames.add(frameID, std::nullopt);
+        sendToProcessContainingFrame(frameID, Messages::WebPage::SetFixedContainerEdgeSamplingSides(frameID, sides));
+    }
+
+    for (auto& [frameID, results] : previousFrames) {
+        if (!sidesByFrame.contains(frameID) && WebFrameProxy::webFrame(frameID))
+            sendToProcessContainingFrame(frameID, Messages::WebPage::SetFixedContainerEdgeSamplingSides(frameID, RectEdges<bool> { }));
+    }
+
+    resolveFixedContainerEdges();
+}
+
+void WebPageProxy::didReceiveFixedContainerEdges(IPC::Connection& connection, FrameIdentifier frameID, const FixedContainerEdges& edges)
+{
+    RefPtr frame = WebFrameProxy::webFrame(frameID);
+    auto sampling = internals().fixedContainerEdgeSamplingFrames.find(frameID);
+    if (!frame || frame->page() != this || !frame->process().hasConnection(connection) || sampling == internals().fixedContainerEdgeSamplingFrames.end())
+        return;
+
+    sampling->value = edges;
+    resolveFixedContainerEdges();
+}
+
+void WebPageProxy::resendFixedContainerEdgeSamplingSides(FrameIdentifier frameID)
+{
+    auto sampling = internals().fixedContainerEdgeSamplingFrames.find(frameID);
+    auto sidesByFrame = fixedContainerEdgeSamplingSides(*this, internals().mainFrameFixedContainerEdges, internals().topFixedContainerEdgeIsLocked);
+    auto sides = sidesByFrame.find(frameID);
+    if (sampling == internals().fixedContainerEdgeSamplingFrames.end() || sides == sidesByFrame.end())
+        return;
+
+    sampling->value = std::nullopt;
+    sendToProcessContainingFrame(frameID, Messages::WebPage::SetFixedContainerEdgeSamplingSides(frameID, sides->value));
+}
+
+void WebPageProxy::resolveFixedContainerEdges()
+{
+    auto resolved = internals().mainFrameFixedContainerEdges;
+    for (auto side : allBoxSides) {
+        auto* frameID = std::get_if<FrameIdentifier>(&resolved.colors.at(side));
+        if (!frameID)
+            continue;
+
+        if (side == BoxSide::Top && internals().topFixedContainerEdgeIsLocked) {
+            resolved.colors.setAt(side, internals().resolvedFixedContainerEdges.colors.at(side));
+            continue;
+        }
+
+        auto sampling = internals().fixedContainerEdgeSamplingFrames.find(*frameID);
+        if (sampling == internals().fixedContainerEdgeSamplingFrames.end() || !sampling->value) {
+            resolved.colors.setAt(side, internals().resolvedFixedContainerEdges.colors.at(side));
+            continue;
+        }
+
+        auto edge = sampling->value->colors.at(side);
+        if (auto* color = std::get_if<Color>(&edge))
+            edge = PageColorSampler::finishedFixedContainerColor(*color, false, pageExtendedBackgroundColor());
+        else if (std::holds_alternative<FrameIdentifier>(edge))
+            edge = PredominantColorType::None;
+        resolved.colors.setAt(side, edge);
+    }
+
+    internals().resolvedFixedContainerEdges = resolved;
     if (RefPtr pageClient = this->pageClient())
-        pageClient->didCommitMainFrameData(mainFrameData);
+        pageClient->didUpdateFixedContainerEdges(resolved);
+}
+
+void WebPageProxy::resetFixedContainerEdgeSamplingForMainFrameLoad()
+{
+    // Frames of the old document can stay alive in the back/forward cache.
+    for (auto frameID : internals().fixedContainerEdgeSamplingFrames.keys()) {
+        if (WebFrameProxy::webFrame(frameID))
+            sendToProcessContainingFrame(frameID, Messages::WebPage::SetFixedContainerEdgeSamplingSides(frameID, RectEdges<bool> { }));
+    }
+
+    internals().mainFrameFixedContainerEdges = { };
+    internals().topFixedContainerEdgeIsLocked = false;
+    internals().resolvedFixedContainerEdges = { };
+    internals().fixedContainerEdgeSamplingFrames.clear();
 }
 
 void WebPageProxy::layerTreeCommitComplete()
@@ -495,8 +615,24 @@ bool WebPageProxy::scrollingUpdatesDisabledForTesting()
 
 #if ENABLE(DRAG_SUPPORT)
 
-void WebPageProxy::startDrag(const DragItem& dragItem, ShareableBitmap::Handle&& dragImageHandle, const std::optional<NodeIdentifier>& nodeID, const std::optional<FrameIdentifier>& frameID)
+void WebPageProxy::startDrag(IPC::Connection& connection, const DragItem& dragItem, ShareableBitmap::Handle&& dragImageHandle, const std::optional<NodeIdentifier>& nodeID, const std::optional<FrameIdentifier>& frameID)
 {
+    auto& promisedAttachmentInfo = dragItem.promisedAttachmentInfo;
+#if ENABLE(ATTACHMENT_ELEMENT)
+    MESSAGE_CHECK(promisedAttachmentInfo.attachmentIdentifier.isEmpty() || protect(preferences())->attachmentElementEnabled(), connection);
+#endif
+    for (auto& [type, data] : promisedAttachmentInfo.additionalTypesAndData) {
+        // These are written to the platform drag pasteboard verbatim, so hold them to the same
+        // standard as any other pasteboard write coming from the web process: it must never be able
+        // to plant a file reference on the drag pasteboard. Editor::getPasteboardTypesAndDataForAttachment
+        // never produces a file type, so this is not a limitation on any legitimate drag.
+        MESSAGE_CHECK(!type.isEmpty(), connection);
+        MESSAGE_CHECK(data, connection);
+#if PLATFORM(MAC)
+        MESSAGE_CHECK(!PlatformPasteboard::isFilePasteboardType(type), connection);
+#endif
+    }
+
     m_dragSourceFrameID = frameID;
     if (RefPtr pageClient = this->pageClient())
         pageClient->startDrag(dragItem, WTF::move(dragImageHandle), nodeID, frameID);
@@ -944,7 +1080,7 @@ void WebPageProxy::createTextFragmentDirectiveFromSelection(CompletionHandler<vo
     if (!hasRunningProcess())
         return;
 
-    protect(legacyMainFrameProcess())->sendWithAsyncReply(Messages::WebPage::CreateTextFragmentDirectiveFromSelection(), WTF::move(completionHandler), webPageIDInMainFrameProcess());
+    sendWithAsyncReplyToFocusedOrMainFrameProcess(Messages::WebPage::CreateTextFragmentDirectiveFromSelection(), Messages::WebPage::CreateTextFragmentDirectiveFromSelection::Reply { WTF::move(completionHandler) });
 }
 
 void WebPageProxy::getTextFragmentRanges(CompletionHandler<void(const Vector<EditingRange>&&)>&& completionHandler)
@@ -1242,31 +1378,6 @@ void WebPageProxy::replaceImageForRemoveBackground(const ElementContext& element
 }
 
 #endif
-
-bool WebPageProxy::useGPUProcessForDOMRenderingEnabled() const
-{
-    if (RetainPtr useGPUProcessForDOMRendering = [[NSUserDefaults standardUserDefaults] objectForKey:@"WebKit2GPUProcessForDOMRendering"])
-        return [useGPUProcessForDOMRendering boolValue];
-
-    if (protect(preferences())->useGPUProcessForDOMRenderingEnabled())
-        return true;
-
-    Ref configuration = m_configuration;
-#if ENABLE(REMOTE_LAYER_TREE_ON_MAC_BY_DEFAULT)
-    if (configuration->lockdownModeEnabled())
-        return true;
-#endif
-
-    HashSet<Ref<const WebPageProxy>> visitedPages;
-    visitedPages.add(*this);
-    for (RefPtr page = configuration->relatedPage(); page && !visitedPages.contains(*page); page = page->configuration().relatedPage()) {
-        if (protect(page->preferences())->useGPUProcessForDOMRenderingEnabled())
-            return true;
-        visitedPages.add(*page);
-    }
-
-    return false;
-}
 
 bool WebPageProxy::shouldForceForegroundPriorityForClientNavigation() const
 {
@@ -1817,7 +1928,18 @@ void WebPageProxy::createTextIndicatorForElementWithID(const String& elementID, 
         return;
     }
 
-    protect(legacyMainFrameProcess())->sendWithAsyncReply(Messages::WebPage::CreateTextIndicatorForElementWithID(elementID), WTF::move(completionHandler), webPageIDInMainFrameProcess());
+    auto mainFrameProcessResult = Box<RefPtr<WebCore::TextIndicator>>::create();
+    auto otherProcessesResult = Box<RefPtr<WebCore::TextIndicator>>::create();
+    Ref aggregator = CallbackAggregator::create([mainFrameProcessResult, otherProcessesResult, completionHandler = WTF::move(completionHandler)] mutable {
+        completionHandler(*mainFrameProcessResult ? WTF::move(*mainFrameProcessResult) : WTF::move(*otherProcessesResult));
+    });
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        auto result = &process == &legacyMainFrameProcess() ? mainFrameProcessResult : otherProcessesResult;
+        process.sendWithAsyncReply(Messages::WebPage::CreateTextIndicatorForElementWithID(elementID), [aggregator, result](RefPtr<WebCore::TextIndicator>&& textIndicator) {
+            if (textIndicator && !*result)
+                *result = WTF::move(textIndicator);
+        }, pageID);
+    });
 }
 
 void WebPageProxy::setTextIndicatorFromFrame(FrameIdentifier frameID, RefPtr<WebCore::TextIndicator>&& textIndicator, WebCore::TextIndicatorLifetime lifetime)
@@ -2435,6 +2557,16 @@ void WebPageProxy::updateVisibleContentRectsLocally(const VisibleContentRectUpda
     internals().lastVisibleContentRectUpdate = visibleContentRectUpdate;
 }
 
+#if PLATFORM(MAC)
+bool WebPageProxy::isRedundantUnstableVisibleContentRectUpdate(const VisibleContentRectUpdateInfo& visibleContentRectUpdate) const
+{
+    const auto& lastUpdate = internals().lastVisibleContentRectUpdate;
+    if (!lastUpdate || !lastUpdate->inStableState() || visibleContentRectUpdate.inStableState())
+        return false;
+    return equalIgnoringViewStability(*lastUpdate, visibleContentRectUpdate);
+}
+#endif
+
 FloatRect WebPageProxy::updateVisibleContentRectsAndAdjustLayers(const VisibleContentRectUpdateInfo& visibleContentRectUpdate, bool sendEvenIfUnchanged)
 {
     updateVisibleContentRects(visibleContentRectUpdate, sendEvenIfUnchanged);
@@ -2522,11 +2654,6 @@ WebCore::FloatRect WebPageProxy::computeLayoutViewportRect(const FloatRect& unob
 
     double minimumScale = pageClient->minimumZoomScale();
     bool isBelowMinimumScale = displayedContentScale < minimumScale && !WebKit::scalesAreEssentiallyEqual(displayedContentScale, minimumScale);
-
-#if PLATFORM(MAC)
-    if (delegatesScalingToUIProcess())
-        isBelowMinimumScale = false;
-#endif
 
     // Below the minimum scale the viewport's off-document edges get pulled back onto the document, so fixed
     // elements stay with the page as it shrinks inside the view.
@@ -2672,6 +2799,13 @@ void WebPageProxy::didHandleTapAsHover()
     if (RefPtr pageClient = this->pageClient())
         pageClient->didHandleTapAsHover();
 }
+
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+void WebPageProxy::setHoverActivatedByClickBounds(std::optional<WebCore::IntRect>&& bounds)
+{
+    m_hoverActivatedByClickBounds = WTF::move(bounds);
+}
+#endif
 
 void WebPageProxy::didCompleteSyntheticClick()
 {

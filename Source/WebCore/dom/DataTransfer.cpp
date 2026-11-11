@@ -37,6 +37,7 @@
 #include "DocumentPage.h"
 #include "DocumentQuirks.h"
 #include "DocumentView.h"
+#include "DragController.h"
 #include "DragData.h"
 #include "Editor.h"
 #include "FileList.h"
@@ -69,10 +70,10 @@ class DragImageLoader final : public CachedImageClient, public RefCounted<DragIm
     WTF_MAKE_TZONE_ALLOCATED(DragImageLoader);
     WTF_MAKE_NONCOPYABLE(DragImageLoader);
 public:
-    static Ref<DragImageLoader> LEGACY_NODELETE create(DataTransfer&, const Document&);
+    NODELETE static Ref<DragImageLoader> create(DataTransfer&, const Document&);
     void startLoading(CachedResourceHandle<CachedImage>&);
     void stopLoading(CachedResourceHandle<CachedImage>&);
-    void LEGACY_NODELETE moveToDataTransfer(DataTransfer&);
+    NODELETE void moveToDataTransfer(DataTransfer&);
 
     // CachedResourceClient.
     void ref() const final { RefCounted::ref(); }
@@ -633,8 +634,7 @@ void DataTransfer::updateDragImage(const Document* document)
     if (!m_shouldUpdateDragImage)
         return;
 
-    IntPoint computedHotSpot;
-    auto computedImage = DragImage { createDragImage(document, computedHotSpot) };
+    auto [computedImage, computedHotSpot] = createDragImage(document);
     if (!computedImage)
         return;
 
@@ -646,36 +646,35 @@ RefPtr<Element> DataTransfer::dragImageElement() const
     return m_dragImageElement;
 }
 
-DragImageRef DataTransfer::createDragImage(const Document* document, IntPoint& location) const
+std::pair<DragImage, IntPoint> DataTransfer::createDragImage(const Document* document) const
 {
     if (m_dragImage) {
         // FIXME; Sizing images for DataTransfer is not fully specified. See https://github.com/whatwg/html/issues/13099.
 
         Ref image = *protect(m_dragImage)->image();
-        RefPtr nativeImage = image->currentNativeImage(DefaultSizing { std::nullopt, m_dragImageDensity }.resolve(image->naturalDimensions()));
+        RefPtr nativeImage = image->currentNativeImage(ImageDrawDescriptor { DefaultSizing { std::nullopt, m_dragImageDensity }.resolve(image->naturalDimensions()) });
         if (!nativeImage)
-            return nullptr;
+            return { };
 
-        DragImageRef result = createDragImageFromImage(*nativeImage, document && document->view() ? protect(document->view())->hostWindow() : nullptr, document ? document->deviceScaleFactor() : 1.0f);
-        location = platformAdjustDragImageHotSpot(m_dragLocation, dragImageSize(result));
-        return result;
+        auto result = DragImage::create(*nativeImage, document && document->view() ? protect(document->view())->hostWindow() : nullptr, document ? document->deviceScaleFactor() : 1.0f);
+        auto hotSpot = DragImage::platformAdjustDragImageHotSpot(m_dragLocation, result.size());
+        return { WTF::move(result), hotSpot };
     }
 
     if (m_dragImageElement) {
         RefPtr frame = m_dragImageElement->document().frame();
         if (!frame)
-            return nullptr;
+            return { };
 
         IntRect imageRect;
         IntRect elementRect;
-        DragImageRef result = createDragImageForImage(*frame, dragImageElement().releaseNonNull(), imageRect, elementRect);
-        location = platformAdjustDragImageHotSpot(m_dragLocation + (elementRect.location() - imageRect.location()), imageRect.size());
-        return result;
+        auto result = DragController::dragImageForImage(*frame, dragImageElement().releaseNonNull(), imageRect, elementRect);
+        auto hotSpot = DragImage::platformAdjustDragImageHotSpot(m_dragLocation + (elementRect.location() - imageRect.location()), imageRect.size());
+        return { WTF::move(result), hotSpot };
     }
 
     // We do not have enough information to create a drag image, use the default icon.
-    location = m_dragLocation;
-    return nullptr;
+    return { DragImage { }, m_dragLocation };
 }
 
 Ref<DragImageLoader> DragImageLoader::create(DataTransfer& dataTransfer, const Document& document)

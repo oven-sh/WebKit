@@ -1,0 +1,49 @@
+# lib.js: export function rate() { return 1 }
+# main.js: import * as lib from "./lib.js"; const f = x => x + 1, g = x => x + 2; f(1); g(1); lib.rate = f; lib[0] = () => 41
+# In a test run a mock may stand in place of the module, and the run time hands the store to the object of its factory, off which whoever imports the name reads it: f is called by whom nobody sees,
+# and the closure that nothing else names is reached. g, which is stored nowhere, keeps its callers
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 callers-known
+# CHECK-NOT: function f4 unreached
+# RUN(KEPT): link functions mechanisms=all
+# KEPT: function f3 callers-known
+# KEPT-NEXT: parameter 0 expected=i32 proven=int[0, 2147483647]
+
+module m0 path="/lib.js" displayPath="lib.js" body=f1 exports=[{name="rate" variable=g0}]
+module m1 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}]
+entry module=m1
+variable g0 name="rate" module=m0 declared={type=function} initialization=Function function=f5 flags=[IsImmutable]
+function f0 name="main" module=m1 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = Integer integer=1
+    v3 = Call v0, -, v2
+    v4 = Call v1, -, v2
+    v5 = ModuleNamespace module=m0
+    PropSet v5, v0 key="rate" mode=Strict
+    v7 = NewClosure function=f4
+    v8 = Integer integer=0
+    ElemSet v5, v8, v7 mode=Strict
+    Return
+}
+function f1 name="lib" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="f" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 name="g" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=2
+    v2 = Add v0, v1
+    Return v2
+}
+function f4 name="late" module=m1 results=[{type=anything}] {
+    v0 = Integer integer=41
+    Return v0
+}
+function f5 name="rate" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}

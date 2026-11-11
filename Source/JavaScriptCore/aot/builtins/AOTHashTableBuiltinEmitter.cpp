@@ -11,11 +11,10 @@
 #include "AOTCompactTable.h"
 #include "AOTConversionEmitter.h"
 #include "AOTRepresentation.h"
-#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static KeyComparison keyComparisonOf(const Type& key)
+static KeyComparison keyComparisonForType(const Type& key)
 {
     if (key.primitives & Primitive::AnyString)
         return key.hasOnlyPrimitives(Primitive::AnyString | Primitive::UndefinedOrNull) ? KeyComparison::String : KeyComparison::AnyValue;
@@ -23,12 +22,10 @@ static KeyComparison keyComparisonOf(const Type& key)
         return KeyComparison::AnyValue;
     if (!(key.primitives & Primitive::Number))
         return KeyComparison::Bits;
-    switch (defaultRepresentationOf(key)) {
+    switch (representationOf(key)) {
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
         return KeyComparison::Bits;
@@ -38,18 +35,17 @@ static KeyComparison keyComparisonOf(const Type& key)
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         return KeyComparison::AnyValue;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static StubKey lookupStubFor(HashTableOwner owner, bool returnsValue, KeyComparison comparison)
+static StubKey lookupStubFor(HashTableOwner owner, LookupAnswer answer, KeyComparison comparison)
 {
     switch (owner) {
     case HashTableOwner::Map:
-        return returnsValue ? mapGet(comparison) : mapHas(comparison);
+        return answer == LookupAnswer::IsPresent ? mapHas(comparison) : mapGet(comparison);
     case HashTableOwner::Set:
         return setHas(comparison);
     }
@@ -61,28 +57,20 @@ HashTableBuiltinEmitter::HashTableBuiltinEmitter(CodeGenerator& generator)
 {
 }
 
-Boxed HashTableBuiltinEmitter::normalizedNumber(const OperationContext& context, Number key)
+Boxed HashTableBuiltinEmitter::normalizedNumber(Number key)
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    auto anyNumber = [&] {
-        // Every NaN is one key.
-        Boxed boxedKey = conversions.boxNumber(ImpureNumber(key.value()));
-        return select(equal(key, number(0)), boxInt32(word32(0)), boxedKey);
-    };
-    if (context.shape() != CodeShape::Fast)
-        return anyNumber();
-
     LBasicBlock fitsInt32 = newBlock();
     LBasicBlock otherwise = newBlock();
     Join<Boxed> join(m_out);
-    Word32 truncated = low32(conversions.toInteger(key));
+    Word32 truncated = conversions.truncateToWord(key);
     m_out.branch(equal(toNumber(truncated), key).value(), normalEdge(fitsInt32), unlikelyEdge(otherwise));
 
     m_out.appendTo(fitsInt32);
     join.add(boxInt32(truncated));
 
     m_out.appendTo(otherwise);
-    join.add(anyNumber());
+    join.add(conversions.boxDouble(conversions.purified(key)));
     return join.finish();
 }
 
@@ -90,7 +78,7 @@ Boxed HashTableBuiltinEmitter::normalizedKey(const OperationContext& context, Va
 {
     const Type& type = typeOf(id);
     Boxed key = boxedOperand(context, id);
-    bool calleeNormalizes = keyComparisonOf(type) != KeyComparison::Bits;
+    bool calleeNormalizes = keyComparisonForType(type) != KeyComparison::Bits;
     if (calleeNormalizes || !(type.primitives & Primitive::Number))
         return key;
 
@@ -107,7 +95,7 @@ Boxed HashTableBuiltinEmitter::normalizedKey(const OperationContext& context, Va
     join.add(key);
 
     m_out.appendTo(needsNormalization);
-    join.add(normalizedNumber(context, unboxDouble(key)));
+    join.add(normalizedNumber(unboxDouble(key)));
     return join.finish();
 }
 
@@ -115,7 +103,8 @@ Word32 HashTableBuiltinEmitter::hashOfBits(Boxed key)
 {
     LValue a = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets)).value());
     LValue b = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets) + sizeof(uint64_t)).value());
-    return Word32(m_out.castToInt32(m_out.bitXor(m_out.mul(a, b), m_out.uMulHigh(a, b))));
+    LValue lowerHalf = m_out.mul(a, b);
+    return Word32(m_out.castToInt32(m_out.bitXor(lowerHalf, m_out.uMulHigh(a, b))));
 }
 
 Integer HashTableBuiltinEmitter::sizeOf(CellPointer table, HashTableOwner owner)
@@ -128,23 +117,54 @@ Integer HashTableBuiltinEmitter::sizeOf(CellPointer table, HashTableOwner owner)
     });
 }
 
-void HashTableBuiltinEmitter::lookUp(const InlineCall& call, HashTableOwner owner, bool returnsValue)
+Operand HashTableBuiltinEmitter::lookUpByStub(const OperationContext& context, CellPointer owner, Boxed key, StubKey stub, LookupAnswer answer)
 {
-    RELEASE_ASSERT(owner == HashTableOwner::Map || !returnsValue);
-    CellPointer table = cellOperand(call.receiver());
-    KeyComparison comparison = keyComparisonOf(typeOf(call.argument(0)));
-    Boxed key = normalizedKey(call.context(), call.argument(0));
-    Boxed answer(callStub(call.context(), lookupStubFor(owner, returnsValue, comparison), { table.value(), key.value() }).first);
-    if (returnsValue)
-        finish(call, answer);
-    else
-        finish(call, unboxBoolean(answer));
+    Boxed found(callStub(context, stub, { owner.value(), key.value() }).first);
+    switch (answer) {
+    case LookupAnswer::IsPresent:
+        return unboxBoolean(found);
+    case LookupAnswer::Value:
+        return found;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+Operand HashTableBuiltinEmitter::search(const OperationContext& context, ValueID collection, ValueID keyOfSearch, HashTableOwner owner, LookupAnswer answer)
+{
+    RELEASE_ASSERT(owner == HashTableOwner::Map || answer == LookupAnswer::IsPresent);
+
+    CellPointer table = cellOperand(collection);
+    KeyComparison comparison = keyComparisonForType(typeOf(keyOfSearch));
+    Boxed key = normalizedKey(context, keyOfSearch);
+    return lookUpByStub(context, table, key, lookupStubFor(owner, answer, comparison), answer);
+}
+
+Integer HashTableBuiltinEmitter::findPlace(const OperationContext& context, ValueID map, ValueID keyOfSearch)
+{
+    CellPointer table = cellOperand(map);
+    KeyComparison comparison = keyComparisonForType(typeOf(keyOfSearch));
+    Boxed key = normalizedKey(context, keyOfSearch);
+    return Integer(callStub(context, findKeyInMap(comparison), { table.value(), key.value() }).first);
+}
+
+void HashTableBuiltinEmitter::lookUp(const InlineCall& call, HashTableOwner owner, LookupAnswer answer)
+{
+    Operand found = search(call.context(), call.receiver(), call.argument(0), owner, answer);
+    switch (answer) {
+    case LookupAnswer::IsPresent:
+        finish(call, found.as<Condition>());
+        return;
+    case LookupAnswer::Value:
+        finish(call, found.as<Boxed>());
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void HashTableBuiltinEmitter::insert(const InlineCall& call, HashTableOwner owner)
 {
     CellPointer table = cellOperand(call.receiver());
-    KeyComparison comparison = keyComparisonOf(typeOf(call.argument(0)));
+    KeyComparison comparison = keyComparisonForType(typeOf(call.argument(0)));
     Boxed key = normalizedKey(call.context(), call.argument(0));
     switch (owner) {
     case HashTableOwner::Map:
@@ -160,7 +180,7 @@ void HashTableBuiltinEmitter::insert(const InlineCall& call, HashTableOwner owne
 void HashTableBuiltinEmitter::remove(const InlineCall& call, HashTableOwner owner)
 {
     CellPointer table = cellOperand(call.receiver());
-    KeyComparison comparison = keyComparisonOf(typeOf(call.argument(0)));
+    KeyComparison comparison = keyComparisonForType(typeOf(call.argument(0)));
     Boxed key = normalizedKey(call.context(), call.argument(0));
     StubKey stub = owner == HashTableOwner::Map ? mapDelete(comparison) : setDelete(comparison);
     finish(call, unboxBoolean(Boxed(callStub(call.context(), stub, { table.value(), key.value() }).first)));
@@ -183,17 +203,17 @@ void HashTableBuiltinEmitter::generateNewSet(const InlineCall& call)
 
 void HashTableBuiltinEmitter::generateMapGet(const InlineCall& call)
 {
-    lookUp(call, HashTableOwner::Map, true);
+    lookUp(call, HashTableOwner::Map, LookupAnswer::Value);
 }
 
 void HashTableBuiltinEmitter::generateMapHas(const InlineCall& call)
 {
-    lookUp(call, HashTableOwner::Map, false);
+    lookUp(call, HashTableOwner::Map, LookupAnswer::IsPresent);
 }
 
 void HashTableBuiltinEmitter::generateSetHas(const InlineCall& call)
 {
-    lookUp(call, HashTableOwner::Set, false);
+    lookUp(call, HashTableOwner::Set, LookupAnswer::IsPresent);
 }
 
 void HashTableBuiltinEmitter::generateMapSet(const InlineCall& call)
@@ -214,31 +234,6 @@ void HashTableBuiltinEmitter::generateMapSize(const InlineCall& call)
 void HashTableBuiltinEmitter::generateSetSize(const InlineCall& call)
 {
     generateSize(call, HashTableOwner::Set);
-}
-
-KeyPartsLookupEmitter::KeyPartsLookupEmitter(CodeGenerator& generator)
-    : BuiltinFamilyEmitter(generator)
-{
-}
-
-Pointer KeyPartsLookupEmitter::partsBuffer(const ValueContext& value)
-{
-    Vector<Boxed, 8> parts;
-    for (ValueID part : value->partsOperands())
-        parts.append(boxedOperand(value, part));
-    return argumentBuffer(parts.span());
-}
-
-void KeyPartsLookupEmitter::generateMapGetByKeyParts(const ValueContext& value)
-{
-    Word32 count = word32(static_cast<int32_t>(value->partsOperands().size()));
-    define(value, callOperation<Boxed>(value, RuntimeOperation::MapGetByKeyParts, { cellOperand(value->mapOperand()), count, partsBuffer(value) }));
-}
-
-void KeyPartsLookupEmitter::generateHasByKeyParts(const ValueContext& value)
-{
-    Word32 count = word32(static_cast<int32_t>(value->partsOperands().size()));
-    defineTest(value, callOperation<Condition>(value, RuntimeOperation::HasByKeyParts, { cellOperand(value->collectionOperand()), count, partsBuffer(value) }));
 }
 
 } } } // namespace JSC::AOT::Typed

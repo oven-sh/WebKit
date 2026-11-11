@@ -1,0 +1,19 @@
+# const act = Math.floor.bind(null); act(65.5)
+# The control of two-bound-functions-that-meet-at-one-call-are-called-as-unseen-code.ir: one bound function over a built-in function alone is called by the rows of its target.
+# RUN: link functions mechanisms=all
+# CHECK: function f0 {{*}}result=int|whole
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Null
+    v2 = PropGet v0 key="Math" [isFreeName]
+    v3 = PropGet v2 key="floor"
+    v4 = PropGet v3 key="bind"
+    v5 = Call v4, v3, v1 calleeKey="bind"
+    v6 = Double number=65.5
+    v7 = Call v5, -, v6
+    Return v7
+}

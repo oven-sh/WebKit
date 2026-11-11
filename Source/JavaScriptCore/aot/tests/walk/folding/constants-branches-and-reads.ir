@@ -1,0 +1,44 @@
+# a sum of constants is a constant. A branch on what is proven is a jump, and the side that nothing enters is not walked. A variable that was stored a moment ago is not read
+# function folded(v) { last = v; if (typeof (2 + 3) === "number") return [last, 2 + 3]; return v.never; }
+# The state learns what a variable holds from the typed accesses, so they are on
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding
+# CHECK: mechanisms TypedOperations,Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: [[five]]: {{*}} = Integer integer=5
+# CHECK: b0([[v]]:
+# CHECK: PutModuleVariable {{*}}variable=g0
+# CHECK: = NewArray [[v]], [[five]]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding
+# NEVER-NOT: = Add
+# NEVER-NOT: = TypeTest
+# NEVER-NOT: Branch
+# NEVER-NOT: GetModuleVariable
+# NEVER-NOT: key="never"
+
+variable g0 name="last" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="folded" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=2
+    v3 = Integer integer=3
+    v4 = Add v2, v3
+    v5 = TypeTest v4 testedType=number
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = GetModuleVariable variable=g0
+    v7 = NewArray v6, v4 contents=anything
+    Return v7
+  b2():
+    v8 = PropGet v0 key="never"
+    Return v8
+}

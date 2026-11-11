@@ -1,0 +1,217 @@
+# a text that grows under a handler lies in a builder. What the handler gets is the text at the head of the block that threw
+# function caught() { let s = ""; try { for (let i = 0; i < 16; i++) s += "k" + i + ","; } catch { return s; } return s; }
+#   the handler block lies behind the loop and is handed the text: a block of the walk's own catches, makes the string of what the builder holds, and throws on. An append of several parts is rolled back where it fails
+# function inner(n, f) { try { let s = ""; for (let i = 0; i < n; i++) s += f(i) + ","; return s; } catch { return ""; } }
+#   the handler is handed nothing of the text: nothing is caught on the way, nothing is rolled back
+# function kept(n, f) { let s = ""; let bad = 0; for (let i = 0; i < n; i++) { try { s += f(i); } catch { bad++; } } return s + bad; }
+#   the handler block lies in the loop: it goes on with the builder, and no string is made
+# function late(f) { let s = ""; try { for (let i = 0; i < 16; i++) { s += i; f(); } } catch { return s; } return s; }
+#   written so that the call stands behind the append in one block whose handler edge names the text at its head: the builder would hold more than that, so there is none
+# function left(n, f) { let s = ""; for (let i = 0; i < n; i++) { try { s += f(i); } catch { return s; } } return s; }
+#   written so that the handler block, which lies behind the loop, reads the parameter of the head without being handed it: no edge brings it a string, so there is no builder
+# function headed(n, f) { let s = ""; let i = 0; for (;;) { try { if (i >= n) break; s += f(i++); } catch { i++; } } return s; }
+#   written so that the head of the loop stands under the handler, which lies in the loop: what is built in front of the loop would throw into the loop, so there is no builder
+# each function is handed to code that nobody has seen
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# CHECK-LABEL: code f1:Body
+# CHECK: = StringBuilderBegin
+# CHECK: = StringBuilderCheckpoint
+# CHECK: StringBuilderRollBack
+# RUN(LANDING): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# LANDING-LABEL: code f1:Body
+# LANDING: = CatchException
+# LANDING: = StringBuilderToString
+# LANDING: Rethrow
+# RUN(PARTS): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# PARTS: StringBuilderAppendInteger
+# RUN(DEAD): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# DEAD-LABEL: code f2:Body
+# DEAD: = StackStringBuilderBegin
+# DEAD: = StackStringBuilderFinish
+# RUN(DEADONLY): walk f2 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# DEADONLY-NOT: CatchException
+# DEADONLY-NOT: StringBuilderCheckpoint
+# DEADONLY-NOT: StringBuilderToString
+# RUN(INSIDE): walk f3 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# INSIDE-LABEL: code f3:Body
+# INSIDE: = StringBuilderBegin
+# INSIDE: isLoopHead=true
+# INSIDE: = StringBuilderFinish
+# INSIDE: role=CatchHandler
+# RUN(INSIDEONLY): walk f3 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# INSIDEONLY-NOT: StringBuilderToString
+# INSIDEONLY-NOT: CatchException
+# RUN(LATE): walk f4 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# LATE-NOT: StringBuilder
+# RUN(LEFT): walk f5 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# LEFT-NOT: StringBuilder
+# RUN(HEADED): walk f6 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# HEADED-NOT: StringBuilder
+# RUN(KEEPS): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants+Handlers
+# KEEPS-NOT: StringBuilderFinish
+# KEEPS-NOT: StringBuilderDiscard
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = StringBuilderBegin
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="caught" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string=""
+    Jump -> next b1()
+  b1() handler=b5(v0):
+    v1 = Integer
+    Jump -> next b2(v0, v1)
+  b2(v2, v3) handler=b5(v2):
+    LoopHint
+    v5 = Integer integer=16
+    v6 = Less v3, v5
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() handler=b5(v2):
+    v7 = Increment v3
+    v8 = String string="k"
+    v9 = Add v8, v3
+    v10 = String string=","
+    v11 = Add v9, v10
+    v12 = Add v2, v11
+    Jump -> next b2(v12, v7)
+  b4():
+    Return v2
+  b5(v13) role=CatchHandler:
+    v14 = CatchValue
+    Return v13
+}
+function f2 name="inner" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b5():
+    v2 = String string=""
+    v3 = Integer
+    Jump -> next b2(v2, v3)
+  b2(v4, v5) handler=b5():
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() handler=b5():
+    v8 = Call v1, -, v5
+    v9 = String string=","
+    v10 = Add v8, v9
+    v11 = Add v4, v10
+    v12 = Increment v5
+    Jump -> next b2(v11, v12)
+  b4() handler=b5():
+    Return v4
+  b5() role=CatchHandler:
+    v13 = CatchValue
+    v14 = String string=""
+    Return v14
+}
+function f3 name="kept" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=""
+    v3 = Integer
+    v4 = Integer
+    Jump -> next b1(v2, v3, v4)
+  b1(v5, v6, v7):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b2(), notTaken b6()
+  b2() handler=b4(v5):
+    v10 = Call v1, -, v7
+    v11 = Add v5, v10
+    Jump -> next b3()
+  b3():
+    Jump -> next b5(v11, v6)
+  b4(v12) role=CatchHandler:
+    v13 = CatchValue
+    v14 = Increment v6
+    Jump -> next b5(v12, v14)
+  b5(v15, v16):
+    v17 = Increment v7
+    Jump -> next b1(v15, v16, v17)
+  b6():
+    v18 = Add v5, v6
+    Return v18
+}
+function f4 name="late" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    Jump -> next b1()
+  b1() handler=b5(v1):
+    v2 = Integer
+    Jump -> next b2(v1, v2)
+  b2(v3, v4) handler=b5(v3):
+    LoopHint
+    v6 = Integer integer=16
+    v7 = Less v4, v6
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() handler=b5(v3):
+    v8 = Add v3, v4
+    v9 = Call v0
+    v10 = Increment v4
+    Jump -> next b2(v8, v10)
+  b4():
+    Return v3
+  b5(v11) role=CatchHandler:
+    v12 = CatchValue
+    Return v11
+}
+function f5 name="left" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=""
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b5()
+  b2() handler=b4():
+    v8 = Call v1, -, v5
+    Jump -> next b3()
+  b3():
+    v9 = Add v4, v8
+    v10 = Increment v5
+    Jump -> next b1(v9, v10)
+  b4() role=CatchHandler:
+    v11 = CatchValue
+    Return v4
+  b5():
+    Return v4
+}
+function f6 name="headed" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string=""
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5) handler=b3(v4, v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b5()
+  b2() handler=b3(v4, v5):
+    v8 = Call v1, -, v5
+    v9 = Increment v5
+    v10 = Add v4, v8
+    Jump -> next b4(v10, v9)
+  b3(v11, v12) role=CatchHandler:
+    v13 = CatchValue
+    v14 = Increment v12
+    Jump -> next b4(v11, v14)
+  b4(v15, v16):
+    Jump -> next b1(v15, v16)
+  b5():
+    Return v4
+}

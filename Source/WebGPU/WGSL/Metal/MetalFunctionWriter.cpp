@@ -35,8 +35,10 @@
 #include "Constraints.h"
 #include "Types.h"
 #include "WGSLShaderModule.h"
+#include <limits>
 #include <numbers>
 #include <wtf/HashSet.h>
+#include <wtf/OptionSet.h>
 #include <wtf/SetForScope.h>
 #include <wtf/SortedArrayMap.h>
 #include <wtf/text/MakeString.h>
@@ -46,12 +48,55 @@ namespace WGSL {
 
 namespace Metal {
 
+ASCIILiteral hdrToSDRMetalSource()
+{
+    return
+        "// Decodes PQ (SMPTE ST 2084) or HLG (ITU-R BT.2100) rgb to linear light in the frame's own primaries,\n"
+        "// scaled so that 1.0 is SDR white. An SDR canvas has no room above that, so __wgslToneMapHDR() then\n"
+        "// fits what is brighter into it.\n"
+        "static float3 __wgslDecodeHDR(float3 encoded, bool isHLG)\n"
+        "{\n"
+        "    constexpr float referenceWhiteNits = 440.0f;\n"
+        "    if (!isHLG) {\n"
+        "        constexpr float m1 = 0.1593017578125f, m2 = 78.84375f, c1 = 0.8359375f, c2 = 18.8515625f, c3 = 18.6875f;\n"
+        "        float3 const p = pow(encoded, 1.0f / m2);\n"
+        "        return pow(max(p - c1, 0.0f) / (c2 - c3 * p), 1.0f / m1) * (10000.0f / referenceWhiteNits);\n"
+        "    }\n"
+        "    constexpr float a = 0.17883277f, b = 0.28466892f, c = 0.55991073f;\n"
+        "    float3 const scene = select((exp((encoded - c) / a) + b) / 12.0f, encoded * encoded / 3.0f, encoded <= 0.5f);\n"
+        "    // The HLG OOTF for a 1000 nit display: a gamma of 1.2 applied through the luminance.\n"
+        "    float const sceneLuminance = dot(scene, float3(0.2627f, 0.6780f, 0.0593f));\n"
+        "    return scene * pow(max(sceneLuminance, 1e-6f), 0.2f) * (1000.0f / referenceWhiteNits);\n"
+        "}\n"
+        "\n"
+        "// Leaves everything up to half of SDR white alone, and rolls what is above it off towards 1.0 with a\n"
+        "// slope that starts out matching, so SDR-range content is not dimmed. It scales the color by its\n"
+        "// luminance, to keep the hue of what it compresses.\n"
+        "static float3 __wgslToneMapHDR(float3 linearLight)\n"
+        "{\n"
+        "    constexpr float knee = 0.5f;\n"
+        "    float const luminance = dot(linearLight, float3(0.2627f, 0.6780f, 0.0593f));\n"
+        "    if (luminance <= knee)\n"
+        "        return linearLight;\n"
+        "    float const excess = luminance - knee;\n"
+        "    float const mapped = knee + (1.0f - knee) * excess / (excess + (1.0f - knee));\n"
+        "    return linearLight * (mapped / luminance);\n"
+        "}\n"
+        "\n"
+        "static float3 __wgslLinearToBT1886(float3 linearLight)\n"
+        "{\n"
+        "    return sign(linearLight) * pow(abs(linearLight), 1.0f / 2.4f);\n"
+        "}\n"_s;
+}
+
 #define DECLARE_FORWARD_PROGRESS_VOLATILE_ACCESS "uint32_t __wgslEnsureForwardProgress = 0;"_s
 #define CHECK_FORWARD_PROGRESS_VOLATILE_ACCESS "if (__wgslEnsureForwardProgress == 4294967295u) break;"_s
 #define DECLARE_FORWARD_PROGRESS_VOLATILE_COUNTER "volatile uint32_t __wgslEnsureForwardProgress = 0; if (!__wgslEnsureForwardProgress)"_s
 #define CHECK_FORWARD_PROGRESS_VOLATILE_COUNTER "if (++__wgslEnsureForwardProgress == 4294967295u) break;"_s
 #define DECLARE_OPAQUE_SCOPE "volatile uint32_t __wgslEnsureSwitchClauseScope = 0; if (!__wgslEnsureSwitchClauseScope)"
 
+// Variadic so that helper bodies may contain top-level commas, e.g. in a
+// template parameter list
 #define STRINGIFY_(...) #__VA_ARGS__##_s
 #define STRINGIFY(...) STRINGIFY_(__VA_ARGS__)
 
@@ -254,6 +299,37 @@ DEFINE_HELPER_TEXT(TextureSampleBiasWithOffset3d,
     "    return __texture.sample(__sampler, __coords, bias(__bias), int3(__x, __y, __z));\n"
     "}\n"_s)
 
+DEFINE_HELPER(NegateInt, \
+    template<typename T>\n \
+    [[clang::always_inline]] static T __wgslNegateInt(T value)\n \
+    {\n \
+        return as_type<T>(make_unsigned_t<T>(0) - make_unsigned_t<T>(value)); \
+    }\n)
+
+DEFINE_HELPER(AddInt, \
+    template<typename T, typename U>\n \
+    [[clang::always_inline]] static auto __wgslAddInt(T lhs, U rhs)\n \
+    {\n \
+        using V = decltype(lhs + rhs); \
+        return as_type<V>(make_unsigned_t<V>(lhs) + make_unsigned_t<V>(rhs)); \
+    }\n)
+
+DEFINE_HELPER(SubInt, \
+    template<typename T, typename U>\n \
+    [[clang::always_inline]] static auto __wgslSubInt(T lhs, U rhs)\n \
+    {\n \
+        using V = decltype(lhs - rhs); \
+        return as_type<V>(make_unsigned_t<V>(lhs) - make_unsigned_t<V>(rhs)); \
+    }\n)
+
+DEFINE_HELPER(MulInt, \
+    template<typename T, typename U>\n \
+    [[clang::always_inline]] static auto __wgslMulInt(T lhs, U rhs)\n \
+    {\n \
+        using V = decltype(lhs * rhs); \
+        return as_type<V>(make_unsigned_t<V>(lhs) * make_unsigned_t<V>(rhs)); \
+    }\n)
+
 };
 
 #undef DEFINE_TRIG_HELPER
@@ -284,6 +360,7 @@ public:
     void visit(AST::Attribute&) override;
     void visit(AST::BuiltinAttribute&) override;
     void visit(AST::LocationAttribute&) override;
+    void visit(AST::BlendSrcAttribute&) override;
     void visit(AST::StageAttribute&) override;
     void visit(AST::GroupAttribute&) override;
     void visit(AST::BindingAttribute&) override;
@@ -339,11 +416,11 @@ public:
 
     void visit(const Type*, bool shouldPack = false);
 
-    StringBuilder& LEGACY_NODELETE stringBuilder() { return m_body; }
-    Indentation<4>& LEGACY_NODELETE indent() { return m_indent; }
-    HelperGenerator& LEGACY_NODELETE helperGenerator() { return m_helperGenerator; }
-    unsigned LEGACY_NODELETE metalAppleGPUFamily() const { return m_deviceState.appleGPUFamily; }
-    bool LEGACY_NODELETE shaderValidationEnabled() const { return m_deviceState.shaderValidationEnabled; }
+    NODELETE StringBuilder& stringBuilder() { return m_body; }
+    NODELETE Indentation<4>& indent() { return m_indent; }
+    NODELETE HelperGenerator& helperGenerator() { return m_helperGenerator; }
+    NODELETE unsigned metalAppleGPUFamily() const { return m_deviceState.appleGPUFamily; }
+    NODELETE bool shaderValidationEnabled() const { return m_deviceState.shaderValidationEnabled; }
 
     ASCIILiteral declareForwardProgress() const
     {
@@ -357,6 +434,11 @@ public:
 
 private:
     enum class PackingHelper : bool { Pack, Unpack };
+    enum class ArgumentKind : uint8_t { Constant = 1 << 0, Runtime = 1 << 1 };
+    struct CallSiteInfo {
+        Vector<OptionSet<ArgumentKind>> argumentKinds;
+        bool hasMixedArgument { false };
+    };
 
     void emitNecessaryHelpers();
     void serializeVariable(AST::Variable&);
@@ -365,12 +447,14 @@ private:
     void generatePackingHelpers(AST::Structure&);
     bool emitPackedVector(const Types::Vector&, bool shouldPack);
     bool shouldForceInlining(AST::Function&) const;
+    void collectCallSiteInfo(AST::Function&);
+    void selectForcedInliningCallees();
 
     bool outlineConstant(const Type*, AST::Expression&);
     void serializeConstant(const Type*, ConstantValue);
     void serializeBinaryExpression(AST::Expression&, AST::BinaryOperation, AST::Expression&);
     void visitStatements(AST::Statement::List&);
-    bool LEGACY_NODELETE shouldPackType() const;
+    NODELETE bool shouldPackType() const;
 
     HelperGenerator m_helperGenerator;
     StringBuilder m_body;
@@ -386,6 +470,10 @@ private:
     AST::Function* m_currentFunction { nullptr };
     AST::Continuing*m_continuing { nullptr };
     HashSet<AST::Function*> m_visitedFunctions;
+    HashSet<AST::Function*> m_collectedFunctions;
+    Vector<AST::Function*> m_functionsCalleesFirst;
+    HashMap<AST::Function*, CallSiteInfo> m_callSiteInfo;
+    HashSet<AST::Function*> m_forcedInliningCallees;
     HashMap<const AST::Structure*, AST::Structure*> m_packedStructures;
     HashSet<const AST::Structure*> m_usedPackHelpers;
     HashSet<const AST::Structure*> m_usedUnpackHelpers;
@@ -411,6 +499,16 @@ static ASCIILiteral serializeAddressSpace(AddressSpace addressSpace)
     }
 }
 
+static bool isSignedIntegerArithmeticType(const Type* type)
+{
+    if (auto* reference = std::get_if<Types::Reference>(type))
+        type = reference->element;
+    if (auto* vector = std::get_if<Types::Vector>(type))
+        type = vector->element;
+    auto* primitive = std::get_if<Types::Primitive>(type);
+    return primitive && primitive->kind == Types::Primitive::I32;
+}
+
 void FunctionDefinitionWriter::write()
 {
     emitNecessaryHelpers();
@@ -425,6 +523,8 @@ void FunctionDefinitionWriter::write()
 
     m_output.append(m_body);
     m_body.clear();
+
+    selectForcedInliningCallees();
 
     for (auto& entryPoint : m_shaderModule.callGraph().entrypoints()) {
         if (m_prepareResult.entryPoints.contains(entryPoint.originalName))
@@ -508,6 +608,7 @@ void FunctionDefinitionWriter::emitNecessaryHelpers()
 
     if (m_shaderModule.usesExternalTextures()) {
         m_shaderModule.clearUsesExternalTextures();
+        m_output.append(hdrToSDRMetalSource(), "\n"_s);
         m_output.append("struct texture_external {\n"_s);
         {
             IndentationScope scope(m_indent);
@@ -515,7 +616,7 @@ void FunctionDefinitionWriter::emitNecessaryHelpers()
                 m_indent, "texture2d<float> SecondPlane;\n"_s,
                 m_indent, "float3x2 UVRemapMatrix;\n"_s,
                 m_indent, "float4x3 ColorSpaceConversionMatrix;\n"_s,
-                m_indent, "float3x3 PrimariesConversionMatrix;\n"_s,
+                m_indent, "float3x4 PrimariesConversionMatrix;\n"_s,
                 m_indent, "uint2 VisibleSize;\n"_s,
                 // The size the source presents the frame at, which is what textureDimensions() is owed and
                 // is not the size of the plane the frame was decoded into: a VideoFrame carries a display
@@ -532,14 +633,29 @@ void FunctionDefinitionWriter::emitNecessaryHelpers()
                 // has to skip the round trip rather than run it to arrive back where it started.
                 m_indent, "float4 to_destination_color_space(float3 rgb, float alpha, float premultiplied) const\n"_s,
                 m_indent, "{\n"_s,
-                m_indent, "    if (PrimariesConversionMatrix[0][0] == 0.0f)\n"_s,
+                // The w of the matrix's first column says how the frame's rgb is encoded: 0 is SDR, which
+                // is taken to be sRGB-encoded, 1 is PQ and 2 is HLG.
+                m_indent, "    float const transfer = PrimariesConversionMatrix[0][3];\n"_s,
+                m_indent, "    bool const isHDR = transfer != 0.0f;\n"_s,
+                m_indent, "    bool const keepsPrimaries = PrimariesConversionMatrix[0][0] == 0.0f;\n"_s,
+                m_indent, "    if (keepsPrimaries && !isHDR)\n"_s,
                 m_indent, "        return float4(rgb * mix(alpha, 1.0f, premultiplied), alpha);\n"_s,
                 m_indent, "    float3 const straight = (premultiplied != 0.0f && alpha > 0.0f) ? rgb / alpha : rgb;\n"_s,
-                m_indent, "    float3 const magnitude = abs(straight);\n"_s,
-                m_indent, "    float3 const linearLight = sign(straight) * select(pow((magnitude + 0.055f) / 1.055f, 2.4f), magnitude / 12.92f, magnitude <= 0.04045f);\n"_s,
-                m_indent, "    float3 const converted = PrimariesConversionMatrix * linearLight;\n"_s,
+                m_indent, "    float3 linearLight;\n"_s,
+                m_indent, "    if (isHDR)\n"_s,
+                m_indent, "        linearLight = __wgslToneMapHDR(__wgslDecodeHDR(clamp(straight, 0.0f, 1.0f), transfer == 2.0f));\n"_s,
+                m_indent, "    else {\n"_s,
+                m_indent, "        float3 const magnitude = abs(straight);\n"_s,
+                m_indent, "        linearLight = sign(straight) * select(pow((magnitude + 0.055f) / 1.055f, 2.4f), magnitude / 12.92f, magnitude <= 0.04045f);\n"_s,
+                m_indent, "    }\n"_s,
+                m_indent, "    float3x3 const primaries = keepsPrimaries ? float3x3(1.0f) : float3x3(PrimariesConversionMatrix[0].xyz, PrimariesConversionMatrix[1].xyz, PrimariesConversionMatrix[2].xyz);\n"_s,
+                m_indent, "    float3 const converted = primaries * linearLight;\n"_s,
                 m_indent, "    float3 const convertedMagnitude = abs(converted);\n"_s,
-                m_indent, "    float3 const encoded = sign(converted) * select(1.055f * pow(convertedMagnitude, 1.0f / 2.4f) - 0.055f, convertedMagnitude * 12.92f, convertedMagnitude <= 0.0031308f);\n"_s,
+                // HDR is encoded the way a video signal is, with the pure 2.4 gamma of ITU-R BT.1886, rather
+                // than with the sRGB curve, as CoreGraphics does when it brings HDR video down to SDR.
+                m_indent, "    float3 const encoded = isHDR\n"_s,
+                m_indent, "        ? __wgslLinearToBT1886(converted)\n"_s,
+                m_indent, "        : sign(converted) * select(1.055f * pow(convertedMagnitude, 1.0f / 2.4f) - 0.055f, convertedMagnitude * 12.92f, convertedMagnitude <= 0.0031308f);\n"_s,
                 m_indent, "    return float4(encoded * alpha, alpha);\n"_s,
                 m_indent, "}\n"_s);
         }
@@ -830,7 +946,20 @@ void FunctionDefinitionWriter::emitNecessaryHelpers()
             m_indent, "{\n"_s);
         {
             IndentationScope scope(m_indent);
-            m_output.append(m_indent, "auto result = lhs[0] * rhs[0] + lhs[1] * rhs[1];\n"_s,
+            // use built-in dot for floats since its only defined there
+            m_output.append(m_indent, "if constexpr (is_floating_point_v<T>)\n"_s,
+                m_indent, "    return dot(lhs, rhs);\n"_s);
+            // avoid integer UB by promotion to unsigned
+            m_output.append(m_indent, "if constexpr (is_integral_v<T>) {\n"_s,
+                m_indent, "    using U = make_unsigned_t<T>;\n"_s,
+                m_indent, "    vec<U, N> l = vec<U, N>(lhs);\n"_s,
+                m_indent, "    vec<U, N> r = vec<U, N>(rhs);\n"_s,
+                m_indent, "    U result = l[0] * r[0] + l[1] * r[1];\n"_s,
+                m_indent, "    if constexpr (N > 2) result += l[2] * r[2];\n"_s,
+                m_indent, "    if constexpr (N > 3) result += l[3] * r[3];\n"_s,
+                m_indent, "    return as_type<T>(result);\n"_s,
+                m_indent, "}\n"_s,
+                m_indent, "auto result = lhs[0] * rhs[0] + lhs[1] * rhs[1];\n"_s,
                 m_indent, "if constexpr (N > 2) result += lhs[2] * rhs[2];\n"_s,
                 m_indent, "if constexpr (N > 3) result += lhs[3] * rhs[3];\n"_s,
                 m_indent, "return result;\n"_s);
@@ -968,9 +1097,32 @@ void FunctionDefinitionWriter::emitNecessaryHelpers()
     m_shaderModule.clearUsesPackedVec3();
 }
 
-bool FunctionDefinitionWriter::shouldForceInlining(AST::Function& functionDefinition) const
+void FunctionDefinitionWriter::collectCallSiteInfo(AST::Function& function)
 {
-    if (metalAppleGPUFamily() < 9 || m_entryPointStage)
+    if (!m_collectedFunctions.add(&function).isNewEntry)
+        return;
+
+    for (auto& callee : m_shaderModule.callGraph().callees(function)) {
+        auto& callSiteInfo = m_callSiteInfo.add(callee.target, CallSiteInfo { }).iterator->value;
+        for (auto& callSite : callee.callSites) {
+            auto& arguments = std::get<1>(callSite)->arguments();
+            if (callSiteInfo.argumentKinds.size() < arguments.size())
+                callSiteInfo.argumentKinds.grow(arguments.size());
+            for (size_t i = 0; i < arguments.size(); ++i) {
+                auto& argumentKinds = callSiteInfo.argumentKinds[i];
+                argumentKinds.add(arguments[i].constantValue() ? ArgumentKind::Constant : ArgumentKind::Runtime);
+                if (argumentKinds.containsAll({ ArgumentKind::Constant, ArgumentKind::Runtime }))
+                    callSiteInfo.hasMixedArgument = true;
+            }
+        }
+        collectCallSiteInfo(*callee.target);
+    }
+    m_functionsCalleesFirst.append(&function);
+}
+
+static bool returnsLargeAggregate(AST::Function& functionDefinition)
+{
+    if (functionDefinition.stage())
         return false;
 
     auto* returnType = functionDefinition.maybeReturnType();
@@ -987,6 +1139,52 @@ bool FunctionDefinitionWriter::shouldForceInlining(AST::Function& functionDefini
     constexpr unsigned minimumInlinedReturnSize = 128;
     auto size = type->maybeSize();
     return size && *size >= minimumInlinedReturnSize;
+}
+
+void FunctionDefinitionWriter::selectForcedInliningCallees()
+{
+    if (metalAppleGPUFamily() < 9)
+        return;
+
+    for (auto& entryPoint : m_shaderModule.callGraph().entrypoints()) {
+        if (m_prepareResult.entryPoints.contains(entryPoint.originalName))
+            collectCallSiteInfo(entryPoint.function);
+    }
+
+    constexpr uint64_t maximumInliningGrowthFactor = 4;
+    constexpr uint64_t maximumBodyCount = std::numeric_limits<uint32_t>::max();
+
+    uint64_t remainingGrowth = 0;
+    for (auto* function : m_functionsCalleesFirst)
+        remainingGrowth += function->span().length;
+    remainingGrowth *= maximumInliningGrowthFactor;
+
+    HashMap<AST::Function*, uint64_t> bodyCounts;
+    for (size_t i = m_functionsCalleesFirst.size(); i--;) {
+        auto& function = *m_functionsCalleesFirst[i];
+        uint64_t bodies = std::max<uint64_t>(bodyCounts.get(&function), 1);
+        bool forced = returnsLargeAggregate(function);
+        auto callSiteInfo = m_callSiteInfo.find(&function);
+        if (!forced && callSiteInfo != m_callSiteInfo.end() && callSiteInfo->value.hasMixedArgument) {
+            uint64_t growth = (bodies - 1) * function.span().length;
+            if (growth <= remainingGrowth) {
+                remainingGrowth -= growth;
+                forced = true;
+            }
+        }
+        if (forced)
+            m_forcedInliningCallees.add(&function);
+        uint64_t inlinedBodies = forced ? bodies : 1;
+        for (auto& callee : m_shaderModule.callGraph().callees(function)) {
+            auto& calleeBodies = bodyCounts.add(callee.target, 0u).iterator->value;
+            calleeBodies = std::min(calleeBodies + callee.callSites.size() * inlinedBodies, maximumBodyCount);
+        }
+    }
+}
+
+bool FunctionDefinitionWriter::shouldForceInlining(AST::Function& functionDefinition) const
+{
+    return !m_entryPointStage && m_forcedInliningCallees.contains(&functionDefinition);
 }
 
 void FunctionDefinitionWriter::visit(AST::Function& functionDefinition)
@@ -1073,7 +1271,7 @@ void FunctionDefinitionWriter::visit(AST::Structure& structDecl)
                     m_indent, "texture2d<float> __"_s, name, "_SecondPlane [[id("_s, (bindingIndex + 1), ")]];\n"_s,
                     m_indent, "float3x2 __"_s, name, "_UVRemapMatrix [[id("_s, (bindingIndex + 2), ")]];\n"_s,
                     m_indent, "float4x3 __"_s, name, "_ColorSpaceConversionMatrix [[id("_s, (bindingIndex + 3), ")]];\n"_s,
-                    m_indent, "float3x3 __"_s, name, "_PrimariesConversionMatrix [[id("_s, (bindingIndex + 4), ")]];\n"_s,
+                    m_indent, "float3x4 __"_s, name, "_PrimariesConversionMatrix [[id("_s, (bindingIndex + 4), ")]];\n"_s,
                     m_indent, "uint2 __"_s, name, "_VisibleSize [[id("_s, (bindingIndex + 5), ")]];\n"_s);
                 continue;
             }
@@ -1576,6 +1774,14 @@ void FunctionDefinitionWriter::visit(AST::LocationAttribute& location)
             break;
         }
     }
+}
+
+void FunctionDefinitionWriter::visit(AST::BlendSrcAttribute& blendSrc)
+{
+    // @blend_src is only valid on fragment outputs, where it selects the blending unit input
+    // for @location(0): [[color(0)]] [[index(0)]] or [[color(0)]] [[index(1)]].
+    if (m_structRole.has_value() && *m_structRole == AST::StructureRole::FragmentOutput)
+        m_body.append("[[index("_s, blendSrc.blendSrc().constantValue()->integerValue(), ")]]"_s);
 }
 
 void FunctionDefinitionWriter::visit(AST::WorkgroupSizeAttribute&)
@@ -2629,7 +2835,7 @@ static void emitAtomicExchange(FunctionDefinitionWriter* writer, AST::CallExpres
     atomicFunction("atomic_exchange_explicit"_s, writer, call);
 }
 
-[[noreturn]] static void LEGACY_NODELETE emitArrayLength(FunctionDefinitionWriter*, AST::CallExpression&)
+NODELETE [[noreturn]] static void emitArrayLength(FunctionDefinitionWriter*, AST::CallExpression&)
 {
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -2979,6 +3185,16 @@ void FunctionDefinitionWriter::visit(const Type* type, AST::CallExpression& call
 
 void FunctionDefinitionWriter::visit(AST::UnaryExpression& unary)
 {
+    // `-x` on a signed integer must wrap rather than be assumed not to overflow.
+    if (unary.operation() == AST::UnaryOperation::Negate && isSignedIntegerArithmeticType(unary.inferredType())) {
+        if (!std::exchange(m_helperGenerator.didEmitNegateInt, true))
+            m_helperGenerator.emitNegateInt();
+        m_body.append("__wgslNegateInt("_s);
+        visit(unary.expression());
+        m_body.append(')');
+        return;
+    }
+
     m_body.append('(');
     switch (unary.operation()) {
     case AST::UnaryOperation::Complement:
@@ -3019,6 +3235,42 @@ void FunctionDefinitionWriter::serializeBinaryExpression(AST::Expression& lhs, A
                 helperFunction = "__wgslMod"_s;
         } else if (isMod)
             helperFunction = "fmod"_s;
+
+        if (!helperFunction.isNull()) {
+            m_body.append(helperFunction, '(');
+            visit(lhs);
+            m_body.append(", "_s);
+            visit(rhs);
+            m_body.append(')');
+            return;
+        }
+    }
+
+    // `+`, `-` and `*` on signed integers must wrap rather than be assumed not
+    // to overflow. Both operands are checked because WGSL only declares these
+    // operators over matching element types, so a matrix operand (whose element
+    // type is always floating point) never reaches the helpers.
+    if (isSignedIntegerArithmeticType(lhs.inferredType()) && isSignedIntegerArithmeticType(rhs.inferredType())) {
+        ASCIILiteral helperFunction;
+        switch (operation) {
+        case AST::BinaryOperation::Add:
+            if (!std::exchange(m_helperGenerator.didEmitAddInt, true))
+                m_helperGenerator.emitAddInt();
+            helperFunction = "__wgslAddInt"_s;
+            break;
+        case AST::BinaryOperation::Subtract:
+            if (!std::exchange(m_helperGenerator.didEmitSubInt, true))
+                m_helperGenerator.emitSubInt();
+            helperFunction = "__wgslSubInt"_s;
+            break;
+        case AST::BinaryOperation::Multiply:
+            if (!std::exchange(m_helperGenerator.didEmitMulInt, true))
+                m_helperGenerator.emitMulInt();
+            helperFunction = "__wgslMulInt"_s;
+            break;
+        default:
+            break;
+        }
 
         if (!helperFunction.isNull()) {
             m_body.append(helperFunction, '(');
@@ -3297,13 +3549,19 @@ void FunctionDefinitionWriter::visitStatements(AST::Statement::List& statements)
 
 void FunctionDefinitionWriter::visit(AST::DecrementIncrementStatement& statement)
 {
+    // `x++` / `x--` on a signed integer must wrap, for the same reason `x + 1`
+    // and `x - 1` must. Performing the arithmetic in the unsigned domain carries
+    // no overflow assumption, and the compound assignment form keeps the
+    // reference evaluated exactly once, as WGSL requires.
+    bool wraps = isSignedIntegerArithmeticType(statement.expression().inferredType());
+
     visit(statement.expression());
     switch (statement.operation()) {
     case AST::DecrementIncrementStatement::Operation::Increment:
-        m_body.append("++"_s);
+        m_body.append(wraps ? " += 1u"_s : "++"_s);
         break;
     case AST::DecrementIncrementStatement::Operation::Decrement:
-        m_body.append("--"_s);
+        m_body.append(wraps ? " -= 1u"_s : "--"_s);
         break;
     }
 }

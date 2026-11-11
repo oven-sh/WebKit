@@ -79,7 +79,7 @@ void RenderTableRow::willBeRemovedFromTree()
     section()->setNeedsCellRecalc();
 }
 
-static bool LEGACY_NODELETE borderWidthChanged(const Style::ComputedStyle* oldStyle, const Style::ComputedStyle* newStyle)
+NODELETE static bool borderWidthChanged(const Style::ComputedStyle* oldStyle, const Style::ComputedStyle* newStyle)
 {
     return Style::effectiveBorderWidths(*oldStyle).left() != Style::effectiveBorderWidths(*newStyle).left()
         || Style::effectiveBorderWidths(*oldStyle).top() != Style::effectiveBorderWidths(*newStyle).top()
@@ -161,7 +161,7 @@ void RenderTableRow::layout()
 
     for (RenderTableCell* cell = firstCell(); cell; cell = cell->nextCell()) {
         if (!cell->needsLayout() && paginated && (layoutState->pageLogicalHeightChanged() || (layoutState->pageLogicalHeight() && layoutState->pageLogicalOffset(cell, cell->logicalTop()) != cell->pageLogicalOffset())))
-            cell->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            cell->setChildNeedsLayout(MarkingBehavior::OnlyThis);
 
         if (cell->needsLayout())
             cell->layout();

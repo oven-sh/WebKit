@@ -451,6 +451,7 @@ struct _WebKitWebViewPrivate {
 #endif
 
     GRefPtr<WebKitAuthenticationRequest> authenticationRequest;
+    Markable<WebCore::NavigationIdentifier> authenticationRequestNavigationID;
 
 #if ENABLE(2022_GLIB_API)
     GRefPtr<WebKitNetworkSession> networkSession;
@@ -970,7 +971,9 @@ static void webkitWebViewCreatePage(WebKitWebView* webView, Ref<API::PageConfigu
 #endif
 #endif
 #if USE(LIBWPE)
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     webView->priv->view = WKWPE::ViewLegacy::create(webkit_web_view_backend_get_wpe_backend(webView->priv->backend.get()), configuration.get());
+    ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 #endif
 }
@@ -1408,19 +1411,23 @@ static void webkit_web_view_class_init(WebKitWebViewClass* webViewClass)
 
 #if PLATFORM(WPE)
 #if USE(LIBWPE)
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     /**
      * WebKitWebView:backend:
      *
      * The #WebKitWebViewBackend of the view.
      *
      * Since: 2.20
+     *
+     * Deprecated: 2.56: Use WPE Platform API instead.
      */
     sObjProperties[PROP_BACKEND] =
         g_param_spec_boxed(
             "backend",
             nullptr, nullptr,
             WEBKIT_TYPE_WEB_VIEW_BACKEND,
-            static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
+            static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_DEPRECATED));
+    ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 #if ENABLE(WPE_PLATFORM)
     /**
@@ -2769,6 +2776,11 @@ static void webkitWebViewCompleteAuthenticationRequest(WebKitWebView* webView)
     priv->authenticationRequest = nullptr;
 }
 
+static bool webkitWebViewAuthenticationRequestIsForNavigation(WebKitWebView* webView, API::Navigation* navigation)
+{
+    return navigation && webView->priv->authenticationRequest && navigation->navigationID() == webView->priv->authenticationRequestNavigationID;
+}
+
 WebPageProxy& webkitWebViewGetPage(WebKitWebView* webView)
 {
     return getPage(webView);
@@ -2796,7 +2808,7 @@ void webkitWebViewWillStartLoad(WebKitWebView* webView)
         error.get());
 }
 
-void webkitWebViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent loadEvent)
+void webkitWebViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent loadEvent, API::Navigation* navigation)
 {
     WebKitWebViewPrivate* priv = webView->priv;
     switch (loadEvent) {
@@ -2805,7 +2817,8 @@ void webkitWebViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent loadEvent)
         webkitWebViewCancelFaviconRequest(webView);
         webkitWebViewWatchForChangesInFavicon(webView);
 #endif
-        webkitWebViewCompleteAuthenticationRequest(webView);
+        if (!webkitWebViewAuthenticationRequestIsForNavigation(webView, navigation))
+            webkitWebViewCompleteAuthenticationRequest(webView);
         priv->mainResource = nullptr;
         webView->priv->isActiveURIChangeBlocked = false;
         break;
@@ -2867,7 +2880,7 @@ void webkitWebViewLoadFailedWithTLSErrors(WebKitWebView* webView, const String& 
 }
 
 #if PLATFORM(GTK) || ENABLE(2022_GLIB_API)
-void webkitWebViewGetLoadDecisionForIcons(WebKitWebView* webView, const HashMap<CallbackID, WebCore::LinkIcon>& icons, CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&& completionHandler)
+void webkitWebViewGetLoadDecisionForIcons(WebKitWebView* webView, const Vector<std::pair<CallbackID, WebCore::LinkIcon>>& icons, CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&& completionHandler)
 {
     struct CallbackAggregator final : public ThreadSafeRefCounted<CallbackAggregator>  {
         explicit CallbackAggregator(CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&& completionHandler)
@@ -3263,6 +3276,7 @@ void webkitWebViewHandleAuthenticationChallenge(WebKitWebView* webView, Authenti
     bool credentialStorageEnabled = webkit_website_data_manager_get_persistent_credential_storage_enabled(websiteDataManager);
 #endif
     webView->priv->authenticationRequest = adoptGRef(webkitAuthenticationRequestCreate(authenticationChallenge, webkitWebViewIsEphemeral(webView), credentialStorageEnabled));
+    webView->priv->authenticationRequestNavigationID = getPage(webView).pageLoadState().pendingAPIRequest().navigationID;
     gboolean returnValue;
     g_signal_emit(webView, signals[AUTHENTICATE], 0, webView->priv->authenticationRequest.get(), &returnValue);
 }
@@ -3433,6 +3447,8 @@ RendererBufferDescription webkitWebViewGetRendererBufferDescription(WebKitWebVie
  * Returns: (transfer none): the #WebKitWebViewBackend of @web_view
  *
  * Since: 2.20
+ *
+ * Deprecated: 2.56: Use WPE Platform API instead.
  */
 WebKitWebViewBackend* webkit_web_view_get_backend(WebKitWebView* webView)
 {
@@ -5682,6 +5698,8 @@ void webkit_web_view_remove_frame_displayed_callback(WebKitWebView* webView, uns
  * webkit_web_view_send_message_to_page_finish() to get the message reply.
  *
  * Since: 2.28
+ *
+ * Deprecated: 2.56
  */
 void webkit_web_view_send_message_to_page(WebKitWebView* webView, WebKitUserMessage* message, GCancellable* cancellable, GAsyncReadyCallback callback, gpointer userData)
 {
@@ -5725,6 +5743,8 @@ void webkit_web_view_send_message_to_page(WebKitWebView* webView, WebKitUserMess
  * Returns: (transfer full): a #WebKitUserMessage with the reply or %NULL in case of error.
  *
  * Since: 2.28
+ *
+ * Deprecated: 2.56
  */
 WebKitUserMessage* webkit_web_view_send_message_to_page_finish(WebKitWebView* webView, GAsyncResult* result, GError** error)
 {

@@ -1,0 +1,33 @@
+# A text goes round a loop in which it is asked whether it is an object. Who looks for its reader follows the side on which it is none to a block behind, and to none in front: else the search would come back to the same parameter for ever.
+# RUN: walk f1:Body mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Strcat
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="round" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Strcat v0, v1
+    v3 = TypeTest v2 testedType=object
+    Branch v3 -> taken b5(), notTaken b1(| 0)
+  b1(v4):
+    Jump -> next b2(v4)
+  b2(v5: anything):
+    LoopHint
+    v7 = TypeTest v5 testedType=object
+    Branch v7 -> taken b3(), notTaken b4(| 0)
+  b3():
+    Return v5
+  b4(v8):
+    Jump -> next b2(v8)
+  b5():
+    Return v2
+}

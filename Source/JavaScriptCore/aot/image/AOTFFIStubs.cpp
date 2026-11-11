@@ -11,10 +11,9 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTCodeTemplates.h"
-#include "AOTFlowResults.h"
+#include "AOTFacts.h"
 #include "AOTImageBuilder.h"
 #include "AOTImageFormat.h"
-#include "AOTPipeline.h"
 #include "AOTRelocation.h"
 #include "AOTVector.h"
 #include "FFIStubEmitters.h"
@@ -22,13 +21,14 @@
 
 namespace JSC { namespace AOT {
 
-// Whatever makes a foreign function or a callback is a member of Bun.FFI, which the module bun:ffi reads when it is loaded, or the native function behind cc().
-bool mayUseFFI(const Typed::PipelineOutput& pipeline)
+bool mayUseFFI(const Typed::Facts& facts, const CompileOptions& options)
 {
-    if (flagsForUnseenCode(pipeline).contains(ImageFlag::AdmitsUnknownJavaScript))
+    if (options.excludesForeignCalls())
+        return false;
+    OptionSet<ImageFlag> flags = flagsForUnseenCode(facts, options);
+    if (flags.contains(ImageFlag::AdmitsUnknownJavaScript) && (!options.excludesForeignCallsOfUnseenCode() || flags.contains(ImageFlag::AllowsLibrarySource)))
         return true;
-    const Typed::FlowResults& flow = *pipeline.flow;
-    return !flow.usesOf(Builtins::BunFFI).isEmpty() || !flow.usesOf(Builtins::NativeBindgenFfiBindTsCc).isEmpty();
+    return facts.isUsedByOperation(Builtins::BunFFI) || facts.isUsedByOperation(Builtins::NativeBindgenFfiBindTsCc);
 }
 
 #if FFI_STUBS_SUPPORTED
@@ -37,7 +37,7 @@ static constexpr CodeSymbol callbackContextSymbol { SymbolSpace::FFI, 0 };
 
 FFIStubs generateFFIStubs(BuildContext& context)
 {
-    unsigned numberOfEntries = safeCast<unsigned>(context.limit(LimitID::ForeignCallbackStubs));
+    constexpr unsigned numberOfCallbackEntries = 256;
 
     CCallHelpers jit;
     RelocationRecorder recorder(jit, context.assemblerPolicy());
@@ -46,7 +46,7 @@ FFIStubs generateFFIStubs(BuildContext& context)
     auto moveContextAddress = [&](CCallHelpers&, GPRReg destination) {
         recorder.moveAddress(callbackContextSymbol, destination, PCRelativeReach::Far);
     };
-    WTF::Vector<CCallHelpers::Label> entries = FFI::emitCallbackEntries(jit, numberOfEntries, moveContextAddress);
+    Vector<CCallHelpers::Label> entries = FFI::emitCallbackEntries(jit, numberOfCallbackEntries, moveContextAddress);
 
     ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
     if (buffer.didFailToAllocate()) {
@@ -81,7 +81,7 @@ FFIStubs generateFFIStubs(BuildContext& context)
     memcpySpan(bytes, code);
     templates->fillWithBreakpoints(bytes.subspan(code.size(), contextOffset - code.size()));
 
-    FFI::StubDirectory directory { offsetOf(invoke), safeCast<uint32_t>(contextOffset), safeCast<uint32_t>(imagePageSize), numberOfEntries };
+    FFI::StubDirectory directory { offsetOf(invoke), safeCast<uint32_t>(contextOffset), safeCast<uint32_t>(imagePageSize), numberOfCallbackEntries };
     Vector<uint32_t> entryOffsets = entries.map(offsetOf);
     result.directory.append(asByteSpan(directory));
     result.directory.append(asByteSpan(entryOffsets.span()));

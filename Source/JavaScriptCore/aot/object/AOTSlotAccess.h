@@ -14,7 +14,7 @@
 
 namespace JSC { namespace AOT {
 
-class ProgramStrings;
+struct Instance;
 
 ALWAYS_INLINE JSCell* decodeCell32(const HeapCell* holder, uint32_t word)
 {
@@ -55,8 +55,8 @@ inline bool slotHoldsMarker(SlotRepresentation representation, const void* slot)
     return (traits.hasAbsent && bits == traits.absentBits) || (traits.hasUndefined && bits == traits.undefinedBits) || (traits.hasNull && bits == traits.nullBits);
 }
 
-JSValue readSlot(SlotRepresentation, const void* slot, const ProgramStrings&);
-bool tryWriteSlot(ProgramStrings&, SlotRepresentation, void* slot, JSValue);
+JSValue readSlot(SlotRepresentation, const void* slot, const Instance&);
+bool tryWriteSlot(const Instance&, SlotRepresentation, void* slot, JSValue);
 bool tryWriteInt32(SlotRepresentation, void* slot, int32_t);
 bool tryWriteDouble(SlotRepresentation, void* slot, double);
 bool tryWriteBoolean(SlotRepresentation, void* slot, bool);

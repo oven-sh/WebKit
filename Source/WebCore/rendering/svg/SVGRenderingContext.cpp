@@ -53,7 +53,7 @@
 
 namespace WebCore {
 
-static inline bool LEGACY_NODELETE isRenderingMaskImage(const RenderObject& object)
+NODELETE static inline bool isRenderingMaskImage(const RenderObject& object)
 {
     return object.view().frameView().paintBehavior().contains(PaintBehavior::RenderingSVGClipOrMask);
 }
@@ -202,7 +202,7 @@ void SVGRenderingContext::prepareToRenderSVGContent(RenderElement& renderer, Pai
     m_renderingFlags |= RenderingPrepared;
 }
 
-static AffineTransform& LEGACY_NODELETE currentContentTransformation()
+NODELETE static AffineTransform& currentContentTransformation()
 {
     static NeverDestroyed<AffineTransform> s_currentContentTransformation;
     return s_currentContentTransformation;
@@ -218,7 +218,7 @@ AffineTransform SVGRenderingContext::calculateTransformationToOutermostCoordinat
 {
     AffineTransform absoluteTransform = currentContentTransformation();
 
-    float deviceScaleFactor = protect(renderer.document())->deviceScaleFactor();
+    float deviceScaleFactor = renderer.document().deviceScaleFactor();
     // Walk up the render tree, accumulating SVG transforms.
     const RenderObject* ancestor = &renderer;
     while (ancestor) {

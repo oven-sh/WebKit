@@ -98,7 +98,7 @@ namespace WebCore {
 using namespace Inspector;
 
 static Lock allWorkerGlobalScopeIdentifiersLock;
-static HashSet<ScriptExecutionContextIdentifier>& LEGACY_NODELETE allWorkerGlobalScopeIdentifiers() WTF_REQUIRES_LOCK(allWorkerGlobalScopeIdentifiersLock)
+NODELETE static HashSet<ScriptExecutionContextIdentifier>& allWorkerGlobalScopeIdentifiers() WTF_REQUIRES_LOCK(allWorkerGlobalScopeIdentifiersLock)
 {
     static NeverDestroyed<HashSet<ScriptExecutionContextIdentifier>> identifiers;
     ASSERT(allWorkerGlobalScopeIdentifiersLock.isLocked());
@@ -119,6 +119,7 @@ WorkerGlobalScope::WorkerGlobalScope(WorkerThreadType type, const WorkerParamete
     , m_ownerURL(params.ownerURL)
     , m_inspectorIdentifier(params.inspectorIdentifier)
     , m_userAgent(params.userAgent)
+    , m_navigatorPlatform(params.navigatorPlatform)
     , m_isOnline(params.isOnline)
     , m_shouldBypassMainWorldContentSecurityPolicy(params.shouldBypassMainWorldContentSecurityPolicy)
     , m_isSecureContext(params.isSecureContext == IsSecureContext::Yes)
@@ -166,7 +167,8 @@ WorkerGlobalScope::~WorkerGlobalScope()
     m_crypto = nullptr;
 
     // Notify proxy that we are going away. This can free the WorkerThread object and the proxy, so do not access them after this.
-    if (auto* workerReportingProxy = thread()->workerReportingProxy())
+    // FIXME: A CheckedPtr cannot be used here since the proxy may get destroyed on the main thread before it goes out of scope.
+    if (SUPPRESS_UNCHECKED_LOCAL auto* workerReportingProxy = thread()->workerReportingProxy())
         workerReportingProxy->workerGlobalScopeDestroyed();
 }
 
@@ -358,7 +360,7 @@ void WorkerGlobalScope::close()
 WorkerNavigator& WorkerGlobalScope::navigator()
 {
     if (!m_navigator)
-        lazyInitialize(m_navigator, WorkerNavigator::create(*this, m_userAgent, m_isOnline));
+        lazyInitialize(m_navigator, WorkerNavigator::create(*this, m_userAgent, m_navigatorPlatform, m_isOnline));
     return *m_navigator;
 }
 
@@ -409,8 +411,7 @@ ExceptionOr<void> WorkerGlobalScope::importScripts(const FixedVector<Variant<Ref
 {
     ASSERT(contentSecurityPolicy());
 
-    Vector<String> urlStrings;
-    urlStrings.reserveInitialCapacity(urls.size());
+    Vector<String> urlStrings(ReserveCapacityTag { }, urls.size());
     for (auto&& entry : urls) {
         auto stringValueHolder = WTF::switchOn(entry,
             [this](const String& str) -> ExceptionOr<String> {
@@ -432,8 +433,7 @@ ExceptionOr<void> WorkerGlobalScope::importScripts(const FixedVector<Variant<Ref
     if (m_workerType == WorkerType::Module)
         return Exception { ExceptionCode::TypeError, "importScripts cannot be used if worker type is \"module\""_s };
 
-    Vector<URLKeepingBlobAlive> completedURLs;
-    completedURLs.reserveInitialCapacity(urls.size());
+    Vector<URLKeepingBlobAlive> completedURLs(ReserveCapacityTag { }, urls.size());
     for (auto& entry : urlStrings) {
         URL url = parseURL(entry);
         if (!url.isValid())
@@ -804,6 +804,8 @@ String WorkerGlobalScope::endpointURIForToken(const String& token) const
 
 void WorkerGlobalScope::sendReportToEndpoints(const URL&, std::span<const String> /*endpointURIs*/, std::span<const String> /*endpointTokens*/, Ref<FormData>&&, ViolationReportType)
 {
+    // FIXME: Parse Reporting-Endpoints for workers. A policy a worker inherits, such as Document-Isolation-Policy, names its owner's endpoints,
+    // which might need specification changes.
     notImplemented();
 }
 

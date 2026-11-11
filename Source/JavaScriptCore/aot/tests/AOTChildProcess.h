@@ -17,15 +17,29 @@ enum class ChildProcessOutcome : uint8_t { Exited, Crashed, Hung, NotStarted };
 
 struct ChildProcessResult {
     bool exitedWith(int exitCode) const { return outcome == ChildProcessOutcome::Exited && code == exitCode; }
+    bool hasCrashedOrHung() const { return outcome == ChildProcessOutcome::Crashed || outcome == ChildProcessOutcome::Hung; }
     String description() const;
+    String descriptionOfOutcome() const;
 
     ChildProcessOutcome outcome { ChildProcessOutcome::NotStarted };
     int code { 0 };
     String output;
+    String commandLine { };
 };
 
 void setProgramPath(String&&);
 const String& programPath();
+
+void enterTemporaryFolder();
+String temporaryFolder();
+
+void installTrapReporter();
+
+inline constexpr const char* crashRequestVariable = "TESTAOT_CRASH_ON_REQUEST";
+
+inline constexpr ASCIILiteral lineAfterChildProcess = "a child process has ended"_s;
+
+void printLineAfterEachChildProcess();
 
 class ChildProcessLauncher {
 public:

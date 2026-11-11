@@ -1,0 +1,99 @@
+# function whole(n) { const l = new Array(n | 0); l[0] = 7; return l; }   function fractions(n) { const l = new Array(n | 0); l[0] = 0.5; return l; }   function texts(n) { const l = new Array(n | 0); l[0] = "s"; return l; }
+# function given(x) { return new Array(x); }   function filled() { const l = new Array(32); for (let i = 0; i < 32; i++) l[i] = i; return l; }
+# A list of a length was born at its site by a comparison, two operations for the room, the call of a stub, a test for null, the store of the length, and on a rare path the call of an operation with four operands: about 110 bytes.
+# ONE STUB DOES ALL OF IT: the site is the length in a register and a call. What the stub does not bear (over 127 places, a length that is none) the operation behind it bears or refuses.
+# REQUIRES: as-written
+# RUN: bytes f1 mechanisms=all
+# CHECK: Call Stub NewArrayOfLength
+# REQUIRES(OLD): as-written
+# RUN(OLD): bytes f1 mechanisms=all
+# OLD-NOT: Call Stub NewArrayWithLength
+# REQUIRES(GIVEN): as-written
+# RUN(GIVEN): bytes f4 mechanisms=all
+# GIVEN: Call Stub NewArrayOfGiven
+# The list was born with the written bound as its written length: no room is reserved for it in front of the loop that fills it.
+# RUN(ROOM): walk f5 mechanisms=all
+# ROOM: = NewArrayLike
+# RUN(NOROOM): walk f5 mechanisms=all
+# NOROOM-NOT: ReserveArrayCapacity
+# Lists with room for one are born between lists that live: the stub writes nothing behind its own cell.
+# RUN(ANSWER): run-in-shell mechanisms=all globalThis.sink = (whole, fractions, texts, given, filled) => { const kind = list => /ArrayWith([A-Za-z0-9]+)/.exec(describe(list))[1]; const tell = f => { try { const list = f(); let holes = 0; for (let at = 0; at < list.length && at < 300; at++) if (!(at in list)) holes++; return kind(list) + ":" + list.length + ":" + holes + ":" + String(list[0]); } catch (error) { return error.constructor.name; } }; for (const f of [whole, fractions, texts]) print([0, 1, 2, 3, 4, 126, 127, 128, 129, 1000, 99999, -1, -2147483648].map(n => tell(() => f(n))).join(" ")); print([0, 1, 2, 127, 128, -1, 2147483647, 1.5, "3", null, 4.0].map(x => tell(() => given(x))).join(" ")); print(tell(filled), filled().join("").length); const many = []; for (let turn = 0; turn < 3000; turn++) { const list = given(turn & 3); for (let at = 0; at < list.length; at++) list[at] = turn; many.push(list); } let wrong = 0; for (let turn = 0; turn < 3000; turn++) { const list = many[turn]; if (list.length !== (turn & 3)) wrong++; for (let at = 0; at < list.length; at++) if (list[at] !== turn) wrong++; } print(wrong); const kept = []; for (let turn = 0; turn < 20000; turn++) { const list = given(1); list[0] = turn; if (turn & 1) kept.push(list); } gc(); const between = []; for (let turn = 0; turn < 20000; turn++) between.push(given(turn & 1)); let broken = 0; for (let at = 0; at < kept.length; at++) if (kept[at].length !== 1 || kept[at][0] !== 2 * at + 1) broken++; print(broken, between.length); };
+# ANSWER: Int32:1:0:7 Int32:1:0:7 Int32:2:1:7 Int32:3:2:7 Int32:4:3:7 Int32:126:125:7 Int32:127:126:7 Int32:128:127:7 Int32:129:128:7 Int32:1000:299:7 Int32:99999:299:7 RangeError RangeError
+# ANSWER-NEXT: Double:1:0:0.5 Double:1:0:0.5 Double:2:1:0.5 Double:3:2:0.5 Double:4:3:0.5 Double:126:125:0.5 Double:127:126:0.5 Double:128:127:0.5 Double:129:128:0.5 Double:1000:299:0.5 Double:99999:299:0.5 RangeError RangeError
+# ANSWER-NEXT: Contiguous:1:0:s Contiguous:1:0:s Contiguous:2:1:s Contiguous:3:2:s Contiguous:4:3:s Contiguous:126:125:s Contiguous:127:126:s Contiguous:128:127:s Contiguous:129:128:s Contiguous:1000:299:s Contiguous:99999:299:s RangeError RangeError
+# ANSWER-NEXT: Int32:0:0:undefined Int32:1:1:undefined Int32:2:2:undefined Int32:127:127:undefined Int32:128:128:undefined RangeError ArrayStorage:2147483647:300:undefined RangeError Contiguous:1:0:3 Contiguous:1:0:null Int32:4:4:undefined
+# ANSWER-NEXT: Int32:32:0:0 54
+# ANSWER-NEXT: 0
+# ANSWER-NEXT: 0 20000
+# ANSWER-NEXT: exited with 0
+# LIBRARY: own
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="whole" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    v5 = Integer integer=7
+    ElemSet v4, v2, v5
+    Return v4
+}
+function f2 name="fractions" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    v5 = Double number=0.5
+    ElemSet v4, v2, v5
+    Return v4
+}
+function f3 name="texts" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Construct v1, -, v3 calleeName="Array"
+    v5 = String string="s"
+    ElemSet v4, v2, v5
+    Return v4
+}
+function f4 name="given" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Construct v1, -, v0 calleeName="Array"
+    Return v2
+}
+function f5 name="filled" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Array
+    v1 = Integer integer=32
+    v2 = Construct v0, -, v1 calleeName="Array"
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: anything):
+    LoopHint
+    v6 = Integer integer=32
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    ElemSet v2, v4, v4
+    v9 = Increment v4
+    Jump -> next b1(v9)
+  b3():
+    Return v2
+}

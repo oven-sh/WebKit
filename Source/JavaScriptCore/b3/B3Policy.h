@@ -37,11 +37,49 @@ enum class ValidationLevel : uint8_t {
     AtEachPhase,
 };
 
+enum class KnownProperty : uint8_t {
+    Range,
+    Induction,
+};
+
+enum class MoveOmittedByRegisterAllocator : uint8_t {
+    None,
+    StoreAfterCluster,
+    LoadBeforeCluster,
+    StoreBeforeClobber,
+    LoadAfterClobber,
+    StoreAfterSpilledDefinition,
+};
+
 struct ValidationPolicy {
     ValidationLevel level { ValidationLevel::FromOptions };
     bool checksKnownPropertiesAtRunTime { false };
     bool logsMovedLoads { false };
-    bool keepsOriginsOfAccessesThatTakeTraps { false };
+    bool logsDecidedComparisons { false };
+    // Every read of a spill slot sees the value that the slot stands for, and every read of a register the Tmp that it is read for: AirCheckSpillSlots.h. They change no code.
+    bool continuesAfterMovedLoadReports { false };
+    bool keepsOriginsOfTrappingAccesses { false };
+    bool checksSpillSlots { false };
+    bool checksAllocatedRegisters { false };
+    // These break a phase on purpose, for the tests of the checks.
+    bool ignoresWritesOnRarePaths { false };
+    bool ignoresWritesBetweenLoadsOfBound { false };
+    bool skipsStridedLimitGuard { false };
+    bool takesIdentitiesInHeadersForPhis { false };
+    bool skipsUpperClamp { false };
+    bool ignoresWritesAfterReloadedLocations { false };
+    bool ignoresWritesToLocationsReloadedInLoops { false };
+    bool ignoresWritesToPromotedLocations { false };
+    bool ignoresWritesBetweenLoadsAndUsers { false };
+    bool ignoresWritesBetweenPairedLoads { false };
+    bool reservesOneIterationTooFew { false };
+    bool assumesVectorIterationAccessesAreDisjoint { false };
+    bool assumesLanesHoldWholeValues { false };
+    bool assumesDoubleSumsAreIntegers { false };
+    bool comparesAllLanesAsSigned { false };
+    bool setsUpFrameAfterWrites { false };
+    bool ignoresColdUsesOfCrossBlockClusters { false };
+    MoveOmittedByRegisterAllocator moveOmittedByRegisterAllocator { MoveOmittedByRegisterAllocator::None };
 };
 
 enum class RedundancyElimination : uint8_t {
@@ -117,12 +155,20 @@ struct LoopPolicy {
     bool foldsComparisonsWithBounds { false };
     bool versions { false };
     bool clampsLoopBounds { false };
+    // A loop whose turns can be counted runs at most Limits::maxTurnsWithoutPoll of them between two polls, instead of polling on every turn.
+    bool pollsBetweenStretches { false };
+    bool vectorizes { false };
+    bool unrolls { false };
+    bool promotesMemory { false };
+    bool (*clientHoistsOutOfLoops)(Procedure&, const MemoryValue&) { nullptr };
+    double minFrequencyOfUnrolledLoop { 1 };
     bool hoistsOnlyFromLikelyPaths { false };
     bool hoistsImmutableLoadsPastWrites { false };
 };
 
 struct SwitchLoweringPolicy {
     bool usesBitTests { false };
+    bool usesValueTables { false };
     unsigned minCasesForJumpTable { 7 };
 };
 
@@ -166,6 +212,9 @@ enum class PolicySwitch : uint8_t {
     FoldComparisonsWithBounds,
     VersionLoops,
     ClampLoopBounds,
+    VectorizeLoops,
+    UnrollLoops,
+    PromoteLoopMemory,
     BitTests,
     KnownRanges,
     KnownDereferenceableBytes,
@@ -189,7 +238,7 @@ enum class PolicySwitch : uint8_t {
     FoldTrapsIntoAccesses,
 };
 
-static constexpr unsigned numberOfSwitches = 40;
+static constexpr unsigned numberOfSwitches = 43;
 static_assert(static_cast<unsigned>(PolicySwitch::FoldTrapsIntoAccesses) + 1 == numberOfSwitches);
 static_assert(numberOfSwitches <= 64);
 
@@ -219,6 +268,12 @@ struct Policy {
     Vector<ClientPhase, 4> clientPhases;
     // False: the load is not logged. The collector's threads write some words, and some writes change no operation's result.
     RefPtr<SharedTask<bool(const MemoryValue&, MovedLoad&)>> saysWhatCountsOfMovedLoad;
+    // For a phase that puts its own check where it moves loads. `found` and `given` are what the check compared.
+    RefPtr<SharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg found, GPRReg given)>> reportsMovedLoad;
+    // What checkKnownProperties() emits where a known property does not hold. It does not return. Null: a breakpoint.
+    RefPtr<SharedTask<void(CCallHelpers&, KnownProperty, Origin)>> reportsBrokenKnownProperty;
+    // Whether arrays in that memory are mostly short. Null: none are.
+    RefPtr<SharedTask<bool(Procedure&, const HeapRange&)>> holdsMostlyShortArrays;
 
     JS_EXPORT_PRIVATE static Policy fromProcessOptions();
 

@@ -32,26 +32,15 @@
 #if USE(COORDINATED_GRAPHICS)
 
 #if USE(SKIA)
-#include "BitmapTexturePool.h"
 #include "FontRenderOptions.h"
-#include "GLContext.h"
-#include "GLFence.h"
 #include "PlatformDisplay.h"
 #include "ProcessCapabilities.h"
 #include "SkiaUtilities.h"
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
-#include <skia/core/SkImage.h>
-#include <skia/core/SkStream.h>
-#include <skia/gpu/ganesh/gl/GrGLDirectContext.h>
+#include <skia/core/SkImageInfo.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/MainThread.h>
-
-#if USE(LIBEPOXY)
-#include <epoxy/gl.h>
-#else
-#include <GLES3/gl3.h>
-#endif
 #endif
 
 #if USE(CAIRO)
@@ -97,37 +86,95 @@ void CoordinatedTileBuffer::didReleaseMemory(size_t size)
     s_currentLayersMemoryUsage -= size;
 }
 
-void CoordinatedTileBuffer::didBeginPainting()
+CoordinatedTileBuffer::BeginPaintingResult CoordinatedTileBuffer::beginPainting()
 {
-    Locker locker { m_painting.lock };
-    ASSERT(m_painting.state == PaintingState::Pending);
-    m_painting.state = PaintingState::Painting;
+    {
+        Locker locker { m_painting.lock };
+        if (m_painting.state == PaintingState::Cancelled)
+            return BeginPaintingResult::Cancelled;
+
+        ASSERT(m_painting.state == PaintingState::Pending);
+        m_painting.state = PaintingState::Painting;
+    }
+
+    return prepareForPainting() ? BeginPaintingResult::Started : BeginPaintingResult::Failed;
 }
 
-void CoordinatedTileBuffer::didCompletePainting()
+std::optional<uint64_t> CoordinatedTileBuffer::completePainting()
 {
+    finishPainting();
+
     Locker locker { m_painting.lock };
-    ASSERT(m_painting.state == PaintingState::Pending || m_painting.state == PaintingState::Painting);
+    ASSERT(m_painting.state == PaintingState::Painting);
     m_painting.state = PaintingState::Complete;
     m_painting.condition.notifyAll();
+
+    return std::exchange(m_painting.renderingUpdateID, std::nullopt);
 }
 
-void CoordinatedTileBuffer::waitUntilPaintingComplete()
+std::optional<uint64_t> CoordinatedTileBuffer::cancelPainting()
 {
     Locker locker { m_painting.lock };
+    if (m_painting.state == PaintingState::Pending) {
+        m_painting.state = PaintingState::Cancelled;
+        m_painting.condition.notifyAll();
+    }
+
+    return std::exchange(m_painting.renderingUpdateID, std::nullopt);
+}
+
+std::optional<uint64_t> CoordinatedTileBuffer::updateDistance(unsigned distance, uint64_t renderingUpdateID)
+{
+    Locker locker { m_painting.lock };
+    m_painting.distance = distance;
+
+    if (m_painting.state == PaintingState::Complete || m_painting.state == PaintingState::Cancelled)
+        return std::nullopt;
+
+    // When the tile becomes hidden we reset the renderingUpdateID and return the previous one to be passed to didPaintTile().
+    if (distance) {
+        // Passed renderingUpdateID is ignored for hidden tiles.
+        return std::exchange(m_painting.renderingUpdateID, std::nullopt);
+    }
+
+    // When the tile becomes visible we return the new renderingUpdateID to be passed to willPaintTile().
+    if (!std::exchange(m_painting.renderingUpdateID, renderingUpdateID))
+        return m_painting.renderingUpdateID;
+
+    return std::nullopt;
+}
+
+CoordinatedTileBuffer::PaintingState CoordinatedTileBuffer::paintingState() const
+{
+    Locker locker { m_painting.lock };
+    return m_painting.state;
+}
+
+unsigned CoordinatedTileBuffer::distance() const
+{
+    Locker locker { m_painting.lock };
+    return m_painting.distance;
+}
+
+void CoordinatedTileBuffer::waitUntilPaintingFinished()
+{
+    Locker locker { m_painting.lock };
+    // Only wait for visible tiles, pre-rendered ones are processed by the compositor when ready.
+    if (m_painting.distance)
+        return;
     m_painting.condition.wait(m_painting.lock, [this] {
         assertIsHeld(m_painting.lock);
-        return m_painting.state == PaintingState::Complete;
+        return m_painting.state == PaintingState::Complete || m_painting.state == PaintingState::Cancelled;
     });
 }
 
-Ref<CoordinatedTileBuffer> CoordinatedUnacceleratedTileBuffer::create(const IntSize& size, Flags flags)
+Ref<CoordinatedTileBuffer> CoordinatedUnacceleratedTileBuffer::create(const IntSize& size, Flags flags, unsigned distance, std::optional<uint64_t> renderingUpdateID)
 {
-    return adoptRef(*new CoordinatedUnacceleratedTileBuffer(size, flags));
+    return adoptRef(*new CoordinatedUnacceleratedTileBuffer(size, flags, distance, renderingUpdateID));
 }
 
-CoordinatedUnacceleratedTileBuffer::CoordinatedUnacceleratedTileBuffer(const IntSize& size, Flags flags)
-    : CoordinatedTileBuffer(flags)
+CoordinatedUnacceleratedTileBuffer::CoordinatedUnacceleratedTileBuffer(const IntSize& size, Flags flags, unsigned distance, std::optional<uint64_t> renderingUpdateID)
+    : CoordinatedTileBuffer(flags, distance, renderingUpdateID)
     , m_size(size)
 {
 }
@@ -146,8 +193,8 @@ Vector<unsigned char> CoordinatedUnacceleratedTileBuffer::takeData()
 
 bool CoordinatedUnacceleratedTileBuffer::tryAllocateData()
 {
-    const auto checkedArea = m_size.area() * 4;
-    if (checkedArea.hasOverflowed() || !m_data.tryReserveCapacity(checkedArea.value()))
+    const auto checkedArea = m_size.area<RecordOverflow>() * 4;
+    if (checkedArea.hasOverflowed() || !checkedArea.value() || !m_data.tryReserveCapacity(checkedArea.value()))
         return false;
 
     m_data.grow(checkedArea.value());
@@ -156,15 +203,9 @@ bool CoordinatedUnacceleratedTileBuffer::tryAllocateData()
 }
 
 #if USE(CAIRO)
-bool CoordinatedUnacceleratedTileBuffer::beginPainting()
+bool CoordinatedUnacceleratedTileBuffer::prepareForPainting()
 {
-    if (tryAllocateData()) {
-        didBeginPainting();
-        return true;
-    }
-
-    didCompletePainting();
-    return false;
+    return tryAllocateData();
 }
 
 RefPtr<cairo_surface_t> CoordinatedUnacceleratedTileBuffer::createSurface()
@@ -174,14 +215,13 @@ RefPtr<cairo_surface_t> CoordinatedUnacceleratedTileBuffer::createSurface()
     return adoptRef(cairo_image_surface_create_for_data(m_data.mutableSpan().data(), CAIRO_FORMAT_ARGB32, m_size.width(), m_size.height(), m_size.width() * 4));
 }
 
-void CoordinatedUnacceleratedTileBuffer::completePainting()
+void CoordinatedUnacceleratedTileBuffer::finishPainting()
 {
-    didCompletePainting();
 }
 #endif
 
 #if USE(SKIA)
-bool CoordinatedUnacceleratedTileBuffer::beginPainting()
+bool CoordinatedUnacceleratedTileBuffer::prepareForPainting()
 {
     if (tryAllocateData()) {
         auto alphaType = supportsAlpha() ? kPremul_SkAlphaType : kOpaque_SkAlphaType;
@@ -190,14 +230,11 @@ bool CoordinatedUnacceleratedTileBuffer::beginPainting()
         m_surface = SkSurfaces::WrapPixels(imageInfo, m_data.mutableSpan().data(), imageInfo.minRowBytes64(), &properties);
     }
 
-    if (m_surface) {
-        didBeginPainting();
+    if (m_surface)
         return true;
-    }
 
     didReleaseMemory(m_data.size());
     m_data.clear();
-    didCompletePainting();
     return false;
 }
 
@@ -207,27 +244,12 @@ SkCanvas* CoordinatedUnacceleratedTileBuffer::canvas()
     return m_surface->getCanvas();
 }
 
-void CoordinatedUnacceleratedTileBuffer::completePainting()
+void CoordinatedUnacceleratedTileBuffer::finishPainting()
 {
     m_surface = nullptr;
-    didCompletePainting();
 }
 
-#if USE(TEXTURE_MAPPER)
-Ref<CoordinatedTileBuffer> CoordinatedAcceleratedTileBuffer::create(const IntSize& size, Flags flags)
-{
-    return adoptRef(*new CoordinatedAcceleratedTileBuffer(size, flags));
-}
-
-CoordinatedAcceleratedTileBuffer::CoordinatedAcceleratedTileBuffer(const IntSize& size, Flags flags)
-    : CoordinatedTileBuffer(flags)
-    , m_size(size)
-{
-}
-
-#else
-
-Ref<CoordinatedTileBuffer> CoordinatedAcceleratedTileBuffer::create(const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext, const IntSize& size, Flags flags)
+Ref<CoordinatedTileBuffer> CoordinatedAcceleratedTileBuffer::create(const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext, const IntSize& size, Flags flags, unsigned distance, std::optional<uint64_t> renderingUpdateID)
 {
     auto alphaType = (flags & SupportsAlpha) ? kPremul_SkAlphaType : kOpaque_SkAlphaType;
     auto imageInfo = SkImageInfo::Make(size.width(), size.height(), kRGBA_8888_SkColorType, alphaType, SkColorSpace::MakeSRGB());
@@ -236,100 +258,51 @@ Ref<CoordinatedTileBuffer> CoordinatedAcceleratedTileBuffer::create(const sk_sp<
     auto properties = FontRenderOptions::singleton().createSurfaceProps();
     auto maxResourceCacheBytes = PlatformDisplay::sharedDisplay().maxSkiaResourceCacheBytes();
     auto characterization = threadSafeGrContext->createCharacterization(maxResourceCacheBytes, imageInfo, backendFormat, 0, kTopLeft_GrSurfaceOrigin, properties, skgpu::Mipmapped::kNo);
-    return adoptRef(*new CoordinatedAcceleratedTileBuffer(WTF::move(characterization), flags));
+    return adoptRef(*new CoordinatedAcceleratedTileBuffer(WTF::move(characterization), flags, distance, renderingUpdateID));
 }
 
-CoordinatedAcceleratedTileBuffer::CoordinatedAcceleratedTileBuffer(GrSurfaceCharacterization&& characterization, Flags flags)
-    : CoordinatedTileBuffer(flags)
+CoordinatedAcceleratedTileBuffer::CoordinatedAcceleratedTileBuffer(GrSurfaceCharacterization&& characterization, Flags flags, unsigned distance, std::optional<uint64_t> renderingUpdateID)
+    : CoordinatedTileBuffer(flags, distance, renderingUpdateID)
     , m_characterization(WTF::move(characterization))
 {
 }
-#endif
 
 CoordinatedAcceleratedTileBuffer::~CoordinatedAcceleratedTileBuffer() = default;
 
 IntSize CoordinatedAcceleratedTileBuffer::size() const
 {
-#if USE(TEXTURE_MAPPER)
-    return m_size;
-#else
     return { m_characterization.width(), m_characterization.height() };
-#endif
 }
 
-bool CoordinatedAcceleratedTileBuffer::beginPainting()
+bool CoordinatedAcceleratedTileBuffer::prepareForPainting()
 {
-#if USE(TEXTURE_MAPPER)
-    if (!PlatformDisplay::sharedDisplay().skiaGLContext()->makeContextCurrent()) {
-        didCompletePainting();
-        return false;
-    }
-
-    OptionSet<BitmapTexture::Flags> textureFlags;
-    if (supportsAlpha())
-        textureFlags.add(BitmapTexture::Flags::SupportsAlpha);
-    m_texture = BitmapTexturePool::singleton().acquireTexture(m_size, textureFlags);
-    m_surface = m_texture->createSkiaSurface(PlatformDisplay::sharedDisplay().skiaGrContext());
-    if (!m_surface) {
-        m_texture = nullptr;
-        didCompletePainting();
-        return false;
-    }
-#else
     m_recorder.emplace(m_characterization);
-#endif
-
-    didBeginPainting();
     return true;
 }
 
 SkCanvas* CoordinatedAcceleratedTileBuffer::canvas()
 {
-#if USE(TEXTURE_MAPPER)
-    ASSERT(m_surface);
-    return m_surface->getCanvas();
-#else
     ASSERT(m_recorder);
     return m_recorder->getCanvas();
-#endif
 }
 
-void CoordinatedAcceleratedTileBuffer::completePainting()
+void CoordinatedAcceleratedTileBuffer::finishPainting()
 {
-#if USE(TEXTURE_MAPPER)
-    ASSERT(m_surface);
-    auto* recordingContext = m_surface->recordingContext();
-    auto* grContext = recordingContext ? recordingContext->asDirectContext() : nullptr;
-    if (grContext)
-        m_fence = SkiaUtilities::flushAndSubmitSurfaceWithFence(grContext, m_surface.get());
+    if (!m_recorder)
+        return;
 
-    // Surface is no longer needed, destroy it (in the same thread that created it).
-    m_surface = nullptr;
-#else
-    ASSERT(m_recorder);
     m_displayList = m_recorder->detach();
     m_recorder.reset();
-#endif
-
-    didCompletePainting();
 }
 
-#if USE(TEXTURE_MAPPER)
-RefPtr<BitmapTexture> CoordinatedAcceleratedTileBuffer::takeTexture()
-{
-    if (m_fence) {
-        m_fence->serverWait();
-        m_fence = nullptr;
-    }
-
-    return std::exchange(m_texture, nullptr);
-}
-#endif
 #endif // USE(SKIA)
 
-CoordinatedTileBuffer::CoordinatedTileBuffer(Flags flags)
+CoordinatedTileBuffer::CoordinatedTileBuffer(Flags flags, unsigned distance, std::optional<uint64_t> renderingUpdateID)
     : m_flags(flags)
 {
+    m_painting.distance = distance;
+    if (!distance)
+        m_painting.renderingUpdateID = renderingUpdateID;
 }
 
 CoordinatedTileBuffer::~CoordinatedTileBuffer() = default;

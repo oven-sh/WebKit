@@ -1,0 +1,28 @@
+# the scan and the aggregates of Link have gone by the names that the wire opens on Object.prototype: an assignment under any other name fills its field, a read of an empty field gives undefined
+# nothing starts over, so a name that only the flow brings there is not opened. The build says so, and the run time refuses the store aloud
+# put(Object.prototype, 1)   with   put = (o, v) => { o.planted = v }
+# name-added-through-a-list-of-prototypes.ir is the control: the same store on another object is opened
+# DIAGNOSTIC: UndetectedBuiltinAddition 1
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: test-run
+# CHECK-NOT: adds
+# CHECK: left-to-program
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2 = PropGet v1 key="prototype"
+    v3 = NewClosure function=f1
+    v4 = Integer integer=1
+    v5 = Call v3, -, v2, v4
+    Return v5
+}
+function f1 name="put" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="planted"
+    Return v1
+}

@@ -1,0 +1,101 @@
+# function Q() { this.y = 2; }  Q.prototype = null;  function tell(p) { return p === null; }  tell(Q.prototype);
+# function R() { this.z = 3; }  function strip(f, v) { f.prototype = v; }  strip(R, 7);  function count(p) { return typeof p; }  count(R.prototype);
+# whatever is stored under a name is what a read of that name may give. The store of a primitive went nowhere, so the read stayed proven an object: `p === null` was folded to false and `p.y` loaded off the boxed value.
+# RUN: link functions mechanisms=all
+# CHECK: function f2
+# CHECK-NOT: proven=
+# CHECK: referrers f0
+# CHECK: function f5
+# CHECK-NOT: proven=
+# CHECK: referrers f0
+# What `new` makes behind the store stands below Object.prototype: the layouts go, as they do when an object is stored.
+# RUN(LAYOUTS): link layouts mechanisms=all
+# LAYOUTS: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# LAYOUTS: layout L1 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# function S() { this.w = 4; }  function fail() { throw 1; }  try { S.prototype = fail(); } catch {}  keep(S.prototype);
+# a store at which nothing ever arrives never runs, and takes nothing.
+# RUN(KEPT): link functions fields layouts mechanisms=all
+# KEPT: function f8
+# KEPT-NEXT: parameter 0 {{*}}proven=object
+# KEPT: field L2.0 "w" proven=i32 writers-known
+# KEPT: layout L2 changes=[]
+
+layout L0 kind=Instance name="Q" module=m0 constructor=f1 fields=[{key="y" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="R" module=m0 constructor=f3 fields=[{key="z" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="S" module=m0 constructor=f6 fields=[{key="w" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Null
+    PropSet v0, v1 key="prototype"
+    v3 = PropGet v0 key="prototype"
+    v4 = NewClosure function=f2
+    v5 = Call v4, -, v3 calleeName="tell"
+    v6 = Construct v0
+    v7 = NewClosure function=f3
+    v8 = NewClosure function=f4
+    v9 = Integer integer=7
+    v10 = Call v8, -, v7, v9 calleeName="strip"
+    v11 = PropGet v7 key="prototype"
+    v12 = NewClosure function=f5
+    v13 = Call v12, -, v11 calleeName="count"
+    v14 = Construct v7
+    v15 = NewClosure function=f6
+    v16 = Construct v15
+    v17 = PropGet v15 key="prototype"
+    v18 = NewClosure function=f8
+    v19 = Call v18, -, v17 calleeName="keep"
+    v20 = NewClosure function=f7
+    v21 = Call v20, - calleeName="fail"
+    PropSet v15, v21 key="prototype"
+    Return v5
+}
+function f1 name="Q" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="y"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="tell" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    v2 = StrictEq v0, v1
+    Return v2
+}
+function f3 name="R" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=3
+    PropSet v0, v1 key="z"
+    v3 = Undefined
+    Return v3
+}
+function f4 name="strip" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="prototype"
+    v3 = Undefined
+    Return v3
+}
+function f5 name="count" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeOf v0
+    Return v1
+}
+function f6 name="S" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Integer integer=4
+    PropSet v0, v1 key="w"
+    v3 = Undefined
+    Return v3
+}
+function f7 name="fail" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Throw v0
+}
+function f8 name="keep" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

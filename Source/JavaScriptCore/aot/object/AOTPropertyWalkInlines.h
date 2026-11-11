@@ -11,6 +11,8 @@
 
 namespace JSC { namespace AOT { namespace PropertyWalk {
 
+bool tryAssign(VM&, JSObject* compiledTarget, JSObject* source, bool& goesOnKeyByKey);
+
 ALWAYS_INLINE std::optional<std::span<const FieldAsProperty>> fieldsInKeyOrder(const JSObject* compiledObject)
 {
     ASSERT(isCompiledObject(compiledObject));
@@ -23,20 +25,34 @@ ALWAYS_INLINE bool haveSameFieldsInKeyOrder(const JSObject* compiledObject, cons
     return compiledObject->structureID() == other->structureID() && !((uncheckedDowncast<Object>(compiledObject)->orderWord() ^ uncheckedDowncast<Object>(other)->orderWord()) & ~orderWordIntegrityBits);
 }
 
-// Empty for a field that is absent.
+ALWAYS_INLINE uint32_t orderWordWithoutIntegrity(const JSObject* compiledObject)
+{
+    ASSERT(isCompiledObject(compiledObject));
+    return uncheckedDowncast<Object>(compiledObject)->orderWord() & ~orderWordIntegrityBits;
+}
+
+ALWAYS_INLINE bool hasExtraProperties(const JSObject* compiledObject)
+{
+    ASSERT(isCompiledObject(compiledObject));
+    return uncheckedDowncast<Object>(compiledObject)->hasExtraProperties();
+}
+
+ALWAYS_INLINE JSValue readListedProperty(const JSObject* compiledObject, const PropertyListEntry& property, JSObject* extraProperties)
+{
+    return property.field ? uncheckedDowncast<Object>(compiledObject)->readInline(*property.field) : extraProperties->getDirect(property.offsetInExtraProperties);
+}
+
 ALWAYS_INLINE JSValue readListedField(const JSObject* compiledObject, const FieldAsProperty& property)
 {
     return uncheckedDowncast<Object>(compiledObject)->readListedField(property);
 }
 
-// As Object::readInlineUnboxed. An empty value also stands for a field that holds undefined and has no storage.
 template<typename Functor>
 ALWAYS_INLINE auto readListedFieldUnboxed(const JSObject* compiledObject, const FieldAsProperty& property, const Functor& functor)
 {
     return uncheckedDowncast<Object>(compiledObject)->readInlineUnboxed(*property.field, functor);
 }
 
-// The narrow references of an object in a frame are not read by cellInNarrowSlot().
 ALWAYS_INLINE bool isInFrame(const JSObject* compiledObject)
 {
     return uncheckedDowncast<Object>(compiledObject)->isInFrame();
@@ -74,11 +90,19 @@ ALWAYS_INLINE Result forEachOwnPropertyInline(VM& vm, JSObject* object, Filter f
 }
 
 template<typename Functor>
-ALWAYS_INLINE Result forEachOwnPropertyAsCreatedInline(VM& vm, JSObject* object, const Functor& functor, Elements elements = Elements::NeedGenericPath)
+ALWAYS_INLINE Result forEachOwnPropertyAsCreatedInline(VM& vm, JSObject* object, const Functor& functor, Elements elements = Elements::NeedGenericPath, Preparations preparations = Preparations::NeedGenericPath)
 {
     if (auto result = tryVisitListedFields(object, true, functor)) [[likely]]
         return *result;
-    return forEachOwnPropertyAsCreated(vm, object, functor, elements);
+    return forEachOwnPropertyAsCreated(vm, object, functor, elements, preparations);
+}
+
+template<typename Functor>
+ALWAYS_INLINE Result forEachOwnPropertyAsCreatedAfterPreparingInline(JSGlobalObject* globalObject, JSObject* object, const Functor& functor, Elements elements)
+{
+    if (auto result = tryVisitListedFields(object, true, functor)) [[likely]]
+        return *result;
+    return forEachOwnPropertyAsCreatedAfterPreparing(globalObject, object, functor, elements);
 }
 
 } } } // namespace JSC::AOT::PropertyWalk

@@ -3,35 +3,13 @@ import {
   engineStructNameOf,
   engineTypeOf,
   hasEngineStruct,
-  listFirstWord,
   sectionElementTypeOf,
   twoWordScalars,
 } from "./cpp-types.ts";
 import { kindText } from "./hash.ts";
-import { blocks, cppHeader, cppSource, groupedCases, indent, inNamespace } from "./lines.ts";
-import type {
-  Entry,
-  External,
-  Field,
-  Kind,
-  PayloadField,
-  ScalarKind,
-  Schema,
-  SchemaRecord,
-  SchemaType,
-  Variant,
-} from "./model.ts";
-import {
-  entriesOf,
-  fieldsOf,
-  innermostKindOf,
-  isNested,
-  isStringKey,
-  isWireType,
-  nameOf,
-  payloadWordsOf,
-  wireParametersOf,
-} from "./model.ts";
+import { blocks, cppHeader, cppSource, indent, inNamespace } from "./lines.ts";
+import type { Field, Kind, ScalarKind, Schema, SchemaRecord, SchemaType, Variant } from "./model.ts";
+import { innermostKindOf, isNested, nameOf } from "./model.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
 import { wireFieldsOf, wireTypesOf } from "./rust-types.ts";
 import { SchemaError } from "./source.ts";
@@ -44,214 +22,39 @@ const borrowedSpanReaders: Readonly<Partial<Record<ScalarKind, string>>> = {
   CodeWord: "code",
 };
 
-const recursionHelpers = `struct RecursiveRead {
-    uint64_t remainingRecords { 0 };
-    uint64_t depth { 0 };
-};
+const recursionHelpers = `// Nested records are read by recursion, before any verifier has seen them.
+// A cycle among the spans would recurse forever, and spans that share records could be read exponentially often.
+struct RecursiveRead {
+    // Must equal MaxDataNestingDepth in limits.def, which the front end enforces.
+    static constexpr uint32_t maxDepth = 2000;
 
-static bool enterSpan(RecordChecker& checker, RecursiveRead& recursion, size_t numberOfRecords)
-{
-    constexpr uint64_t maxDepth = std::max(valueOnARM64Of(LimitID::MaxNestingDepth), valueOnX86_64Of(LimitID::MaxNestingDepth));
-    if (recursion.depth >= maxDepth || numberOfRecords > recursion.remainingRecords) {
-        checker.fail(InternalErrorKind::DuplicateListEntry);
-        return false;
+    void enterSpan(size_t numberOfRecords)
+    {
+        RELEASE_ASSERT(depth < maxDepth);
+        RELEASE_ASSERT(numberOfRecords <= remainingRecords);
+        remainingRecords -= numberOfRecords;
+        ++depth;
     }
-    recursion.remainingRecords -= numberOfRecords;
-    ++recursion.depth;
-    return true;
-}`.split("\n");
 
-const decoderHelpers = `template<typename E>
-static uint32_t nextEnumerator(BodyDecoder& decoder)
-{
-    uint32_t word = decoder.next();
-    if (decoder.form() == IRForm::AsRead)
-        return static_cast<uint32_t>(decoder.checker().enumerator<E>(word));
-    if (word >= numberOfEnumerators<E>)
-        decoder.fail(InternalErrorKind::UnknownEnumerator);
-    return word;
-}
+    void leaveSpan() { --depth; }
 
-template<typename E>
-static uint32_t nextOptionalEnumerator(BodyDecoder& decoder)
-{
-    uint32_t word = decoder.next();
-    if (word == Wire::none)
-        return word;
-    if (decoder.form() == IRForm::AsRead)
-        return static_cast<uint32_t>(decoder.checker().enumerator<E>(word));
-    if (word >= numberOfEnumerators<E>)
-        decoder.fail(InternalErrorKind::UnknownEnumerator);
-    return word;
-}
-
-template<typename F>
-static uint32_t nextFlagWord(BodyDecoder& decoder)
-{
-    uint32_t word = decoder.next();
-    if (decoder.form() == IRForm::AsRead)
-        return static_cast<uint32_t>(decoder.checker().flags<F>(word).toRaw());
-    if (static_cast<uint64_t>(word) >> numberOfEnumerators<F>)
-        decoder.fail(InternalErrorKind::UnknownFlag);
-    return word;
-}
-
-template<typename IDType>
-static uint32_t nextID(BodyDecoder& decoder)
-{
-    return decoder.checker().id<IDType>(decoder.next()).index();
-}
-
-template<typename IDType>
-static uint32_t nextOptionalID(BodyDecoder& decoder)
-{
-    return decoder.checker().optionalID<IDType>(decoder.next()).index();
-}
-
-template<typename External>
-static uint32_t nextExternal(BodyDecoder& decoder)
-{
-    uint32_t word = decoder.next();
-    decoder.checker().external<External>(word);
-    return word;
-}
-
-template<typename External>
-static uint32_t nextOptionalExternal(BodyDecoder& decoder)
-{
-    uint32_t word = decoder.next();
-    if (word != Wire::none)
-        decoder.checker().external<External>(word);
-    return word;
-}
-
-static uint32_t nextBoolean(BodyDecoder& decoder)
-{
-    return decoder.checker().boolean(decoder.next());
-}
-
-// An operation whose words on the wire are a fixed number is decoded without a test between its words. Where a word is not valid, the words are decoded again one by one,
-// which finds the error to report.
-template<typename E>
-static uint32_t checkedEnumerator(uint32_t word, bool& isValid)
-{
-    isValid &= word < numberOfWireEnumerators<E>;
-    return word;
-}
-
-template<typename E>
-static uint32_t checkedOptionalEnumerator(uint32_t word, bool& isValid)
-{
-    isValid &= word < numberOfWireEnumerators<E> || word == Wire::none;
-    return word;
-}
-
-template<typename F>
-static uint32_t checkedFlagWord(uint32_t word, bool& isValid)
-{
-    constexpr uint64_t wireMask = (uint64_t { 1 } << numberOfWireEnumerators<F>) - 1;
-    isValid &= !(word & ~wireMask);
-    return word;
-}
-
-static uint32_t checkedBoolean(uint32_t word, bool& isValid)
-{
-    isValid &= word <= 1;
-    return word;
-}
-
-static void setCheckedDeclaredType(BodyDecoder& decoder, Instruction& instruction, unsigned firstWord, const uint32_t* words, bool& isValid)
-{
-    static_assert(sizeof(Wire::DeclaredType) == 3 * sizeof(uint32_t) && PayloadWords<DeclaredType>::count == 3);
-    static_assert(!offsetof(Wire::DeclaredType, type) && offsetof(Wire::DeclaredType, site) == sizeof(uint32_t) && offsetof(Wire::DeclaredType, flags) == 2 * sizeof(uint32_t));
-    constexpr uint32_t flagsThatExcludeEachOther = OptionSet<PositionFlags> { PositionFlags::IsExpected, PositionFlags::IsInt32Promise }.toRaw();
-    uint32_t flags = checkedFlagWord<PositionFlags>(words[2], isValid);
-    isValid &= (flags & flagsThatExcludeEachOther) != flagsThatExcludeEachOther;
-    instruction.setPayloadWordAt(firstWord, decoder.checkedID<TypeID>(words[0], isValid));
-    instruction.setPayloadWordAt(firstWord + 1, decoder.checkedOptionalID<TypeSiteID>(words[1], isValid));
-    instruction.setPayloadWordAt(firstWord + 2, flags);
-}
-
-template<typename WireRecord, typename Record>
-static Record nextRecord(BodyDecoder& decoder)
-{
-    std::array<uint32_t, sizeof(WireRecord) / sizeof(uint32_t)> words;
-    for (uint32_t& word : words)
-        word = decoder.next();
-    Record record;
-    read(decoder.checker(), std::bit_cast<WireRecord>(words), record);
-    return record;
-}
-
-template<typename WireRecord, typename Record>
-static void decodeRecord(BodyDecoder& decoder, Instruction& instruction, unsigned firstWord)
-{
-    encodePayloadRecord(instruction, firstWord, nextRecord<WireRecord, Record>(decoder));
-}
-
-template<typename WireRecord, typename Record>
-static void decodeRecordList(BodyDecoder& decoder, Instruction& instruction, unsigned firstWord)
-{
-    uint32_t count = decoder.nextCount(sizeof(WireRecord) / sizeof(uint32_t));
-    Vector<Record, 4> records;
-    for (uint32_t i = 0; i < count && !decoder.hasFailed(); ++i)
-        records.append(nextRecord<WireRecord, Record>(decoder));
-    instruction.setPayloadListFrom(firstWord, encodePayloadList(records.span()).span());
-}
-
-template<typename Functor>
-static void decodeWordList(BodyDecoder& decoder, Instruction& instruction, unsigned firstWord, unsigned wordsPerElement, const Functor& nextWord)
-{
-    uint32_t count = decoder.nextCount(wordsPerElement);
-    Vector<uint32_t, 16> words;
-    for (uint64_t i = 0; i < static_cast<uint64_t>(count) * wordsPerElement && !decoder.hasFailed(); ++i)
-        words.append(nextWord(decoder));
-    instruction.setPayloadListFrom(firstWord, words.span());
-}
-
-static uint32_t nextWord(BodyDecoder& decoder)
-{
-    return decoder.next();
-}`.split("\n");
+    uint64_t remainingRecords { 0 };
+    uint32_t depth { 0 };
+};`.split("\n");
 
 export function convertedTypes(schema: Schema): SchemaType[] {
   return wireTypesOf(schema).filter(hasEngineStruct);
 }
 
-function externalsRead(schema: Schema): External[] {
-  const kinds = [
-    ...wireTypesOf(schema).flatMap(type => fieldsOf(type).map(field => field.kind)),
-    ...entriesOf(schema).flatMap(entry => entry.payload.map(field => field.kind)),
-  ];
-  const used = new Set<string>();
-  for (const kind of kinds) {
-    const inner = innermostKindOf(kind);
-    if (inner.tag === "External") used.add(inner.external.name);
-  }
-  return schema.externals.filter(external => used.has(external.name));
-}
-
-function externalTest(external: External): string {
-  const type = external.cppType;
-  const head = `template<> inline bool isValidExternal<${type}>(uint32_t word, const BuiltinTable&`;
-  if (external.form === "id") return `${head} builtins) { return builtins.contains(${type}(word)); }`;
-  if (external.below !== null) return `${head}) { return word < ${external.below}; }`;
-  return `${head} builtins) { return isValid${type.split("::").at(-1)}(word, builtins); }`;
-}
-
 function readerHeader(schema: Schema): string[] {
   return cppHeader(
     [],
-    inNamespace("Typed", [
-      ...externalsRead(schema).map(externalTest),
-      "",
-      ...convertedTypes(schema).map(
+    inNamespace(
+      "Typed",
+      convertedTypes(schema).map(
         type => `void read(RecordChecker&, const Wire::${nameOf(type)}&, ${engineStructNameOf(type)}&);`,
       ),
-      "",
-      "void decodeFields(BodyDecoder&, Value&);",
-      "void decodeFields(BodyDecoder&, Terminator&);",
-    ]),
+    ),
   );
 }
 
@@ -308,17 +111,6 @@ function recursiveTypes(schema: Schema): SchemaType[] {
   return convertedTypes(schema).filter(type => reaches(nameOf(type), type, new Set()));
 }
 
-function ascendingCheck(elements: string, key: Field | null): string[] {
-  const access = key === null ? "" : `.${key.name}`;
-  const previous = `${elements}[i - 1]${access}`;
-  const next = `${elements}[i]${access}`;
-  const check =
-    key !== null && isStringKey(key)
-      ? `checker.requireAscendingStrings(${checkedWord(key.kind, false, previous)}, ${checkedWord(key.kind, false, next)});`
-      : `checker.requireAscending(${previous}, ${next});`;
-  return [`for (size_t i = 1; i < ${elements}.size(); ++i)`, `    ${check}`];
-}
-
 function readSpan(recursiveCallees: readonly string[], field: Field, source: string, target: string): string[] {
   const element = innermostKindOf(field.kind);
   const borrowedReader = element.tag === "Scalar" ? borrowedSpanReaders[element.scalar] : undefined;
@@ -327,7 +119,6 @@ function readSpan(recursiveCallees: readonly string[], field: Field, source: str
     return [
       "{",
       `    auto words = checker.words(${source});`,
-      ...indent(field.isSorted ? ascendingCheck("words", null) : []),
       `    ${target}.reserveInitialCapacity(words.size());`,
       "    for (uint32_t word : words)",
       `        ${target}.append(${checkedWord(element, false, "word")});`,
@@ -335,22 +126,15 @@ function readSpan(recursiveCallees: readonly string[], field: Field, source: str
     ];
   }
   const isRecursive = recursiveCallees.includes(nameOf(element));
-  const readElements = [
-    `${target}.grow(elements.size());`,
-    "for (size_t i = 0; i < elements.size(); ++i)",
-    `    read(checker, elements[i], ${target}[i]${isRecursive ? ", recursion" : ""});`,
-  ];
-  const readWithinBudget = [
-    "if (enterSpan(checker, recursion, elements.size())) {",
-    ...indent(readElements),
-    "    --recursion.depth;",
-    "}",
-  ];
   return [
     "{",
     `    auto elements = checker.slice<Wire::${nameOf(element)}>(${source});`,
-    ...indent(field.isSorted ? ascendingCheck("elements", field.sortedBy) : []),
-    ...indent(isRecursive ? readWithinBudget : readElements),
+    ...(isRecursive ? ["    recursion.enterSpan(elements.size());"] : []),
+    `    ${target}.reserveInitialCapacity(elements.size());`,
+    `    ${target}.grow(elements.size());`,
+    "    for (size_t i = 0; i < elements.size(); ++i)",
+    `        read(checker, elements[i], ${target}[i]${isRecursive ? ", recursion" : ""});`,
+    ...(isRecursive ? ["    recursion.leaveSpan();"] : []),
     "}",
   ];
 }
@@ -420,7 +204,7 @@ function readCaseField(recursiveCallees: readonly string[], variant: Variant, fi
 function readVariant(schema: Schema, recursive: readonly string[], variant: Variant): string[] {
   const recursiveCallees = recursive.includes(variant.name) ? recursive : [];
   const cases = variant.cases.flatMap(variantCase => {
-    const label = `case ${variant.name}::Kind::${variantCase.name}:`;
+    const label = `case static_cast<uint32_t>(${variant.name}::Kind::${variantCase.name}):`;
     const caseType = `${variant.name}::${variantCase.name}`;
     if (variantCase.fields.length === 0) return [label, `    record = ${caseType} { };`, "    break;"];
     return [
@@ -439,12 +223,10 @@ function readVariant(schema: Schema, recursive: readonly string[], variant: Vari
   return [
     readSignature(recursive, { tag: "Variant", variant }),
     "{",
-    `    if (wire.kind >= ${variant.cases.length}) {`,
-    "        checker.fail(InternalErrorKind::UnknownVariantCase);",
-    "        return;",
-    "    }",
-    `    switch (static_cast<${variant.name}::Kind>(wire.kind)) {`,
+    "    switch (wire.kind) {",
     ...indent(cases),
+    "    default:",
+    "        RELEASE_ASSERT_NOT_REACHED();",
     "    }",
     "    checker.didRead(record);",
     "}",
@@ -490,167 +272,8 @@ function recordReaderSource(schema: Schema): string[] {
     return recursive.includes(nameOf(type)) ? [read, recursionEntry(type, budget)] : [read];
   });
   return cppSource(
-    ['"AOTReaderInternal.h"', "<algorithm>", "<bit>"],
+    ['"AOTReaderInternal.h"', "<bit>"],
     inNamespace("Typed", blocks(recursionSupport(recursiveStructs), ...functions)),
-  );
-}
-
-function nextWordFunction(kind: Kind, isOptional: boolean): string {
-  const type = engineTypeOf(kind);
-  if (kind.tag === "Id" && !kind.id.isEngine) return `${isOptional ? "nextOptionalID" : "nextID"}<${type}>`;
-  if (kind.tag === "External") return `${isOptional ? "nextOptionalExternal" : "nextExternal"}<${type}>`;
-  if (kind.tag === "Enum") return `${isOptional ? "nextOptionalEnumerator" : "nextEnumerator"}<${type}>`;
-  if (kind.tag === "Flags") return `nextFlagWord<${kind.type.name}>`;
-  if (kind.tag === "Scalar" && kind.scalar === "Bool") return "nextBoolean";
-  return "nextWord";
-}
-
-function decodeList(entry: Entry, element: Kind, subject: string): string {
-  const firstWord = listFirstWord(entry);
-  if (isNested(element) && isWireType(element)) {
-    return `decodeRecordList<Wire::${nameOf(element)}, ${engineTypeOf(element)}>(decoder, ${subject}, ${firstWord});`;
-  }
-  return `decodeWordList(decoder, ${subject}, ${firstWord}, ${payloadWordsOf(element)}, ${nextWordFunction(element, false)});`;
-}
-
-function decodePayload(entry: Entry, parameter: PayloadField, subject: string): string[] {
-  const kind = parameter.kind;
-  if (kind.tag === "List") return [decodeList(entry, kind.element, subject)];
-  const firstWord = parameter.firstWord;
-  if (firstWord === null) throw new Error(`payload field ${parameter.name} of ${entry.name} has no payload word`);
-  if (isNested(kind)) {
-    if (isWireType(kind))
-      return [`decodeRecord<Wire::${nameOf(kind)}, ${engineTypeOf(kind)}>(decoder, ${subject}, ${firstWord});`];
-    return Array.from(
-      { length: parameter.payloadWords },
-      (_, index) => `${subject}.setPayloadWordAt(${firstWord + index}, decoder.next());`,
-    );
-  }
-  if (kind.tag === "Scalar" && twoWordScalars.has(kind.scalar))
-    return [`${subject}.setPayloadWordPairAt(${firstWord}, decoder.nextPair());`];
-  return [`${subject}.setPayloadWordAt(${firstWord}, ${nextWordFunction(kind, parameter.isOptional)}(decoder));`];
-}
-
-function checkedFixedWord(kind: Kind, isOptional: boolean, word: string): string | null {
-  const type = engineTypeOf(kind);
-  if (kind.tag === "Id" && !kind.id.isEngine)
-    return `decoder.${isOptional ? "checkedOptionalID" : "checkedID"}<${type}>(${word}, isValid)`;
-  if (kind.tag === "External") return null;
-  if (kind.tag === "Enum")
-    return `${isOptional ? "checkedOptionalEnumerator" : "checkedEnumerator"}<${type}>(${word}, isValid)`;
-  if (kind.tag === "Flags") return `checkedFlagWord<${kind.type.name}>(${word}, isValid)`;
-  if (kind.tag === "Scalar" && kind.scalar === "Bool") return `checkedBoolean(${word}, isValid)`;
-  return word;
-}
-
-interface FixedWords {
-  readonly count: number;
-  readonly statements: readonly string[];
-}
-
-function fixedWordsOfPayload(parameter: PayloadField, subject: string, first: number): FixedWords | null {
-  const kind = parameter.kind;
-  const firstWord = parameter.firstWord;
-  if (kind.tag === "List" || firstWord === null) return null;
-  if (isNested(kind)) {
-    if (!isWireType(kind)) {
-      const statements = Array.from(
-        { length: parameter.payloadWords },
-        (_, index) => `${subject}.setPayloadWordAt(${firstWord + index}, words[${first + index}]);`,
-      );
-      return { count: parameter.payloadWords, statements };
-    }
-    if (nameOf(kind) !== "DeclaredType") return null;
-    return {
-      count: 3,
-      statements: [`setCheckedDeclaredType(decoder, ${subject}, ${firstWord}, words + ${first}, isValid);`],
-    };
-  }
-  if (kind.tag === "Scalar" && twoWordScalars.has(kind.scalar)) {
-    return {
-      count: 2,
-      statements: [
-        `${subject}.setPayloadWordAt(${firstWord}, words[${first}]);`,
-        `${subject}.setPayloadWordAt(${firstWord + 1}, words[${first + 1}]);`,
-      ],
-    };
-  }
-  const word = checkedFixedWord(kind, parameter.isOptional, `words[${first}]`);
-  return word === null ? null : { count: 1, statements: [`${subject}.setPayloadWordAt(${firstWord}, ${word});`] };
-}
-
-function decodeFixedWords(entry: Entry, subject: string): string[] {
-  const statements: string[] = [];
-  let count = 0;
-  for (const parameter of wireParametersOf(entry)) {
-    if (parameter.tag === "Operand") {
-      if (parameter.isVariadic) return [];
-      statements.push(
-        `${subject}.setOperand(${parameter.index}, decoder.${parameter.isOptional ? "checkedOptionalOperand" : "checkedOperand"}(words[${count}], isValid));`,
-      );
-      count += 1;
-      continue;
-    }
-    const fixed = fixedWordsOfPayload(parameter, subject, count);
-    if (fixed === null) return [];
-    statements.push(...fixed.statements);
-    count += fixed.count;
-  }
-  if (count === 0) return [];
-  return [
-    `if (const uint32_t* words = decoder.peekWords(${count})) {`,
-    "    bool isValid = true;",
-    ...indent(statements),
-    "    if (isValid) [[likely]] {",
-    `        decoder.skipWords(${count});`,
-    "        return;",
-    "    }",
-    "}",
-  ];
-}
-
-function decodeEntry(entry: Entry, subject: string): string[] {
-  const statements = wireParametersOf(entry).flatMap(parameter => {
-    if (parameter.tag === "Payload") return decodePayload(entry, parameter, subject);
-    if (parameter.isVariadic) return [`decoder.decodeVariadicOperands(${subject});`];
-    return [
-      `${subject}.setOperand(${parameter.index}, decoder.${parameter.isOptional ? "nextOptionalOperand" : "nextOperand"}());`,
-    ];
-  });
-  return [...decodeFixedWords(entry, subject), ...statements, "return;"];
-}
-
-function decodeFunction(
-  entries: readonly Entry[],
-  typeName: string,
-  subject: string,
-  tag: string,
-  enumName: string,
-): string[] {
-  return [
-    `void decodeFields(BodyDecoder& decoder, ${typeName}& ${subject})`,
-    "{",
-    `    switch (${subject}.${tag}) {`,
-    ...groupedCases(
-      enumName,
-      entries.map(entry => ({ label: entry.name, body: decodeEntry(entry, subject) })),
-    ),
-    "    }",
-    "    RELEASE_ASSERT_NOT_REACHED();",
-    "}",
-  ];
-}
-
-function bodyDecoderSource(schema: Schema): string[] {
-  return cppSource(
-    ['"AOTReaderInternal.h"', "<array>", "<bit>"],
-    inNamespace("Typed", [
-      ...decoderHelpers,
-      "",
-      ...decodeFunction(schema.operations, "Value", "value", "opcode", "Opcode"),
-      "",
-      ...decodeFunction(schema.terminators, "Terminator", "terminator", "kind", "TerminatorKind"),
-    ]),
   );
 }
 
@@ -658,6 +281,5 @@ export function emitCppReader(context: EmitContext): OutputFile[] {
   return [
     { name: "AOTSchemaReader.h", lines: readerHeader(context.schema) },
     { name: "AOTSchemaRecordReader.cpp", lines: recordReaderSource(context.schema) },
-    { name: "AOTSchemaBodyDecoder.cpp", lines: bodyDecoderSource(context.schema) },
   ];
 }

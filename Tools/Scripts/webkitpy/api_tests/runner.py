@@ -29,6 +29,7 @@ from webkitcorepy import string_utils
 from webkitcorepy import TaskPool
 
 from webkitpy.common.iteration_compatibility import iteritems
+from webkitpy.common.program_status import ProgramStatus
 from webkitpy.port.server_process import ServerProcess, _log as server_process_logger
 
 _log = logging.getLogger(__name__)
@@ -88,10 +89,12 @@ def report_result(worker, test, status, output, elapsed=None):
     else:
         Runner.instance.results[test] = status, output, elapsed
 
-    if status in (Runner.STATUS_FAILED, Runner.STATUS_CRASHED, Runner.STATUS_TIMEOUT):
+    failed = status in (Runner.STATUS_FAILED, Runner.STATUS_CRASHED, Runner.STATUS_TIMEOUT)
+    if failed:
         Runner.instance._failure_count += 1
-        if Runner.instance.exit_after_n_failures and Runner.instance._failure_count >= Runner.instance.exit_after_n_failures:
-            raise EarlyExitException(Runner.instance._failure_count)
+    Runner.instance.test_finished()
+    if failed and Runner.instance.exit_after_n_failures and Runner.instance._failure_count >= Runner.instance.exit_after_n_failures:
+        raise EarlyExitException(Runner.instance._failure_count)
 
 
 def teardown_shard():
@@ -121,10 +124,13 @@ class Runner(object):
 
     instance = None
 
-    def __init__(self, port, printer, log_limit=250, expectations=None):
+    def __init__(self, port, printer, log_limit=250, expectations=None, status=None):
         self.port = port
         self.printer = printer
         self.tests_run = 0
+        self._status = status or ProgramStatus.disabled()
+        self._tests_total = 0
+        self._tests_finished = 0
         self._num_workers = 1
         self.log_limit = log_limit
         self._has_logged_for_test = True  # Suppress an empty line between "Running tests" and the first test's output.
@@ -138,16 +144,8 @@ class Runner(object):
     def command_for_port(port, args, worker_number=None):
         if (port.get_option('force')):
             args.append('--force')
-        if (port.get_option('remote_layer_tree')):
-            args.append('--remote-layer-tree')
         if (port.get_option('site_isolation_enabled_by_default')):
             args.append('--site-isolation-enabled-by-default')
-        if (port.get_option('no_remote_layer_tree')):
-            args.append('--no-remote-layer-tree')
-        if (port.get_option('use_gpu_process')):
-            args.append('--use-gpu-process')
-        if (port.get_option('no_use_gpu_process')):
-            args.append('--no-use-gpu-process')
         if getattr(port, 'DEVICE_MANAGER', None):
             assert port.DEVICE_MANAGER.INITIALIZED_DEVICES
             device = port.target_host(worker_number) if worker_number is not None else port.DEVICE_MANAGER.INITIALIZED_DEVICES[0]
@@ -159,13 +157,17 @@ class Runner(object):
         return args
 
     @staticmethod
+    def _suite_name(test):
+        return '.'.join(test.split('.')[:-1])
+
+    @staticmethod
     def _shard_tests(tests, fully_parallel):
         shards = {}
         for test in tests:
-            shard_prefix = '.'.join(test.split('.')[:-1])
-            if shard_prefix not in shards:
-                shards[shard_prefix] = []
-            shards[shard_prefix].append(test)
+            suite = Runner._suite_name(test)
+            if suite not in shards:
+                shards[suite] = []
+            shards[suite].append(test)
         if fully_parallel:
             shards = {}
             for i, test in enumerate(tests):
@@ -191,12 +193,30 @@ class Runner(object):
         components = test_name.split('.')[1:]
         return len(components) > 1 and components[1].startswith('DISABLED_')
 
+    def begin_tests(self, total):
+        self._tests_total = total
+        self._tests_finished = 0
+        self._report_progress()
+
+    def test_finished(self):
+        self._tests_finished += 1
+        self._report_progress()
+
+    def _report_progress(self):
+        progress = None
+        if self._tests_total and not self.port.get_option('test_parallel_safety'):
+            progress = min(self._tests_finished * 100 // self._tests_total, 100)
+        msg = string_utils.pluralize(self._failure_count, 'failure') if self._failure_count else None
+        self._status.report('working', progress=progress, msg=msg)
+
     def run(self, tests, num_workers):
         if not tests:
             return
 
         if self.port.get_option('fully_parallel') and self.port.get_option('test_parallel_safety'):
             raise RuntimeError(f'Running api tests fully parallel is not compatible with test_parallel_safety')
+
+        self.begin_tests(len(tests))
 
         self.printer.write_update('Filtering tests by allowlist ...')
         # Split tests by allowlist BEFORE sharding
@@ -275,8 +295,8 @@ class Runner(object):
             _log.info('Test-parallel-safety mode: no tests to check')
             return
 
-        checked_set = set(checked_tests)
-        background_chunks = Runner._parallel_safety_background_chunks([test for test in allowlisted_tests if test not in checked_set], checked_tests)
+        checked_suites = {Runner._suite_name(test) for test in checked_tests}
+        background_chunks = Runner._parallel_safety_background_chunks([test for test in allowlisted_tests if Runner._suite_name(test) not in checked_suites], checked_tests)
         iterations = self.port.get_option('parallel_safety_iterations') or 1
         checked_workers = min(len(checked_tests), max(1, workers // 3))
         background_workers = min(len(background_chunks), workers - checked_workers)

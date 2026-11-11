@@ -79,8 +79,12 @@ struct WKWebExtensionAPIActionTests {
             browser.test.assertThrows(() => browser.action.setPopup({windowId: 'bad', popup: 'popup.html'}), /'windowId' is expected to be a number or null, but a string was provided/i)
             browser.test.assertThrows(() => browser.action.setBadgeText({tabId: 1.2, text: '1'}), /'tabId' value is invalid, because it is not a tab identifier/i)
             browser.test.assertThrows(() => browser.action.setBadgeText({windowId: -3, text: '2'}), /'windowId' value is invalid, because it is not a window identifier/i)
-            browser.test.assertThrows(() => browser.action.enable('bad'), /'tabId' value is invalid, because a number is expected/i)
-            browser.test.assertThrows(() => browser.action.disable('bad'), /'tabId' value is invalid, because a number is expected/i)
+            browser.test.assertThrows(() => browser.action.enable('bad'), /'details' value is invalid, because a number or an object is expected/i)
+            browser.test.assertThrows(() => browser.action.disable('bad'), /'details' value is invalid, because a number or an object is expected/i)
+            browser.test.assertThrows(() => browser.action.enable({tabId: 'bad'}), /'tabId' is expected to be a number or null, but a string was provided/i)
+            browser.test.assertThrows(() => browser.action.disable({windowId: 'bad'}), /'windowId' is expected to be a number or null, but a string was provided/i)
+            browser.test.assertThrows(() => browser.action.enable({tabId: 1, windowId: 1}), /'details' value is invalid, because it cannot specify both 'tabId' and 'windowId'/i)
+            browser.test.assertThrows(() => browser.action.disable({tabId: 1, windowId: 1}), /'details' value is invalid, because it cannot specify both 'tabId' and 'windowId'/i)
             browser.test.assertThrows(() => browser.action.isEnabled({tabId: Infinity}), /'tabId' is expected to be a number or null, but Infinity was provided/i)
             browser.test.assertThrows(() => browser.action.isEnabled({windowId: NaN}), /'windowId' is expected to be a number or null, but NaN was provided/i)
 
@@ -104,6 +108,8 @@ struct WKWebExtensionAPIActionTests {
             await browser.test.assertRejects(browser.action.getBadgeText({windowId: 9999}), /window not found/i)
             await browser.test.assertRejects(browser.action.isEnabled({tabId: 9999}), /tab not found/i)
             await browser.test.assertRejects(browser.action.isEnabled({windowId: 9999}), /window not found/i)
+            await browser.test.assertRejects(browser.action.enable({tabId: 9999}), /tab not found/i)
+            await browser.test.assertRejects(browser.action.disable({windowId: 9999}), /window not found/i)
 
             browser.test.notifyPass()
             """
@@ -119,25 +125,28 @@ struct WKWebExtensionAPIActionTests {
             await browser.test.assertRejects(browser.action.setPopup({ popup: 'webkit-extension://other-extension/popup.html' }), /The 'popup' value is invalid, because it must be a resource within the extension/i)
             await browser.test.assertRejects(browser.action.setPopup({ popup: 'javascript:alert(1)' }), /The 'popup' value is invalid, because it must be a resource within the extension/i)
 
-            browser.test.assertEq(await browser.action.getPopup({ }), 'popup.html', 'Popup should be unchanged after a rejection')
+            browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('popup.html'), 'Popup should be unchanged after a rejection')
 
             await browser.action.setPopup({ popup: 'alt-popup.html' })
-            browser.test.assertEq(await browser.action.getPopup({ }), 'alt-popup.html', 'Relative popup path should be accepted')
+            browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('alt-popup.html'), 'Relative popup path should be accepted')
 
             await browser.action.setPopup({ popup: '/popup.html' })
-            browser.test.assertEq(await browser.action.getPopup({ }), '/popup.html', 'Absolute popup path should be accepted')
+            browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('/popup.html'), 'Absolute popup path should be accepted')
 
             await browser.action.setPopup({ popup: browser.runtime.getURL('alt-popup.html') })
             browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('alt-popup.html'), 'Full extension URL should be accepted')
 
-            await browser.action.setPopup({ popup: 'missing.html' })
-            browser.test.assertEq(await browser.action.getPopup({ }), 'missing.html', 'A path to a missing file should be accepted')
+            await browser.test.assertRejects(browser.action.setPopup({ popup: 'missing.html' }), /"missing.html" was not found in the extension/i)
+            browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('alt-popup.html'), 'Popup should be unchanged after a missing path is rejected')
+
+            await browser.action.setPopup({ popup: 'alt-popup.html?mode=compact#section' })
+            browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('alt-popup.html?mode=compact#section'), 'A path with a query and fragment should be accepted')
 
             await browser.action.setPopup({ popup: '' })
             browser.test.assertEq(await browser.action.getPopup({ }), '', 'Empty popup path should be accepted')
 
             await browser.action.setPopup({ popup: null })
-            browser.test.assertEq(await browser.action.getPopup({ }), 'popup.html', 'Null popup path should restore the default')
+            browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('popup.html'), 'Null popup path should restore the default')
 
             browser.test.notifyPass()
             """
@@ -172,6 +181,38 @@ struct WKWebExtensionAPIActionTests {
         try await manager.waitForTestMessage("Test Action")
 
         context.performAction(for: manager.defaultTab)
+
+        try await manager.run()
+    }
+
+    @Test
+    func popupCanCreateJSHandle() async throws {
+        let popupScript = """
+            const canCreateJSHandle = typeof window.webkit?.createJSHandle === 'function'
+            browser.test.assertTrue(canCreateJSHandle, 'createJSHandle should be available in a popup')
+
+            const handle = canCreateJSHandle ? window.webkit.createJSHandle(document.documentElement) : null
+            browser.test.assertTrue(!!handle, 'createJSHandle should return a handle for an element')
+
+            browser.test.notifyPass()
+            """
+
+        let resources: [String: Any] = [
+            "background.js": "browser.test.sendMessage('Test Popup Action')",
+            "popup.html": "<script src='popup.js'></script>",
+            "popup.js": popupScript,
+            "toolbar-16.png": makePNGData(size: CGSize(width: 16, height: 16), color: .red),
+            "toolbar-32.png": makePNGData(size: CGSize(width: 32, height: 32), color: .blue),
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        let context = try #require(manager.context)
+
+        try await manager.waitForTestMessage("Test Popup Action")
+
+        _ = try await manager.nextPresentedAction {
+            context.performAction(for: manager.defaultTab)
+        }
 
         try await manager.run()
     }
@@ -222,10 +263,38 @@ struct WKWebExtensionAPIActionTests {
     }
 
     @Test
+    func popupWithQueryAndFragmentLoads() async throws {
+        let backgroundScript = """
+            await browser.action.setPopup({ popup: 'popup.html?mode=compact#section' })
+
+            browser.test.sendMessage('Popup Set')
+            """
+
+        let resources: [String: Any] = [
+            "background.js": backgroundScript,
+            "popup.html": "<b>Hello World!</b>",
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        let context = try #require(manager.context)
+
+        try await manager.waitForTestMessage("Popup Set")
+
+        let action = try await manager.nextPresentedAction {
+            context.performAction(for: manager.defaultTab)
+        }
+
+        let popupWebView = try #require(action.popupWebView)
+        #expect(popupWebView.url?.path == "/popup.html")
+        #expect(popupWebView.url?.query == "mode=compact")
+        #expect(popupWebView.url?.fragment == "section")
+
+        action.closePopup()
+    }
+
+    @Test
     func popupRecoversAfterPopupLoadFailure() async throws {
         let backgroundScript = """
-            await browser.action.setPopup({ popup: 'invalid.html' })
-
             browser.test.sendMessage('Invalid Popup Set')
 
             // Gives the failed provisional load time to finish before the popup path is restored.
@@ -241,7 +310,11 @@ struct WKWebExtensionAPIActionTests {
             "popup.html": "<b>Hello World!</b>",
         ]
 
-        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        // The manifest popup is checked only when the popup loads, so a missing file is how the load fails.
+        var manifest = actionPopupManifest
+        manifest["action"] = ["default_title": "Test Action", "default_popup": "invalid.html"]
+
+        let manager = try loadWebExtension(manifest: manifest, resources: resources)
         let context = try #require(manager.context)
 
         try await manager.waitForTestMessage("Invalid Popup Set")
@@ -296,6 +369,60 @@ struct WKWebExtensionAPIActionTests {
 
         // A fresh web view for the second presentation confirms m_popupWebView was cleared.
         #expect(firstWebView !== secondWebView)
+    }
+
+    @Test
+    func popupScrollsContentTallerThanMaximumSize() async throws {
+        let popupScript = """
+            window.scrollTo(0, 200)
+
+            browser.test.assertEq(window.scrollY, 200, 'The popup should scroll')
+
+            browser.test.notifyPass()
+            """
+
+        let resources: [String: Any] = [
+            "background.js": "browser.test.sendMessage('Open Popup')",
+            "popup.html": "<div style='height: 3000px'></div><script type='module' src='popup.js'></script>",
+            "popup.js": popupScript,
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        let context = try #require(manager.context)
+
+        manager.internalDelegate.presentPopupForAction = { _ in }
+
+        try await manager.waitForTestMessage("Open Popup")
+
+        context.performAction(for: manager.defaultTab)
+
+        try await manager.run()
+    }
+
+    @Test
+    func popupWidthIncludesScrollbar() async throws {
+        let resources: [String: Any] = [
+            "background.js": "browser.test.sendMessage('Open Popup')",
+            "popup.html": "<div style='width: 200px; height: 3000px'></div>",
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        let context = try #require(manager.context)
+
+        try await manager.waitForTestMessage("Open Popup")
+
+        let action = try await manager.nextPresentedAction {
+            context.performAction(for: manager.defaultTab)
+        }
+
+        let popupWebView = try #require(action.popupWebView)
+        let innerWidth = try await popupWebView.evaluateJavaScript("window.innerWidth") as! Int
+        let clientWidth = try await popupWebView.evaluateJavaScript("document.documentElement.clientWidth") as! Int
+
+        #expect(innerWidth > clientWidth)
+        #expect(popupWebView.intrinsicContentSize.width == CGFloat(innerWidth))
+
+        action.closePopup()
     }
     #endif // WTF_PLATFORM_MAC
 
@@ -377,7 +504,7 @@ struct WKWebExtensionAPIActionTests {
     func setDefaultActionProperties() async throws {
         let backgroundScript = """
             browser.test.assertEq(await browser.action.getTitle({ }), 'Test Action', 'Title should be')
-            browser.test.assertEq(await browser.action.getPopup({ }), 'popup.html', 'Popup should be')
+            browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('popup.html'), 'Popup should be')
             browser.test.assertEq(await browser.action.getBadgeText({ }), '', 'Badge text should be')
             browser.test.assertTrue(await browser.action.isEnabled({ }), 'Action should be enabled')
 
@@ -388,7 +515,7 @@ struct WKWebExtensionAPIActionTests {
             await browser.action.disable()
 
             browser.test.assertEq(await browser.action.getTitle({ }), 'Modified Title', 'Title should be')
-            browser.test.assertEq(await browser.action.getPopup({ }), 'alt-popup.html', 'Popup should be')
+            browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('alt-popup.html'), 'Popup should be')
             browser.test.assertEq(await browser.action.getBadgeText({ }), '42', 'Badge text should be')
             browser.test.assertFalse(await browser.action.isEnabled({ }), 'Action should be disabled')
 
@@ -442,7 +569,7 @@ struct WKWebExtensionAPIActionTests {
             const [currentTab] = await browser.tabs.query({ active: true, currentWindow: true })
 
             browser.test.assertEq(await browser.action.getTitle({ tabId: currentTab.id }), 'Test Action', 'Title should be')
-            browser.test.assertEq(await browser.action.getPopup({ tabId: currentTab.id }), 'popup.html', 'Popup should be')
+            browser.test.assertEq(await browser.action.getPopup({ tabId: currentTab.id }), browser.runtime.getURL('popup.html'), 'Popup should be')
             browser.test.assertEq(await browser.action.getBadgeText({ tabId: currentTab.id }), '', 'Badge text should be')
             browser.test.assertTrue(await browser.action.isEnabled({ tabId: currentTab.id }), 'Action should be enabled')
 
@@ -453,7 +580,7 @@ struct WKWebExtensionAPIActionTests {
             browser.action.disable(currentTab.id)
 
             browser.test.assertEq(await browser.action.getTitle({ tabId: currentTab.id }), 'Tab Title', 'Title should be')
-            browser.test.assertEq(await browser.action.getPopup({ tabId: currentTab.id }), 'alt-popup.html', 'Popup should be')
+            browser.test.assertEq(await browser.action.getPopup({ tabId: currentTab.id }), browser.runtime.getURL('alt-popup.html'), 'Popup should be')
             browser.test.assertEq(await browser.action.getBadgeText({ tabId: currentTab.id }), '42', 'Badge text should be')
             browser.test.assertFalse(await browser.action.isEnabled({ tabId: currentTab.id }), 'Action should be disabled')
 
@@ -547,7 +674,7 @@ struct WKWebExtensionAPIActionTests {
             const currentWindowId = currentTab.windowId
 
             browser.test.assertEq(await browser.action.getTitle({ windowId: currentWindowId }), 'Test Action', 'Title should be')
-            browser.test.assertEq(await browser.action.getPopup({ windowId: currentWindowId }), 'popup.html', 'Popup should be')
+            browser.test.assertEq(await browser.action.getPopup({ windowId: currentWindowId }), browser.runtime.getURL('popup.html'), 'Popup should be')
             browser.test.assertEq(await browser.action.getBadgeText({ windowId: currentWindowId }), '', 'Badge text should be')
 
             browser.action.setTitle({ title: 'Window Title', windowId: currentWindowId })
@@ -556,7 +683,7 @@ struct WKWebExtensionAPIActionTests {
             browser.action.setBadgeText({ text: 'W', windowId: currentWindowId })
 
             browser.test.assertEq(await browser.action.getTitle({ windowId: currentWindowId }), 'Window Title', 'Title should be')
-            browser.test.assertEq(await browser.action.getPopup({ windowId: currentWindowId }), 'window-popup.html', 'Popup should be')
+            browser.test.assertEq(await browser.action.getPopup({ windowId: currentWindowId }), browser.runtime.getURL('window-popup.html'), 'Popup should be')
             browser.test.assertEq(await browser.action.getBadgeText({ windowId: currentWindowId }), 'W', 'Badge text should be')
 
             browser.action.openPopup({ windowId: currentWindowId })
@@ -621,13 +748,97 @@ struct WKWebExtensionAPIActionTests {
     }
 
     @Test
+    func enableAndDisableWithDetails() async throws {
+        let backgroundScript = """
+            const [currentTab] = await browser.tabs.query({ active: true, currentWindow: true })
+            const currentWindowId = currentTab.windowId
+
+            browser.test.assertTrue(await browser.action.isEnabled({ windowId: currentWindowId }), 'Window action should start enabled')
+            browser.test.assertTrue(await browser.action.isEnabled({ tabId: currentTab.id }), 'Tab action should start enabled')
+
+            await browser.action.disable({ windowId: currentWindowId })
+            browser.test.assertFalse(await browser.action.isEnabled({ windowId: currentWindowId }), 'Window action should be disabled')
+            browser.test.assertTrue(await browser.action.isEnabled(), 'Default action should still be enabled')
+
+            await browser.action.enable({ windowId: currentWindowId })
+            browser.test.assertTrue(await browser.action.isEnabled({ windowId: currentWindowId }), 'Window action should be enabled again')
+
+            await browser.action.disable({ tabId: currentTab.id })
+            browser.test.assertFalse(await browser.action.isEnabled({ tabId: currentTab.id }), 'Tab action should be disabled')
+            browser.test.assertTrue(await browser.action.isEnabled(), 'Default action should still be enabled')
+
+            await browser.action.enable(currentTab.id)
+            browser.test.assertTrue(await browser.action.isEnabled({ tabId: currentTab.id }), 'Tab action should be enabled with a bare tab identifier')
+
+            await browser.action.disable({ tabId: null })
+            browser.test.assertFalse(await browser.action.isEnabled(), 'Default action should be disabled')
+
+            await browser.action.enable()
+            browser.test.assertTrue(await browser.action.isEnabled(), 'Default action should be enabled')
+
+            browser.test.notifyPass()
+            """
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
+    func isEnabledWithTabIdentifier() async throws {
+        let backgroundScript = """
+            const [currentTab] = await browser.tabs.query({ active: true, currentWindow: true })
+
+            browser.test.assertTrue(await browser.action.isEnabled(currentTab.id), 'Tab action should start enabled with a bare tab identifier')
+
+            await browser.action.disable(currentTab.id)
+            browser.test.assertFalse(await browser.action.isEnabled(currentTab.id), 'Tab action should be disabled with a bare tab identifier')
+            browser.test.assertFalse(await browser.action.isEnabled({ tabId: currentTab.id }), 'Tab action should be disabled with details')
+            browser.test.assertTrue(await browser.action.isEnabled(), 'Default action should still be enabled')
+
+            await browser.test.assertRejects(browser.action.isEnabled(9999), /tab not found/i)
+            browser.test.assertThrows(() => browser.action.isEnabled('invalid'), /'details' value is invalid, because a number or an object is expected/i)
+
+            browser.test.notifyPass()
+            """
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
+    func getPopupReturnsFullExtensionURL() async throws {
+        let backgroundScript = """
+            const defaultPopup = await browser.action.getPopup({ })
+            browser.test.assertEq(defaultPopup, browser.runtime.getURL('popup.html'), 'Default popup should be a full extension URL')
+            browser.test.assertTrue(defaultPopup.startsWith(browser.runtime.getURL('')), 'Default popup should start with the extension base URL')
+
+            await browser.action.setPopup({ popup: 'alt-popup.html' })
+            browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('alt-popup.html'), 'Relative popup path should resolve to a full extension URL')
+
+            await browser.action.setPopup({ popup: '' })
+            browser.test.assertEq(await browser.action.getPopup({ }), '', 'Empty popup should stay empty')
+
+            browser.test.notifyPass()
+            """
+
+        let resources: [String: Any] = [
+            "background.js": backgroundScript,
+            "popup.html": "<b>Hello World!</b>",
+            "alt-popup.html": "<b>Alternate</b>",
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        try await manager.run()
+    }
+
+    @Test
     func setDefaultActionPropertiesWithNullIdentifiers() async throws {
         let backgroundScript = """
             const [currentTab] = await browser.tabs.query({ active: true, currentWindow: true })
             const currentWindowId = currentTab.windowId
 
             browser.test.assertEq(await browser.action.getTitle({ tabId: null }), 'Test Action', 'Title should be')
-            browser.test.assertEq(await browser.action.getPopup({ windowId: null }), 'popup.html', 'Popup should be')
+            browser.test.assertEq(await browser.action.getPopup({ windowId: null }), browser.runtime.getURL('popup.html'), 'Popup should be')
             browser.test.assertEq(await browser.action.getBadgeText({ tabId: null, windowId: null }), '', 'Badge text should be')
             browser.test.assertTrue(await browser.action.isEnabled({ tabId: null }), 'Action should be enabled')
 
@@ -637,7 +848,7 @@ struct WKWebExtensionAPIActionTests {
             await browser.action.setBadgeText({ text: '42', tabId: null, windowId: null })
 
             browser.test.assertEq(await browser.action.getTitle({ }), 'Modified Title', 'Title should be')
-            browser.test.assertEq(await browser.action.getPopup({ }), 'alt-popup.html', 'Popup should be')
+            browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('alt-popup.html'), 'Popup should be')
             browser.test.assertEq(await browser.action.getBadgeText({ }), '42', 'Badge text should be')
 
             await browser.action.setTitle({ title: 'Window Title', tabId: null, windowId: currentWindowId })
@@ -666,6 +877,30 @@ struct WKWebExtensionAPIActionTests {
         #expect(defaultAction.badgeText == "42")
 
         let icon = try #require(defaultAction.icon(for: CGSize(width: 48, height: 48)))
+        #expect(icon.size == CGSize(width: 48, height: 48))
+    }
+
+    @Test
+    func setIconWithWindowIdNotifiesWindowAction() async throws {
+        let backgroundScript = """
+            const [currentTab] = await browser.tabs.query({ active: true, currentWindow: true })
+
+            await browser.action.setIcon({ path: 'window-toolbar-48.png', windowId: currentTab.windowId })
+            """
+
+        let resources: [String: Any] = [
+            "background.js": backgroundScript,
+            "popup.html": "Hello World!",
+            "toolbar-32.png": makePNGData(size: CGSize(width: 32, height: 32), color: .red),
+            "window-toolbar-48.png": makePNGData(size: CGSize(width: 48, height: 48), color: .green),
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+
+        let action = try await manager.nextUpdatedAction()
+        #expect(action.associatedTab == nil)
+
+        let icon = try #require(action.icon(for: CGSize(width: 48, height: 48)))
         #expect(icon.size == CGSize(width: 48, height: 48))
     }
 
@@ -804,9 +1039,57 @@ struct WKWebExtensionAPIActionTests {
     }
 
     @Test
-    func setIconWithBadPath() async throws {
+    func setIconWithMissingPathIsRejected() async throws {
+        let backgroundScript = """
+            await browser.test.assertRejects(browser.action.setIcon({ path: 'bad.png' }), /"\\/bad.png" was not found in the extension/i)
+            await browser.test.assertRejects(browser.action.setIcon({ path: 'symbol:not.a.real.symbol' }), /"symbol:not.a.real.symbol" is not a known symbol/i)
+            await browser.test.assertRejects(browser.action.setIcon({ path: { '48': 'toolbar-48.png', '96': 'missing-96.png' } }), /"\\/missing-96.png" was not found in the extension/i)
+
+            browser.test.notifyPass()
+            """
+
         let resources: [String: Any] = [
-            "background.js": "await browser.action.setIcon({ path: 'bad.png' })",
+            "background.js": backgroundScript,
+            "toolbar-48.png": makePNGData(size: CGSize(width: 48, height: 48), color: .yellow),
+            "popup.html": "Hello world!",
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        try await manager.run()
+
+        let action = try #require(manager.context?.action(for: nil))
+        #expect(action.icon(for: CGSize(width: 48, height: 48)) == nil)
+    }
+
+    @Test
+    func setIconRejectionKeepsPreviousIcon() async throws {
+        let backgroundScript = """
+            await browser.action.setIcon({ path: 'toolbar-48.png' })
+            await browser.test.assertRejects(browser.action.setIcon({ path: 'bad.png' }), /"\\/bad.png" was not found in the extension/i)
+
+            browser.test.sendMessage('Rejected')
+            """
+
+        let resources: [String: Any] = [
+            "background.js": backgroundScript,
+            "toolbar-48.png": makePNGData(size: CGSize(width: 48, height: 48), color: .yellow),
+            "popup.html": "Hello world!",
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+
+        let action = try await manager.nextUpdatedAction()
+        try await manager.waitForTestMessage("Rejected")
+
+        let icon = try #require(action.icon(for: CGSize(width: 48, height: 48)))
+        #expect(icon.size == CGSize(width: 48, height: 48))
+    }
+
+    @Test
+    func setIconWithQueryAndFragmentInPath() async throws {
+        let resources: [String: Any] = [
+            "background.js": "await browser.action.setIcon({ path: 'toolbar-48.png?v=2#icon' })",
+            "toolbar-48.png": makePNGData(size: CGSize(width: 48, height: 48), color: .yellow),
             "popup.html": "Hello world!",
         ]
 
@@ -814,7 +1097,7 @@ struct WKWebExtensionAPIActionTests {
 
         let action = try await manager.nextUpdatedAction()
 
-        #expect(action.icon(for: CGSize(width: 48, height: 48)) == nil)
+        #expect(action.icon(for: CGSize(width: 48, height: 48)) != nil)
     }
 
     @Test
@@ -920,11 +1203,13 @@ struct WKWebExtensionAPIActionTests {
     }
 
     @Test
-    func setIconWithBadDataURL() async throws {
+    func setIconWithBadDataURLIsRejected() async throws {
         let backgroundScript = """
             const invalidDataURL = 'data:image/png;base64,INVALIDDATA'
 
-            await browser.action.setIcon({ path: invalidDataURL })
+            await browser.test.assertRejects(browser.action.setIcon({ path: invalidDataURL }), /the data URL is not a valid image/i)
+
+            browser.test.notifyPass()
             """
 
         let resources: [String: Any] = [
@@ -933,10 +1218,7 @@ struct WKWebExtensionAPIActionTests {
         ]
 
         let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
-
-        let action = try await manager.nextUpdatedAction()
-
-        #expect(action.icon(for: CGSize(width: 48, height: 48)) == nil)
+        try await manager.run()
     }
 
     @Test
@@ -969,17 +1251,65 @@ struct WKWebExtensionAPIActionTests {
         try await expectDefaultIconAfterSettingIcon(with: backgroundScript)
     }
 
+    @Test
+    func setIconWithoutKnownPropertiesIsNoop() async throws {
+        let backgroundScript = """
+            const [currentTab] = await browser.tabs.query({ active: true, currentWindow: true })
+
+            await browser.action.setIcon({ path: 'toolbar-48.png' })
+
+            await browser.action.setIcon({})
+            await browser.action.setIcon({ tabId: null })
+            await browser.action.setIcon({ windowId: currentTab.windowId })
+            await browser.action.setIcon({ path: undefined })
+
+            browser.test.sendMessage('Icon Set')
+            """
+
+        let resources: [String: Any] = [
+            "background.js": backgroundScript,
+            "toolbar-32.png": makePNGData(size: CGSize(width: 32, height: 32), color: .blue),
+            "toolbar-48.png": makePNGData(size: CGSize(width: 48, height: 48), color: .red),
+            "popup.html": "Hello world!",
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        let context = try #require(manager.context)
+
+        try await manager.waitForTestMessage("Icon Set")
+
+        let action = try #require(context.action(for: nil))
+        let icon = try #require(action.icon(for: CGSize(width: 48, height: 48)))
+        #expect(compareColors(pixelColor(of: icon), .red))
+    }
+
+    @Test
+    func setIconWithNullPathStillResetsAfterNoop() async throws {
+        let backgroundScript = """
+            await browser.action.setIcon({ path: 'toolbar-48.png' })
+            await browser.action.setIcon({})
+            await browser.action.setIcon({ path: null })
+            browser.test.sendMessage('Icon Set')
+            """
+
+        let additionalResources: [String: Any] = ["toolbar-48.png": makePNGData(size: CGSize(width: 48, height: 48), color: .red)]
+
+        try await expectDefaultIconAfterSettingIcon(with: backgroundScript, additionalResources: additionalResources)
+    }
+
     /// Runs a background script that clears the action icon and sends `Icon Set`, then checks that
     /// the action fell back to the icon declared in the manifest.
     private func expectDefaultIconAfterSettingIcon(
         with backgroundScript: String,
+        additionalResources: [String: Any] = [:],
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let resources: [String: Any] = [
+        var resources: [String: Any] = [
             "background.js": backgroundScript,
             "toolbar-32.png": makePNGData(size: CGSize(width: 32, height: 32), color: .blue),
             "popup.html": "Hello world!",
         ]
+        resources.merge(additionalResources) { current, _ in current }
 
         let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
         let context = try #require(manager.context)
@@ -1064,6 +1394,29 @@ struct WKWebExtensionAPIActionTests {
     }
 
     #if ENABLE_WK_WEB_EXTENSIONS_ICON_VARIANTS
+    @Test
+    func setIconWithMissingVariantPathIsRejected() async throws {
+        let backgroundScript = """
+            await browser.test.assertRejects(browser.action.setIcon({
+                variants: [
+                    { 32: 'action-dark-32.png', 'colorSchemes': [ 'dark' ] },
+                    { 32: 'action-light-missing.png', 'colorSchemes': [ 'light' ] }
+                ]
+            }), /"\\/action-light-missing.png" was not found in the extension/i)
+
+            browser.test.notifyPass()
+            """
+
+        let resources: [String: Any] = [
+            "background.js": backgroundScript,
+            "popup.html": "Hello world!",
+            "action-dark-32.png": makePNGData(size: CGSize(width: 32, height: 32), color: .white),
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        try await manager.run()
+    }
+
     @Test
     func setIconWithVariants() async throws {
         let backgroundScript = """
@@ -1463,7 +1816,7 @@ struct WKWebExtensionAPIActionTests {
             browser.action.disable(currentTab.id)
 
             browser.test.assertEq(await browser.action.getTitle({ tabId: currentTab.id }), 'Tab Title', 'Title should be before navigation')
-            browser.test.assertEq(await browser.action.getPopup({ tabId: currentTab.id }), 'alt-popup.html', 'Popup should be before navigation')
+            browser.test.assertEq(await browser.action.getPopup({ tabId: currentTab.id }), browser.runtime.getURL('alt-popup.html'), 'Popup should be before navigation')
             browser.test.assertEq(await browser.action.getBadgeText({ tabId: currentTab.id }), '42', 'Badge text should be before navigation')
             browser.test.assertFalse(await browser.action.isEnabled({ tabId: currentTab.id }), 'Action should be disabled before navigation')
 
@@ -1472,7 +1825,7 @@ struct WKWebExtensionAPIActionTests {
               browser.test.assertEq(details.frameId, 0, 'Only main frame should be changing')
 
               browser.test.assertEq(await browser.action.getTitle({ tabId: currentTab.id }), 'Test Action', 'Title should be after navigation')
-              browser.test.assertEq(await browser.action.getPopup({ tabId: currentTab.id }), 'popup.html', 'Popup should be after navigation')
+              browser.test.assertEq(await browser.action.getPopup({ tabId: currentTab.id }), browser.runtime.getURL('popup.html'), 'Popup should be after navigation')
               browser.test.assertEq(await browser.action.getBadgeText({ tabId: currentTab.id }), '', 'Badge text should be after navigation')
               browser.test.assertTrue(await browser.action.isEnabled({ tabId: currentTab.id }), 'Action should be enabled after navigation')
 

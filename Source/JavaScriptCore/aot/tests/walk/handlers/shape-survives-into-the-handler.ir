@@ -1,0 +1,53 @@
+# the block under the handler throws and writes nothing, so what was known where it began still holds in the handler: the store has filled the slot, and the read asks for no empty slot
+# function caught(o, e) { if (o is of layout L0) { o.x = 1; try { throw e; } catch (x) { const read = o.x; kept = x; return read; } } }
+# The handler keeps what it catches: a throw whose catch reads nothing of it is a jump, and no handler block is left.
+# Another object of the layout is made without the property: else Link calls the field filled, and no read of it reckons with an empty slot.
+# RUN: walk f1 mechanisms=none+TypedOperations+Handlers
+# CHECK: mechanisms TypedOperations,Handlers
+# CHECK-LABEL: code f1:Body
+# CHECK: [[o]]: L0{{*}} = Narrowed
+# CHECK: [[stored]]: {{*}} = Unbox [[o]]
+# CHECK: PutSlot{{*}} [[stored]],
+# CHECK: role=CatchHandler
+# CHECK: [[read]]: {{*}} = Unbox [[o]]
+# CHECK: = GetSlot [[read]] key="x"
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Handlers
+# NEVER-NOT: GetSlotOrUndefined
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="kept" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    v6 = FinishObject v4
+    PutModuleVariable v6 variable=g0
+    v8 = NewObject layout=L0
+    v9 = FinishObject v8
+    PutModuleVariable v9 variable=g0
+    Return v3
+}
+function f1 name="caught" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=L0
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = Integer integer=1
+    PropSet v3, v4 key="x"
+    Jump -> next b2()
+  b2() handler=b3():
+    Throw v1
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    v7 = PropGet v3 key="x"
+    PutModuleVariable v6 variable=g0
+    Return v7
+  b4():
+    Return v1
+}

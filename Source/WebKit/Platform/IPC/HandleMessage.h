@@ -30,6 +30,7 @@
 #include "MessageArgumentDescriptions.h"
 #include "MessageNames.h"
 #include "StreamServerConnection.h"
+#include "SwiftCoding.h"
 #include <functional>
 #include <wtf/Compiler.h>
 #include <wtf/CompletionHandler.h>
@@ -557,9 +558,6 @@ void handleMessageAsync(C& connection, Decoder& decoder, T* object, MF U::* func
     auto arguments = decoder.decode<typename MessageType::Arguments>();
     if (!arguments) [[unlikely]]
         return;
-    auto replyID = decoder.decode<IPC::AsyncReplyID>();
-    if (!replyID) [[unlikely]]
-        return;
 
     if constexpr (ValidationType::returnsVoid)
         static_assert(std::is_same_v<typename ValidationType::CompletionHandlerArguments, typename MessageType::ReplyArguments>);
@@ -569,8 +567,10 @@ void handleMessageAsync(C& connection, Decoder& decoder, T* object, MF U::* func
     using CompletionHandlerType = std::conditional_t<ValidationType::returnsVoid, typename ValidationType::CompletionHandlerType, typename MessageType::Reply>;
 
     logMessage(connection, MessageType::name(), object, *arguments);
+    auto replyID = decoder.asyncReplyID();
+    decoder.markHandled();
     auto completionHandler = ValidationType::wrapCompletionHandler(CompletionHandlerType(
-        [replyID = *replyID, connection = protect(connection)] (auto&&... args) mutable {
+        [replyID, connection = protect(connection)](auto&&... args) mutable {
             connection->template sendAsyncReply<MessageType>(replyID, std::forward<decltype(args)>(args)...);
         }, MessageType::callbackThread));
     if constexpr (ValidationType::returnsVoid) {
@@ -628,13 +628,62 @@ void handleMessageAsyncWithReplyID(Connection& connection, Decoder& decoder, T* 
     using ValidationType = MethodSignatureValidation<MF>;
     static_assert(std::is_same_v<typename ValidationType::MessageArguments, std::tuple<IPC::AsyncReplyID>>);
 
-    auto replyID = decoder.decode<Connection::AsyncReplyID>();
-    if (!replyID) [[unlikely]]
-        return;
-
     logMessage(connection, MessageType::name(), object, std::tuple<>());
     static_assert(!ValidationType::expectsConnectionArgument);
-    callMemberFunction(object, function, std::tuple<IPC::AsyncReplyID>(*replyID));
+    auto replyID = decoder.asyncReplyID();
+    decoder.markHandled();
+    callMemberFunction(object, function, std::tuple<IPC::AsyncReplyID>(replyID));
+}
+
+// Dispatch to Swift handlers of messages that take Swift types. The Swift dispatch function decodes the
+// arguments itself, and returns false if they were malformed.
+
+inline void markSwiftArgumentsInvalid(Decoder& decoder)
+{
+#if ENABLE(IPC_TESTING_API)
+    decoder.setErrorString("Failed to decode the arguments of a message that takes Swift types"_s);
+#endif
+    decoder.markInvalid();
+}
+
+template<typename MessageType>
+void encodeDefaultSwiftReply(Encoder& encoder)
+{
+    Connection::cancelReply<MessageType>([&encoder](auto&&... arguments) {
+        (..., void(encoder << std::forward<decltype(arguments)>(arguments)));
+    });
+}
+
+template<typename MessageType, typename T, typename U, typename MF>
+void handleSwiftMessage(Connection& connection, Decoder& decoder, T* object, MF U::* function)
+{
+    NonEscapableBorrowLender<SwiftDecoder> swiftDecoderLender { decoder };
+    SUPPRESS_UNCOUNTED_ARG if (!(object->*function)(&connection, swiftDecoderLender.view()))
+        markSwiftArgumentsInvalid(decoder);
+}
+
+template<typename MessageType, typename T, typename U, typename MF>
+void handleSwiftMessageAsync(Connection& connection, Decoder& decoder, T* object, MF U::* function)
+{
+    Ref replyEncoder = SwiftReplyEncoder::create(connection, makeUniqueRef<Encoder>(MessageType::asyncMessageReplyName(), decoder.asyncReplyID().toUInt64()), encodeDefaultSwiftReply<MessageType>);
+    NonEscapableBorrowLender<SwiftDecoder> swiftDecoderLender { decoder };
+    SUPPRESS_UNCOUNTED_ARG if (!(object->*function)(&connection, swiftDecoderLender.view(), replyEncoder.ptr())) {
+        replyEncoder->discard();
+        markSwiftArgumentsInvalid(decoder);
+        return;
+    }
+    decoder.markHandled();
+}
+
+template<typename MessageType, typename T, typename U, typename MF>
+void handleSwiftMessageSynchronous(Connection& connection, Decoder& decoder, UniqueRef<Encoder>& replyEncoder, T* object, MF U::* function)
+{
+    Ref swiftReplyEncoder = SwiftReplyEncoder::create(connection, WTF::move(replyEncoder), encodeDefaultSwiftReply<MessageType>);
+    NonEscapableBorrowLender<SwiftDecoder> swiftDecoderLender { decoder };
+    SUPPRESS_UNCOUNTED_ARG if (!(object->*function)(&connection, swiftDecoderLender.view(), swiftReplyEncoder.ptr())) {
+        replyEncoder = makeUniqueRefFromNonNullUniquePtr(swiftReplyEncoder->discard());
+        markSwiftArgumentsInvalid(decoder);
+    }
 }
 
 } // namespace IPC

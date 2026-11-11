@@ -54,7 +54,7 @@ public:
         m_runLoop->threadWillExit();
     }
 
-    RunLoop& LEGACY_NODELETE runLoop() { return m_runLoop; }
+    NODELETE RunLoop& runLoop() { return m_runLoop; }
 
 private:
     const Ref<RunLoop> m_runLoop;
@@ -64,6 +64,9 @@ void RunLoop::initializeMain()
 {
     RELEASE_ASSERT(!s_mainRunLoop);
     s_mainRunLoop = &RunLoop::currentSingleton();
+#if USE(GLIB_EVENT_LOOP) || USE(WINDOWS_EVENT_LOOP)
+    s_mainRunLoop->drainDispatchMainQueue();
+#endif
 }
 
 auto RunLoop::runLoopHolder() -> ThreadSpecific<Holder>&

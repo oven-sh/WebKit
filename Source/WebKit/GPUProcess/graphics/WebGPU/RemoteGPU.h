@@ -36,7 +36,7 @@
 #include "StreamServerConnection.h"
 #include "WebGPUIdentifier.h"
 #include "WebGPUObjectHeap.h"
-#include "WebGPUSupportedFeatures.h"
+#include "WebGPURequestAdapterOptions.h"
 #include "WebGPUSupportedLimits.h"
 #include <WebCore/MediaPlayerIdentifier.h>
 #include <WebCore/ProcessIdentifier.h>
@@ -76,7 +76,6 @@ class RemoteRenderingBackend;
 
 namespace WebGPU {
 class ObjectHeap;
-struct RequestAdapterOptions;
 }
 
 class RemoteGPU final : public CanMakeWeakPtr<RemoteGPU>, public IPC::StreamServerConnection::Client {
@@ -131,7 +130,7 @@ private:
     void didReceiveInvalidMessage(IPC::StreamServerConnection&, IPC::MessageName, const Vector<uint32_t>&) final;
 
     void requestAdapter(const WebGPU::RequestAdapterOptions&, WebGPUIdentifier, CompletionHandler<void(std::optional<RemoteGPURequestAdapterResponse>&&)>&&);
-    void LEGACY_NODELETE createModelBacking(unsigned width, unsigned height, WebModel::ImageAsset&& diffuseTexture, WebModel::ImageAsset&& specularTexture, WebKit::WebModelIdentifier, bool standardDynamicRange, CompletionHandler<void(Vector<MachSendRight>&&)>&&);
+    NODELETE void createModelBacking(unsigned width, unsigned height, WebModel::ImageAsset&& diffuseTexture, WebModel::ImageAsset&& specularTexture, WebKit::WebModelIdentifier, bool standardDynamicRange, CompletionHandler<void(Vector<MachSendRight>&&)>&&);
 
     void createPresentationContext(const WebGPU::PresentationContextDescriptor&, WebGPUIdentifier);
 

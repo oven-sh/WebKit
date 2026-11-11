@@ -1,0 +1,34 @@
+# the branch that ends the block goes by a value from in front of the stretch, which is the same in both arms. A branch in each arm would save nothing, so the arms meet and the block has its one branch
+# function over(n: number, c) { const flag = !!c; sink = n * n * n; if (flag) return 1; return 2; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK: mechanisms TypedOperations,Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: Branch
+# CHECK-NOT: Branch
+
+variable g0 name="kept" module=m0 declared={type=anything}
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="over" module=m0 length=2 thisType={type=anything} parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    v2 = ToBoolean v1
+    v3 = Convert v0 declared={type=number}
+    v4 = Mul v3, v3
+    v5 = Mul v4, v3
+    PutModuleVariable v5 variable=g0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Integer integer=1
+    Return v7
+  b2():
+    v8 = Integer integer=2
+    Return v8
+}

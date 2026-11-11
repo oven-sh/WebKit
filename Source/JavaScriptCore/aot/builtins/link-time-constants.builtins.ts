@@ -7,7 +7,6 @@ const typedArrayStorage = "TypedArrayStorage";
 const operandCodeEffects = { capability: "js", throws: true, runsOnlyOperandCode: true } as const;
 const realmPromise = b.builtin("Promise");
 const newPromiseHolding = (contents: Contents) => b.instance("Promise").holding(contents).fresh;
-// No primitive is a thenable, so nothing rejects the promise.
 const fulfilledWithPrimitive = newPromiseHolding({ value: b.operand("value"), reason: b.never });
 const otherConstructor = b.otherwiseConstructs(0, b.hostCall);
 
@@ -37,7 +36,6 @@ const typedArrayClasses = [
   "BigUint64Array",
 ] as const;
 
-// The view is made without a call of the constructor, which only says of which class it is.
 const copyOfItems = (constructor: b.TableType, className: string) =>
   ({
     args: { constructor, items: b.any },
@@ -45,12 +43,10 @@ const copyOfItems = (constructor: b.TableType, className: string) =>
     capability: "heap",
     throws: true,
     uses: { constructor: b.inspected, items: [b.readsContents()] },
-    // The items may be a view.
     reads: [typedArrayStorage, "TypedArrayElements"],
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// Only the library names these functions, and it passes the operands they take without a test.
 export default b.declarations(
   b.linkTimeConstants({
     promiseResolve: [
@@ -151,6 +147,7 @@ export default b.declarations(
     isArray: {
       args: { value: b.any },
       returns: b.bool,
+      answersWhetherInstance: { value: b.instance("Array") },
       capability: "heap",
       throws: true,
       uses: { value: b.inspected },
@@ -185,7 +182,6 @@ export default b.declarations(
       implementation: b.hostCall,
     },
 
-    // Each step of the helper resumes the generator without asking whether it is one.
     iteratorHelperCreate: iteratorCreation("IteratorHelper", { generator: b.instance("Generator"), underlyingIterator: b.any }),
     wrapForValidIteratorCreate: iteratorCreation("WrapForValidIterator", { iterator: b.any, nextMethod: b.any }),
     asyncFromSyncIteratorCreate: {

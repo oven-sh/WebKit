@@ -1,0 +1,77 @@
+# a front end asks every value for its truth, so a negation that was kept in a variable stands between two ToBoolean, and both edges of the branch hand on a proof that nobody reads. The truth of a boolean is the boolean: the branch asks the test below all three, with its sides changed round
+# function asked(v) { const no = !(typeof v === "string"); if (no) return v.other; return v.text; }       the records are those that the front end writes for it
+# function read(v): the same by hand, but the taken side returns the proof. Code has no Narrowed for a proof once the test stands above the condition, so the branch asks the negation. The proof of a boolean is the constant
+# both are handed to sink, so nothing is known of v
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK: mechanisms Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: [[test]]: {{*}} = TypeTest
+# CHECK: Branch [[test]] -> taken [[text]](), notTaken [[other]]()
+# RUN(TEXT): walk f1 mechanisms=none+Folding
+# TEXT: Branch {{*}} -> taken [[text]](),
+# TEXT: [[text]]():
+# TEXT-NOT: ():
+# TEXT: key="text"
+# RUN(OTHER): walk f1 mechanisms=none+Folding
+# OTHER: Branch {{*}} notTaken [[other]]()
+# OTHER: [[other]]():
+# OTHER-NOT: ():
+# OTHER: key="other"
+# RUN(NEVER): walk f1 mechanisms=none+Folding
+# NEVER-NOT: LogicalNot
+# NEVER-NOT: ToBoolean
+# RUN(TYPED): walk f1 mechanisms=none+TypedOperations+Folding
+# TYPED-LABEL: code f1:Body
+# TYPED: [[test]]: {{*}} = TypeTest
+# TYPED: Branch [[test]] -> taken
+# RUN(TYPEDNEVER): walk f1 mechanisms=none+TypedOperations+Folding
+# TYPEDNEVER-NOT: LogicalNot
+# TYPEDNEVER-NOT: ToBoolean
+# RUN(KEPT): walk f2 mechanisms=none+Folding
+# KEPT-LABEL: code f2:Body
+# KEPT: [[yes]]: true {{*}} = Boolean boolean=true
+# KEPT: [[asked]]: {{*}} = LogicalNot
+# KEPT-NEXT: Branch [[asked]] -> taken
+# KEPT: Return [[yes]]
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL-NOT: LogicalNot
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="asked" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    v2 = ToBoolean v1
+    v3 = LogicalNot v2
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = PropGet v0 key="other"
+    Return v6
+  b2(v7):
+    v8 = PropGet v0 key="text"
+    Return v8
+}
+function f2 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    v2 = ToBoolean v1
+    v3 = LogicalNot v2
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    Return v5
+  b2(v6):
+    v7 = PropGet v0 key="text"
+    Return v7
+}

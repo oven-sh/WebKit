@@ -1,0 +1,7 @@
+# the same call with calls of built-ins withheld: it is a call by value of the built-in function object
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call v
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls
+# NEVER-NOT: CallBuiltin
+# PROGRAM-OF: builtin-found-by-binding.ir

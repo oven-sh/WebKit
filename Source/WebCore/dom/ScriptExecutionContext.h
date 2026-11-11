@@ -114,6 +114,7 @@ enum class TaskSource : uint8_t;
 struct ClientOrigin;
 struct CryptoKeyData;
 struct NetworkLoadPolicy;
+struct ReportingClient;
 struct SettingsValues;
 
 #if ENABLE(NOTIFICATIONS)
@@ -130,9 +131,8 @@ enum class ScriptExecutionContextType : uint8_t {
     EmptyScriptExecutionContext
 };
 
-class ScriptExecutionContext : public SecurityContext, public TimerAlignment, public CanMakeThreadSafeCheckedPtr<ScriptExecutionContext> {
+class ScriptExecutionContext : public SecurityContext, public TimerAlignment {
     WTF_MAKE_TZONE_ALLOCATED(ScriptExecutionContext);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ScriptExecutionContext);
 public:
     using Type = ScriptExecutionContextType;
 
@@ -160,12 +160,14 @@ public:
     virtual const URL& cookieURL() const = 0;
 
     virtual String userAgent(const URL&) const = 0;
+    virtual String navigatorPlatform() const { return { }; }
 
-    virtual const SettingsValues& LEGACY_NODELETE settingsValues() const = 0;
+    NODELETE virtual const SettingsValues& settingsValues() const = 0;
 
     virtual const NetworkLoadPolicy& networkLoadPolicy() const = 0;
 
     virtual NotificationClient* notificationClient() { return nullptr; }
+    virtual ReportingClient* reportingClient() { return nullptr; }
     virtual std::optional<PAL::SessionID> sessionID() const;
 
     virtual void disableEval(const String& errorMessage) = 0;
@@ -213,7 +215,7 @@ public:
     bool activeDOMObjectsAreSuspended() const { return m_activeDOMObjectsAreSuspended; }
     bool activeDOMObjectsAreStopped() const { return m_activeDOMObjectsAreStopped; }
 
-    JSC::ScriptExecutionStatus LEGACY_NODELETE jscScriptExecutionStatus() const;
+    NODELETE JSC::ScriptExecutionStatus jscScriptExecutionStatus() const;
 
     enum class CallStackPosition : bool { BottomMost, TopMost };
     URL currentSourceURL(CallStackPosition = CallStackPosition::BottomMost) const;
@@ -241,20 +243,14 @@ public:
     virtual RefPtr<FontLoadRequest> fontLoadRequest(const String& url, bool isSVG, bool isInitiatingElementInUserAgentShadowTree, LoadedFromOpaqueSource);
     virtual void beginLoadingFontSoon(FontLoadRequest&) { }
 
-    WEBCORE_EXPORT static void LEGACY_NODELETE setCrossOriginMode(CrossOriginMode);
-    WEBCORE_EXPORT static CrossOriginMode LEGACY_NODELETE crossOriginMode();
+    NODELETE WEBCORE_EXPORT static void setCrossOriginMode(CrossOriginMode);
+    NODELETE WEBCORE_EXPORT static CrossOriginMode crossOriginMode();
 
     virtual bool crossOriginIsolated() const { return false; }
     virtual String agentClusterID() const = 0;
 
-    WEBCORE_EXPORT void LEGACY_NODELETE ref();
+    NODELETE WEBCORE_EXPORT void ref();
     WEBCORE_EXPORT void deref();
-
-    uint32_t checkedPtrCount() const final { return CanMakeThreadSafeCheckedPtr::checkedPtrCount(); }
-    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeThreadSafeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
-    void incrementCheckedPtrCount() const final { CanMakeThreadSafeCheckedPtr::incrementCheckedPtrCount(); }
-    void decrementCheckedPtrCount() const final { CanMakeThreadSafeCheckedPtr::decrementCheckedPtrCount(); }
-    void setDidBeginCheckedPtrDeletion() override { CanMakeThreadSafeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
     enum class IncludeConsoleLog : bool { No, Yes };
     WEBCORE_EXPORT bool requiresScriptTrackingPrivacyProtection(ScriptTrackingPrivacyCategory, IncludeConsoleLog = IncludeConsoleLog::Yes);
@@ -302,7 +298,7 @@ public:
     void postTaskToResponsibleDocument(Function<void(Document&)>&&);
 
     // Gets the next id in a circular sequence from 1 to 2^31-1.
-    int LEGACY_NODELETE circularSequentialID();
+    NODELETE int circularSequentialID();
 
     inline bool addTimeout(int timeoutId, DOMTimer&); // Defined in ScriptExecutionContextInlines.h
     inline RefPtr<DOMTimer> takeTimeout(int timeoutId); // Defined in ScriptExecutionContextInlines.h
@@ -373,7 +369,7 @@ public:
     void setHasLoggedAuthenticatedEncryptionWarning(bool value) { m_hasLoggedAuthenticatedEncryptionWarning = value; }
 
     void setStorageBlockingPolicy(StorageBlockingPolicy policy) { m_storageBlockingPolicy = policy; }
-    WEBCORE_EXPORT bool LEGACY_NODELETE shouldBlockThirdPartyStorage() const;
+    NODELETE WEBCORE_EXPORT bool shouldBlockThirdPartyStorage() const;
 
     enum class ResourceType : uint8_t {
         Cookies,
@@ -441,7 +437,7 @@ private:
 
     RejectedPromiseTracker* ensureRejectedPromiseTrackerSlow();
 
-    void LEGACY_NODELETE checkConsistency() const;
+    NODELETE void checkConsistency() const;
     WEBCORE_EXPORT GuaranteedSerialFunctionDispatcher& nativePromiseDispatcher();
 
     WeakHashSet<MessagePort, WeakPtrImplWithEventTargetData> m_messagePorts;
@@ -490,6 +486,6 @@ private:
     std::unique_ptr<JSC::WeakGCSet<JSC::JSGlobalObject, DefaultHash<JSC::JSGlobalObject*>, HashTraits<JSC::JSGlobalObject*>>> m_microtaskGlobalObjects;
 };
 
-WebCoreOpaqueRoot LEGACY_NODELETE root(ScriptExecutionContext*);
+NODELETE WebCoreOpaqueRoot root(ScriptExecutionContext*);
 
 } // namespace WebCore

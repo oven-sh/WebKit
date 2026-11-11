@@ -21,7 +21,6 @@ const lazyOwnProperty = (type: b.TableType) =>
     implementation: b.generic,
   }) satisfies b.GetterField;
 
-// FunctionPrototype.cpp argumentsGetter, callerGetter.
 const poisoned = {
   this: b.any.refusing(b.null),
   getter: b.any,
@@ -46,7 +45,6 @@ export default b.declarations(
     lockedMembers: ["prototype"],
     closedToOtherNames: ["prototype"],
     openNamesOfPrototype: ["demethodize", "unThis"],
-    // A bound function has `length` and `name` alone. A function made from text also has `prototype`: the rows that make one answer b.any, so the compiler follows none.
     namesDefinedOnNewInstances: [],
     types: [b.viewType("Function"), b.viewType("CallableFunction"), b.viewType("NewableFunction")],
     usesFeature: "Interpreter",
@@ -102,7 +100,7 @@ export default b.declarations(
       bind: {
         this: b.callable,
         args: { thisArg: b.any.optional, bound: b.any.rest },
-        returns: b.instance("BoundFunction").fresh,
+        returns: b.instance("BoundFunction").holding({ target: b.operand("this"), boundThis: b.operand("thisArg"), boundArguments: b.operand("bound") }).fresh,
         prototypeSource: "this",
         capability: "js",
         throws: true,
@@ -152,6 +150,8 @@ export default b.declarations(
     },
   }),
 
+  b.name("displayName"),
+
   b.fn("Function.prototype", {
     usesFeature: [],
     args: { operands: b.any.rest },
@@ -164,13 +164,13 @@ export default b.declarations(
   b.class("%BoundFunction%", {
     extends: "Function",
     instanceCppClass: b.cppClass("JSBoundFunction"),
-    hasClosureInstances: true,
+    isFollowedBesideUnseenObject: true,
     hasConstructor: false,
     hasPrototype: false,
     slots: {
-      target: b.state("InternalFields", b.callable),
-      boundThis: b.state("InternalFields"),
-      boundArguments: b.state("InternalFields"),
+      target: b.wordOfCell("Followed", b.contents("Value", "InternalFields", b.callable)),
+      boundThis: b.wordOfCell("Unfollowed", b.contents("Key", "InternalFields")),
+      boundArguments: b.wordOfCell("MarkedWhereFilled", b.contents("Element", "InternalFields")),
     },
   }),
 );

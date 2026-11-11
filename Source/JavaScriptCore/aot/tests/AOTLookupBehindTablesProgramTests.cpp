@@ -7,12 +7,10 @@
 
 #if ENABLE(AOT)
 
-#include "AOTPropertyCachesWords.h"
 #include "AOTShellProgramTestSupport.h"
 
 namespace JSC { namespace AOT {
 
-// What no table holds the objects themselves answer, in the stubs GetById, InById, GetByValCached, InByValCached and PutByValCached. Every question here meets a Structure and a name for the first few times.
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 fields=[{key="kept" declared={type=anything} flags=[IsRequired]}, {key="count" declared={type=anything} flags=[IsRequired]}]
@@ -125,29 +123,14 @@ function f16 name="shared" kind=Method flags=[HasThis] thisType={type=anything} 
 }
 )IR"_s;
 
-// Fewer questions about one Structure and one name than the stubs answer before they leave for the operation that files.
-static_assert(MissesOfPairs::missesBetweenFilings > 12);
-
-#define ASK_QUESTIONS R"JS(
-const operations = [
-    "GetById", "GetByIdAndCache", "GetGeneric", "GetByVal", "GetByValGeneric", "GetByValAndCache", "GetWithProxyTrap", "HasWithProxyTrap",
-    "InByIdAndCache", "InByValGeneric", "InByValAndCache", "HasOwnByIdAndCache", "HasOwnByValAndCache",
-    "PutByValGeneric", "PutByValAndCache", "PutByValAndCacheSloppy",
-];
-const calls = () => {
-    let sum = 0;
-    for (const name of operations) sum += Number(aotOperationCount("operationAOT" + name));
-    return sum;
-};
+#define ASK_QUESTIONS COUNTED_CALLS(R"("GetById", "GetByIdAndCache", "GetGeneric", "GetByVal", "GetByValGeneric", "GetByValAndCache", "GetWithProxyTrap", "HasWithProxyTrap", "InByIdAndCache", "InByValGeneric", "InByValAndCache", "HasOwnByIdAndCache", "HasOwnByValAndCache", "PutByValGeneric", "PutByValAndCache", "PutByValAndCacheSloppy")") R"JS(
 // ask(n) says whether the nth answer is right.
 const verdict = (ask, count = 12) => {
-    const callsBefore = calls();
+    const before = countedCalls();
     let wrong = 0;
     for (let n = 0; n < count; n++) wrong += ask(n) ? 0 : 1;
-    const callsMade = calls() - callsBefore;
-    if (wrong) return "WRONG " + wrong + " times";
-    if (!globalThis.printsCalls) return "right";
-    return !callsMade ? "objects" : callsMade >= count ? "operations" : "a few operations";
+    const made = countedCalls() - before;
+    return wrong ? "WRONG " + wrong + " times" : !countsCalls ? "right" : !made ? "objects" : made >= count ? "operations" : "a few operations";
 };
 const printAnswers = (kind, answers) => {
     let line = "";
@@ -157,8 +140,11 @@ const printAnswers = (kind, answers) => {
 let numberOfObjects = 0;
 // An object of a Structure that nothing has been asked about.
 const fresh = (prototype = Object.prototype) => {
+    const name = "own" + numberOfObjects++;
+    // The first object that is given a name keeps it in a table of its own. The next one has a Structure for it, and for what it is given behind it.
+    Object.create(prototype)[name] = 0;
     const object = Object.create(prototype);
-    object["own" + numberOfObjects++] = 0;
+    object[name] = 0;
     return object;
 };
 const withManyNames = (object, howMany) => {
@@ -167,7 +153,6 @@ const withManyNames = (object, howMany) => {
 };
 )JS"
 
-// Each kind makes { object, value, has, hasOwn }: what a read of `shared` gives and what the two questions about it give.
 #define STATEMENTS_ASKING_ORDINARY_OBJECTS R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
     const own = (object, value) => { object.shared = value; return { object, value, has: true, hasOwn: true }; };
@@ -224,49 +209,41 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
 };
 )JS"
 
-#define LINE_OF_ANSWERS(kind, answer) \
-    kind ": read " answer " | in " answer " | hasOwn " answer " | read by key " answer " | in by key " answer " | hasOwn by key " answer " | read by key, twice " answer "\n"
+#define LINE_OF_ANSWERS(kind) \
+    kind ": read right | in right | hasOwn right | read by key right | in by key right | hasOwn by key right | read by key, twice right\n"
 
-#define OUTPUT_OF_ORDINARY_OBJECTS(objects, operations, fewOperations) \
-    LINE_OF_ANSWERS("own value in the cell", objects) \
-    LINE_OF_ANSWERS("own value outside the cell", objects) \
-    LINE_OF_ANSWERS("own value among 300 names", objects) \
-    LINE_OF_ANSWERS("own value without a prototype", objects) \
-    LINE_OF_ANSWERS("own value of a dictionary that gives names up", objects) \
-    LINE_OF_ANSWERS("value of the prototype", objects) \
-    LINE_OF_ANSWERS("value of the prototype, outside its cell", objects) \
-    LINE_OF_ANSWERS("value of a prototype with 300 names", objects) \
-    LINE_OF_ANSWERS("value two objects above", objects) \
-    LINE_OF_ANSWERS("nothing", objects) \
-    LINE_OF_ANSWERS("nothing without a prototype", objects) \
-    LINE_OF_ANSWERS("nothing among 10 names", objects) \
-    LINE_OF_ANSWERS("nothing among 300 names", objects) \
-    LINE_OF_ANSWERS("nothing below a prototype with 300 names", objects) \
-    LINE_OF_ANSWERS("own getter", objects) \
-    LINE_OF_ANSWERS("getter of the prototype", objects) \
-    LINE_OF_ANSWERS("setter alone", objects) \
-    LINE_OF_ANSWERS("own value that is undefined", objects) \
-    LINE_OF_ANSWERS("own value beside an element", operations) \
-    "value behind a proxy: read " operations " | in " objects " | hasOwn " operations " | read by key " operations " | in by key " fewOperations " | hasOwn by key " operations " | read by key, twice " operations "\n"
+#define OUTPUT_OF_ORDINARY_OBJECTS \
+    LINE_OF_ANSWERS("own value in the cell") \
+    LINE_OF_ANSWERS("own value outside the cell") \
+    LINE_OF_ANSWERS("own value among 300 names") \
+    LINE_OF_ANSWERS("own value without a prototype") \
+    LINE_OF_ANSWERS("own value of a dictionary that gives names up") \
+    LINE_OF_ANSWERS("value of the prototype") \
+    LINE_OF_ANSWERS("value of the prototype, outside its cell") \
+    LINE_OF_ANSWERS("value of a prototype with 300 names") \
+    LINE_OF_ANSWERS("value two objects above") \
+    LINE_OF_ANSWERS("nothing") \
+    LINE_OF_ANSWERS("nothing without a prototype") \
+    LINE_OF_ANSWERS("nothing among 10 names") \
+    LINE_OF_ANSWERS("nothing among 300 names") \
+    LINE_OF_ANSWERS("nothing below a prototype with 300 names") \
+    LINE_OF_ANSWERS("own getter") \
+    LINE_OF_ANSWERS("getter of the prototype") \
+    LINE_OF_ANSWERS("setter alone") \
+    LINE_OF_ANSWERS("own value that is undefined") \
+    LINE_OF_ANSWERS("own value beside an element") \
+    LINE_OF_ANSWERS("value behind a proxy")
 
-static constexpr OptionWords shellOptions = { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s };
+static constexpr OptionWords shellOptions = { "--useDollarVM=1"_s };
 
-// With the calls counted, and then only for the answers: checked at run time, and with all code compiled as hot and as cold code.
-#define CHECK_OUTPUT(statements, output) do { \
-        checkOutputOfProgramInShell(programText, output("objects", "operations", "a few operations") ""_s, { }, "globalThis.printsCalls = true;" ASK_QUESTIONS statements ""_s, shellOptions); \
-        for (ASCIILiteral word : { "validate"_s, "heat=EverythingIsHot"_s, "heat=EverythingIsCold"_s }) \
-            checkOutputOfProgramInShell(programText, output("right", "right", "right") ""_s, { word }, ASK_QUESTIONS statements ""_s, shellOptions); \
-    } while (false)
-
-#define OUTPUT_OF_ORDINARY_OBJECTS_BY(objects, operations, fewOperations) OUTPUT_OF_ORDINARY_OBJECTS(objects, operations, fewOperations)
+#define CHECK_OUTPUT(statements, output) checkOutputOfProgramInShell(programText, output ""_s, { }, ASK_QUESTIONS statements ""_s, shellOptions)
+#define CHECK_SERVICES(statements, output, letters) checkServicesInShell(__FILE__, __LINE__, programText, output ""_s, ASK_QUESTIONS statements ""_s, wordsOfLookups, letters, { }, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s })
 
 static void testOrdinaryObjectsAnswer()
 {
-    CHECK_OUTPUT(STATEMENTS_ASKING_ORDINARY_OBJECTS, OUTPUT_OF_ORDINARY_OBJECTS_BY);
+    CHECK_OUTPUT(STATEMENTS_ASKING_ORDINARY_OBJECTS, OUTPUT_OF_ORDINARY_OBJECTS);
+    CHECK_SERVICES(STATEMENTS_ASKING_ORDINARY_OBJECTS, OUTPUT_OF_ORDINARY_OBJECTS, "ooooooooooooooooooo(nonnfnn)"_s);
 }
-
-// A key that is no atom: the stub finds the name of a text of NameOfText::minLength to maxLength 8-bit characters that an operation has seen once.
-static_assert(NameOfText::minLength == 2 && NameOfText::maxLength == 16);
 
 #define STATEMENTS_ASKING_BY_TEXTS R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey) => {
@@ -287,8 +264,6 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
         for (let t = 0; t < texts.length; t++) {
             const text = texts[t];
             const make = n => { const object = fresh(); object[text] = n; return object; };
-            // The operation that the first such key leaves for notes the name of the text.
-            readByKey(make(0), makeKey(text));
             printAnswers((t == 18 ? "4 wide" : text.length) + " characters, " + form, {
                 "read": verdict(n => readByKey(make(n), makeKey(text)) === n),
                 "read of nothing": verdict(n => readByKey(fresh(), makeKey(text)) === undefined),
@@ -301,24 +276,27 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 };
 )JS"
 
-#define LINE_OF_TEXT(length, form, answer) length " characters, " form ": read " answer " | read of nothing " answer " | in " answer " | hasOwn " answer " | store " answer "\n"
-#define LINES_OF_TEXTS(form, answerOfOneCharacter, objects, operations) \
-    LINE_OF_TEXT("1", form, answerOfOneCharacter) \
-    LINE_OF_TEXT("2", form, objects) LINE_OF_TEXT("3", form, objects) LINE_OF_TEXT("4", form, objects) LINE_OF_TEXT("5", form, objects) LINE_OF_TEXT("6", form, objects) \
-    LINE_OF_TEXT("7", form, objects) LINE_OF_TEXT("8", form, objects) LINE_OF_TEXT("9", form, objects) LINE_OF_TEXT("10", form, objects) LINE_OF_TEXT("11", form, objects) \
-    LINE_OF_TEXT("12", form, objects) LINE_OF_TEXT("13", form, objects) LINE_OF_TEXT("14", form, objects) LINE_OF_TEXT("15", form, objects) LINE_OF_TEXT("16", form, objects) \
-    LINE_OF_TEXT("17", form, operations) LINE_OF_TEXT("18", form, operations) LINE_OF_TEXT("4 wide", form, operations)
-// A string of one character is an atom that all such strings share.
-#define OUTPUT_OF_TEXTS(objects, operations, fewOperations) \
-    LINES_OF_TEXTS("made of character codes", objects, objects, operations) \
-    LINES_OF_TEXTS("a piece of a longer string", objects, objects, operations)
+#define LINE_OF_TEXT(length, form) length " characters, " form ": read right | read of nothing right | in right | hasOwn right | store right\n"
+#define LINES_OF_TEXTS(form) \
+    LINE_OF_TEXT("1", form) LINE_OF_TEXT("2", form) LINE_OF_TEXT("3", form) LINE_OF_TEXT("4", form) LINE_OF_TEXT("5", form) LINE_OF_TEXT("6", form) \
+    LINE_OF_TEXT("7", form) LINE_OF_TEXT("8", form) LINE_OF_TEXT("9", form) LINE_OF_TEXT("10", form) LINE_OF_TEXT("11", form) LINE_OF_TEXT("12", form) \
+    LINE_OF_TEXT("13", form) LINE_OF_TEXT("14", form) LINE_OF_TEXT("15", form) LINE_OF_TEXT("16", form) LINE_OF_TEXT("17", form) LINE_OF_TEXT("18", form) \
+    LINE_OF_TEXT("4 wide", form)
+#define OUTPUT_OF_TEXTS \
+    LINES_OF_TEXTS("made of character codes") \
+    LINES_OF_TEXTS("a piece of a longer string")
 
 static void testTextsThatAreNoAtomsAreNames()
 {
     CHECK_OUTPUT(STATEMENTS_ASKING_BY_TEXTS, OUTPUT_OF_TEXTS);
+    CHECK_SERVICES(STATEMENTS_ASKING_BY_TEXTS, OUTPUT_OF_TEXTS, "o(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)(foooo)nnnoooooooooooooooonnn"_s);
 }
 
-// A search goes from word to word of the index of a table until it meets the name or an empty word. These tables are as full as a table gets, and their names lie all over the memory that the names asked for lie in.
+static void testTextsThatAreNoAtomsAreServedAsTheyWere()
+{
+    CHECK_SERVICES(STATEMENTS_ASKING_BY_TEXTS, OUTPUT_OF_TEXTS, "oooooooooooooooonnnoooooooooooooooonnn"_s);
+}
+
 #define STATEMENTS_ASKING_FULL_TABLES R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
     const keeper = { };
@@ -340,12 +318,13 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
 };
 )JS"
 
-#define LINE_OF_FULL_TABLE(howMany, answer) howMany " names: read " answer " | read of nothing " answer " | in " answer " | hasOwn " answer "\n"
-#define OUTPUT_OF_FULL_TABLES(objects, operations, fewOperations) LINE_OF_FULL_TABLE("128", objects) LINE_OF_FULL_TABLE("1024", objects)
+#define LINE_OF_FULL_TABLE(howMany) howMany " names: read right | read of nothing right | in right | hasOwn right\n"
+#define OUTPUT_OF_FULL_TABLES LINE_OF_FULL_TABLE("128") LINE_OF_FULL_TABLE("1024")
 
 static void testFullTablesAnswer()
 {
     CHECK_OUTPUT(STATEMENTS_ASKING_FULL_TABLES, OUTPUT_OF_FULL_TABLES);
+    CHECK_SERVICES(STATEMENTS_ASKING_FULL_TABLES, OUTPUT_OF_FULL_TABLES, "oo"_s);
 }
 
 #define STATEMENTS_ASKING_BY_SYMBOLS R"JS(
@@ -368,19 +347,19 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 };
 )JS"
 
-#define LINE_OF_SYMBOL(kind, answer) kind ": read " answer " | in " answer " | hasOwn " answer "\n"
-#define OUTPUT_OF_SYMBOLS(objects, operations, fewOperations) \
-    LINE_OF_SYMBOL("own value", objects) \
-    LINE_OF_SYMBOL("own value among 300 names", objects) \
-    LINE_OF_SYMBOL("value of the prototype", objects) \
-    LINE_OF_SYMBOL("nothing", objects)
+#define LINE_OF_SYMBOL(kind) kind ": read right | in right | hasOwn right\n"
+#define OUTPUT_OF_SYMBOLS \
+    LINE_OF_SYMBOL("own value") \
+    LINE_OF_SYMBOL("own value among 300 names") \
+    LINE_OF_SYMBOL("value of the prototype") \
+    LINE_OF_SYMBOL("nothing")
 
 static void testSymbolsAreNames()
 {
     CHECK_OUTPUT(STATEMENTS_ASKING_BY_SYMBOLS, OUTPUT_OF_SYMBOLS);
+    CHECK_SERVICES(STATEMENTS_ASKING_BY_SYMBOLS, OUTPUT_OF_SYMBOLS, "oooo"_s);
 }
 
-// A store replaces the value of a plain own property in the stub. Each kind makes { object, after }: what a read gives behind a store of n + 100.
 #define STATEMENTS_STORING_BY_KEY R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey, storeByKeySloppy) => {
     const own = (object, n) => { object.shared = n; return { object, after: n + 100 }; };
@@ -423,26 +402,26 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 };
 )JS"
 
-#define LINE_OF_STORE(kind, answer) kind ": strict " answer " | sloppy " answer "\n"
-#define OUTPUT_OF_STORES(objects, operations, fewOperations) \
-    LINE_OF_STORE("own value in the cell", objects) \
-    LINE_OF_STORE("own value outside the cell", objects) \
-    LINE_OF_STORE("own value among 300 names", objects) \
-    LINE_OF_STORE("own value without a prototype", objects) \
-    LINE_OF_STORE("own value of a dictionary that gives names up", objects) \
-    LINE_OF_STORE("own value that cannot be written", operations) \
-    LINE_OF_STORE("own value of a frozen object", operations) \
-    LINE_OF_STORE("own setter", operations) \
-    LINE_OF_STORE("setter of the prototype", operations) \
-    LINE_OF_STORE("value of the prototype", operations) \
-    LINE_OF_STORE("nothing", operations)
+#define LINE_OF_STORE(kind) kind ": strict right | sloppy right\n"
+#define OUTPUT_OF_STORES \
+    LINE_OF_STORE("own value in the cell") \
+    LINE_OF_STORE("own value outside the cell") \
+    LINE_OF_STORE("own value among 300 names") \
+    LINE_OF_STORE("own value without a prototype") \
+    LINE_OF_STORE("own value of a dictionary that gives names up") \
+    LINE_OF_STORE("own value that cannot be written") \
+    LINE_OF_STORE("own value of a frozen object") \
+    LINE_OF_STORE("own setter") \
+    LINE_OF_STORE("setter of the prototype") \
+    LINE_OF_STORE("value of the prototype") \
+    LINE_OF_STORE("nothing")
 
 static void testStoresReplaceOwnValues()
 {
     CHECK_OUTPUT(STATEMENTS_STORING_BY_KEY, OUTPUT_OF_STORES);
+    CHECK_SERVICES(STATEMENTS_STORING_BY_KEY, OUTPUT_OF_STORES, "ooooonnnnnn"_s);
 }
 
-// A store gives a dictionary a name that it lacks in the stub, where neither the table of its names nor its storage has to grow. Each kind makes { object, key, value, isRight, throws }.
 #define STATEMENTS_ADDING_BY_KEY R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey, storeByKeySloppy, makeRecord) => {
     const dictionary = (object, givesNamesUp) => {
@@ -545,54 +524,54 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 };
 )JS"
 
-#define OUTPUT_OF_ADDITIONS(objects, operations, fewOperations) \
-    LINE_OF_STORE("without a prototype", objects) \
-    LINE_OF_STORE("below Object.prototype", objects) \
-    LINE_OF_STORE("one that gives names up", objects) \
-    LINE_OF_STORE("room outside the cell", objects) \
-    LINE_OF_STORE("among 100 names", objects) \
-    LINE_OF_STORE("among 300 names", objects) \
-    LINE_OF_STORE("a plain value above", objects) \
-    LINE_OF_STORE("a name of wide characters", objects) \
-    LINE_OF_STORE("behind a name that was deleted and another that took its place", objects) \
-    LINE_OF_STORE("no storage outside the cell yet", operations) \
-    LINE_OF_STORE("a full table", operations) \
-    LINE_OF_STORE("full storage", operations) \
-    LINE_OF_STORE("the place of a deleted name is free", operations) \
-    LINE_OF_STORE("the name was there and was deleted", operations) \
-    LINE_OF_STORE("a name that spells an index", operations) \
-    LINE_OF_STORE("a name that begins with a digit", operations) \
-    LINE_OF_STORE("a wide character whose low half is a digit", operations) \
-    LINE_OF_STORE("the empty name", operations) \
-    LINE_OF_STORE("then", operations) \
-    LINE_OF_STORE("__proto__ without a prototype", operations) \
-    LINE_OF_STORE("__proto__ below Object.prototype", operations) \
-    LINE_OF_STORE("a symbol", operations) \
-    LINE_OF_STORE("not extensible", operations) \
-    LINE_OF_STORE("sealed", operations) \
-    LINE_OF_STORE("frozen", operations) \
-    LINE_OF_STORE("a setter above", operations) \
-    LINE_OF_STORE("a value above that cannot be written", operations) \
-    LINE_OF_STORE("a proxy above", operations) \
-    LINE_OF_STORE("a prototype", operations) \
-    LINE_OF_STORE("no dictionary", operations) \
-    LINE_OF_STORE("a record with 200 names beside its fields", operations)
+#define OUTPUT_OF_ADDITIONS \
+    LINE_OF_STORE("without a prototype") \
+    LINE_OF_STORE("below Object.prototype") \
+    LINE_OF_STORE("one that gives names up") \
+    LINE_OF_STORE("room outside the cell") \
+    LINE_OF_STORE("among 100 names") \
+    LINE_OF_STORE("among 300 names") \
+    LINE_OF_STORE("a plain value above") \
+    LINE_OF_STORE("a name of wide characters") \
+    LINE_OF_STORE("behind a name that was deleted and another that took its place") \
+    LINE_OF_STORE("no storage outside the cell yet") \
+    LINE_OF_STORE("a full table") \
+    LINE_OF_STORE("full storage") \
+    LINE_OF_STORE("the place of a deleted name is free") \
+    LINE_OF_STORE("the name was there and was deleted") \
+    LINE_OF_STORE("a name that spells an index") \
+    LINE_OF_STORE("a name that begins with a digit") \
+    LINE_OF_STORE("a wide character whose low half is a digit") \
+    LINE_OF_STORE("the empty name") \
+    LINE_OF_STORE("then") \
+    LINE_OF_STORE("__proto__ without a prototype") \
+    LINE_OF_STORE("__proto__ below Object.prototype") \
+    LINE_OF_STORE("a symbol") \
+    LINE_OF_STORE("not extensible") \
+    LINE_OF_STORE("sealed") \
+    LINE_OF_STORE("frozen") \
+    LINE_OF_STORE("a setter above") \
+    LINE_OF_STORE("a value above that cannot be written") \
+    LINE_OF_STORE("a proxy above") \
+    LINE_OF_STORE("a prototype") \
+    LINE_OF_STORE("no dictionary") \
+    LINE_OF_STORE("a record with 200 names beside its fields")
 
 static void testStoresAddToDictionaries()
 {
     CHECK_OUTPUT(STATEMENTS_ADDING_BY_KEY, OUTPUT_OF_ADDITIONS);
+    CHECK_SERVICES(STATEMENTS_ADDING_BY_KEY, OUTPUT_OF_ADDITIONS, "ooooooooonnnnnnnnnnnnnnnnnnnnnn"_s);
 }
 
-// What the stub has written the engine reads: the order of the names, each value, and every way in which an object changes later. The names are made at run time, and nothing but the dictionary keeps them.
 #define STATEMENTS_GROWING_DICTIONARIES R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey, storeByKeySloppy) => {
     const nameAt = k => "name" + k * 7 + "x";
     // A text becomes a name where it is first stored under. The object that it is stored in here dies.
     const asName = text => { ({ })[text] = 0; return text; };
     const grow = (object, howMany, keyAt = k => asName(nameAt(k))) => {
-        const callsBefore = calls();
+        const before = countedCalls();
         for (let k = 0; k < howMany; k++) storeByKey(object, keyAt(k), { k });
-        return calls() - callsBefore;
+        return countedCalls() - before;
     };
     const isWhole = (object, howMany, first = 0) => {
         let k = first;
@@ -602,14 +581,14 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
         }
         return k === howMany && !hasByKey(object, nameAt(howMany));
     };
-    const report = (what, isRight, callsMade, most) => print(what + ": " + (!isRight ? "WRONG" : !globalThis.printsCalls ? "right" : callsMade <= most ? "a few operations" : callsMade + " operations"));
+    const check = (what, isRight, made = 0, most = 0) => print(what + ": " + (!isRight ? "WRONG" : !countsCalls ? "right" : made <= most ? "a few operations" : made + " operations"));
     for (const howMany of [5, 40, 128, 129, 700]) {
         for (const prototype of [null, Object.prototype]) {
             const object = Object.create(prototype);
             $vm.toCacheableDictionary(object);
-            const callsMade = grow(object, howMany);
+            const made = grow(object, howMany);
             fullGC();
-            report(howMany + " names " + (prototype ? "below Object.prototype" : "without a prototype"), isWhole(object, howMany), callsMade, 12 + howMany / 8);
+            check(howMany + " names " + (prototype ? "below Object.prototype" : "without a prototype"), isWhole(object, howMany), made, 12 + howMany / 8);
         }
     }
     {
@@ -617,10 +596,9 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
         $vm.toCacheableDictionary(object);
         grow(object, 40, nameAt);
         fullGC();
-        report("40 texts that were no names", isWhole(object, 40), 0, 0);
+        check("40 texts that were no names", isWhole(object, 40));
     }
     const make = () => { const object = Object.create(null); $vm.toCacheableDictionary(object); grow(object, 40); return object; };
-    const check = (what, isRight) => report(what, isRight, 0, 0);
 
     let object = make();
     for (let k = 0; k < 10; k++) delete object[nameAt(k)];
@@ -666,40 +644,39 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 };
 )JS"
 
-#define LINE_OF_GROWTH(what, answer) what ": " answer "\n"
-#define OUTPUT_OF_GROWTH(objects, operations, fewOperations) \
-    LINE_OF_GROWTH("5 names without a prototype", fewOperations) \
-    LINE_OF_GROWTH("5 names below Object.prototype", fewOperations) \
-    LINE_OF_GROWTH("40 names without a prototype", fewOperations) \
-    LINE_OF_GROWTH("40 names below Object.prototype", fewOperations) \
-    LINE_OF_GROWTH("128 names without a prototype", fewOperations) \
-    LINE_OF_GROWTH("128 names below Object.prototype", fewOperations) \
-    LINE_OF_GROWTH("129 names without a prototype", fewOperations) \
-    LINE_OF_GROWTH("129 names below Object.prototype", fewOperations) \
-    LINE_OF_GROWTH("700 names without a prototype", fewOperations) \
-    LINE_OF_GROWTH("700 names below Object.prototype", fewOperations) \
-    LINE_OF_GROWTH("40 texts that were no names", fewOperations) \
-    LINE_OF_GROWTH("ten names deleted", fewOperations) \
-    LINE_OF_GROWTH("twenty names behind them", fewOperations) \
-    LINE_OF_GROWTH("a getter in the place of the last value", fewOperations) \
-    LINE_OF_GROWTH("a name behind the getter", fewOperations) \
-    LINE_OF_GROWTH("written as JSON", fewOperations) \
-    LINE_OF_GROWTH("copied", fewOperations) \
-    LINE_OF_GROWTH("its names listed", fewOperations) \
-    LINE_OF_GROWTH("frozen", fewOperations) \
-    LINE_OF_GROWTH("no dictionary any more", fewOperations) \
-    LINE_OF_GROWTH("a name behind that", fewOperations) \
-    LINE_OF_GROWTH("a prototype", fewOperations) \
-    LINE_OF_GROWTH("a prototype given a name", fewOperations) \
-    LINE_OF_GROWTH("thirty that die", fewOperations)
+#define LINE_OF_GROWTH(what) what ": right\n"
+#define OUTPUT_OF_GROWTH \
+    LINE_OF_GROWTH("5 names without a prototype") \
+    LINE_OF_GROWTH("5 names below Object.prototype") \
+    LINE_OF_GROWTH("40 names without a prototype") \
+    LINE_OF_GROWTH("40 names below Object.prototype") \
+    LINE_OF_GROWTH("128 names without a prototype") \
+    LINE_OF_GROWTH("128 names below Object.prototype") \
+    LINE_OF_GROWTH("129 names without a prototype") \
+    LINE_OF_GROWTH("129 names below Object.prototype") \
+    LINE_OF_GROWTH("700 names without a prototype") \
+    LINE_OF_GROWTH("700 names below Object.prototype") \
+    LINE_OF_GROWTH("40 texts that were no names") \
+    LINE_OF_GROWTH("ten names deleted") \
+    LINE_OF_GROWTH("twenty names behind them") \
+    LINE_OF_GROWTH("a getter in the place of the last value") \
+    LINE_OF_GROWTH("a name behind the getter") \
+    LINE_OF_GROWTH("written as JSON") \
+    LINE_OF_GROWTH("copied") \
+    LINE_OF_GROWTH("its names listed") \
+    LINE_OF_GROWTH("frozen") \
+    LINE_OF_GROWTH("no dictionary any more") \
+    LINE_OF_GROWTH("a name behind that") \
+    LINE_OF_GROWTH("a prototype") \
+    LINE_OF_GROWTH("a prototype given a name") \
+    LINE_OF_GROWTH("thirty that die")
 
 static void testDictionariesGrownByStoresAreWhole()
 {
     CHECK_OUTPUT(STATEMENTS_GROWING_DICTIONARIES, OUTPUT_OF_GROWTH);
+    CHECK_SERVICES(STATEMENTS_GROWING_DICTIONARIES, OUTPUT_OF_GROWTH, "ffffffffffffffffffffffff"_s);
 }
 
-// A Structure is made for what comes again. The first object that a store by key gives a name which no object of its Structure has been given becomes a dictionary.
-// The next one that is given the same name there gets a Structure for it, and for each name behind it. A dictionary that is asked again and again for what it lacks ceases to be one.
 #define STATEMENTS_GIVING_NAMES_AGAIN R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey) => {
     const kindOf = object => $vm.value(object).indexOf(", Dictionary") >= 0 ? "a dictionary" : "no dictionary";
@@ -733,7 +710,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
 };
 )JS"
 
-#define OUTPUT_OF_NAMES_GIVEN_AGAIN(objects, operations, fewOperations) \
+#define OUTPUT_OF_NAMES_GIVEN_AGAIN \
     "names that come for the first time: a dictionary\n" \
     "the same names again: no dictionary\n" \
     "and again: no dictionary, of the same Structure\n" \
@@ -749,19 +726,18 @@ static void testStructuresAreMadeForWhatComesAgain()
     CHECK_OUTPUT(STATEMENTS_GIVING_NAMES_AGAIN, OUTPUT_OF_NAMES_GIVEN_AGAIN);
 }
 
-// The objects of a layout share a Structure, so each pair of a Structure and a name is asked fewer times in all than the stubs answer before they leave.
 #define STATEMENTS_ASKING_COMPILED_OBJECTS R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey, storeByKeySloppy, makeRecord, construct, classes) => {
     const [WithMethod, WithGetter, WithNeither] = classes;
     const twice = ask => verdict(ask, 2);
     const values = [7, -1.5, "text", null, true, undefined, { }];
     let wrong = 0;
-    const callsBefore = calls();
+    const callsBefore = countedCalls();
     for (let k = 0; k < values.length; k++) {
         const record = makeRecord(values[k], k);
         wrong += readByKey(record, "kept") === values[k] && readByKey(record, "count") === k ? 0 : 1;
     }
-    print("fields of a record by key: " + (wrong ? "WRONG " + wrong + " times" : !globalThis.printsCalls ? "right" : calls() == callsBefore ? "objects" : "operations"));
+    print("fields of a record by key: " + (wrong ? "WRONG " + wrong + " times" : !countsCalls ? "right" : countedCalls() == callsBefore ? "objects" : "operations"));
     const method = WithMethod.prototype.shared;
     const kinds = {
         "a record without the name": n => ({ object: makeRecord(n, n), isRight: value => value === undefined, has: false, hasOwn: false }),
@@ -774,12 +750,11 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
         "an ordinary object below an instance with a getter": n => { const object = fresh(construct(WithGetter)); return { object, isRight: value => value === object, has: true, hasOwn: false }; },
         "an ordinary object below an instance without the name": n => ({ object: fresh(construct(WithNeither)), isRight: value => value === undefined, has: false, hasOwn: false }),
     };
-    // The first reads of an instance itself are filed at once.
+    const countsHere = countsCalls;
     const filedAtOnce = { "a method of the class": true, "a getter of the class": true, "a class without the name": true };
-    const printsCalls = globalThis.printsCalls;
     for (const kind in kinds) {
         const make = kinds[kind];
-        globalThis.printsCalls = printsCalls && !filedAtOnce[kind];
+        countsCalls = countsHere && !filedAtOnce[kind];
         printAnswers(kind, {
             "read": twice(n => { const made = make(n); return made.isRight(read(made.object)); }),
             "in": twice(n => { const made = make(n); return has(made.object) === made.has; }),
@@ -789,32 +764,33 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, store
             "hasOwn by key": twice(n => { const made = make(n); return hasOwnByKey(made.object, "shared") === made.hasOwn; }),
         });
     }
+    countsCalls = countsHere;
     printAnswers("a record given the name later", {
         "store by key": twice(n => { const object = makeRecord(n, n); object.shared = n; storeByKey(object, "shared", n + 1); return object.shared === n + 1; }),
     });
 };
 )JS"
 
-#define LINE_OF_COMPILED_OBJECT(kind, answer) kind ": read " answer " | in " answer " | hasOwn " answer " | read by key " answer " | in by key " answer " | hasOwn by key " answer "\n"
-#define OUTPUT_OF_COMPILED_OBJECTS(objects, operations, fewOperations) \
-    "fields of a record by key: " objects "\n" \
-    LINE_OF_COMPILED_OBJECT("a record without the name", objects) \
-    LINE_OF_COMPILED_OBJECT("a method of the class", "right") \
-    LINE_OF_COMPILED_OBJECT("a getter of the class", "right") \
-    LINE_OF_COMPILED_OBJECT("a class without the name", "right") \
-    LINE_OF_COMPILED_OBJECT("a record given the name later", objects) \
-    LINE_OF_COMPILED_OBJECT("an ordinary object below a record", objects) \
-    LINE_OF_COMPILED_OBJECT("an ordinary object below an instance", objects) \
-    LINE_OF_COMPILED_OBJECT("an ordinary object below an instance with a getter", objects) \
-    LINE_OF_COMPILED_OBJECT("an ordinary object below an instance without the name", objects) \
-    "a record given the name later: store by key " objects "\n"
+#define LINE_OF_COMPILED_OBJECT(kind) kind ": read right | in right | hasOwn right | read by key right | in by key right | hasOwn by key right\n"
+#define OUTPUT_OF_COMPILED_OBJECTS \
+    "fields of a record by key: right\n" \
+    LINE_OF_COMPILED_OBJECT("a record without the name") \
+    LINE_OF_COMPILED_OBJECT("a method of the class") \
+    LINE_OF_COMPILED_OBJECT("a getter of the class") \
+    LINE_OF_COMPILED_OBJECT("a class without the name") \
+    LINE_OF_COMPILED_OBJECT("a record given the name later") \
+    LINE_OF_COMPILED_OBJECT("an ordinary object below a record") \
+    LINE_OF_COMPILED_OBJECT("an ordinary object below an instance") \
+    LINE_OF_COMPILED_OBJECT("an ordinary object below an instance with a getter") \
+    LINE_OF_COMPILED_OBJECT("an ordinary object below an instance without the name") \
+    "a record given the name later: store by key right\n"
 
 static void testCompiledObjectsAnswer()
 {
     CHECK_OUTPUT(STATEMENTS_ASKING_COMPILED_OBJECTS, OUTPUT_OF_COMPILED_OBJECTS);
+    CHECK_SERVICES(STATEMENTS_ASKING_COMPILED_OBJECTS, OUTPUT_OF_COMPILED_OBJECTS, "oo...oooooo"_s);
 }
 
-// The key that a trap is handed for a name of the program is kept, so what is filed for a proxy is there behind a collection.
 #define STATEMENTS_ASKING_A_PROXY_BEHIND_COLLECTIONS R"JS(
 globalThis.publish = (read, has) => {
     const proxy = new Proxy({ shared: 1 }, { get(target, key) { return target[key]; }, has(target, key) { return key in target; } });
@@ -826,14 +802,14 @@ globalThis.publish = (read, has) => {
 };
 )JS"
 
-#define OUTPUT_OF_A_PROXY_BEHIND_COLLECTIONS(objects, operations, fewOperations) "a collection in front of each: read " objects " | in " objects "\n"
+#define OUTPUT_OF_A_PROXY_BEHIND_COLLECTIONS "a collection in front of each: read right | in right\n"
 
 static void testWhatIsFiledForAProxyOutlivesCollections()
 {
     CHECK_OUTPUT(STATEMENTS_ASKING_A_PROXY_BEHIND_COLLECTIONS, OUTPUT_OF_A_PROXY_BEHIND_COLLECTIONS);
+    CHECK_SERVICES(STATEMENTS_ASKING_A_PROXY_BEHIND_COLLECTIONS, OUTPUT_OF_A_PROXY_BEHIND_COLLECTIONS, "o"_s);
 }
 
-// Nothing in this program makes a proxy, so its code holds nothing that reads and calls traps.
 static constexpr ASCIILiteral textOfProgramThatNamesNoProxy = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -931,18 +907,17 @@ globalThis.publish = (read, has, store, readByKey, hasByKey, storeByKey) => {
 };
 )JS"
 
-#define OUTPUT_OF_PROXIES_HANDED_OVER(verdict) \
-    "with traps: " verdict "\n" \
-    "without traps: " verdict "\n" \
-    "above the receiver: " verdict "\n" \
-    "whose trap answers against the target: " verdict "\n" \
-    "revoked: " verdict "\n"
+#define OUTPUT_OF_PROXIES_HANDED_OVER \
+    "with traps: right\n" \
+    "without traps: right\n" \
+    "above the receiver: right\n" \
+    "whose trap answers against the target: right\n" \
+    "revoked: right\n"
 
 static void testAProxyHandedToAProgramThatMakesNoneIsAnswered()
 {
-    checkOutputOfProgramInShell(textOfProgramThatNamesNoProxy, OUTPUT_OF_PROXIES_HANDED_OVER("operations") ""_s, { }, "globalThis.printsCalls = true;" ASK_QUESTIONS STATEMENTS_HANDING_PROXIES_OVER ""_s, shellOptions);
-    for (ASCIILiteral word : { "validate"_s, "heat=EverythingIsHot"_s, "heat=EverythingIsCold"_s })
-        checkOutputOfProgramInShell(textOfProgramThatNamesNoProxy, OUTPUT_OF_PROXIES_HANDED_OVER("right") ""_s, { word }, ASK_QUESTIONS STATEMENTS_HANDING_PROXIES_OVER ""_s, shellOptions);
+    checkOutputOfProgramInShell(textOfProgramThatNamesNoProxy, OUTPUT_OF_PROXIES_HANDED_OVER ""_s, { }, ASK_QUESTIONS STATEMENTS_HANDING_PROXIES_OVER ""_s, shellOptions);
+    checkServicesInShell(__FILE__, __LINE__, textOfProgramThatNamesNoProxy, OUTPUT_OF_PROXIES_HANDED_OVER ""_s, ASK_QUESTIONS STATEMENTS_HANDING_PROXIES_OVER ""_s, wordsOfLookups, "fnnfn"_s, { }, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s });
 }
 
 std::span<const NativeTest> lookupBehindTablesProgramTests()
@@ -950,6 +925,7 @@ std::span<const NativeTest> lookupBehindTablesProgramTests()
     static constexpr NativeTest tests[] = {
         { "lookup-behind-tables/programs/ordinary-objects-answer"_s, testOrdinaryObjectsAnswer },
         { "lookup-behind-tables/programs/texts-that-are-no-atoms-are-names"_s, testTextsThatAreNoAtomsAreNames },
+        { "lookup-behind-tables/programs/texts-that-are-no-atoms-are-served-as-they-were"_s, testTextsThatAreNoAtomsAreServedAsTheyWere, "reads by key: a text of two to sixteen characters made of character codes enters the run time a few times in twelve reads; the compiler before this one asked the objects alone"_s },
         { "lookup-behind-tables/programs/full-tables-answer"_s, testFullTablesAnswer },
         { "lookup-behind-tables/programs/symbols-are-names"_s, testSymbolsAreNames },
         { "lookup-behind-tables/programs/stores-replace-own-values"_s, testStoresReplaceOwnValues },

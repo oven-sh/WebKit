@@ -52,3 +52,7 @@ Vector<.*(appendSlowCase|expandCapacity)
 ^AOT::ChainDependents::hasDependents$
 ^AOT::slotAgreesWithStructures$
 ^AOT::Image::currentOfThread$
+^AOT::Instance::(instanceWithShape|instanceWithClosureNumber|findInstanceOfRunningImage|owning)$
+^AOT::(imageWithClosureNumber|belongsToOtherImageSlow)$
+^AOT::VMState::run$
+^AOT::ClosureTable::closureIfCreated$

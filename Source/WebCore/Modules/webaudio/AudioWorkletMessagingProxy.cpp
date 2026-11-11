@@ -47,7 +47,7 @@
 
 namespace WebCore {
 
-static WorkletParameters generateWorkletParameters(AudioWorklet& worklet)
+static WorkletParameters generateWorkletParameters(AudioWorklet& worklet, TransferredMessagePort&& globalScopePort)
 {
     RefPtr document = worklet.document();
     auto jsRuntimeFlags = document->settings().javaScriptRuntimeFlags();
@@ -70,23 +70,39 @@ static WorkletParameters generateWorkletParameters(AudioWorklet& worklet)
         document->agentClusterID(),
         document->crossOriginIsolated() ? CanBeCrossOriginIsolated::Yes : CanBeCrossOriginIsolated::No,
         protect(document->contentSecurityPolicy())->responseHeaders(),
-        document->networkLoadPolicy()
+        document->networkLoadPolicy(),
+        WTF::move(globalScopePort)
     };
 }
 
 AudioWorkletMessagingProxy::AudioWorkletMessagingProxy(AudioWorklet& worklet)
     : m_worklet(worklet)
     , m_documentIdentifier(worklet.document()->identifier())
-    , m_workletThread(AudioWorkletThread::create(*this, generateWorkletParameters(worklet)))
+    , m_workletThread(AudioWorkletThread::create(*this, generateWorkletParameters(worklet, worklet.takeGlobalScopePort())))
 {
     ASSERT(isMainThread());
 
     m_workletThread->start();
 }
 
+void AudioWorkletMessagingProxy::stopThread(StopThread option)
+{
+    ASSERT(isMainThread());
+    if (m_wasAskedToTerminate)
+        return;
+    m_wasAskedToTerminate = true;
+    // ~Worklet destroys this proxy while tearing down m_proxies. proxy() would
+    // then call Ref::ptr() on that slot, and m_nodes is already gone.
+    if (option == StopThread::ReleaseProcessors) {
+        if (RefPtr worklet = m_worklet)
+            worklet->releaseProcessors(*this);
+    }
+    m_workletThread->stop();
+}
+
 AudioWorkletMessagingProxy::~AudioWorkletMessagingProxy()
 {
-    m_workletThread->stop();
+    stopThread(StopThread::ThreadOnly);
     m_workletThread->clearProxies();
 }
 

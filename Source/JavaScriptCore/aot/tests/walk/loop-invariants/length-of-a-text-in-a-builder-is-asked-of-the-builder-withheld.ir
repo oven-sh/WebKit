@@ -1,0 +1,10 @@
+# the same functions with loop invariants withheld: no text lies in a builder, and the length is that of the string that comes round
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: StringBuilder
+# RUN(NONE): walk f2 mechanisms=none
+# NONE-NOT: StringBuilder
+# PROGRAM-OF: length-of-a-text-in-a-builder-is-asked-of-the-builder.ir

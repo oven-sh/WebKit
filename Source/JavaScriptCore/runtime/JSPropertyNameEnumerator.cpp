@@ -34,7 +34,7 @@ namespace JSC {
 
 const ClassInfo JSPropertyNameEnumerator::s_info = { "JSPropertyNameEnumerator"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSPropertyNameEnumerator) };
 
-JSPropertyNameEnumerator* JSPropertyNameEnumerator::tryCreate(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, PropertyNameArrayBuilder&& propertyNames, uint32_t cachedOrderWord, uint32_t cachedOrderWordMask)
+JSPropertyNameEnumerator* JSPropertyNameEnumerator::tryCreate(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, PropertyNameArrayBuilder&& propertyNames, uint32_t cachedOrderWord, uint32_t cachedOrderWordMask, uint32_t numberOwnProperties)
 {
     unsigned propertyNamesSize = propertyNames.size();
     auto propertyNamesBufferSizeInBytes = CheckedUint32(propertyNamesSize) * sizeof(WriteBarrier<JSString>);
@@ -51,12 +51,12 @@ JSPropertyNameEnumerator* JSPropertyNameEnumerator::tryCreate(VM& vm, Structure*
             propertyNamesBuffer[i].clear();
     }
 
-    JSPropertyNameEnumerator* enumerator = new (NotNull, allocateCell<JSPropertyNameEnumerator>(vm)) JSPropertyNameEnumerator(vm, structure, indexedLength, numberStructureProperties, propertyNamesBuffer, propertyNamesSize, cachedOrderWord, cachedOrderWordMask);
+    JSPropertyNameEnumerator* enumerator = new (NotNull, allocateCell<JSPropertyNameEnumerator>(vm)) JSPropertyNameEnumerator(vm, structure, indexedLength, numberStructureProperties, propertyNamesBuffer, propertyNamesSize, cachedOrderWord, cachedOrderWordMask, numberOwnProperties);
     enumerator->finishCreation(vm, propertyNames.releaseData());
     return enumerator;
 }
 
-JSPropertyNameEnumerator::JSPropertyNameEnumerator(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, WriteBarrier<JSString>* propertyNamesBuffer, unsigned propertyNamesSize, uint32_t cachedOrderWord, uint32_t cachedOrderWordMask)
+JSPropertyNameEnumerator::JSPropertyNameEnumerator(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, WriteBarrier<JSString>* propertyNamesBuffer, unsigned propertyNamesSize, uint32_t cachedOrderWord, uint32_t cachedOrderWordMask, uint32_t numberOwnProperties)
     : JSCell(vm, vm.propertyNameEnumeratorStructure.get())
     , m_propertyNames(propertyNamesBuffer, WriteBarrierEarlyInit)
     , m_cachedStructureID(structure, WriteBarrierEarlyInit)
@@ -66,7 +66,9 @@ JSPropertyNameEnumerator::JSPropertyNameEnumerator(VM& vm, Structure* structure,
     , m_cachedInlineCapacity(structure ? structure->inlineCapacity() : 0)
     , m_cachedOrderWord(cachedOrderWord)
     , m_cachedOrderWordMask(cachedOrderWordMask)
+    , m_endOwnPropertyIndex(std::max(numberStructureProperties, numberOwnProperties))
 {
+    ASSERT(m_endOwnPropertyIndex <= m_endGenericPropertyIndex);
     if (m_indexedLength)
         m_flags |= JSPropertyNameEnumerator::IndexedMode;
     if (m_endStructurePropertyIndex)
@@ -104,7 +106,7 @@ DEFINE_VISIT_CHILDREN(JSPropertyNameEnumerator);
 
 // FIXME: Assert that properties returned by getOwnPropertyNames() are reported enumerable by getOwnPropertySlot().
 // https://bugs.webkit.org/show_bug.cgi?id=219926
-void getEnumerablePropertyNames(JSGlobalObject* globalObject, JSObject* base, PropertyNameArrayBuilder& propertyNames, uint32_t& indexedLength, uint32_t& structurePropertyCount)
+void getEnumerablePropertyNames(JSGlobalObject* globalObject, JSObject* base, PropertyNameArrayBuilder& propertyNames, uint32_t& indexedLength, uint32_t& structurePropertyCount, uint32_t* ownPropertyCount)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -139,6 +141,8 @@ void getEnumerablePropertyNames(JSGlobalObject* globalObject, JSObject* base, Pr
         // |propertyNames| contains all indexed properties, so disable enumeration based on getEnumerableLength().
         indexedLength = 0;
     }
+    if (ownPropertyCount)
+        *ownPropertyCount = propertyNames.size();
 
     JSObject* object = base;
     unsigned prototypeCount = 0;

@@ -5,11 +5,12 @@ const storage = "TypedArrayStorage";
 
 const maximumBufferLength = b.checked(2 ** 32, "MAX_ARRAY_BUFFER_SIZE");
 const bufferLength = b.int(0, maximumBufferLength);
-// An element takes eight bytes at most.
 const lengthOfAnyElementSize = b.int(0, 2 ** 29);
 const indexOrNotFound = b.int(-1, maximumBufferLength);
 const element = b.union(b.f64, b.bigint);
 const elementOrUndefined = b.union(element, b.undefined);
+const elementOfReceiver = b.slot("this", "element");
+const elementOfReceiverOrUndefined = b.union(elementOfReceiver, b.undefined);
 const self = b.operand("this");
 const typedArray = b.instance("TypedArray");
 const typedArrayWithDefaultSpecies = typedArray.pristine("Names");
@@ -119,7 +120,7 @@ const traversal = (returns: b.TableType, result: b.CallbackResultUse, ...receive
           afterwards: "TouchesOnlyWhatRowNames",
           times: "PerElement",
           this: b.operand("thisArg"),
-          args: [elementOrUndefined, bufferLength, self],
+          args: [elementOfReceiverOrUndefined, bufferLength, self],
           result,
         }),
       ],
@@ -127,6 +128,9 @@ const traversal = (returns: b.TableType, result: b.CallbackResultUse, ...receive
     },
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
+
+const compiledTraversal = (name: string, returns: b.TableType, result: b.CallbackResultUse) =>
+  ({ ...traversal(returns, result), implementation: b.compiled("TypedArrayPrototype", name) }) satisfies b.FunctionField;
 
 type SpeciesLookup = "BeforeCallbacks" | "AfterCallbacks";
 
@@ -140,15 +144,15 @@ const copyingTraversal = (result: b.CallbackResultUse, speciesLookup: SpeciesLoo
 };
 
 const foldCall = (times: b.CallbackTimes, accumulator: b.PlaceLike) =>
-  b.called({ afterwards: "TouchesOnlyWhatRowNames", times, this: b.undefined, args: [accumulator, elementOrUndefined, bufferLength, self], result: "Returned" });
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times, this: b.undefined, args: [accumulator, elementOfReceiverOrUndefined, bufferLength, self], result: "Returned" });
 
-const fold = [
+const fold = (name: string) => [
   {
     ...operandCodeEffects,
     args: { callback: b.callable, initialValue: b.notPassed },
     returns: b.union(element, b.callbackResult("callback")),
-    uses: { this: [readsElements], callback: [foldCall("Once", element), foldCall("PerElement", b.result)] },
-    implementation: b.hostCall,
+    uses: { this: [readsElements], callback: [foldCall("Once", elementOfReceiver), foldCall("PerElement", b.result)] },
+    implementation: b.compiled("TypedArrayPrototype", name),
   },
   {
     ...operandCodeEffects,
@@ -159,9 +163,40 @@ const fold = [
       callback: [foldCall("Once", b.operand("initialValue")), foldCall("PerElement", b.result)],
       initialValue: b.inspected,
     },
-    implementation: b.hostCall,
+    implementation: b.compiled("TypedArrayPrototype", name),
   },
 ] satisfies b.FunctionField[];
+
+const sortingWithComparator = (returns: b.TableType, receiverUses: readonly b.UseSpec[]) =>
+  ({
+    ...operandCodeEffects,
+    args: { comparator: b.callable },
+    returns,
+    uses: {
+      this: receiverUses,
+      comparator: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [elementOfReceiver, elementOfReceiver], result: convertedByNativeCode })],
+    },
+    implementation: b.hostCall,
+  }) satisfies b.FunctionField;
+
+const typedArrayOfNumbers = b.union(
+  b.instance("Int8Array"),
+  b.instance("Uint8Array"),
+  b.instance("Uint8ClampedArray"),
+  b.instance("Int16Array"),
+  b.instance("Uint16Array"),
+  b.instance("Int32Array"),
+  b.instance("Uint32Array"),
+  b.instance("Float16Array"),
+  b.instance("Float32Array"),
+  b.instance("Float64Array"),
+);
+
+const sortingOfNumbers = {
+  ...sortingWithComparator(self, changesElements),
+  this: typedArrayOfNumbers,
+  implementation: b.compiled("prelude/array-sort", "sortTypedArray"),
+} satisfies b.FunctionField;
 
 const sorting = (nativeSymbol: string, returns: b.TableType, receiverUses: readonly b.UseSpec[]) =>
   [
@@ -175,18 +210,7 @@ const sorting = (nativeSymbol: string, returns: b.TableType, receiverUses: reado
       nativeSymbols: [nativeSymbol],
       implementation: b.hostCall,
     },
-    {
-      args: { comparator: b.callable },
-      returns,
-      capability: "js",
-      throws: true,
-      runsOnlyOperandCode: true,
-      uses: {
-        this: receiverUses,
-        comparator: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [element, element], result: convertedByNativeCode })],
-      },
-      implementation: b.hostCall,
-    },
+    sortingWithComparator(returns, receiverUses),
   ] satisfies b.FunctionField[];
 
 const copyOfRange = {
@@ -235,19 +259,35 @@ export default b.declarations(
         uses: { this: b.inspected },
         implementation: b.inline("ReturnThis"),
       },
-      from: {
-        this: b.callable,
-        args: { items: b.any, mapper: b.callable.optional, thisArg: b.any.optional },
-        returns: b.callbackResult("this"),
-        ...operandCodeEffects,
-        uses: {
-          this: [constructedByReceiver],
-          items: [convertedItems],
-          mapper: [mapperCall(b.iterated("items")), mapperCall(b.ownValues("items"))],
-          thisArg: b.inspected,
+      from: [
+        {
+          this: b.callable,
+          args: { items: b.union(b.string, b.instance("Array").pristine("Storage", "Names")), mapper: b.callable, thisArg: b.any.optional },
+          returns: b.callbackResult("this"),
+          ...operandCodeEffects,
+          uses: {
+            this: [constructedByReceiver],
+            items: [convertedItems],
+            mapper: [mapperCall(b.iterated("items")), mapperCall(b.ownValues("items"))],
+            thisArg: b.inspected,
+          },
+          isSpecialCase: true,
+          implementation: b.compiled("prelude/iterator-consumers", "viewFrom"),
         },
-        implementation: b.compiled("TypedArrayConstructor", "from"),
-      },
+        {
+          this: b.callable,
+          args: { items: b.any, mapper: b.callable.optional, thisArg: b.any.optional },
+          returns: b.callbackResult("this"),
+          ...operandCodeEffects,
+          uses: {
+            this: [constructedByReceiver],
+            items: [convertedItems],
+            mapper: [mapperCall(b.iterated("items")), mapperCall(b.ownValues("items"))],
+            thisArg: b.inspected,
+          },
+          implementation: b.compiled("TypedArrayConstructor", "from"),
+        },
+      ],
       of: {
         ...operandCodeEffects,
         this: b.callable,
@@ -304,8 +344,8 @@ export default b.declarations(
       entries: iteratorOver("Entries"),
       keys: iteratorOver("Keys"),
       values: iteratorOver("Values"),
-      every: traversal(b.bool, "Tested"),
-      some: traversal(b.bool, "Tested"),
+      every: compiledTraversal("every", b.bool, "Tested"),
+      some: compiledTraversal("some", b.bool, "Tested"),
       fill: {
         ...operandCodeEffects,
         args: { value: b.any, ...range },
@@ -315,11 +355,11 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       filter: copyingTraversal("Tested", "AfterCallbacks"),
-      find: traversal(elementOrUndefined, "Tested"),
-      findIndex: traversal(indexOrNotFound, "Tested"),
-      findLast: traversal(elementOrUndefined, "Tested"),
-      findLastIndex: traversal(indexOrNotFound, "Tested"),
-      forEach: traversal(b.undefined, "Ignored"),
+      find: compiledTraversal("find", elementOrUndefined, "Tested"),
+      findIndex: compiledTraversal("findIndex", indexOrNotFound, "Tested"),
+      findLast: compiledTraversal("findLast", elementOrUndefined, "Tested"),
+      findLastIndex: compiledTraversal("findLastIndex", indexOrNotFound, "Tested"),
+      forEach: compiledTraversal("forEach", b.undefined, "Ignored"),
       includes: search(b.bool),
       indexOf: search(indexOrNotFound),
       lastIndexOf: search(indexOrNotFound),
@@ -329,12 +369,12 @@ export default b.declarations(
         capability: "heap",
         throws: true,
         readsStateBeforeConversions: true,
-        uses: { this: [readsElements], separator: [b.readAsCharacters] },
+        uses: { this: [readsElements], separator: b.inspected },
         implementation: b.hostCall,
       },
       map: copyingTraversal(convertedByNativeCode, "BeforeCallbacks"),
-      reduce: fold,
-      reduceRight: fold,
+      reduce: fold("reduce"),
+      reduceRight: fold("reduceRight"),
       reverse: {
         returns: self,
         capability: "heap",
@@ -349,6 +389,14 @@ export default b.declarations(
           throws: true,
           readsStateBeforeConversions: true,
           uses: { this: changesElements, source: [readsElements] },
+          implementation: b.inline("TypedArraySet", { otherwise: b.hostCall }),
+        },
+        {
+          args: { source: b.notPassed },
+          returns: b.never,
+          capability: "heap",
+          throws: true,
+          uses: { this: b.inspected },
           implementation: b.hostCall,
         },
         {
@@ -375,7 +423,7 @@ export default b.declarations(
           writes: [elements],
         },
       ],
-      sort: sorting("typedArrayViewProtoFuncSort", self, changesElements),
+      sort: [sortingOfNumbers, ...sorting("typedArrayViewProtoFuncSort", self, changesElements)],
       subarray: [
         {
           ...viewOfRange,
@@ -397,6 +445,7 @@ export default b.declarations(
         returns: b.string,
         capability: "js",
         throws: true,
+        reads: ["ExternalState"],
         uses: { this: [readsElements], locales: [b.readAsLocale, b.retained], options: [b.retained] },
         usesFeature: ["ElementsToLocaleString", "IntlNumberFormat", "IntlUnits", "IntlDateTimeFormat"],
         implementation: b.compiled("TypedArrayPrototype", "toLocaleString"),
@@ -439,25 +488,25 @@ export default b.declarations(
     ...textCodec("uint8ArrayConstructorFromBase64"),
     args: { string: b.string, options: decodingOptions },
     returns: b.instance("Uint8Array").exactly.fresh,
-    uses: { string: [b.readAsCharacters], options: b.inspected },
+    uses: { string: b.inspected, options: b.inspected },
   }),
   b.static("Uint8Array.fromHex", {
     ...textCodec("uint8ArrayConstructorFromHex"),
     args: { string: b.string },
     returns: b.instance("Uint8Array").exactly.fresh,
-    uses: { string: [b.readAsCharacters] },
+    uses: { string: b.inspected },
   }),
   b.method("Uint8Array.prototype.setFromBase64", {
     ...textCodec("uint8ArrayPrototypeSetFromBase64"),
     args: { string: b.string, options: decodingOptions },
     returns: b.ordinaryObjectOf("ReadAndWrittenCounts").fresh,
-    uses: { this: changesElements, string: [b.readAsCharacters], options: b.inspected },
+    uses: { this: changesElements, string: b.inspected, options: b.inspected },
   }),
   b.method("Uint8Array.prototype.setFromHex", {
     ...textCodec("uint8ArrayPrototypeSetFromHex"),
     args: { string: b.string },
     returns: b.ordinaryObjectOf("ReadAndWrittenCounts").fresh,
-    uses: { this: changesElements, string: [b.readAsCharacters] },
+    uses: { this: changesElements, string: b.inspected },
   }),
   b.method("Uint8Array.prototype.toBase64", {
     ...textCodec("uint8ArrayPrototypeToBase64"),
@@ -471,7 +520,6 @@ export default b.declarations(
     uses: { this: [readsElements] },
   }),
 
-  // `core-js/actual` replaces them without a test, from 3.35 to 3.37.
   b.replacedByPackages(
     "Uint8Array.fromBase64",
     "Uint8Array.fromHex",

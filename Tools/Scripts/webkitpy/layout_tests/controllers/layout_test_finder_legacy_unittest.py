@@ -1018,6 +1018,19 @@ class LayoutTestFinderTests(unittest.TestCase, TestCaseMixin):
             ],
         )
 
+    def test_is_wpt_crash_test_ignores_working_directory(self):
+        finder = self.finder
+        fs = finder._filesystem
+        test = "imported/w3c/web-platform-tests/dom/attributes-are-nodes.html"
+
+        fs.chdir(self.port.layout_tests_dir())
+        fs.maybe_make_directory(fs.dirname(test))
+        fs.write_text_file(test, "XXX")
+        fs.maybe_make_directory("/crashtests")
+        fs.chdir("/crashtests")
+
+        self.assertFalse(finder.find_tests_by_path([test], with_expectations=True)[0].is_wpt_crash_test)
+
     def test_is_wpt_crash_test(self):
         finder = self.finder
         fs = finder._filesystem
@@ -1064,6 +1077,95 @@ class LayoutTestFinderTests(unittest.TestCase, TestCaseMixin):
                     test_path="imported/w3c/web-platform-tests/mathml/crashtests/mtd-as-multicol.html",
                     is_wpt_test=True,
                     is_wpt_crash_test=True,
+                ),
+            ],
+        )
+
+    def test_is_wpt_print_reftest(self):
+        finder = self.finder
+        fs = finder._filesystem
+
+        files = [
+            "fast/css/page-size-print.html",
+            "http/wpt/css/css-page/page-box-print.html",
+            "imported/w3c/web-platform-tests/css/css-page/crashtests/page-print.html",
+            "imported/w3c/web-platform-tests/css/css-page/page-crash-print.html",
+            "imported/w3c/web-platform-tests/css/css-page/page-print-crash.html",
+            "imported/w3c/web-platform-tests/css/css-page/page-reprint.html",
+            "imported/w3c/web-platform-tests/css/css-page/page-size-print.tentative.html",
+            "imported/w3c/web-platform-tests/css/css-page/print/margin.html",
+            "imported/w3c/web-platform-tests/css/printing/page-size.html",
+            "imported/w3c/web-platform-tests/html/browsers/windows/iframe-cross-origin-print.sub.html",
+            "printing/print/test.html",
+        ]
+
+        fs.chdir(self.port.layout_tests_dir())
+
+        for f in files:
+            fs.maybe_make_directory(fs.dirname(f))
+            fs.write_text_file(f, "XXX")
+
+        tests = finder.find_tests_by_path(files, with_expectations=True)
+        self.assertEqual(
+            tests,
+            [
+                Test(
+                    test_path="fast/css/page-size-print.html",
+                    is_wpt_test=False,
+                    is_wpt_print_reftest=False,
+                ),
+                Test(
+                    test_path="http/wpt/css/css-page/page-box-print.html",
+                    is_wpt_test=True,
+                    is_wpt_print_reftest=True,
+                ),
+                Test(
+                    test_path="imported/w3c/web-platform-tests/css/css-page/crashtests/page-print.html",
+                    is_wpt_test=True,
+                    is_wpt_crash_test=True,
+                    is_wpt_print_reftest=False,
+                ),
+                Test(
+                    test_path="imported/w3c/web-platform-tests/css/css-page/page-crash-print.html",
+                    is_wpt_test=True,
+                    is_wpt_crash_test=False,
+                    is_wpt_print_reftest=True,
+                ),
+                Test(
+                    test_path="imported/w3c/web-platform-tests/css/css-page/page-print-crash.html",
+                    is_wpt_test=True,
+                    is_wpt_crash_test=True,
+                    is_wpt_print_reftest=False,
+                ),
+                Test(
+                    test_path="imported/w3c/web-platform-tests/css/css-page/page-reprint.html",
+                    is_wpt_test=True,
+                    is_wpt_print_reftest=False,
+                ),
+                Test(
+                    test_path="imported/w3c/web-platform-tests/css/css-page/page-size-print.tentative.html",
+                    is_wpt_test=True,
+                    is_wpt_print_reftest=True,
+                ),
+                Test(
+                    test_path="imported/w3c/web-platform-tests/css/css-page/print/margin.html",
+                    is_wpt_test=True,
+                    is_wpt_print_reftest=True,
+                ),
+                Test(
+                    test_path="imported/w3c/web-platform-tests/css/printing/page-size.html",
+                    is_wpt_test=True,
+                    is_wpt_print_reftest=False,
+                ),
+                Test(
+                    test_path="imported/w3c/web-platform-tests/html/browsers/windows/iframe-cross-origin-print.sub.html",
+                    is_wpt_test=True,
+                    is_wpt_print_reftest=True,
+                ),
+                Test(
+                    test_path="printing/print/test.html",
+                    is_wpt_test=False,
+                    is_wpt_print_reftest=False,
                 ),
             ],
         )

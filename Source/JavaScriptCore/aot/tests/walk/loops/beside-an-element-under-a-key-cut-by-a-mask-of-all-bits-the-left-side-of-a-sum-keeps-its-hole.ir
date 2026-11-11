@@ -1,0 +1,101 @@
+# Written by hand: f1, b2: `const place = (k - 40) & 4294967295; last = list[k & 3] + other[place]`, with a Convert of `place` laid behind the left read, so that the look ahead goes by the written mask.
+# A mask above INT32_MAX leaves negatives: -1 is a name, not an index, and what lies under it may be a text: the left element keeps its hole and is not read as NaN.
+# RUN: walk f1 mechanisms=all
+# CHECK: undefined|number @OptionalDouble = GetArrayElement {{*}} arrayStorage=Double {{*}} @301
+# RUN(NONE): walk f1 mechanisms=all
+# NONE-NOT: readsHoleAsNaN{{*}} @301
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 27.5|undefinedx 28.5|undefinedx
+# ANSWER-NEXT: exited with 0
+
+module m0 path="h4.cjs" displayPath="h4.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0 place=0
+layout L1 module=m0 place=0
+data d0 root=Array{contents=anything elements=[Number{value=1.5}, Number{value=2.5}, Number{value=3.5}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=0.5}, Number{value=0.25}, Number{value=4}]} module=m0
+data d2 root=Array{contents=anything} module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=5
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
+    v5 = Data data=d0 @30
+    v6 = Data data=d1 @62
+    v7 = String string="x" @93
+    PropSet v6, v7 key="-1" @78
+    v9 = Data data=d2 @374
+    v10 = Integer @394
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @394
+    Jump -> next b1(v11) @387
+  b1(v12):
+    LoopHint @387
+    v14 = Integer integer=200 @404
+    v15 = Less v12, v14 @404
+    Branch v15 -> taken b2(), notTaken b3() @404
+  b2():
+    v16 = PropGet v9 key="push" @417
+    v17 = Call v4, -, v5, v6, v12 calleeName="lastLabel" @426
+    v18 = Call v16, v9, v17 calleeKey="push" calleeName="out.push" @421
+    v19 = Increment v12 @409
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @409
+    Jump -> next b1(v20) @409
+  b3():
+    v21 = Builtin builtin=GlobalThis @461
+    v22 = PropGet v21 key="print" [isFreeName] @461
+    v23 = Integer @467
+    v24 = ElemGet v9, v23 @467
+    v25 = Integer integer=199 @475
+    v26 = ElemGet v9, v25 @475
+    v27 = Call v22, -, v24, v26 calleeName="print" @461
+    v28 = Undefined @461
+    Return v28 @461
+}
+function f1 name="lastLabel" module=m0 position=98 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>, v2: i32):
+    v3 = String string="" @151
+    v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]} @151
+    v5 = Integer integer=1 @174
+    v6 = BitAnd v2, v5 @174
+    v7 = Convert v6 declared={type=number flags=[IsExpected]} @167
+    v8 = Integer @192
+    v9 = Convert v8 declared={type=i32 flags=[IsExpected]} @192
+    Jump -> next b1(v4, v7, v9) @188
+  b1(v10, v11, v12):
+    LoopHint @188
+    v14 = Integer integer=40 @199
+    v15 = Less v12, v14 @199
+    Branch v15 -> taken b2(), notTaken b3() @199
+  b2():
+    v16 = Integer integer=1 @230
+    v17 = BitAnd v12, v16 @230
+    v18 = ElemGet v0, v17 @221
+    v19 = Integer integer=1 @245
+    v20 = BitAnd v12, v19 @245
+    v21 = ElemGet v1, v20 @235
+    v22 = Mul v18, v21 @235
+    v23 = Add v11, v22 @235
+    v24 = Convert v23 declared={type=number flags=[IsExpected]} @214
+    v25 = Integer integer=40 @272
+    v26 = Sub v12, v25 @272
+    v27 = Integer integer=4294967295 @278
+    v28 = BitAnd v26, v27 @278
+    v29 = Integer integer=3 @310
+    v30 = BitAnd v12, v29 @310
+    v31 = ElemGet v0, v30 @301
+    v32 = Convert v28 declared={type=number flags=[IsExpected]} @315
+    v33 = ElemGet v1, v32 @315
+    v34 = Add v31, v33 @315
+    v35 = Convert v34 declared={type=undefined|null|string flags=[IsExpected]} @294
+    v36 = Increment v12 @203
+    v37 = Convert v36 declared={type=i32 flags=[IsExpected]} @203
+    Jump -> next b1(v35, v24, v37) @203
+  b3():
+    v38 = String string="|" @348
+    v39 = Add v11, v38 @348
+    v40 = Add v39, v10 @354
+    Return v40 @354
+}

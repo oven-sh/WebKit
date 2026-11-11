@@ -67,8 +67,10 @@ public:
     void elementUnderMouseDidChange(LocalFrame&, Element*);
 
 #if PLATFORM(MAC)
+    void mouseDidLeaveLocalRoot(const LocalFrame&);
+
     // DataDetectorHighlightClient.
-    void LEGACY_NODELETE ref() const final;
+    NODELETE void ref() const final;
     void deref() const final;
 #else
     void ref() const;
@@ -76,23 +78,24 @@ public:
 #endif
 
 #if ENABLE(DATA_DETECTION)
-    WEBCORE_EXPORT bool LEGACY_NODELETE hasActiveDataDetectorHighlightForTesting() const;
+    NODELETE WEBCORE_EXPORT bool hasActiveDataDetectorHighlightForTesting() const;
     void textRecognitionResultsChanged(HTMLElement&);
 #endif
 
     void documentDetached(const Document&);
 
 private:
-    void willMoveToPage(PageOverlay&, Page*) final;
+    void willMoveToPage(PageOverlay&, Page*) final { }
     void didMoveToPage(PageOverlay&, Page*) final { }
     void drawRect(PageOverlay&, GraphicsContext&, const IntRect& dirtyRect) final;
-    bool mouseEvent(PageOverlay&, const PlatformMouseEvent& event) final { return platformHandleMouseEvent(event); }
+    bool mouseEvent(PageOverlay& overlay, const PlatformMouseEvent& event) final { return platformHandleMouseEvent(overlay, event); }
 
-    bool LEGACY_NODELETE shouldUsePageOverlayToPaintSelection(const RenderElement&);
+    NODELETE bool shouldUsePageOverlayToPaintSelection(const RenderElement&);
 
-    PageOverlay& installPageOverlayIfNeeded();
-    void uninstallPageOverlayIfNeeded();
-    void uninstallPageOverlay();
+    static RefPtr<LocalFrame> rootFrameForHost(const WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData>&);
+    void updateOverlays();
+    RefPtr<PageOverlay> overlayForRootFrame(const LocalFrame*) const;
+    void clearSelectionState();
 
 #if PLATFORM(MAC)
     void updateDataDetectorHighlights(const HTMLElement&);
@@ -109,10 +112,9 @@ private:
 #endif
 
     void platformUpdateElementUnderMouse(LocalFrame&, Element* elementUnderMouse);
-    bool platformHandleMouseEvent(const PlatformMouseEvent&);
+    bool platformHandleMouseEvent(const PageOverlay&, const PlatformMouseEvent&);
 
     WeakRef<Page> m_page;
-    RefPtr<PageOverlay> m_overlay;
     WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData> m_hostElementForSelection;
     Vector<FloatQuad> m_selectionQuads;
     LayoutRect m_selectionClipRect;

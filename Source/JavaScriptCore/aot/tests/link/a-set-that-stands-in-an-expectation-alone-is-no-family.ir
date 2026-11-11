@@ -1,0 +1,36 @@
+# A SET OF LAYOUTS OUT OF A WRITTEN TYPE IS A DECLARED FAMILY ONLY WHERE THAT TYPE STANDS DIRECTLY ON A PLACE. An expectation that an operation states proves nothing and is tested at run time: it may not move a layout, and the plan
+# makes the members of a family agree on their slots. L0|L1 is written on a field: a family. L2|L3 stands in a Convert that is expected alone, L4|L5 in the written contents of a list, which the engine reads as expected: neither is
+# a family. L6|L7 is what a parameter is expected to be: the entry block says it of its parameter, and it is a family still. L8|L9 stands in a Convert that is not expected: a family.
+# RUN: link families mechanisms=all
+# CHECK: family F0 [L0, L1]
+# CHECK: family F1 [L6, L7]
+# CHECK: family F2 [L8, L9]
+# CHECK-NOT: family
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L3 module=m0 fields=[{key="d" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L4 module=m0 fields=[{key="e" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L5 module=m0 fields=[{key="f" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L6 module=m0 fields=[{key="g" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L7 module=m0 fields=[{key="h" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L8 module=m0 fields=[{key="i" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L9 module=m0 fields=[{key="j" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L10 module=m0 fields=[{key="one" declared={type=undefined|L0|L1}}, {key="many" declared={type=undefined|Array<L4|L5>}}] ownFieldCount=2
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Convert v1 declared={type=L2|L3 flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v2
+    Return v4
+}
+function f1 name="taken" module=m0 thisType={type=anything} parameters=[{type=L6|L7 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L6|L7):
+    v1 = Convert v0 declared={type=L8|L9}
+    Return v1
+}

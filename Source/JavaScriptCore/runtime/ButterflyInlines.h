@@ -38,7 +38,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-inline size_t LEGACY_NODELETE nextLength(size_t length)
+NODELETE inline size_t nextLength(size_t length)
 {
     return length + length / 2;
 }
@@ -137,9 +137,10 @@ inline Butterfly* Butterfly::tryCreate(VM& vm, JSObject*, size_t preCapacity, si
 
 inline Butterfly* Butterfly::create(VM& vm, JSObject* intendedOwner, size_t preCapacity, size_t propertyCapacity, bool hasIndexingHeader, const IndexingHeader& indexingHeader, size_t indexingPayloadSizeInBytes)
 {
-    Butterfly* result = tryCreate(vm, intendedOwner, preCapacity, propertyCapacity, hasIndexingHeader, indexingHeader, indexingPayloadSizeInBytes);
-
-    RELEASE_ASSERT(result);
+    Butterfly* result = createUninitialized(vm, intendedOwner, preCapacity, propertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes);
+    if (hasIndexingHeader)
+        *result->indexingHeader() = indexingHeader;
+    memset(result->propertyStorage() - propertyCapacity, 0, propertyCapacity * sizeof(EncodedJSValue));
     return result;
 }
 
@@ -187,9 +188,15 @@ inline Butterfly* Butterfly::createOrGrowArrayRight(
             vm, intendedOwner, 0, propertyCapacity, true, IndexingHeader(),
             newIndexingPayloadSizeInBytes);
     }
-    return oldButterfly->growArrayRight(
-        vm, intendedOwner, oldStructure, propertyCapacity, hadIndexingHeader,
-        oldIndexingPayloadSizeInBytes, newIndexingPayloadSizeInBytes);
+    ASSERT_UNUSED(oldStructure, !oldButterfly->preCapacity(oldStructure));
+    ASSERT(hadIndexingHeader == oldStructure->hasIndexingHeader(intendedOwner));
+    Butterfly* result = createUninitialized(vm, intendedOwner, 0, propertyCapacity, true, newIndexingPayloadSizeInBytes);
+    // Use memcpy since this butterfly is not tied to any object yet.
+    memcpy(
+        static_cast<JSValue*>(result->base(0, propertyCapacity)),
+        static_cast<JSValue*>(oldButterfly->base(0, propertyCapacity)),
+        totalSize(0, propertyCapacity, hadIndexingHeader, oldIndexingPayloadSizeInBytes));
+    return result;
 }
 
 inline Butterfly* Butterfly::growArrayRight(
@@ -317,21 +324,43 @@ ALWAYS_INLINE void Butterfly::clearRange(IndexingType indexingType, Butterfly* b
 {
     ASSERT(end >= start);
 
-    if (size_t remaining = end - start) {
-        // 32-bit, non-Darwin builds don't use `remaining`.
-        UNUSED_VARIABLE(remaining);
-        if (hasDouble(indexingType)) {
-#if OS(DARWIN)
-            constexpr double pattern = PNaN;
-            memset_pattern8(static_cast<void*>(butterfly->contiguous().data() + start), &pattern, sizeof(double) * remaining);
-#else
-            for (unsigned i = start; i < end; ++i)
-                butterfly->contiguousDouble().atUnsafe(i) = PNaN;
-#endif
-        } else {
-            memset(static_cast<void*>(butterfly->contiguous().data() + start), 0, sizeof(JSValue) * remaining);
-        }
+    size_t remaining = end - start;
+    if (!remaining)
+        return;
+
+    EncodedJSValue* dst = std::bit_cast<EncodedJSValue*>(butterfly->contiguous().data() + start);
+    EncodedJSValue pattern = hasDouble(indexingType) ? std::bit_cast<EncodedJSValue>(PNaN) : 0;
+    if (remaining == 1) {
+        dst[0] = pattern;
+        return;
     }
+    if (remaining <= 4) {
+        dst[0] = pattern;
+        dst[1] = pattern;
+        dst[remaining - 2] = pattern;
+        dst[remaining - 1] = pattern;
+        return;
+    }
+    if (remaining <= 8) {
+        dst[0] = pattern;
+        dst[1] = pattern;
+        dst[2] = pattern;
+        dst[3] = pattern;
+        dst[remaining - 4] = pattern;
+        dst[remaining - 3] = pattern;
+        dst[remaining - 2] = pattern;
+        dst[remaining - 1] = pattern;
+        return;
+    }
+    if (hasDouble(indexingType)) {
+#if OS(DARWIN)
+        memset_pattern8(dst, &pattern, sizeof(EncodedJSValue) * remaining);
+#else
+        for (size_t i = 0; i < remaining; ++i)
+            dst[i] = pattern;
+#endif
+    } else
+        zeroSpan(unsafeMakeSpan(dst, remaining));
 }
 
 } // namespace JSC

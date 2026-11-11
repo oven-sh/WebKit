@@ -1,0 +1,63 @@
+# The walk writes the literal where the program does and answers what is read of it. The call in the arm is all that is left to need the cell, so the sweep lays the allocation there
+# function kept(c, f) { const p = { x: 1 }; if (c) f(p); return 1; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = NewObject
+# CHECK: Branch
+# CHECK: = NewObject
+# CHECK: = Call
+# CHECK-NOT: = NewObject
+# RUN(COUNT): compile AllocationsSunk mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# COUNT: statistic AllocationsSunk 1
+# Without the mechanism nothing moves
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+Folding
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD: = NewObject
+# WITHHELD: Branch
+# WITHHELD-NOT: = NewObject
+# The same function with one thing changed: the slot is read behind the meeting. The call may have stored into the object, so the read goes to memory on both ways, and nothing but the block of the birth stands above both needs
+# function read(c, f) { const p = { x: 1 }; if (c) f(p); return p.x; }
+# RUN(READ): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# READ-LABEL: code f2:Body
+# READ: = NewObject
+# READ: Branch
+# READ-NOT: = NewObject
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything}}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    Return v5
+}
+function f1 name="kept" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v1, -, v4
+    Jump -> next b2()
+  b2():
+    Return v2
+}
+function f2 name="read" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v1, -, v4
+    Jump -> next b2()
+  b2():
+    v6 = PropGet v4 key="x"
+    Return v6
+}

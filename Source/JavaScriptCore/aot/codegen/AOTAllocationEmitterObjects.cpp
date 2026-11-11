@@ -8,51 +8,74 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
+#include "AOTBuiltinCallEmitter.h"
 #include "AOTConstantEmitter.h"
+#include "AOTConversionEmitter.h"
+#include "AOTDiagnostics.h"
+#include "AOTIRProgram.h"
+#include "AOTNumbering.h"
 #include "AOTRegExpFlags.h"
-#include "AOTStaticsEmitter.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsRegExp.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
+static std::optional<Wire::SourceLocation> placeWhereLiteralObjectIsWritten(const Program& program, const Code& code, const Operation& literal)
+{
+    FunctionID writtenIn = code.inlineFrames()[literal.inlineFrame].callee;
+    if (!writtenIn)
+        return std::nullopt;
+    Wire::SourceLocation place = program.at(writtenIn).locationAt(literal.position);
+    if (!hasModule(place))
+        return std::nullopt;
+    return place;
+}
+
 void AllocationEmitter::generateNewRegExp(const ValueContext& value)
 {
-    RegExpRecordID record = value->regExpRecord();
-    if (!record) {
-        fail(value, InternalErrorKind::PlacedPayloadMissing);
-        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
+    if (emitter<AccessEmitter>().isPatternLeftToCall(value.id())) {
+        emitter<BuiltinCallEmitter>().generateSharedRegExpLiteral(value);
         return;
     }
 
-    std::optional<StaticsOffset> sharedCellOffset = value->staticsOffset();
-    Word32 recordNumber = word32(static_cast<int32_t>(record.index()));
-    Word32 flags = word32(static_cast<int32_t>(toYarrFlags(value->regExpFlags()).toRaw()));
-    Word32 offset = word32(static_cast<int32_t>(sharedCellOffset ? sharedCellOffset->value() : noSharedRegExpOffset));
-    LValue sharedCell = m_out.constInt64(0);
-    if (sharedCellOffset)
-        sharedCell = m_out.load64(emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *sharedCellOffset));
-    define(value, CellPointer(callStub(value, newRegExpLiteral(), { recordNumber.value(), flags.value(), offset.value(), sharedCell }).first));
+    StringID pattern = value->pattern();
+    OptionSet<Yarr::Flags> flags = toYarrFlags(value->regExpFlags());
+
+    Wire::SourceLocation written = placeWhereLiteralObjectIsWritten(m_program, m_code, value.value()).value_or(noSourceLocation);
+    uint32_t sharedCell = m_mentions.regExpLiteralCell(written, pattern, flags);
+
+    Word32 record = numberOf(m_mentions.regExp(pattern, flags));
+    LValue sharedObject = m_out.load64(instanceWord(m_heaps.entire(AbstractHeap::AllocatorState), sharedCell));
+    define(value, CellPointer(callStub(value, newRegExpLiteral(), { record.value(), word32(flags.toRaw()).value(), numberOf(sharedCell).value(), sharedObject }).first));
 }
 
 void AllocationEmitter::generateNewTemplateObject(const ValueContext& value)
 {
-    std::optional<Request> request = value->request();
-    std::optional<StaticsOffset> siteCellOffset = value->staticsOffset();
-    if (!request || !siteCellOffset) {
-        fail(value, InternalErrorKind::PlacedPayloadMissing);
+    std::optional<Wire::SourceLocation> written = placeWhereLiteralObjectIsWritten(m_program, m_code, value.value());
+    if (!written) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
         define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
         return;
     }
 
-    TypedPointer siteCell = emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *siteCellOffset);
+    Vector<uint32_t, 8> cookedAndRawStrings;
+    for (TemplateString part : value->templateStrings()) {
+        cookedAndRawStrings.append(part.cooked ? part.cooked.index() : Wire::none);
+        cookedAndRawStrings.append(part.raw.index());
+    }
+    uint32_t request = m_mentions.request(RequestKind::TemplateObject, cookedAndRawStrings.span());
+
+    uint32_t keyOfSiteCell[] { written->module, written->position };
+    TypedPointer siteCell = instanceWord(m_heaps.entire(AbstractHeap::AllocatorState), m_mentions.templateObjectCell(*written));
     Integer existing(m_out.load64(siteCell));
     define(value, either<CellPointer>(isNotZero(existing), [&] {
         return CellPointer(existing.value());
     }, [&] {
-        CellPointer created = callOperation<CellPointer>(value, RuntimeOperation::NewTemplateObject, { word32(static_cast<int32_t>(request->value())) }, { .isOnRarePath = true });
+        CellPointer created = callOperation<CellPointer>(value, RuntimeOperation::NewTemplateObject, { numberOf(request), word32(static_cast<int32_t>(written->module)), numberOf(m_mentions.templateObjectCell(*written)) }, { .isOnRarePath = true });
         mutatorFence();
         m_out.store64(created.value(), siteCell);
-        emitter<BarrierEmitter>().markCardOfStatics(siteCellOffset->value());
+        emitter<BarrierEmitter>().markCard(m_mentions.cardOfWord(NumberSpace::TemplateObjectCell, keyOfSiteCell));
         return created;
     }));
 }
@@ -61,15 +84,10 @@ void AllocationEmitter::generateNewRuntimeError(const ValueContext& value)
 {
     Word32 errorKind = word32(static_cast<int32_t>(value->runtimeError()));
     if (StringID name = value->name()) {
-        define(value, callOperation<CellPointer>(value, RuntimeOperation::NewRuntimeErrorWithName, { errorKind, word32(static_cast<int32_t>(name.index())) }, { .capturesStackTrace = true }));
+        define(value, callOperation<CellPointer>(value, RuntimeOperation::NewRuntimeErrorWithName, { errorKind, numberOf(m_mentions.add(NumberSpace::ShownString, name)) }, { .capturesStackTrace = true }));
         return;
     }
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewRuntimeError, { errorKind }, { .capturesStackTrace = true }));
-}
-
-void AllocationEmitter::generateNewFunctionThatThrows(const ValueContext& value)
-{
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewFunctionThatThrows, { in<Boxed>(value->getterOperand()), word32(static_cast<int32_t>(value->name().index())) }));
 }
 
 void AllocationEmitter::generateNewSuppressedError(const ValueContext& value)
@@ -77,7 +95,24 @@ void AllocationEmitter::generateNewSuppressedError(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewSuppressedError, { in<Boxed>(value->errorOperand()), in<Boxed>(value->suppressedOperand()) }, { .capturesStackTrace = true }));
 }
 
-CellPointer AllocationEmitter::createArguments(const ValueContext& value, RuntimeOperation operation, std::optional<CellPointer> callee)
+bool AllocationEmitter::isListedByArgumentsObjectAlone(ValueID list) const
+{
+    const Operation& made = m_code.at(list);
+    if (made.opcode != Opcode::NewArray || !m_code.has(Mechanism::EscapeAnalysis, m_facts))
+        return false;
+    if (made.storage() != AllocationStorage::Heap || !made.holes().empty())
+        return false;
+    ValueID user = m_code.onlyUserOf(list);
+    if (!user || m_code.at(user).opcode != Opcode::CreateUnmappedArguments || m_code.at(user).restOperand() != list)
+        return false;
+    for (const LiveAtSuspension& record : m_code.suspensions()) {
+        if (std::ranges::contains(m_code.liveAt(record.suspension), list))
+            return false;
+    }
+    return true;
+}
+
+CellPointer AllocationEmitter::createArguments(const ValueContext& value, std::optional<CellPointer> callee)
 {
     ValueID countOperand = value->countOperand();
     Word32 count = word32(0);
@@ -92,14 +127,11 @@ CellPointer AllocationEmitter::createArguments(const ValueContext& value, Runtim
     case Representation::Void:
     case Representation::Boolean:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         fail(value, InternalErrorKind::WrongRepresentation);
         break;
@@ -108,24 +140,29 @@ CellPointer AllocationEmitter::createArguments(const ValueContext& value, Runtim
     Vector<Boxed, 8> parameters;
     for (ValueID parameter : value->parametersOperands())
         parameters.append(in<Boxed>(parameter));
+    if (isListedByArgumentsObjectAlone(value->restOperand())) {
+        ConversionEmitter& conversions = emitter<ConversionEmitter>();
+        for (ValueID element : operationAt(value->restOperand()).elementsOperands()) {
+            const Type& type = typeOf(element);
+            parameters.append(conversions.box(value, conversions.inFormOfType(get(element), type), type));
+        }
+    }
 
-    Vector<Operand, 4> arguments;
+    CellPointer rest = in<CellPointer>(value->restOperand());
+    Pointer buffer = argumentBuffer(parameters.span());
     if (callee)
-        arguments.append(*callee);
-    arguments.append(count);
-    arguments.append(in<CellPointer>(value->restOperand()));
-    arguments.append(argumentBuffer(parameters.span()));
-    return callOperation(value, operation, arguments.span(), Representation::Cell, { }).as<CellPointer>();
+        return CellPointer(callStub(value, createMappedArguments(), { callee->value(), count.value(), rest.value(), buffer.value(), word32(static_cast<int32_t>(parameters.size())).value() }).first);
+    return CellPointer(callStub(value, AOT::createArguments(), { count.value(), rest.value(), buffer.value(), word32(static_cast<int32_t>(parameters.size())).value() }).first);
 }
 
 void AllocationEmitter::generateCreateUnmappedArguments(const ValueContext& value)
 {
-    define(value, createArguments(value, RuntimeOperation::CreateUnmappedArguments, std::nullopt));
+    define(value, createArguments(value, std::nullopt));
 }
 
 void AllocationEmitter::generateCreateMappedArguments(const ValueContext& value)
 {
-    define(value, createArguments(value, RuntimeOperation::CreateMappedArguments, in<CellPointer>(value->calleeOperand())));
+    define(value, createArguments(value, in<CellPointer>(value->calleeOperand())));
 }
 
 void AllocationEmitter::generateGetMappedArgument(const ValueContext& value)
@@ -151,7 +188,7 @@ void AllocationEmitter::generateSetMappedArgument(const ValueContext& value)
     Condition isWithinCapacity = below(indexWord, loadField<Word32>(arguments, m_heaps.DirectArguments_minCapacity));
     ifElse(isWithinCapacity, [&] {
         storeField(arguments, m_heaps.DirectArguments_storage[index], stored);
-        barrierAfterStore(value, arguments, stored, typeOf(storedValue));
+        barrierAfterStore(value, arguments, typeOf(storedValue));
     }, [&] {
         callVoidOperation(value, RuntimeOperation::SetMappedArgument, { arguments, indexWord, stored }, { .isOnRarePath = true });
     });

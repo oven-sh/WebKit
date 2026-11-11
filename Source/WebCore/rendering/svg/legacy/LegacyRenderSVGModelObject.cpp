@@ -122,7 +122,7 @@ LayoutRect LegacyRenderSVGModelObject::outlineBoundsForRepaint(const RenderLayer
 
     // FIXME: Remove suppression once rdar://189998444 is fixed.
     SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad containerRelativeQuad = localToContainerQuad(FloatRect(box), repaintContainer);
-    return LayoutRect(snapRectToDevicePixels(LayoutRect(containerRelativeQuad.boundingBox()), protect(document())->deviceScaleFactor()));
+    return LayoutRect(snapRectToDevicePixels(LayoutRect(containerRelativeQuad.boundingBox()), document().deviceScaleFactor()));
 }
 
 void LegacyRenderSVGModelObject::boundingRects(Vector<LayoutRect>& rects, const LayoutPoint& accumulatedOffset) const
@@ -193,7 +193,7 @@ static void getElementCTM(SVGElement* element, AffineTransform& transform)
 
 // FloatRect::intersects does not consider horizontal or vertical lines (because of isEmpty()).
 // So special-case handling of such lines.
-static bool LEGACY_NODELETE legacyIntersectsAllowingEmpty(const FloatRect& r, const FloatRect& other)
+NODELETE static bool legacyIntersectsAllowingEmpty(const FloatRect& r, const FloatRect& other)
 {
     if (r.isEmpty() && other.isEmpty())
         return false;
@@ -206,7 +206,7 @@ static bool LEGACY_NODELETE legacyIntersectsAllowingEmpty(const FloatRect& r, co
 
 // One of the element types that can cause graphics to be drawn onto the target canvas. Specifically: circle, ellipse,
 // image, line, path, polygon, polyline, rect, text and use.
-static bool LEGACY_NODELETE legacyIsGraphicsElement(const RenderElement& renderer)
+NODELETE static bool legacyIsGraphicsElement(const RenderElement& renderer)
 {
     return renderer.isLegacyRenderSVGShape() || renderer.isRenderSVGText() || renderer.isLegacyRenderSVGImage() || is<SVGUseElement>(renderer.element());
 }

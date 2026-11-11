@@ -184,7 +184,6 @@
 #endif
 
 #if PLATFORM(MAC)
-#include "TiledCoreAnimationScrollingCoordinator.h"
 #endif
 
 #if USE(COORDINATED_GRAPHICS)
@@ -445,6 +444,7 @@ RefPtr<Page> WebChromeClient::createWindow(LocalFrame& frame, const String& open
         navigationAction.isInitialFrameSrcLoad(),
         navigationAction.isContentRuleListRedirect(),
         openedMainFrameName,
+        navigationAction.openedByScriptDomain(), /* openedByScriptDomain */
         std::nullopt, /* targetBackForwardItemIdentifier */
         std::nullopt, /* sourceBackForwardItemIdentifier */
         WebCore::LockHistory::No,
@@ -616,7 +616,7 @@ void WebChromeClient::rootFrameRemoved(const WebCore::LocalFrame& frame)
         drawingArea->removeRootFrame(frame.frameID());
 }
 
-static bool LEGACY_NODELETE shouldSuppressJavaScriptDialogs(LocalFrame& frame)
+NODELETE static bool shouldSuppressJavaScriptDialogs(LocalFrame& frame)
 {
     if (frame.opener() && frame.loader().stateMachine().isDisplayingInitialEmptyDocument() && frame.loader().provisionalDocumentLoader())
         return true;
@@ -1314,15 +1314,18 @@ RefPtr<GraphicsContextGL> WebChromeClient::createGraphicsContextGL(const Graphic
     WebProcess::singleton().initializePlatformDisplayIfNeeded();
     WebProcess::singleton().initializeVulkanIfNeeded();
 #endif
-#if ENABLE(GPU_PROCESS)
-    if (WebProcess::singleton().shouldUseRemoteRenderingForWebGL()) {
-        RefPtr page = m_page.get();
-        if (!page)
-            return nullptr;
-        return RemoteGraphicsContextGLProxy::create(attributes, page.releaseNonNull());
-    }
+#if ENABLE(GPU_PROCESS) && !PLATFORM(COCOA)
+    if (!WebProcess::singleton().shouldUseRemoteRenderingForWebGL())
+        return WebCore::createWebProcessGraphicsContextGL(attributes);
 #endif
+#if ENABLE(GPU_PROCESS)
+    RefPtr page = m_page.get();
+    if (!page)
+        return nullptr;
+    return RemoteGraphicsContextGLProxy::create(attributes, page.releaseNonNull());
+#else
     return WebCore::createWebProcessGraphicsContextGL(attributes);
+#endif
 }
 #endif
 
@@ -1592,14 +1595,7 @@ RefPtr<WebCore::ScrollingCoordinator> WebChromeClient::createScrollingCoordinato
         return nullptr;
 
     ASSERT_UNUSED(corePage, page->corePage() == &corePage);
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    switch (protect(page->drawingArea())->type()) {
-    case DrawingAreaType::TiledCoreAnimation:
-        return TiledCoreAnimationScrollingCoordinator::create(page.get());
-    case DrawingAreaType::RemoteLayerTree:
-        return RemoteScrollingCoordinator::create(page.get());
-    }
-#elif PLATFORM(COCOA)
+#if PLATFORM(COCOA)
     return RemoteScrollingCoordinator::create(page.get());
 #elif USE(COORDINATED_GRAPHICS)
     return ScrollingCoordinatorCoordinated::create(page.get());
@@ -1626,26 +1622,10 @@ void WebChromeClient::ensureScrollbarsController(Page& corePage, ScrollableArea&
     }
 
 #if PLATFORM(MAC)
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    switch (protect(page->drawingArea())->type()) {
-    case DrawingAreaType::RemoteLayerTree: {
-        if (!area.usesCompositedScrolling() && (!currentScrollbarsController || is<RemoteScrollbarsController>(currentScrollbarsController)))
-            area.setScrollbarsController(ScrollbarsController::create(area));
-        else if (area.usesCompositedScrolling() && (!currentScrollbarsController || !is<RemoteScrollbarsController>(currentScrollbarsController)))
-            area.setScrollbarsController(makeUnique<RemoteScrollbarsController>(area, corePage.scrollingCoordinator()));
-        return;
-    }
-    default: {
-        if (!currentScrollbarsController)
-            area.setScrollbarsController(ScrollbarsController::create(area));
-    }
-    }
-#else
     if (!area.usesCompositedScrolling() && (!currentScrollbarsController || is<RemoteScrollbarsController>(currentScrollbarsController)))
         area.setScrollbarsController(ScrollbarsController::create(area));
     else if (area.usesCompositedScrolling() && (!currentScrollbarsController || !is<RemoteScrollbarsController>(currentScrollbarsController)))
         area.setScrollbarsController(makeUnique<RemoteScrollbarsController>(area, corePage.scrollingCoordinator()));
-#endif
 #elif USE(COORDINATED_GRAPHICS_ASYNC_SCROLLBAR)
     if (area.usesCompositedScrolling()) {
         if (!currentScrollbarsController || !is<ScrollbarsControllerCoordinated>(currentScrollbarsController))
@@ -2118,16 +2098,16 @@ bool WebChromeClient::hasRelevantSelectionServices(bool isTextOnly) const
     return (isTextOnly && WebProcess::singleton().hasSelectionServices()) || WebProcess::singleton().hasRichContentServices();
 }
 
-void WebChromeClient::handleImageServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, Image& image, HTMLImageElement& element)
+bool WebChromeClient::handleImageServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLImageElement& element)
 {
-    if (RefPtr page = m_page.get())
-        page->handleImageServiceClick(frameID, point, image, element);
+    RefPtr page = m_page.get();
+    return page && page->handleImageServiceClick(frameID, point, element);
 }
 
-void WebChromeClient::handlePDFServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLAttachmentElement& element)
+bool WebChromeClient::handlePDFServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLAttachmentElement& element)
 {
-    if (RefPtr page = m_page.get())
-        page->handlePDFServiceClick(frameID, point, element);
+    RefPtr page = m_page.get();
+    return page && page->handlePDFServiceClick(frameID, point, element);
 }
 
 #endif
@@ -2505,7 +2485,7 @@ void WebChromeClient::showMediaControlsContextMenu(FloatRect&& targetFrame, Vect
 void WebChromeClient::enumerateImmersiveXRDevices(CompletionHandler<void(const PlatformXR::DeviceList&)>&& completionHandler)
 {
     if (RefPtr page = m_page.get())
-        page->xrSystemProxy().enumerateImmersiveXRDevices(WTF::move(completionHandler));
+        protect(page->xrSystemProxy())->enumerateImmersiveXRDevices(WTF::move(completionHandler));
     else
         completionHandler({ });
 }
@@ -2513,7 +2493,7 @@ void WebChromeClient::enumerateImmersiveXRDevices(CompletionHandler<void(const P
 void WebChromeClient::requestPermissionOnXRSessionFeatures(const SecurityOriginData& origin, PlatformXR::SessionMode mode, const PlatformXR::Device::FeatureList& granted, const PlatformXR::Device::FeatureList& consentRequired, const PlatformXR::Device::FeatureList& consentOptional, const PlatformXR::Device::FeatureList& requiredFeaturesRequested, const PlatformXR::Device::FeatureList& optionalFeaturesRequested,  CompletionHandler<void(std::optional<PlatformXR::Device::FeatureList>&&)>&& completionHandler)
 {
     if (RefPtr page = m_page.get())
-        page->xrSystemProxy().requestPermissionOnSessionFeatures(origin, mode, granted, consentRequired, consentOptional, requiredFeaturesRequested, optionalFeaturesRequested, WTF::move(completionHandler));
+        protect(page->xrSystemProxy())->requestPermissionOnSessionFeatures(origin, mode, granted, consentRequired, consentOptional, requiredFeaturesRequested, optionalFeaturesRequested, WTF::move(completionHandler));
     else
         completionHandler(std::nullopt);
 }
@@ -2549,10 +2529,7 @@ void WebChromeClient::beginSystemPreview(const URL& url, const SecurityOriginDat
 
 bool WebChromeClient::isUsingUISideCompositing() const
 {
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    RefPtr page = m_page.get();
-    return page && protect(page->drawingArea())->type() == DrawingAreaType::RemoteLayerTree;
-#elif PLATFORM(COCOA)
+#if PLATFORM(COCOA)
     return true;
 #else
     return false;
@@ -2792,7 +2769,7 @@ void WebChromeClient::showCaptionDisplaySettings(HTMLMediaElement& element, cons
 void WebChromeClient::didFinishContentChangeObserving(WebCore::LocalFrame& frame, WebCore::ContentChange observedContentChange)
 {
     if (RefPtr page = m_page.get())
-        page->didFinishContentChangeObserving(frame.frameID(), observedContentChange);
+        page->didFinishContentChangeObserving(frame.rootFrame().frameID(), observedContentChange);
 }
 #endif
 

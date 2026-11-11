@@ -2709,7 +2709,7 @@ if (APPLE)
         "-framework Foundation"
         "-framework VideoToolbox"
     )
-    if (WEBKIT_SDK_IS_MACOS)
+    if (WEBKIT_PLATFORM_MAC)
         # audio_device_mac.cc and audio_mixer_manager_mac.cc are macOS-only and
         # call into the CoreAudio HAL and AudioConverter.
         target_link_libraries(webrtc "-framework AudioToolbox" "-framework CoreAudio")
@@ -3697,7 +3697,7 @@ elseif (WTF_CPU_ARM64)
 endif ()
 
 target_include_directories(vpx PRIVATE ${vpx_INCLUDE_DIRECTORIES})
-target_compile_options(vpx PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-cast-align> $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-incompatible-pointer-types>)
+target_compile_options(vpx PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-cast-align> $<$<COMPILE_LANGUAGE:C>:-Wno-incompatible-pointer-types>)
 
 # libaom static library, mirrors libwebrtc.xcodeproj's libaom target.
 # Source list canonically extracted from libwebrtc.xcodeproj/project.pbxproj (228 entries),

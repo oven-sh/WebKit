@@ -1,0 +1,51 @@
+# switch (kind) { case "add": .. case "mul": .. case "sub": .. }, over a string that is held as a cell: the texts have one length, and their first two characters tell them apart, so the switch goes by those.
+# Behind it each case compares the third character alone. It read the first two again.
+# RUN: emit f1:Body mechanisms=none+TypedOperations+Guesses+Folding+UnboxedNumbers+DirectCalls+Inlining
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Load16Z({{*}}offset = 0, {{*}}characters8
+# CHECK-NOT: = Load16Z({{*}}characters8
+# CHECK-COUNT-3: = Load8Z({{*}}offset = 2, {{*}}characters8
+# CHECK-NOT: = Load16Z({{*}}characters8
+
+variable g0 name="weightOf" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="weigh" [isNeverInlined]
+    v2 = Builtin builtin=GlobalThis
+    PropSet v2, v1 key="answer" mode=Strict
+    v4 = Undefined
+    Return v4
+}
+function f1 name="weigh" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = Convert v2 declared={type=undefined|null|"add"|"mul"|"neg"|"sub" flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v4 = Call v0, -, v3 calleeName="weightOf"
+    v5 = Convert v4 declared={type=number}
+    Return v5
+}
+function f2 name="weightOf" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"add"|"mul"|"neg"|"sub" flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|"add"|"mul"|"neg"|"sub"):
+    SwitchString v0 strings=["add", "mul", "sub"] -> case b1(| 0), case b2(| 0), case b3(| 0), otherwise b4()
+  b1(v1):
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number}
+    Return v3
+  b2(v4):
+    v5 = Integer integer=2
+    v6 = Convert v5 declared={type=number}
+    Return v6
+  b3(v7):
+    v8 = Integer integer=3
+    v9 = Convert v8 declared={type=number}
+    Return v9
+  b4():
+    v10 = Integer
+    v11 = Convert v10 declared={type=number}
+    Return v11
+}

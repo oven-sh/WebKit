@@ -1,0 +1,204 @@
+# where a getter, a setter or a method is defined under a key that only the run knows, the key becomes an atom: its cell gets another word. What was read of the cell in front of the definition is read again behind it.
+# for (..) { const key = head + tail; const long = key.length; const box = { get [key]() { return 7; } }; if (key === "alphabet") hits += 1; hits += long * 10; }
+# no SetFunctionName stands beside the definitions, as in an obfuscated executable, which names no function after its key.
+# RUN: run-in-shell globalThis.id = value => value; globalThis.keep = value => value; globalThis.report = value => print(String(value));
+# CHECK: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: 243
+# CHECK-NEXT: exited with 0
+# The row of the operation, then that of the operation of the run time, as each was before: under testing=CheckEffectsAtRunTime (ir/AOTEffectsNet.h) the process stops by name.
+# The key is put together out of three pairs of parts. The net keeps two bytes a heap of what it hashes, and of a text it hashes addresses: one pair of words, in front and behind, reads alike in one process of 65,536. While it kept one byte, this file with one pair was red once in 256.
+# RUN(OPERATION): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Operation/DefineGetter/StringStorage globalThis.id = value => value; globalThis.keep = value => value; globalThis.report = value => print(String(value));
+# OPERATION: bun: internal AOT error: effects check failed
+# OPERATION-NEXT: the declared effects of operation:DefineGetter and of runtime:operationAOTDefineAccessor say that the call does not write StringStorage, but operand 2 changed there
+# RUN(RUNTIME): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:RuntimeOperation/DefineAccessor/StringStorage globalThis.id = value => value; globalThis.keep = value => value; globalThis.report = value => print(String(value));
+# RUNTIME: bun: internal AOT error: effects check failed
+# RUNTIME-NEXT: the declared effects of operation:DefineGetter and of runtime:operationAOTDefineAccessor say that the call does not write StringStorage, but operand 2 changed there
+
+layout L0 kind=Instance name="Crate" module=m0 constructor=f6
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="id" [isFreeName]
+    v2 = String string="alpha"
+    v3 = Call v1, -, v2
+    v4 = ToString v3
+    v5 = String string="bet"
+    v6 = Call v1, -, v5
+    v7 = ToString v6
+    v8 = PropGet v0 key="report" [isFreeName]
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v4, v7
+    v11 = Call v8, -, v10
+    v12 = NewClosure function=f3
+    v13 = Call v12, -, v4, v7
+    v14 = Call v8, -, v13
+    v15 = NewClosure function=f5
+    v16 = Call v15, -, v4, v7
+    v17 = Call v8, -, v16
+    v18 = String string="alph"
+    v19 = Call v1, -, v18
+    v20 = ToString v19
+    v21 = String string="abet"
+    v22 = Call v1, -, v21
+    v23 = ToString v22
+    v24 = Call v9, -, v20, v23
+    v25 = Call v8, -, v24
+    v26 = Call v12, -, v20, v23
+    v27 = Call v8, -, v26
+    v28 = Call v15, -, v20, v23
+    v29 = Call v8, -, v28
+    v30 = String string="al"
+    v31 = Call v1, -, v30
+    v32 = ToString v31
+    v33 = String string="phabet"
+    v34 = Call v1, -, v33
+    v35 = ToString v34
+    v36 = Call v9, -, v32, v35
+    v37 = Call v8, -, v36
+    v38 = Call v12, -, v32, v35
+    v39 = Call v8, -, v38
+    v40 = Call v15, -, v32, v35
+    v41 = Call v8, -, v40
+    v42 = Undefined
+    Return v42
+}
+function f1 name="underGetter" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Integer integer=3
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    v9 = Add v0, v1
+    v10 = PropGet v9 key="length"
+    v11 = NewDictionary
+    v12 = ToPropertyKey v9
+    v13 = NewClosure function=f2
+    DefineGetter v11, v13, v12
+    v15 = String string="alphabet"
+    v16 = StrictEq v9, v15
+    Branch v16 -> taken b3(), notTaken b4(v4)
+  b3():
+    v17 = Integer integer=1
+    v18 = Add v4, v17
+    Jump -> next b4(v18)
+  b4(v19):
+    v20 = Integer integer=10
+    v21 = Mul v10, v20
+    v22 = Add v19, v21
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="keep" [isFreeName]
+    v25 = Call v24, -, v11
+    v26 = Increment v5
+    Jump -> next b1(v22, v26)
+  b5():
+    Return v4
+}
+function f2 module=m0 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f3 name="underSetter" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Integer integer=3
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    v9 = Add v0, v1
+    v10 = PropGet v9 key="length"
+    v11 = NewDictionary
+    v12 = ToPropertyKey v9
+    v13 = NewClosure function=f4
+    DefineSetter v11, v13, v12
+    v15 = String string="alphabet"
+    v16 = StrictEq v9, v15
+    Branch v16 -> taken b3(), notTaken b4(v4)
+  b3():
+    v17 = Integer integer=1
+    v18 = Add v4, v17
+    Jump -> next b4(v18)
+  b4(v19):
+    v20 = Integer integer=10
+    v21 = Mul v10, v20
+    v22 = Add v19, v21
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="keep" [isFreeName]
+    v25 = Call v24, -, v11
+    v26 = Increment v5
+    Jump -> next b1(v22, v26)
+  b5():
+    Return v4
+}
+function f4 module=m0 kind=Setter length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f5 name="underMethod" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Integer integer=3
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    v9 = Add v0, v1
+    v10 = PropGet v9 key="length"
+    v11 = NewClosure function=f6
+    v12 = NewClass v11 layout=L0
+    v13 = ToPropertyKey v9
+    v14 = NewClosure function=f7
+    DefineMethod v12, v14, v13 layout=L0
+    v16 = FinishClass v12 layout=L0
+    v17 = String string="alphabet"
+    v18 = StrictEq v9, v17
+    Branch v18 -> taken b3(), notTaken b4(v4)
+  b3():
+    v19 = Integer integer=1
+    v20 = Add v4, v19
+    Jump -> next b4(v20)
+  b4(v21):
+    v22 = Integer integer=10
+    v23 = Mul v10, v22
+    v24 = Add v21, v23
+    v25 = Builtin builtin=GlobalThis
+    v26 = PropGet v25 key="keep" [isFreeName]
+    v27 = Call v26, -, v16
+    v28 = Increment v5
+    Jump -> next b1(v24, v28)
+  b5():
+    Return v4
+}
+function f6 name="Crate" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f7 module=m0 kind=Method thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

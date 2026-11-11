@@ -34,15 +34,13 @@ JS_EXPORT_PRIVATE bool isCompiledCallee(const JSCell*);
 
 JS_EXPORT_PRIVATE String name(JSObject* callee);
 JS_EXPORT_PRIVATE unsigned length(JSObject* callee);
-// Of a slim closure. It looks for neither property.
 JS_EXPORT_PRIVATE bool canAssumeNameAndLengthAreOriginal(VM&, JSObject* callee);
 JS_EXPORT_PRIVATE JSValue sourceText(JSGlobalObject*, JSObject* callee);
+JSString* sourceStringIfCreated(VM&, JSObject* callee);
 JS_EXPORT_PRIVATE FunctionKind kind(JSObject* callee);
-JS_EXPORT_PRIVATE bool isBoundFunction(JSObject* callee);
 
 JS_EXPORT_PRIVATE void setPrototypeProperty(VM&, JSObject* callee, JSObject* prototype, unsigned attributes);
 JS_EXPORT_PRIVATE void setNameProperty(JSGlobalObject*, JSObject* callee, JSString* name, unsigned attributes);
-JS_EXPORT_PRIVATE void showNameUntilLookedFor(VM&, JSObject* callee, const String& name);
 
 JS_EXPORT_PRIVATE String displayName(JSObject*);
 JS_EXPORT_PRIVATE bool reifyProperties(VM&, JSObject*);
@@ -54,11 +52,16 @@ JS_EXPORT_PRIVATE void setCachedBoundFunctionStructure(VM&, JSObject*, Structure
 enum class DeclaredAs : uint8_t { NotCompiled, Function, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction, Class };
 
 JS_EXPORT_PRIVATE DeclaredAs declaredAs(JSCell*);
+JS_EXPORT_PRIVATE bool hasOwnAwait(JSCell*);
+JS_EXPORT_PRIVATE bool mayImportOwnOriginal(JSCell*);
+JS_EXPORT_PRIVATE Vector<String> requestedOriginals(JSCell*);
+JS_EXPORT_PRIVATE String declaringFilePath(JSCell*);
 JS_EXPORT_PRIVATE String closureDeclaredName(JSObject*);
 JS_EXPORT_PRIVATE bool belongsToBuiltinModule(JSCell*);
 JS_EXPORT_PRIVATE bool isCompiledClassObject(JSFunction*);
 JS_EXPORT_PRIVATE bool isClosureOf(JSCell*, FunctionID);
 std::optional<FunctionID> functionOf(const JSCell*);
+std::optional<uint32_t> closureNumberOf(const JSCell*);
 
 } // namespace AOT
 } // namespace JSC

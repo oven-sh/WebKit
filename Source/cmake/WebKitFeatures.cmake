@@ -176,6 +176,19 @@ macro(WEBKIT_OPTION_BEGIN)
         set(ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT ${_swift_features_default})
     endif ()
 
+    if (NOT DEFINED ENABLE_JAVASCRIPTCORE_TOOLS)
+        # Currently, libJavaScriptCoreTools relies on Mach API (for the corpse code). Hence,
+        # only Apple platforms are supported. Simulators and MacCatalyst are not supported by design.
+        if (APPLE AND NOT WEBKIT_SDK_IS_SIMULATOR AND NOT WEBKIT_SDK_IS_MACCATALYST)
+            set(ENABLE_JAVASCRIPTCORE_TOOLS ON)
+        else ()
+            set(ENABLE_JAVASCRIPTCORE_TOOLS OFF)
+        endif ()
+    endif ()
+    if (NOT APPLE)
+        SET_AND_EXPOSE_TO_BUILD(ENABLE_LIB_JSC_TOOLS ${ENABLE_JAVASCRIPTCORE_TOOLS})
+    endif ()
+
     # Annotating WTF's ref-counted base classes for Swift needs Swift 6.4 or newer;
     # older toolchains don't apply the annotation to derived classes. Cocoa ports
     # gate this in PlatformEnable.h on the SDK version instead.
@@ -247,7 +260,7 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEFINE(ENABLE_INSPECTOR_TELEMETRY "Toggle inspector telemetry support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_IOS_GESTURE_EVENTS "Toggle iOS gesture events support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_IOS_TOUCH_EVENTS "Toggle iOS touch events support" PRIVATE OFF)
-    WEBKIT_OPTION_DEFINE(ENABLE_IPC_TESTING_SWIFT "Toggle Swift-based IPC testing support" PRIVATE OFF)
+    WEBKIT_OPTION_DEFINE(ENABLE_IPC_TESTING_SWIFT "Toggle Swift-based IPC testing support" PRIVATE ${ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT})
     WEBKIT_OPTION_DEFINE(ENABLE_JAVASCRIPT_SHELL "Toggle JavaScript shell and testing support" PRIVATE ON)
     WEBKIT_OPTION_DEFINE(ENABLE_JIT "Toggle JustInTime JavaScript support" PRIVATE ${ENABLE_JIT_DEFAULT})
     WEBKIT_OPTION_DEFINE(ENABLE_LAYOUT_TESTS "Toggle layout test support (DumpRenderTree/WebkitTestRunner)" PRIVATE OFF)
@@ -330,6 +343,7 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEFINE(ENABLE_WEBXR "Toggle WebXR support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEBXR_HIT_TEST "Toggle WebXR Hit Test Module support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEBXR_LAYERS "Toggle WebXR Layers support" PRIVATE OFF)
+    WEBKIT_OPTION_DEFINE(ENABLE_WEBXR_PLANE_DETECTION "Toggle WebXR Plane Detection Module support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEB_API_STATISTICS "Toggle Web API statistics support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_WEB_AUDIO "Toggle Web Audio support" PRIVATE ON)
     WEBKIT_OPTION_DEFINE(ENABLE_WEB_AUTHN "Toggle Web AuthN support" PRIVATE OFF)
@@ -378,6 +392,7 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEPEND(ENABLE_WEBXR ENABLE_WEBGL)
     WEBKIT_OPTION_DEPEND(ENABLE_WEBXR_HIT_TEST ENABLE_WEBXR)
     WEBKIT_OPTION_DEPEND(ENABLE_WEBXR_LAYERS ENABLE_WEBXR)
+    WEBKIT_OPTION_DEPEND(ENABLE_WEBXR_PLANE_DETECTION ENABLE_WEBXR)
     WEBKIT_OPTION_DEPEND(USE_SKIA_ENCODERS USE_SKIA)
     WEBKIT_OPTION_DEPEND(USE_EXTERNAL_MIMALLOC USE_MIMALLOC)
 endmacro()
@@ -533,33 +548,33 @@ macro(WEBKIT_OPTION_END)
     # Swift-emitted C++ thunks rely on Clang ABI details), so refuse to configure
     # a Swift feature under a non-Clang compiler.
     if (NOT COMPILER_IS_CLANG)
-        if (ENABLE_BACK_FORWARD_LIST_SWIFT)
+        if (ENABLE_BACK_FORWARD_LIST_SWIFT OR ENABLE_IPC_TESTING_SWIFT)
             message(FATAL_ERROR
                 "Swift/C++ interop on the GLib ports requires Clang, but the "
                 "configured C++ compiler is ${CMAKE_CXX_COMPILER_ID}. Re-run "
                 "the configure step with CC=clang CXX=clang++, or pass "
-                "-DENABLE_BACK_FORWARD_LIST_SWIFT=OFF.")
+                "-DENABLE_BACK_FORWARD_LIST_SWIFT=OFF -DENABLE_IPC_TESTING_SWIFT=OFF.")
         endif ()
     endif ()
 
     # A Swift feature still on with a too-old toolchain was requested explicitly
     # (the default declines to auto-enable it), so fail loudly rather than drop it
     # silently. Apple is gated elsewhere; non-Clang is already rejected above.
-    if (NOT APPLE AND COMPILER_IS_CLANG AND ENABLE_BACK_FORWARD_LIST_SWIFT)
+    if (NOT APPLE AND COMPILER_IS_CLANG AND (ENABLE_BACK_FORWARD_LIST_SWIFT OR ENABLE_IPC_TESTING_SWIFT))
         _WEBKIT_DETECT_SWIFT_CXX_INTEROP_SUPPORT(_swift_interop_ok)
         if (NOT _swift_interop_ok)
             message(FATAL_ERROR
-                "ENABLE_BACK_FORWARD_LIST_SWIFT "
+                "ENABLE_BACK_FORWARD_LIST_SWIFT or ENABLE_IPC_TESTING_SWIFT "
                 "was requested, but the Swift toolchain is too old for WebKit's "
                 "Swift/C++ interop: it lacks the -emit-clang-header-min-access "
                 "frontend flag, first shipped in Swift 6.3 (6.2 and earlier do "
                 "not have it). Detected: ${SWIFT_DETECTED_VERSION}. Install Swift "
                 "6.3 or newer from swift.org and reconfigure, or pass "
-                "-DENABLE_BACK_FORWARD_LIST_SWIFT=OFF.")
+                "-DENABLE_BACK_FORWARD_LIST_SWIFT=OFF -DENABLE_IPC_TESTING_SWIFT=OFF.")
         endif ()
     endif ()
 
-    if (ENABLE_BACK_FORWARD_LIST_SWIFT)
+    if (ENABLE_BACK_FORWARD_LIST_SWIFT OR ENABLE_IPC_TESTING_SWIFT)
         set(SWIFT_REQUIRED ON)
     else ()
         set(SWIFT_REQUIRED OFF)

@@ -102,9 +102,16 @@ def main(argv, stdout, stderr):
         options.additional_env_var.append('__XPC_JSC_useRecursiveJSONParse=0')
         run_details = run(port, options, args, stderr)
 
-        if run_details.exit_code != -1 and not run_details.skipped_all_tests and not run_details.initial_results.keyboard_interrupted:
+        # A failed upload to the results server sets the exit code to -1, but the tests did run, so still print their results.
+        has_results = (run_details.exit_code != -1 or run_details.failed_uploads) and run_details.initial_results is not None
+        if has_results and not run_details.skipped_all_tests and not run_details.initial_results.keyboard_interrupted:
             bot_printer = buildbot_results.BuildBotPrinter(stdout, options.debug_rwt_logging)
             bot_printer.print_results(run_details)
+
+        if run_details.failed_uploads:
+            # The layout tests steps of the bots look for this message, please keep it in sync with FAILED_RESULTS_UPLOAD_MESSAGE in Tools/CISupport/Shared/steps.py.
+            print('\nFailed to upload test results to {} ({} failed), exiting with status -1.'.format(
+                ', '.join(sorted(set(run_details.failed_uploads))), len(run_details.failed_uploads)), file=stdout)
 
         return run_details.exit_code
 
@@ -130,9 +137,7 @@ def parse_args(args):
         optparse.make_option("--accelerated-drawing", action="store_true", default=False,
             help="Use accelerated drawing (OS X only)"),
         optparse.make_option("--remote-layer-tree", action="store_true", default=False,
-            help="Use the remote layer tree drawing model (OS X WebKit2 only)"),
-        optparse.make_option("--no-remote-layer-tree", action="store_true", default=False,
-            help="Disable the remote layer tree drawing model (OS X WebKit2 only)"),
+                             help="Does nothing, the remote layer tree drawing model is always used"),
         optparse.make_option("--wpe-legacy-api", action="store_true", default=False,
             help="Use the WPE legacy API (WPE only), including its own expectations and result report flavor"),
         optparse.make_option("--internal-feature", type="string", action="append", default=[],
@@ -299,6 +304,9 @@ def parse_args(args):
                  "those which are device-specific (implies --skipped=ignore)"),
         optparse.make_option("--time-out-ms", "--timeout",
             help="Set the timeout for each test in milliseconds"),
+        optparse.make_option(
+            "--expected-failure-time-out-ms", type="int", default=None,
+            help="Run tests expected to fail, including tests whose baseline records a harness timeout, with this timeout first, and again with the full timeout only if it cut short an unexpected result."),
         optparse.make_option("--order", action="store", default="natural",
             choices=["none", "natural", "random"],
             help=("determine the order in which the test cases will be run. "

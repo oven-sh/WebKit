@@ -1,0 +1,173 @@
+# a function that calls last what arrives at a parameter ends its tail calls if what arrives there ends its own: whoever hands it a closure of such a function may keep his frame
+# function leaf(v) { return v.x }  function last(f, v) { return f(v) }  function passes(v, f) { return last(f, v) }  function either(f, g, v) { if (f) return f(v); return g(v) }
+# `passes` hands its own parameter on to `last` in tail position, and the condition goes with it. `either` calls `f` by the name that the test of it gives
+# function maker(v) { return last(toLeaf, v) }, toLeaf = v => leaf(v). The condition is met, so `maker` ends its tail calls whatever arrives. So does `both`, which meets both conditions of `either`
+# toMaker = v => maker(v) jumps to a function that ends, and function outer(v) { return passes(v, toMaker) } hands it on: a closure may owe its word to another closure
+# function round(v) { return last(toRound, v) }, toRound = v => round(v). A ring that goes through the closure: neither has a word, and each turn is three jumps. `spin` and `toSpin` are the same two in the other order
+# function blind(v) { return last(callsIt, v) }, callsIt = v => v(v). The closure has a condition of its own, and nobody knows what meets it
+# function oneOfTwo(v) { return either(toLeaf, toRound, v) } meets one condition of two
+# f1 = leaf, f2 = last, f3 = passes, f4 = toLeaf, f5 = maker, f6 = toRound, f7 = round, f8 = callsIt, f9 = blind, f10 = either, f11 = both, f12 = oneOfTwo, f13 = toMaker, f14 = outer, f15 = toLeafToo, f16 = spin, f17 = toSpin
+# last, passes, maker, round, blind, either, both, oneOfTwo, outer and spin are handed to sink, so nobody lists what arrives at `f` and `g`
+# RUN: plan units mechanisms=none+DirectCalls
+# CHECK: unit f1:Body {{*}}ends-its-tail-calls
+# CHECK: unit f2:Body {{*}}ends-tail-calls-if-arguments-do=[0]
+# CHECK: unit f3:Body {{*}}ends-tail-calls-if-arguments-do=[1]
+# CHECK: unit f4:Body {{*}}ends-its-tail-calls
+# CHECK: unit f5:Body {{*}}ends-its-tail-calls
+# CHECK: unit f8:Body {{*}}ends-tail-calls-if-arguments-do=[0]
+# CHECK: unit f10:Body {{*}}ends-tail-calls-if-arguments-do=[0, 1]
+# CHECK: unit f11:Body {{*}}ends-its-tail-calls
+# CHECK: unit f13:Body {{*}}ends-its-tail-calls
+# CHECK: unit f14:Body {{*}}ends-its-tail-calls
+# CHECK: unit f15:Body {{*}}ends-its-tail-calls
+# RUN(NEVER): plan units mechanisms=none+DirectCalls
+# NEVER-NOT: unit f2:Body {{*}}ends-its-tail-calls
+# NEVER-NOT: unit f3:Body {{*}}ends-its-tail-calls
+# NEVER-NOT: unit f6:Body {{*}}tail-calls
+# NEVER-NOT: unit f7:Body {{*}}tail-calls
+# NEVER-NOT: unit f9:Body {{*}}tail-calls
+# NEVER-NOT: unit f12:Body {{*}}tail-calls
+# NEVER-NOT: unit f16:Body {{*}}tail-calls
+# NEVER-NOT: unit f17:Body {{*}}tail-calls
+# RUN(WITHHELD): plan units mechanisms=none
+# WITHHELD-NOT: tail-calls
+
+variable g0 name="leaf" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="last" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="passes" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="maker" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g4 name="round" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g5 name="either" module=m0 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable]
+variable g6 name="spin" module=m0 declared={type=f16 flags=[IsFromCompiler]} initialization=Function function=f16 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = GetModuleVariable variable=g1
+    v3 = GetModuleVariable variable=g2
+    v4 = GetModuleVariable variable=g3
+    v5 = GetModuleVariable variable=g4
+    v6 = NewClosure function=f9
+    v7 = GetModuleVariable variable=g5
+    v8 = NewClosure function=f11
+    v9 = NewClosure function=f12
+    v10 = NewClosure function=f14
+    v11 = GetModuleVariable variable=g6
+    v12 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11
+    Return v12
+}
+function f1 name="leaf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="last" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 calleeName="f"
+    ReturnCall v2
+}
+function f3 name="passes" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v2, -, v1, v0 calleeName="last"
+    ReturnCall v3
+}
+function f4 name="toLeaf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="leaf"
+    ReturnCall v2
+}
+function f5 name="maker" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = NewClosure function=f4
+    v3 = Call v1, -, v2, v0 calleeName="last"
+    ReturnCall v3
+}
+function f6 name="toRound" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g4
+    v2 = Call v1, -, v0 calleeName="round"
+    ReturnCall v2
+}
+function f7 name="round" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = NewClosure function=f6
+    v3 = Call v1, -, v2, v0 calleeName="last"
+    ReturnCall v3
+}
+function f8 name="callsIt" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -, v0 calleeName="v"
+    ReturnCall v1
+}
+function f9 name="blind" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = NewClosure function=f8
+    v3 = Call v1, -, v2, v0 calleeName="last"
+    ReturnCall v3
+}
+function f10 name="either" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = Call v4, -, v2 calleeName="f"
+    ReturnCall v5
+  b2(v6):
+    v7 = Call v1, -, v2 calleeName="g"
+    ReturnCall v7
+}
+function f11 name="both" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g5
+    v2 = NewClosure function=f4
+    v3 = NewClosure function=f15
+    v4 = Call v1, -, v2, v3, v0 calleeName="either"
+    ReturnCall v4
+}
+function f12 name="oneOfTwo" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g5
+    v2 = NewClosure function=f4
+    v3 = NewClosure function=f6
+    v4 = Call v1, -, v2, v3, v0 calleeName="either"
+    ReturnCall v4
+}
+function f13 name="toMaker" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3
+    v2 = Call v1, -, v0 calleeName="maker"
+    ReturnCall v2
+}
+function f14 name="outer" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2
+    v2 = NewClosure function=f13
+    v3 = Call v1, -, v0, v2 calleeName="passes"
+    ReturnCall v3
+}
+function f15 name="toLeafToo" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="leaf"
+    ReturnCall v2
+}
+function f16 name="spin" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = NewClosure function=f17
+    v3 = Call v1, -, v2, v0 calleeName="last"
+    ReturnCall v3
+}
+function f17 name="toSpin" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g6
+    v2 = Call v1, -, v0 calleeName="spin"
+    ReturnCall v2
+}

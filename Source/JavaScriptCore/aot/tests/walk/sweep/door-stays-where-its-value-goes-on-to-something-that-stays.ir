@@ -1,0 +1,28 @@
+# const e = new SuppressedError(a, b); define(e, "name", !t); b(!t);   the second use leans on what the door has asked
+# The object and its store go. v3 goes on into the call, in front of which no second door stands because v4 has asked: v4 stays.
+# RUN: sweep-code
+# CHECK: dropped v5, v6
+# CHECK: v3: boolean @Boolean = LogicalNot v2
+# CHECK-NEXT: v4 @Void = CheckProof v3
+# CHECK-NEXT: v7: anything @JSValue = Call v1, -, v3
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: boolean @Boolean = TypeTest v0 testedType=undefined
+#     v3: boolean @Boolean = LogicalNot v2
+#     v4 @Void = CheckProof v3 checkedType=true typeWithoutProof=boolean source=Field [goesWithItsValue]
+#     v5: anything @Cell = NewSuppressedError v0, v1 traits=[mayCollect, mayTouchMemory]
+#     v6 @Void = PropDefine v5, v3 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     v7: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v1
+# }
+# -- end of code

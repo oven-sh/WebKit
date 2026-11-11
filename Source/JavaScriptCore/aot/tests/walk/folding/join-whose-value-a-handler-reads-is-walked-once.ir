@@ -1,0 +1,41 @@
+# a handler behind the join reads what the ways have brought to it. A handler edge brings the arguments that are written and no name, so the value must have one name behind the join: the ways meet at its head
+# function kind(c, f) { const v = c ? 1 : "a"; if (typeof v === "number") { try { return f(); } catch (e) { return v; } } return 0; }
+# RUN: walk f1 mechanisms=none+Folding+Handlers
+# CHECK: mechanisms Folding,Handlers
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-1: = TypeTest
+# CHECK-NOT: = TypeTest
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="kind" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Jump -> next b3(v3)
+  b2():
+    v4 = String string="a"
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = TypeTest v5 testedType=number
+    Branch v6 -> taken b4(), notTaken b6()
+  b4() handler=b5():
+    v7 = Call v1, -
+    Return v7
+  b5() role=CatchHandler:
+    v8 = CatchValue
+    Return v5
+  b6():
+    v9 = Integer
+    Return v9
+}

@@ -1,0 +1,10 @@
+# the same functions with loop invariants withheld: the texts that are at hand are parts of a join like any other
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = Strcat
+# RUN(NEVER): walk f1 f2 mechanisms=none+TypedOperations+Guesses+Folding
+# NEVER-NOT: StringBuilderAppend
+# RUN(NONE): walk f1 f2 mechanisms=none
+# NONE-NOT: StringBuilderAppend
+# PROGRAM-OF: known-part-of-a-growing-text-is-written-as-bytes.ir

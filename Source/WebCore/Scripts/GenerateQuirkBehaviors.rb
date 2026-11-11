@@ -23,8 +23,8 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 # THE POSSIBILITY OF SUCH DAMAGE.
 
-# Generates QuirkBehaviorID, the build conditions, the QuirkBehaviors:: constants, their lookup by ID for the
-# runtime quirk table parser, and the QuirksAccessors base class of Quirks from QuirkBehaviors.yaml and
+# Generates QuirkBehaviorID, the build conditions, the declaration of each behavior (looked up by ID by the
+# quirk table parser), and the QuirksAccessors base class of Quirks from QuirkBehaviors.yaml and
 # QuirkBuildConditions.yaml.
 
 require "fileutils"
@@ -160,8 +160,8 @@ class QuirkBehavior
   def declaration
     prefix = @isExported ? "WEBCORE_EXPORT " : ""
     prefix += "static " if @isStatic
-    nodelete = isNoDelete? ? "LEGACY_NODELETE " : ""
-    "#{prefix}bool #{nodelete}#{@accessor}(#{argument})#{constSuffix};"
+    nodelete = isNoDelete? ? "NODELETE " : ""
+    "#{nodelete}#{prefix}bool #{@accessor}(#{argument})#{constSuffix};"
   end
 
   def definitionSignature
@@ -197,7 +197,7 @@ end
 class QuirkBehaviors
   FIELDS = %w{ available parameters conditions conditionsRequired implementation accessor static export }
   GENERATED_ONLY_FIELDS = %w{ accessor static export }
-  PARAMETERS = %w{ Script UserAgent ChromeCompatibilityVersion CookieNames }
+  PARAMETERS = %w{ Script UserAgent ChromeCompatibilityVersion CookieNames StyleSheet }
   CONDITIONS = %w{ ElementSelector SecondaryURL DocumentSelector }
 
   attr_reader :behaviors, :buildConditions

@@ -9,12 +9,13 @@
 #if ENABLE(AOT)
 
 #include "AOTConstantEmitter.h"
+#include "AOTSlotAccessEmitter.h"
 #include "AOTVector.h"
 #include <bit>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr size_t maskWidth = 32;
+static constexpr size_t widthOfAccessorMasks = 32;
 
 static uint32_t descriptorBitsOf(OptionSet<PropertyDescriptorFlags> flags)
 {
@@ -43,12 +44,28 @@ void ObjectCreationEmitter::generateDefineOwnProperty(const ValueContext& value)
     RELEASE_ASSERT(flags.contains(PropertyDescriptorFlags::HasSet) == !!setterID);
     RELEASE_ASSERT(!definedValueID || !getterID);
 
-    Boxed object = boxCell(in<CellPointer>(objectID));
-    Boxed key = in<Boxed>(value->computedKeyOperand());
-    Boxed valueOrGetter = inOptional<Boxed>(definedValueID ? definedValueID : getterID).value_or(undefined());
-    Boxed setter = inOptional<Boxed>(setterID).value_or(undefined());
-    callVoidOperation(value, RuntimeOperation::DefineOwnProperty, { object, key, valueOrGetter, setter, word32(static_cast<int32_t>(descriptorBitsOf(flags))) });
-    define(value, get(objectID));
+    Boxed object = in<Boxed>(objectID);
+    auto defineByRunTime = [&] {
+        Boxed key = in<Boxed>(value->computedKeyOperand());
+        Boxed valueOrGetter = inOptional<Boxed>(definedValueID ? definedValueID : getterID).value_or(undefined());
+        Boxed setter = inOptional<Boxed>(setterID).value_or(undefined());
+        callVoidOperation(value, RuntimeOperation::DefineOwnProperty, { object, key, valueOrGetter, setter, word32(static_cast<int32_t>(descriptorBitsOf(flags))) });
+    };
+    SlotAccessEmitter::CreationByDefinition creation;
+    if (typeOf(objectID).isObject())
+        creation = emitter<SlotAccessEmitter>().tryCreateFieldByDefinition(value, unboxCell(object));
+    if (!creation.isEmitted)
+        defineByRunTime();
+    else if (creation.leftToRunTime) {
+        LBasicBlock done = newBlock();
+        m_out.jump(done);
+        m_out.appendTo(creation.leftToRunTime);
+        defineByRunTime();
+        m_out.jump(done);
+        m_out.appendTo(done);
+    }
+    if (!typeOf(value.id()).isNever())
+        defineNarrowed(value, object);
 }
 
 void ObjectCreationEmitter::generateDefineAccessors(const ValueContext& value)
@@ -57,7 +74,7 @@ void ObjectCreationEmitter::generateDefineAccessors(const ValueContext& value)
     std::span<const PropertyKeyID> keys = value->keys();
     std::span<const ValueID> functions = value->functionsOperands();
     size_t count = keys.size();
-    RELEASE_ASSERT(functions.size() == count && count <= maskWidth);
+    RELEASE_ASSERT(functions.size() == count && count <= widthOfAccessorMasks);
 
     CellPointer object = in<CellPointer>(value->objectOperand());
     ConstantEmitter& constants = emitter<ConstantEmitter>();

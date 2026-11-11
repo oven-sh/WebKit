@@ -1,0 +1,35 @@
+# The handler block b2 branches on its parameter, and b3 throws to b2 again.
+# v4 is marked where b2 is reached, and waits in the worklist. b3 is reached in the same search, and its Throw takes its handler edge at once: the edge finds v4 marked and asks for v2.
+# Then v4 leaves the worklist and asks for what every taken edge brings, v2 once more. A mark may be set twice. A use is counted once for each edge and position: v2 has one use, like v1.
+# RUN: sweep-code
+# CHECK: v1: boolean @Boolean = TypeTest v0 testedType=undefined # uses=1
+# CHECK-NEXT: v2: boolean @Boolean = TypeTest v0 testedType=undefined # uses=1
+# CHECK-NEXT: Jump
+# CHECK: b1() handler=b2(v1)
+# CHECK: b3() handler=b2(v2)
+# CHECK: visits of operations: 3
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: boolean @Boolean = TypeTest v0 testedType=undefined
+#     v2: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Jump -> next b1()
+#   b1() handler=b2(v1):
+#     v3: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v3
+#   b2(v4: boolean @Boolean) role=CatchHandler:
+#     Branch v4 -> taken b3(), notTaken b4()
+#   b3() handler=b2(v2):
+#     Throw v0
+#   b4():
+#     Return v0
+# }
+# -- end of code

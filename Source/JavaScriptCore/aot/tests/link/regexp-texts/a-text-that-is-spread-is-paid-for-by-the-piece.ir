@@ -1,0 +1,46 @@
+# The list follows from the program alone. A text that is spread gives a piece for each character, and each piece costs an operation, paid before it is spread.
+# export function grammar() { return new RegExp("x".toUpperCase() + [...doubled("ab", 17)].length); }: more pieces than a function that is only guessed at may make.   (doubled(text, k): text = text + text, k times)
+# RUN: regexp-texts mechanisms=all
+# CHECK-NOT: text /X262144/
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="grammar" variable=g0}]
+entry module=m0
+variable g0 name="grammar" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f1 name="grammar" module=m0 position=10 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="ab"
+    v1 = Add v0, v0
+    v2 = Add v1, v1
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = Add v15, v15
+    v17 = Add v16, v16
+    v18 = NewArray contents=anything
+    AppendSpread v18, v17
+    v20 = PropGet v18 key="length"
+    v21 = String string="x"
+    v22 = PropGet v21 key="toUpperCase"
+    v23 = Call v22, v21 calleeKey="toUpperCase"
+    v24 = Add v23, v20
+    v25 = Builtin builtin=RegExp
+    v26 = Construct v25, -, v24
+    Return v26
+}

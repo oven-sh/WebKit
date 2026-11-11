@@ -327,7 +327,6 @@ static void testWrittenCardsAreListed()
     AOT_TEST_CHECK((regionsToSweep(writtenByCompiledCode, CollectionScope::Eden) == Regions { { regionSize, 2 * regionSize }, { 3 * regionSize, 4 * regionSize } }));
 }
 
-// The list ends where it would be no shorter than the cards. From there on the cards are read, and none is missed.
 static void testMoreWrittenCardsThanAreListed()
 {
     constexpr size_t numberOfRegions = 400;

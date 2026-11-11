@@ -248,13 +248,12 @@ private:
                 continue;
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "Looking at ", *m_block, ":");
 
-            m_data = ImpureBlockData();
             for (m_index = 0; m_index < m_block->size(); ++m_index) {
                 m_value = m_block->at(m_index);
                 process();
             }
             m_insertionSet.execute(m_block);
-            m_impureBlockData[m_block] = m_data;
+            m_impureBlockData[m_block] = std::exchange(m_data, { });
         }
     }
 
@@ -618,7 +617,7 @@ private:
                 [&] (MemoryValue* candidate) -> bool {
                     return candidate->opcode() == Store
                         && candidate->offset() == offset
-                        && candidate->accessWidth() >= clobberWidth;
+                        && (candidate->accessWidth() == clobberWidth || (candidate->accessWidth() > clobberWidth && !candidate->traps()));
                 });
             break;
         }
@@ -688,6 +687,10 @@ private:
         worklist.pushAll(m_block->successorBlocks());
 
         while (BasicBlock* block = worklist.pop()) {
+            // The next iteration computes another address.
+            if (block == ptr->owner)
+                return false;
+
             ImpureBlockData& data = m_impureBlockData[block];
 
             MemoryValue* match = data.memoryStoresAtHead.find(ptr, filter);

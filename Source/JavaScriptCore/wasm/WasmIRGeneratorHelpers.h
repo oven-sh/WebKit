@@ -36,6 +36,7 @@
 #include "JSWebAssemblyInstance.h"
 #include "LinkBuffer.h"
 #include "ProbeContext.h"
+#include "WasmBinding.h"
 #include "WasmCallee.h"
 #include "WasmCompilationContext.h"
 #include "WasmOperations.h"
@@ -144,7 +145,7 @@ static inline void emitThrowRefImpl(CCallHelpers& jit)
     jit.copyCalleeSavesToVMEntryFrameCalleeSavesBuffer(scratch);
 
     jit.prepareWasmCallOperation(GPRInfo::argumentGPR0);
-    jit.callOperation<OperationPtrTag>(operationWasmRethrow);
+    callOperation(jit, operationWasmRethrow);
     jit.farJump(GPRInfo::returnValueGPR, ExceptionHandlerPtrTag);
 }
 
@@ -161,7 +162,7 @@ static inline void emitThrowImpl(CCallHelpers& jit, unsigned exceptionIndex)
     jit.move(MacroAssembler::TrustedImm32(exceptionIndex), GPRInfo::argumentGPR1);
     jit.move(MacroAssembler::stackPointerRegister, GPRInfo::argumentGPR2);
     jit.prepareWasmCallOperation(GPRInfo::argumentGPR0);
-    jit.callOperation<OperationPtrTag>(operationWasmThrow);
+    callOperation(jit, operationWasmThrow);
     jit.farJump(GPRInfo::returnValueGPR, ExceptionHandlerPtrTag);
 }
 
@@ -209,7 +210,7 @@ static inline void prepareForTailCall(CCallHelpers& jit, const B3::StackmapGener
     newStackOffset -= Checked<int32_t>(sizeof(Register));
 #elif CPU(ARM64) || CPU(RISCV64)
     jit.loadPtr(CCallHelpers::Address(MacroAssembler::stackPointerRegister, newStackOffset - Checked<int32_t>(sizeof(Register))), MacroAssembler::linkRegister);
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     GPRReg callerSP = jit.scratchRegister();
     jit.addPtr(MacroAssembler::TrustedImm32(frameSize + Checked<int32_t>(sizeof(CallerFrameAndPC))), MacroAssembler::stackPointerRegister, callerSP);
     jit.untagPtr(callerSP, MacroAssembler::linkRegister);
@@ -223,6 +224,12 @@ static inline void prepareForTailCall(CCallHelpers& jit, const B3::StackmapGener
 }
 
 #endif // ENABLE(WEBASSEMBLY_OMGJIT)
+
+inline CCallHelpers::Jump branchIfCalleeNotWasmToJS(CCallHelpers& jit, GPRReg boxedCalleeGPR)
+{
+    return jit.branchPtr(CCallHelpers::NotEqual, boxedCalleeGPR,
+        CCallHelpers::TrustedImmPtr(CalleeBits::boxNativeCallee(&WasmToJSCallee::singleton())));
+}
 
 // Emits a RestoreInstanceCallee frame to restore our instance when returning from a
 // cross instance tail call chain. This is done lazily for performance of intra-module
@@ -251,25 +258,29 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
 
     JIT_COMMENT(jit, "Check for existing restore frame");
     jit.loadPtr(CCallHelpers::Address(MacroAssembler::framePointerRegister, CallFrame::returnPCOffset()), scratch1);
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     jit.removePtrTag(scratch1);
 #endif
-    auto hasExistingThunk = jit.branchPtr(CCallHelpers::Equal, scratch1,
-        CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress));
+    CCallHelpers::Jump hasExistingThunk;
+    if (isForImage(jit)) {
+        loadImagePointer(jit, currentInstanceReg, ImagePointerTable::restoreFrameReturnAddress, scratch2);
+        hasExistingThunk = jit.branchPtr(CCallHelpers::Equal, scratch1, scratch2);
+    } else
+        hasExistingThunk = jit.branchPtr(CCallHelpers::Equal, scratch1, CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress));
 
     JIT_COMMENT(jit, "Restore frame body for callerStackSize: ", callerStackSize, " frameSize: ", frameSize, " topSourceOffsetFromFP: ", topSourceOffsetFromFP, " restoreFrameBase: ", restoreFrameBase);
     // Lower sp so we don't write below it if we take the loop.
     jit.subPtr(CCallHelpers::TrustedImm32(restoreFrameSize), MacroAssembler::stackPointerRegister);
 
     if (needsCopy) {
-        // Copy [sp, cfr + topSourceOffsetFromFP) down by restoreFrameSize bytes.
-        // The range above cfr is the caller's argument area. OMG may reference
-        // these slots via positive-FP-offset ValueReps, so they must shift too.
-        jit.move(MacroAssembler::stackPointerRegister, scratch1);
+        // Copy [sp, cfr + topSourceOffsetFromFP) down by restoreFrameSize bytes, where sp is its
+        // value before the adjustment above. The range above cfr is the caller's argument area.
+        // OMG may reference these slots via positive-FP-offset ValueReps, so they must shift too.
+        jit.addPtr(CCallHelpers::TrustedImm32(restoreFrameSize), MacroAssembler::stackPointerRegister, scratch1);
 
         jit.jitAssert([&] {
             jit.addPtr(CCallHelpers::TrustedImm32(topSourceOffsetFromFP), GPRInfo::callFrameRegister, scratch2);
-            return jit.branchPtr(CCallHelpers::AboveOrEqual, scratch2, MacroAssembler::stackPointerRegister);
+            return jit.branchPtr(CCallHelpers::Above, scratch2, scratch1);
         });
 
         JIT_COMMENT(jit, "Copy loop start");
@@ -296,7 +307,7 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
     CCallHelpers::Address callerFrameAndPCAddress(GPRInfo::callFrameRegister, topSourceOffsetFromFP > 0 ? -static_cast<int32_t>(restoreFrameSize) : 0);
 
     JIT_COMMENT(jit, "Creating the restore frame");
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     jit.loadPairPtr(callerFrameAndPCAddress, scratch1, ARM64Registers::lr);
     jit.addPtr(CCallHelpers::TrustedImm32(sizeof(CallerFrameAndPC)), MacroAssembler::framePointerRegister, scratch2);
     jit.untagPtr(scratch2, ARM64Registers::lr);
@@ -318,21 +329,27 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
     jit.storePairPtr(scratch1, scratch2, CCallHelpers::Address(MacroAssembler::framePointerRegister, restoreFrameBase));
 #endif
     // Store current instance and callee to the frame.
-    jit.move(CCallHelpers::TrustedImm64(g_restoreFrameCalleeBoxed), scratch1);
+    if (isForImage(jit))
+        loadImagePointer(jit, currentInstanceReg, ImagePointerTable::restoreFrameCallee, scratch1);
+    else
+        jit.move(CCallHelpers::TrustedImm64(g_restoreFrameCalleeBoxed), scratch1);
     jit.storePairPtr(currentInstanceReg, scratch1, CCallHelpers::Address(MacroAssembler::framePointerRegister, restoreFrameBase + static_cast<int32_t>(CallFrameSlot::codeBlock) * static_cast<int32_t>(sizeof(Register))));
 
     // Account for the lowering of callFrameRegister we're going to do below.
     jit.addPtr(CCallHelpers::TrustedImm32(restoreFrameBase), GPRInfo::callFrameRegister, scratch1);
 
     JIT_COMMENT(jit, "Update CallerFrameAndPC to return to the restore frame");
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     // Move to where callFrameRegister will be when actually untagging.
     jit.subPtr(CCallHelpers::TrustedImm32(restoreFrameSize - sizeof(CallerFrameAndPC)), GPRInfo::callFrameRegister);
     jit.move(CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress), ARM64Registers::lr);
     jit.tagPtr(GPRInfo::callFrameRegister, ARM64Registers::lr);
     jit.storePair64(scratch1, ARM64Registers::lr, CCallHelpers::PreIndexAddress(GPRInfo::callFrameRegister, -static_cast<ptrdiff_t>(sizeof(CallerFrameAndPC))));
 #else
-    jit.move(CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress), scratch2);
+    if (isForImage(jit))
+        loadImagePointer(jit, currentInstanceReg, ImagePointerTable::restoreFrameReturnAddress, scratch2);
+    else
+        jit.move(CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress), scratch2);
     jit.subPtr(CCallHelpers::TrustedImm32(restoreFrameSize), GPRInfo::callFrameRegister);
     jit.storePairPtr(scratch1, scratch2, GPRInfo::callFrameRegister);
 #endif

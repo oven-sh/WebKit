@@ -1,0 +1,54 @@
+# The list follows from the program alone. A built-in that is handed a function that asks the world outside (as `this`, as an argument) would call it: it is refused like that function itself, and gives what nobody knows.
+# new RegExp("a" + Array.from([0, 0], Math.random).join("")) . ("b" + Reflect.apply(Date.now, undefined, [])) . ("c" + [0].map(Date.now)) . ("d" + Date.now.call(null)) . ("z+" + 1)
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /z+1/
+# CHECK-NOT: text /
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=Array
+    v2 = PropGet v1 key="from"
+    v3 = Integer
+    v4 = NewArray v3, v3 contents=anything
+    v5 = Builtin builtin=Math
+    v6 = PropGet v5 key="random"
+    v7 = Call v2, v1, v4, v6 calleeKey="from"
+    v8 = PropGet v7 key="join"
+    v9 = String string=""
+    v10 = Call v8, v7, v9 calleeKey="join"
+    v11 = String string="a"
+    v12 = Add v11, v10
+    v13 = Construct v0, -, v12
+    v14 = Builtin builtin=Reflect
+    v15 = PropGet v14 key="apply"
+    v16 = Builtin builtin=Date
+    v17 = PropGet v16 key="now"
+    v18 = Undefined
+    v19 = NewArray contents=anything
+    v20 = Call v15, v14, v17, v18, v19 calleeKey="apply"
+    v21 = String string="b"
+    v22 = Add v21, v20
+    v23 = Construct v0, -, v22
+    v24 = NewArray v3 contents=anything
+    v25 = PropGet v24 key="map"
+    v26 = Call v25, v24, v17 calleeKey="map"
+    v27 = String string="c"
+    v28 = Add v27, v26
+    v29 = Construct v0, -, v28
+    v30 = PropGet v17 key="call"
+    v31 = Null
+    v32 = Call v30, v17, v31 calleeKey="call"
+    v33 = String string="d"
+    v34 = Add v33, v32
+    v35 = Construct v0, -, v34
+    v36 = String string="z+"
+    v37 = Integer integer=1
+    v38 = Add v36, v37
+    v39 = Construct v0, -, v38
+    v40 = NewArray v13, v23, v29, v35, v39 contents=anything
+    Return v40
+}

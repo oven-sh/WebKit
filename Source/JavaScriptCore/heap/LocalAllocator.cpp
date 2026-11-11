@@ -40,10 +40,6 @@
 #include "StructureAlignedMemoryAllocator.h"
 #include "SuperSampler.h"
 
-#if ENABLE(AOT)
-#include "AOTAllocationCounts.h"
-#endif
-
 namespace JSC {
 
 LocalAllocator::LocalAllocator(BlockDirectory* directory)
@@ -106,7 +102,7 @@ void LocalAllocator::stopAllocating(MarkedBlock::Handle::StopAllocatingMode mode
         ASSERT(m_freeList.allocationWillFail());
         return;
     }
-    
+
     m_currentBlock->stopAllocating(m_freeList, mode);
     m_lastActiveBlock = m_currentBlock;
     m_currentBlock = nullptr;
@@ -143,11 +139,6 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     ASSERT(!m_directory->markedSpace().isIterating());
     heap.didAllocate(m_freeList.originalSize());
 
-#if ENABLE(AOT)
-    if (AOT::AllocationCounts::isEnabled()) [[unlikely]]
-        AOT::AllocationCounts::willRefill(heap.vm(), *this);
-#endif
-
     didConsumeFreeList();
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -168,6 +159,10 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
 
     AllocatingScope helpingHeap(heap);
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (MarkedBlockCage::isRequired() && m_directory->m_subspace->alignedMemoryAllocator() == heap.structureAllocator.get())
+        heap.cage().willAllocateStructureInSlowPath();
+#endif
     heap.collectIfNecessaryOrDefer(deferralContext);
     
     // Goofy corner case: the GC called a callback and now this directory has a currentBlock. This only
@@ -194,7 +189,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     if (!block) [[unlikely]] {
         if (MarkedBlockCage::isRequired() && heap.cage().allocationsAreInfallible())
             failureMode = AllocationFailureMode::Assert;
-        if (heap.tryCollectForExhaustedCage(deferralContext)) {
+        if (heap.tryCollectForExhaustedCage(deferralContext, subspace->alignedMemoryAllocator())) {
             if (m_currentBlock)
                 return allocate(heap, cellSize, deferralContext, failureMode);
             result = tryAllocateWithoutCollecting(cellSize);
@@ -202,11 +197,19 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
                 return result;
             block = m_directory->tryAllocateBlock(heap);
         }
-        if (!block && failureMode == AllocationFailureMode::Assert && heap.tryUseReserveOfExhaustedCage(m_directory->subspace()->alignedMemoryAllocator()))
-            block = m_directory->tryAllocateBlock(heap);
+        if (!block && failureMode == AllocationFailureMode::Assert) {
+            // Another thread may take what this one lets go of.
+            while (!block && heap.tryUseReserveOfExhaustedCage(m_directory->subspace()->alignedMemoryAllocator()))
+                block = m_directory->tryAllocateBlock(heap);
+        }
         if (!block) {
-            if (failureMode == AllocationFailureMode::Assert)
-                MarkedBlockCage::logExhaustion(m_directory->subspace()->alignedMemoryAllocator() == heap.structureAllocator.get() ? MarkedBlockCage::ExhaustedHeap::Structures : MarkedBlockCage::ExhaustedHeap::Cells);
+            if (failureMode == AllocationFailureMode::Assert) {
+                bool isForStructures = m_directory->subspace()->alignedMemoryAllocator() == heap.structureAllocator.get();
+                // Where the set of blocks or the list of the directory has no room for a block, the heap of Structures is not what is full.
+                if (isForStructures && MarkedBlockCage::isRequired() && !heap.cage().willAddBlock(heap.vm(), *m_directory))
+                    isForStructures = false;
+                MarkedBlockCage::logExhaustion(isForStructures ? MarkedBlockCage::ExhaustedHeap::Structures : MarkedBlockCage::ExhaustedHeap::Cells);
+            }
             RELEASE_ASSERT_RESOURCE_AVAILABLE(failureMode != AllocationFailureMode::Assert, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
             return nullptr;
         }
@@ -259,7 +262,8 @@ void* LocalAllocator::tryAllocateWithoutCollecting(size_t cellSize)
             return result;
     }
     
-    if (Options::stealEmptyBlocksFromOtherAllocators()) {
+    // A block that the list of this directory has no room for is not taken from another directory.
+    if (Options::stealEmptyBlocksFromOtherAllocators() && (!MarkedBlockCage::isRequired() || MarkedBlockCage::willStealBlock(*m_directory))) {
         AlignedMemoryAllocator* allocator = m_directory->m_subspace->alignedMemoryAllocator();
         if (MarkedBlock::Handle* block = allocator->findEmptyBlockToSteal()) {
             RELEASE_ASSERT(block->alignedMemoryAllocator() == allocator);
@@ -313,7 +317,7 @@ void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
             return nullptr;
         }, cellSize);
 
-    m_directory->markedSpace().heap().assertIsMutatorOrMutatorIsStopped();
+    m_directory->markedSpace().heap().assertIsExclusiveAccessHolder();
     m_directory->markedSpace().didAllocateInBlock(m_currentBlock);
     return result;
 }

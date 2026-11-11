@@ -27,7 +27,6 @@
 #include "SVGTextLayoutAlgorithm.h"
 
 #include "ComplexTextController.h"
-#include "FontCascadeCache.h"
 #include "FontCascadeInlines.h"
 #include "InlineDisplayBoxInlines.h"
 #include "LayoutElementBox.h"
@@ -39,7 +38,6 @@
 #include "SVGLengthContext.h"
 #include "SVGNames.h"
 #include "SVGTextFragment.h"
-#include "SVGTextLayoutAttributes.h"
 #include "SVGTextLayoutEngineBaseline.h"
 #include "SVGTextLayoutEngineSpacing.h"
 #include "SVGTextMetrics.h"
@@ -53,48 +51,50 @@
 namespace WebCore {
 
 // SVG specific inputs live on the renderers and the DOM.
-static RenderSVGInlineText* LEGACY_NODELETE svgInlineText(const Layout::InlineTextBox& inlineTextBox)
+NODELETE static RenderSVGInlineText* svgInlineText(const Layout::InlineTextBox& inlineTextBox)
 {
     return dynamicDowncast<RenderSVGInlineText>(inlineTextBox.rendererForIntegration());
 }
 
-static const SVGTextContentElement* LEGACY_NODELETE textContentElement(const Layout::ElementBox& elementBox)
+NODELETE static const SVGTextContentElement* textContentElement(const Layout::ElementBox& elementBox)
 {
     // Anonymous inline boxes, like the ones for display: contents, have no element.
-    CheckedPtr renderer = elementBox.rendererForIntegration();
+    auto* renderer = elementBox.rendererForIntegration();
     if (!renderer || renderer->isAnonymous())
         return nullptr;
-    return SVGTextContentElement::elementFromRenderer(renderer.get());
+    return SVGTextContentElement::elementFromRenderer(renderer);
 }
 
-static const RenderSVGTextPath* LEGACY_NODELETE svgTextPath(const Layout::ElementBox& elementBox)
+NODELETE static const RenderSVGTextPath* svgTextPath(const Layout::ElementBox& elementBox)
 {
     return dynamicDowncast<RenderSVGTextPath>(elementBox.rendererForIntegration());
 }
 
-static const Vector<SVGTextMetrics>& LEGACY_NODELETE textMetrics(const Layout::InlineTextBox& inlineTextBox)
+NODELETE static const Vector<SVGTextMetrics>& textMetrics(const Layout::InlineTextBox& inlineTextBox)
 {
-    return svgInlineText(inlineTextBox)->layoutAttributes()->textMetricsValues();
+    return svgInlineText(inlineTextBox)->textMetrics();
 }
 
-// Text boxes have a style with the non-inherited properties reset. The SVG text properties like alignment-baseline and
-// baseline-shift come from the parent.
-static const Style::ComputedStyle& LEGACY_NODELETE textStyle(const Layout::InlineTextBox& inlineTextBox)
+// Text boxes have a style with the non-inherited properties reset. The non-inherited alignment-baseline and baseline-shift
+// are properties of the parent box.
+NODELETE static const Style::ComputedStyle& parentBoxStyle(const Layout::InlineTextBox& inlineTextBox)
 {
     return inlineTextBox.parent().style();
 }
 
-static bool LEGACY_NODELETE isUnspecified(float value)
+static constexpr float unspecifiedValue = std::numeric_limits<float>::quiet_NaN();
+
+NODELETE static bool isUnspecified(float value)
 {
     return std::isnan(value);
 }
 
-static float LEGACY_NODELETE valueAt(std::span<const float> values, unsigned index)
+NODELETE static float valueAt(std::span<const float> values, unsigned index)
 {
-    return values.empty() ? SVGTextLayoutAttributes::emptyValue() : values[index];
+    return values.empty() ? unspecifiedValue : values[index];
 }
 
-static float LEGACY_NODELETE valueOrZeroAt(std::span<const float> values, unsigned index)
+NODELETE static float valueOrZeroAt(std::span<const float> values, unsigned index)
 {
     auto value = valueAt(values, index);
     return isUnspecified(value) ? 0 : value;
@@ -135,7 +135,7 @@ static void ensureTextMetrics(RenderSVGInlineText& text)
         return;
     text.setHasValidTextMetrics(true);
 
-    auto& metrics = text.layoutAttributes()->textMetricsValues();
+    auto& metrics = text.textMetrics();
     metrics.clear();
 
     auto run = SVGTextMetrics::constructTextRun(text);
@@ -154,7 +154,6 @@ static void ensureTextMetrics(RenderSVGInlineText& text)
     };
 
     if (shouldUseComplexTextController(scaledFont, run)) {
-        FontCascadeCache::forCurrentThread().invalidate();
         auto controller = ComplexTextController { scaledFont, run, true };
         auto totalWidth = 0.f;
         for (unsigned position = 0; position < length;) {
@@ -171,10 +170,10 @@ static void ensureTextMetrics(RenderSVGInlineText& text)
     auto canUseSimplifiedTextMeasuring = [&] {
         if (run.direction() != TextDirection::LTR)
             return false;
-        if (auto cachedValue = text.canUseSimplifiedTextMeasuring())
+        if (auto cachedValue = text.canUseSimplifiedTextMeasuringWithScaledFont())
             return *cachedValue;
         auto value = Layout::TextUtil::canUseSimplifiedTextMeasuring(run.text(), scaledFont, text.style().collapseWhiteSpace(), nullptr);
-        text.setCanUseSimplifiedTextMeasuring(value);
+        text.setCanUseSimplifiedTextMeasuringWithScaledFont(value);
         return value;
     }();
 
@@ -342,7 +341,7 @@ void SVGTextLayoutAlgorithm::collectTextBoxes()
     auto collect = [&](auto& collect, size_t inlineBoxIndex, unsigned textPathIndex) -> size_t {
         CheckedRef inlineBox = m_displayBoxes[inlineBoxIndex].layoutBox();
         auto isWithinInlineBox = [&](const InlineDisplay::Box& displayBox) {
-            for (CheckedPtr ancestor = &displayBox.layoutBox().parent();; ancestor = &ancestor->parent()) {
+            for (auto* ancestor = &displayBox.layoutBox().parent();; ancestor = &ancestor->parent()) {
                 if (ancestor == inlineBox.ptr())
                     return true;
                 if (!ancestor->isInlineBox())
@@ -361,7 +360,7 @@ void SVGTextLayoutAlgorithm::collectTextBoxes()
                     auto start = textContent.start + static_cast<unsigned>(displayBox.text().start());
                     auto length = static_cast<unsigned>(displayBox.text().length());
 
-                    CheckedRef style = textStyle(textContent.inlineTextBox);
+                    CheckedRef style = parentBoxStyle(textContent.inlineTextBox);
                     auto baselineLayout = SVGTextLayoutEngineBaseline { protect(style->fontCascade()) };
                     auto baselineShift = baselineLayout.calculateBaselineShift(style) - baselineLayout.calculateAlignmentBaselineShift(m_isVertical, style);
 
@@ -405,7 +404,7 @@ void SVGTextLayoutAlgorithm::computeCSSPositions()
 {
     auto position = 0.f;
     for (auto& textBox : m_textBoxes) {
-        CheckedRef style = textStyle(textBox.inlineTextBox);
+        CheckedRef style = textBox.inlineTextBox->style();
         auto& content = textBox.inlineTextBox->content();
         auto baselineLayout = SVGTextLayoutEngineBaseline { protect(style->fontCascade()) };
         auto spacingLayout = SVGTextLayoutEngineSpacing { protect(style->fontCascade()) };
@@ -481,7 +480,7 @@ void SVGTextLayoutAlgorithm::resolveCharacterPositioning()
 
         auto ensureValues = [&](auto& values, unsigned listCount) {
             if (listCount && values.isEmpty())
-                values.fill(SVGTextLayoutAttributes::emptyValue(), m_characters.size());
+                values.fill(unspecifiedValue, m_characters.size());
         };
         ensureValues(m_resolvedX, xCount);
         ensureValues(m_resolvedY, yCount);
@@ -491,7 +490,7 @@ void SVGTextLayoutAlgorithm::resolveCharacterPositioning()
         auto inTextPath = isInTextPath(element);
         auto newChunkCount = inTextPath ? (m_isVertical ? yCount : xCount) : std::max(xCount, yCount);
 
-        // FIXME: For bidi content the lists are assigned in display order like the old engine did. The spec assigns them in logical order.
+        // FIXME: For bidi content the lists are assigned in display order. The spec assigns them in logical order.
         auto reorderedCharacterIndexes = Vector<unsigned> { };
         auto characterIndexes = [&] -> std::span<const unsigned> {
             if (!isReordered) {
@@ -672,11 +671,11 @@ void SVGTextLayoutAlgorithm::applyTextLength()
 
 float SVGTextLayoutAlgorithm::anchorShift(std::span<const unsigned> chunk) const
 {
-    CheckedRef style = textStyle(m_textBoxes[m_characters[chunk.front()].textBoxIndex].inlineTextBox);
+    auto& style = m_textBoxes[m_characters[chunk.front()].textBoxIndex].inlineTextBox->style();
     auto [start, end] = extent(chunk);
     auto length = end - start;
-    auto isRightToLeft = style->writingMode().isBidiRTL();
-    switch (style->textAnchor()) {
+    auto isRightToLeft = style.writingMode().isBidiRTL();
+    switch (style.textAnchor()) {
     case TextAnchor::Start:
         return isRightToLeft ? -length : 0;
     case TextAnchor::Middle:
@@ -762,14 +761,22 @@ void SVGTextLayoutAlgorithm::positionOnPaths()
     for (unsigned textPathIndex = 0; textPathIndex < m_textPaths.size(); ++textPathIndex) {
         auto& textPath = m_textPaths[textPathIndex];
 
+        auto isOnTextPath = [&](unsigned charIndex) {
+            return m_textBoxes[m_characters[charIndex].textBoxIndex].textPathIndex == textPathIndex;
+        };
+
         auto rangeStart = notFound;
         size_t rangeEnd = 0;
-        for (size_t i = 0; i < m_displayOrder.size(); ++i) {
-            if (m_textBoxes[m_characters[m_displayOrder[i]].textBoxIndex].textPathIndex != textPathIndex)
+        for (size_t glyphIndex = 0; glyphIndex < m_displayOrder.size(); ++glyphIndex) {
+            if (!isOnTextPath(m_displayOrder[glyphIndex])) {
+                if (rangeStart != notFound)
+                    break;
                 continue;
+            }
+
             if (rangeStart == notFound)
-                rangeStart = i;
-            rangeEnd = i + 1;
+                rangeStart = glyphIndex;
+            rangeEnd = glyphIndex + 1;
         }
         if (rangeStart == notFound)
             continue;
@@ -788,7 +795,7 @@ void SVGTextLayoutAlgorithm::positionOnPaths()
         auto isReversed = textPathRenderer->isLayoutPathReversed();
 
         // Text-anchor and textLength use the anchored chunks of the path content as laid out on a line.
-        auto anchorShift = 0.f;
+        auto totalAnchorShift = 0.f;
         auto totalLength = 0.f;
         size_t chunkStart = 0;
         for (size_t i = 1; i <= range.size(); ++i) {
@@ -796,7 +803,7 @@ void SVGTextLayoutAlgorithm::positionOnPaths()
                 continue;
             auto chunk = range.subspan(chunkStart, i - chunkStart);
             chunkStart = i;
-            anchorShift += this->anchorShift(chunk);
+            totalAnchorShift += anchorShift(chunk);
             auto [start, end] = extent(chunk);
             totalLength += end - start;
         }
@@ -814,7 +821,7 @@ void SVGTextLayoutAlgorithm::positionOnPaths()
 
         // "Let offset be the value of the 'textPath' element's 'startOffset' attribute, adjusted due to any 'pathLength' attribute on
         // the referenced element."
-        auto startOffset = computeTextPathStartOffset(textPathRenderer, pathLength) + anchorShift;
+        auto startOffset = computeTextPathStartOffset(textPathRenderer, pathLength) + totalAnchorShift;
         auto currentOffset = startOffset;
         auto perpendicularShift = 0.f;
         auto textPositionAfterPath = std::optional<FloatPoint> { };

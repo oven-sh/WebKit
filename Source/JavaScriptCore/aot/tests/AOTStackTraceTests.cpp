@@ -7,20 +7,27 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
-#include "AOTCompile.h"
-#include "AOTCompileOptionWords.h"
-#include "AOTIRParser.h"
+#include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinIDs.h"
+#include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableRealm.h"
+#include "AOTCompiledCallee.h"
+#include "AOTDriver.h"
+#include "AOTFunctionDescription.h"
+#include "AOTLoadedProgramTestSupport.h"
 #include "AOTNativeTest.h"
-#include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
+#include "AOTShellProgramTestSupport.h"
 #include "AOTStackTrace.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
+#include <wtf/Scope.h>
+#include <wtf/Threading.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -48,6 +55,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PropSet v1, v14 key="reads"
     v16 = NewClosure function=f9
     PropSet v1, v16 key="recurseAndRead"
+    v18 = NewClosure function=f10
+    PropSet v1, v18 key="applies"
     Return
 }
 function f1 name="recurse" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -117,6 +126,10 @@ function f9 name="recurseAndRead" parameters=[{type=anything}, {type=anything}] 
     v8 = CallDirect v7, v1 function=f9 @110
     Return v8
 }
+function f10 name="applies" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0 calledBuiltin=MathMin @120
+    Return v1
+}
 )IR"_s;
 
 static constexpr ASCIILiteral scriptStart = R"js(
@@ -158,38 +171,20 @@ function withLimit(limit, run) {
 globalThis.leaf = function leaf() { return names(new Error().stack); };
 )js"_s;
 
-static std::unique_ptr<CompileOutput> compileWithValidation(ASCIILiteral referencesWord)
+static String runInShell(ASCIILiteral way, ASCIILiteral referencesWord, ASCIILiteral statements)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
-        Wire::CompileOptions options = makeDefaultCompileOptions();
-        AOT_TEST_CHECK(!applyOptionWord(options, "validate"_s));
-        // The script of the shell hands the program its own objects, closures and Error.captureStackTrace.
-        AOT_TEST_CHECK(!applyOptionWord(options, "admit=Inspector"_s));
-        AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
-        BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
-        if (!program) {
-            build.diagnostics().finish(nullptr);
-            Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
-        }
-        AOT_TEST_CHECK(program);
-        output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
+        output = compileForShellOnThisThread(programText, { "admit=Inspector"_s, referencesWord }, way);
     });
-    return output;
-}
+    std::span<const uint32_t> entryModules = output->records<uint32_t>(Wire::ResultSection::EntryModuleIds);
+    AOT_TEST_CHECK(entryModules.size() == 1);
 
-static String runInShell(ASCIILiteral referencesWord, ASCIILiteral statements)
-{
-    std::unique_ptr<CompileOutput> output = compileWithValidation(referencesWord);
-    TemporaryFile image(".image"_s, output->image.span());
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").then(async () => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),
+        makeString(scriptStart, "runCompiledEntryPoint("_s, entryModules[0], ").then(async () => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),
     };
     String shell = shellPath();
     ChildProcessResult result = ChildProcessLauncher(String(shell), { }).run(arguments.span());
@@ -201,11 +196,13 @@ static String runInShell(ASCIILiteral referencesWord, ASCIILiteral statements)
 
 static void checkShellOutput(ASCIILiteral statements, ASCIILiteral expectedOutput)
 {
-    for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
-        String output = runInShell(referencesWord, statements);
-        if (output != expectedOutput)
-            dataLog("with ", referencesWord, " the shell printed\n", output, "expected\n", expectedOutput);
-        AOT_TEST_CHECK(output == expectedOutput);
+    for (ASCIILiteral way : waysToCompilePrograms) {
+        for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
+            String output = runInShell(way, referencesWord, statements);
+            if (output != expectedOutput)
+                dataLog("with ", way, " ", referencesWord, " the shell printed\n", output, "expected\n", expectedOutput);
+            AOT_TEST_CHECK(output == expectedOutput);
+        }
     }
 }
 
@@ -315,6 +312,77 @@ reads < thrower < asyncInner < async asyncOuter < async driver
 )"_s);
 }
 
+static void testTraceWithBuiltinFormattedByGC()
+{
+    checkShellOutput(R"js(
+    let errors = [];
+    function makeError() { errors.push(new Error()); }
+    function driver() {
+        for (let i = 0; i < 4; ++i)
+            (function dead() { return [registry.applies(makeError)]; })();
+    }
+    driver();
+    fullGC();
+    for (let error of errors)
+        print(names(error.stack));
+)js"_s, R"(makeError < min < applies < dead < driver
+makeError < min < applies < dead < driver
+makeError < min < applies < dead < driver
+makeError < min < applies < dead < driver
+)"_s);
+}
+
+static void checkBuiltinNamesNeedNoAtomTable(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    auto nameOf = [&](BuiltinID builtin) {
+        FunctionDescription description(functionInFramesOf(builtin));
+        String name = description.stackTraceName(vm);
+        AOT_TEST_CHECK(name == description.name(vm) && name == description.calculatedDisplayName(vm));
+        return name;
+    };
+    Thread& thread = Thread::currentSingleton();
+    AtomStringTable* atomStringTable = thread.setCurrentAtomStringTable(nullptr);
+    auto restore = makeScopeExit([&] {
+        thread.setCurrentAtomStringTable(atomStringTable);
+    });
+    for (unsigned index = 0; index < BuiltinTable::singleton().builtinCount(); ++index)
+        nameOf(BuiltinID(index));
+    AOT_TEST_CHECK(nameOf(Builtins::FunctionPrototypeApply) == "apply"_s);
+    AOT_TEST_CHECK(nameOf(Builtins::FunctionPrototypeSymbolHasInstance) == "[Symbol.hasInstance]"_s);
+}
+
+static void testBuiltinNamesNeedNoAtomTable()
+{
+    runWithLoadedProgram("stack-traces/builtin-names-need-no-atom-table"_s, programText, checkBuiltinNamesNeedNoAtomTable, { "admit=Inspector"_s });
+}
+
+static void checkAskingForFunctionObjectOfBuiltinCreatesNothing(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto exists = [&](ASCIILiteral name) {
+        return !!findExistingObject(realm, Identifier::fromString(vm, name).impl());
+    };
+    AOT_TEST_CHECK(!exists("Math"_s) && !exists("JSON"_s) && !exists("Reflect"_s));
+    {
+        AssertNoGC assertNoGC;
+        for (unsigned index = 0; index < BuiltinTable::singleton().builtinCount(); ++index) {
+            if (BuiltinID builtin(index); builtin != Builtins::GlobalThis)
+                AOT_TEST_CHECK(!isClosureOf(realm, functionInFramesOf(builtin)));
+        }
+    }
+    AOT_TEST_CHECK(!exists("Math"_s) && !exists("JSON"_s) && !exists("Reflect"_s));
+
+    JSObject* stringify = program.realms().object(realm, "JSON.stringify"_s);
+    AOT_TEST_CHECK(isClosureOf(stringify, functionInFramesOf(Builtins::JSONStringify)) && !isClosureOf(stringify, functionInFramesOf(Builtins::JSONParse)));
+}
+
+static void testAskingForFunctionObjectOfBuiltinCreatesNothing()
+{
+    runWithLoadedProgram("stack-traces/asking-for-function-object-of-builtin-creates-nothing"_s, programText, checkAskingForFunctionObjectOfBuiltinCreatesNothing, { "admit=Inspector"_s });
+}
+
 static void testSizeOfTrace()
 {
     AOT_TEST_CHECK(ReturnAddressTrace::numberOfFlagWords(0) == 0);
@@ -362,6 +430,9 @@ std::span<const NativeTest> stackTraceTests()
         { "stack-traces/capture-below-interpreted-function-under-compiled-frames"_s, testCaptureBelowInterpretedFunctionUnderCompiledFrames },
         { "stack-traces/trace-that-leaves-and-enters-compiled-code"_s, testTraceThatLeavesAndEntersCompiledCode },
         { "stack-traces/async-frames-below"_s, testAsyncFramesBelow },
+        { "stack-traces/trace-with-builtin-formatted-by-gc"_s, testTraceWithBuiltinFormattedByGC },
+        { "stack-traces/builtin-names-need-no-atom-table"_s, testBuiltinNamesNeedNoAtomTable },
+        { "stack-traces/asking-for-function-object-of-builtin-creates-nothing"_s, testAskingForFunctionObjectOfBuiltinCreatesNothing },
         { "stack-traces/size-of-trace"_s, testSizeOfTrace },
     };
     return tests;

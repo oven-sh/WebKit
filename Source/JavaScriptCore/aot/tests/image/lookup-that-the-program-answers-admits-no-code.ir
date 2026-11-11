@@ -1,0 +1,36 @@
+# If the facts of the program went by every name that a summary spells, `new.target.prototype` of any constructor would find `%GeneratorFunction.prototype%.prototype`, below it `constructor`, which evaluates text:
+# every program with a class would count as open, its image would admit code that nobody has read, and the build would warn of a Worker that nobody starts
+# class Point { constructor(x) { this.x = x; } }  print(new Point(3).x);
+# Link sees that the constructor itself answers the lookup. The facts go by the lookups that the objects of the program do not answer (LinkTables::lookups), as what is reached does.
+# LIBRARY: own
+# RUN: image
+# CHECK: flags
+# CHECK-NOT: AdmitsUnknownJavaScript
+# RUN(CLOSED): image mechanisms=none
+# CLOSED: flags
+# CLOSED-NOT: AdmitsUnknownJavaScript
+
+layout L0 kind=Instance name="Point" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Integer integer=3
+    v4 = Construct v2, -, v3 calleeName="Point"
+    v5 = PropGet v4 key="x"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="print" [isFreeName]
+    v8 = Call v7, -, v5 calleeName="print"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="Point" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="x"
+    Return v3
+}

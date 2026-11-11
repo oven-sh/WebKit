@@ -61,6 +61,7 @@ void Policy::dump(PrintStream& out) const
     AIR_POLICY_PRINT_IF_SET(registers, hintsTwoAddressOperands);
     AIR_POLICY_PRINT_IF_SET(registers, usesSecondPreferredRegister);
     AIR_POLICY_PRINT_IF_SET(registers, evictsHolderOfPreferredRegister);
+    AIR_POLICY_PRINT_IF_SET(registers, patchpointsKeepOnlyLowerHalvesOfVectors);
     AIR_POLICY_PRINT_IF_NOT_EMPTY(registers, unsavedCalleeSaves);
     AIR_POLICY_PRINT_IF_NOT_EMPTY(registers, savedByCallee);
     AIR_POLICY_PRINT_IF_NOT_EMPTY(registers, calleeSavesClobberedAtSuspensions);
@@ -70,16 +71,23 @@ void Policy::dump(PrintStream& out) const
     AIR_POLICY_PRINT_IF_DIFFERENT(splitting, splitMultiplier);
     AIR_POLICY_PRINT_IF_DIFFERENT(splitting, maxLoopFractionOfLiveRange);
     AIR_POLICY_PRINT_IF_SET(splitting, splitsAroundClobbersEarly);
+    AIR_POLICY_PRINT_IF_SET(splitting, splitsAroundClobbersThatRead);
+    AIR_POLICY_PRINT_IF_SET(splitting, keepsUnusedTmpsOnStackThroughLoops);
+    AIR_POLICY_PRINT_IF_SET(splitting, spillsTmpsReadInPlaceFirst);
     AIR_POLICY_PRINT_IF_SET(splitting, spansStretchesOfClobbers);
-    AIR_POLICY_PRINT_IF_SET(splitting, limitsClobberSitesPerSplit);
+    AIR_POLICY_PRINT_IF_DIFFERENT(splitting, leastCostOfSplitAroundClobber);
     AIR_POLICY_PRINT_IF_SET(splitting, splitsIntoClustersOverBlocks);
     AIR_POLICY_PRINT_IF_SET(splitting, splitsAroundFrame);
 
     AIR_POLICY_PRINT_IF_DIFFERENT(frame, coalescesSpillSlots);
     AIR_POLICY_PRINT_IF_SET(frame, emitsFrame);
     AIR_POLICY_PRINT_IF_SET(frame, shrinkWraps);
+    AIR_POLICY_PRINT_IF_SET(frame, needsLikelyFramelessPath);
+    AIR_POLICY_PRINT_IF_SET(frame, hoistsFrameAboveSwitches);
+    AIR_POLICY_PRINT_IF_SET(frame, sinksFrameBelowEntry);
     AIR_POLICY_PRINT_IF_SET(frame, setsUpFrameAtEntry);
     AIR_POLICY_PRINT_IF_DIFFERENT(frame, maxBytesAllocatedBeforeStackCheck);
+    AIR_POLICY_PRINT_IF_DIFFERENT(frame, smallestFrameTestedAtSetup);
     AIR_POLICY_PRINT_IF_NOT_EMPTY(frame, registersClobberedByFrameSetup);
     AIR_POLICY_PRINT_IF_SET(frame, mayPlaceSlotsAboveFrameRecord);
     AIR_POLICY_PRINT_IF_SET(frame, mayPushCalleeSaves);

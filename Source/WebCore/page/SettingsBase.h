@@ -60,14 +60,18 @@ namespace WebCore {
 
 class Page;
 
+#if PLATFORM(APPLETV)
+bool defaultTextAutosizingEnabledAtLargeInitialScale();
+#endif
+
 class SettingsBase : public AbstractRefCountedAndCanMakeWeakPtr<SettingsBase> {
     WTF_MAKE_TZONE_ALLOCATED(SettingsBase);
     WTF_MAKE_NONCOPYABLE(SettingsBase);
 public:
 
 #if ENABLE(MEDIA_SOURCE)
-    WEBCORE_EXPORT static bool LEGACY_NODELETE platformDefaultMediaSourceEnabled();
-    WEBCORE_EXPORT static uint64_t LEGACY_NODELETE defaultMaximumSourceBufferSize();
+    NODELETE WEBCORE_EXPORT static bool platformDefaultMediaSourceEnabled();
+    NODELETE WEBCORE_EXPORT static uint64_t defaultMaximumSourceBufferSize();
 #endif
 
     static const unsigned defaultMaximumHTMLParserDOMTreeDepth = 512;
@@ -76,6 +80,7 @@ public:
 
     virtual FontGenericFamilies& fontGenericFamilies() LIFETIME_BOUND = 0;
     virtual const FontGenericFamilies& fontGenericFamilies() const LIFETIME_BOUND = 0;
+    void setFontGenericFamilies(const FontGenericFamilies&);
 
     WEBCORE_EXPORT void setStandardFontFamily(const String&, UScriptCode = USCRIPT_COMMON);
     WEBCORE_EXPORT const String& standardFontFamily(UScriptCode = USCRIPT_COMMON) const LIFETIME_BOUND;

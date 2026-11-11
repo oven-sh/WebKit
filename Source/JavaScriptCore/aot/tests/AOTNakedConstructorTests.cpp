@@ -7,8 +7,8 @@
 
 #if ENABLE(AOT)
 
-#include "AOTHostEntriesTestSupport.h"
 #include "AOTClosureTable.h"
+#include "AOTCompiledCallee.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTModuleHost.h"
 #include "AOTModuleTable.h"
@@ -18,6 +18,8 @@
 #include "ErrorInstance.h"
 #include "JSCInlines.h"
 #include "JSPromiseConstructor.h"
+#include "JSPromisePrototype.h"
+#include "ObjectConstructor.h"
 #include "TopExceptionScope.h"
 #include <wtf/DataLog.h>
 
@@ -28,7 +30,7 @@ std::span<const NativeTest> nakedConstructorTests();
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
-runtimefunction id=0 function=f1
+runtimefunction id=PromiseConstructorPromise function=f1
 layout L0 kind=Instance name="Widget" constructor=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
@@ -41,7 +43,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v7 = Call v5, -, v6
     Return
 }
-function f1 name="Promise" module=m1 kind=BaseConstructor role=Library flags=[HasNewTarget, HasExplicitName, IsNakedConstructor] enclosingRuntimeFunction=0 parameters=[{type=anything}] results=[{type=object}] {
+function f1 name="Promise" module=m1 kind=BaseConstructor role=Library flags=[HasNewTarget, HasExplicitName, IsNakedConstructor] enclosingRuntimeFunction=PromiseConstructorPromise parameters=[{type=anything}] results=[{type=object}] {
     v2 = Builtin builtin=GlobalThis
     Return v2
 }
@@ -51,8 +53,6 @@ function f2 name="Widget" kind=BaseConstructor flags=[HasNewTarget, HasExplicitN
     Return v2
 }
 )IR"_s;
-
-static constexpr ModuleID mainModule { 0u };
 
 static void checkCallThrowsTypeError(LoadedProgram& program, JSValue callee, ASCIILiteral expectedMessage)
 {
@@ -71,31 +71,29 @@ static void checkCallThrowsTypeError(LoadedProgram& program, JSValue callee, ASC
     AOT_TEST_CHECK(message == expectedMessage);
 }
 
-static void checkCompiledClosureNamesConstructor(LoadedProgram& program)
-{
-    AOT_TEST_CHECK(!functionImplementing(Builtins::Promise).index());
-    const CompiledRuntimeFunctionData* entry = ModuleTable(program.instance().tables()).findRuntimeFunction(0);
-    AOT_TEST_CHECK(entry);
-    JSCell* closure = program.state().objects->closures.closure(program.vm(), FunctionID(entry->function));
-
-    checkCallThrowsTypeError(program, closure, "Cannot call a constructor Promise without |new|"_s);
-}
-
 static void checkBuiltinOfRealmNamesConstructor(LoadedProgram& program)
 {
     checkCallThrowsTypeError(program, program.realm()->promiseConstructor(), "Cannot call a constructor Promise without |new|"_s);
 }
 
-static void checkClassNamesClassConstructor(LoadedProgram& program)
+static void checkBuiltinOfRealmIsDeclaredAsFunction(LoadedProgram& program)
+{
+    JSFunction* promiseConstructor = program.realm()->promiseConstructor();
+    AOT_TEST_CHECK(promiseConstructor->isHostFunction());
+
+    AOT_TEST_CHECK(declaredAs(promiseConstructor) == DeclaredAs::Function);
+}
+
+static void checkHostFunctionsAreNotCompiled(LoadedProgram& program)
 {
     VM& vm = program.vm();
     JSGlobalObject* realm = program.realm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    program.realms().evaluate(realm, "globalThis.publish = function () { }"_s);
-    evaluateModuleSynchronously(realm, mainModule);
-    AOT_TEST_CHECK(!scope.exception());
+    JSValue resolve = realm->promiseConstructor()->get(realm, Identifier::fromString(vm, "resolve"_s));
+    AOT_TEST_CHECK(resolve.isCallable());
 
-    checkCallThrowsTypeError(program, realm->get(realm, Identifier::fromString(vm, "Widget"_s)), "Cannot call a class constructor Widget without |new|"_s);
+    AOT_TEST_CHECK(declaredAs(resolve.asCell()) == DeclaredAs::NotCompiled);
+    AOT_TEST_CHECK(declaredAs(realm->objectConstructor()) == DeclaredAs::NotCompiled);
+    AOT_TEST_CHECK(declaredAs(realm->promisePrototype()) == DeclaredAs::NotCompiled);
 }
 
 template<LoadedProgramTest body>
@@ -104,9 +102,9 @@ static constexpr void (*withConstructors)() = runNativeTestWithLoadedProgram<nak
 std::span<const NativeTest> nakedConstructorTests()
 {
     static constexpr NativeTest tests[] = {
-        { "naked-constructor/compiled-closure-names-constructor"_s, withConstructors<checkCompiledClosureNamesConstructor> },
         { "naked-constructor/builtin-of-realm-names-constructor"_s, withConstructors<checkBuiltinOfRealmNamesConstructor> },
-        { "naked-constructor/class-names-class-constructor"_s, withConstructors<checkClassNamesClassConstructor> },
+        { "naked-constructor/builtin-of-realm-is-declared-as-function"_s, withConstructors<checkBuiltinOfRealmIsDeclaredAsFunction> },
+        { "naked-constructor/host-functions-are-not-compiled"_s, withConstructors<checkHostFunctionsAreNotCompiled> },
     };
     return tests;
 }

@@ -1,0 +1,219 @@
+# slice, substring and substr on a proven text and proven numbers are the two bounds and one Substring. A bound that the ranges decide is the position, the length or 0, the others come out of one StringRange
+# function rest(s) { if (typeof s === "string") return [s.slice(1)]; }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: [[length]]: {{*}} = GetStringLength
+# CHECK: = StringRange [[length]]
+# CHECK: = Substring {{*}}, [[length]]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: = CallInline
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = Substring
+# function head(s, n) { if (typeof s === "string" && (n | 0) === n) return [s.substring(0, n)]; }
+# RUN(HEAD): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# HEAD-LABEL: code f2:Body
+# HEAD: = StringRange {{*}}method=Substring
+# HEAD: = Substring
+# function some(s, a) { if (typeof s === "string" && (a | 0) === a) return [s.substr(a, 2)]; }
+# RUN(SOME): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# SOME-LABEL: code f3:Body
+# SOME: = StringRange {{*}}method=Substr
+# SOME: = Substring
+# the whole text is the text: function whole(s) { if (typeof s === "string") return [s.slice(0)]; }
+# RUN(WHOLE): walk f4 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# WHOLE-LABEL: code f4:Body
+# WHOLE-NOT: = Substring
+# WHOLE-NOT: = StringRange
+# WHOLE: = NewArray
+# nobody knows what the position is, so the function converts it itself: function from(s, a) { if (typeof s === "string") return [s.slice(a)]; }
+# RUN(UNKNOWN): walk f5 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# UNKNOWN-LABEL: code f5:Body
+# UNKNOWN-NOT: = StringRange
+# UNKNOWN: = NewArray
+# a piece is compared where it lies: function beginsWith(s, n) { if (typeof s === "string" && (n | 0) === n) return [s.slice(0, n) === "ab"]; }
+# RUN(EQUAL): walk f6 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# EQUAL-LABEL: code f6:Body
+# EQUAL: = StringRange
+# EQUAL: literal="ab"
+# RUN(UNCUT): walk f6 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# UNCUT-NOT: = Substring
+# the edge hands the piece on as the text that it equals, so the piece is cut and compared: function itself(s, n) { if (typeof s === "string" && (n | 0) === n) { const p = s.slice(0, n); if (p === "ab") return p; } }
+# RUN(NARROWED): walk f7 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NARROWED-LABEL: code f7:Body
+# NARROWED: = Substring
+# a number is read off the characters where they lie: function amount(s) { if (typeof s === "string") return [+s.slice(2)]; }
+# RUN(NUMBER): walk f8 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NUMBER-LABEL: code f8:Body
+# NUMBER: = StringRangeToNumber
+# RUN(NUMBERUNCUT): walk f8 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NUMBERUNCUT-NOT: = Substring
+# function parsed(s) { if (typeof s === "string") return [parseInt(s.slice(2), 16)]; }
+# RUN(PARSED): walk f9 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# PARSED-LABEL: code f9:Body
+# PARSED: = StringRangeParseInt
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = NewClosure function=f9
+    v11 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10
+    Return v11
+}
+function f1 name="rest" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="slice"
+    v4 = Integer integer=1
+    v5 = Call v3, v2, v4 calleeKey="slice"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f2 name="head" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="substring"
+    v7 = Integer
+    v8 = Call v6, v3, v7, v5 calleeKey="substring"
+    v9 = NewArray v8 contents=anything
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f3 name="some" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="substr"
+    v7 = Integer integer=2
+    v8 = Call v6, v3, v5, v7 calleeKey="substr"
+    v9 = NewArray v8 contents=anything
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f4 name="whole" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="slice"
+    v4 = Integer
+    v5 = Call v3, v2, v4 calleeKey="slice"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f5 name="from" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = PropGet v3 key="slice"
+    v5 = Call v4, v3, v1 calleeKey="slice"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f6 name="beginsWith" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = PropGet v3 key="slice"
+    v7 = Integer
+    v8 = Call v6, v3, v7, v5 calleeKey="slice"
+    v9 = String string="ab"
+    v10 = StrictEq v8, v9
+    v11 = NewArray v10 contents=anything
+    Return v11
+  b3():
+    v12 = Undefined
+    Return v12
+}
+function f7 name="itself" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b4()
+  b2(v5):
+    v6 = PropGet v3 key="slice"
+    v7 = Integer
+    v8 = Call v6, v3, v7, v5 calleeKey="slice"
+    v9 = String string="ab"
+    v10 = StrictEq v8, v9
+    Branch v10 -> taken b3(| 0), notTaken b4()
+  b3(v11):
+    Return v11
+  b4():
+    v12 = Undefined
+    Return v12
+}
+function f8 name="amount" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="slice"
+    v4 = Integer integer=2
+    v5 = Call v3, v2, v4 calleeKey="slice"
+    v6 = ToNumber v5
+    v7 = NewArray v6 contents=anything
+    Return v7
+  b2():
+    v8 = Undefined
+    Return v8
+}
+function f9 name="parsed" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="slice"
+    v4 = Integer integer=2
+    v5 = Call v3, v2, v4 calleeKey="slice"
+    v6 = Builtin builtin=ParseInt
+    v7 = Integer integer=16
+    v8 = Call v6, -, v5, v7 calleeName="parseInt"
+    v9 = NewArray v8 contents=anything
+    Return v9
+  b2():
+    v10 = Undefined
+    Return v10
+}

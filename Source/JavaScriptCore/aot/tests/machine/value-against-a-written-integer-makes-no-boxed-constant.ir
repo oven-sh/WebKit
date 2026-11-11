@@ -1,0 +1,68 @@
+# function isEighty(x) { return x === 80 ? 1 : 2; }   function isZero(x) { return x === 0 ? 1 : 2; }   function same(x, n) { return x === (n | 0) ? 1 : 2; }
+# The tag of the value is asked for first, and what is left to compare is 32 bits wide. So the written integer stands in the compare, and no boxed integer is made for it, which takes an instruction of ten bytes.
+# On the TypeScript compiler checking a project `node.kind === <a kind>` ran 376 million times, and the boxed integer was made each time.
+# RUN: emit f1:Body mechanisms=none+TypedOperations
+# CHECK-LABEL: unit f1:Body
+# CHECK: = AboveEqual(
+# CHECK-NEXT: = Branch({{*}}, rare #
+# CHECK: = Trunc(
+# CHECK-NEXT: = Equal(
+# CHECK: = Const32(80)
+# The integer 80 as a boxed value.
+# CHECK-NOT: = Const64(-562949953421232)
+# RUN(SHELL): run-in-shell globalThis.register = (isEighty, isZero, same) => { const row = (count, answer) => { let said = ""; for (let i = 0; i < count; i++) said += (i ? " " : "") + answer(i); print(said); }; const values = [80, 81, 80.5 - 0.5, 80.5, "80", null, undefined, -80, 4294967376, {}, true]; row(values.length, i => isEighty(values[i])); const zeros = [0, -0, 1, 0.5, "", null, false, NaN]; row(zeros.length, i => isZero(zeros[i])); const pairs = [[7, 7], [7, 8], [7, 7.9], [-1, 4294967295], ["7", 7], [0, -0], [-0, 0], [NaN, NaN]]; row(pairs.length, i => same(pairs[i][0], pairs[i][1])); };
+# SHELL: 1 2 1 2 2 2 2 2 2 2 2
+# SHELL-NEXT: 1 1 2 2 2 2 2 2
+# SHELL-NEXT: 1 2 1 1 2 1 1 2
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2 calleeName="register"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="isEighty" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=80
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+}
+function f2 name="isZero" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+}
+function f3 name="same" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = BitOr v1, v2
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    Return v5
+  b2():
+    v6 = Integer integer=2
+    Return v6
+}

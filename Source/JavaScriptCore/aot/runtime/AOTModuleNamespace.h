@@ -36,7 +36,7 @@ public:
         JSObject* liveSources { nullptr };
     };
 
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, bool shouldPreventExtensions);
     static ModuleNamespace* create(VM&, Structure*, ModuleID, ModulePhase, const DynamicExports&);
 
     DECLARE_INFO;
@@ -44,18 +44,34 @@ public:
 
     ModuleID module() const { return m_module; }
     bool isDeferred() const { return m_isDeferred; }
-    // A read of a deferred namespace object may evaluate the module, so that object does not have the module's namespace layout.
-    bool hasNamespaceLayoutOf(ModuleID module) const { return m_module == module && !m_isDeferred; }
+    bool isAnsweredByMock() const;
+    JSObject* activeMock() const;
+    void setKeepsToModule(bool keepsToModule) { m_keepsToModule = keepsToModule; }
+    bool keepsToModule() const;
+    void setMockOfView(VM& vm, JSObject* mock) { m_mockOfView.set(vm, this, mock); }
+    void clearMockOfView() { m_mockOfView.clear(); }
+    AbstractModuleRecord* recordForResolution();
+    bool hasNamespaceLayoutOf(ModuleID module) const { return (m_module == module || m_facade == module) && !m_isDeferred && !m_mockOfView; }
+    void setFacade(ModuleID facade) { m_facade = facade; }
     std::optional<unsigned> find(UniquedStringImpl*) const;
-    bool hasExport(UniquedStringImpl* name) const { return find(name) || isDynamicExport(name); }
-    // Reads every export once, in the order of the keys, as [[OwnPropertyKeys]] and [[Get]] of each key would, without a lookup by name.
+    std::optional<unsigned> findWhetherShownOrNot(UniquedStringImpl*) const;
+    bool hasExport(UniquedStringImpl* name) const { return findWhetherShownOrNot(name) || isDynamicExport(name); }
     bool tryReadExports(JSGlobalObject*, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values);
+    void refuseToShowExport(PropertyName);
 
-    bool hasESModuleMarker() const { return m_hasESModuleMarker; }
+    void replaceCapturedValue(JSGlobalObject*, const Identifier& name, JSValue);
+    DynamicExports dynamicExports() const { return { m_dynamicExportNames.get(), m_capturedValues.get(), m_liveSources.get() }; }
+    void replaceDynamicExports(VM&, const DynamicExports&);
+    JSValue capturedValueWithoutAllocating(UniquedStringImpl*) const;
+
+    bool showsESModuleMarker() const { return m_hasESModuleMarker || (m_isMarkerDeferred && isDeferredMarkerReady()); }
     void setESModuleMarker(bool hasMarker) { m_hasESModuleMarker = hasMarker; }
+    void setMarkerDeferred(bool isDeferred) { m_isMarkerDeferred = isDeferred; }
+    void storeESModuleMarker(bool hasMarker);
 
     bool hasOwnStructure() const { return m_hasOwnStructure; }
     void ensureOwnStructure(VM&);
+    void leaveStructureThatCachesKnow(VM&);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
@@ -71,20 +87,27 @@ private:
 
     Modules& modules() const;
     std::span<const ModuleExportData> exports() const;
-    bool isAmbiguousExport(unsigned index) const;
+    bool isHiddenExport(unsigned index) const;
     bool isSymbolLikeKey(UniquedStringImpl*) const;
+    bool isOrdinaryKey(PropertyName) const;
     bool isDynamicExport(UniquedStringImpl*) const;
     JSValue readDynamicExport(JSGlobalObject*, PropertyName);
+    bool getOwnPropertySlotOfMock(JSGlobalObject*, JSObject* mock, PropertyName, PropertySlot&);
     bool evaluateIfNeeded(JSGlobalObject*);
+    bool isDeferredMarkerReady() const;
 
     WriteBarrier<JSCellButterfly> m_dynamicExportNames;
     WriteBarrier<JSObject> m_capturedValues;
     WriteBarrier<JSObject> m_liveSources;
+    WriteBarrier<JSObject> m_mockOfView;
     ModuleID m_module;
+    ModuleID m_facade;
     bool m_isDeferred;
     bool m_mayNeedEvaluation;
     bool m_hasESModuleMarker { false };
+    bool m_isMarkerDeferred { false };
     bool m_hasOwnStructure { false };
+    bool m_keepsToModule { false };
 };
 
 } } // namespace JSC::AOT

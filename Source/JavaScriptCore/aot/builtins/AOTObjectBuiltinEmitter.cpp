@@ -14,6 +14,7 @@
 #include "AOTCellAllocationEmitter.h"
 #include "AOTCellFormat.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTTypeTable.h"
 #include "JSObject.h"
 #include "JSTypeInfo.h"
 #include "Structure.h"
@@ -25,14 +26,14 @@ ObjectBuiltinEmitter::ObjectBuiltinEmitter(CodeGenerator& generator)
 {
 }
 
-CellPointer ObjectBuiltinEmitter::allocateEmptyObject(InlineAllocation kind, std::optional<Integer> header, LBasicBlock slowPath)
+CellPointer ObjectBuiltinEmitter::allocateEmptyObject(InlineAllocation kind, std::optional<Integer> header, LBasicBlock slowPath, unsigned inlineCapacity)
 {
     CellAllocationEmitter& allocation = emitter<CellAllocationEmitter>();
     CodeGenerator::InitializationScope scope(generator());
     CellPointer object = allocation.allocateObject(kind, slowPath);
     if (header)
         allocation.storeHeader(object, *header);
-    for (PropertyOffset slot = 0; slot < static_cast<PropertyOffset>(JSFinalObject::defaultInlineCapacity); ++slot)
+    for (PropertyOffset slot = 0; slot < static_cast<PropertyOffset>(inlineCapacity); ++slot)
         m_out.store64(m_out.int64Zero, inlineProperty(object, slot));
     emitter<BarrierEmitter>().fenceAfterInitialization();
     return object;
@@ -47,15 +48,15 @@ CellPointer ObjectBuiltinEmitter::createObjectWithPrototype(const InlineCall& ca
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
     TypedPointer cache = instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(builtins.objects.objectCreate));
-    LValue offset = m_out.bitAnd(m_out.lShr(prototype.value(), m_out.constInt32(ObjectBuiltinWords::objectCreateShift - logEntrySize)), m_out.constIntPtr((ObjectBuiltinWords::objectCreateSize - 1) << logEntrySize));
+    LValue offset = m_out.bitAnd(m_out.lShr(prototype.value(), ObjectBuiltinWords::objectCreateShift - logEntrySize), (ObjectBuiltinWords::objectCreateSize - 1) << logEntrySize);
     LValue entry = m_out.add(cache.base(), offset);
     CellPointer cachedPrototype(m_out.loadPtr(m_out.address(*cache.heap(), entry, cache.offset() + OBJECT_OFFSETOF(CacheEntry, prototype))));
     branchUnless(equal(cachedPrototype, prototype), slowPath);
     Integer header(m_out.load64(m_out.address(*cache.heap(), entry, cache.offset() + OBJECT_OFFSETOF(CacheEntry, header))));
-    join.add(allocateEmptyObject(InlineAllocation::DefaultFinalObject, header, slowPath));
+    join.add(allocateEmptyObject(InlineAllocation::DefaultFinalObject, header, slowPath, JSFinalObject::defaultInlineCapacity));
 
     m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectCreate, { prototype }, { .isOnRarePath = true }));
+    join.add(callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectCreate, { prototype, word32(0) }, { .isOnRarePath = true }));
     return join.finish();
 }
 
@@ -63,10 +64,12 @@ CellPointer ObjectBuiltinEmitter::createObjectWithoutPrototype(const InlineCall&
 {
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
-    join.add(allocateEmptyObject(InlineAllocation::NullPrototypeObject, std::nullopt, slowPath));
+    uint32_t numberOfDefinitions = call.numberOfParameters() ? call.parameterWord(0) : 0;
+    bool isSmall = numberOfDefinitions && numberOfDefinitions <= smallObjectInlineCapacity;
+    join.add(allocateEmptyObject(isSmall ? InlineAllocation::SmallNullPrototypeObject : InlineAllocation::NullPrototypeObject, std::nullopt, slowPath, isSmall ? smallObjectInlineCapacity : JSFinalObject::defaultInlineCapacity));
 
     m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectCreate, { CellPointer(m_out.intPtrZero) }, { .isOnRarePath = true }));
+    join.add(callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectCreate, { CellPointer(m_out.intPtrZero), word32(isSmall) }, { .isOnRarePath = true }));
     return join.finish();
 }
 
@@ -75,7 +78,7 @@ void ObjectBuiltinEmitter::generateObjectCreate(const InlineCall& call)
     ValueID prototype = call.argument(0);
     Join<CellPointer> join(m_out);
     if (typeOf(prototype).primitives & Primitive::Null) {
-        const TypeTestPlan& plan = typeTestPlanFor(m_function.at(prototype).type, representationOf(prototype), TypeTable::null);
+        const TypeTestPlan& plan = typeTestPlanFor(typeIDOf(prototype), representationOf(prototype), TypeTable::null);
         LBasicBlock isNull = newBlock();
         LBasicBlock isNotNull = newBlock();
         branchOnType(get(prototype), plan, { normalEdge(isNull), normalEdge(isNotNull) });
@@ -101,8 +104,6 @@ void ObjectBuiltinEmitter::generateSetPrototypeOf(const InlineCall& call)
     ValueID argument = call.argument(0);
     CellPointer object = objectOrMiss(call, argument);
     Boxed prototype = boxedOperand(call.context(), call.argument(1));
-    if (generator().validates())
-        missUnless(call, Condition(m_out.booleanFalse));
     Word32 structureID = emitter<AccessEmitter>().findPrototypeTransition(object, prototype, missBlockOf(call));
     missUnless(call, hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(object), orderWordIsNotExtensible));
     emitter<AccessEmitter>().storeStructureAfterPrototypeTransition(object, structureID);
@@ -123,28 +124,33 @@ Condition ObjectBuiltinEmitter::isSameValue(const OperationContext& context, Val
     const Type& left = typeOf(a);
     const Type& right = typeOf(b);
     auto bitsOf = [&](Number x) {
-        return Integer(m_out.bitCast(x.value(), B3::Int64));
+        return Integer(m_out.bitCast(x.value(), Machine::Int64));
     };
     auto areSameNumber = [&](Number x, Number y) {
-        return logicalOr(equal(bitsOf(x), bitsOf(y)), logicalAnd(notEqualOrUnordered(x, x), notEqualOrUnordered(y, y)));
+        Integer bitsOfX = bitsOf(x);
+        Condition haveSameBits = equal(bitsOfX, bitsOf(y));
+        Condition xIsNaN = notEqualOrUnordered(x, x);
+        return logicalOr(haveSameBits, logicalAnd(xIsNaN, notEqualOrUnordered(y, y)));
     };
-    if (left.isInteger() && right.isInteger())
-        return equal(integerOperand(a), integerOperand(b));
-    if (left.isNumber() && right.isNumber())
-        return areSameNumber(numberOperand(a), numberOperand(b));
+    if (left.isInteger() && right.isInteger()) {
+        Integer x = integerOperand(a);
+        return equal(x, integerOperand(b));
+    }
+    if (left.isNumber() && right.isNumber()) {
+        Number x = numberOperand(a);
+        return areSameNumber(x, numberOperand(b));
+    }
     Boxed x = boxedOperand(context, a);
     Boxed y = boxedOperand(context, b);
     if (!(left.primitives & Primitive::Number) || !(right.primitives & Primitive::Number))
         return equal(x, y);
-    LBasicBlock numbers = newBlock();
-    LBasicBlock others = newBlock();
-    Join<Condition> join(m_out);
-    branch(logicalAnd(isNumber(x), isNumber(y)), { normalEdge(numbers), normalEdge(others) });
-    m_out.appendTo(numbers);
-    join.add(areSameNumber(numberToDouble(x), numberToDouble(y)));
-    m_out.appendTo(others);
-    join.add(equal(x, y));
-    return join.finish();
+    Condition xIsNumber = isNumber(x);
+    return selectByBranch<Condition>(logicalAnd(xIsNumber, isNumber(y)), [&] {
+        Number numberX = numberToDouble(x);
+        return areSameNumber(numberX, numberToDouble(y));
+    }, [&] {
+        return equal(x, y);
+    });
 }
 
 void ObjectBuiltinEmitter::generateObjectIs(const InlineCall& call)
@@ -160,9 +166,11 @@ void ObjectBuiltinEmitter::generateObjectIs(const InlineCall& call)
         LBasicBlock decided = newBlock();
         branch(isSame, { normalEdge(decided), normalEdge(differentBits) });
         m_out.appendTo(differentBits);
-        branch(logicalAnd(isCell(x), isCell(y)), { normalEdge(cells), normalEdge(decided) });
+        Condition xIsCell = isCell(x);
+        branch(logicalAnd(xIsCell, isCell(y)), { normalEdge(cells), normalEdge(decided) });
         m_out.appendTo(cells);
-        branch(hasCellTypeIn(unboxCell(x), { StringType, HeapBigIntType }), { rareEdge(missBlockOf(call)), normalEdge(decided) });
+        Condition isComparedByContents = hasCellTypeIn(unboxCell(x), { StringType, HeapBigIntType });
+        branch(isComparedByContents, { rareEdge(missBlockOf(call)), normalEdge(decided) });
         m_out.appendTo(decided);
     }
     finish(call, isSame);
@@ -173,21 +181,16 @@ void ObjectBuiltinEmitter::generateCallObjectConstructor(const InlineCall& call)
     finish(call, objectOrMiss(call, call.argument(0)));
 }
 
-void ObjectBuiltinEmitter::generateObjectFreeze(const InlineCall& call)
+void ObjectBuiltinEmitter::generateObjectAssign(const InlineCall& call)
 {
-    static_assert(orderWordHasExtraProperties < orderWordIsFrozen && orderWordIsFrozen < orderWordIsSealed && orderWordIsSealed < orderWordIsNotExtensible);
-    ValueID argument = call.argument(0);
-    const Type& type = typeOf(argument);
-    ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
-    Word32 frozen = word32(static_cast<int32_t>(orderWordIntegrityBits));
-    CellPointer cell = objectOrMiss(call, argument);
-    if (!shapeTests.hasOnlyCompiledObjects(type))
-        missUnless(call, shapeTests.hasShapeIn(cell, type.layouts, type));
-    missUnless(call, hasNoBits(loadField<Word32>(loadStructure(cell), m_heaps.Structure_bitField), Structure::s_mayBePrototypeBits));
-    Word32 word = shapeTests.orderWordOf(cell);
-    missUnless(call, below(word, word32(orderWordHasExtraProperties)));
-    storeField(cell, m_heaps.AOTObject_orderWord, bitOr(word, frozen));
-    finish(call, get(argument), type);
+    ValueID target = call.argument(0);
+    CellPointer object = objectOrMiss(call, target);
+    for (unsigned index = 1; index < call.arguments().size(); ++index) {
+        bool isLastSource = index + 1 == call.arguments().size();
+        RuntimeOperation operation = isLastSource ? RuntimeOperation::ObjectAssignWithoutCode : RuntimeOperation::ObjectAssignWithoutGetters;
+        missUnless(call, callOperation<Condition>(call.context(), operation, { object, boxedOperand(call.context(), call.argument(index)) }, { .calledBuiltin = functionOf(call.overload()) }));
+    }
+    finish(call, get(target), typeOf(target));
 }
 
 void ObjectBuiltinEmitter::generateObjectPrototypeToString(const InlineCall& call)

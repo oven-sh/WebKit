@@ -1,0 +1,18 @@
+# const next = (turnLeft(a, 5) + (b ^ c) + words[t]) | 0;
+# A read past the end of a view gives undefined, and a sum with undefined is no number. So the read gave `undefined|i32`, the sum of integers in front of it was made a double, the element a double that may be absent,
+# and the whole was brought back to an int32: fifteen instructions a step. Nobody writes such a sum for the sake of NaN.
+# In a turn that may begin again, a read whose only user is a sum beside a number is held below the length at hand: past it the turn begins again in the closed copy, which does what the language says.
+# Behind the test the read gives an int32, and the sum stays a sum of integers.
+# PROGRAM-OF: what-comes-round-as-an-int32-is-asked-for-one-in-front-of-the-loop.ir
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: i32 @Int32, {{*}}isInLoop=true isLoopHead=true
+# The header compares the counter with the lesser of its bound and the length, so the iteration checks nothing.
+# CHECK: [[below]]: boolean @Boolean = Less {{*}}form=Integers
+# CHECK-NOT: = Less
+# CHECK-NOT: = IntegerToNumber
+# CHECK: [[word]]: i32 @Int32 = GetTypedArrayElement {{*}}isInsideView
+# CHECK-NOT: form=Numbers
+# CHECK: = ToInt32
+# RUN(SHELL): run-in-shell let asked = 0; const all = [new Int32Array([1, 2, 3]), new Int32Array([3, 4, 5]), 5, new Int32Array([7]), 3]; globalThis.hidden = () => all[asked++]; globalThis.sink = (mixed, changed) => { print(String(mixed) + " " + String(changed)); };
+# SHELL: exited with 0

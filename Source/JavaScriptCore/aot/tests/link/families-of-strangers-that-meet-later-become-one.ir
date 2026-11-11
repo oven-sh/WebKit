@@ -1,0 +1,139 @@
+# If two families of strangers that meet stayed apart, whoever had read through the one before would never hear of what the other holds, and an escape of the one would leave the other closed
+# function first(c) { switch (c) { case 1: return { x: "a", p: 0 }; case 2: return { x: "b", t: 0 }; case 3: return { x: "c", u: 0 }; case 4: return { x: "d", v: 0 }; default: return { x: true, q: 0 }; } }
+# function second(c) { switch (c) { case 1: return { x: 1, r: 0 }; case 2: return { x: 2, w: 0 }; case 3: return { x: 3, y: 0 }; case 4: return { x: 4, z: 0 }; default: return { x: null, s: 0 }; } }
+# function read(o) { return o.x; }  read(first(flag));  const either = flag ? first(flag) : second(flag);  readEither(either)
+# Five meet in what each function gives, one more than a set takes, so they are lost: two families. The reader of the first five was given its node before the families met. It is tied to the node of the other five, so it finds what all ten hold. Nothing has escaped
+# RUN: link functions layouts mechanisms=all
+# CHECK: function f3 callers-known one-callee {{*}}result=undefined|null|true|int[0, 2147483647]|string
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9
+# CHECK: function f4 callers-known one-callee {{*}}result=undefined|null|true|int[0, 2147483647]|string
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[]
+# CHECK: layout L2 {{*}}changes=[]
+# CHECK: layout L3 {{*}}changes=[]
+# CHECK: layout L4 {{*}}changes=[]
+# CHECK: layout L5 {{*}}changes=[]
+# CHECK: layout L6 {{*}}changes=[]
+# CHECK: layout L7 {{*}}changes=[]
+# CHECK: layout L8 {{*}}changes=[]
+# CHECK: layout L9 {{*}}changes=[]
+# RUN(ANSWER): run-in-shell globalThis.flag = false; globalThis.report = value => print(String(value));
+# ANSWER: true
+# ANSWER-NEXT: null
+# ANSWER-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none globalThis.flag = false; globalThis.report = value => print(String(value));
+# NONE: true
+# NONE-NEXT: null
+# NONE-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}]
+layout L4 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="t" declared={type=anything} flags=[IsRequired]}]
+layout L5 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="u" declared={type=anything} flags=[IsRequired]}]
+layout L6 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="v" declared={type=anything} flags=[IsRequired]}]
+layout L7 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="w" declared={type=anything} flags=[IsRequired]}]
+layout L8 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L9 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="z" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = PropGet v0 key="report" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = NewClosure function=f3
+    v6 = NewClosure function=f4
+    v7 = Call v3, -, v1 calleeName="first"
+    v8 = Call v5, -, v7 calleeName="read"
+    v9 = Call v2, -, v8 calleeName="report"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v10 = Call v3, -, v1 calleeName="first"
+    Jump -> next b3(v10)
+  b2():
+    v11 = Call v4, -, v1 calleeName="second"
+    Jump -> next b3(v11)
+  b3(v12):
+    v13 = Call v6, -, v12 calleeName="readEither"
+    v14 = Call v2, -, v13 calleeName="report"
+    Return v14
+}
+function f1 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Switch v0 cases=[1, 2, 3, 4] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+  b1():
+    v2 = String string="a"
+    v3 = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    Jump -> next b6(v4)
+  b2():
+    v5 = String string="b"
+    v6 = NewObject -, v5, v1 layout=L4 fields=[0, 1]
+    v7 = FinishObject v6
+    Jump -> next b6(v7)
+  b3():
+    v8 = String string="c"
+    v9 = NewObject -, v8, v1 layout=L5 fields=[0, 1]
+    v10 = FinishObject v9
+    Jump -> next b6(v10)
+  b4():
+    v11 = String string="d"
+    v12 = NewObject -, v11, v1 layout=L6 fields=[0, 1]
+    v13 = FinishObject v12
+    Jump -> next b6(v13)
+  b5():
+    v14 = Boolean boolean=true
+    v15 = NewObject -, v14, v1 layout=L1 fields=[0, 1]
+    v16 = FinishObject v15
+    Jump -> next b6(v16)
+  b6(v17):
+    Return v17
+}
+function f2 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    Switch v0 cases=[1, 2, 3, 4] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+  b1():
+    v2 = Integer integer=1
+    v3 = NewObject -, v2, v1 layout=L2 fields=[0, 1]
+    v4 = FinishObject v3
+    Jump -> next b6(v4)
+  b2():
+    v5 = Integer integer=2
+    v6 = NewObject -, v5, v1 layout=L7 fields=[0, 1]
+    v7 = FinishObject v6
+    Jump -> next b6(v7)
+  b3():
+    v8 = Integer integer=3
+    v9 = NewObject -, v8, v1 layout=L8 fields=[0, 1]
+    v10 = FinishObject v9
+    Jump -> next b6(v10)
+  b4():
+    v11 = Integer integer=4
+    v12 = NewObject -, v11, v1 layout=L9 fields=[0, 1]
+    v13 = FinishObject v12
+    Jump -> next b6(v13)
+  b5():
+    v14 = Null
+    v15 = NewObject -, v14, v1 layout=L3 fields=[0, 1]
+    v16 = FinishObject v15
+    Jump -> next b6(v16)
+  b6(v17):
+    Return v17
+}
+function f3 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f4 name="readEither" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

@@ -81,7 +81,7 @@ RenderFileUploadControl::RenderFileUploadControl(HTMLInputElement& input, Style:
 
 RenderFileUploadControl::~RenderFileUploadControl() = default;
 
-HTMLInputElement& LEGACY_NODELETE RenderFileUploadControl::inputElement() const
+NODELETE HTMLInputElement& RenderFileUploadControl::inputElement() const
 {
     return downcast<HTMLInputElement>(nodeForNonAnonymous());
 }
@@ -106,13 +106,13 @@ void RenderFileUploadControl::updateFromElement()
         repaint();
 }
 
-static int LEGACY_NODELETE nodeLogicalWidth(Node* node)
+NODELETE static int nodeLogicalWidth(Node* node)
 {
     return (node && node->renderBox()) ? roundToInt(node->renderBox()->logicalSize().width()) : 0;
 }
 
 #if PLATFORM(COCOA)
-static int LEGACY_NODELETE nodeLogicalHeight(Node* node)
+NODELETE static int nodeLogicalHeight(Node* node)
 {
     return (node && node->renderBox()) ? roundToInt(node->renderBox()->logicalSize().height()) : 0;
 }
@@ -192,7 +192,7 @@ void RenderFileUploadControl::paintControl(PaintInfo& paintInfo, const LayoutPoi
                     if (auto textBox = InlineIterator::lineLeftmostTextBoxFor(*buttonTextRenderer)) {
                         auto textVisualRect = textBox->visualRectIgnoringBlockDirection();
                         textVisualRect.setLocation(buttonTextRenderer->localToContainerPoint(textVisualRect.location(), this));
-                        textVisualRect.moveBy(roundPointToDevicePixels(paintOffset, protect(document())->deviceScaleFactor()));
+                        textVisualRect.moveBy(roundPointToDevicePixels(paintOffset, document().deviceScaleFactor()));
 
                         auto metrics = protect(textBox->style()->fontCascade())->metricsOfPrimaryFont();
 
@@ -211,7 +211,7 @@ void RenderFileUploadControl::paintControl(PaintInfo& paintInfo, const LayoutPoi
                 }
             }
             // File upload button is display: none (see ::file-selector-button).
-            return roundToDevicePixel(marginBoxLogicalHeight(containingBlock()->writingMode()), protect(document())->deviceScaleFactor());
+            return roundToDevicePixel(marginBoxLogicalHeight(containingBlock()->writingMode()), document().deviceScaleFactor());
         }();
 
         paintInfo.context().setFillColor(style->visitedDependentColorApplyingColorFilter());
@@ -225,7 +225,7 @@ void RenderFileUploadControl::paintControl(PaintInfo& paintInfo, const LayoutPoi
                 textLogicalTop += font->metricsOfPrimaryFont().ascent();
             }
 
-            auto textOrigin = roundPointToDevicePixels({ textLogicalLeft, textLogicalTop }, protect(document())->deviceScaleFactor());
+            auto textOrigin = roundPointToDevicePixels({ textLogicalLeft, textLogicalTop }, document().deviceScaleFactor());
             if (!isHorizontalWritingMode) {
                 textOrigin = textOrigin.transposedPoint();
 
@@ -310,22 +310,15 @@ std::pair<LayoutUnit, LayoutUnit> RenderFileUploadControl::computeIntrinsicLogic
     return { minLogicalWidth, maxLogicalWidth };
 }
 
-void RenderFileUploadControl::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderFileUploadControl::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
-    m_minContentLogicalWidthContribution = 0_lu;
-    m_maxContentLogicalWidthContribution = 0_lu;
-
     if (auto fixedLogicalWidth = style().logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive()) {
-        m_maxContentLogicalWidthContribution = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
-        m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-    } else
-        std::tie(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution) = computeIntrinsicLogicalWidths();
-
-    constrainIntrinsicLogicalWidthsByMinMax(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
-
-    clearContentLogicalWidthsInvalidation();
+        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
+        return { logicalWidth, logicalWidth };
+    }
+    return computeIntrinsicLogicalWidths();
 }
 
 PositionWithAffinity RenderFileUploadControl::positionForPoint(const LayoutPoint&, HitTestSource, const RenderFragmentContainer*)

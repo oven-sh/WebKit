@@ -1,0 +1,44 @@
+# `using` asks a helper for `value[Symbol.dispose]` and calls what it gets at the end of the block. The helper's row reads through the prototypes, so Link itself tells which member of the table the read finds above the iterator, and the code of the library behind that member is in the image. It hangs on nothing else that the program does
+# { using held = [].values(); }
+# LIBRARY: own
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup let-go IteratorPrototypeSymbolDispose
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK: function f2 unreached
+# RUN(IMAGE): image ProgramTables
+# IMAGE: compiledRuntimeFunction JSIteratorPrototypeDispose
+# IMAGE-NOT: compiledRuntimeFunction JSIteratorPrototypeMap
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/engine/DisposableStackPrototype.ts" displayPath="/$bun/js/engine/DisposableStackPrototype.ts" flags=[IsLibrary]
+data d0 root=Array{contents=never} module=m0
+entry module=m0
+runtimefunction id=JSIteratorPrototypeDispose function=f1
+runtimefunction id=DisposableStackPrototypeGetDisposeMethod function=f3 visibility=Private
+runtimefunction id=JSIteratorPrototypeMap function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Builtin builtin=ArrayPrototypeValues
+    v2 = Call v1, v0 calleeName="values"
+    v3 = Builtin builtin=CompilerHelpersGetDisposeMethod [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Call v4, v2
+    v6 = Undefined
+    Return v6
+}
+function f1 name="[Symbol.dispose]" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeMap thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="getDisposeMethod" module=m2 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=DisposableStackPrototypeGetDisposeMethod thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key=@@dispose
+    Return v1
+}

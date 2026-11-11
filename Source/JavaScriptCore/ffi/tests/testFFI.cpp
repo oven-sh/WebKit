@@ -2409,6 +2409,10 @@ static void testOptimizingTierPointerArgumentWithNonViewCells()
         arguments.append(view);
         if (callFunction(hot, arguments) != viewAddress)
             ++warmupMismatches;
+        // The DFG and the FTL compile on another thread. Wait for a compile that this call started:
+        // without the wait, the loop gives that thread only the time the calls take (about 0.2 s),
+        // and the test fails on a machine where the compiler thread is slower than that.
+        vm.heap.completeAllJITPlans();
     }
     FFI_CHECK(!warmupMismatches);
     FFI_CHECK(installedInFTL());

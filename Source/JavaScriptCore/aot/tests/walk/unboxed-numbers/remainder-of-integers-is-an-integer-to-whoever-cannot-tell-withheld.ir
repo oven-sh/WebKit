@@ -1,0 +1,8 @@
+# the same functions with unboxed numbers withheld: the remainder is the number that the operator gives
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Mod
+# CHECK: = StrictEq
+# RUN(NEVER): walk f1 f2 f3 f4 mechanisms=none+TypedOperations
+# NEVER-NOT: RemainderOfIntegers
+# PROGRAM-OF: remainder-of-integers-is-an-integer-to-whoever-cannot-tell.ir

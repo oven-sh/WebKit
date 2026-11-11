@@ -135,6 +135,62 @@ TEST(WTF_Vector, InitializerList)
     EXPECT_EQ(4, vector[3]);
 }
 
+TEST(WTF_Vector, ReserveCapacityTag)
+{
+    Vector<int> vector(ReserveCapacityTag { }, 10);
+    EXPECT_TRUE(vector.isEmpty());
+    EXPECT_EQ(0U, vector.size());
+    EXPECT_GE(vector.capacity(), 10U);
+
+    auto capacity = vector.capacity();
+    auto* buffer = vector.span().data();
+    EXPECT_NE(nullptr, buffer);
+    for (int i = 0; i < 10; ++i)
+        vector.append(i);
+
+    EXPECT_EQ(10U, vector.size());
+    EXPECT_EQ(capacity, vector.capacity());
+    EXPECT_EQ(buffer, vector.span().data());
+    for (int i = 0; i < 10; ++i)
+        EXPECT_EQ(i, vector[i]);
+}
+
+TEST(WTF_Vector, ReserveCapacityTagZero)
+{
+    Vector<int> vector(ReserveCapacityTag { }, 0);
+    EXPECT_TRUE(vector.isEmpty());
+    EXPECT_EQ(0U, vector.capacity());
+    EXPECT_EQ(nullptr, vector.span().data());
+}
+
+TEST(WTF_Vector, ReserveCapacityTagInline)
+{
+    Vector<int, 8> smallVector(ReserveCapacityTag { }, 4);
+    EXPECT_TRUE(smallVector.isEmpty());
+    EXPECT_EQ(8U, smallVector.capacity());
+
+    Vector<int, 8> largeVector(ReserveCapacityTag { }, 20);
+    EXPECT_TRUE(largeVector.isEmpty());
+    EXPECT_GE(largeVector.capacity(), 20U);
+
+    auto* buffer = largeVector.span().data();
+    for (int i = 0; i < 20; ++i)
+        largeVector.append(i);
+    EXPECT_EQ(buffer, largeVector.span().data());
+}
+
+TEST(WTF_Vector, ReserveCapacityTagDoesNotConstructElements)
+{
+    ConstructorDestructorCounter::TestingScope scope;
+    {
+        Vector<ConstructorDestructorCounter> vector(ReserveCapacityTag { }, 5);
+        EXPECT_TRUE(vector.isEmpty());
+        EXPECT_GE(vector.capacity(), 5U);
+    }
+    EXPECT_EQ(0U, ConstructorDestructorCounter::constructionCount);
+    EXPECT_EQ(0U, ConstructorDestructorCounter::destructionCount);
+}
+
 TEST(WTF_Vector, ConstructWithFrom)
 {
     auto vector = Vector<int>::from(1, 2, 3, 4, 5);
@@ -671,9 +727,7 @@ TEST(WTF_Vector, ReverseIterator)
 
 TEST(WTF_Vector, MoveOnly_UncheckedAppend)
 {
-    Vector<MoveOnly> vector;
-
-    vector.reserveInitialCapacity(100);
+    Vector<MoveOnly> vector(ReserveCapacityTag { }, 100);
     for (size_t i = 0; i < 100; ++i) {
         MoveOnly moveOnly(i);
         vector.append(WTF::move(moveOnly));
@@ -1213,9 +1267,7 @@ static MoveOnly multiplyByTwoMoveOnly(const MoveOnly& value)
 
 TEST(WTF_Vector, MapStaticFunctionMoveOnly)
 {
-    Vector<MoveOnly> vector;
-
-    vector.reserveInitialCapacity(3);
+    Vector<MoveOnly> vector(ReserveCapacityTag { }, 3);
     for (unsigned i = 0; i < 3; ++i)
         vector.append(MoveOnly { i });
 
@@ -1245,9 +1297,7 @@ TEST(WTF_Vector, MapLambda)
 
 TEST(WTF_Vector, MapLambdaMove)
 {
-    Vector<MoveOnly> vector;
-
-    vector.reserveInitialCapacity(3);
+    Vector<MoveOnly> vector(ReserveCapacityTag { }, 3);
     for (unsigned i = 0; i < 3; ++i)
         vector.append(MoveOnly { i });
 
@@ -2443,6 +2493,55 @@ TEST(WTF_Vector, fromRangeConstructorEmptyRange)
     EXPECT_EQ(0U, wtfVec.size());
 }
 
+TEST(WTF_Vector, AppendSizedRange)
+{
+    Vector<int> wtfVec = { 1, 2 };
+    std::array<int, 3> array = { 3, 4, 5 };
+    wtfVec.appendRange(array);
+
+    EXPECT_EQ(5U, wtfVec.size());
+    EXPECT_EQ(1, wtfVec[0]);
+    EXPECT_EQ(2, wtfVec[1]);
+    EXPECT_EQ(3, wtfVec[2]);
+    EXPECT_EQ(4, wtfVec[3]);
+    EXPECT_EQ(5, wtfVec[4]);
+}
+
+TEST(WTF_Vector, AppendSizedRangeEmpty)
+{
+    Vector<int> wtfVec = { 1, 2 };
+    wtfVec.appendRange(std::views::empty<int>);
+
+    EXPECT_EQ(2U, wtfVec.size());
+    EXPECT_EQ(1, wtfVec[0]);
+    EXPECT_EQ(2, wtfVec[1]);
+}
+
+TEST(WTF_Vector, AppendSizedRangeMovesFromRvalue)
+{
+    Vector<String> wtfVec = { "a"_s };
+    Vector<String> other = { "b"_s, "c"_s };
+    wtfVec.appendRange(WTF::move(other));
+
+    EXPECT_EQ(3U, wtfVec.size());
+    EXPECT_EQ("a"_s, wtfVec[0]);
+    EXPECT_EQ("b"_s, wtfVec[1]);
+    EXPECT_EQ("c"_s, wtfVec[2]);
+    SUPPRESS_USE_AFTER_MOVE EXPECT_TRUE(other[0].isNull());
+    SUPPRESS_USE_AFTER_MOVE EXPECT_TRUE(other[1].isNull());
+}
+
+TEST(WTF_Vector, AppendSizedRangeCopiesFromLvalue)
+{
+    Vector<String> wtfVec = { "a"_s };
+    Vector<String> other = { "b"_s, "c"_s };
+    wtfVec.appendRange(other);
+
+    EXPECT_EQ(3U, wtfVec.size());
+    EXPECT_EQ("b"_s, other[0]);
+    EXPECT_EQ("c"_s, other[1]);
+}
+
 TEST(WTF_Vector, fromRangeStrings)
 {
     Vector<String> stringVec = { "hello"_s, "world"_s };
@@ -2545,8 +2644,7 @@ TEST(WTF_Vector, InsertFillAliasingWithReallocation)
 {
     // Test that insertFill() works correctly when data references an element
     // in the vector and the insertion triggers reallocation.
-    Vector<String> v;
-    v.reserveInitialCapacity(3);
+    Vector<String> v(ReserveCapacityTag { }, 3);
     v.append("a"_s);
     v.append("b"_s);
     v.append("c"_s);
@@ -2700,8 +2798,7 @@ TEST(WTF_Vector, AppendVectorMoveToEmpty)
 
 TEST(WTF_Vector, AppendVectorMoveTriggersExpansion)
 {
-    Vector<int> dest;
-    dest.reserveInitialCapacity(2);
+    Vector<int> dest(ReserveCapacityTag { }, 2);
     dest.append(1);
     dest.append(2);
     EXPECT_EQ(2U, dest.capacity());
@@ -2772,8 +2869,7 @@ TEST(WTF_Vector, AppendVectorMoveMoveOnlyToEmpty)
 
 TEST(WTF_Vector, AppendVectorMoveMoveOnlyTriggersExpansion)
 {
-    Vector<MoveOnly> dest;
-    dest.reserveInitialCapacity(1);
+    Vector<MoveOnly> dest(ReserveCapacityTag { }, 1);
     dest.append(MoveOnly(1));
     EXPECT_EQ(1U, dest.capacity());
 
@@ -2883,8 +2979,7 @@ TEST(WTF_Vector, AppendVectorMoveRef)
 TEST(WTF_Vector, AppendVectorMoveRefPtrTriggersExpansion)
 {
     // Same as above but forces capacity expansion during appendVector.
-    Vector<RefPtr<RefCountedObject>> dest;
-    dest.reserveInitialCapacity(1);
+    Vector<RefPtr<RefCountedObject>> dest(ReserveCapacityTag { }, 1);
     dest.append(RefCountedObject::create(1).ptr());
     EXPECT_EQ(1U, dest.capacity());
 

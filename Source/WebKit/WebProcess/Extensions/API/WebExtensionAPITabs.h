@@ -35,6 +35,7 @@
 #include "WebPageProxyIdentifier.h"
 
 OBJC_CLASS NSDictionary;
+OBJC_CLASS NSObject;
 OBJC_CLASS NSString;
 
 namespace WebKit {
@@ -76,7 +77,7 @@ public:
     void toggleReaderMode(WebPageProxyIdentifier, double tabID, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
     void captureVisibleTab(WebPageProxyIdentifier, double windowID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
-    void sendMessage(WebFrame&, double tabID, const String& message, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void sendMessage(WebFrame&, double tabID, const WebExtensionMessage&, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
     RefPtr<WebExtensionAPIPort> connect(WebFrame&, JSContextRef, double tabID, NSDictionary *options, NSString **outExceptionString);
 
     void executeScript(WebPageProxyIdentifier, double tabID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
@@ -84,6 +85,9 @@ public:
     void removeCSS(WebPageProxyIdentifier, double tabID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
     double tabIdentifierNone() const { return -1; }
+
+    NODELETE NSDictionary *tabStatus();
+    NODELETE NSDictionary *windowType();
 
     WebExtensionAPIEvent& onActivated();
     WebExtensionAPIEvent& onAttached();

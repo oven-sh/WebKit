@@ -12,56 +12,15 @@
 #include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
-#include <wtf/Forward.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-class FunctionAnalyses;
-class Program;
-struct Function;
-
 enum class FrameSlotKind : uint8_t { Value, Cell, NarrowReference };
-
-struct FrameRoot {
-    ValueID value;
-    FrameSlotKind kind;
-};
-
-struct FrameResultRoot {
-    ValueID producer;
-    uint32_t index;
-    FrameSlotKind kind;
-};
-
-struct SuspensionRoots {
-    ValueID suspension;
-    Vector<FrameRoot, 8> roots;
-    Vector<FrameResultRoot, 2> resultRoots;
-
-    size_t size() const { return roots.size() + resultRoots.size(); }
-};
-
-class FrameMaps {
-public:
-    FrameMaps() = default;
-
-    const SuspensionRoots& rootsAt(ValueID suspension) const LIFETIME_BOUND;
-    unsigned numberOfSuspensions() const { return m_suspensions.size(); }
-    BitVector suspensionValues() const;
-    void dump(PrintStream&, const Function&) const;
-
-private:
-    friend FrameMaps computeFrameMaps(const Program&, const Function&, FunctionAnalyses&);
-
-    Vector<SuspensionRoots> m_suspensions;
-};
 
 constexpr std::optional<FrameSlotKind> frameSlotKindOf(Representation representation)
 {
     switch (representation) {
     case Representation::JSValue:
-    case Representation::LiteralString:
         return FrameSlotKind::Value;
     case Representation::Cell:
         return FrameSlotKind::Cell;
@@ -73,8 +32,6 @@ constexpr std::optional<FrameSlotKind> frameSlotKindOf(Representation representa
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::RawWord:
@@ -83,10 +40,9 @@ constexpr std::optional<FrameSlotKind> frameSlotKindOf(Representation representa
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-FrameMaps computeFrameMaps(const Program&, const Function&, FunctionAnalyses&);
-
 struct FrameMapRecords {
     Vector<uint32_t> words;
+    bool didReportLimit { false };
 
     uint32_t addMap(std::span<const uint32_t> map);
 

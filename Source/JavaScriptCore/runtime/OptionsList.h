@@ -96,7 +96,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, usePrelinkedModuleInfo, true, Normal, "If true, module records the embedder creates from a pre-resolved module graph (PrelinkedModuleGraph) keep their entries in the graph: requested modules are wired by index, import/export resolution, GetImportedModule, InitializeEnvironment and GetModuleNamespace read the graph's tables, and the by-name entry maps are only built on demand. If false such records copy their entries out of the graph and behave like ModuleAnalyzer's."_s) \
     v(Bool, validatePrelinkedModuleInfo, false, Normal, "Cross-check every pre-resolved import/export binding of a PrelinkedModuleGraph against the specification's ResolveExport and crash on a mismatch."_s)
 #define FOR_EACH_JSC_STATIC_CODE_OPTION(v) \
-    v(Bool, disallowNonStaticCode, false, Normal, "Only code whose SourceProvider was made with SourceProvenance::Static runs: anything else throws an EvalError."_s)
+    v(Bool, disallowNonStaticCode, false, Normal, "Only code whose SourceProvider was made with SourceProvenance::Static runs: anything else throws an EvalError."_s) \
+    v(Bool, disallowNonStaticCodeOnlyWithCompiledCode, false, Normal, "disallowNonStaticCode holds in a VM that runs a program compiled ahead of time and in no other."_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)
@@ -151,19 +152,15 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useAOT, false, Normal, "Run ahead-of-time compiled code from the image the embedder registers. Turns the JIT off."_s) \
     v(OptionString, aotImagePath, nullptr, Normal, "jsc shell and testaot only. Path of an image written by testaot compile. Implies useAOT."_s) \
     v(Unsigned, markedBlockCageSizeInMB, 32 * 1024, Normal, "With useAOT: the address space reserved for the cells of each heap, a power of two, at most 32768. 0: none is reserved, and blocks come from fastMalloc as without useAOT."_s) \
-    v(Bool, useNarrowReferenceScan, true, Normal, "With useAOT: the collector's scan of stacks and registers also takes each 32-bit half of a word for a reference to a cell. Tests turn it off to show that compiled code keeps a pointer next to each such reference."_s) \
+    v(Unsigned, logHoldersOfListsThisLongWhenCageIsFull, 0, Normal, "For testing. Where the collection at a poll frees too little and the out-of-memory error stands: what holds each list of at least this many elements. 0: nothing is logged."_s) \
     v(Bool, useAOTPerfMap, false, Normal, "Linux. When running: the code of the image is copied to anonymous memory and /tmp/perf-<pid>.map names each function in it, so that perf, which reads such a map for anonymous memory alone, shows compiled functions by name."_s) \
     v(OptionString, aotCountsPath, nullptr, Normal, "The counts of the AoT run time are written to this path at exit. %p stands for the process ID."_s) \
-    v(Bool, validateAOTRuntime, false, Normal, "Run the validators of the AoT run time on any image and crash on a mismatch. An image compiled with validation runs them without this option."_s) \
     v(Bool, logAOTPhaseTimes, false, Normal, "Log the wall time of each AOT compiler phase and the CPU time of the process during it."_s) \
     v(Bool, verifyAOTProgram, true, Normal, "When compiling: verify the program as read, its placement, its representations and the program handed to the back end. No byte of the output depends on it. Bun turns it off outside its own tests."_s) \
-    v(OptionString, dumpAOTIR, nullptr, Normal, "When compiling: print the IR of aotFunctionToDump, or of every function, at these points: AsRead, Prepared, Selected, Placed, or the name of a pass to print after. Comma-separated."_s) \
-    v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \
-    v(Bool, dumpAOTDisassembly, false, Normal, "Dump the machine code the AOT compiler generates."_s) \
-    v(OptionString, aotFunctionToDump, nullptr, Normal, "If set, dumpAOTIR, dumpAOTB3Graph and dumpAOTDisassembly only cover the functions of this name."_s) \
+    v(Bool, verifyAOTMachineCode, false, Normal, "When compiling: the back end checks itself in every function: the operations as emitted, the register allocation, the rules of the collector, the frame. No byte of the output depends on it. A validating build runs the same checks, on the other code that it makes."_s) \
     v(OptionString, aotMapFilePath, nullptr, Normal, "When compiling: write a map of the image (the location and key of each function, and the identifier of each inline cache slot) to this file, for symbolicating profiles."_s) \
     v(Bool, useRegExpImageMode, false, Normal, "jsc and testRegExp. Yarr compiles every pattern as for an image, and that code runs. For running the regexp corpus against image mode."_s) \
-    v(Bool, dropLastFastVisitReferenceForTesting, false, Normal, "For testing. With verifyGC, or an image compiled with validation: the last cell that each inline visit of the collector marked counts as missed, so the check of inline visits crashes."_s) \
+    v(Bool, dropLastFastVisitReferenceForTesting, false, Normal, "For testing. With verifyGC: the last cell that each inline visit of the collector marked counts as missed, so the check of inline visits crashes."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
     v(Unsigned, initialCoolDownCount, 20, Normal, nullptr) \
@@ -441,6 +438,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Int32, numberOfSuperAndPerformanceCoresOverride, 0, Normal, "If non-zero, overrides the number of Super and Performance (i.e. non-Efficiency) cores reported by the hardware; 0 means use the value reported by the hardware."_s) \
     v(Double, dfgThresholdScaleForFewPerformanceCores, 2.0, Normal, "On Apple silicon Macs with few Super and Performance cores, scale the DFG tier-up thresholds (thresholdForOptimize*) by this factor."_s) \
     v(Double, ftlThresholdScaleForFewPerformanceCores, 1.5, Normal, "On Apple silicon Macs with few Super and Performance cores, scale the FTL tier-up thresholds (thresholdForFTLOptimize*) by this factor."_s) \
+    v(Double, ftlThresholdScaleForFewCores, 4.0, Normal, "On Linux ARM64 devices (not Android) with four or fewer cores, scale the FTL tier-up thresholds (thresholdForFTLOptimize*) by this factor."_s) \
     v(Bool, forceEagerCompilation, false, Normal, nullptr) \
     v(Double, startupJITDeferralScale, 1, Normal, "While the VM's startup window is active, LLInt->Baseline and Baseline->DFG tier-up require this multiple of the normal execution-count threshold (1 = off)."_s) \
     v(Int32, thresholdForJITAfterWarmUp, 500, Normal, nullptr) \
@@ -776,9 +774,9 @@ bool hasCapacityToUseLargeGigacage();
     FOR_EACH_JSC_WEB_PREFERENCE_OPTION(v) \
     /* Restricted so some app doesn't set this environment variable and start using it. */ \
     v(Bool, disallowMixedWasmExceptions, true, Restricted, "Disallow using both legacy and modern (try_table) wasm exception specs in the same module."_s) \
-    /* Not sourced from UnifiedWebPreferences.yaml: exposes SharedArrayBuffer to every global object. */ \
-    v(Bool, useSharedArrayBuffer, false, Normal, nullptr) \
-    /* Not sourced from UnifiedWebPreferences.yaml: lets an embedder expose SharedArrayBuffer to some global objects, see JSGlobalObject::exposeSharedArrayBuffer(). */ \
+    /* Not sourced from UnifiedWebPreferences.yaml: unconditionally expose SharedArrayBuffer to every global object. */ \
+    v(Bool, alwaysUseSharedArrayBuffer, false, Normal, nullptr) \
+    /* Not sourced from UnifiedWebPreferences.yaml: allows an embedder to conditionally expose SharedArrayBuffer per global, see callers of JSGlobalObject::exposeSharedArrayBuffer(). */ \
     v(Bool, allowSharedArrayBuffer, true, Normal, nullptr) \
     /* Not sourced from UnifiedWebPreferences.yaml: shares its semantics with the WebCore-bound TrustedTypes feature. */ \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
@@ -852,7 +850,7 @@ public:
     OptionRange(std::nullptr_t) { }
 
     bool init(const char*);
-    bool LEGACY_NODELETE isInRange(unsigned) const;
+    NODELETE bool isInRange(unsigned) const;
     const char* rangeString() const { return (m_state > InitError) ? m_rangeString : s_nullRangeStr; }
 
     void dump(PrintStream& out) const;

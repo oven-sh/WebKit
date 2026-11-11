@@ -60,6 +60,10 @@ enum class ::WebGPU::BlendFactor : uint8_t {
     SrcAlphaSaturated,
     Constant,
     OneMinusConstant,
+    Src1,
+    OneMinusSrc1,
+    Src1Alpha,
+    OneMinusSrc1Alpha,
 };
 
 header: <WebGPU/WebGPUCpp.h>
@@ -247,7 +251,20 @@ enum class ::WebGPU::LoadOp : uint8_t {
 };
 
 header: <WebGPU/WebGPUCpp.h>
-enum class ::WebGPU::ColorWrite : uint8_t {
+enum class ::WebGPU::ErrorType : uint8_t {
+    Validation,
+    OutOfMemory,
+    Internal,
+};
+
+header: <WebGPU/WebGPUCpp.h>
+[CustomHeader] struct ::WebGPU::Error {
+    ::WebGPU::ErrorType type;
+    String message;
+};
+
+header: <WebGPU/WebGPUCpp.h>
+[OptionSet] enum class ::WebGPU::ColorWrite : uint8_t {
     Red,
     Green,
     Blue,

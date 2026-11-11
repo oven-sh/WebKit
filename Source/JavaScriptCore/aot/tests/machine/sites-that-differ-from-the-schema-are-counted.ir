@@ -1,0 +1,14 @@
+# The control: the emitter of an await is made to say Open, which the schema does not name for it and its code does not show. The program has two awaits.
+# Each is listed as not named, and as looking otherwise with what was found beside what was said: two calls of a stub. Each counts once among the forms that differ from the schema, in the text and in the statistic of the build.
+# OPTIONS: report=Flow
+# PROGRAM-OF: bytes-of-an-async-function-are-counted.ir
+# STATISTIC: CodeFormSchemaMismatches >= 2
+# RUN: bytes-by-form says=AwaitBySavingFrame:Open
+# CHECK-NOT: the build failed
+# CHECK: AwaitBySavingFrame Always Anywhere Open 2
+# CHECK: not named: AwaitBySavingFrame Always Anywhere Open 2
+# CHECK: looks otherwise: AwaitBySavingFrame Always Anywhere Open 2 found Open 0 Closed 2 Runtime 0
+# CHECK: forms that differ from the schema
+# CHECK-NEXT: forms picked by a place other than a loop
+# CHECK-NEXT: forms not named
+# CHECK-NEXT: all forms

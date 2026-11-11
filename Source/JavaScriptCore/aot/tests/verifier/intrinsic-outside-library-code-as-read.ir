@@ -1,5 +1,4 @@
 # On the wire an intrinsic is sent only in the code of the library
-# FORM: AsRead
 # RUN: verify
 # DIAGNOSTIC: IntrinsicOutsideLibraryCode 1
 

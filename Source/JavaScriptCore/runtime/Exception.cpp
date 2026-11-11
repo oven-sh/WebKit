@@ -119,7 +119,7 @@ void Exception::retainReturnAddresses(VM& vm, AOT::ReturnAddressTrace* returnAdd
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
 }
 
-// Two readers tell the stack of an Error that was made on the spot from the stack of the throw: an inspector lists the frames, and node:vm marks the throw in the source text of the bytecode on top.
+// The inspector and node:vm tell the stack of the Error from the stack of the throw, so they get null.
 ErrorInstance* Exception::errorToTakeStackFrom(VM& vm, JSValue thrownValue)
 {
     auto* error = dynamicDowncast<ErrorInstance>(thrownValue);
@@ -142,7 +142,10 @@ Exception* Exception::tryCreateWithStackOfErrorMadeHere(VM& vm, JSValue thrownVa
     ErrorInstance* error = errorToTakeStackFrom(vm, thrownValue);
     if (!error || !AOT::beginsInTopCompiledFrame(vm, *error->returnAddresses()))
         return nullptr;
-    // The end of a collection may turn the stack of the Error into text.
+    // An Error's stack stops at Error.stackTraceLimit. The report of an uncaught exception also lists the frames beyond that.
+    if (error->returnAddresses()->isFull && error->returnAddresses()->limit < Options::exceptionStackTraceLimit())
+        return nullptr;
+    // The end of a garbage collection may convert the Error's stack to a string.
     DeferGC deferGC(vm);
     Exception* result = new (NotNull, allocateCell<Exception>(vm)) Exception(vm, thrownValue);
     result->Base::finishCreation(vm);

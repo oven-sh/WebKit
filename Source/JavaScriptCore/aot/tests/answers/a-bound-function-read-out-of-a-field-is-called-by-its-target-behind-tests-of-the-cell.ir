@@ -1,0 +1,197 @@
+# `this.add = this.addImpl.bind(this)` IN A CONSTRUCTOR, `counter.add(value)` IN A LOOP ELSEWHERE: A BOUND FUNCTION THAT IS READ OUT OF A FIELD AND CALLED.
+# The call went through the stub for calls by value, the stub's way for bound functions, the target's guard of parameters and the target's generic entry.
+# Link follows what bind makes as a site of its own, BESIDE the unseen object that it has always given for it: every rule of Link goes on seeing an object that nobody knows, and nothing is proven of it.
+# What the site adds is what is SEEN in the field: BoundFunction<addImpl, never, never>: the one function that is bound there, and that no argument is bound. The walk takes that for an expectation:
+# the call asks the cell: is it a bound function . has it no bound argument . is its target a closure of that function: and enters the function with the words read off the cell. Whatever else stands in the field is called as written.
+# Of the three words of the cell only the target's is followed. The word of `this` is not; the word of the arguments holds a mark that there are some: two arguments that met in one node lost their layouts.
+# Nobody reads the three words by a property: an inspection (JSON.stringify, a formatter) stops at them, an escape of the site does not open them, and sites that are united keep their own.
+# declare function print(...values: unknown[]): void;
+# declare function change(holder: unknown, other: unknown): void;
+# class Counter {
+#   total = 0;
+#   step: number;
+#   add: (value: number) => number;
+#   constructor(step: number) { this.step = step; this.add = this.addImpl.bind(this); }
+#   addImpl(value: number): number { this.total += value * this.step; return this.total; }
+# }
+# function drive(counter: Counter, turns: number): number {
+#   let last = 0;
+#   for (let turn = 0; turn < turns; turn++) last += counter.add(turn & 7);
+#   return last;
+# }
+# const counter = new Counter(3), other = new Counter(5);
+# print(drive(counter, 10));
+# change(counter, other);
+# print(drive(counter, 10), counter.total, other.total);
+# The shell lays whatever it likes into the field between the two runs.
+# f1 = drive
+# OPTIONS: mechanisms=all check=Validate
+# LIBRARY: own
+# RUN(FORM): walk f1
+# FORM: = TypeTest {{*}}testedType=BoundFunction
+# FORM: = HasNumberOfBoundArguments
+# FORM: = GetWordOfBoundFunction
+# FORM: = TypeTest {{*}}testedType=f3
+# FORM: = GetWordOfBoundFunction {{*}}index=1
+# RUN(NOTHING): run-in-shell change = function () { };
+# NOTHING: 423
+# NOTHING-NEXT: 1293 174 0
+# NOTHING-NEXT: exited with 0
+# RUN(CLOSURE): run-in-shell change = function (holder) { holder.add = value => -value; };
+# CLOSURE: 423
+# CLOSURE-NEXT: -29 87 0
+# RUN(OTHERS): run-in-shell change = function (holder, other) { holder.add = other.add; };
+# OTHERS: 423
+# OTHERS-NEXT: 705 87 145
+# RUN(OTHERTHIS): run-in-shell change = function (holder, other) { holder.add = holder.addImpl.bind(other); };
+# OTHERTHIS: 423
+# OTHERTHIS-NEXT: 705 87 145
+# RUN(COUNT): run-in-shell change = function (holder) { holder.add = holder.addImpl.bind(holder, 100); };
+# COUNT: 423
+# COUNT-NEXT: 17370 3087 0
+# RUN(OTHERTARGET): run-in-shell change = function (holder) { holder.add = function (value) { return this.step + value; }.bind(holder); };
+# OTHERTARGET: 423
+# OTHERTARGET-NEXT: 59 87 0
+# RUN(NATIVE): run-in-shell change = function (holder) { holder.add = Math.abs; };
+# NATIVE: 423
+# NATIVE-NEXT: 29 87 0
+# RUN(PROXY): run-in-shell change = function (holder) { holder.add = new Proxy(holder.addImpl.bind(holder), { apply() { return 9000; } }); };
+# PROXY: 423
+# PROXY-NEXT: 90000 87 0
+# RUN(TWICE): run-in-shell change = function (holder) { holder.add = holder.addImpl.bind(holder).bind(null); };
+# TWICE: 423
+# TWICE-NEXT: 1293 174 0
+# RUN(GETTER): run-in-shell change = function (holder) { Object.defineProperty(holder, "add", { get() { return () => 11; }, configurable: true }); };
+# GETTER: 423
+# GETTER-NEXT: 110 87 0
+# RUN(NUMBER): run-in-shell change = function (holder) { holder.add = 5; };
+# NUMBER: 423
+# NUMBER-NEXT: TypeError: counter.add is not a function
+module m0 path="seed1.ts" displayPath="seed1.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Counter" module=m0 position=122 constructor=f2 fields=[{key="total" declared={type=number} flags=[IsRequired]}, {key="step" declared={type=number} flags=[IsRequired]}, {key="add" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=3
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @116
+    v3 = NewClass v2 layout=L0 @116
+    PutModuleVariable v3 variable=g0 @116
+    v5 = NewClosure function=f3 @283
+    DefineMethod v3, v5 layout=L0 key="addImpl" @283
+    v7 = FinishClass v3 layout=L0 @116
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @116
+    v9 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @116
+    v10 = Integer integer=3 @565
+    v11 = Construct v9, -, v10 calleeName="Counter" @557
+    v12 = Integer integer=5 @589
+    v13 = Construct v9, -, v12 calleeName="Counter" @581
+    v14 = Builtin builtin=GlobalThis @593
+    v15 = PropGet v14 key="print" [isFreeName] @593
+    v16 = Integer integer=10 @614
+    v17 = Call v1, -, v11, v16 calleeName="drive" @599
+    v18 = Call v15, -, v17 calleeName="print" @593
+    v19 = Builtin builtin=GlobalThis @620
+    v20 = PropGet v19 key="change" [isFreeName] @620
+    v21 = Call v20, -, v11, v13 calleeName="change" @620
+    v22 = Builtin builtin=GlobalThis @644
+    v23 = PropGet v22 key="print" [isFreeName] @644
+    v24 = Integer integer=10 @665
+    v25 = Call v1, -, v11, v24 calleeName="drive" @650
+    v26 = PropGet v11 key="total" @670
+    v27 = PropGet v13 key="total" @685
+    v28 = Call v23, -, v25, v26, v27 calleeName="print" @644
+    v29 = Undefined @644
+    Return v29 @644
+}
+function f1 name="drive" module=m0 position=372 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = Integer @443
+    v3 = Convert v2 declared={type=number} @443
+    v4 = Integer @464
+    v5 = Convert v4 declared={type=number} @464
+    Jump -> next b1(v3, v5) @457
+  b1(v6: number, v7: number):
+    LoopHint @457
+    v9 = Less v7, v1 @474
+    Branch v9 -> taken b2(), notTaken b3() @474
+  b2():
+    v10 = PropGet v0 key="add" @497
+    v11 = Integer integer=7 @516
+    v12 = BitAnd v7, v11 @516
+    v13 = Call v10, v0, v12 calleeKey="add" calleeName="counter.add" @505
+    v14 = Add v6, v13 @497
+    v15 = Convert v14 declared={type=number} @489
+    v16 = Increment v7 @481
+    v17 = Convert v16 declared={type=number} @481
+    Jump -> next b1(v15, v17) @481
+  b3():
+    v18 = Convert v6 declared={type=number} @529
+    Return v18 @529
+}
+function f2 name="Counter" module=m0 position=208 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0 @208
+    v3 = NewObject v2 layout=L0 @208
+    v4 = Convert v3 declared={type=L0} @208
+    v5 = CallDirect v4 function=f4 @208
+    PropSet v4, v1 key="step" @225
+    v7 = PropGet v4 key="addImpl" @254
+    v8 = PropGet v7 key="bind" @259
+    v9 = Call v8, v7, v4 calleeKey="bind" calleeName="this.addImpl.bind" @267
+    v10 = Convert v9 declared={type=undefined|null|function|f3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @254
+    PropSet v4, v10 key="add" @243
+    v12 = Undefined @243
+    v13 = TypeTest v12 testedType=object @243
+    Branch v13 -> taken b1(| 0), notTaken b2(v4) @243
+  b1(v14):
+    Jump -> next b2(v14) @243
+  b2(v15):
+    Return v15 @243
+}
+function f3 name="addImpl" module=m0 position=283 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=number}] results=[{type=number}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number):
+    v2 = PropGet v0 key="total" @316
+    v3 = PropGet v0 key="step" @338
+    v4 = Mul v1, v3 @338
+    v5 = Add v2, v4 @338
+    PropSet v0, v5 key="total" @316
+    v7 = PropGet v0 key="total" @356
+    v8 = Convert v7 declared={type=number} @356
+    Return v8 @356
+}
+function f4 module=m0 position=122 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @122
+    v2 = Integer @142
+    v3 = Convert v2 declared={type=number} @142
+    PropDefine v1, v3 key="total" @134
+    v5 = Undefined @122
+    PropDefine v1, v5 key="step" @147
+    v7 = Undefined @122
+    PropDefine v1, v7 key="add" @163
+    v9 = Undefined @122
+    Return v9 @122
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f7 visibility=Private

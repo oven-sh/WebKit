@@ -1,0 +1,137 @@
+# function turnLeft(word: number, by: number) { return (word << by) | (word >>> (32 - by)); }
+# function mix(sums: Int32Array, words: Int32Array, to: number) { let a = sums[0], b = sums[1], c = sums[2];
+#   for (let t = 0; t < to; t++) { const next = (turnLeft(a, 5) + (b ^ c) + words[t]) | 0; c = turnLeft(b, 30); b = a; a = next; } return a ^ b ^ c; }
+# function changePlaces(from: Int32Array, to: number) { let a = from[0], b = from[1]; for (let t = 0; t < to; t++) { const kept = a; a = b; b = kept; } return a; }
+# What a read out of a view gives may be undefined, so the words entered the loop as `undefined|i32` and went round it in boxes, though every turn hands on an int32: out of a bit operator,
+# out of a small function that ends in one, or out of another word of the head. Each turn took them out of their boxes, worked on them as numbers that may be absent, and boxed two again: 67 instructions a step for 49.
+# What may be an int32 where it enters, and comes round as an int32 by the look at the loop, is asked for an int32 once, in the row in front of the loop, as a counter is.
+# Words that only change places bring no int32 round: nothing is asked of them.
+# RUN: walk f2 f3 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-COUNT-3: = TypeTest {{*}}testedType=i32
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: ([[a]]: i32 @Int32, [[b]]: i32 @Int32, [[c]]: i32 @Int32, {{*}}isInLoop=true isLoopHead=true
+# CHECK-NOT: = Unbox
+# CHECK: = BitXor [[b]], [[c]] form=Integers
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: = TypeTest
+# CHECK-COUNT-1: isLoopHead=true
+# CHECK-NOT: isLoopHead=true
+# RUN(SHELL): run-in-shell let asked = 0; const all = [new Int32Array([1, 2]), new Int32Array([3, 4, 5]), 4, new Int32Array([7]), 3]; globalThis.hidden = () => all[asked++]; globalThis.sink = (mixed, changed) => { print(String(mixed) + " " + String(changed)); };
+# SHELL: 536909299 undefined
+# SHELL: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="turnLeft" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @651
+    v5 = PropGet v4 key="sink" [isFreeName] @651
+    v6 = Builtin builtin=GlobalThis @660
+    v7 = PropGet v6 key="hidden" [isFreeName] @660
+    v8 = Call v7 calleeName="hidden" @660
+    v9 = Convert v8 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @660
+    v10 = Builtin builtin=GlobalThis @684
+    v11 = PropGet v10 key="hidden" [isFreeName] @684
+    v12 = Call v11 calleeName="hidden" @684
+    v13 = Convert v12 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @684
+    v14 = Builtin builtin=GlobalThis @708
+    v15 = PropGet v14 key="hidden" [isFreeName] @708
+    v16 = Call v15 calleeName="hidden" @708
+    v17 = Convert v16 declared={type=number} illTypedCause=Assertion @708
+    v18 = Call v1, -, v9, v13, v17 calleeName="mix" @656
+    v19 = Builtin builtin=GlobalThis @742
+    v20 = PropGet v19 key="hidden" [isFreeName] @742
+    v21 = Call v20 calleeName="hidden" @742
+    v22 = Convert v21 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @742
+    v23 = Builtin builtin=GlobalThis @766
+    v24 = PropGet v23 key="hidden" [isFreeName] @766
+    v25 = Call v24 calleeName="hidden" @766
+    v26 = Convert v25 declared={type=number} illTypedCause=Assertion @766
+    v27 = Call v3, -, v22, v26 calleeName="changePlaces" @729
+    v28 = Call v5, -, v18, v27 calleeName="sink" @651
+    v29 = Undefined @651
+    Return v29 @651
+}
+function f1 name="turnLeft" module=m0 position=84 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = LShift v0, v1 @154
+    v3 = Integer integer=32 @171
+    v4 = Sub v3, v1 @176
+    v5 = URShift v0, v4 @176
+    v6 = BitOr v2, v5 @176
+    v7 = Convert v6 declared={type=number} @176
+    Return v7 @176
+}
+function f2 name="mix" module=m0 position=184 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: undefined|null|Int32Array, v2: number):
+    v3 = Integer @266
+    v4 = ElemGet v0, v3 @266
+    v5 = Convert v4 declared={type=number} illTypedCause=Assertion @266
+    v6 = Integer integer=1 @280
+    v7 = ElemGet v0, v6 @280
+    v8 = Convert v7 declared={type=number} illTypedCause=Assertion @280
+    v9 = Integer integer=2 @294
+    v10 = ElemGet v0, v9 @294
+    v11 = Convert v10 declared={type=number} illTypedCause=Assertion @294
+    v12 = Integer @319
+    v13 = Convert v12 declared={type=number} @319
+    Jump -> next b1(v5, v8, v11, v13) @315
+  b1(v14: number, v15: number, v16: number, v17: number):
+    LoopHint @315
+    v19 = Less v17, v2 @326
+    Branch v19 -> taken b2(), notTaken b3() @326
+  b2():
+    v20 = GetModuleVariable variable=g0 @355
+    v21 = Integer integer=5 @367
+    v22 = Call v20, -, v14, v21 calleeName="turnLeft" @355
+    v23 = BitXor v15, v16 @377
+    v24 = Add v22, v23 @377
+    v25 = ElemGet v1, v17 @382
+    v26 = Add v24, v25 @382
+    v27 = Integer @395
+    v28 = BitOr v26, v27 @395
+    v29 = GetModuleVariable variable=g0 @406
+    v30 = Integer integer=30 @418
+    v31 = Call v29, -, v15, v30 calleeName="turnLeft" @406
+    v32 = Convert v31 declared={type=number} @402
+    v33 = Convert v14 declared={type=number} @427
+    v34 = Convert v28 declared={type=number} @438
+    v35 = Increment v17 @330
+    v36 = Convert v35 declared={type=number} @330
+    Jump -> next b1(v34, v33, v32, v36) @330
+  b3():
+    v37 = BitXor v14, v15 @465
+    v38 = BitXor v37, v16 @469
+    v39 = Convert v38 declared={type=number} @469
+    Return v39 @469
+}
+function f3 name="changePlaces" module=m0 position=474 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: number):
+    v2 = Integer @547
+    v3 = ElemGet v0, v2 @547
+    v4 = Convert v3 declared={type=number} @547
+    v5 = Integer integer=1 @560
+    v6 = ElemGet v0, v5 @560
+    v7 = Convert v6 declared={type=number} @560
+    v8 = Integer @584
+    v9 = Convert v8 declared={type=number} @584
+    Jump -> next b1(v4, v7, v9) @580
+  b1(v10: number, v11: number, v12: number):
+    LoopHint @580
+    v14 = Less v12, v1 @591
+    Branch v14 -> taken b2(), notTaken b3() @591
+  b2():
+    v15 = Convert v11 declared={type=number} @618
+    v16 = Convert v10 declared={type=number} @625
+    v17 = Increment v12 @595
+    v18 = Convert v17 declared={type=number} @595
+    Jump -> next b1(v15, v16, v18) @595
+  b3():
+    Return v10 @646
+}

@@ -1,0 +1,39 @@
+# function at1(view) { return view[1]; } at1(new Int32Array(8)); at1(undefined);
+# a read off nothing throws: what arrives beside the views says nothing of how long they are
+# function text(view) { return view[1]; } text(new Int32Array(8)); text("ab");
+# a text answers an index itself, so there the row is not written
+# LIBRARY: own
+# RUN: link accesses mechanisms=all
+# CHECK: read-off-views f1 v2 least-length=8
+# CHECK-NOT: read-off-views f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Int32Array
+    v2 = Integer integer=8
+    v3 = Construct v1, -, v2 calleeName="Int32Array"
+    v4 = Call v0, -, v3 calleeName="at1"
+    v5 = Undefined
+    v6 = Call v0, -, v5 calleeName="at1"
+    v7 = NewClosure function=f2
+    v8 = Construct v1, -, v2 calleeName="Int32Array"
+    v9 = Call v7, -, v8 calleeName="text"
+    v10 = String string="ab"
+    v11 = Call v7, -, v10 calleeName="text"
+    Return v5
+}
+function f1 name="at1" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="text" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = ElemGet v0, v1
+    Return v2
+}

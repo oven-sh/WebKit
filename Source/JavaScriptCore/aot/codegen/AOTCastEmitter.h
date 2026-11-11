@@ -7,7 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClosureTestEmitter.h"
 #include "AOTOperationEmitter.h"
+#include "AOTStubKey.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -18,21 +20,56 @@ public:
     {
     }
 
-    void generateUpcast(const ValueContext& value) { define(value, get(value->valueOperand())); }
-    void generateExpect(const ValueContext& value) { define(value, get(value->valueOperand())); }
-    void generateNarrowByField(const ValueContext& value) { define(value, get(value->valueOperand())); }
-    void generateAssumeType(const ValueContext&);
-    void generateReportMismatch(const ValueContext&);
+    void generateNarrowed(const ValueContext&);
     void generateCheckInitialized(const ValueContext&);
     void generateRequireObjectCoercible(const ValueContext&);
     void requireObjectCoercible(const ValueContext&);
     void generateRequireObject(const ValueContext&);
     void generateTypeTest(const ValueContext&);
+    void generateIsUnlockedInstance(const ValueContext&);
+    void generateCheckProof(const ValueContext&);
+    void checkBooleanOrBranch(const ValueContext& test, ValueID check);
+    struct QuestionForStub {
+        StubKey stub;
+        uint32_t kinds;
+        std::optional<uint32_t> mentionAboveKinds;
+        std::optional<uint32_t> numberInRegister;
+    };
+    std::optional<QuestionForStub> questionForStubThatTells(TypeID);
+    std::optional<Operand> takeIntegerHandedOnTo(ValueID unboxing);
+    struct DeferredNumberCheck {
+        Boxed value;
+        BlockEdge failing;
+    };
+    Vector<DeferredNumberCheck, 2> takeNumberChecksOf(ValueID sum);
 
 private:
-    const TypeTestPlan& planFor(ValueID operand, TypeID to) { return typeTestPlanFor(m_function.at(operand).type, representationOf(operand), to); }
-    void testAheadOfNullishCheck(const ValueContext& test, Operand);
-    void testAtLandingOfMisfit(const ValueContext& test, ValueID call, const CodeGenerator::LandingOfMisfit&, const TypeTestPlan&);
+    const TypeTestPlan& planFor(ValueID operand, TypeID to) { return typeTestPlanFor(typeIDOf(operand), representationOf(operand), to); }
+    ValueID unboxingBehindTestForInt32(const ValueContext& test);
+    bool tryBranchOnInt32AndHandItOn(const ValueContext& test, Operand);
+    ValueID unboxingToDoubleBehindTestForNumber(const ValueContext& test);
+    bool tryBranchOnNumberAndHandItOn(const ValueContext& test, Operand);
+    ValueID sumBehindTestForNumber(const ValueContext& test);
+    bool tryDeferTestToSum(const ValueContext& test, Operand);
+    bool tryTestWordOfSlot(const ValueContext& test, Boxed, const TypeTestPlan&);
+    FunctionID closureThatTestAsksFor(ValueID test);
+    bool tryBeginClosureChain(const ValueContext& test);
+    bool tryContinueClosureChain(const ValueContext& test);
+
+    struct ClosureChain {
+        CellPointer closure;
+        Word32 word;
+        Vector<ClosureTestEmitter::ClosureCase, 4> cases;
+    };
+    struct PlaceInClosureChain {
+        uint32_t chain;
+        uint32_t place;
+    };
+    Vector<ClosureChain> m_closureChains;
+    UncheckedKeyHashMap<uint32_t, PlaceInClosureChain, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_placesInClosureChains;
+
+    UncheckedKeyHashMap<uint32_t, Operand, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_integersHandedOn;
+    UncheckedKeyHashMap<uint32_t, Vector<DeferredNumberCheck, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_numberChecksOfSums;
 };
 
 } } } // namespace JSC::AOT::Typed

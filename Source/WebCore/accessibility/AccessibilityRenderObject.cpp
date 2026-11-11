@@ -86,11 +86,11 @@
 #include "Image.h"
 #include "ImageOverlay.h"
 #include "InlineIteratorBoxInlines.h"
+#include "InlineIteratorLineBox.h"
 #include "InlineIteratorLogicalOrderTraversal.h"
 #include "InlineIteratorTextBox.h"
 #include "LegacyRenderSVGRoot.h"
 #include "LegacyRenderSVGShape.h"
-#include "LineSelection.h"
 #include "LocalFrame.h"
 #include "LocalizedStrings.h"
 #include "Logging.h"
@@ -161,7 +161,7 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-static Node* LEGACY_NODELETE nodeForRenderer(RenderObject& renderer)
+NODELETE static Node* nodeForRenderer(RenderObject& renderer)
 {
     if (!renderer.isRenderView()) [[likely]]
         return renderer.node();
@@ -411,7 +411,7 @@ Element* AccessibilityRenderObject::anchorElement() const
 }
 
 // Null is distinct from empty: empty asks for the content to be ignored.
-static const String& LEGACY_NODELETE generatedContentAltText(const RenderText* renderText)
+NODELETE static const String& generatedContentAltText(const RenderText* renderText)
 {
     if (auto* renderTextFragment = dynamicDowncast<RenderTextFragment>(renderText))
         return renderTextFragment->altText();
@@ -605,8 +605,7 @@ String AccessibilityRenderObject::stringValue() const
 
         // As fallback, gather the static text under this.
         String value;
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST Accessibility::enumerateUnignoredDescendants(*const_cast<AccessibilityRenderObject*>(this), false, [&value](const auto& object) {
+        Accessibility::enumerateUnignoredDescendants(*const_cast<AccessibilityRenderObject*>(this), false, [&value](const auto& object) {
             if (object.isStaticText())
                 value = makeString(value, object.stringValue());
         });
@@ -632,8 +631,7 @@ bool AccessibilityRenderObject::canHavePlainText() const
 // within the parent page, otherwise they are in relative coordinates only.
 void AccessibilityRenderObject::offsetBoundingBoxForRemoteSVGElement(LayoutRect& rect) const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST for (RefPtr<AccessibilityObject> parent = const_cast<AccessibilityRenderObject*>(this); parent; parent = parent->parentObject()) {
+    for (RefPtr<AccessibilityObject> parent = const_cast<AccessibilityRenderObject*>(this); parent; parent = parent->parentObject()) {
         if (parent->isAccessibilitySVGRoot()) {
             rect.moveBy(parent->parentObject()->boundingBoxRect().location());
             break;
@@ -716,14 +714,23 @@ bool AccessibilityRenderObject::isNonLayerSVGObject() const
     return renderer ? is<RenderSVGInlineText>(renderer.get()) || is<LegacyRenderSVGModelObject>(renderer.get()) : false;
 }
 
+// Maps a path in the renderer's local coordinates to absolute document coordinates, including any transforms
+// of the renderer and its ancestors, so that, for example, the path of an element inside a scaled container is
+// scaled like its bounding box is.
+static void mapLocalPathToAbsolute(Path& path, const RenderObject& renderer)
+{
+    path.transform(localToAbsoluteLinearTransform(renderer));
+    auto absoluteOrigin = flooredLayoutPoint(renderer.localToAbsolute(FloatPoint(), MapCoordinatesMode::UseTransforms));
+    path.transform(AffineTransform().translate(absoluteOrigin.x(), absoluteOrigin.y()));
+}
+
 static Path computePathForRenderBox(const RenderBox& renderBox)
 {
     auto borderShape = BorderShape::shapeForBorderRect(renderBox.usedStyle(), renderBox.borderBoxRect());
     auto path = borderShape.pathForOuterShape(protect(renderBox.document())->deviceScaleFactor());
-    // borderBoxRect() is in local coordinates. Offset it to absolute document coordinates
+    // borderBoxRect() is in local coordinates. Map it to absolute document coordinates
     // to match the coordinate system used by SVG, RenderText, and inline box paths.
-    auto absoluteOrigin = flooredLayoutPoint(renderBox.localToAbsolute(FloatPoint(), MapCoordinatesMode::UseTransforms));
-    path.transform(AffineTransform().translate(absoluteOrigin.x(), absoluteOrigin.y()));
+    mapLocalPathToAbsolute(path, renderBox);
     return path;
 }
 
@@ -731,7 +738,7 @@ static Path computePathForRenderBox(const RenderBox& renderBox)
 // different block-direction positions. For horizontal text, rects on different
 // lines have different Y positions. For vertical text, different columns have
 // different X positions.
-static bool LEGACY_NODELETE rectsSpanMultipleLines(const Vector<LayoutRect>& rects, bool isHorizontal)
+NODELETE static bool rectsSpanMultipleLines(const Vector<LayoutRect>& rects, bool isHorizontal)
 {
     for (size_t i = 1; i < rects.size(); ++i) {
         if (isHorizontal) {
@@ -847,8 +854,7 @@ Path AccessibilityRenderObject::elementPath() const
                     // FIXME: Remove suppression once rdar://189998444 is fixed.
                     SUPPRESS_MEMORY_UNSAFE_CAST auto referenceBox = FloatRect(renderBox->borderBoxRect());
                     auto path = Style::path(clipPath.shape(), referenceBox, renderBox->style().usedZoomForLength());
-                    auto absoluteOrigin = flooredLayoutPoint(renderBox->localToAbsolute(FloatPoint(), MapCoordinatesMode::UseTransforms));
-                    path.transform(AffineTransform().translate(absoluteOrigin.x(), absoluteOrigin.y()));
+                    mapLocalPathToAbsolute(path, *renderBox);
                     clipPathResult = WTF::move(path);
                 },
                 [](const auto&) { }
@@ -992,7 +998,7 @@ AccessibilityObject* AccessibilityRenderObject::containingTree() const
     });
 }
 
-static AccessibilityObjectInclusion LEGACY_NODELETE objectInclusionFromAltText(const String& altText)
+NODELETE static AccessibilityObjectInclusion objectInclusionFromAltText(const String& altText)
 {
     // Don't ignore an image that has alt text.
     if (!altText.containsOnly<isASCIIWhitespace>())
@@ -1462,7 +1468,7 @@ CharacterRange AccessibilityRenderObject::selectedTextRange() const
 // content cannot be a valid text position nor be selected (with a mouse or otherwise), so emitting
 // text runs for it would make the isolated tree's text-marker strings diverge from what can actually
 // be represented on the main-thread.
-static bool LEGACY_NODELETE shouldExcludeTextRunsForPseudoElement(std::optional<PseudoElementType> pseudoElementType)
+NODELETE static bool shouldExcludeTextRunsForPseudoElement(std::optional<PseudoElementType> pseudoElementType)
 {
     if (!pseudoElementType) {
         // No pseudo type, so this function is not applicable.
@@ -1639,7 +1645,7 @@ AXTextRuns AccessibilityRenderObject::textRuns()
 
         auto textRun = textBox->textRun(InlineIterator::TextRunMode::Editing);
         auto lineBox = textBox->lineBox();
-        lineHeight = LineSelection::logicalRect(lineBox).height();
+        lineHeight = lineBox.contentLogicalRectAdjustedForAdjacentLineBoxes().height();
 
         // Compute distanceFromBoundsInDirection only for the first text box on each
         // line. Multiple text boxes can share a line (e.g. due to inline formatting
@@ -1809,7 +1815,7 @@ int AccessibilityRenderObject::insertionPointLineNumber() const
     return lineForPosition(makeDeprecatedLegacyPosition(selectedTextRange->start));
 }
 
-static void LEGACY_NODELETE setTextSelectionIntent(AXObjectCache* cache, AXTextStateChangeType type)
+NODELETE static void setTextSelectionIntent(AXObjectCache* cache, AXTextStateChangeType type)
 {
     if (!cache)
         return;
@@ -1818,7 +1824,7 @@ static void LEGACY_NODELETE setTextSelectionIntent(AXObjectCache* cache, AXTextS
     cache->setIsSynchronizingSelection(true);
 }
 
-static void LEGACY_NODELETE clearTextSelectionIntent(AXObjectCache* cache)
+NODELETE static void clearTextSelectionIntent(AXObjectCache* cache)
 {
     if (!cache)
         return;
@@ -2329,8 +2335,7 @@ RefPtr<AccessibilityObject> AccessibilityRenderObject::elementAccessibilityHitTe
             LayoutRect parentRect = boundingBoxRect();
 
             RefPtr<AccessibilityObject> listBoxOption;
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST const auto& children = const_cast<AccessibilityRenderObject*>(this)->unignoredChildren();
+            const auto& children = const_cast<AccessibilityRenderObject*>(this)->unignoredChildren();
             unsigned length = children.size();
             for (unsigned i = 0; i < length; ++i) {
                 LayoutRect rect = renderListBox->itemBoundingBoxRect(parentRect.location(), i);
@@ -2766,7 +2771,7 @@ AccessibilitySVGObject* AccessibilityRenderObject::remoteSVGRootElement(CreateIf
     if (!svgImage)
         return nullptr;
 
-    RefPtr frameView = svgImage->frameView();
+    RefPtr frameView = svgImage->defaultInstanceFrameView();
     if (!frameView)
         return nullptr;
 
@@ -3207,7 +3212,15 @@ bool AccessibilityRenderObject::hasSameStyle(AXCoreObject& object)
     if (!m_renderer || !renderer)
         return false;
 
-    return m_renderer->style() == renderer->style();
+    // Non-inherited properties like the background color come from the parent of text.
+    auto styleForComparison = [](const RenderObject& renderer) -> const Style::ComputedStyle* {
+        if (is<RenderText>(renderer))
+            return renderer.parent() ? &renderer.parent()->style() : nullptr;
+        return &renderer.style();
+    };
+    CheckedPtr style = styleForComparison(*m_renderer);
+    CheckedPtr otherStyle = styleForComparison(*renderer);
+    return style && otherStyle && *style == *otherStyle;
 }
 
 bool AccessibilityRenderObject::hasUnderline() const

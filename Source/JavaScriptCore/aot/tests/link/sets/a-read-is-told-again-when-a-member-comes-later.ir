@@ -1,0 +1,48 @@
+# If a read that has looked at a set took its subject for done, the field of a member that joins the set later would never flow into the result, and a boolean would be taken for an integer or a text
+# function read(o) { return o.x; }  function unwrap(b) { return b.held; }  read({ x: 1, p: 1 });  read({ x: "a", q: 1 });  read(unwrap({ held: { x: true, r: 1 } }));
+# The third comes a round later, through a read of its own: by then the read of `x` has been told of the set of two.
+# RUN: link functions layouts mechanisms=all
+# CHECK: function f1 callers-known one-callee {{*}}result=true|int[0, 2147483647]|string returns=
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1|L2
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+# CHECK: layout L2 changes=[] stays-with-compiled-code
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="r" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = String string="a"
+    v4 = NewObject -, v3, v0 layout=L1 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Boolean boolean=true
+    v7 = NewObject -, v6, v0 layout=L2 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = NewObject -, v8 layout=L3 fields=[0]
+    v10 = FinishObject v9
+    v11 = NewClosure function=f1
+    v12 = Call v11, -, v2 calleeName="read"
+    v13 = Call v11, -, v5 calleeName="read"
+    v14 = NewClosure function=f2
+    v15 = Call v14, -, v10 calleeName="unwrap"
+    v16 = Call v11, -, v15 calleeName="read"
+    v17 = Undefined
+    Return v17
+}
+function f1 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="unwrap" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="held"
+    Return v1
+}

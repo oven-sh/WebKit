@@ -38,7 +38,6 @@ export class ErrorList {
   readonly #errors: SchemaError[] = [];
   readonly #messages = new Set<string>();
 
-  // A parameter group, a named set and a family default are resolved once for each entry that uses them.
   add(location: Location, problem: string): void {
     const error = new SchemaError(location, problem);
     if (this.#messages.has(error.message)) return;

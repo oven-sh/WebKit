@@ -64,7 +64,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(AlternativeTextController);
 
 #if USE(DICTATION_ALTERNATIVES) || USE(AUTOCORRECTION_PANEL)
 
-constexpr OptionSet<DocumentMarkerType> LEGACY_NODELETE markerTypesForAppliedDictationAlternative()
+NODELETE constexpr OptionSet<DocumentMarkerType> markerTypesForAppliedDictationAlternative()
 {
     return DocumentMarkerType::SpellCheckingExemption;
 }
@@ -324,7 +324,7 @@ void AlternativeTextController::timerFired()
         if (!m_rangeWithAlternative)
             return;
         auto dictationContext = std::get<DictationContext>(m_details);
-        auto boundingBox = rootViewRectForRange(*m_rangeWithAlternative);
+        auto boundingBox = mainFrameViewRectForRange(*m_rangeWithAlternative);
         m_isActive = true;
         if (!boundingBox.isEmpty()) {
             if (CheckedPtr client = alternativeTextClient())
@@ -396,14 +396,6 @@ bool AlternativeTextController::isAutomaticSpellingCorrectionEnabled()
         return false;
 
     return canEnableAutomaticSpellingCorrection();
-}
-
-FloatRect AlternativeTextController::rootViewRectForRange(const SimpleRange& range) const
-{
-    RefPtr view = m_document->view();
-    if (!view)
-        return { };
-    return view->contentsToRootView(unitedBoundingBoxes(RenderObject::absoluteTextQuads(range)));
 }
 
 FloatRect AlternativeTextController::mainFrameViewRectForRange(const SimpleRange& range) const

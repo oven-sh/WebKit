@@ -7,6 +7,7 @@
 
 #include <array>
 #include <limits>
+#include <optional>
 #include <span>
 #include <wtf/Vector.h>
 #include <wtf/text/Latin1Character.h>
@@ -38,6 +39,9 @@ struct RequiredText {
     // That unit is text[indexInText], and the rest of the text stands around it. A letter that matches in both cases is in lower case and has 0x20 in caseMask. Empty: the unit is all that is known.
     Vector<Latin1Character, 16> text;
     Vector<Latin1Character, 16> caseMask;
+    // The first eight units of the text and of the mask, for a text of no more than eight.
+    uint64_t firstUnitsOfText { 0 };
+    uint64_t firstUnitsOfCaseMask { 0 };
     unsigned indexInText { 0 };
     // Of a pattern in unicode mode: no attempt begins between the halves of a surrogate pair.
     bool decodesSurrogatePairs { false };
@@ -47,6 +51,10 @@ struct RequiredText {
     bool isFirstAttemptAlwaysMade { false };
     // One of those is none the less tried at every place.
     bool isSilentOnSomeRepeatedAlternative { false };
+    // The pattern has alternatives that begin with a $ that holds at the end of the subject alone, of which all this says nothing.
+    bool allowsEmptyMatchAtEnd { false };
+    // Of findTextOfEveryMatch(), with allowsEmptyMatchAtEnd: every other alternative is tried at the first place alone.
+    bool isForFirstAttemptOnly { false };
 };
 
 // The rarest first. A second one is nearer to the start of a match: its distance has a bound, the first one's has none.
@@ -55,6 +63,12 @@ inline constexpr unsigned maxRequiredTexts = 2;
 
 // Of the body's alternatives that are tried at one place after another. None for a sticky pattern, whose one attempt costs less than a search.
 RequiredTexts findRequiredTexts(const YarrPattern&);
+
+// Of all the body's alternatives, those that are tried at the first place alone too: a subject without it from `start` on has no match. The rarest there is.
+// `^(?:.*\/)?[^\/]*\.pem$` is tried once, and that attempt walks a long path once for each of its folders.
+std::optional<RequiredText> findTextOfEveryMatch(const YarrPattern&);
+bool holdsRequiredText(const RequiredText&, std::span<const Latin1Character> subject, unsigned start);
+bool holdsRequiredText(const RequiredText&, std::span<const char16_t> subject, unsigned start);
 
 // How many times the share of the places in a subject that hold one of these units halves: 10 is one place in a thousand. By what program text, logs and prose hold.
 unsigned rarityOfUnits(const std::array<uint64_t, 2>& asciiMembers, bool matchesAllNonASCII);

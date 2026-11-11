@@ -105,7 +105,7 @@ public:
     // For threads other than the mutator (compiler-thread dumps): null while the name is still only in the bytecode cache.
     const Identifier* tryGetEcmaNameConcurrently() const
     {
-        if (WTF::atomicLoad(const_cast<bool*>(&m_nameIsDeferred), std::memory_order_acquire))
+        if (WTF::atomicLoad<MemoryOrder::Acquire>(const_cast<bool*>(&m_nameIsDeferred)))
             return nullptr;
         return &m_ecmaName;
     }

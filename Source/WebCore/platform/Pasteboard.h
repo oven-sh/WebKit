@@ -244,7 +244,7 @@ public:
     virtual WEBCORE_EXPORT void read(PasteboardWebContentReader&, WebContentReadingPolicy = WebContentReadingPolicy::AnyType, std::optional<size_t> itemIndex = std::nullopt);
     virtual WEBCORE_EXPORT void read(PasteboardFileReader&, std::optional<size_t> itemIndex = std::nullopt);
 
-    static bool LEGACY_NODELETE canWriteTrustworthyWebURLsPboardType();
+    NODELETE static bool canWriteTrustworthyWebURLsPboardType();
 
     virtual WEBCORE_EXPORT void write(const Color&);
     virtual WEBCORE_EXPORT void write(const PasteboardURL&);
@@ -267,7 +267,7 @@ public:
     WEBCORE_EXPORT static std::unique_ptr<Pasteboard> createForDragAndDrop(std::unique_ptr<PasteboardContext>&&);
     WEBCORE_EXPORT static std::unique_ptr<Pasteboard> create(const DragData&);
 
-    WEBCORE_EXPORT virtual void setDragImage(DragImage, const IntPoint& hotSpot);
+    WEBCORE_EXPORT virtual void setDragImage(DragImage&&, const IntPoint& hotSpot);
 #endif
 
 #if PLATFORM(WIN)

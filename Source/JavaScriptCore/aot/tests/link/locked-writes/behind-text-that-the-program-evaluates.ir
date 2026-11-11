@@ -1,0 +1,25 @@
+# text may do anything, so code that nobody names may end the process: a warning
+# function read(bag) { return bag.level; } read({}); Array.prototype.push = () => {}; eval(seed);
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @1
+    v1 = NewDictionary @1
+    v2 = Call v0, -, v1 calleeName="read" @1
+    v3 = Builtin builtin=ArrayPrototype @2
+    PropSet v3, v0 key="push" @3
+    v5 = Builtin builtin=Eval @4
+    v6 = Builtin builtin=GlobalThis @4
+    v7 = PropGet v6 key="seed" [isFreeName] @4
+    v8 = Call v5, -, v7 @4
+    Return v8 @5
+}
+function f1 name="read" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="level" @101
+    Return v1 @102
+}

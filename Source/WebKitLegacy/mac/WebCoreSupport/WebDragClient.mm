@@ -77,7 +77,7 @@ WebDragClient::WebDragClient(WebView* webView)
 
 #if PLATFORM(MAC)
 
-static OptionSet<WebCore::DragSourceAction> LEGACY_NODELETE coreDragSourceActionMask(WebDragSourceAction action)
+NODELETE static OptionSet<WebCore::DragSourceAction> coreDragSourceActionMask(WebDragSourceAction action)
 {
     OptionSet<WebCore::DragSourceAction> result;
 
@@ -93,7 +93,7 @@ static OptionSet<WebCore::DragSourceAction> LEGACY_NODELETE coreDragSourceAction
     return result;
 }
 
-static WebDragDestinationAction LEGACY_NODELETE kit(WebCore::DragDestinationAction action)
+NODELETE static WebDragDestinationAction kit(WebCore::DragDestinationAction action)
 {
     switch (action) {
     case WebCore::DragDestinationAction::DHTML:
@@ -168,7 +168,7 @@ void WebDragClient::startDrag(WebCore::DragItem dragItem, WebCore::DataTransfer&
     [topHTMLView.get() _stopAutoscrollTimer];
     RetainPtr pasteboard = [NSPasteboard pasteboardWithName:dataTransfer.pasteboard().name().createNSString().get()];
 
-    RetainPtr dragNSImage = dragImage.get().unsafeGet();
+    RetainPtr dragNSImage = dragImage.platformImage();
     RetainPtr sourceHTMLView = htmlView.get();
 
     WebCore::IntSize size([dragNSImage.get() size]);
@@ -200,13 +200,13 @@ void WebDragClient::beginDrag(WebCore::DragItem dragItem, WebCore::LocalFrame& f
 
     auto draggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:createPasteboardWriter(dragItem.data).get()]);
 
-    auto dragImageSize = WebCore::IntSize { [dragItem.image.get() size] };
+    auto dragImageSize = WebCore::IntSize { [dragItem.image.platformImage() size] };
 
     dragImageSize.scale(1 / frame.page()->deviceScaleFactor());
-    [dragItem.image.get() setSize:dragImageSize];
+    [dragItem.image.platformImage() setSize:dragImageSize];
 
     NSRect draggingFrame = NSMakeRect(mouseDraggedPosition.x() - dragImageSize.width() * dragItem.imageAnchorPoint.x(), mouseDraggedPosition.y() - dragImageSize.height() * dragItem.imageAnchorPoint.y(), dragImageSize.width(), dragImageSize.height());
-    [draggingItem setDraggingFrame:draggingFrame contents:dragItem.image.get().get()];
+    [draggingItem setDraggingFrame:draggingFrame contents:dragItem.image.platformImage().get()];
 
     // FIXME: We should be able to make a fake event with the mosue dragged coordinates.
     RetainPtr event = frame.eventHandler().currentNSEvent();

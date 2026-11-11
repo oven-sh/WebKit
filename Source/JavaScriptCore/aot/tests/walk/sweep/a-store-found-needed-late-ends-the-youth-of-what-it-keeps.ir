@@ -1,0 +1,27 @@
+# const e = new SuppressedError(a, a); f(e); const made = make(); define(e, "name", made); made.right = r;
+# v6 lays v5 in v3, which nothing has marked where the way comes by v6: the store waits, and the way takes v7 for a store into a young cell. v4, in front of them, reads v3: so v6 stays after all, and all is looked at again:
+# behind v6 memory names the cell, and v7 keeps its barrier.
+# RUN: sweep-code
+# CHECK: v6 @Void = PropDefine v3, v5
+# CHECK: v7 @Void = SetMappedArgument v5
+# CHECK-NOT: OwnerIsYoung
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = PropGet v0 key="name"
+    Return v3
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @Cell, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     v3: anything @Cell = NewSuppressedError v1, v1 traits=[mayCollect, mayTouchMemory]
+#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything @Cell = NewPromise traits=[mayCollect, mayTouchMemory]
+#     v6 @Void = PropDefine v3, v5 key="name" traits=[mayWriteObservableState, mayTouchMemory]
+#     v7 @Void = SetMappedArgument v5, v1 index=1 traits=[mayWriteObservableState, mayTouchMemory]
+#     Return v5
+# }
+# -- end of code

@@ -8,25 +8,25 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTNativeTest.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
-#include <initializer_list>
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
-// class C { #a = <initializer of a>; #b = 2; #m() { <body of m> } read() { return { a: this.#a, b: this.#b } } }; show("read()", new C().read())
 static constexpr ASCIILiteral layouts = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 kind=Instance name="C" constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"a"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key=#"b"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}]
+layout L0 kind=Instance name="C" constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"a"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key=#"b"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}]
 layout L1 name="Answer" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
 )IR"_s;
 
@@ -45,7 +45,7 @@ static constexpr ASCIILiteral evaluatedTwice = R"IR(function f0 name="main" kind
 }
 )IR"_s;
 
-static constexpr ASCIILiteral constructor = R"IR(function f1 name="C" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=classtoken}] results=[{type=anything}] {
+static constexpr ASCIILiteral constructor = R"IR(function f1 name="C" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=classtoken flags=[IsFromCompiler]}] results=[{type=anything}] {
   b0(v0: classtoken, v1: anything):
     v2 = GetConstructPrototype v1 layout=L0
     v3 = NewObject v2 layout=L0
@@ -53,7 +53,7 @@ static constexpr ASCIILiteral constructor = R"IR(function f1 name="C" kind=BaseC
     v5 = CallDirect v3, v0 function=f2
     Return v3
 }
-function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=classtoken}] results=[{type=anything}] {
+function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=classtoken flags=[IsFromCompiler]}] results=[{type=anything}] {
 )IR"_s;
 
 static constexpr ASCIILiteral definitions = R"IR(    PrivateDefine v0, v1, v2 layout=L0 field=1
@@ -68,14 +68,14 @@ static constexpr ASCIILiteral definitionsAfterStore = R"IR(    PrivateDefine v0,
 
 static constexpr ASCIILiteral methods = R"IR(    Return
 }
-function f3 name="read" kind=Method flags=[HasThis] captures=[{type=classtoken}] thisType={type=L0} results=[{type=anything}] {
+function f3 name="read" kind=Method flags=[HasThis] captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=L0} results=[{type=anything}] {
     v2 = PrivateGet v1, v0 layout=L0 field=1
     v3 = PrivateGet v1, v0 layout=L0 field=2
     v4 = NewObject -, v2, v3 layout=L1 fields=[0, 1]
     v5 = FinishObject v4
     Return v5
 }
-function f4 name="m" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=classtoken}] results=[{type=anything}] {
+function f4 name="m" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=classtoken flags=[IsFromCompiler]}] results=[{type=anything}] {
 )IR"_s;
 
 static constexpr ASCIILiteral evaluation = R"IR(}
@@ -112,92 +112,82 @@ struct PrivateFieldProgram {
     ASCIILiteral bodyOfMethod { methodReturningFive };
 };
 
-static std::unique_ptr<CompileOutput> compileOnThisThread(const PrivateFieldProgram& parts, std::initializer_list<ASCIILiteral> optionWords)
+static std::unique_ptr<CompileOutput> compileOnThisThread(const PrivateFieldProgram& parts, ASCIILiteral way)
 {
-    Wire::CompileOptions options = makeDefaultCompileOptions();
-    for (ASCIILiteral word : optionWords)
-        AOT_TEST_CHECK(!applyOptionWord(options, word));
+    Wire::CompileOptions options = makeOptionsOfTestedProgram();
     BuildContext build(options);
     String text = makeString(layouts, parts.main, constructor, parts.initializerOfA, parts.definitions, methods, parts.bodyOfMethod, evaluation);
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(WTF::move(text)), Typed::IRForm::AsRead, build);
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(text), build);
     if (!program) {
         build.diagnostics().finish(nullptr);
         Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
     }
     AOT_TEST_CHECK(program);
 
-    std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-    if (output->image.isEmpty())
-        Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-    AOT_TEST_CHECK(!output->image.isEmpty());
-    AOT_TEST_CHECK(output->entryModuleIDs.size() == 1);
+    std::unique_ptr<CompileOutput> output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfWay(way));
+    if (!output->hasImage())
+        Typed::printDiagnosticsOf(*output, WTF::dataFile());
+    AOT_TEST_CHECK(output->hasImage());
+    AOT_TEST_CHECK(output->records<uint32_t>(Wire::ResultSection::EntryModuleIds).size() == 1);
     return output;
 }
 
-static String runInShell(const PrivateFieldProgram& parts, std::initializer_list<ASCIILiteral> optionWords)
+static String runInShell(const PrivateFieldProgram& parts, ASCIILiteral way)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
-        output = compileOnThisThread(parts, optionWords);
+        output = compileOnThisThread(parts, way);
     });
 
-    TemporaryFile image(".image"_s, output->image.span());
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString(script, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], "); drainMicrotasks();"_s),
+        makeString(script, "runCompiledEntryPoint("_s, output->records<uint32_t>(Wire::ResultSection::EntryModuleIds)[0], "); drainMicrotasks();"_s),
     };
 
-    // The shell prints what the program throws, and the stack below it.
     ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
     return makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
 }
 
-static void checkUnderEveryOptionSet(const PrivateFieldProgram& parts, ASCIILiteral expectedOutput)
+static void checkInEveryWay(const PrivateFieldProgram& parts, ASCIILiteral expectedOutput)
 {
-    auto check = [&](std::initializer_list<ASCIILiteral> optionWords) {
-        String output = runInShell(parts, optionWords);
+    for (ASCIILiteral way : waysToCompilePrograms) {
+        String output = runInShell(parts, way);
         if (!output.startsWith(expectedOutput))
-            dataLog(output);
+            dataLogLn(way, " printed:\n", output);
         AOT_TEST_CHECK(output.startsWith(expectedOutput));
-    };
-    check({ });
-    check({ "disable=pass:InlineCalls"_s });
-    check({ "only-passes=ResolveAccesses"_s });
-    check({ "only-passes=AnalyzeFlow"_s });
+    }
 }
 
 static constexpr ASCIILiteral missingFieldError = "Exception: TypeError: Cannot access invalid private field\n"_s;
 
 static void testDefinitionsInOrder()
 {
-    checkUnderEveryOptionSet({ }, "read(): {\"a\":1,\"b\":2}\n"_s);
-    checkUnderEveryOptionSet({ .initializerOfA = callOfMethod }, "read(): {\"a\":5,\"b\":2}\n"_s);
+    checkInEveryWay({ }, "read(): {\"a\":1,\"b\":2}\n"_s);
+    checkInEveryWay({ .initializerOfA = callOfMethod }, "read(): {\"a\":5,\"b\":2}\n"_s);
 }
 
-// #a = (this.#b = 1)
 static void testStoreBeforeDefinition()
 {
-    checkUnderEveryOptionSet({ .initializerOfA = "    v2 = Integer integer=1\n    PrivateSet v0, v1, v2 layout=L0 field=2\n"_s, .definitions = definitionsAfterStore }, missingFieldError);
-    checkUnderEveryOptionSet({ .initializerOfA = callOfMethod, .bodyOfMethod = "    v2 = Integer integer=5\n    PrivateSet v0, v1, v2 layout=L0 field=2\n    Return v2\n"_s }, missingFieldError);
+    checkInEveryWay({ .initializerOfA = "    v2 = Integer integer=1\n    PrivateSet v0, v1, v2 layout=L0 field=2\n"_s, .definitions = definitionsAfterStore }, missingFieldError);
+    checkInEveryWay({ .initializerOfA = callOfMethod, .bodyOfMethod = "    v2 = Integer integer=5\n    PrivateSet v0, v1, v2 layout=L0 field=2\n    Return v2\n"_s }, missingFieldError);
 }
 
-// #a = this.#b
 static void testReadBeforeDefinition()
 {
-    checkUnderEveryOptionSet({ .initializerOfA = "    v2 = PrivateGet v0, v1 layout=L0 field=2\n"_s }, missingFieldError);
-    checkUnderEveryOptionSet({ .initializerOfA = callOfMethod, .bodyOfMethod = "    v2 = PrivateGet v0, v1 layout=L0 field=2\n    Return v2\n"_s }, missingFieldError);
+    checkInEveryWay({ .initializerOfA = "    v2 = PrivateGet v0, v1 layout=L0 field=2\n"_s }, missingFieldError);
+    checkInEveryWay({ .initializerOfA = callOfMethod, .bodyOfMethod = "    v2 = PrivateGet v0, v1 layout=L0 field=2\n    Return v2\n"_s }, missingFieldError);
 }
 
-// #a = (#b in this)
 static void testMembershipBeforeDefinition()
 {
-    checkUnderEveryOptionSet({ .initializerOfA = "    v2 = PrivateHas v0, v1 layout=L0 field=2\n"_s }, "read(): {\"a\":false,\"b\":2}\n"_s);
+    checkInEveryWay({ .initializerOfA = "    v2 = PrivateHas v0, v1 layout=L0 field=2\n"_s }, "read(): {\"a\":false,\"b\":2}\n"_s);
 }
 
 static void testClassEvaluatedTwice()
 {
-    checkUnderEveryOptionSet({ .main = evaluatedTwice }, "read(): {\"a\":1,\"b\":2}\nread(): {\"a\":1,\"b\":2}\n"_s);
+    checkInEveryWay({ .main = evaluatedTwice }, "read(): {\"a\":1,\"b\":2}\nread(): {\"a\":1,\"b\":2}\n"_s);
 }
 
 std::span<const NativeTest> privateFieldDefinitionTests()

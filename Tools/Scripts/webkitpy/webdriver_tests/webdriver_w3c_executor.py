@@ -20,17 +20,16 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import http.client
 import logging
 import os
 import json
-import queue
 import sys
-
-import multiprocessing as mp
-_mp_context = mp.get_context('fork')
+import time
 
 from webkitpy.common.system.filesystem import FileSystem
 from webkitpy.common.webkit_finder import WebKitFinder
+from webkitpy.webdriver_tests.test_process import TestProcess
 
 from mozlog import structuredlog
 
@@ -43,7 +42,7 @@ def _ensure_directory_in_path(directory):
 _ensure_directory_in_path(os.path.join(w3c_tools_dir, 'webdriver'))
 _ensure_directory_in_path(os.path.join(w3c_tools_dir, 'wptrunner'))
 
-from wptrunner.executors.base import WdspecExecutor, WdspecProtocol  # noqa
+from wptrunner.executors.base import PytestExecutor  # noqa
 from wptrunner.browsers.base import WebDriverBrowser  # noqa
 
 pytest_runner = None
@@ -124,11 +123,11 @@ class WebKitDriverBrowser(WebDriverBrowser):
         return [self.webdriver_binary, f"--port={self.port}"] + self.webdriver_args
 
 
-class WebDriverW3CExecutor(WdspecExecutor):
-    RESULT_TIMEOUT_SECONDS = 300
-    TEARDOWN_TIMEOUT_SECONDS = 10
+class WebDriverW3CExecutor(PytestExecutor):
+    WARM_UP_TIMEOUT_SECONDS = 120
+    PYTEST_ARGS = ['--strict-markers', '-p', 'no:mozlog']
 
-    def __init__(self, driver, server, env, timeout, expectations):
+    def __init__(self, driver, server, env, timeout, expectations, target_platform):
         WebKitDriverBrowser.test_env = env
         WebKitDriverBrowser.test_env.update(driver.browser_env())
         WebKitDriverBrowser.test_env['WEBKIT_TLS_CAFILE_PEM'] = server.cacert_pem_file()
@@ -140,81 +139,82 @@ class WebDriverW3CExecutor(WdspecExecutor):
                          'doc_root': server.document_root()}
         self.runner = TestRunner()
         browser = WebKitDriverBrowser(self.runner.logger, webdriver_binary=driver.binary_path())
-        WdspecExecutor.__init__(self, self.runner.logger, browser, server_config, driver.binary_path(), None, capabilities=driver.capabilities(), target_platform=None)
+        PytestExecutor.__init__(self, self.runner.logger, browser, server_config, driver.binary_path(), None, capabilities=driver.capabilities(), target_platform=target_platform)
 
         self._timeout = timeout
         self._expectations = expectations
-        self._test_queue = None
-        self._result_queue = None
-        self._process = None
+        self._test_process = None
 
     def setup(self):
         super(WebDriverW3CExecutor, self).setup(self.runner)
-        self._test_queue = _mp_context.Queue()
-        self._result_queue = _mp_context.Queue()
         self.browser.start(None)
-        args = (self._test_queue,
-                self._result_queue,
-                self.browser.host,
-                self.browser.port,
-                self.capabilities,
-                self.browser.webdriver_binary,
-                self.server_config,
-                self._timeout,
-                self._expectations)
-        self._process = _mp_context.Process(target=WebDriverW3CExecutor._runner, args=args)
-        self._process.start()
+        # When a subtest times out, the browser may be stuck too, for example showing a dialog.
+        self._test_process = TestProcess(self._run_file, self._timeout, restart=self._restart_driver)
+        self._test_process.start()
+
+    def collect(self, tests):
+        # Collecting the tests imports pytest, its plugins and everything that the tests import, and AutoInstall may
+        # have to download some of that. Do it here, before any test process is forked: a download in a test process
+        # crashes on macOS, where looking up the system proxy settings isn't safe in a child of a multi-threaded process.
+        do_delayed_imports()
+        pytest_runner.collect(tests, self.PYTEST_ARGS)
+
+    def warm_up(self):
+        # The first launch of a newly built browser can take much longer than later ones, for example while
+        # the system checks the new executables. Start and end a session before running any tests, so that
+        # the first test doesn't time out.
+        start_time = time.monotonic()
+        connection = http.client.HTTPConnection(self.browser.host, self.browser.port, timeout=self.WARM_UP_TIMEOUT_SECONDS)
+        try:
+            connection.request('POST', '/session', json.dumps({'capabilities': {'alwaysMatch': self.capabilities}}), {'Content-Type': 'application/json'})
+            value = json.loads(connection.getresponse().read())['value']
+            if 'sessionId' not in value:
+                _log.warning('Failed to start a session before running tests: %s' % value)
+                return
+            connection.request('DELETE', '/session/%s' % value['sessionId'])
+            connection.getresponse().read()
+        except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as error:
+            _log.warning('Failed to start a session before running tests: %s' % error)
+            return
+        finally:
+            connection.close()
+        _log.info('Started and ended a session in %.1f s before running tests' % (time.monotonic() - start_time))
 
     def teardown(self):
-        self.protocol.teardown()
+        if self._test_process is not None:
+            self._test_process.stop()
+            self._test_process = None
+        super(WebDriverW3CExecutor, self).teardown()
         self.browser.stop(force=True)
-        if self._process is not None:
-            self._test_queue.put('TEARDOWN')
-            self._process.join(self.TEARDOWN_TIMEOUT_SECONDS)
-            if self._process.is_alive():
-                self._process.terminate()
-                self._process.join(self.TEARDOWN_TIMEOUT_SECONDS)
-            self._process = None
-        self._test_queue = None
-        self._result_queue = None
 
-    @staticmethod
-    def _runner(test_queue, result_queue, host, port, capabilities, webdriver_binary, server_config, timeout, expectations):
+    def _restart_driver(self):
+        # Stopping the driver also stops the browser it launched.
+        self.browser.stop(force=True)
+        self.browser.start(None)
+
+    def _run_file(self, test, deselected, report):
+        # Runs in the test process.
         if pytest_runner is None:
             do_delayed_imports()
 
-        while True:
-            test = test_queue.get()
-            if test == 'TEARDOWN':
-                break
+        with pytest_runner.TemporaryDirectory() as cache_directory:
+            config_path = os.path.join(cache_directory, 'wd_config.json')
+            env = {'WDSPEC_CONFIG_FILE': config_path}
 
-            with pytest_runner.TemporaryDirectory() as cache_directory:
-                config_path = os.path.join(cache_directory, 'wd_config.json')
-                env = {'WDSPEC_CONFIG_FILE': config_path}
+            config = {'host': self.browser.host,
+                      'port': self.browser.port,
+                      'capabilities': self.capabilities,
+                      'webdriver': {'binary': self.browser.webdriver_binary},
+                      'wptserve': self.server_config,
+                      'timeout_multiplier': 1,
+                      'target_platform': self.target_platform,
+                      }
+            with open(config_path, 'w') as f:
+                json.dump(config, f)
 
-                config = {'host': host,
-                          'port': port,
-                          'capabilities': capabilities,
-                          'webdriver': {'binary': webdriver_binary},
-                          'wptserve': server_config,
-                          'timeout_multiplier': 10,
-                          'target_platform': sys.platform,
-                          }
-                with open(config_path, 'w') as f:
-                    json.dump(config, f)
-
-                env.update(WebKitDriverBrowser.test_env)
-                args = ['--strict-markers', '-p', 'no:mozlog']
-                result_queue.put(pytest_runner.run(test, args, timeout, env, expectations))
+            env.update(WebKitDriverBrowser.test_env)
+            harness_result, _ = pytest_runner.run(test, self.PYTEST_ARGS, self._timeout, env, self._expectations, report=report, deselected=deselected)
+            return harness_result
 
     def run(self, test):
-        self._test_queue.put(test)
-        try:
-            return self._result_queue.get(timeout=self.RESULT_TIMEOUT_SECONDS)
-        except queue.Empty:
-            _log.error('No result for %s after %d seconds, terminating the test process'
-                       % (test, self.RESULT_TIMEOUT_SECONDS))
-            if self._process is not None:
-                self._process.terminate()
-                self._process.join(self.TEARDOWN_TIMEOUT_SECONDS)
-            return ('ERROR', 'no result after %d seconds' % self.RESULT_TIMEOUT_SECONDS), []
+        return self._test_process.run(test)

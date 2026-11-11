@@ -61,6 +61,7 @@ public:
     {
         return adoptRef(*new AudioParam(context, name, defaultValue, minValue, maxValue, automationRate, automationRateMode));
     }
+    ~AudioParam();
 
     // AudioSummingJunction
     bool canUpdateState() override { return true; }
@@ -70,7 +71,7 @@ public:
     float value();
     void setValue(float);
 
-    float LEGACY_NODELETE valueForBindings() const;
+    NODELETE float valueForBindings() const;
     ExceptionOr<void> setValueForBindings(float);
 
     AutomationRate automationRate() const { return m_automationRate; }
@@ -129,7 +130,7 @@ private:
     const Logger& logger() const final { return m_logger.get(); }
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const final { return "AudioParam"_s; }
-    WTFLogChannel& LEGACY_NODELETE logChannel() const final;
+    NODELETE WTFLogChannel& logChannel() const final;
 #endif
     
     String m_name;

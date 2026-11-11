@@ -44,21 +44,20 @@ public:
         return m_objectBoundingBoxValid;
     }
     bool isLayoutSizeChanged() const { return m_isLayoutSizeChanged; }
-    bool didTransformToRootUpdate() const { return m_didTransformToRootUpdate; }
 
-    TransformationMatrix transformToParentUserSpace() const;
+    TransformationMatrix computeChildrenToParentUserSpaceTransform() const;
 
     FloatRect objectBoundingBox() const final
     {
         updateSVGTransformDependentBoundingBoxesIfNeeded();
         return m_objectBoundingBox;
     }
-    FloatRect objectBoundingBoxWithoutTransformations() const final { return m_objectBoundingBoxWithoutTransformations; }
+    FloatRect objectBoundingBoxWithoutTransforms() const final { return m_objectBoundingBoxWithoutTransforms; }
     // A viewport-establishing container (inner <svg>, <marker>) overrides this to return its viewport
     // rectangle, so that it contributes its viewport (not its clipped descendant geometry) to an
-    // ancestor's "without transformations" object bounding box. Public so SVGBoundingBoxComputation
+    // ancestor's "without transforms" object bounding box. Public so SVGBoundingBoxComputation
     // can honor it while recursing.
-    virtual std::optional<FloatRect> overridenObjectBoundingBoxWithoutTransformations() const { return std::nullopt; }
+    virtual std::optional<FloatRect> overriddenObjectBoundingBoxWithoutTransforms() const { return std::nullopt; }
     FloatRect strokeBoundingBox() const final;
 
     void invalidateCachedSVGTransformDependentBoundingBoxes() final { m_transformDependentBoundingBoxesDirty = true; }
@@ -81,7 +80,6 @@ protected:
     void addFocusRingRects(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject* container) const override;
 
     bool m_isLayoutSizeChanged { false };
-    bool m_didTransformToRootUpdate { false };
 
 private:
     // Recompute m_objectBoundingBox / m_strokeBoundingBox lazily after a descendant transform
@@ -93,7 +91,7 @@ private:
     mutable bool m_objectBoundingBoxValid { false };
     mutable bool m_transformDependentBoundingBoxesDirty { false };
     mutable FloatRect m_objectBoundingBox;
-    FloatRect m_objectBoundingBoxWithoutTransformations;
+    FloatRect m_objectBoundingBoxWithoutTransforms;
     mutable Markable<FloatRect> m_strokeBoundingBox;
 };
 

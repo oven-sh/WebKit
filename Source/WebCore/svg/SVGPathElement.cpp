@@ -47,7 +47,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGPathElement);
 
 class PathCache {
 public:
-    static PathCache& LEGACY_NODELETE singleton();
+    NODELETE static PathCache& singleton();
 
     std::optional<DataRef<SVGPathByteStream::Data>> get(const AtomString& attributeValue) const;
     void add(const AtomString& attributeValue, DataRef<SVGPathByteStream::Data>);
@@ -249,8 +249,7 @@ const SVGPathByteStream& SVGPathElement::pathByteStream() const
             return SVGPathByteStream::empty();
         }
 
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST if (CheckedPtr style = const_cast<SVGPathElement&>(*this).computedStyle()) {
+        if (CheckedPtr style = const_cast<SVGPathElement&>(*this).computedStyle()) {
             if (auto& pathFunction = style->d().tryPath())
                 return pathFunction->parameters.data.byteStream;
             return SVGPathByteStream::empty();

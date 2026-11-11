@@ -30,6 +30,7 @@
 #include <drm_fourcc.h>
 #include <glib.h>
 #include <string.h>
+#include <wtf/IndexedRange.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WPE {
@@ -111,9 +112,9 @@ Connector::Connector(drmModeConnector* connector, Properties&& properties)
     , m_properties(WTF::move(properties))
 {
     m_modes.reserveInitialCapacity(connector->count_modes);
-    for (const auto& [i, mode] : unsafeMakeSpan(connector->modes, connector->count_modes) | std::views::enumerate) {
+    for (const auto& [i, mode] : indexedRange(unsafeMakeSpan(connector->modes, connector->count_modes))) {
         if (mode.type & DRM_MODE_TYPE_PREFERRED)
-            m_preferredModeIndex = i;
+            m_preferredModeIndex = static_cast<unsigned>(i);
         m_modes.append(mode);
     }
 }
@@ -128,8 +129,7 @@ std::unique_ptr<Plane> Plane::create(int fd, Type type, drmModePlane* plane, boo
     if (!typeProperty.first || typeProperty.second != static_cast<uint64_t>(type))
         return nullptr;
 
-    Vector<Format> formats;
-    formats.reserveInitialCapacity(plane->count_formats);
+    Vector<Format> formats(ReserveCapacityTag { }, plane->count_formats);
     bool useFallback = true;
     if (modifiersSupported) {
         auto blobID = drmPropertyForName(fd, properties.get(), "IN_FORMATS");
@@ -145,8 +145,7 @@ std::unique_ptr<Plane> Plane::create(int fd, Type type, drmModePlane* plane, boo
                 RELEASE_ASSERT(plane->count_formats == formatModifierBlob->count_formats);
 
                 for (uint32_t i = 0; i < formatModifierBlob->count_formats; ++i) {
-                    Vector<uint64_t> modifiers;
-                    modifiers.reserveInitialCapacity(formatModifierBlob->count_modifiers);
+                    Vector<uint64_t> modifiers(ReserveCapacityTag { }, formatModifierBlob->count_modifiers);
 
                     for (uint32_t j = 0; j < formatModifierBlob->count_modifiers; ++j) {
                         struct drm_format_modifier* modifier = &blobModifiers[j];

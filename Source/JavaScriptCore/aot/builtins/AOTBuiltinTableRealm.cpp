@@ -12,6 +12,7 @@
 #include "AOTBuiltinTableBindings.h"
 #include "AOTErrorMessages.h"
 #include "AOTModuleHost.h"
+#include "AOTProgramTables.h"
 #include "AOTVector.h"
 #include "ArrayIteratorPrototype.h"
 #include "AsyncFunctionPrototype.h"
@@ -32,10 +33,10 @@
 #include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
 #include "SetIteratorPrototype.h"
-#include "ShadowRealmPrototype.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
 #include <array>
+#include <wtf/FastBitVector.h>
 #include <mutex>
 #include <wtf/BitVector.h>
 #include <wtf/NeverDestroyed.h>
@@ -53,9 +54,12 @@ using CellLookup = std::expected<JSCell*, BuiltinLookupFailure>;
 static bool hasValueCell(const BuiltinTable& table, BuiltinID id)
 {
     const Builtin& member = table.at(id);
+    if (member.scope != BuiltinScope::Realm)
+        return false;
+    if (member.isAddedAtFirstRead)
+        return true;
     return member.kind == BuiltinKind::DataProperty
-        && member.scope == BuiltinScope::Realm
-        && member.mutability == BuiltinMutability::ConstantUnlessWritten
+        && member.mutability != BuiltinMutability::ChangesOnItsOwn
         && member.flags.contains(BuiltinFlag::IsLazilyCreated)
         && !member.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
 }
@@ -76,12 +80,12 @@ std::optional<BuiltinCellKey> BuiltinCellKey::decode(uint32_t bits, const Builti
 
 bool groupsFunctionsOfCompiledCode(BuiltinID id)
 {
-    return id == Builtins::CompilerHelpers || id == Builtins::JSONText || id == Builtins::PrivateGlobals;
+    return id == Builtins::CompilerHelpers || id == Builtins::PrivateGlobals;
 }
 
 static bool hasObjectCell(const BuiltinTable& table, BuiltinID id)
 {
-    if (groupsFunctionsOfCompiledCode(id))
+    if (groupsFunctionsOfCompiledCode(id) || id == Builtins::UndeclaredNativeCode)
         return false;
     BuiltinKind kind = table.at(id).kind;
     return isObjectKind(kind) || (kind == BuiltinKind::Constant && table.nameOfSymbol(id));
@@ -111,6 +115,20 @@ static bool hasAccessorCallee(const BuiltinTable& table, BuiltinID id, BuiltinCa
     return table.at(id).kind == BuiltinKind::Accessor && std::ranges::any_of(table.overloadSummariesOf(id), [&](const BuiltinOverloadSummary& overload) {
         return overload.mode == mode && mayCallEntryFunction(overload);
     });
+}
+
+BuiltinCellKey cellThatNamesMemberAskedByItsByte(const BuiltinTable& table, BuiltinID member)
+{
+    BuiltinID object = table.canonicalID(member);
+    return table.at(object).kind == BuiltinKind::Accessor ? BuiltinCellKey::getter(object) : BuiltinCellKey::object(object);
+}
+
+bool isMemberAskedByByteAlone(const BuiltinTable& table, BuiltinID member)
+{
+    const Builtin& entry = table.at(member);
+    if (entry.kind != BuiltinKind::Accessor || entry.scope != BuiltinScope::Realm || entry.mutability != BuiltinMutability::ConstantUnlessWritten || entry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
+        return false;
+    return entry.holder && entry.name && table.canonicalID(member) == member && !BuiltinCellKey::getter(member).hasCell(table);
 }
 
 bool BuiltinCellKey::hasCell(const BuiltinTable& table) const
@@ -227,9 +245,6 @@ static auto hiddenPrototypesOf(JSGlobalObject* realm)
         { BuiltinClasses::AsyncGeneratorFunction, realm->asyncGeneratorFunctionPrototype() },
         { BuiltinClasses::Generator, realm->generatorPrototype() },
         { BuiltinClasses::AsyncGenerator, realm->asyncGeneratorPrototype() },
-#if ENABLE(SHADOW_REALM)
-        { BuiltinClasses::ShadowRealm, realm->shadowRealmPrototype() },
-#endif
     });
 }
 
@@ -279,6 +294,38 @@ static const ClassesOfStaticTables& classesOfStaticTablesOfFirstRealm(JSGlobalOb
         });
     });
     return classes.get();
+}
+
+BuiltinID findMemberOfNamespaceCreatedWith(JSGlobalObject* realm, const LazyClassStructure& lazyStructure)
+{
+    struct ClassOfNamespace {
+        const LazyClassStructure* lazyStructure;
+        ASCIILiteral holder;
+        ASCIILiteral name;
+    };
+    const ClassOfNamespace classes[] = {
+        { &realm->m_durationStructure, "Temporal"_s, "Duration"_s },
+        { &realm->m_instantStructure, "Temporal"_s, "Instant"_s },
+        { &realm->m_plainDateStructure, "Temporal"_s, "PlainDate"_s },
+        { &realm->m_plainDateTimeStructure, "Temporal"_s, "PlainDateTime"_s },
+        { &realm->m_plainMonthDayStructure, "Temporal"_s, "PlainMonthDay"_s },
+        { &realm->m_plainTimeStructure, "Temporal"_s, "PlainTime"_s },
+        { &realm->m_plainYearMonthStructure, "Temporal"_s, "PlainYearMonth"_s },
+        { &realm->m_zonedDateTimeStructure, "Temporal"_s, "ZonedDateTime"_s },
+#define AOT_CLASS_OF_WEBASSEMBLY(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) { &realm->m_ ## properName ## Structure, "WebAssembly"_s, #jsName ## _s },
+        FOR_EACH_WEBASSEMBLY_CONSTRUCTOR_TYPE(AOT_CLASS_OF_WEBASSEMBLY)
+#undef AOT_CLASS_OF_WEBASSEMBLY
+    };
+    const BuiltinTable& table = BuiltinTable::singleton();
+    for (const ClassOfNamespace& entry : classes) {
+        if (entry.lazyStructure != &lazyStructure)
+            continue;
+        BuiltinName holderName = table.nameOf(byteCast<uint8_t>(entry.holder.span()));
+        BuiltinID holder = holderName ? table.findGlobal(holderName) : BuiltinID();
+        BuiltinName name = holder ? table.nameOf(byteCast<uint8_t>(entry.name.span())) : BuiltinName();
+        return name ? table.findOwnMember(table.canonicalID(holder), name) : BuiltinID();
+    }
+    return { };
 }
 
 BuiltinID findGlobalCreatedWith(JSGlobalObject* realm, const LazyClassStructure& lazyStructure)
@@ -343,48 +390,70 @@ static JSObject* findConstructorOfLazyClass(JSGlobalObject* realm, const Identif
     return constructor;
 }
 
+template<typename Visitor>
+static ALWAYS_INLINE void visitInstanceStructuresOfEngine(JSGlobalObject* realm, const Visitor& visit)
+{
+#define AOT_VISIT_INSTANCE_STRUCTURE(name, structure) visit(BuiltinClasses::name, [&]() ALWAYS_INLINE_LAMBDA { return structure; });
+    for (IndexingType indexingType : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, ArrayWithArrayStorage, CopyOnWriteArrayWithInt32, CopyOnWriteArrayWithDouble, CopyOnWriteArrayWithContiguous })
+        AOT_VISIT_INSTANCE_STRUCTURE(Array, realm->originalArrayStructureForIndexingType(indexingType))
+    AOT_VISIT_INSTANCE_STRUCTURE(Map, realm->mapStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(Set, realm->setStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(WeakMap, realm->weakMapStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(WeakSet, realm->weakSetStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(ArrayBuffer, realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Default))
+    AOT_VISIT_INSTANCE_STRUCTURE(SharedArrayBuffer, realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared))
+    AOT_VISIT_INSTANCE_STRUCTURE(DataView, realm->typedArrayStructureConcurrently(TypeDataView, false))
+    AOT_VISIT_INSTANCE_STRUCTURE(DataView, realm->typedArrayStructureConcurrently(TypeDataView, true))
+    AOT_VISIT_INSTANCE_STRUCTURE(RegExp, realm->regExpStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(Promise, realm->promiseStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(String, realm->stringObjectStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(Error, realm->errorStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(Date, realm->dateStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(IntlDateTimeFormat, realm->m_dateTimeFormatStructure.getConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(IntlNumberFormat, realm->m_numberFormatStructure.getConcurrently())
+#define AOT_VISIT_TYPED_ARRAY_STRUCTURE(name) \
+    AOT_VISIT_INSTANCE_STRUCTURE(name##Array, realm->typedArrayStructureConcurrently(Type##name, false)) \
+    AOT_VISIT_INSTANCE_STRUCTURE(name##Array, realm->typedArrayStructureConcurrently(Type##name, true))
+    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_VISIT_TYPED_ARRAY_STRUCTURE)
+#undef AOT_VISIT_TYPED_ARRAY_STRUCTURE
+    AOT_VISIT_INSTANCE_STRUCTURE(ArrayIterator, realm->arrayIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(MapIterator, realm->mapIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(SetIterator, realm->setIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(StringIterator, realm->stringIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(RegExpStringIterator, realm->regExpStringIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(IteratorHelper, realm->iteratorHelperStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(WrapForValidIterator, realm->wrapForValidIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(AsyncFromSyncIterator, realm->asyncFromSyncIteratorStructure())
+#undef AOT_VISIT_INSTANCE_STRUCTURE
+}
+
 template<typename Function>
 static ALWAYS_INLINE void forEachInstanceStructureOfEngine(JSGlobalObject* realm, const Function& function)
 {
-    auto visitIfCreated = [&](BuiltinClassID builtinClass, Structure* structure) ALWAYS_INLINE_LAMBDA {
-        if (structure)
+    visitInstanceStructuresOfEngine(realm, [&](BuiltinClassID builtinClass, const auto& findStructure) ALWAYS_INLINE_LAMBDA {
+        if (Structure* structure = findStructure())
             function(builtinClass, structure);
-    };
-    for (IndexingType indexingType : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, ArrayWithArrayStorage, CopyOnWriteArrayWithInt32, CopyOnWriteArrayWithDouble, CopyOnWriteArrayWithContiguous })
-        visitIfCreated(BuiltinClasses::Array, realm->originalArrayStructureForIndexingType(indexingType));
-    visitIfCreated(BuiltinClasses::Map, realm->mapStructureConcurrently());
-    visitIfCreated(BuiltinClasses::Set, realm->setStructureConcurrently());
-    visitIfCreated(BuiltinClasses::WeakMap, realm->weakMapStructureConcurrently());
-    visitIfCreated(BuiltinClasses::WeakSet, realm->weakSetStructureConcurrently());
-    visitIfCreated(BuiltinClasses::ArrayBuffer, realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Default));
-    visitIfCreated(BuiltinClasses::SharedArrayBuffer, realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared));
-    visitIfCreated(BuiltinClasses::DataView, realm->typedArrayStructureConcurrently(TypeDataView, false));
-    visitIfCreated(BuiltinClasses::RegExp, realm->regExpStructure());
-    visitIfCreated(BuiltinClasses::Promise, realm->promiseStructure());
-    visitIfCreated(BuiltinClasses::String, realm->stringObjectStructure());
-    visitIfCreated(BuiltinClasses::Error, realm->errorStructureConcurrently());
-    visitIfCreated(BuiltinClasses::Date, realm->dateStructureConcurrently());
-#define AOT_VISIT_TYPED_ARRAY_STRUCTURE(name) visitIfCreated(BuiltinClasses::name##Array, realm->typedArrayStructureConcurrently(Type##name, false));
-    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_VISIT_TYPED_ARRAY_STRUCTURE)
-#undef AOT_VISIT_TYPED_ARRAY_STRUCTURE
-    visitIfCreated(BuiltinClasses::ArrayIterator, realm->arrayIteratorStructure());
-    visitIfCreated(BuiltinClasses::MapIterator, realm->mapIteratorStructure());
-    visitIfCreated(BuiltinClasses::SetIterator, realm->setIteratorStructure());
-    visitIfCreated(BuiltinClasses::StringIterator, realm->stringIteratorStructure());
-    visitIfCreated(BuiltinClasses::RegExpStringIterator, realm->regExpStringIteratorStructure());
-    visitIfCreated(BuiltinClasses::IteratorHelper, realm->iteratorHelperStructure());
-    visitIfCreated(BuiltinClasses::WrapForValidIterator, realm->wrapForValidIteratorStructure());
-    visitIfCreated(BuiltinClasses::AsyncFromSyncIterator, realm->asyncFromSyncIteratorStructure());
+    });
+}
+
+bool engineNamesInstanceStructureOf(BuiltinClassID builtinClass)
+{
+    static NeverDestroyed<FastBitVector> namedClasses = [] {
+        FastBitVector classes(BuiltinTable::singleton().classCount());
+        visitInstanceStructuresOfEngine(nullptr, [&](BuiltinClassID named, const auto&) ALWAYS_INLINE_LAMBDA {
+            classes[named.index()] = true;
+        });
+        return classes;
+    }();
+    return namedClasses->at(builtinClass.index());
 }
 
 void forEachInstanceStructure(JSGlobalObject* realm, const ScopedLambda<void(BuiltinClassID, Structure*)>& function)
 {
     forEachInstanceStructureOfEngine(realm, function);
-    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
-        Structure* structure = binding.findInstanceStructure ? binding.findInstanceStructure(realm) : nullptr;
-        if (structure)
-            function(binding.builtinClass, structure);
-    }
+    BuiltinBindings::forEachInstanceStructureOfHost(realm, [&](const BuiltinClassBinding& binding, Structure* structure) {
+        function(binding.builtinClass, structure);
+    });
 }
 
 BuiltinClassID findClassWithInstanceStructure(JSGlobalObject* realm, Structure* structure)
@@ -395,10 +464,10 @@ BuiltinClassID findClassWithInstanceStructure(JSGlobalObject* realm, Structure* 
             found = builtinClass;
     });
     const ClassInfo* info = structure->classInfoForCells();
-    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
-        if ((!binding.instanceClassInfo || info->isSubClassOf(binding.instanceClassInfo)) && binding.findInstanceStructure && binding.findInstanceStructure(realm) == structure)
+    BuiltinBindings::forEachInstanceStructureOfHost(realm, [&](const BuiltinClassBinding& binding, Structure* original) {
+        if (original == structure && (!binding.instanceClassInfo || info->isSubClassOf(binding.instanceClassInfo)))
             found = binding.builtinClass;
-    }
+    });
     return found;
 }
 
@@ -467,6 +536,8 @@ static ObjectLookup findHiddenRoot(JSGlobalObject* realm, BuiltinID id)
         return findTableOfLoader(realm, &ModuleHost::requireCache);
     if (id == Builtins::ModuleExtensions)
         return findTableOfLoader(realm, &ModuleHost::requireExtensions);
+    if (id == Builtins::ModuleRequirePrototype)
+        return findTableOfLoader(realm, &ModuleHost::requirePrototype);
     if (std::optional<LinkTimeConstant> constant = BuiltinBindings::linkTimeConstantOf(id))
         return asObject(realm->linkTimeConstant(*constant));
     BuiltinID subclassConstructor = findSubclassConstructor(BuiltinTable::singleton(), id);
@@ -616,7 +687,7 @@ static CellLookup checkFound(const BuiltinTable& table, BuiltinCellKey key, JSVa
         if (isOverloadOfKey(key.kind(), overload.mode) && !hasExpectedCallee(overload.callee, value))
             return makeUnexpected(BuiltinLookupFailure::HasOtherCallee);
     }
-    if (key.kind() == BuiltinCellKey::Kind::Object && table.isHostFunctionOfEngine(id)) {
+    if (key.kind() == BuiltinCellKey::Kind::Object && (table.isHostFunctionOfEngine(id) || table.isNativeFunctionOfHost(id))) {
         Structure* structure = value.asCell()->structure();
         if (structure->globalObject()->hostFunctionStructure()->mayHaveImmutableProperties() && !structure->mayHaveImmutableProperties())
             return makeUnexpected(BuiltinLookupFailure::HasOtherCallee);
@@ -769,6 +840,32 @@ JSObject* findExistingObject(JSObject* holder, UniquedStringImpl* key)
     return isValidOffset(offset) ? objectAt(holder, offset) : nullptr;
 }
 
+JSObject* findExistingBuiltin(JSGlobalObject* realm, BuiltinID id)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    if (!table.contains(id) || table.at(id).scope == BuiltinScope::Module)
+        return nullptr;
+    if (id == Builtins::GlobalThis)
+        return realm;
+    VM& vm = realm->vm();
+    const Builtin& builtin = table.at(id);
+    if (builtin.holder) {
+        if (table.isSymbolName(builtin.name) && !table.wellKnownSymbolOf(builtin.name))
+            return nullptr;
+        JSObject* holder = findExistingBuiltin(realm, builtin.holder);
+        return holder ? findExistingObject(holder, table.identifierOf(vm, builtin.name).impl()) : nullptr;
+    }
+    if (BuiltinID subclassConstructor = findSubclassConstructor(table, id)) {
+        JSObject* constructor = findExistingBuiltin(realm, subclassConstructor);
+        return constructor ? constructor->getPrototypeDirect().getObject() : nullptr;
+    }
+    BuiltinID prototypeID = findClassPrototype(table, id);
+    JSObject* prototype = prototypeID ? findExistingHiddenPrototype(realm, builtin.instanceClass) : nullptr;
+    if (!prototype || id == prototypeID)
+        return prototype;
+    return findExistingObject(prototype, vm.propertyNames->constructor.impl());
+}
+
 class ExistingBuiltins {
 public:
     explicit ExistingBuiltins(JSGlobalObject* realm)
@@ -851,45 +948,97 @@ namespace {
 
 class FixedNamesOfBuiltin final : public ImmutablePropertyNames::OutsideNames {
 public:
-    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes)
+    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes, std::span<const uint32_t> unlockedMembers, bool reflectThrows, std::span<const Identifier> openedNames, std::optional<std::span<const uint32_t>> namesTakenForAbsent)
         : m_vm(vm)
         , m_holder(holder)
         , m_closedKeys(BuiltinTable::singleton().closedKeysOf(holder))
         , m_constantMembers(constantMembers)
+        , m_unlockedMembers(unlockedMembers)
+        , m_reflectThrows(reflectThrows)
         , m_writes(writes)
+        , m_namesTakenForAbsent(namesTakenForAbsent)
     {
+        for (const Identifier& opened : openedNames) {
+            if (m_namesTakenForAbsent || m_reflectThrows)
+                m_openedTexts.add(opened.impl());
+            if (BuiltinName name = BuiltinTable::singleton().nameOf(vm, opened.impl()))
+                m_openedNames.append(name);
+        }
     }
 
     void willWrite(UniquedStringImpl* uid) const final
     {
-        if (!m_writes || m_vm.allowLazyMaterializationOfImmutablePropertiesCount)
+        if (m_vm.allowLazyMaterializationOfImmutablePropertiesCount || m_membersWrittenBefore.contains(uid))
             return;
         const BuiltinTable& table = BuiltinTable::singleton();
         BuiltinName name = table.nameOf(m_vm, uid);
-        if (BuiltinID member = name ? table.findOwnMember(m_holder, name) : BuiltinID())
+        BuiltinID member = name ? table.findOwnMember(m_holder, name) : BuiltinID();
+        if (member && !refusalDependsOnWriter(uid))
+            m_membersWrittenBefore.add(uid);
+        if (!m_writes)
+            return;
+        if (member)
             m_writes->willWrite(member, uid);
+        else
+            m_writes->willAddNameTo(m_holder);
     }
 
     bool contains(UniquedStringImpl* uid) const final
     {
-        BuiltinName name = BuiltinTable::singleton().nameOf(m_vm, uid);
-        return name && isFixed(name);
+        if (m_membersWrittenBefore.contains(uid))
+            return false;
+        const BuiltinTable& table = BuiltinTable::singleton();
+        BuiltinName name = table.nameOf(m_vm, uid);
+        if (table.at(m_holder).flags.contains(BuiltinFlag::IsLockedObject)) {
+            if (!uid->isSymbol() || static_cast<SymbolImpl*>(uid)->isPrivate())
+                return false;
+            BuiltinID member = name ? table.findOwnMember(m_holder, name) : BuiltinID();
+            return !member || !ProgramTables::isUnlocked(m_unlockedMembers, member.index());
+        }
+        if (name && isFixed(name))
+            return true;
+        return m_namesTakenForAbsent && !uid->isSymbol() && !m_openedTexts.contains(uid) && !(name && table.findOwnMember(m_holder, name)) && isTakenForAbsent(uid);
     }
 
-    String messageOfRefusal(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
-    String messageOfRefusedDeletion(UniquedStringImpl* uid) const final { return deletionFromLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
-    bool refusalAlwaysThrows() const final { return true; }
+    bool refusesWrite(UniquedStringImpl* uid) const final { return !m_membersWrittenBefore.contains(uid) && (contains(uid) || (refusalDependsOnWriter(uid) && isWrittenByFileOfProduct(m_vm))); }
 
-    String messageOfRefusedPrototype() const final
+    bool refusalDependsOnWriter(UniquedStringImpl* uid) const final
     {
-        return prototypeChangeOfLockedBuiltinMessage(BuiltinTable::singleton().textOf(m_holder));
+        if (!m_reflectThrows)
+            return false;
+        const BuiltinTable& table = BuiltinTable::singleton();
+        BuiltinName name = table.nameOf(m_vm, uid);
+        if (BuiltinID member = name ? table.findOwnMember(m_holder, name) : BuiltinID())
+            return table.at(member).mutability == BuiltinMutability::AlwaysLocked && ProgramTables::isUnlocked(m_unlockedMembers, member.index());
+        bool executableOpensWhatProgramSpells = table.canonicalID(m_holder) != Builtins::ObjectPrototype && table.at(m_holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames });
+        return !executableOpensWhatProgramSpells && m_openedTexts.contains(uid);
+    }
+
+    String storeErrorMessage(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(m_vm, m_holder, uid, lockedIn()); }
+    String deleteErrorMessage(UniquedStringImpl* uid) const final { return deletionFromLockedBuiltinMessage(m_vm, m_holder, uid, lockedIn()); }
+    bool throwsInSloppyMode() const final { return true; }
+    bool throwsFromReflect() const final { return lockedIn() == LockedIn::TestRun; }
+
+    String setPrototypeErrorMessage() const final
+    {
+        return prototypeChangeOfLockedBuiltinMessage(BuiltinTable::singleton().textOf(m_holder), lockedIn());
     }
 
 private:
+    LockedIn lockedIn() const { return m_reflectThrows && !isWrittenByFileOfProduct(m_vm) ? LockedIn::TestRun : LockedIn::Executable; }
+
+    bool isTakenForAbsent(UniquedStringImpl* uid) const
+    {
+        if (uid->is8Bit() && charactersAreAllASCII(uid->span8()))
+            return std::ranges::binary_search(*m_namesTakenForAbsent, ProgramTables::numberOfNameTakenForAbsent(byteCast<uint8_t>(uid->span8())));
+        CString utf8 = String(uid).utf8();
+        return std::ranges::binary_search(*m_namesTakenForAbsent, ProgramTables::numberOfNameTakenForAbsent(byteCast<uint8_t>(utf8.span())));
+    }
+
     bool isFixed(BuiltinName name) const
     {
         if (std::ranges::binary_search(m_closedKeys, name))
-            return true;
+            return !m_openedNames.contains(name);
         const BuiltinTable& table = BuiltinTable::singleton();
         BuiltinID member = table.findOwnMember(m_holder, name);
         if (!member)
@@ -897,7 +1046,7 @@ private:
         const Builtin& entry = table.at(member);
         if (m_holder == Builtins::GlobalThis && !BuiltinBindings::provides(entry.origin))
             return false;
-        if (member == m_holder || std::ranges::binary_search(table.lockedMembers(), member))
+        if (member == m_holder || (std::ranges::binary_search(table.lockedMembers(), member) && !ProgramTables::isUnlocked(m_unlockedMembers, member.index())))
             return true;
         if (entry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances) && table.at(m_holder).flags.contains(BuiltinFlag::HasLockedMembers))
             return true;
@@ -907,13 +1056,19 @@ private:
     VM& m_vm;
     BuiltinID m_holder;
     std::span<const BuiltinName> m_closedKeys;
+    Vector<BuiltinName, 2> m_openedNames;
     std::span<const uint32_t> m_constantMembers;
+    std::span<const uint32_t> m_unlockedMembers;
+    bool m_reflectThrows;
     WritesToBuiltinMembers* m_writes;
+    std::optional<std::span<const uint32_t>> m_namesTakenForAbsent;
+    IdentifierSet m_openedTexts;
+    mutable IdentifierSet m_membersWrittenBefore;
 };
 
 } // anonymous namespace
 
-Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes)
+Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes, std::span<const uint32_t> unlockedMembers, bool reflectThrows, std::span<const Identifier> openedNames, std::optional<std::span<const uint32_t>> namesTakenForAbsent)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     OptionSet<ImmutablePropertyNames::Part> parts;
@@ -923,16 +1078,21 @@ Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, s
         parts.add(ImmutablePropertyNames::Part::Prototype);
 
     IdentifierSet openStrings;
-    if (table.at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames)) {
+    if (table.at(holder).flags.contains(BuiltinFlag::IsLockedObject) || !table.at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames))
+        namesTakenForAbsent = std::nullopt;
+    if (!namesTakenForAbsent && table.at(holder).flags.containsAny({ BuiltinFlag::IsClosedToOtherNames, BuiltinFlag::IsLockedObject })) {
         parts.add(ImmutablePropertyNames::Part::OtherStrings);
+        for (const Identifier& name : openedNames)
+            openStrings.add(name.impl());
         for (BuiltinName name : table.openNamesOf(holder))
             openStrings.add(table.identifierOf(vm, name).impl());
         for (BuiltinID member : table.membersOf(holder)) {
-            if (table.at(member).mutability != BuiltinMutability::AlwaysLocked && !table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
+            bool isLocked = table.at(member).mutability == BuiltinMutability::AlwaysLocked && !ProgramTables::isUnlocked(unlockedMembers, member.index());
+            if (!isLocked && !table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
                 openStrings.add(table.identifierOf(vm, table.at(member).name).impl());
         }
     }
-    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, writes)));
+    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, writes, unlockedMembers, reflectThrows, openedNames, namesTakenForAbsent)));
 }
 
 } // namespace JSC::AOT

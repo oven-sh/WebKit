@@ -1,0 +1,138 @@
+# a callee that is walked in line where its call is returned at once returns in place of the unit: each of its returns ends the unit, nothing meets behind the call, and its own tail call stays one
+# function even(n) { if (n === 0) return true; return odd(n - 1); }  function odd(n) { if (n === 0) return false; return even(n - 1); }
+# RUN: walk f1 mechanisms=none+DirectCalls+Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: frame 1 callee=f2 {{*}}isTailCall=true
+# CHECK: [[bottom]]: false
+# CHECK: Return [[bottom]]
+# CHECK: [[call]]: {{*}} = CallDirect {{*}}function=f1
+# CHECK-NEXT: ReturnCall [[call]]
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: frame 1 callee=f2 {{*}}isTailCall=true
+# ALL: [[call]]: {{*}} = CallDirect {{*}}function=f1
+# ALL-NEXT: ReturnCall [[call]]
+# through two copies: first > second > third > first
+# RUN(TWO): walk f4 mechanisms=none+DirectCalls+Inlining
+# TWO-LABEL: code f4:Body
+# TWO: frame 1 callee=f5 {{*}}isTailCall=true
+# TWO: frame 2 callee=f6 {{*}}parent=1 isTailCall=true
+# TWO: [[call]]: {{*}} = CallDirect {{*}}function=f4
+# TWO-NEXT: ReturnCall [[call]]
+# function adds(n) { const r = odd(n); return r + 1; }
+# The control: the unit goes on behind this call, so the returns of the copy meet there. So do those of the copy in the copy, whose call the unit does not return, and the call in it comes back
+# RUN(ELSEWHERE): walk f3 mechanisms=none+DirectCalls+Inlining
+# ELSEWHERE-LABEL: code f3:Body
+# ELSEWHERE: frame 1 callee=f2
+# ELSEWHERE: frame 2 callee=f1 {{*}}parent=1 isTailCall=true
+# ELSEWHERE: [[call]]: {{*}} = CallDirect {{*}}function=f2
+# ELSEWHERE-NEXT: Jump -> next [[behind]]([[call]])
+# ELSEWHERE: = Add
+# RUN(NEVER): walk f3 mechanisms=none+DirectCalls+Inlining
+# NEVER-NOT: ReturnCall
+# with inlining withheld it is a direct call that leaves by a jump
+# RUN(WITHHELD): walk f1 mechanisms=none+DirectCalls
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD: [[call]]: {{*}} = CallDirect {{*}}function=f2
+# WITHHELD-NEXT: ReturnCall [[call]]
+
+variable g0 name="even" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="odd" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="first" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g3 name="second" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g4 name="third" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = NewClosure function=f3
+    v4 = GetModuleVariable variable=g2
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="even" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Boolean boolean=true
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g1
+    v5 = Integer integer=1
+    v6 = Sub v0, v5
+    v7 = Call v4, -, v6 calleeName="odd"
+    ReturnCall v7
+}
+function f2 name="odd" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Boolean
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g0
+    v5 = Integer integer=1
+    v6 = Sub v0, v5
+    v7 = Call v4, -, v6 calleeName="even"
+    ReturnCall v7
+}
+function f3 name="adds" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0 calleeName="odd"
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    Return v4
+}
+function f4 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g3
+    v5 = Integer integer=1
+    v6 = Sub v0, v5
+    v7 = Call v4, -, v6 calleeName="second"
+    ReturnCall v7
+}
+function f5 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=2
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g4
+    v5 = Integer integer=1
+    v6 = Sub v0, v5
+    v7 = Call v4, -, v6 calleeName="third"
+    ReturnCall v7
+}
+function f6 name="third" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=3
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g2
+    v5 = Integer integer=1
+    v6 = Sub v0, v5
+    v7 = Call v4, -, v6 calleeName="first"
+    ReturnCall v7
+}

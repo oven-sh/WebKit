@@ -439,6 +439,9 @@ bool WebPageProxy::requestAutocorrectionContextAndWaitForReply(Seconds timeout)
     RefPtr frame = focusedOrMainFrame();
     auto frameID = frame ? std::optional(frame->frameID()) : std::nullopt;
     Ref process = processContainingFrame(frameID);
+    if (!process->hasConnection())
+        return false;
+
     auto pageID = webPageIDInProcessForFrame(frameID);
     process->send(Messages::WebPage::HandleAutocorrectionContextRequest(), pageID);
     return protect(process->connection())->waitForAndDispatchImmediately<Messages::WebPageProxy::HandleAutocorrectionContext>(pageID, timeout, IPC::WaitForOption::DispatchIncomingSyncMessagesWhileWaiting) == IPC::Error::NoError;
@@ -446,6 +449,10 @@ bool WebPageProxy::requestAutocorrectionContextAndWaitForReply(Seconds timeout)
 
 void WebPageProxy::handleAutocorrectionContext(const WebAutocorrectionContext& context)
 {
+    RefPtr frame = focusedOrMainFrame();
+    if (context.frameID != (frame ? std::optional(frame->frameID()) : std::nullopt))
+        return;
+
     if (RefPtr pageClient = this->pageClient())
         pageClient->handleAutocorrectionContext(context);
 }
@@ -1033,16 +1040,18 @@ void WebPageProxy::showPlaybackTargetPicker(bool hasVideo, const IntRect& elemen
         pageClient->showPlaybackTargetPicker(hasVideo, elementRect, policy, contextUID);
 }
 
-size_t WebPageProxy::computePagesForPrintingiOS(FrameIdentifier frameID, const PrintInfo& printInfo)
+PrintPageInfo WebPageProxy::computePageInfoForPrintingiOS(FrameIdentifier frameID, const PrintInfo& printInfo)
 {
     ASSERT_WITH_MESSAGE(!printInfo.snapshotFirstPage, "If we are just snapshotting the first page, we don't need a synchronous message to determine the page count, which is 1.");
 
     if (!hasRunningProcess())
-        return 0;
+        return { 0, printInfo.margin };
 
+    RefPtr frame = WebFrameProxy::webFrame(frameID);
+    launchPrintProcessIfNeeded(frame.get());
     auto sendResult = sendSyncToProcessContainingFrame(frameID, Messages::WebPage::ComputePagesForPrintingiOS(frameID, printInfo), Seconds::infinity());
-    auto [pageCount] = sendResult.takeReplyOr(0);
-    return pageCount;
+    auto [pageCount, computedPageMargin] = sendResult.takeReplyOr(0, printInfo.margin);
+    return { static_cast<size_t>(pageCount), computedPageMargin };
 }
 
 std::optional<IPC::Connection::AsyncReplyID> WebPageProxy::drawToPDFiOS(FrameIdentifier frameID, const PrintInfo& printInfo, size_t pageCount, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&& completionHandler)
@@ -1064,7 +1073,7 @@ std::optional<IPC::Connection::AsyncReplyID> WebPageProxy::drawToPDFiOS(FrameIde
     auto snapshotIdentifier = generateRemoteSnapshotIdentifier();
     Ref gpuProcess = GPUProcessProxy::getOrCreate();
     Ref drawing = PendingSnapshotDrawing::create(snapshotIdentifier);
-    auto sinkReplyID = gpuProcess->sinkCompletedSnapshotToPDF(snapshotIdentifier, frameID, drawing->completionHandler(WTF::move(completionHandler)));
+    auto sinkReplyID = gpuProcess->sinkCompletedSnapshotToPDF(snapshotIdentifier, frameID, printProcessIdentifier(frame.get()), drawing->completionHandler(launchPrintProcessForDrawingIfNeeded(frame.get(), WTF::move(completionHandler))));
     auto replyID = sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::DrawPrintingPagesToSnapshotiOS(snapshotIdentifier, frameID, printInfo, pageCount), gpuProcess->releaseSnapshotIfRootFails(snapshotIdentifier));
     if (replyID)
         drawing->setReply<Messages::GPUProcess::SinkCompletedSnapshotToPDF>(gpuProcess.get(), sinkReplyID, *replyID);
@@ -1296,8 +1305,9 @@ void WebPageProxy::requestAdditionalItemsForDragSession(std::optional<WebCore::F
 
 void WebPageProxy::insertDroppedImagePlaceholders(const Vector<IntSize>& imageSizes, CompletionHandler<void(const Vector<IntRect>&, RefPtr<WebCore::TextIndicator>)>&& completionHandler)
 {
+    // The placeholders are inserted at the drop caret, which is in the process of the frame under the drop.
     if (hasRunningProcess())
-        protect(legacyMainFrameProcess())->sendWithAsyncReply(Messages::WebPage::InsertDroppedImagePlaceholders(imageSizes), WTF::move(completionHandler), webPageIDInMainFrameProcess());
+        sendWithAsyncReplyToProcessContainingFrame(internals().currentDragTargetFrameID, Messages::WebPage::InsertDroppedImagePlaceholders(imageSizes), Messages::WebPage::InsertDroppedImagePlaceholders::Reply { WTF::move(completionHandler) });
     else
         completionHandler({ }, nullptr);
 }
@@ -1321,10 +1331,10 @@ void WebPageProxy::didConcludeDrop()
 #endif
 
 #if ENABLE(MODEL_PROCESS)
-void WebPageProxy::didReceiveInteractiveModelElement(std::optional<WebCore::NodeIdentifier> nodeID)
+void WebPageProxy::didReceiveInteractiveModelElement(std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::NodeIdentifier> nodeID)
 {
     if (RefPtr pageClient = this->pageClient())
-        pageClient->didReceiveInteractiveModelElement(nodeID);
+        pageClient->didReceiveInteractiveModelElement(frameID, nodeID);
 }
 #endif
 

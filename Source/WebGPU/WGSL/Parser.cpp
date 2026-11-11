@@ -41,7 +41,7 @@ namespace WGSL {
 
 template<TokenType TT, TokenType... TTs>
 struct TemplateTypes {
-    static bool LEGACY_NODELETE includes(TokenType tokenType)
+    NODELETE static bool includes(TokenType tokenType)
     {
         return TT == tokenType || TemplateTypes<TTs...>::includes(tokenType);
     }
@@ -55,7 +55,7 @@ struct TemplateTypes {
 
 template <TokenType TT>
 struct TemplateTypes<TT> {
-    static bool LEGACY_NODELETE includes(TokenType tokenType)
+    NODELETE static bool includes(TokenType tokenType)
     {
         return TT == tokenType;
     }
@@ -172,7 +172,7 @@ bool Parser<Lexer>::canBeginUnaryExpression(const Token& token)
     }
 }
 
-static bool LEGACY_NODELETE canContinueMultiplicativeExpression(const Token& token)
+NODELETE static bool canContinueMultiplicativeExpression(const Token& token)
 {
     switch (token.type) {
     case TokenType::Modulo:
@@ -199,7 +199,7 @@ bool Parser<Lexer>::canContinueAdditiveExpression(const Token& token)
     }
 }
 
-static bool LEGACY_NODELETE canContinueBitwiseExpression(const Token& token)
+NODELETE static bool canContinueBitwiseExpression(const Token& token)
 {
     switch (token.type) {
     case TokenType::And:
@@ -211,7 +211,7 @@ static bool LEGACY_NODELETE canContinueBitwiseExpression(const Token& token)
     }
 }
 
-static bool LEGACY_NODELETE canContinueRelationalExpression(const Token& token)
+NODELETE static bool canContinueRelationalExpression(const Token& token)
 {
     switch (token.type) {
     case TokenType::Gt:
@@ -226,17 +226,17 @@ static bool LEGACY_NODELETE canContinueRelationalExpression(const Token& token)
     }
 }
 
-static bool LEGACY_NODELETE canContinueShortCircuitAndExpression(const Token& token)
+NODELETE static bool canContinueShortCircuitAndExpression(const Token& token)
 {
     return token.type == TokenType::AndAnd;
 }
 
-static bool LEGACY_NODELETE canContinueShortCircuitOrExpression(const Token& token)
+NODELETE static bool canContinueShortCircuitOrExpression(const Token& token)
 {
     return token.type == TokenType::OrOr;
 }
 
-static bool LEGACY_NODELETE canContinueCompoundAssignmentStatement(const Token& token)
+NODELETE static bool canContinueCompoundAssignmentStatement(const Token& token)
 {
     switch (token.type) {
     case TokenType::PlusEq:
@@ -255,7 +255,7 @@ static bool LEGACY_NODELETE canContinueCompoundAssignmentStatement(const Token& 
     }
 }
 
-static AST::BinaryOperation LEGACY_NODELETE toBinaryOperation(const Token& token)
+NODELETE static AST::BinaryOperation toBinaryOperation(const Token& token)
 {
     switch (token.type) {
     case TokenType::And:
@@ -309,7 +309,7 @@ static AST::BinaryOperation LEGACY_NODELETE toBinaryOperation(const Token& token
     }
 }
 
-static AST::UnaryOperation LEGACY_NODELETE toUnaryOperation(const Token& token)
+NODELETE static AST::UnaryOperation toUnaryOperation(const Token& token)
 {
     switch (token.type) {
     case TokenType::And:
@@ -435,7 +435,7 @@ Result<void> Parser<Lexer>::parseEnableDirective()
         CONSUME_TYPE_NAMED(identifier, Identifier);
         auto* extension = parseExtension(identifier.ident);
         if (!extension)
-            FAIL("Expected 'clip_distances', 'f16', 'primitive_index', or 'subgroups'"_s);
+            FAIL("Expected 'clip_distances', 'dual_source_blending', 'f16', 'primitive_index', or 'subgroups'"_s);
         m_shaderModule.enabledExtensions().add(*extension);
 
         if (current().type != TokenType::Comma)
@@ -703,6 +703,15 @@ Result<std::optional<AST::Attribute::Ref>> Parser<Lexer>::parseAttribute()
             consume();
         CONSUME_TYPE(ParenRight);
         RETURN_ARENA_NODE(LocationAttribute, WTF::move(location));
+    }
+
+    if (ident.ident == "blend_src"_s) {
+        CONSUME_TYPE(ParenLeft);
+        PARSE(blendSrc, Expression);
+        if (current().type  == TokenType::Comma)
+            consume();
+        CONSUME_TYPE(ParenRight);
+        RETURN_ARENA_NODE(BlendSrcAttribute, WTF::move(blendSrc));
     }
 
     if (ident.ident == "builtin"_s) {
@@ -1369,6 +1378,14 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseForStatement(AST::Attribute::Lis
             maybeInitializer = &statement.get();
             break;
         }
+        case TokenType::ParenLeft:
+        case TokenType::And:
+        case TokenType::Star: {
+            // A variable_updating_statement whose lhs_expression starts with `(`, `&` or `*`.
+            PARSE(statement, VariableUpdatingStatement);
+            maybeInitializer = &statement.get();
+            break;
+        }
         case TokenType::Underbar: {
             // A phony assignment is a variable_updating_statement, so it is allowed here.
             PARSE(phonyAssignment, PhonyAssignmentStatement);
@@ -1388,15 +1405,26 @@ Result<AST::Statement::Ref> Parser<Lexer>::parseForStatement(AST::Attribute::Lis
     CONSUME_TYPE(Semicolon);
 
     if (current().type != TokenType::ParenRight) {
-        if (current().type == TokenType::Underbar) {
-            PARSE(phonyAssignment, PhonyAssignmentStatement);
-            maybeUpdate = &phonyAssignment.get();
-        } else {
-            if (current().type != TokenType::Identifier)
-                FAIL("Invalid for-loop update clause"_s);
-
+        switch (current().type) {
+        case TokenType::Identifier: {
             PARSE(statement, CallOrVariableUpdatingStatement);
             maybeUpdate = &statement.get();
+            break;
+        }
+        case TokenType::ParenLeft:
+        case TokenType::And:
+        case TokenType::Star: {
+            PARSE(statement, VariableUpdatingStatement);
+            maybeUpdate = &statement.get();
+            break;
+        }
+        case TokenType::Underbar: {
+            PARSE(phonyAssignment, PhonyAssignmentStatement);
+            maybeUpdate = &phonyAssignment.get();
+            break;
+        }
+        default:
+            FAIL("Invalid for-loop update clause"_s);
         }
     }
     CONSUME_TYPE(ParenRight);

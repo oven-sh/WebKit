@@ -1,0 +1,56 @@
+# function Crate() { this.kept = 1; return id({ kept: 2 }); }
+# function make() { return new Crate().kept; }
+# print(make()); print("went on");
+# testing=CheckProofsAtRunTime: where Link has proven that the body of a plain function returns no object, a construction with that function produces `this` without looking at what the body returned.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined (see false-proofs-are-stopped-where-the-value-comes-in.ir): Link assumes that the shell's `id` returns undefined.
+# So the body of Crate is proven to return undefined.
+# Without the proof checks the program prints 1 instead of 2 and continues. A body that is entered by a call checks the value at its return.
+# Where the body is inlined, the caller checks what the inlined copy returns, at a construction as at a call.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeUnknownCallsReturnUndefined
+# RUN(COPY): run-in-shell mechanisms=all
+# COPY: bun: internal AOT error: type check failed
+# COPY-NEXT: found object in a call result
+# COPY-NOT: went on
+# COPY: crashed with
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: bun: internal AOT error: type check failed
+# CALL-NEXT: found object in a call result
+# CALL-NOT: went on
+# CALL: crashed with
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Crate" module=m0 constructor=f1 fields=[{key="kept" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 fields=[{key="kept" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="Crate" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0, - calleeName="make"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="print" [isFreeName]
+    v4 = Call v3, -, v1 calleeName="print"
+    v5 = String string="went on"
+    v6 = Call v3, -, v5 calleeName="print"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="Crate" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="kept"
+    v3 = Integer integer=2
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="id" [isFreeName]
+    v8 = Call v7, -, v5 calleeName="id"
+    Return v8
+}
+function f2 name="make" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Construct v0, - calleeName="Crate"
+    v2 = PropGet v1 key="kept"
+    Return v2
+}

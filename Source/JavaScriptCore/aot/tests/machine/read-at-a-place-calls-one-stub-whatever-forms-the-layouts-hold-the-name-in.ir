@@ -1,0 +1,121 @@
+# function partOfA(o) { return o.part; }  function wholeOfA(o) { return o.whole; }  .. OfB .. OfC   publish(partOfA, ..);
+# const a = { part: 1.5, whole: 7, first: 7 }, b = { whole: "w", part: 2.5, second: 2.5 }, c = { part: "p", whole: "x", more: 1 };   for (..) partOfA(a) ..
+# Three layouts have both names. Each has a name of its own, so none is written as a kind of another, and their objects never meet. Two of them hold `part` as a raw number and one as any value.
+# One holds `whole` raw and two as any value. Every read under either name calls the same stub: how a function is compiled does not hang on how many layouts elsewhere hold a name in which form (it went by the majority). Each object is read right.
+# RUN(PLAN): plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# PLAN: layout L0 CompiledObject
+# PLAN-NEXT: slot 0 "part" OptionalDouble Inline
+# PLAN-NEXT: slot 1 "whole" OptionalInt64 Inline
+# PLAN: layout L1 CompiledObject
+# PLAN-NEXT: slot 0 "whole" JSValue Inline
+# PLAN-NEXT: slot 1 "part" OptionalDouble Inline
+# PLAN: layout L2 CompiledObject
+# PLAN-NEXT: slot 0 "part" Cell32 Inline
+# PLAN-NEXT: slot 1 "whole" Cell32 Inline
+# RUN(CODE): bytes f1:Body f2:Body f5:Body mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# CODE: Call Stub ReadAtSite.OfAnyValue
+# CODE: Call Stub ReadAtSite.OfAnyValue
+# CODE: Call Stub ReadAtSite.OfAnyValue
+# RUN: run-in-shell globalThis.publish = () => { }; globalThis.show = (a, b) => print(a, b); mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# CHECK: 1.5 7
+# CHECK-NEXT: 2.5 w
+# CHECK-NEXT: p x
+# CHECK-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="part" declared={type=anything} flags=[IsRequired]}, {key="whole" declared={type=anything} flags=[IsRequired]}, {key="first" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+layout L1 module=m0 fields=[{key="whole" declared={type=anything} flags=[IsRequired]}, {key="part" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+layout L2 module=m0 fields=[{key="part" declared={type=anything} flags=[IsRequired]}, {key="whole" declared={type=anything} flags=[IsRequired]}, {key="more" declared={type=anything} flags=[IsRequired]}] ownFieldCount=3
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    v9 = PropGet v0 key="show" [isFreeName]
+    v10 = Double number=1.5
+    v11 = Integer integer=7
+    v12 = NewObject layout=L0
+    PropDefine v12, v10 key="part"
+    PropDefine v12, v11 key="whole"
+    PropDefine v12, v11 key="first"
+    v16 = FinishObject v12
+    v17 = String string="w"
+    v18 = Double number=2.5
+    v19 = NewObject layout=L1
+    PropDefine v19, v17 key="whole"
+    PropDefine v19, v18 key="part"
+    PropDefine v19, v18 key="second"
+    v23 = FinishObject v19
+    v24 = String string="p"
+    v25 = String string="x"
+    v26 = Integer integer=1
+    v27 = NewObject layout=L2
+    PropDefine v27, v24 key="part"
+    PropDefine v27, v25 key="whole"
+    PropDefine v27, v26 key="more"
+    v31 = FinishObject v27
+    v32 = Integer
+    Jump -> next b1(v32)
+  b1(v33):
+    LoopHint
+    v35 = Integer integer=400
+    v36 = Less v33, v35
+    Branch v36 -> taken b2(), notTaken b3()
+  b2():
+    v37 = Call v2, -, v16
+    v38 = Call v3, -, v16
+    v39 = Call v4, -, v23
+    v40 = Call v5, -, v23
+    v41 = Call v6, -, v31
+    v42 = Call v7, -, v31
+    v43 = Increment v33
+    Jump -> next b1(v43)
+  b3():
+    v44 = Call v2, -, v16
+    v45 = Call v3, -, v16
+    v46 = Call v9, -, v44, v45
+    v47 = Call v4, -, v23
+    v48 = Call v5, -, v23
+    v49 = Call v9, -, v47, v48
+    v50 = Call v6, -, v31
+    v51 = Call v7, -, v31
+    v52 = Call v9, -, v50, v51
+    Return v52
+}
+function f1 name="partOfA" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="part" @10
+    Return v1
+}
+function f2 name="wholeOfA" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="whole" @20
+    Return v1
+}
+function f3 name="partOfB" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="part" @30
+    Return v1
+}
+function f4 name="wholeOfB" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="whole" @40
+    Return v1
+}
+function f5 name="partOfC" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="part" @50
+    Return v1
+}
+function f6 name="wholeOfC" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="whole" @60
+    Return v1
+}

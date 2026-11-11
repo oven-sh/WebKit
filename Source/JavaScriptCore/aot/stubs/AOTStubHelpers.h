@@ -35,7 +35,6 @@ inline constexpr CCallHelpers::Address numberTag { instanceGPR, AOT_INSTANCE_OFF
 inline constexpr GPRReg numberTag = GPRInfo::numberTagRegister;
 #endif
 
-// AOTStubHelpersValues.cpp
 void unboxDouble(StubAssembler&, GPRReg boxed, GPRReg scratch, FPRReg result);
 class PureDouble {
 public:
@@ -60,8 +59,10 @@ class PureDoubleBits {
 public:
     GPRReg gpr() const { return m_gpr; }
 
+    static constexpr uint64_t infinityDoubled = 0xffe0000000000000ull;
+
     static PureDoubleBits branchIfNotFinite(StubAssembler&, GPRReg bits, GPRReg scratch, JumpList& isNotFinite);
-    static PureDoubleBits loadedAgainBehindTestForNaN(GPRReg bits) { return PureDoubleBits(bits); }
+    static PureDoubleBits branchIfNaN(StubAssembler&, GPRReg bits, GPRReg scratch, GPRReg holdsInfinityDoubled, Jump& isNaN);
 
 private:
     explicit PureDoubleBits(GPRReg gpr)
@@ -74,51 +75,50 @@ private:
 
 void boxDouble(StubAssembler&, PureDouble, GPRReg result);
 void boxDoubleBits(StubAssembler&, PureDoubleBits bitsAndResult);
-// A NaN keeps its sign and none of its other bits.
 void boxNaN(StubAssembler&, FPRReg nan, GPRReg result);
-void boxDoubleWithoutPayload(StubAssembler&, FPRReg number, GPRReg result);
 void boxInt32(StubAssembler&, GPRReg int32, GPRReg result);
-// The caller has proven that the value is a number.
 void toDouble(StubAssembler&, GPRReg boxedNumber, GPRReg scratch, FPRReg result);
 void branchIfNotExactInt32(StubAssembler&, FPRReg number, GPRReg integer, JumpList& isNotExact, FPRReg scratch);
-// integer is as branchIfNotExactInt32 left it: nothing is above its 32 bits.
 void boxExactInt32(StubAssembler&, GPRReg integer, GPRReg result);
-// Bits 32 to 63 of word are zero. Zero decodes to the cage base, never to null.
 void decodeCell32(StubAssembler&, GPRReg word, GPRReg result);
-// The reference is bits 0 to 31 of word. The bits above are not cleared.
+void loadValueAtLocationOfGlobalBinding(StubAssembler&, bool seesScriptBindings, GPRReg record, GPRReg global, GPRReg result, JumpList& cannot);
 void encodeCell32(StubAssembler&, GPRReg cell, GPRReg word);
-// Gives an Extension one more granule in the room it has. Leaves where granuleBits is more than one bit, where a granule held comes after it, and where the Extension is full.
+void encodeCellOfProgram(StubAssembler&, GPRReg cell, GPRReg word);
 void appendGranule(StubAssembler&, GPRReg extension, GPRReg granuleBits, GPRReg scratch, GPRReg secondScratch, JumpList& cannotAppend);
-// The caller has proven that the word is a literal string word.
-void loadLiteralString(StubAssembler&, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated);
+void insertGranule(StubAssembler&, GPRReg extension, GPRReg granuleBit, GPRReg place, GPRReg last, JumpList& cannotInsert);
+void decodeExtension(StubAssembler&, GPRReg word, GPRReg result);
 void decodeStructureID(CCallHelpers&, GPRReg idAndResult);
 void loadStructure(StubAssembler&, GPRReg cell, GPRReg result);
 void extractBits(StubAssembler&, GPRReg source, unsigned shift, unsigned width, GPRReg result);
 void loadShapeWord(StubAssembler&, GPRReg cell, GPRReg result);
+void loadShapeWordAsIndex(StubAssembler&, GPRReg cell, GPRReg result);
+int32_t offsetOfRowsByShapeIndex(StubAssembler&);
+bool loadsShapeAsHalfword(StubAssembler&);
+void loadShapeWordWithMark(StubAssembler&, GPRReg cell, GPRReg result);
+void setMarkOfCell(StubAssembler&, GPRReg cell, GPRReg scratch);
+void setFlagThatFieldHasLeft(StubAssembler&, GPRReg cell, GPRReg scratch);
+Jump branchIfCellBearsMark(StubAssembler&, GPRReg cell);
+Jump branchUnlessCellBearsMark(StubAssembler&, GPRReg cell);
+JumpList branchIfNotCompiledObjectOfThisImage(StubAssembler&, GPRReg cell);
+inline JumpList branchIfNotCompiledObject(StubAssembler& jit, GPRReg cell) { return branchIfNotCompiledObjectOfThisImage(jit, cell); }
 void loadCellVM(StubAssembler&, GPRReg cellAndResult);
-// Overwrites structure.
 Jump branchIfNotOfThisRealm(StubAssembler&, GPRReg structure);
+void branchIfHasNamesOrIsNotOfThisRealm(StubAssembler&, GPRReg structure, JumpList&);
 Jump branchIfNotPristine(StubAssembler&, GPRReg cell);
-// The masked indexing byte of a pristine cell. For any other cell a value above 0xff, which equals no indexing shape.
 void loadPristineArrayKind(StubAssembler&, GPRReg array, GPRReg kind, unsigned mask);
 Jump branchIfWatchpointSetIsNotWatched(StubAssembler&, Address set, GPRReg scratch);
 // Falls through exactly when isFunctionType(cell->type()). A jump proves nothing: a callable Proxy or a host object needs C++. Preserves cell.
 Jump branchIfNotFunctionType(CCallHelpers&, GPRReg cell, GPRReg scratch);
-void bumpRuntimeCounter(StubAssembler&, RuntimeCounterID, GPRReg scratch);
+void branchUnlessAccessorPair(CCallHelpers&, GPRReg word, JumpList& isNoPair);
 
-// AOTStubHelpersAllocation.cpp In a program that counts its allocations both count the cell under the family of the stub, before they look for room: see ExactAllocationCounts.
-enum class CountedUnder : bool { FamilyOfStub, Allocation };
 void allocateCell(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath);
-// The bump path falls through. The generator calls emitLateRefill after an exit of its fast path and before it links slowPath.
-[[nodiscard]] AssemblyHelpers::FreeListRefill allocateCellWithLateRefill(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath, std::optional<unsigned> cellSize = std::nullopt, CountedUnder = CountedUnder::FamilyOfStub);
-// The upper 32 bits of allocation are zero.
-void countCellOfAllocation(StubAssembler&, GPRReg allocation, GPRReg scratch);
-// Behind an allocation with CountedUnder::Allocation, in a stub whose slow path calls an operation that is counted as making the cell.
-void countAllocatedCellOfStub(StubAssembler&, GPRReg scratch, unsigned cellSize);
+[[nodiscard]] AssemblyHelpers::FreeListRefill allocateCellWithLateRefill(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath, std::optional<unsigned> cellSize = std::nullopt);
 void emitLateRefill(StubAssembler&, const AssemblyHelpers::FreeListRefill&, JumpList& slowPath);
 void fenceAfterAllocation(StubAssembler&);
 
-// AOTStubHelpersStorage.cpp
+constexpr unsigned maxGranulesOfExtensionFromStub = 13;
+void loadUnitsOfExtensionWith(StubAssembler&, GPRReg granuleBits, GPRReg units, GPRReg scratch);
+
 struct StorageGrowth {
     GPRReg object;
     GPRReg newStructureID;
@@ -132,30 +132,22 @@ void growOutOfLineStorage(StubAssembler&, const StorageGrowth&, JumpList& slowPa
 struct VectorGrowth {
     GPRReg array;
     GPRReg butterfly;
-    // The public length.
     GPRReg length;
     GPRReg storage;
     GPRReg allocator;
     GPRReg scratch;
-    // In place of an array: the extra properties of a compiled object.
     bool isOfExtraProperties { false };
 };
-// For an array whose vector is as long as the array. Gives it the vector that JSObject::ensureLength() gives it for one more element. The public length stays. Preserves array alone.
 void growFullVector(StubAssembler&, const VectorGrowth&, JumpList& slowPath);
-// The same for an array that is to have neededLength elements, which its vector has no room for. Preserves array and neededLength.
+void widenStorageOfIntegersForAnyValue(StubAssembler&, GPRReg array, GPRReg scratch, JumpList& isLeftToOthers);
 void growVectorFor(StubAssembler&, const VectorGrowth&, GPRReg neededLength, JumpList& slowPath);
 
-// AOTStubsElements.cpp
-// A trap is handed an index as its text. The texts of the small ones are kept once they have been asked for. Goes on where the base is a proxy and the text of the key is there. Writes storage, index and text.
-enum class BaseOfTrappedIndex : bool { IsAnything, IsProxy };
-void loadTextOfIndexForTrap(StubAssembler&, BaseOfTrappedIndex, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);
+void loadTextOfIndexForTrap(StubAssembler&, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);
+void loadKeptTextOfIndex(StubAssembler&, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);
 
-// AOTStubsBarriers.cpp
 Jump branchIfBarrierIsNeeded(StubAssembler&, GPRReg owner, GPRReg scratch);
-void returnIfFencedAndNotBlack(StubAssembler&, GPRReg owner);
 Label returnAfterStoring(StubAssembler&, GPRReg owner, GPRReg value);
 
-// AOTStubHelpersFrames.cpp
 struct HostCallFrame {
     GPRReg callee;
     GPRReg thisValue;
@@ -163,6 +155,7 @@ struct HostCallFrame {
     std::optional<GPRReg> arguments;
 };
 void emitHostCallFrame(StubAssembler&, const HostCallFrame&);
+void emitHostCallFrameOfCallWithCount(StubAssembler&, GPRReg callee, GPRReg thisValue, GPRReg count, JumpList& doesNotFitOnStack);
 constexpr unsigned hostCallFrameSize(unsigned argumentCount)
 {
     return static_cast<unsigned>(WTF::roundUpToMultipleOf<stackAlignmentBytes()>((CallFrame::headerSizeInRegisters + 1 + argumentCount) * sizeof(Register)));
@@ -170,22 +163,22 @@ constexpr unsigned hostCallFrameSize(unsigned argumentCount)
 Address hostCallFrameSlot(CallFrameSlot, ptrdiff_t offset = 0);
 Address outgoingFrameSlot(CallFrameSlot, ptrdiff_t offset = 0);
 Address incomingFrameSlot(CallFrameSlot, ptrdiff_t offset = 0);
-// The frame of emitHostCallFrame is set up. Ends the stub: returns the result, or unwinds.
-void callNativeFunction(StubAssembler&, CodeSpecializationKind, GPRReg function);
 void callNativeFunction(StubAssembler&, CodeSpecializationKind, Address function, GPRReg scratch);
 void callNativeFunctionAndReturn(StubAssembler&, CodeSpecializationKind, GPRReg scratch, Address realm, Address function);
 
-// AOTStubHelpersFunctions.cpp
 enum class StackIsTested : bool { No, Yes };
-// Bits 0 to 31 of word are the offset of a ClosureWord. The bits above are ignored.
 void toCodeAddress(StubAssembler&, GPRReg word, GPRReg scratch, StackIsTested);
-// Crashes the build unless these are the operand registers of target, in order. For a generator that jumps to target.
 void checkStubOperands(StubKey target, std::span<const GPRReg>);
 inline void checkStubOperands(StubKey target, std::initializer_list<GPRReg> registers) { checkStubOperands(target, std::span<const GPRReg>(registers.begin(), registers.end())); }
 
 inline Address softStackLimit()
 {
     return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
+}
+
+inline Address trapAwareSoftStackLimit()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
 }
 
 } } // namespace JSC::AOT

@@ -33,6 +33,7 @@
 #include <wtf/Forward.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/URLHash.h>
+#include <wtf/WeakHashSet.h>
 
 namespace WebCore {
 class DOMWrapperWorld;
@@ -48,7 +49,7 @@ class WebExtensionControllerProxy final : public RefCounted<WebExtensionControll
     WTF_MAKE_NONCOPYABLE(WebExtensionControllerProxy);
 
 public:
-    static RefPtr<WebExtensionControllerProxy> LEGACY_NODELETE get(WebExtensionControllerIdentifier);
+    NODELETE static RefPtr<WebExtensionControllerProxy> get(WebExtensionControllerIdentifier);
     static Ref<WebExtensionControllerProxy> getOrCreate(const WebExtensionControllerParameters&, WebPage* = nullptr);
 
     ~WebExtensionControllerProxy();
@@ -65,6 +66,8 @@ public:
 
     bool inTestingMode() { return m_testingMode; }
 
+    void addFrameWithTestListeners(WebFrame&);
+
     void globalObjectIsAvailableForFrame(WebPage&, WebFrame&, WebCore::DOMWrapperWorld&);
     void serviceWorkerGlobalObjectIsAvailableForFrame(WebPage&, WebFrame&, WebCore::DOMWrapperWorld&);
     void addBindingsToWebPageFrameIfNecessary(WebFrame&, WebCore::DOMWrapperWorld&);
@@ -75,7 +78,7 @@ public:
     // FIXME: Include the error here.
     void didFailLoadForFrame(WebPage&, WebFrame&, const URL&);
 
-    RefPtr<WebExtensionContextProxy> LEGACY_NODELETE extensionContext(const String& uniqueIdentifier) const;
+    NODELETE RefPtr<WebExtensionContextProxy> extensionContext(const String& uniqueIdentifier) const;
     RefPtr<WebExtensionContextProxy> extensionContext(const URL&) const;
     RefPtr<WebExtensionContextProxy> extensionContext(WebFrame&, WebCore::DOMWrapperWorld&) const;
 
@@ -91,11 +94,18 @@ private:
     void load(const WebExtensionContextParameters&);
     void unload(WebExtensionContextIdentifier);
 
+    void addTestListenersToContext(WebExtensionContextProxy&);
+
     WebExtensionControllerIdentifier m_identifier;
     bool m_testingMode { false };
 
     WebExtensionContextProxySet m_extensionContexts;
     WebExtensionContextProxyBaseURLMap m_extensionContextBaseURLMap;
+    WeakHashSet<WebFrame> m_framesWithTestListeners;
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionControllerProxyAdditions.h>)
+#include <WebKitAdditions/WebExtensionControllerProxyAdditions.h>
+#endif
 };
 
 } // namespace WebKit

@@ -1,0 +1,39 @@
+# the start of a module tests the stack in its own frame and the run time enters right behind a test, so the body of a module makes none. What it calls is counted below it like below any body
+# import "./other.js"; sink(leaf(1))   and in other.js: sink(2)
+# f0 = the body of main.js, f1 = leaf, f2 = the body of other.js
+# RUN: plan units mechanisms=none+DirectCalls
+# CHECK: unit f0:Body {{*}}covered-by-callers
+# CHECK: unit f1:Body {{*}}covered-by-callers
+# CHECK: unit f2:Body {{*}}covered-by-callers
+# RUN(START): plan units mechanisms=none+DirectCalls
+# START-NOT: ModuleStart {{*}}covered-by-callers
+# RUN(WITHHELD): plan units mechanisms=none
+# WITHHELD-NOT: covered-by-callers
+
+variable g0 name="leaf" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/other.js" displayPath="other.js" body=f2
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = Integer integer=1
+    v4 = Call v2, -, v3 calleeName="leaf"
+    v5 = Call v1, -, v4
+    Return v5
+}
+function f1 name="leaf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Integer integer=2
+    v3 = Call v1, -, v2
+    Return v3
+}

@@ -268,7 +268,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     protect(*_preferences)->setTelephoneNumberParsingEnabled(telephoneNumberDetectionIsEnabled);
 }
 
-static WebCore::StorageBlockingPolicy LEGACY_NODELETE toStorageBlockingPolicy(_WKStorageBlockingPolicy policy)
+NODELETE static WebCore::StorageBlockingPolicy toStorageBlockingPolicy(_WKStorageBlockingPolicy policy)
 {
     switch (policy) {
     case _WKStorageBlockingPolicyAllowAll:
@@ -283,7 +283,7 @@ static WebCore::StorageBlockingPolicy LEGACY_NODELETE toStorageBlockingPolicy(_W
     return WebCore::StorageBlockingPolicy::AllowAll;
 }
 
-static _WKStorageBlockingPolicy LEGACY_NODELETE toAPI(WebCore::StorageBlockingPolicy policy)
+NODELETE static _WKStorageBlockingPolicy toAPI(WebCore::StorageBlockingPolicy policy)
 {
     switch (policy) {
     case WebCore::StorageBlockingPolicy::AllowAll:
@@ -436,6 +436,16 @@ static _WKStorageBlockingPolicy LEGACY_NODELETE toAPI(WebCore::StorageBlockingPo
 - (void)_setAnimatedImageAsyncDecodingEnabled:(BOOL)_animatedImageAsyncDecodingEnabled
 {
     protect(*_preferences)->setAnimatedImageAsyncDecodingEnabled(_animatedImageAsyncDecodingEnabled);
+}
+
+- (BOOL)_contentSizeCategoryTextScaleEnabled
+{
+    return protect(*_preferences)->contentSizeCategoryTextScaleEnabled();
+}
+
+- (void)_setContentSizeCategoryTextScaleEnabled:(BOOL)enabled
+{
+    protect(*_preferences)->setContentSizeCategoryTextScaleEnabled(enabled);
 }
 
 - (BOOL)_textAutosizingEnabled
@@ -807,7 +817,7 @@ static _WKStorageBlockingPolicy LEGACY_NODELETE toAPI(WebCore::StorageBlockingPo
     protect(*_preferences)->setShouldAllowUserInstalledFonts(_shouldAllowUserInstalledFonts);
 }
 
-static _WKEditableLinkBehavior LEGACY_NODELETE toAPI(WebCore::EditableLinkBehavior behavior)
+NODELETE static _WKEditableLinkBehavior toAPI(WebCore::EditableLinkBehavior behavior)
 {
     switch (behavior) {
     case WebCore::EditableLinkBehavior::Default:
@@ -826,7 +836,7 @@ static _WKEditableLinkBehavior LEGACY_NODELETE toAPI(WebCore::EditableLinkBehavi
     return _WKEditableLinkBehaviorNeverLive;
 }
 
-static WebCore::EditableLinkBehavior LEGACY_NODELETE toEditableLinkBehavior(_WKEditableLinkBehavior wkBehavior)
+NODELETE static WebCore::EditableLinkBehavior toEditableLinkBehavior(_WKEditableLinkBehavior wkBehavior)
 {
     switch (wkBehavior) {
     case _WKEditableLinkBehaviorDefault:
@@ -1803,14 +1813,14 @@ static WebCore::EditableLinkBehavior LEGACY_NODELETE toEditableLinkBehavior(_WKE
 
 - (void)_setRequiresPageVisibilityForVideoToBeNowPlayingForTesting:(BOOL)enabled
 {
-#if ENABLE(REQUIRES_PAGE_VISIBILITY_FOR_NOW_PLAYING)
+#if PLATFORM(APPLETV)
     protect(*_preferences)->setRequiresPageVisibilityForVideoToBeNowPlaying(enabled);
 #endif
 }
 
 - (BOOL)_requiresPageVisibilityForVideoToBeNowPlayingForTesting
 {
-#if ENABLE(REQUIRES_PAGE_VISIBILITY_FOR_NOW_PLAYING)
+#if PLATFORM(APPLETV)
     return protect(*_preferences)->requiresPageVisibilityForVideoToBeNowPlaying();
 #else
     return NO;

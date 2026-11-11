@@ -415,13 +415,13 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
 
 #if USE(BUN_JSC_ADDITIONS)
     // Nothing runs without a CodeBlock, and this is the only caller of newCodeBlockFor().
-    if (Options::disallowNonStaticCode() && source().provider()->provenance() != SourceProvenance::Static) [[unlikely]] {
+    if (vm.runsOnlyStaticCode() && source().provider()->provenance() != SourceProvenance::Static) [[unlikely]] {
         throwNonStaticCodeError(scope->realm(), throwScope);
         return;
     }
 #endif
 #if ENABLE(AOT)
-    if (vm.hasCompiledCode() && AOT::refusesToInterpret(scope->realm(), *this)) [[unlikely]] {
+    if (vm.hasCompiledCode() && AOT::isInterpretationDisallowed(scope->realm(), *this)) [[unlikely]] {
         throwScope.release();
         AOT::throwLibraryFunctionNotCompiled(scope->realm(), *this);
         return;

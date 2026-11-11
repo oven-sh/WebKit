@@ -51,12 +51,12 @@ void WeakMapImpl<WeakMapBucket>::visitChildrenImpl(JSCell* cell, Visitor& visito
     WeakMapImpl* thisObject = uncheckedDowncast<WeakMapImpl>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    uint32_t capacity = thisObject->hasOutOfLineBuffer() ? thisObject->m_capacity : 0;
-    if (capacity)
-        visitor.reportExtraMemoryVisited(capacity * sizeof(WeakMapBucket));
+    // The buffer is not reported here, where it still has room for the keys that this collection finds dead:
+    // reconcileWeakReferencesAtGCEnd() reports it. At the first visit the heap's count of extra memory holds nothing for this
+    // table: it is new, or the collection is a full one, which counts from zero.
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
         if (visitor.isFirstVisit())
-            thisObject->m_capacityCountedByHeap = capacity;
+            thisObject->m_capacityCountedByHeap = 0;
     }
 }
 

@@ -230,7 +230,12 @@ static std::expected<CountedLoop, GaveUpReason> analyzeWithRecord(const CountedL
         return makeUnexpected(outcome.error());
     if (auto outcome = computeSafeBound(inputs, record, result); !outcome)
         return makeUnexpected(outcome.error());
-    result.relationHoldsOnEntry = record.relationHoldsOnEntry || relationHoldsOnEntry(inputs.proc, result, result.bound);
+    // The record speaks of the numbers with their signs. `while (++i < n)` from -1 on is tested as Below(i + 1, n), and Below(-1, n) does not hold.
+    auto isNeverNegative = [&](Value* value) {
+        return intervalFor(inputs.proc, value, Signedness::Signed).min >= 0;
+    };
+    bool recordSpeaksOfRelation = result.signedness() == Signedness::Signed || (isNeverNegative(result.start) && isNeverNegative(result.bound));
+    result.relationHoldsOnEntry = (record.relationHoldsOnEntry && recordSpeaksOfRelation) || relationHoldsOnEntry(inputs.proc, result, result.bound);
     return result;
 }
 

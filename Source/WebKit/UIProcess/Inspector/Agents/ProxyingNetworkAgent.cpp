@@ -33,7 +33,9 @@
 #include "ProxyingNetworkAgent.h"
 
 #include "HandleMessage.h"
+#include "ProvisionalFrameProxy.h"
 #include "ProxyingNetworkAgentMessages.h"
+#include "WebFrameProxy.h"
 #include "WebInspectorBackendMessages.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
@@ -248,12 +250,33 @@ CommandResult<void> ProxyingNetworkAgent::enable()
     if (!prefs->siteIsolationEnabled())
         return { };
 
+    if (m_enabled)
+        return { };
+
     m_enabled = true;
 
-    // FIXME: <https://webkit.org/b/327562> This registers each process once, but WebPageInspectorController::willDestroyFrame
-    // releases once per frame, so removing a frame that existed before enable() can take a process that still hosts other frames
-    // to zero. Count per frame, as ProxyingPageAgent::enable() does.
+    // Register once per frame, not once per process: WebPageInspectorController releases one registration per
+    // frame, so a process registered once would be released while it still hosts other frames.
+    for (RefPtr frame = inspectedPage->mainFrame(); frame; frame = frame->traverseNext().frame) {
+        if (auto pageID = frame->webPageIDInCurrentProcess()) {
+            Ref process = frame->process();
+            enableInstrumentationForProcess(process, *pageID);
+        }
+
+        // Released by willDestroyProvisionalFrame, or carried to the new process by didCommitProvisionalFrame.
+        if (RefPtr provisionalFrame = frame->provisionalFrame()) {
+            Ref process = provisionalFrame->process();
+            enableInstrumentationForProcess(process, inspectedPage->webPageIDInProcess(process));
+        }
+    }
+
+    // Processes that host this page's WebPage but no frame (e.g. the process of a popup in the same browsing context group,
+    // which holds only a remote page). They were instrumented when enable() registered every process once, so keep doing that.
+    // Nothing releases these per frame, so they are held on purpose until disable(): a process that later hosts a frame and
+    // loses it goes 1->2->1 and stays registered.
     inspectedPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+        if (m_instrumentedProcessPageCounts.contains(std::make_pair(webProcess.coreProcessIdentifier(), pageID)))
+            return;
         Ref protectedWebProcess { webProcess };
         enableInstrumentationForProcess(protectedWebProcess, pageID);
     });
@@ -592,7 +615,7 @@ void ProxyingNetworkAgent::loadingFailed(ResourceID resourceID, double timestamp
     m_frontendDispatcher->loadingFailed(requestId, timestamp, errorText, canceled);
 }
 
-void ProxyingNetworkAgent::requestServedFromMemoryCache(ResourceID resourceID, FrameID frameID, const String& loaderId, const String& documentURL, const ResourceResponse& response, ResourceType resourceType, const String& sourceMapURL, uint64_t bodySize, double timestamp, InitiatorData&& initiator)
+void ProxyingNetworkAgent::requestServedFromMemoryCache(ResourceID resourceID, FrameID frameID, const String& loaderId, const String& documentURL, const URL& url, const ResourceResponse& response, ResourceType resourceType, const String& sourceMapURL, uint64_t bodySize, double timestamp, InitiatorData&& initiator)
 {
     if (!m_enabled)
         return;
@@ -600,7 +623,7 @@ void ProxyingNetworkAgent::requestServedFromMemoryCache(ResourceID resourceID, F
     auto requestId = IdentifierRegistry::protocolRequestId(resourceID.processIdentifier(), resourceID.object());
     auto frameIdString = IdentifierRegistry::protocolFrameId(frameID, resourceID.processIdentifier());
     auto cachedResourceObject = Protocol::Network::CachedResource::create()
-        .setUrl(response.url().string())
+        .setUrl(url.string())
         .setType(toProtocolResourceType(resourceType))
         .setBodySize(bodySize)
         .release();

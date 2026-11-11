@@ -60,7 +60,7 @@ function conditionText({ field, column, isNegated }: PackedCondition, owner: str
   return isNegated ? `!${text}` : text;
 }
 
-function saysNothingText({ name, kind }: PackedField): string {
+function emptyConditionText({ name, kind }: PackedField): string {
   switch (kind.tag) {
     case "List":
       return `${name}.isEmpty()`;
@@ -84,7 +84,6 @@ function rawBitsOf({ name, kind }: PackedField): string {
   return kind.tag === "Number" && kind.cppType === "uint64_t" ? name : `static_cast<uint64_t>(${name})`;
 }
 
-/** How many bits a value of the kind can need where nothing bounds it. */
 function bitsOfKind(kind: PackedField["kind"]): number {
   return kind.tag === "Signed" || (kind.tag === "Number" && kind.cppType === "uint64_t") ? bitsInWord : 32;
 }
@@ -93,7 +92,6 @@ function mayBeWrittenEmpty({ kind }: PackedField): boolean {
   return kind.tag === "Number" || kind.tag === "CodeOffset" || kind.tag === "Signed" || kind.tag === "Record";
 }
 
-/** Nothing says anything where it is not written. But for numbers and rows, what is written says something. */
 function checksOf(word: PackedWord): string[] {
   const all = fieldsOfWord(word);
   const offsets = all.filter(field => field.kind.tag === "CodeOffset");
@@ -106,13 +104,13 @@ function checksOf(word: PackedWord): string[] {
     ...narrow.map(field => `RELEASE_ASSERT(!(${rawBitsOf(field)} >> ${field.width}));`),
     ...(condition === null ? [] : word.fields).map(field => {
       const isWritten = conditionText(condition!, "");
-      return `RELEASE_ASSERT(${isWritten} ${mayBeWrittenEmpty(field) ? "||" : "!="} ${saysNothingText(field)});`;
+      return `RELEASE_ASSERT(${isWritten} ${mayBeWrittenEmpty(field) ? "||" : "!="} ${emptyConditionText(field)});`;
     }),
     ...(word.arms?.whenTrue ?? []).map(
-      field => `RELEASE_ASSERT(${word.arms!.condition.name} || ${saysNothingText(field)});`,
+      field => `RELEASE_ASSERT(${word.arms!.condition.name} || ${emptyConditionText(field)});`,
     ),
     ...(word.arms?.whenFalse ?? []).map(
-      field => `RELEASE_ASSERT(!${word.arms!.condition.name} || ${saysNothingText(field)});`,
+      field => `RELEASE_ASSERT(!${word.arms!.condition.name} || ${emptyConditionText(field)});`,
     ),
   ];
 }
@@ -121,7 +119,6 @@ function bitsOf(field: PackedField): string {
   return field.shift ? `${rawBitsOf(field)} << ${field.shift}` : rawBitsOf(field);
 }
 
-/** The lines of all words. Neighbors that are there under one condition share its test. */
 function guardedLines(
   words: readonly PackedWord[],
   owner: string,
@@ -215,7 +212,6 @@ function readLinesOf(word: PackedWord, position: number): string[] {
   ];
 }
 
-/** Null: the row holds as many rows or bytes as it likes. */
 function maxSizeOf(record: PackedRecord): number | null {
   let size = 0;
   const endOf = ({ shift, width, kind }: PackedField) => shift + (width ?? bitsOfKind(kind));
@@ -246,13 +242,13 @@ function structLines(record: PackedRecord): string[] {
     maxSize === null ? [] : [`static constexpr unsigned maxSize = ${maxSize};`],
     isComparable ? [equality] : [],
     [
-      "void append(Vector<uint8_t>& bytes) const",
+      "void append(auto& bytes) const",
       "{",
       ...indent([...words.flatMap(checksOf), ...guardedLines(words, "", appendLinesOf)]),
       "}",
     ],
     [
-      `static ${name} read(const uint8_t*& cursor)`,
+      `static ${name} read(auto& cursor)`,
       "{",
       ...indent([`${name} result;`, ...guardedLines(words, "result.", readLinesOf), "return result;"]),
       "}",

@@ -1,0 +1,59 @@
+# After `$isPrototypeChainPlain` returns true, the library's own source omits lookups at an allocation.
+# The result reads bytes that the runtime maintains. The walk has no operation there for a run-time check to test.
+# With testing=CheckWalkAtRunTime the true result is checked against the objects themselves, for each queried class.
+# The check reads the class object's own `prototype`, without reifying it, and follows each link above it in step with the records of the classes, which are the tables that arm the bytes.
+# Each object must be the prototype object of the record's class, and the last one must be directly below Object.prototype. The properties on those objects are not checked.
+# RUN(FORM): walk f4 mechanisms=all testing=CheckWalkAtRunTime
+# FORM: [[yes]]: boolean @Boolean = AreMembersUnchanged
+# FORM: AskObjectAgain {{*}}, -, [[yes]] key="prototype" function=f2 [asksChainAbovePrototype]
+# FORM: AskObjectAgain {{*}}, -, [[yes]] key="prototype" function=f3 [asksChainAbovePrototype]
+# With nothing changed, and with the changes that the promise allows, nothing crashes.
+# RUN(QUIET): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; born = () => true; early = function () { }; later = function () { };
+# QUIET: yes yes
+# QUIET-NEXT: yes yes
+# QUIET-NEXT: exited with 0
+# RUN(STORED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Meter.prototype.other = function () { }; Base.prototype.more = 1; Base.prototype.reach = function () { return "wrapped"; }; };
+# STORED: yes yes
+# STORED-NEXT: yes yes
+# STORED-NEXT: exited with 0
+# A link that changes makes the result false, and the run-time check does not run.
+# RUN(LINK): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Object.setPrototypeOf(Meter.prototype, { }); };
+# LINK: yes yes
+# LINK-NEXT: no no
+# LINK-NEXT: exited with 0
+# RUN(ABOVE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Object.setPrototypeOf(Base.prototype, { }); };
+# ABOVE: yes yes
+# ABOVE-NEXT: no no
+# ABOVE-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base, Other) { Other.prototype = { }; };
+# REPLACED: yes yes
+# REPLACED-NEXT: no no
+# REPLACED-NEXT: exited with 0
+# Fault injection, testing=AssumeGuardsAndFacts: the test is folded to true at compile time. The guards are still started before it.
+# With the fault injected, the run-time check stays silent on an unchanged program.
+# RUN(LIEQUIET): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; born = () => true; early = function () { }; later = function () { };
+# LIEQUIET: yes yes
+# LIEQUIET-NEXT: yes yes
+# LIEQUIET-NEXT: exited with 0
+# RUN(LIELINK): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Object.setPrototypeOf(Meter.prototype, { }); };
+# LIELINK: yes yes
+# LIELINK-NEXT: bun: internal AOT error: property lookup check failed
+# LIELINK-NEXT: the check that the prototype chain of a class is unchanged passed, but a link above the prototype of the class has changed
+# LIELINK: crashed with
+# RUN(LIEABOVE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Object.setPrototypeOf(Base.prototype, { }); };
+# LIEABOVE: yes yes
+# LIEABOVE-NEXT: bun: internal AOT error: property lookup check failed
+# LIEABOVE-NEXT: the check that the prototype chain of a class is unchanged passed, but a link above the prototype of the class has changed
+# LIEABOVE: crashed with
+# Every object on the chain is still a holder that the tables know, but one holder is skipped. A traversal that only tested "is this a known holder" would accept the chain.
+# RUN(LIESKIPS): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base) { Object.setPrototypeOf(Meter.prototype, Object.prototype); };
+# LIESKIPS: yes yes
+# LIESKIPS-NEXT: bun: internal AOT error: property lookup check failed
+# LIESKIPS-NEXT: the check that the prototype chain of a class is unchanged passed, but a link above the prototype of the class has changed
+# LIESKIPS: crashed with
+# RUN(LIEREPLACED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; born = () => true; early = function () { }; later = function (Meter, Base, Other) { Other.prototype = { }; };
+# LIEREPLACED: yes yes
+# LIEREPLACED-NEXT: bun: internal AOT error: property lookup check failed
+# LIEREPLACED-NEXT: the check that the prototype chain of a class is unchanged passed, but the prototype of the class was replaced
+# LIEREPLACED: crashed with
+# PROGRAM-OF: whether-the-prototype-chain-of-a-class-is-plain-is-asked-without-an-object.ir

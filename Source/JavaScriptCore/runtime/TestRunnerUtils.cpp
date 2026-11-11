@@ -70,6 +70,11 @@ JSValue numberOfDFGCompiles(JSValue theFunctionValue)
     pretendToHaveManyCompiles = true;
 #endif
 
+#if ENABLE(AOT)
+    if (theFunctionValue.isCallable() && theFunctionValue.asCell()->vm().hasCompiledCode())
+        return jsNumber(1000000.0);
+#endif
+
     if (CodeBlock* baselineCodeBlock = getSomeBaselineCodeBlockForFunction(theFunctionValue)) {
         if (pretendToHaveManyCompiles)
             return jsNumber(1000000.0);

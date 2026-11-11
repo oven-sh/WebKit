@@ -167,8 +167,8 @@ public:
         return IterationStatus::Done;
     }
 
-    CodeBlock* LEGACY_NODELETE codeBlock() const { return m_codeBlock; }
-    BytecodeIndex LEGACY_NODELETE bytecodeIndex() const { return m_bytecodeIndex; }
+    NODELETE CodeBlock* codeBlock() const { return m_codeBlock; }
+    NODELETE BytecodeIndex bytecodeIndex() const { return m_bytecodeIndex; }
 
 private:
     CallFrame* m_startCallFrame;
@@ -223,6 +223,8 @@ bool getLineColumnAndSource(VM& vm, Vector<StackFrame>* stackTrace, LineColumn& 
                 continue;
             lineColumn = position->lineColumn;
             sourceURL = AOT::sourceProviderURLOf(position->source);
+            if (!sourceURL.isEmpty())
+                sourceURL = AOT::displayPathOf(position->source);
             return true;
         }
 #endif
@@ -481,7 +483,7 @@ JSObject* createOutOfMemoryError(JSGlobalObject* globalObject)
     auto* error = createRangeError(globalObject, "Out of memory"_s, nullptr);
     uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
     if (MarkedBlockCage::isRequired())
-        globalObject->vm().heap.cage().didCreateOutOfMemoryError();
+        globalObject->vm().heap.cage().didCreateOutOfMemoryError(globalObject->vm());
     return error;
 }
 
@@ -492,7 +494,7 @@ JSObject* createOutOfMemoryError(JSGlobalObject* globalObject, const String& mes
     auto* error = createRangeError(globalObject, makeString("Out of memory: "_s, message), nullptr);
     uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
     if (MarkedBlockCage::isRequired())
-        globalObject->vm().heap.cage().didCreateOutOfMemoryError();
+        globalObject->vm().heap.cage().didCreateOutOfMemoryError(globalObject->vm());
     return error;
 }
 

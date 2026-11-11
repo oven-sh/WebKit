@@ -8,25 +8,23 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
-#include "AOTCompactList.h"
-#include "AOTDiagnostics.h"
-#include "AOTID.h"
-#include "AOTLimits.h"
+#include "AOTIDSets.h"
+#include "AOTObjects.h"
 #include "AOTPrimitives.h"
 #include "AOTSchemaEnums.h"
-#include "AOTSortedSet.h"
+#include "AOTTypeIDs.h"
 #include "AOTTypeKinds.h"
 #include "AOTWire.h"
-#include <compare>
+#include <array>
 #include <optional>
 #include <span>
-#include <wtf/Hasher.h>
+#include <wtf/Assertions.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
+#include <wtf/ScopedLambda.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT {
 
-class BuildContext;
 class BuiltinTable;
 
 namespace Typed {
@@ -34,104 +32,119 @@ namespace Typed {
 class Program;
 class TypeArena;
 class TypeTable;
+struct PropertyKey;
+
+enum class UnknownSeed : uint16_t {
+    ResultOfUnknownCallee = 1 << 0,
+    CaughtException = 1 << 1,
+    UndescribedNativeResult = 1 << 2,
+    ParameterOfEscapedFunction = 1 << 3,
+    ContentsOfEscapedObject = 1 << 4,
+    UnseenCode = 1 << 5,
+    DataFromOutside = 1 << 6,
+    UncheckedConversion = 1 << 7,
+    ObjectWithoutLayout = 1 << 8,
+    WrittenAsLoose = 1 << 9,
+    LostByWalk = 1 << 10,
+};
+
+using UnknownSeeds = OptionSet<UnknownSeed>;
+
+inline ASCIILiteral nameOf(UnknownSeed seed)
+{
+    switch (seed) {
+    case UnknownSeed::ResultOfUnknownCallee:
+        return "ResultOfUnknownCallee"_s;
+    case UnknownSeed::CaughtException:
+        return "CaughtException"_s;
+    case UnknownSeed::UndescribedNativeResult:
+        return "UndescribedNativeResult"_s;
+    case UnknownSeed::ParameterOfEscapedFunction:
+        return "ParameterOfEscapedFunction"_s;
+    case UnknownSeed::ContentsOfEscapedObject:
+        return "ContentsOfEscapedObject"_s;
+    case UnknownSeed::UnseenCode:
+        return "UnseenCode"_s;
+    case UnknownSeed::DataFromOutside:
+        return "DataFromOutside"_s;
+    case UnknownSeed::UncheckedConversion:
+        return "UncheckedConversion"_s;
+    case UnknownSeed::ObjectWithoutLayout:
+        return "ObjectWithoutLayout"_s;
+    case UnknownSeed::WrittenAsLoose:
+        return "WrittenAsLoose"_s;
+    case UnknownSeed::LostByWalk:
+        return "LostByWalk"_s;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+inline constexpr unsigned mostContentsOfClass = 3;
 
 struct ClassPart {
     BuiltinClassID builtinClass;
-    bool contentsAreProven { false };
-    ArrayStorage arrayStorage { ArrayStorage::Other };
-    OptionSet<PristineAspects> provenPristine;
-    // As they stand in the type: for the algebra of types, walkers, printers and tables. Whoever wants to know what a collection holds asks one of the two questions below.
-    InlineList<TypeID, 3> writtenContents;
+    std::array<TypeID, mostContentsOfClass> writtenContents;
 
-    TypeID writtenContentsAt(unsigned indexInType) const;
+    TypeID writtenContentsAt(unsigned positionInType) const;
     TypeID writtenContentsAt(const BuiltinTable&, ContentsSlot) const;
-    // All that is ever stored, where flow has followed it. Nothing where the contents are declared or guessed.
-    std::optional<ProvenValue<TypeID>> provenContentsAt(unsigned indexInType) const;
-    std::optional<ProvenValue<TypeID>> provenContentsAt(const BuiltinTable&, ContentsSlot) const;
-    ExpectedType expectedContentsAt(unsigned indexInType) const { return ExpectedType(writtenContentsAt(indexInType)); }
-    ExpectedType expectedContentsAt(const BuiltinTable&, ContentsSlot) const;
+    ExpectedType expectedContentsAt(unsigned positionInType) const { return ExpectedType(writtenContentsAt(positionInType)); }
+    ExpectedType expectedContentsAt(const BuiltinTable& builtins, ContentsSlot slot) const { return ExpectedType(writtenContentsAt(builtins, slot)); }
+    bool hasWrittenContents() const { return writtenContents[0] || writtenContents[1] || writtenContents[2]; }
 
     friend bool operator==(const ClassPart&, const ClassPart&) = default;
 };
+static_assert(sizeof(ClassPart) == 16);
 
-template<> inline constexpr bool canMoveWithMemcpy<ClassPart> = true;
-
-using ClassParts = InlineList<ClassPart, 1>;
-
-struct RegExpLiteralInType {
-    StringID pattern;
-    uint32_t rawFlags { 0 };
-
-    OptionSet<RegExpFlags> flags() const { return OptionSet<RegExpFlags>::fromRaw(static_cast<OptionSet<RegExpFlags>::StorageType>(rawFlags)); }
-
-    friend constexpr bool operator==(const RegExpLiteralInType&, const RegExpLiteralInType&) = default;
-    friend constexpr auto operator<=>(const RegExpLiteralInType&, const RegExpLiteralInType&) = default;
-};
-
-struct Type;
-
-struct WideningContext {
-    const Program& program;
-    TypeArena& types;
-    BuildContext& build;
-    Subject subject;
-    bool* didWiden { nullptr };
-    // The type that the value had until now. A union inside it keeps each list that is no longer than that type's: the program holds one as long already.
-    const Type* typeBefore { nullptr };
-    bool* didKeepListsOfTypeBefore { nullptr };
-};
-
-struct Type {
+struct TypeParts {
     uint16_t primitives { 0 };
+    UnknownSeeds seeds;
     bool anyObject { false };
     bool anyFunction { false };
     std::optional<OpaqueKind> opaque;
     Range integers;
     LayoutID environment;
+    StringSetID stringLiterals;
+    KeySetID symbolLiterals;
+    ObjectSetID objects;
+    LayoutSetID unnamedLayouts;
+    ClassPartsID unnamedClasses;
+    Range boundsOfFractions;
+
+    friend bool operator==(const TypeParts&, const TypeParts&) = default;
+};
+
+struct Type : TypeParts {
     LayoutSetID layouts;
-    SortedSet<StringID> stringLiterals;
-    SortedSet<PropertyKeyID> symbolLiterals;
-    ClassParts classes;
-    SortedSet<FunctionID> functions;
-    SortedSet<BuiltinID> builtins;
-    SortedSet<RegExpLiteralInType> regExpLiteralSet;
+    ClassPartsID classes;
+    OptionSet<ObjectTrait> traitsOfNamed;
+    uint8_t answersOfParts { 0 };
 
-    static Type never() { return { }; }
-    static Type fromPrimitives(uint16_t);
-    static Type integer(Range);
-    static Type number(double);
-    static Type function();
-    static Type object();
-    static Type anything();
-    static Type forLayoutSet(LayoutSetID);
-    static Type forLayout(LayoutID, TypeArena&);
-    static Type forLayouts(std::span<const LayoutID> unsortedLayouts, TypeArena&);
-    static Type forEnvironment(LayoutID);
-    static Type builtinClass(BuiltinClassID);
-    static Type builtinClass(BuiltinClassID, std::span<const TypeID> contents);
-    static Type forFunction(FunctionID);
-    static Type forBuiltin(BuiltinID);
-    static Type stringLiteral(StringID);
-    static Type symbolLiteral(PropertyKeyID);
-    static Type regExpLiteral(StringID pattern, OptionSet<RegExpFlags>);
-    static Type forOpaque(OpaqueKind);
+    void noteAnswersOfParts() { answersOfParts = workOutAnswersOfParts(); }
 
-    bool hasObjects() const { return anyObject || anyFunction || layouts || !classes.isEmpty() || !functions.isEmpty() || !builtins.isEmpty(); }
-    bool isNever() const { return !primitives && !hasObjects() && isJavaScriptValue(); }
-    bool isAnything() const { return (primitives & Primitive::All) == Primitive::All && integers == Range::full() && anyObject && anyFunction; }
-    bool isJavaScriptValue() const { return !environment && !opaque; }
+    bool hasUnknown() const { return answers() & HoldsUnknown; }
+    bool hasUnboundedUnknown() const { return answers() & HoldsUnboundedUnknown; }
+    bool hasNamedObjects() const { return !!objects; }
+    bool hasOnlyNamedObjects() const { return (answers() & (HoldsObjects | HoldsUnknown)) == HoldsObjects; }
+    bool namesMergedObjects() const { return traitsOfNamed.contains(ObjectTrait::IsMerged); }
+
+    bool hasObjects() const { return answers() & HoldsObjects; }
+    bool isNever() const { return !primitives && !(answers() & (HoldsObjects | IsNoJavaScriptValue)); }
+    bool isAnything() const { return (primitives & Primitive::All) == Primitive::All && integers == Range::full() && boundsOfFractions.isEmpty() && anyObject; }
+    bool isJavaScriptValue() const { return !(answers() & IsNoJavaScriptValue); }
     bool isOpaque(OpaqueKind kind) const { return opaque == kind && !primitives; }
     bool hasCells() const;
-    bool hasOnlyPrimitives(uint16_t allowed) const { return !(primitives & ~allowed) && !hasObjects() && isJavaScriptValue(); }
+    bool hasOnlyPrimitives(uint16_t allowed) const { return !(primitives & ~allowed) && !(answers() & (HoldsObjects | IsNoJavaScriptValue)); }
     bool isNumber() const { return !isNever() && hasOnlyPrimitives(Primitive::Number); }
     bool isInteger() const { return !isNever() && hasOnlyPrimitives(Primitive::Integer); }
     bool isNumberWithoutFraction() const { return !isNever() && hasOnlyPrimitives(Primitive::NumberWithoutFraction); }
+    bool holdsFractionsWithoutBounds() const { return primitives & Primitive::FractionalNumber && boundsOfFractions.isEmpty(); }
+    bool isNumberWithinBounds() const { return !isNever() && hasOnlyPrimitives(Primitive::Integer | Primitive::FractionalNumber) && !holdsFractionsWithoutBounds(); }
+    Range boundsOfNumbers() const { return integers.unionWith(boundsOfFractions); }
     bool isBoolean() const { return !isNever() && hasOnlyPrimitives(Primitive::Boolean); }
     bool isString() const { return !isNever() && hasOnlyPrimitives(Primitive::String); }
     bool isAnyString() const { return !isNever() && hasOnlyPrimitives(Primitive::AnyString); }
     bool isUndefinedOrNull() const { return !isNever() && hasOnlyPrimitives(Primitive::UndefinedOrNull); }
     bool isNumberOrNullish() const { return primitives & Primitive::Number && hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull); }
-    bool isStringOrNullish() const { return primitives & Primitive::String && hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull); }
     bool isAnyStringOrNullish() const { return primitives & Primitive::AnyString && hasOnlyPrimitives(Primitive::AnyString | Primitive::UndefinedOrNull); }
     bool isObject() const { return hasObjects() && !primitives; }
     bool mayBeUndefinedOrNull() const { return primitives & Primitive::UndefinedOrNull; }
@@ -141,53 +154,129 @@ struct Type {
     bool isInt32() const { return isInteger() && integers.isSubsetOf(Range::int32()); }
     bool isInt32OrNullish() const { return hasOnlyPrimitives(Primitive::Integer | Primitive::UndefinedOrNull | Primitive::Absent) && integers.isSubsetOf(Range::int32()); }
     bool isNumberLike() const { return hasOnlyPrimitives(Primitive::NumberLike); }
-    bool mayBeFunction() const { return anyFunction || anyObject || !functions.isEmpty() || !builtins.isEmpty(); }
-    bool hasOnlyKnownCallees() const { return !anyFunction && !anyObject && classes.isEmpty(); }
-    bool hasOnlyClassObjects() const { return !anyObject && !anyFunction && !layouts && functions.isEmpty() && builtins.isEmpty(); }
-    bool hasOnlyLayouts() const;
-    bool isSingleValue() const;
 
-    LayoutID singleLayout(const Program&) const;
-    const ClassPart* singleBuiltinClass() const LIFETIME_BOUND;
-    const ClassPart* findClassPart(BuiltinClassID) const LIFETIME_BOUND;
-    FunctionID singleFunction() const;
-    BuiltinID singleBuiltin() const;
-    StringID singleStringLiteral() const;
-    std::span<const RegExpLiteralInType> regExpLiterals() const LIFETIME_BOUND { return regExpLiteralSet.span(); }
+    bool mayBeFunction() const { return anyFunction || traitsOfNamed.contains(ObjectTrait::IsCallable); }
+    bool hasOnlyKnownCallees() const { return !anyFunction && !classes; }
+    bool hasOnlyLayouts() const { return answers() & ObjectsHaveLayouts && !(primitives & ~Primitive::UndefinedOrNull); }
+    bool hasOnlyClassObjects() const { return answers() & ObjectsHaveClasses && !(primitives & ~Primitive::UndefinedOrNull); }
+    bool hasOnlyClosures() const { return answers() & ObjectsAreClosures && !(primitives & ~Primitive::UndefinedOrNull); }
+    bool hasOnlyBuiltins() const { return answers() & ObjectsAreBuiltins && !(primitives & ~Primitive::UndefinedOrNull); }
 
-    Type withoutPrimitives(uint16_t) const;
-    Type withPrimitives(uint16_t) const;
-    Type withoutNullish() const;
-    Type withoutObjects() const;
-    Type withOnlyObjects() const;
-    Type withLiteralStringsWidened() const;
-    Type withContentsProven(bool) const;
-    Type withUntestableBuiltinsWidened() const;
-    Type withoutClassProofs() const;
+private:
+    enum : uint8_t {
+        HoldsUnknown = 1 << 0,
+        HoldsUnboundedUnknown = 1 << 1,
+        HoldsObjects = 1 << 2,
+        IsNoJavaScriptValue = 1 << 3,
+        ObjectsHaveLayouts = 1 << 4,
+        ObjectsHaveClasses = 1 << 5,
+        ObjectsAreClosures = 1 << 6,
+        ObjectsAreBuiltins = 1 << 7,
+    };
 
-    void canonicalize();
+    uint8_t workOutAnswersOfParts() const
+    {
+        bool holdsUnboundedUnknown = anyObject || anyFunction;
+        bool holdsUnknown = holdsUnboundedUnknown || unnamedLayouts || unnamedClasses;
+        bool holdsObjects = holdsUnknown || objects;
+        bool holdsOnlyListedObjects = holdsObjects && !holdsUnboundedUnknown;
+        OptionSet<ObjectTrait> shapesOfNamed = traitsOfNamed & traitsOfShape;
+        OptionSet<ObjectTrait> identitiesOfNamed = traitsOfNamed & traitsOfIdentity;
+        unsigned bits = 0;
+        if (holdsUnknown)
+            bits |= HoldsUnknown;
+        if (holdsUnboundedUnknown)
+            bits |= HoldsUnboundedUnknown;
+        if (holdsObjects)
+            bits |= HoldsObjects;
+        if (environment || opaque)
+            bits |= IsNoJavaScriptValue;
+        if (holdsOnlyListedObjects && !unnamedClasses && shapesOfNamed.containsOnly({ ObjectTrait::HasLayout }))
+            bits |= ObjectsHaveLayouts;
+        if (holdsOnlyListedObjects && !unnamedLayouts && shapesOfNamed.containsOnly({ ObjectTrait::HasClass }))
+            bits |= ObjectsHaveClasses;
+        if (holdsOnlyListedObjects && !holdsUnknown && identitiesOfNamed.containsOnly({ ObjectTrait::IsClosure }))
+            bits |= ObjectsAreClosures;
+        if (holdsOnlyListedObjects && !holdsUnknown && identitiesOfNamed.containsOnly({ ObjectTrait::IsBuiltin }))
+            bits |= ObjectsAreBuiltins;
+        return static_cast<uint8_t>(bits);
+    }
 
-    bool isSubsetOf(const Type&, const Program&) const;
-    bool overlaps(const Type&, const Program&) const;
-    Type unionWith(const Type&, TypeArena&) const;
-    Type unionWideningWith(const Type&, const WideningContext&) const;
-    Type intersectWith(const Type&, TypeArena&) const;
-    Type castTo(const Type& castType, TypeArena&) const;
-    Type without(const Type&, TypeArena&) const;
-
-    friend bool operator==(const Type&, const Type&) = default;
+    uint8_t answers() const
+    {
+        ASSERT(answersOfParts == workOutAnswersOfParts());
+        return answersOfParts;
+    }
 };
 
-void add(Hasher&, const Type&);
-void add(Hasher&, RegExpLiteralInType);
+static_assert(sizeof(Type) <= 88);
 
 uint16_t fromWire(Wire::Primitives);
 inline uint16_t fromWire(OptionSet<Wire::Primitives> primitives) { return fromWire(static_cast<Wire::Primitives>(primitives.toRaw())); }
 Wire::Primitives toWire(uint16_t primitives);
 
-std::span<const LayoutID> membersOf(const Program&, const Type&);
-std::span<const LayoutID> membersOf(const TypeTable&, const Type&);
+class TypeReader {
+public:
+    TypeReader(const Program&);
+    TypeReader(const TypeTable& table)
+        : m_table(&table)
+    {
+    }
+    TypeReader(const TypeArena&);
 
+    Type at(TypeID) const;
+    const Type& recordOf(TypeID) const;
+    SetView<LayoutID, LayoutSetID> at(LayoutSetID) const;
+    std::span<const LayoutID> listOf(LayoutSetID) const;
+    SetView<ObjectID, ObjectSetID> at(ObjectSetID) const;
+    SetView<StringID, StringSetID> at(StringSetID) const;
+    SetView<PropertyKeyID, KeySetID> at(KeySetID) const;
+    std::span<const ClassPart> at(ClassPartsID) const;
+    const PropertyKey& at(PropertyKeyID) const;
+    const ObjectRecord& at(ObjectID) const;
+    std::span<const uint8_t> bytesOf(StringID) const;
+
+    const TypeTable& table() const { return *m_table; }
+    const ObjectTable& objects() const;
+    const BuiltinTable& builtins() const;
+    const Program* program() const;
+
+private:
+    const TypeTable* m_table;
+    const TypeArena* m_arena { nullptr };
+};
+
+std::span<const LayoutID> membersOf(TypeReader, const Type&);
+std::span<const LayoutID> membersOf(TypeReader, LayoutSetID);
+std::span<const ClassPart> classPartsOf(TypeReader, const Type&);
+
+inline LayoutID singleLayoutOf(TypeReader, const Type& type)
+{
+    if (type.hasOnlyLayouts())
+        return holdsOneMember(type.layouts) ? LayoutID(positionOf(type.layouts)) : LayoutID();
+    if (type.primitives & ~Primitive::UndefinedOrNull)
+        return { };
+    return type.environment;
+}
+const ClassPart* singleBuiltinClassOf(TypeReader, const Type&);
+const ClassPart* findClassPart(TypeReader, const Type&, BuiltinClassID);
+FunctionID functionSharedByClosuresOf(TypeReader, const Type&);
+BuiltinID builtinSharedByObjectsOf(TypeReader, const Type&);
+inline FunctionID singleFunctionOf(TypeReader reader, const Type& type) { return type.hasOnlyClosures() ? functionSharedByClosuresOf(reader, type) : FunctionID(); }
+inline BuiltinID singleBuiltinOf(TypeReader reader, const Type& type) { return type.hasOnlyBuiltins() ? builtinSharedByObjectsOf(reader, type) : BuiltinID(); }
+ObjectID singleObjectOf(const Type&);
+StringID singleStringLiteralOf(const Type&);
+bool isSingleValue(TypeReader, const Type&);
+
+void forEachFunctionAmongClosuresOf(TypeReader, const Type&, NOESCAPE const ScopedLambda<void(FunctionID)>&);
+inline void forEachFunctionOf(TypeReader reader, const Type& type, NOESCAPE const ScopedLambda<void(FunctionID)>& functor)
+{
+    if (type.traitsOfNamed.contains(ObjectTrait::IsClosure))
+        forEachFunctionAmongClosuresOf(reader, type, functor);
+}
+void forEachBuiltinOf(TypeReader, const Type&, NOESCAPE const ScopedLambda<void(BuiltinID)>&);
+bool namesFunction(TypeReader, const Type&, FunctionID);
+bool namesBuiltin(TypeReader, const Type&, BuiltinID);
 
 } } } // namespace JSC::AOT::Typed
 

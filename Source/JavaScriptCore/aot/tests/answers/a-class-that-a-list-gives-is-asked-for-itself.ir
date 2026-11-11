@@ -1,0 +1,133 @@
+# class First { constructor(n) { this.tag = n; } }
+# class Second { constructor(n) { this.name = "second"; this.tag = "text" + n; } }
+# const kinds = [First];
+# function run(list) { let said = ""; for (let at = 0; at < list.length; at++) { const made = new list[at](1); said += typeof made.tag + ";"; } return said; }
+# print(run(kinds));
+# kinds.push(id(Second));
+# print(run(kinds));
+# print("went on");
+# An element of an array is checked where it is read. The check used to widen a class's closure to `function`, while the read operation kept the class as its type.
+# `new list[at](1)` relied on the operation's type, so First's constructor ran for Second and the program silently printed `number;number;`.
+# The check now names the class. Where a unit may not name what Link claims, the read's type is only as narrow as what the unit may check.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(FORM): walk f1 mechanisms=all
+# FORM: [[given]]: undefined|f2 @JSValue = GetArrayElement
+# FORM: CheckProof [[given]] checkedType=undefined|f2 {{*}} source=
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: number;
+# ALL-NEXT: bun: internal AOT error: type check failed
+# ALL-NEXT: found function in
+# ALL-NOT: went on
+# ALL: crashed with
+# RUN(CALLS): run-in-shell mechanisms=-Inlining
+# CALLS: number;
+# CALLS-NEXT: bun: internal AOT error: type check failed
+# CALLS-NEXT: found function in
+# CALLS-NOT: went on
+# CALLS: crashed with
+
+layout L0 kind=Instance name="First" module=m0 constructor=f2 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Second" module=m0 constructor=f3 fields=[{key="name" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    PutModuleVariable v3 variable=g0
+    v5 = FinishClass v3 layout=L0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]}
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]}
+    v8 = NewClosure function=f3
+    v9 = NewClass v8 layout=L1
+    PutModuleVariable v9 variable=g1
+    v11 = FinishClass v9 layout=L1
+    v12 = Convert v11 declared={type=f3 flags=[IsFromCompiler]}
+    v13 = Convert v11 declared={type=f3 flags=[IsFromCompiler]}
+    v14 = NewArray v7 contents=anything
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="print" [isFreeName]
+    v17 = Call v1, -, v14 calleeName="run"
+    v18 = Call v16, -, v17 calleeName="print"
+    v19 = PropGet v14 key="push"
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="id" [isFreeName]
+    v22 = Call v21, -, v13 calleeName="id"
+    v23 = Call v19, v14, v22 calleeKey="push" calleeName="kinds.push"
+    v24 = Builtin builtin=GlobalThis
+    v25 = PropGet v24 key="print" [isFreeName]
+    v26 = Call v1, -, v14 calleeName="run"
+    v27 = Call v25, -, v26 calleeName="print"
+    v28 = Builtin builtin=GlobalThis
+    v29 = PropGet v28 key="print" [isFreeName]
+    v30 = String string="went on"
+    v31 = Call v29, -, v30 calleeName="print"
+    v32 = Undefined
+    Return v32
+}
+function f1 name="run" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|function|f2> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|function|f2>):
+    v1 = String string=""
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = ElemGet v0, v6
+    v11 = Integer integer=1
+    v12 = Construct v10, -, v11 calleeName="list[at]"
+    v13 = PropGet v12 key="tag"
+    v14 = TypeOf v13
+    v15 = String string=";"
+    v16 = Add v14, v15
+    v17 = Add v5, v16
+    v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]}
+    v19 = Increment v6
+    v20 = Convert v19 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v18, v20)
+  b3():
+    Return v5
+}
+function f2 name="First" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0}
+    PropSet v4, v1 key="tag"
+    v6 = Undefined
+    v7 = TypeTest v6 testedType=object
+    Branch v7 -> taken b1(| 0), notTaken b2(v4)
+  b1(v8):
+    Jump -> next b2(v8)
+  b2(v9):
+    Return v9
+}
+function f3 name="Second" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1}
+    v5 = String string="second"
+    PropSet v4, v5 key="name"
+    v7 = String string="text"
+    v8 = Add v7, v1
+    PropSet v4, v8 key="tag"
+    v10 = Undefined
+    v11 = TypeTest v10 testedType=object
+    Branch v11 -> taken b1(| 0), notTaken b2(v4)
+  b1(v12):
+    Jump -> next b2(v12)
+  b2(v13):
+    Return v13
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+entry module=m0

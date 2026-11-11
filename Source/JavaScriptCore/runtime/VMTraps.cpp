@@ -62,7 +62,7 @@ private:
     { }
 
 public:
-    static std::optional<SignalContext> LEGACY_NODELETE tryCreate(PlatformRegisters& registers)
+    NODELETE static std::optional<SignalContext> tryCreate(PlatformRegisters& registers)
     {
         auto instructionPointer = MachineContext::instructionPointer(registers);
         if (!instructionPointer)
@@ -76,12 +76,12 @@ public:
     void* framePointer;
 };
 
-inline static bool LEGACY_NODELETE vmIsInactive(VM& vm)
+NODELETE inline static bool vmIsInactive(VM& vm)
 {
     return !vm.entryScope && !vm.ownerThread();
 }
 
-static bool LEGACY_NODELETE isSaneFrame(CallFrame* frame, CallFrame* calleeFrame, EntryFrame* entryFrame, StackBounds stackBounds)
+NODELETE static bool isSaneFrame(CallFrame* frame, CallFrame* calleeFrame, EntryFrame* entryFrame, StackBounds stackBounds)
 {
     if (reinterpret_cast<void*>(frame) >= reinterpret_cast<void*>(entryFrame))
         return false;
@@ -261,7 +261,7 @@ public:
         });
     }
 
-    VMTraps& LEGACY_NODELETE traps() { return m_vm.traps(); }
+    NODELETE VMTraps& traps() { return m_vm.traps(); }
 
 
     void notify(AbstractLocker&)
@@ -274,7 +274,7 @@ public:
         });
     }
 
-    bool LEGACY_NODELETE isStopped(AbstractLocker&)
+    NODELETE bool isStopped(AbstractLocker&)
     {
         return !m_scheduled;
     }
@@ -429,8 +429,8 @@ CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()
 
     bool shouldStop = needHandling(AsyncEvents);
 #if ENABLE(AOT)
-    // Compiled code polls the stop request alone, and looks at no trap bit. Native code that clears whatever was thrown may clear a TerminationException,
-    // whose bit is spent by then. So the polls stay armed for as long as the termination is asked for, and throw it again.
+    // Compiled code polls only the stop request and does not look at the trap bits. Native code that clears any pending exception may clear a TerminationException
+    // whose trap bit was already consumed. So the polls stay armed for as long as termination is requested, and throw it again.
     shouldStop |= vm().hasCompiledCode() && vm().hasTerminationRequest();
 #endif
 
@@ -569,8 +569,6 @@ VMTraps::VMTraps()
     : m_trapSignalingLock(Box<Lock>::create())
     , m_condition(Box<Condition>::create())
 {
-    if (Options::forceTrapAwareStackChecks()) [[unlikely]]
-        m_stack.requestStop();
 }
 
 VMTraps::~VMTraps()

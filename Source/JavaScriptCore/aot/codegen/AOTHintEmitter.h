@@ -13,14 +13,23 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class HintEmitter final : public OperationEmitter {
 public:
-    explicit HintEmitter(CodeGenerator&);
+    explicit HintEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateLoopHint(const ValueContext&);
+    void generateEndCellLifetime(const ValueContext&);
+    void generateGuessFailsUnasked(const ValueContext&);
+    void generateBeginEffectsCheck(const ValueContext&);
+    void generateCheckIterationRestart(const ValueContext&);
+    void generateCheckInlineeFallback(const ValueContext&);
+    void generateCheckReloadBypass(const ValueContext&);
+    void generateAskObjectAgain(const ValueContext&);
+    bool shouldEmitLifetimeEnds();
+    void emitLifetimeEnd(const OperationContext&, ValueID cell);
+    void noteThatCellIsLent(const ValueContext& made, CellPointer);
+    void crashIfLifetimeEnded(const OperationContext&, CellPointer);
     void pollWhereNoFrameIsSetUp(const OperationContext&);
 
 private:
-    Expected<bool> endsWithinLengthOfData(BlockID);
-    bool allocatesWhereErrorsAreCaught(BlockID);
     void emitPoll(const ValueContext&);
 };
 

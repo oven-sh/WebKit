@@ -1,0 +1,40 @@
+# testing=CheckProofsAtRunTime: every caller of `sum` is in sight and hands over integers, so its body takes them raw. Whoever calls by value comes through an entry that has to make the raw words: it tests what it was handed
+# and traps on the failing side, which only a fault of the compiler takes. A bare trap names nothing. Under the switch the value is asked IN FRONT OF the test, as it arrives, and the process ends with the words of a false proof.
+# library.js: export function sum(a, b) { return a + b }
+# main.js: import { sum } from "./library.js"; print(sum(given | 0, given | 0)); print([sum][given | 0](given | 0, given | 0))
+# The second call finds `sum` in a list: behind the test of what it found stands a call by value, so the entry stays open.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN: walk f2:GenericCallEntry mechanisms=all
+# CHECK-LABEL: code f2:GenericCallEntry
+# SINCE THE ENTRY STOPS BY NAME IN EVERY BUILD the value is asked once, by the test, and the check that names the fault stands on the failing side.
+# CHECK: TypeTest v2 testedType=i32
+# CHECK: TypeTest v3 testedType=i32
+# CHECK: CheckProof v2 checkedType=never
+# CHECK: Unbox
+
+module m0 path="/library.js" displayPath="library.js" body=f1
+module m1 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}]
+entry module=m1
+variable g0 name="sum" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+function f0 name="main" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Integer integer=0
+    v3 = BitOr v1, v2
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v3, v3
+    v6 = PropGet v0 key="print" [isFreeName]
+    v7 = Call v6, -, v5
+    v8 = NewArray v4 contents=anything
+    v9 = ElemGet v8, v3
+    v10 = Call v9, -, v3, v3
+    v11 = Call v6, -, v10
+    Return
+}
+function f1 name="library" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="sum" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Add v0, v1
+    Return v2
+}

@@ -7,8 +7,8 @@
 
 #if ENABLE(AOT)
 
-#include "AOTTestCommand.h"
 #include "AOTTestFile.h"
+#include "AOTTestHarness.h"
 #include "AOTVector.h"
 #include <optional>
 #include <wtf/PrintStream.h>
@@ -20,7 +20,6 @@ class ChildProcessLauncher;
 
 namespace Typed {
 
-// Another way to run the same files: under more option words than they name themselves, and for one diagnostic alone.
 struct TestVariant {
     Vector<String> optionWords;
     std::optional<DiagnosticName> onlyDiagnostic;
@@ -45,12 +44,14 @@ TestRunSummary runTestFiles(const TestRunRequest&, PrintStream&);
 
 inline constexpr ASCIILiteral runSubcommandName = "run"_s;
 inline constexpr ASCIILiteral showOutputFlag = "--show-output"_s;
+inline constexpr ASCIILiteral singleProcessRunFlag = "--single-process"_s;
 inline constexpr ASCIILiteral optionFlag = "--option"_s;
 inline constexpr ASCIILiteral onlyDiagnosticFlag = "--only-diagnostic"_s;
 
 struct TestFailure {
     unsigned line;
     String message;
+    bool isInternalError { false };
 };
 
 struct RunOutput {

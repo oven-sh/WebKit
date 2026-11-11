@@ -1,0 +1,7 @@
+# the same loop with loop invariants withheld: the guess is opened where the read stands, so the test is made in every turn
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: Test {{*}}L0
+# CHECK: isLoopHead=true
+# CHECK: Test {{*}}L0
+# PROGRAM-OF: loop-is-built-twice-behind-the-test-of-a-shape.ir
