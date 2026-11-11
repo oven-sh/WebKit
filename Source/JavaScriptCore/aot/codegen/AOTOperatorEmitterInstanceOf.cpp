@@ -8,46 +8,49 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinTable.h"
-#include "AOTConstantEmitter.h"
-#include "AOTFunctionAnalyses.h"
 #include "AOTStubsPropertyKeys.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
+bool OperatorEmitter::leaveOperandToInstanceOf(const ValueContext& read, InstanceOfOperand operand, NumberedImmediate number)
+{
+    std::span<const ValueID> behind = read.operationsBehind();
+    while (!behind.empty() && operationAt(behind.front()).traits().isPure())
+        behind = behind.subspan(1);
+    if (behind.empty() || behind.front() != m_code.onlyUserOf(read.id()))
+        return false;
+    const Operation& test = operationAt(behind.front());
+    bool walksChain = operand == InstanceOfOperand::PrototypeThatIsBuiltin;
+    if (test.opcode != (walksChain ? Opcode::HasInPrototypeChain : Opcode::InstanceOf) || (walksChain ? test.prototypeOperand() : test.constructorOperand()) != read.id())
+        return false;
+    if (!test.traits().mayCallUnknownCode())
+        return false;
+    m_operandLeftToInstanceOf = OperandLeftToInstanceOf { read.id(), operand, number };
+    return true;
+}
+
 void OperatorEmitter::generateInstanceOf(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->valueOperand());
+    if (std::optional left = std::exchange(m_operandLeftToInstanceOf, std::nullopt)) {
+        RELEASE_ASSERT(left->read == value->constructorOperand());
+        defineTest(value, Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(left->operand), { object.value() }, { .numberedImmediate = left->number }).first)));
+        return;
+    }
     Boxed constructor = in<Boxed>(value->constructorOperand());
-    std::optional<ThrowSite> siteThatQuotesExpression;
-    if (value->writtenExpression())
-        siteThatQuotesExpression = ThrowSite { ThrowKind::NotAFunction, value->writtenExpression().index(), std::nullopt };
-    defineTest(value, Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::Constructor), { object.value(), constructor.value() }, { .throwSite = siteThatQuotesExpression }).first)));
-}
-
-// What is no cell has no prototype chain: that is answered in line, and the prototype of a built-in class that only this walk asks for is fetched behind that answer.
-bool OperatorEmitter::fetchesPrototypeItself(ValueID builtin)
-{
-    // Validation reads every operand in front of its operation.
-    if (generator().validates())
-        return false;
-    std::optional<Use> use = analyses().useLists().singleUse(builtin);
-    if (!use || use->kind != Use::Kind::Operand)
-        return false;
-    const Value& user = m_function.at(use->user);
-    return user.opcode == Opcode::HasInPrototypeChain && user.prototypeOperand() == builtin && user.valueOperand() != builtin
-        && use->block == analyses().useLists().locationOf(builtin).block && typeOf(user.valueOperand()).primitives;
+    defineTest(value, Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::Constructor), { object.value(), constructor.value() }).first)));
 }
 
 void OperatorEmitter::generateHasInPrototypeChain(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->valueOperand());
     ValueID prototypeID = value->prototypeOperand();
+    std::optional left = std::exchange(m_operandLeftToInstanceOf, std::nullopt);
+    RELEASE_ASSERT(!left || left->read == prototypeID);
     auto walksChain = [&] {
-        const Value& definition = m_function.at(prototypeID);
-        CellPointer prototype = definition.opcode == Opcode::Builtin && fetchesPrototypeItself(prototypeID)
-            ? emitter<ConstantEmitter>().builtinCell(value, m_builtins.canonicalID(definition.builtin()))
-            : in<CellPointer>(prototypeID);
+        if (left)
+            return Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(left->operand), { object.value() }, { .numberedImmediate = left->number, .runsCodeOfHost = true }).first));
+        CellPointer prototype = in<CellPointer>(prototypeID);
         return Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::Prototype), { object.value(), boxCell(prototype).value() }).first));
     };
     if (!typeOf(value->valueOperand()).primitives) {
@@ -57,9 +60,21 @@ void OperatorEmitter::generateHasInPrototypeChain(const ValueContext& value)
     defineTestByBranching(value, [&](BranchTargets targets) {
         LBasicBlock isCellBlock = newBlock();
         branch(isCell(object), { normalEdge(isCellBlock), targets.notTaken });
-        m_out.appendTo(isCellBlock);
+        m_out.appendToContinuation(isCellBlock);
         branch(walksChain(), targets);
     });
+}
+
+void OperatorEmitter::generateTryFindInPrototypeChain(const ValueContext& value)
+{
+    Boxed object = in<Boxed>(value->valueOperand());
+    CellPointer prototype = in<CellPointer>(value->prototypeOperand());
+    define(value, Word32(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::PrototypeWithoutTraps), { object.value(), boxCell(prototype).value() }).first)));
+}
+
+void OperatorEmitter::generateHasDefaultHasInstance(const ValueContext& value)
+{
+    defineTest(value, callLeaf<Condition>(RuntimeOperation::HasDefaultHasInstance, { in<Boxed>(value->constructorOperand()) }));
 }
 
 } } } // namespace JSC::AOT::Typed

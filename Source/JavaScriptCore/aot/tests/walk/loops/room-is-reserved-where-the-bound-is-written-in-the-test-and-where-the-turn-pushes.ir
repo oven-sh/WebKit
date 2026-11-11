@@ -1,0 +1,157 @@
+# function pushes() { const list: number[] = []; for (let i = 0; i < 1000; i++) list.push(i); return list; }   function stores(list: number[]) { for (let i = 0; i < 1000; i++) list[i] = i; }
+# function pushesSome(list: number[], n: number) { for (let i = 0; i < n; i++) if (i & 1) list.push(i); }   function pushesWhatACallGives(list: number[], n: number, make: (i: number) => number) { for (let i = 0; i < n; i++) list.push(make(i)); }   function pushesOnto(list: number[]) { for (let i = 0; i < 1000; i++) list.push(i); }
+# A loop that counts from zero up to a bound and lays one value into a list in every turn says how much room the list will need, so the room is asked for once in front of the loop and the storage is not moved again and again while the loop runs.
+# The bound may be a whole number written in the loop's own test, which stands in the head of the loop and not in front of it. The turn may push in place of storing under the counter, where the walk itself finds that the member read off the list is the push of lists: the list is as it was made, and the member is constant.
+# It is a hint and changes no answer; but room that is asked for and never filled is memory, so nothing in the turn may run other code.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: ReserveArrayCapacity
+# CHECK: isLoopHead=true
+# RUN(STORES): walk f2 mechanisms=all
+# STORES-LABEL: code f2:Body
+# STORES: ReserveArrayCapacity
+# STORES: isLoopHead=true
+# A push that stands in some turns only, a turn that runs other code, and a list that arrives and may have a push of its own ask for nothing.
+# RUN(SOME): walk f3 mechanisms=all
+# SOME-NOT: ReserveArrayCapacity
+# RUN(CALLS): walk f4 mechanisms=all
+# CALLS-NOT: ReserveArrayCapacity
+# RUN(ARRIVES): walk f5 mechanisms=all
+# ARRIVES-NOT: ReserveArrayCapacity
+# RUN(ANSWER): run-in-shell globalThis.sink = (pushes, stores, pushesSome, pushesWhatACallGives, pushesOnto) => { const sum = list => { let all = 0; for (let k = 0; k < list.length; k++) all += list[k]; return list.length + ":" + all; }; print(sum(pushes())); const a = []; pushesOnto(a); pushesOnto(a); print(sum(a)); const b = [0.5]; stores(b); print(sum(b)); const c = []; pushesSome(c, 9); print(sum(c)); const d = []; pushesWhatACallGives(d, 4, i => i * 2); print(sum(d)); const own = []; own.push = function (value) { this[0] = value; }; pushesOnto(own); print(sum(own)); const closed = Object.preventExtensions([]); try { pushesOnto(closed); } catch (error) { print(error.constructor.name); } print(sum(closed)); const shared = [1, 2, 3]; pushesOnto(shared); print(sum(shared)); };
+# ANSWER: 1000:499500
+# ANSWER-NEXT: 2000:999000
+# ANSWER-NEXT: 1000:499500
+# ANSWER-NEXT: 4:16
+# ANSWER-NEXT: 4:12
+# ANSWER-NEXT: 1:999
+# ANSWER-NEXT: TypeError
+# ANSWER-NEXT: 0:0
+# ANSWER-NEXT: 1003:499506
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
+}
+function f1 name="pushes" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=number
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    Jump -> next b1(v2)
+  b1(v3: number):
+    LoopHint
+    v5 = Integer integer=1000
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v0 key="push"
+    v8 = Call v7, v0, v3 calleeKey="push" calleeName="list.push"
+    v9 = Convert v8 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v10 = Increment v3
+    v11 = Convert v10 declared={type=number}
+    Jump -> next b1(v11)
+  b3():
+    Return v0
+}
+function f2 name="stores" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    Jump -> next b1(v2)
+  b1(v3: number):
+    LoopHint
+    v5 = Integer integer=1000
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    ElemSet v0, v3, v3 mode=Strict
+    v8 = Increment v3
+    v9 = Convert v8 declared={type=number}
+    Jump -> next b1(v9)
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f3 name="pushesSome" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    Jump -> next b1(v3)
+  b1(v4: number):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b6()
+  b2():
+    v7 = Integer integer=1
+    v8 = BitAnd v4, v7
+    v9 = ToBoolean v8
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = PropGet v0 key="push"
+    v11 = Call v10, v0, v4 calleeKey="push" calleeName="list.push"
+    v12 = Convert v11 declared={type=number} illTypedCause=DeclarationWithoutBody
+    Jump -> next b5()
+  b4():
+    Jump -> next b5()
+  b5():
+    v13 = Increment v4
+    v14 = Convert v13 declared={type=number}
+    Jump -> next b1(v14)
+  b6():
+    v15 = Undefined
+    Return v15
+}
+function f4 name="pushesWhatACallGives" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>, v1: number, v2: undefined|null|function):
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v4)
+  b1(v5: number):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v0 key="push"
+    v9 = Call v2, -, v5 calleeName="make"
+    v10 = Call v8, v0, v9 calleeKey="push" calleeName="list.push"
+    v11 = Convert v10 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v12 = Increment v5
+    v13 = Convert v12 declared={type=number}
+    Jump -> next b1(v13)
+  b3():
+    v14 = Undefined
+    Return v14
+}
+function f5 name="pushesOnto" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    Jump -> next b1(v2)
+  b1(v3: number):
+    LoopHint
+    v5 = Integer integer=1000
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v0 key="push"
+    v8 = Call v7, v0, v3 calleeKey="push" calleeName="list.push"
+    v9 = Convert v8 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v10 = Increment v3
+    v11 = Convert v10 declared={type=number}
+    Jump -> next b1(v11)
+  b3():
+    v12 = Undefined
+    Return v12
+}

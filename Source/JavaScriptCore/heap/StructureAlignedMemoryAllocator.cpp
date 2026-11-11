@@ -207,10 +207,62 @@ public:
         return !reserve.isEmpty();
     }
 
+    bool tryRestoreReleasedReserve()
+    {
+        {
+            Locker locker(m_reserveLock);
+            if (!m_hasReleasedReserve)
+                return false;
+        }
+        Vector<void*, reserveBlockCount> reserve;
+        while (reserve.size() < reserveBlockCount) {
+            void* block = tryMallocStructureBlockWithoutReserve();
+            if (!block)
+                break;
+            reserve.append(block);
+        }
+        if (reserve.size() == reserveBlockCount) {
+            Locker locker(m_reserveLock);
+            if (m_hasReleasedReserve) {
+                m_reserve = WTF::move(reserve);
+                m_hasReleasedReserve = false;
+                return true;
+            }
+        }
+        for (void* block : reserve)
+            freeStructureBlock(block);
+        return false;
+    }
+
     void didThrowOutOfMemoryError()
     {
         Locker locker(m_reserveLock);
         m_hasReleasedReserve = false;
+    }
+
+    // keepReserve() takes a block whenever a block is allocated, but the heap may go a long way on the blocks it already has.
+    bool tryFillReserve()
+    {
+        for (;;) {
+            {
+                Locker locker(m_reserveLock);
+                if (m_hasReleasedReserve)
+                    return false;
+                if (m_reserve.size() == reserveBlockCount)
+                    return true;
+            }
+            void* block = tryMallocStructureBlockWithoutReserve();
+            if (!block)
+                return false;
+            {
+                Locker locker(m_reserveLock);
+                if (!m_hasReleasedReserve && m_reserve.size() < reserveBlockCount) {
+                    m_reserve.append(block);
+                    continue;
+                }
+            }
+            freeStructureBlock(block);
+        }
     }
 
     void keepReserve()
@@ -361,9 +413,19 @@ bool StructureAlignedMemoryAllocator::releaseReserve()
     return s_structureMemoryManager->releaseReserve();
 }
 
+bool StructureAlignedMemoryAllocator::tryRestoreReleasedReserve()
+{
+    return s_structureMemoryManager->tryRestoreReleasedReserve();
+}
+
 void StructureAlignedMemoryAllocator::didThrowOutOfMemoryError()
 {
     s_structureMemoryManager->didThrowOutOfMemoryError();
+}
+
+bool StructureAlignedMemoryAllocator::tryFillReserve()
+{
+    return s_structureMemoryManager->tryFillReserve();
 }
 
 void StructureAlignedMemoryAllocator::initializeStructureAddressSpace()
@@ -423,8 +485,18 @@ bool StructureAlignedMemoryAllocator::releaseReserve()
     return false;
 }
 
+bool StructureAlignedMemoryAllocator::tryRestoreReleasedReserve()
+{
+    return false;
+}
+
 void StructureAlignedMemoryAllocator::didThrowOutOfMemoryError()
 {
+}
+
+bool StructureAlignedMemoryAllocator::tryFillReserve()
+{
+    return true;
 }
 
 void StructureAlignedMemoryAllocator::initializeStructureAddressSpace()

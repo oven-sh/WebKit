@@ -40,6 +40,7 @@
 #include "WebPreferences.h"
 #include <WebCore/Cursor.h>
 #include <WebCore/NativeImage.h>
+#include <WebCore/SkiaUtilities.h>
 #include <WebCore/SystemSettings.h>
 #include <wtf/glib/GUniquePtr.h>
 
@@ -331,8 +332,7 @@ void ViewPlatform::toplevelStateChanged(WPEToplevelState previousState, WPETople
 #if ENABLE(DEVELOPER_MODE)
 static Vector<WebKit::WebPlatformTouchPoint> platformTouchPoints(const Vector<WPETouchPoint>& touchPoints)
 {
-    Vector<WebPlatformTouchPoint> points;
-    points.reserveInitialCapacity(touchPoints.size());
+    Vector<WebPlatformTouchPoint> points(ReserveCapacityTag { }, touchPoints.size());
     for (const auto& touchPoint : touchPoints) {
         WebCore::IntPoint position(touchPoint.x, touchPoint.y);
         WebPlatformTouchPoint::State state = WebPlatformTouchPoint::State::Stationary;
@@ -381,8 +381,7 @@ Vector<WebKit::WebPlatformTouchPoint> ViewPlatform::touchPointsForEvent(WPEEvent
         RELEASE_ASSERT_NOT_REACHED();
     };
 
-    Vector<WebPlatformTouchPoint> points;
-    points.reserveInitialCapacity(m_touchEvents.size());
+    Vector<WebPlatformTouchPoint> points(ReserveCapacityTag { }, m_touchEvents.size());
     for (const auto& it : m_touchEvents) {
         auto* currentEvent = it.value.get();
         double x, y;
@@ -490,6 +489,10 @@ void ViewPlatform::handleGesture(WPEEvent* event)
         if (wpe_event_get_event_type(event) == WPE_EVENT_TOUCH_MOVE)
             return;
         if (double x, y; wpe_gesture_controller_get_gesture_position(gestureController, &x, &y)) {
+            // A tap ends the composition before it moves the caret, as a pointer press does in handleEvent().
+            // The simulated mouse events below go to the page directly and would skip that.
+            m_inputMethodFilter.cancelComposition();
+
             // Mouse motion towards the point of the click.
             {
                 GRefPtr<WPEEvent> simulatedEvent = adoptGRef(wpe_event_pointer_move_new(
@@ -530,7 +533,7 @@ void ViewPlatform::handleGesture(WPEEvent* event)
                 dx = dy = 0;
 
             GRefPtr<WPEEvent> simulatedScrollEvent = adoptGRef(wpe_event_scroll_new(
-                m_wpeView.get(), WPE_INPUT_SOURCE_TOUCHSCREEN, 0, static_cast<WPEModifiers>(0), dx, dy, TRUE, FALSE, x, y
+                m_wpeView.get(), WPE_INPUT_SOURCE_TOUCHSCREEN, wpe_event_get_time(event), static_cast<WPEModifiers>(0), dx, dy, TRUE, FALSE, x, y
             ));
             page().handleNativeWheelEvent(WebKit::NativeWebWheelEvent::create(simulatedScrollEvent.get(), phase));
         }
@@ -646,8 +649,25 @@ void ViewPlatform::setCursor(const WebCore::Cursor& cursor)
     if (!nativeImage)
         return;
 
-    SkPixmap pixmap;
     auto platformImage = nativeImage->platformImage();
+
+    auto cursorScale = cursor.imageScaleFactor();
+    WebCore::IntPoint hotspot = cursor.hotSpot();
+    if (cursorScale != 1) {
+        auto* viewClass = WPE_VIEW_GET_CLASS(m_wpeView.get());
+        // If the view supports cursors but not scale, re-scale the cursor and set scale = 1.
+        if (viewClass->set_cursor_from_bytes && !viewClass->set_cursor_from_bytes_with_scale) {
+            auto scaledSize = expandedIntSize(WebCore::FloatSize(nativeImage->size()).scaled(1 / cursorScale));
+            platformImage = WebCore::SkiaUtilities::scaleImagePixels(platformImage, scaledSize);
+            if (!platformImage)
+                return;
+
+            hotspot.scale(1 / cursorScale);
+            cursorScale = 1.;
+        }
+    }
+
+    SkPixmap pixmap;
     if (!platformImage->peekPixels(&pixmap))
         return;
 
@@ -656,8 +676,7 @@ void ViewPlatform::setCursor(const WebCore::Cursor& cursor)
         static_cast<SkImage*>(data)->unref();
     }, platformImage.get()));
 
-    WebCore::IntPoint hotspot = cursor.hotSpot();
-    wpe_view_set_cursor_from_bytes(m_wpeView.get(), bytes.get(), pixmap.width(), pixmap.height(), pixmap.rowBytes(), hotspot.x(), hotspot.y());
+    wpe_view_set_cursor_from_bytes_with_scale(m_wpeView.get(), bytes.get(), pixmap.width(), pixmap.height(), pixmap.rowBytes(), hotspot.x(), hotspot.y(), cursorScale);
 }
 
 #if ENABLE(POINTER_LOCK)

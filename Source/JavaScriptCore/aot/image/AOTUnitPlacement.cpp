@@ -9,12 +9,17 @@
 #if ENABLE(AOT)
 
 #include "AOTSort.h"
+#include <algorithm>
+#include <optional>
+#include <tuple>
+#include <wtf/MathExtras.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT {
 
 namespace {
 
-struct Run {
+struct RunOfUnits {
     size_t first;
     size_t end;
     size_t size;
@@ -26,23 +31,18 @@ public:
         : m_inputs(inputs)
         , m_position(inputs.start)
         , m_lastCopies(FillWith { }, inputs.copyables.size(), std::nullopt)
-        , m_closureSizes(FillWith { }, inputs.copyables.size(), 0)
-        , m_isOnPath(inputs.copyables.size())
         , m_isWaitedFor(inputs.copyables.size())
     {
         RELEASE_ASSERT(inputs.alignedOffsets.size() == inputs.sizes.size());
         RELEASE_ASSERT(inputs.uses.empty() || inputs.firstUseByUnit.size() == inputs.sizes.size() + 1);
-        RELEASE_ASSERT(inputs.usesOfCopyables.empty() || inputs.firstUseByCopyable.size() == inputs.copyables.size() + 1);
         RELEASE_ASSERT(inputs.alignments.size() == 1 || inputs.alignments.size() == inputs.sizes.size());
         for (size_t alignment : inputs.alignments)
             RELEASE_ASSERT(isPowerOfTwo(alignment));
-        RELEASE_ASSERT(inputs.sizes.empty() || !(inputs.shiftOfFirstUnit % alignmentOf(0)));
         RELEASE_ASSERT(inputs.copyables.empty() || isPowerOfTwo(inputs.alignmentAfterCopies));
         for (const CopyableUnit& unit : inputs.copyables)
             RELEASE_ASSERT(isPowerOfTwo(unit.alignment));
         m_result.unitStarts = Vector<size_t>(FillWith { }, inputs.sizes.size(), 0);
         m_result.copyOffsetByUse = Vector<size_t>(FillWith { }, inputs.uses.size(), 0);
-        computeClosureSizes();
     }
 
     UnitPlacement place()
@@ -60,62 +60,28 @@ public:
     }
 
 private:
-    struct PathEntry {
-        uint32_t copyable;
-        uint32_t nextUse;
-    };
-
-    struct UnboundUse {
-        uint32_t copy;
-        uint32_t use;
-        uint32_t copyable;
-    };
-
     size_t numberOfUnits() const { return m_inputs.sizes.size(); }
     size_t alignmentOf(size_t unit) const { return m_inputs.alignments[m_inputs.alignments.size() == 1 ? 0 : unit]; }
     uint32_t firstUseOfUnit(size_t unit) const { return m_inputs.uses.empty() ? 0 : m_inputs.firstUseByUnit[unit]; }
-    size_t endOfRun(const Run& run) const { return startOfUnit(positionAfterBatch(), run.first) + run.size; }
+    size_t endOfRun(const RunOfUnits& run) const { return startOfUnit(positionAfterBatch(), run.first) + run.size; }
     size_t offsetOfLastCopy(uint32_t copyable) const { return m_result.copies[*m_lastCopies[copyable]].offset; }
     bool isInBatch(uint32_t copyable) const { return m_lastCopies[copyable] && *m_lastCopies[copyable] >= m_firstCopyOfBatch; }
 
-    std::span<const CopyableUse> usesOfRun(const Run& run) const
+    size_t paddedSizeOfCopy(uint32_t copyable) const
+    {
+        const CopyableUnit& unit = m_inputs.copyables[copyable];
+        return unit.size + unit.alignment - 1;
+    }
+
+    std::span<const CopyableUse> usesOfRun(const RunOfUnits& run) const
     {
         uint32_t first = firstUseOfUnit(run.first);
         return m_inputs.uses.subspan(first, firstUseOfUnit(run.end) - first);
     }
 
-    std::span<const CopyableUse> usesOfCopyable(uint32_t copyable) const
+    RunOfUnits findRun(size_t first) const
     {
-        if (m_inputs.usesOfCopyables.empty())
-            return { };
-        uint32_t first = m_inputs.firstUseByCopyable[copyable];
-        return m_inputs.usesOfCopyables.subspan(first, m_inputs.firstUseByCopyable[copyable + 1] - first);
-    }
-
-    void computeClosureSizes()
-    {
-        BitVector isReached(m_inputs.copyables.size());
-        Vector<uint32_t> reached;
-        for (uint32_t root = 0; root < m_inputs.copyables.size(); ++root) {
-            isReached.quickSet(root);
-            reached.append(root);
-            for (size_t next = 0; next < reached.size(); ++next) {
-                const CopyableUnit& unit = m_inputs.copyables[reached[next]];
-                m_closureSizes[root] += unit.size + unit.alignment - 1;
-                for (const CopyableUse& use : usesOfCopyable(reached[next])) {
-                    if (!isReached.quickSet(use.copyable))
-                        reached.append(use.copyable);
-                }
-            }
-            for (uint32_t copyable : reached)
-                isReached.quickClear(copyable);
-            reached.shrink(0);
-        }
-    }
-
-    Run findRun(size_t first) const
-    {
-        Run run { first, first + 1, m_inputs.sizes[first] };
+        RunOfUnits run { first, first + 1, m_inputs.sizes[first] };
         for (; run.end < numberOfUnits() && m_inputs.fallsIntoNext.get(run.end - 1); ++run.end)
             run.size += m_inputs.sizes[run.end];
         return run;
@@ -124,8 +90,7 @@ private:
     size_t startOfUnit(size_t position, size_t unit) const
     {
         size_t alignedOffset = m_inputs.alignedOffsets[unit];
-        size_t start = WTF::roundUpToMultipleOf(alignmentOf(unit), position + alignedOffset) - alignedOffset;
-        return unit ? start : start + m_inputs.shiftOfFirstUnit;
+        return WTF::roundUpToMultipleOf(alignmentOf(unit), position + alignedOffset) - alignedOffset;
     }
 
     size_t positionAfterBatch() const
@@ -135,7 +100,7 @@ private:
         return WTF::roundUpToMultipleOf(m_inputs.alignmentAfterCopies, m_position);
     }
 
-    size_t placeUnit(size_t unit, const Run& run)
+    size_t placeUnit(size_t unit, const RunOfUnits& run)
     {
         size_t start = startOfUnit(m_position, unit);
         RELEASE_ASSERT(unit == run.first || start == m_position);
@@ -148,65 +113,20 @@ private:
     {
         if (!m_lastCopies[copyable])
             return true;
-        // A closure size bounds the size of a batch only if the batch has at most one copy of each copyable.
         if (isInBatch(copyable))
             return false;
         return static_cast<int64_t>(endOfLastSite - offsetOfLastCopy(copyable)) >= reach;
     }
 
-    void pushOnPath(uint32_t copyable)
-    {
-        m_isOnPath.quickSet(copyable);
-        m_path.append(PathEntry { copyable, 0 });
-    }
-
     void appendCopy(uint32_t copyable)
     {
         const CopyableUnit& unit = m_inputs.copyables[copyable];
-        std::span<const CopyableUse> uses = usesOfCopyable(copyable);
         uint32_t copyIndex = safeCast<uint32_t>(m_result.copies.size());
         size_t offset = WTF::roundUpToMultipleOf(unit.alignment, m_position);
 
-        PlacedCopy copy { copyable, offset, { } };
-        copy.copyOffsetByUse.reserveInitialCapacity(uses.size());
-        for (uint32_t use = 0; use < uses.size(); ++use) {
-            if (m_isOnPath.quickGet(uses[use].copyable)) {
-                m_unboundUses.append(UnboundUse { copyIndex, use, uses[use].copyable });
-                copy.copyOffsetByUse.append(0);
-                continue;
-            }
-            copy.copyOffsetByUse.append(offsetOfLastCopy(uses[use].copyable));
-        }
-        m_result.copies.append(WTF::move(copy));
+        m_result.copies.append(PlacedCopy { copyable, offset });
         m_lastCopies[copyable] = copyIndex;
         m_position = offset + unit.size;
-
-        m_unboundUses.removeAllMatching([&](const UnboundUse& unbound) {
-            if (unbound.copyable != copyable)
-                return false;
-            m_result.copies[unbound.copy].copyOffsetByUse[unbound.use] = offset;
-            return true;
-        });
-    }
-
-    void placeCopy(uint32_t root)
-    {
-        pushOnPath(root);
-        while (!m_path.isEmpty()) {
-            auto [copyable, nextUse] = m_path.last();
-            std::span<const CopyableUse> uses = usesOfCopyable(copyable);
-            if (nextUse == uses.size()) {
-                appendCopy(copyable);
-                m_isOnPath.quickClear(copyable);
-                m_path.removeLast();
-                continue;
-            }
-            ++m_path.last().nextUse;
-            const CopyableUse& use = uses[nextUse];
-            if (!m_isOnPath.quickGet(use.copyable) && needsCopy(use.copyable, m_position + m_closureSizes[copyable], use.reach))
-                pushOnPath(use.copyable);
-        }
-        RELEASE_ASSERT(m_unboundUses.isEmpty());
     }
 
     void finishBatch()
@@ -218,17 +138,25 @@ private:
     void placeCopiesBeforeUsers()
     {
         for (size_t first = 0; first < numberOfUnits();) {
-            Run run = findRun(first);
-            // The copy with the shortest reach lies next to its user.
-            Vector<CopyableUse, 8> usesByReach(usesOfRun(run));
-            AOT::stableSort(usesByReach, std::ranges::greater { }, &CopyableUse::reach);
+            RunOfUnits run = findRun(first);
+            std::span<const CopyableUse> usesByReach = usesOfRun(run);
+            Vector<CopyableUse, 8> sortedUses;
+            if (usesByReach.size() > 1) {
+                sortedUses.append(usesByReach);
+                AOT::stableSortInLine(sortedUses, [](const CopyableUse& a, const CopyableUse& b) {
+                    if (a.reach != b.reach)
+                        return a.reach > b.reach;
+                    return std::tie(a.copyable, a.firstSite, a.lastSite) < std::tie(b.copyable, b.firstSite, b.lastSite);
+                });
+                usesByReach = sortedUses.span();
+            }
             bool didPlaceCopy;
             do {
                 didPlaceCopy = false;
                 for (const CopyableUse& use : usesByReach) {
                     if (!needsCopy(use.copyable, endOfRun(run), use.reach))
                         continue;
-                    placeCopy(use.copyable);
+                    appendCopy(use.copyable);
                     didPlaceCopy = true;
                 }
             } while (didPlaceCopy);
@@ -242,7 +170,7 @@ private:
         }
     }
 
-    bool shouldFlushBefore(const Run& run) const
+    bool shouldFlushBefore(const RunOfUnits& run) const
     {
         if (!m_deadline)
             return false;
@@ -250,7 +178,7 @@ private:
         size_t batchSize = m_waitingSize;
         for (const CopyableUse& use : usesOfRun(run)) {
             if (!m_isWaitedFor.quickGet(use.copyable) && needsCopy(use.copyable, runEnd, use.reach))
-                batchSize += m_closureSizes[use.copyable];
+                batchSize += paddedSizeOfCopy(use.copyable);
         }
         return static_cast<int64_t>(runEnd + batchSize) >= *m_deadline;
     }
@@ -268,15 +196,14 @@ private:
         if (m_isWaitedFor.quickSet(use.copyable))
             return;
         m_waitedFor.append(use.copyable);
-        m_waitingSize += m_closureSizes[use.copyable];
+        m_waitingSize += paddedSizeOfCopy(use.copyable);
     }
 
     void flush()
     {
         AOT::sort(m_waitedFor);
         for (uint32_t copyable : m_waitedFor) {
-            if (!isInBatch(copyable))
-                placeCopy(copyable);
+            appendCopy(copyable);
             m_isWaitedFor.quickClear(copyable);
         }
         for (uint32_t use : m_waitingUses)
@@ -291,7 +218,7 @@ private:
     void placeCopiesAfterUsers()
     {
         for (size_t first = 0; first < numberOfUnits();) {
-            Run run = findRun(first);
+            RunOfUnits run = findRun(first);
             if (shouldFlushBefore(run))
                 flush();
             for (size_t unit = run.first; unit < run.end; ++unit) {
@@ -310,10 +237,6 @@ private:
     size_t m_position;
     size_t m_firstCopyOfBatch { 0 };
     Vector<std::optional<uint32_t>> m_lastCopies;
-    Vector<size_t> m_closureSizes;
-    BitVector m_isOnPath;
-    Vector<PathEntry> m_path;
-    Vector<UnboundUse> m_unboundUses;
     BitVector m_isWaitedFor;
     Vector<uint32_t> m_waitedFor;
     Vector<uint32_t> m_waitingUses;

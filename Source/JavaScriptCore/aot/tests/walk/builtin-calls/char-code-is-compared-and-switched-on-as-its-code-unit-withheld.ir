@@ -1,0 +1,17 @@
+# the same functions with unboxed numbers withheld: the char code is compared as the number that it is, and the character is switched on as a text
+# the one relation on integers that stays is the test of the bounds in the read, which stands in front of the code unit
+# RUN: walk f4 mechanisms=all-UnboxedNumbers-TypedSlots
+# CHECK-LABEL: code f4:Body
+# CHECK: SwitchString
+# RUN(SPACE): walk f1 mechanisms=all-UnboxedNumbers-TypedSlots
+# SPACE-LABEL: code f1:Body
+# SPACE: = StrictEq {{*}}form=Numbers
+# RUN(DIGIT): walk f2 mechanisms=all-UnboxedNumbers-TypedSlots
+# DIGIT-LABEL: code f2:Body
+# DIGIT: = GetStringCodeUnit
+# DIGIT-NOT: = Less {{*}}form=Integers
+# DIGIT: = Less {{*}}form=Numbers
+# RUN(NEVER): walk f1 f2 f4 mechanisms=all-UnboxedNumbers-TypedSlots
+# NEVER-NOT: = StrictEq {{*}}form=Integers
+# NEVER-NOT: cases=[97
+# PROGRAM-OF: char-code-is-compared-and-switched-on-as-its-code-unit.ir

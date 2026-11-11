@@ -61,7 +61,6 @@ types [
     :SymbolTableOrScopeDepth,
     :ToThisStatus,
     :TypeLocation,
-    :WasmBoundLabel,
     :InlineWatchpointSet,
     :WriteBarrierStructureID,
 
@@ -116,6 +115,28 @@ op :call_varargs,
         arguments?: VirtualRegister,
         firstFree: VirtualRegister,
         firstVarArg: int,
+        valueProfile: unsigned,
+    },
+    metadata: {
+        callLinkInfo: DataOnlyCallLinkInfo,
+    },
+    tmps: {
+        argCountIncludingThis: unsigned,
+    },
+    checkpoints: {
+        determiningArgCount: nil,
+        makeCall: nil,
+    }
+
+op :call_varargs_with_spread,
+    args: {
+        dst: VirtualRegister,
+        callee: VirtualRegister,
+        thisValue?: VirtualRegister,
+        firstFree: VirtualRegister,
+        argv: VirtualRegister,
+        argc: unsigned,
+        bitVector: unsigned,
         valueProfile: unsigned,
     },
     metadata: {
@@ -1502,6 +1523,7 @@ op :op_call_ignore_result_return_location
 op :op_construct_return_location
 op :op_super_construct_return_location
 op :op_call_varargs_return_location
+op :op_call_varargs_with_spread_return_location
 op :op_construct_varargs_return_location
 op :op_super_construct_varargs_return_location
 op :op_get_by_id_return_location
@@ -1539,6 +1561,7 @@ op :js_trampoline_op_call_ignore_result
 op :js_trampoline_op_construct
 op :js_trampoline_op_super_construct
 op :js_trampoline_op_call_varargs
+op :js_trampoline_op_call_varargs_with_spread
 op :js_trampoline_op_construct_varargs
 op :js_trampoline_op_super_construct_varargs
 op :js_trampoline_op_iterator_next
@@ -1600,5 +1623,8 @@ op :llint_cloop_did_return_from_js_34
 op :llint_cloop_did_return_from_js_35
 op :llint_cloop_did_return_from_js_36
 op :llint_cloop_did_return_from_js_37
+op :llint_cloop_did_return_from_js_38
+op :llint_cloop_did_return_from_js_39
+op :llint_cloop_did_return_from_js_40
 
 end_section :CLoopReturnHelpers

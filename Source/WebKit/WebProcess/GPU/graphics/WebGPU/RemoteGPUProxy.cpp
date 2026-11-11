@@ -95,6 +95,7 @@ void RemoteGPUProxy::initializeIPC(Ref<IPC::StreamClientConnection>&& streamConn
         Ref gpuProcessConnection = WebProcess::singleton().ensureGPUProcessConnection();
         gpuProcessConnection->createGPU(m_backing, renderingBackend, WTF::move(serverHandle));
         m_gpuProcessConnection = gpuProcessConnection.get();
+        lazyInitialize(m_gpuProcessIPCConnection, Ref { gpuProcessConnection->connection() });
     });
 }
 
@@ -160,15 +161,8 @@ void RemoteGPUProxy::requestAdapter(const ::WebGPU::RequestAdapterOptions& optio
         return;
     }
 
-    auto convertedOptions = m_convertToBackingContext->convertToBacking(options);
-    ASSERT(convertedOptions);
-    if (!convertedOptions) {
-        callback(nullptr);
-        return;
-    }
-
     auto identifier = WebGPUIdentifier::generate();
-    auto sendResult = sendSync(Messages::RemoteGPU::RequestAdapter(*convertedOptions, identifier));
+    auto sendResult = sendSync(Messages::RemoteGPU::RequestAdapter(options, identifier));
     if (!sendResult.succeeded()) {
         abandonGPUProcess();
         callback(nullptr);
@@ -186,7 +180,7 @@ void RemoteGPUProxy::requestAdapter(const ::WebGPU::RequestAdapterOptions& optio
         .subgroupMinSize = response->subgroupMinSize,
         .subgroupMaxSize = response->subgroupMaxSize,
     };
-    callback(WebGPU::RemoteAdapterProxy::create(WTF::move(response->features), WebGPU::convertFromBacking(response->limits), WTF::move(info), options.xrCompatible, *this, m_convertToBackingContext, identifier));
+    callback(WebGPU::RemoteAdapterProxy::create(WTF::move(response->features), response->limits, WTF::move(info), options.xrCompatible, *this, m_convertToBackingContext, identifier));
 }
 
 RefPtr<WebKit::Mesh> RemoteGPUProxy::createModelBacking(unsigned width, unsigned height, WebModel::ImageAsset&& diffuseTexture, WebModel::ImageAsset&& specularTexture, bool standardDynamicRange, CompletionHandler<void(Vector<MachSendRight>&&)>&& callback)

@@ -2712,6 +2712,39 @@ ts","version":4,"num_passes":42158,"pixel_tests_enabled":false,"date":"11:28AM o
         self.expect_outcome(result=FAILURE, state_string='layout-tests (failure)')
         return self.run_step()
 
+    def test_failure_with_failed_results_upload(self):
+        # When the upload to the results server fails, run-webkit-tests exits with -1 (255), but it still prints the results.
+        self.configureStep()
+        self.setProperty('fullPlatform', 'ios-simulator')
+        self.setProperty('configuration', 'release')
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        logfiles={'json': self.jsonFileName},
+                        log_environ=False,
+                        timeout=19800,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'python3 Tools/Scripts/run-webkit-tests --no-build --no-show-results --no-new-test-results --clobber-old-results --release --results-directory layout-test-results --debug-rwt-logging --exit-after-n-failures 60 --skip-failing-tests 2>&1 | Tools/Scripts/filter-test-logs layout'],
+                        )
+            .log('stdio', stdout='''=> Results: 2/5 tests passed (40.0%)
+
+Unexpected flakiness: text-only failures (1)
+  failures/flaky/text.html [ Pass Failure ]
+
+
+Regressions: Unexpected crashes (1)
+  failures/unexpected/crash.html [ Crash ]
+
+Regressions: Unexpected image and text failures (1)
+  failures/unexpected/text-image-checksum.html [ Failure ]
+
+------------------------------------------------------------------------------
+
+Failed to upload test results to https://results.webkit.org (1 failed), exiting with status -1.
+''')
+            .exit(255),
+        )
+        self.expect_outcome(result=FAILURE, state_string='1 flakes 2 failures results upload failed')
+        return self.run_step()
+
     def test_failure_no_failure_limits(self):
         self.configureStep()
         self.setProperty('fullPlatform', 'ios-simulator')
@@ -2876,6 +2909,22 @@ class TestRunWebKitTestsInStressMode(BuildStepMixinAdditions, unittest.TestCase)
         self.setup_step(RunWebKitTestsInStressMode())
         self.property_exceed_failure_limit = 'first_results_exceed_failure_limit'
         self.property_failures = 'first_run_failures'
+
+    def test_failure_blocks_pull_request(self):
+        self.configureStep()
+        next_steps = []
+        self.patch(self.build, 'addStepsAfterCurrentStep', lambda s: next_steps.extend(s))
+        self.patch(RunWebKitTestsInStressMode, 'evaluateResult', lambda s, r: r)
+        self.get_nth_step(0).evaluateCommand(FAILURE)
+        self.assertTrue(BlockPullRequest() in next_steps)
+
+    def test_success_does_not_block_pull_request(self):
+        self.configureStep()
+        next_steps = []
+        self.patch(self.build, 'addStepsAfterCurrentStep', lambda s: next_steps.extend(s))
+        self.patch(RunWebKitTestsInStressMode, 'evaluateResult', lambda s, r: r)
+        self.get_nth_step(0).evaluateCommand(SUCCESS)
+        self.assertFalse(BlockPullRequest() in next_steps)
 
     @defer.inlineCallbacks
     def test_stress_mode_does_not_label_the_build(self) -> None:
@@ -3063,6 +3112,14 @@ class TestRunWebKitTestsInSiteIsolationMode(BuildStepMixinAdditions, unittest.Te
         self.property_exceed_failure_limit = 'first_results_exceed_failure_limit'
         self.property_failures = 'first_run_failures'
 
+    def test_failure_does_not_block_pull_request(self):
+        self.configureStep()
+        next_steps = []
+        self.patch(self.build, 'addStepsAfterCurrentStep', lambda s: next_steps.extend(s))
+        self.patch(RunWebKitTestsInSiteIsolationMode, 'evaluateResult', lambda s, r: r)
+        self.get_nth_step(0).evaluateCommand(FAILURE)
+        self.assertFalse(BlockPullRequest() in next_steps)
+
     def test_success(self):
         self.configureStep()
         self.setProperty('fullPlatform', 'ios-simulator')
@@ -3166,6 +3223,33 @@ class TestRunWebKitTestsWithoutChange(BuildStepMixinAdditions, unittest.TestCase
             .exit(0),
         )
         self.expect_outcome(result=SUCCESS, state_string='layout-tests')
+        with current_hostname(EWS_BUILD_HOSTNAMES[0]):
+            return self.run_step()
+
+    def test_passing_with_failed_results_upload(self):
+        self.configureStep()
+        self.setProperty('fullPlatform', 'ios-simulator')
+        self.setProperty('configuration', 'release')
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        logfiles={'json': self.jsonFileName},
+                        log_environ=False,
+                        timeout=19800,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-webkit-tests --no-build --no-show-results --no-new-test-results --clobber-old-results --release --results-directory layout-test-results --debug-rwt-logging --exit-after-n-failures 60 --skip-failing-tests --builder-name iOS-13-Simulator-WK2-Tests-EWS --build-number 123 --buildbot-worker ews126 --buildbot-master {EWS_BUILD_HOSTNAMES[0]} --report https://results.webkit.org/ 2>&1 | Tools/Scripts/filter-test-logs layout'],
+                        env={'RESULTS_SERVER_API_KEY': 'test-api-key'},
+                        )
+            .log('stdio', stdout='''=> Results: 2/2 tests passed (100.0%)
+
+=> Tests to be fixed (0):
+
+=> Tests that will only be fixed if they crash (WONTFIX) (0):
+
+
+Failed to upload test results to https://results.webkit.org/ (1 failed), exiting with status -1.
+''')
+            .exit(255),
+        )
+        self.expect_outcome(result=FAILURE, state_string='results upload failed')
         with current_hostname(EWS_BUILD_HOSTNAMES[0]):
             return self.run_step()
 
@@ -3965,6 +4049,16 @@ class TestFilterLayoutTestFailuresUsingResultsDB(BuildStepMixinAdditions, unitte
         self.assertEqual(self.build.results, SUCCESS)
 
     @defer.inlineCallbacks
+    def test_set_build_summary_fails_a_build_with_stress_mode_failures(self):
+        self.setup_step(SetBuildSummary())
+        self.setProperty('build_summary', RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE)
+        self.setProperty('force_build_success', True)
+        self.build.results = SUCCESS
+        self.expect_outcome(result=SUCCESS)
+        yield self.run_step()
+        self.assertEqual(self.build.results, FAILURE)
+
+    @defer.inlineCallbacks
     def test_set_build_summary_keeps_a_cancelled_build_cancelled(self):
         self.setup_step(SetBuildSummary())
         self.setProperty('build_summary', 'Passed layout tests')
@@ -4292,6 +4386,16 @@ class TestRunWebKitTestsRedTree(BuildStepMixinAdditions, unittest.TestCase):
         self.patch(self.build, 'addStepsAfterCurrentStep', lambda s: None)
         self.patch(RunWebKitTestsRedTree, 'evaluateResult', lambda s, r: r)
         step.evaluateCommand(FAILURE)
+        self.assertEqual(self.getProperty('build_summary'), RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE)
+
+    def test_success_keep_stress_mode_failure(self):
+        self.configureStep()
+        self.setProperty('first_run_failures', [])
+        self.setProperty('first_run_flakies', [])
+        self.setProperty('build_summary', RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE)
+        self.patch(self.build, 'addStepsAfterCurrentStep', lambda s: None)
+        self.patch(RunWebKitTestsRedTree, 'evaluateResult', lambda s, r: r)
+        self.get_nth_step(0).evaluateCommand(SUCCESS)
         self.assertEqual(self.getProperty('build_summary'), RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE)
 
     def test_failures_all_pre_existing_in_results_db_with_flakies_then_go_to_analyze_results(self):
@@ -4838,7 +4942,7 @@ class TestReRunAPITestsExcusesKnownFlakes(BuildStepMixinAdditions, unittest.Test
         self.assertEqual(step.steps_to_add, [])
 
     @defer.inlineCallbacks
-    def test_an_unparsed_run_queries_nothing_and_queues_the_ladder(self) -> Generator[Any, Any, None]:
+    def test_an_unparsed_run_queries_nothing_and_retries_the_build(self) -> Generator[Any, Any, None]:
         queried = []
         step = self.configureStep(['suite.flaky'], [], filtered=False)
         self.patch(ResultsDatabase, 'flaky_verdicts_for', TestAPITestFlakinessReadUsingResultsDB.fake_verdicts({}, queried))
@@ -4846,7 +4950,8 @@ class TestReRunAPITestsExcusesKnownFlakes(BuildStepMixinAdditions, unittest.Test
         yield step.doOnFailure()
 
         self.assertEqual(queried, [])
-        self.assertEqual(step.steps_to_add, self.LADDER)
+        self.assertEqual(step.steps_to_add, [])
+        self.assertEqual(step.build.results, RETRY)
 
     @defer.inlineCallbacks
     def test_the_early_read_forwards_the_change_identity(self) -> Generator[Any, Any, None]:
@@ -4942,6 +5047,188 @@ class TestReRunAPITestsExcusesKnownFlakes(BuildStepMixinAdditions, unittest.Test
         self.assertEqual(step.steps_to_add, self.LADDER)
         self.assertEqual(self.results_db_reports, [between_steps_report])
 
+    @defer.inlineCallbacks
+    def test_a_cap_hit_run_queues_the_whole_ladder(self) -> Generator[Any, Any, None]:
+        # A cap-truncated run produces a nondeterministic subset of the real failures, so the
+        # intersection of the two dirty runs cannot be trusted as a "consistent failures" signal.
+        # Mirror the layout-tests guard at ReRunWebKitTests.evaluateCommand.
+        step = self.configureStep(['suite.flaky'], ['suite.flaky'])
+        self.setProperty('api_first_run_exceeded_failure_limit', True)
+        self.patch(ResultsDatabase, 'flaky_verdicts_for', TestAPITestFlakinessReadUsingResultsDB.fake_verdicts(
+            {'suite.flaky': FlakyVerdict(flaky_type='DirtyTree')}))
+
+        yield step.doOnFailure()
+
+        self.assertEqual(step.steps_to_add, self.LADDER)
+        self.assertIsNone(self.getProperty('build_summary'))
+        self.assertIsNone(self.getProperty('force_build_success'))
+
+    @defer.inlineCallbacks
+    def test_more_than_ten_disagreeing_tests_queues_the_whole_ladder(self) -> Generator[Any, Any, None]:
+        # 11 tests in the symmetric difference means the two runs disagree too much to be a
+        # trustworthy flakiness signal, even sub-cap. Mirror the num_flaky_failures <= 10 guard
+        # at ReRunWebKitTests.evaluateCommand:4560.
+        first_only = [f'suite.only_first_{i}' for i in range(6)]
+        second_only = [f'suite.only_second_{i}' for i in range(5)]
+        step = self.configureStep(['suite.flaky'] + first_only, ['suite.flaky'] + second_only)
+        self.patch(ResultsDatabase, 'flaky_verdicts_for', TestAPITestFlakinessReadUsingResultsDB.fake_verdicts(
+            {'suite.flaky': FlakyVerdict(flaky_type='DirtyTree')}))
+
+        yield step.doOnFailure()
+
+        self.assertEqual(step.steps_to_add, self.LADDER)
+        self.assertIsNone(self.getProperty('build_summary'))
+        self.assertIsNone(self.getProperty('force_build_success'))
+
+
+class TestReRunAPITestsSkipsCleanTreeWithoutRepeatedFailures(BuildStepMixinAdditions, unittest.TestCase):
+    """A test that fails in only one of the two runs with the change is flaky, so there is no need
+    to rebuild without the change and run the clean tree."""
+
+    LADDER = TestReRunAPITestsExcusesKnownFlakes.LADDER
+
+    def setUp(self) -> defer.Deferred:
+        self.longMessage = True
+        return self.setup_test_build_step()
+
+    def tearDown(self) -> defer.Deferred:
+        return self.tear_down_test_build_step()
+
+    configureStep = TestReRunAPITestsExcusesKnownFlakes.configureStep
+
+    @defer.inlineCallbacks
+    def test_disjoint_failures_skip_the_revert_and_the_clean_tree_run(self) -> Generator[Any, Any, None]:
+        queried = []
+        step = self.configureStep(['suite.first'], ['suite.second'])
+        self.patch(ResultsDatabase, 'flaky_verdicts_for', TestAPITestFlakinessReadUsingResultsDB.fake_verdicts({}, queried))
+
+        yield step.doOnFailure()
+
+        self.assertEqual(queried, [])
+        self.assertEqual(step.steps_to_add, [])
+        self.assertEqual(step.build.results, SUCCESS)
+        self.assertEqual(self.getProperty('build_summary'), 'Found flaky tests: suite.first, suite.second')
+        self.assertEqual(self.getProperty('force_build_success'), True)
+        self.assertEqual(step.descriptionDone, 'Found flaky tests: suite.first, suite.second')
+
+    @defer.inlineCallbacks
+    def test_a_pull_request_against_a_branch_also_skips_the_clean_tree_run(self) -> Generator[Any, Any, None]:
+        step = self.configureStep(['suite.first'], ['suite.second'])
+        self.setProperty('github.base.ref', 'safari-7620-branch')
+
+        yield step.doOnFailure()
+
+        self.assertEqual(step.steps_to_add, [])
+        self.assertEqual(self.getProperty('build_summary'), 'Found flaky tests: suite.first, suite.second')
+
+    @defer.inlineCallbacks
+    def test_a_failure_excused_in_one_run_does_not_count_as_repeated(self) -> Generator[Any, Any, None]:
+        step = self.configureStep(['suite.flaky', 'suite.pre_existing'], ['suite.pre_existing', 'suite.other'], filtered=False)
+        self.setProperty('api_first_run_failures_filtered', ['suite.flaky'])
+        self.setProperty('api_second_run_failures_filtered', ['suite.other'])
+
+        yield step.doOnFailure()
+
+        self.assertEqual(step.steps_to_add, [])
+        self.assertEqual(self.getProperty('build_summary'), 'Found flaky tests: suite.flaky, suite.other')
+
+    @defer.inlineCallbacks
+    def test_the_summary_lists_at_most_ten_tests(self) -> Generator[Any, Any, None]:
+        first_run = [f'suite.first{index:02}' for index in range(5)]
+        second_run = [f'suite.second{index:02}' for index in range(5)]
+        step = self.configureStep(first_run, second_run)
+
+        yield step.doOnFailure()
+
+        self.assertEqual(self.getProperty('build_summary'), f"Found flaky tests: {', '.join(first_run + second_run)}")
+
+    @defer.inlineCallbacks
+    def test_a_run_that_exceeded_the_failure_limit_queues_the_ladder(self) -> Generator[Any, Any, None]:
+        step = self.configureStep(['suite.first'], ['suite.second'])
+        self.setProperty('api_second_run_exceeded_failure_limit', True)
+        self.patch(ResultsDatabase, 'flaky_verdicts_for', TestAPITestFlakinessReadUsingResultsDB.fake_verdicts({}))
+
+        yield step.doOnFailure()
+
+        self.assertEqual(step.steps_to_add, self.LADDER)
+        self.assertIsNone(self.getProperty('build_summary'))
+
+    @defer.inlineCallbacks
+    def test_more_than_ten_disjoint_failures_queues_the_ladder(self) -> Generator[Any, Any, None]:
+        # 11+ tests failing in only one of the two runs signals environmental noise, not real
+        # flakiness. Mirror the num_flaky_failures <= 10 guard at
+        # ReRunWebKitTests.evaluateCommand:4560.
+        first_only = [f'suite.first_{i}' for i in range(6)]
+        second_only = [f'suite.second_{i}' for i in range(5)]
+        step = self.configureStep(first_only, second_only)
+        self.patch(ResultsDatabase, 'flaky_verdicts_for', TestAPITestFlakinessReadUsingResultsDB.fake_verdicts({}))
+
+        yield step.doOnFailure()
+
+        self.assertEqual(step.steps_to_add, self.LADDER)
+        self.assertIsNone(self.getProperty('build_summary'))
+
+
+class TestReRunAPITestsRunsWithoutResults(BuildStepMixinAdditions, unittest.TestCase):
+    """A run that fails without parseable results cannot be compared with the other one, so
+    AnalyzeAPITestsResults retries the build whatever the clean-tree run finds."""
+
+    def setUp(self) -> defer.Deferred:
+        self.longMessage = True
+        return self.setup_test_build_step()
+
+    def tearDown(self) -> defer.Deferred:
+        return self.tear_down_test_build_step()
+
+    configureStep = TestReRunAPITestsExcusesKnownFlakes.configureStep
+
+    @defer.inlineCallbacks
+    def test_a_first_run_without_results_retries_the_build(self) -> Generator[Any, Any, None]:
+        step = self.configureStep([], ['suite.second'], filtered=False)
+
+        yield step.doOnFailure()
+
+        self.assertEqual(step.steps_to_add, [])
+        self.assertEqual(step.build.results, RETRY)
+        self.assertEqual(step.build.text, ['Unable to parse API test results'])
+
+    @defer.inlineCallbacks
+    def test_a_second_run_without_results_retries_the_build(self) -> Generator[Any, Any, None]:
+        step = self.configureStep(['suite.first'], [], filtered=False)
+
+        yield step.doOnFailure()
+
+        self.assertEqual(step.steps_to_add, [])
+        self.assertEqual(step.build.results, RETRY)
+        self.assertEqual(step.build.text, ['Unable to parse API test results'])
+        self.assertIsNone(self.getProperty('build_summary'))
+
+    def passing_re_run(self, first_run: list) -> defer.Deferred:
+        self.configureStep(first_run, [], filtered=False)
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        log_environ=False,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'python3 Tools/Scripts/run-api-tests --timestamps --no-build --release --verbose --json-output=api_test_results.json --exit-after-n-failures 60 --skip-failing-tests 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        logfiles={'json': 'api_test_results.json'},
+                        timeout=20 * 60,
+                        )
+            .log('json', stdout='{"Failed":[],"Timedout":[],"Crashed":[]}')
+            .log('stdio', stdout='Ran 2 tests of 2 with 2 successful')
+            .exit(0),
+        )
+
+    def test_a_re_run_passing_after_a_first_run_with_failures_reports_them_as_flaky(self):
+        self.passing_re_run(['suite.first'])
+        self.expect_outcome(result=SUCCESS, state_string='re-run-api-tests')
+        self.expect_property('build_summary', 'Found flaky test: suite.first')
+        return self.run_step()
+
+    def test_a_re_run_passing_after_a_first_run_without_results_says_so(self):
+        self.passing_re_run([])
+        self.expect_outcome(result=SUCCESS, state_string='re-run-api-tests')
+        self.expect_property('build_summary', 'Passed API tests on re-run, the first run produced no results')
+        return self.run_step()
+
 
 class TestAPITestStepsReportAsTheyRun(BuildStepMixinAdditions, unittest.TestCase):
     """Every exit of AnalyzeAPITestsResults ends the build, so a step queued after it never runs."""
@@ -4998,6 +5285,21 @@ class TestAPITestStepsReportAsTheyRun(BuildStepMixinAdditions, unittest.TestCase
 
         # suite.both failed both runs, so it is a consistent failure rather than flakiness.
         self.assertEqual(self.reported(), [('BetweenStepsDirtyTree', ['suite.a', 'suite.b'], 'api-tests')])
+
+    @defer.inlineCallbacks
+    def test_the_rerun_skips_the_between_steps_report_when_a_run_hit_the_cap(self):
+        # A cap-truncated run makes the two runs non-comparable, so writing the symmetric
+        # difference as flake evidence would poison results-db. Mirror the layout-tests guard at
+        # ReRunWebKitTests.runCommand:4627-4633.
+        step = self.configureStep(ReRunAPITests)
+        step.log_observer_json = TestLayoutTestStepsReportAsTheyRun.FakeLogObserver(self.SECOND_RUN_JSON)
+        self.setProperty('api_first_run_failures', ['suite.a', 'suite.both'])
+        self.setProperty('api_first_run_results', {'suite.a': dict(actual='FAIL'), 'suite.both': dict(actual='FAIL')})
+        self.setProperty('api_first_run_exceeded_failure_limit', True)
+
+        yield step.parse_and_set_failures()
+
+        self.assertEqual(self.reported(), [])
 
     @defer.inlineCallbacks
     def test_the_analyze_step_reports_the_failures_it_attributes_to_the_change(self):
@@ -5691,6 +5993,21 @@ class TestAnalyzeLayoutTestsResultsRedTree(BuildStepMixinAdditions, unittest.Tes
         self.assertFalse('Test name: <a href="https://github.com/WebKit/WebKit/blob/main/LayoutTests/preexisting-test/pre-existent/failure.html">preexisting-test/pre-existent/failure.html</a>' in self._emails_list[0])
         self.assertTrue('Subject: Info about 1 pre-existent failure at' in self._emails_list[1])
         self.assertTrue('preexisting-test/pre-existent/failure.html' in self._emails_list[1])
+        return step_result
+
+    def test_pre_existent_failures_keep_stress_mode_failure(self):
+        self.configureStep()
+        self.configureCommonProperties()
+        self.setProperty('build_summary', RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE)
+        self.setProperty('first_run_failures', ["test/pre-existent/failure.html"])
+        self.setProperty('first_run_flakies', [])
+        self.setProperty('with_change_repeat_failures_results_nonflaky_failures', ["test/pre-existent/failure.html"])
+        self.setProperty('with_change_repeat_failures_results_flakies', [])
+        self.setProperty('without_change_repeat_failures_results_nonflaky_failures', ["test/pre-existent/failure.html"])
+        self.setProperty('without_change_repeat_failures_results_flakies', [])
+        self.expect_outcome(result=SUCCESS, state_string='Passed layout tests')
+        step_result = self.run_step()
+        self.assertEqual(self.getProperty('build_summary'), RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE)
         return step_result
 
     def test_pre_existent_flakies(self):
@@ -6822,6 +7139,39 @@ class TestCheckChangeRelevance(BuildStepMixinAdditions, unittest.TestCase):
             self.expect_outcome(result=FAILURE, state_string='Pull request doesn\'t have relevant changes')
             rc = self.run_step()
         return rc
+
+
+class TestCheckChangeRelevanceForWebDriver(unittest.TestCase):
+    BUILDER_NAME = 'macOS-Golden-Gate-Debug-WebDriver-Tests-EWS'
+
+    def test_relevant_files(self):
+        for file_name in [
+            'Source/WebDriver/Session.cpp',
+            'Source/WebKit/UIProcess/Automation/WebAutomationSession.cpp',
+            'Source/WebKit/WebProcess/Automation/WebAutomationSessionProxy.cpp',
+            'Source/WebKit/Shared/Automation/AutomationProtocolObjects.h',
+            'Source/WebCore/automation/AutomationInstrumentation.cpp',
+            'Source/WebCore/Modules/webdriver/NavigatorWebDriver.cpp',
+            'Tools/MiniBrowser/mac/AutomationConnection.m',
+            'Tools/MiniBrowser/MiniBrowser.xcodeproj/project.pbxproj',
+            'WebDriverTests/TestExpectations.json',
+            'Tools/Scripts/webkitpy/webdriver_tests/webdriver_test_runner.py',
+            'Tools/Scripts/run-webdriver-tests',
+        ]:
+            self.assertTrue(CheckChangeRelevance()._patch_is_relevant(f'Tools/ChangeLog\n{file_name}', self.BUILDER_NAME), file_name)
+
+    def test_irrelevant_files(self):
+        for file_name in [
+            'Source/WebKit/UIProcess/WebPageProxy.cpp',
+            'Source/WebCore/dom/Document.cpp',
+            'Tools/MiniBrowser/gtk/main.c',
+            'Tools/Scripts/run-webkit-tests',
+            'LayoutTests/imported/w3c/web-platform-tests/webdriver/tests/support/helpers.py',
+        ]:
+            self.assertFalse(CheckChangeRelevance()._patch_is_relevant(file_name, self.BUILDER_NAME), file_name)
+
+    def test_queues_without_a_group_still_run_on_every_change(self):
+        self.assertTrue(CheckChangeRelevance()._patch_is_relevant('Source/WebCore/dom/Document.cpp', 'macOS-Tahoe-Debug-API-Tests-EWS'))
 
 
 class TestGetTestExpectationsBaseline(BuildStepMixinAdditions, unittest.TestCase):
@@ -8128,6 +8478,30 @@ Ran 1296 tests of 1298 with 1293 successful
         self.expect_outcome(result=FAILURE, state_string='3 api tests failed or timed out')
         return self.run_step()
 
+    def test_glib_failures_run_whole_test_programs(self):
+        self.setup_step(RunAPITestsWithoutChange())
+        self.setProperty('fullPlatform', 'gtk')
+        self.setProperty('platform', 'gtk')
+        self.setProperty('configuration', 'release')
+        self.setProperty('buildername', 'API-Tests-GTK-EWS')
+        self.setProperty('buildnumber', '164882')
+        self.setProperty('workername', 'igalia14-gtk-wk2-ews')
+        self.setProperty('api_first_run_failures', ['TestWebsiteData:/webkit/WebKitWebsiteData/compression-dictionary', 'TestWTF.WTF_DateMath.calculateLocalTimeOffset'])
+        self.setProperty('api_second_run_failures', ['TestWebsiteData:/webkit/WebKitWebsiteData/compression-dictionary', 'TestWebsiteData:/webkit/WebKitWebsiteData/sizes'])
+
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        log_environ=False,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-gtk-tests --release --json-output={self.jsonFileName} TestWTF.WTF_DateMath.calculateLocalTimeOffset TestWebsiteData 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        logfiles={'json': self.jsonFileName},
+                        timeout=20 * 60
+                        )
+            .log('stdio', stdout='Ran 12 tests of 12 with 12 successful\n')
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='run-api-tests-without-change')
+        return self.run_step()
+
 
 class TestAnalyzeAPITestsResults(BuildStepMixinAdditions, unittest.TestCase):
     def setUp(self):
@@ -8260,6 +8634,187 @@ class TestAnalyzeAPITestsResults(BuildStepMixinAdditions, unittest.TestCase):
         self.setProperty('api_clean_tree_run_failures', ['suite.pre_existing'])
         self.setProperty('api_first_run_exceeded_failure_limit', True)
         self.expect_outcome(result=SUCCESS, state_string='Passed API tests')
+        return self.run_step()
+
+
+def webdriver_results(*results):
+    return json.dumps({'results': [
+        {'test': test, 'status': status, 'message': None, 'subtests': [{'name': name, 'status': subtest_status, 'message': None} for name, subtest_status in subtests]}
+        for test, status, subtests in results
+    ]})
+
+
+class WebDriverTestsMixin(BuildStepMixinAdditions):
+    jsonFileName = 'webdriver_tests.json'
+    STATUS = 'imported/w3c/webdriver/tests/bidi/session/status/status.py'
+    NAVIGATE = 'imported/w3c/webdriver/tests/classic/navigate_to/navigate.py'
+
+    def setUp(self):
+        self.longMessage = True
+        return self.setup_test_build_step()
+
+    def tearDown(self):
+        return self.tear_down_test_build_step()
+
+    def configure_step(self, step):
+        self.setup_step(step)
+        self.setProperty('fullPlatform', 'mac-tahoe')
+        self.setProperty('platform', 'mac')
+        self.setProperty('configuration', 'debug')
+        self.added_steps = []
+        self.patch(self.build, 'addStepsAfterCurrentStep', lambda steps: self.added_steps.extend(steps))
+
+    def expect_run(self, tests='', json_output=None, exit_code=0):
+        expectation = ExpectShell(
+            workdir='wkdir',
+            log_environ=False,
+            command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-webdriver-tests --verbose --debug --json-output={self.jsonFileName}{tests} 2>&1 | Tools/Scripts/filter-test-logs webdriver'],
+            logfiles={'json': self.jsonFileName},
+            timeout=90 * 60,
+            max_time=3 * 60 * 60,
+            sigterm_time=30,
+        )
+        if json_output is not None:
+            expectation = expectation.log('json', stdout=json_output)
+        self.expectRemoteCommands(expectation.exit(exit_code))
+
+    def added_step_names(self):
+        return [type(step).__name__ for step in self.added_steps if type(step).__name__ not in ('GenerateS3URL', 'UploadFileToS3')]
+
+
+class TestRunWebDriverTests(WebDriverTestsMixin, unittest.TestCase):
+    @defer.inlineCallbacks
+    def test_success(self):
+        self.configure_step(RunWebDriverTests())
+        self.expect_run(json_output=webdriver_results((self.STATUS, 'OK', [('test_status', 'PASS')])))
+        self.expect_outcome(result=SUCCESS, state_string='Passed WebDriver tests')
+        self.expect_property('webdriver_first_run_failures', [])
+        self.expect_property('build_summary', 'Passed WebDriver tests')
+        yield self.run_step()
+        self.assertEqual(self.added_step_names(), [])
+
+    def test_expected_results_are_not_failures(self):
+        self.configure_step(RunWebDriverTests())
+        self.expect_run(json_output=webdriver_results((self.STATUS, 'OK', [('test_one', 'XFAIL'), ('test_two', 'XPASS'), ('test_three', 'SKIP')])))
+        self.expect_outcome(result=SUCCESS, state_string='Passed WebDriver tests')
+        return self.run_step()
+
+    @defer.inlineCallbacks
+    def test_failures_are_run_again(self):
+        self.configure_step(RunWebDriverTests())
+        self.expect_run(json_output=webdriver_results(
+            (self.STATUS, 'OK', [('test_status', 'FAIL'), ('test_other', 'PASS')]),
+            (self.NAVIGATE, 'ERROR', []),
+        ), exit_code=1)
+        self.expect_outcome(result=FAILURE, state_string=f'2 WebDriver test failures: {self.STATUS}::test_status, {self.NAVIGATE}')
+        self.expect_property('webdriver_first_run_failures', [f'{self.STATUS}::test_status', self.NAVIGATE])
+        yield self.run_step()
+        self.assertEqual(self.added_step_names(), ['ValidateChange', 'KillOldProcesses', 'ReRunWebDriverTests'])
+
+    def test_failures_found_when_the_exit_code_wraps(self):
+        self.configure_step(RunWebDriverTests())
+        self.expect_run(json_output=webdriver_results((self.STATUS, 'OK', [('test_status', 'TIMEOUT')])), exit_code=0)
+        self.expect_outcome(result=FAILURE, state_string=f'1 WebDriver test failure: {self.STATUS}::test_status')
+        return self.run_step()
+
+    @defer.inlineCallbacks
+    def test_no_results(self):
+        self.configure_step(RunWebDriverTests())
+        self.expect_run(exit_code=1)
+        self.expect_outcome(result=FAILURE, state_string='run-webdriver-tests produced no results')
+        self.expect_property('build_summary', 'run-webdriver-tests produced no results')
+        yield self.run_step()
+        self.assertEqual(self.added_step_names(), [])
+
+    @defer.inlineCallbacks
+    def test_error_without_failures(self):
+        self.configure_step(RunWebDriverTests())
+        self.expect_run(json_output=webdriver_results((self.STATUS, 'OK', [('test_status', 'PASS')])), exit_code=1)
+        self.expect_outcome(result=FAILURE, state_string='run-webdriver-tests failed without reporting a test failure')
+        self.expect_property('build_summary', 'run-webdriver-tests failed without reporting a test failure')
+        yield self.run_step()
+        self.assertEqual(self.added_step_names(), [])
+
+
+class TestReRunWebDriverTests(WebDriverTestsMixin, unittest.TestCase):
+    def configure_rerun(self):
+        self.configure_step(ReRunWebDriverTests())
+        self.setProperty('webdriver_first_run_failures', [f'{self.STATUS}::test_one', f'{self.STATUS}::test_two', f'{self.NAVIGATE}::test_basic'])
+
+    @defer.inlineCallbacks
+    def test_flaky_failures_pass(self):
+        self.configure_rerun()
+        self.expect_run(tests=f' {self.STATUS} {self.NAVIGATE}', json_output=webdriver_results((self.STATUS, 'OK', [('test_one', 'PASS')])))
+        self.expect_outcome(result=SUCCESS, state_string=f'Found flaky tests: {self.STATUS}::test_one, {self.STATUS}::test_two, {self.NAVIGATE}::test_basic')
+        self.expect_property('force_build_success', True)
+        yield self.run_step()
+        self.assertEqual(self.added_step_names(), [])
+
+    @defer.inlineCallbacks
+    def test_repeated_failures_run_without_change(self):
+        self.configure_rerun()
+        self.setProperty('rebuild_without_change_on_builder', True)
+        self.expect_run(tests=f' {self.STATUS} {self.NAVIGATE}', json_output=webdriver_results((self.STATUS, 'OK', [('test_one', 'FAIL')])), exit_code=1)
+        self.expect_outcome(result=FAILURE, state_string=f'1 WebDriver test failure: {self.STATUS}::test_one')
+        yield self.run_step()
+        self.assertEqual(self.added_step_names(), [
+            'RevertAppliedChanges', 'CleanWorkingDirectory', 'ValidateChange', 'DownloadBuiltProduct', 'ExtractBuiltProduct',
+            'ValidateChange', 'KillOldProcesses', 'RunWebDriverTestsWithoutChange', 'AnalyzeWebDriverTestsResults',
+        ])
+
+    @defer.inlineCallbacks
+    def test_repeated_failures_compile_without_change(self):
+        self.configure_rerun()
+        self.expect_run(tests=f' {self.STATUS} {self.NAVIGATE}', json_output=webdriver_results((self.STATUS, 'OK', [('test_one', 'FAIL')])), exit_code=1)
+        self.expect_outcome(result=FAILURE, state_string=f'1 WebDriver test failure: {self.STATUS}::test_one')
+        yield self.run_step()
+        self.assertIn('CompileWebKitWithoutChange', self.added_step_names())
+        self.assertNotIn('DownloadBuiltProduct', self.added_step_names())
+
+
+class TestRunWebDriverTestsWithoutChange(WebDriverTestsMixin, unittest.TestCase):
+    @defer.inlineCallbacks
+    def test_runs_files_failing_in_both_runs(self):
+        self.configure_step(RunWebDriverTestsWithoutChange())
+        self.setProperty('webdriver_first_run_failures', [f'{self.STATUS}::test_one', f'{self.NAVIGATE}::test_basic'])
+        self.setProperty('webdriver_second_run_failures', [f'{self.STATUS}::test_one'])
+        self.expect_run(tests=f' {self.STATUS}', json_output=webdriver_results((self.STATUS, 'OK', [('test_one', 'FAIL')])), exit_code=1)
+        self.expect_outcome(result=FAILURE, state_string=f'1 WebDriver test failure: {self.STATUS}::test_one')
+        self.expect_property('webdriver_clean_tree_run_failures', [f'{self.STATUS}::test_one'])
+        yield self.run_step()
+        self.assertEqual(self.added_step_names(), [])
+
+
+class TestAnalyzeWebDriverTestsResults(BuildStepMixinAdditions, unittest.TestCase):
+    def setUp(self):
+        self.longMessage = True
+        return self.setup_test_build_step()
+
+    def tearDown(self):
+        return self.tear_down_test_build_step()
+
+    def configure_step(self, clean_tree_failures):
+        self.setup_step(AnalyzeWebDriverTestsResults())
+        self.setProperty('webdriver_first_run_failures', ['a.py::test_one', 'b.py::test_two', 'c.py::test_flaky'])
+        self.setProperty('webdriver_second_run_failures', ['a.py::test_one', 'b.py::test_two'])
+        if clean_tree_failures is not None:
+            self.setProperty('webdriver_clean_tree_run_failures', clean_tree_failures)
+
+    def test_new_failure(self):
+        self.configure_step(['b.py::test_two'])
+        self.expect_outcome(result=FAILURE, state_string='Found 1 new WebDriver test failure: a.py::test_one')
+        self.expect_property('build_summary', 'Found 1 new WebDriver test failure: a.py::test_one')
+        return self.run_step()
+
+    def test_no_results_without_change(self):
+        self.configure_step(None)
+        self.expect_outcome(result=FAILURE, state_string='Unable to run the WebDriver tests without the change')
+        return self.run_step()
+
+    def test_only_pre_existing_failures(self):
+        self.configure_step(['a.py::test_one', 'b.py::test_two'])
+        self.expect_outcome(result=SUCCESS, state_string='Passed WebDriver tests; ignored pre-existing failures: a.py::test_one, b.py::test_two')
+        self.expect_property('force_build_success', True)
         return self.run_step()
 
 
@@ -9923,6 +10478,26 @@ class TestPushCommitToWebKitRepo(BuildStepMixinAdditions, unittest.TestCase):
         self.expect_property('build_finish_summary', 'Failed to commit to WebKit repository')
         self.expect_property('comment_text', 'merge-queue failed to commit PR to repository. To retry, remove any blocking labels and re-apply merge-queue label')
         return rc
+
+    def test_failure_pr_retry_clears_build_summary(self):
+        self.setup_step(PushCommitToWebKitRepo())
+        self.setProperty('github.number', '1234')
+        self.setProperty('remote', 'origin')
+        self.setProperty('build_summary', 'Ignored pre-existing failure: test.html')
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        timeout=300,
+                        log_environ=False,
+                        env=dict(GIT_USER='webkit-commit-queue', GIT_PASSWORD='password'),
+                        command=['git', 'push', 'origin', 'HEAD:main'])
+            .log('stdio', stdout='Unexpected failure')
+            .exit(2),
+        )
+        self.expect_outcome(result=FAILURE, state_string='Failed to push commit to Webkit repository')
+        self.expect_property('retry_count', 1)
+        self.expect_property('build_summary', '')
+        with current_hostname(EWS_BUILD_HOSTNAMES[0]):
+            return self.run_step()
 
 
 class TestDetermineLabelOwner(BuildStepMixinAdditions, unittest.TestCase):
@@ -11881,6 +12456,13 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
                 timeout=300,
                 log_environ=False,
                 env=self.ENV,
+                command=['git', 'checkout', '--progress', 'eng/pull-request-branch'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
                 command=['git', 'pull', 'origin', 'main', '--rebase'],
             ).exit(0),
             ExpectShell(
@@ -11888,7 +12470,76 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
                 timeout=300,
                 log_environ=False,
                 env=self.ENV,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'test "$(git rev-list --count FETCH_HEAD..HEAD)" -eq 1'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
                 command=['git', 'branch', '-f', 'main', 'eng/pull-request-branch'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['git', 'checkout', '--progress', 'main'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['python3', 'Tools/Scripts/git-webkit', 'canonicalize', '-n', '1'],
+            ).exit(0),
+            ExpectShell(workdir='wkdir',
+                        log_environ=False,
+                        env=self.ENV,
+                        timeout=300,
+                        command=[
+                            'git', 'filter-branch', '-f',
+                            '--env-filter', "GIT_AUTHOR_DATE='{date}';GIT_COMMITTER_DATE='{date}';GIT_COMMITTER_NAME='WebKit Committer';GIT_COMMITTER_EMAIL='committer@webkit.org'".format(date=date),
+                            'HEAD...HEAD~1',
+                        ],
+                        ).exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='Canonicalized commit')
+        return self.run_step()
+
+    def test_success_no_head_ref(self):
+        self.setup_step(Canonicalize())
+        self.setProperty('github.number', '1234')
+        self.setProperty('github.base.ref', 'main')
+        self.setProperty('owners', ['webkit-commit-queue'])
+        self.setProperty('remote', 'origin')
+
+        gmtoffset = int(time.localtime().tm_gmtoff * 100 / (60 * 60))
+        fixed_time = int(time.time())
+        date = f'{int(time.time())} {gmtoffset}'
+        time.time = lambda: fixed_time
+
+        self.expectRemoteCommands(
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm .git/identifiers.json || true'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['git', 'pull', 'origin', 'main', '--rebase'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'test "$(git rev-list --count FETCH_HEAD..HEAD)" -eq 1'],
             ).exit(0),
             ExpectShell(
                 workdir='wkdir',
@@ -11945,7 +12596,21 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
                 timeout=300,
                 log_environ=False,
                 env=self.ENV,
+                command=['git', 'checkout', '--progress', 'eng/pull-request-branch'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
                 command=['git', 'pull', 'origin', 'main', '--rebase'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'test "$(git rev-list --count FETCH_HEAD..HEAD)" -eq 4'],
             ).exit(0),
             ExpectShell(
                 workdir='wkdir',
@@ -12008,7 +12673,21 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
                 timeout=300,
                 log_environ=False,
                 env=self.ENV,
+                command=['git', 'checkout', '--progress', 'eng/pull-request-branch'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
                 command=['git', 'pull', 'security', 'safari-000-branch', '--rebase'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'test "$(git rev-list --count FETCH_HEAD..HEAD)" -eq 1'],
             ).exit(0),
             ExpectShell(
                 workdir='wkdir',
@@ -12108,7 +12787,21 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
                 timeout=300,
                 log_environ=False,
                 env=self.ENV,
+                command=['git', 'checkout', '--progress', 'eng/pull-request-branch'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
                 command=['git', 'pull', 'origin', 'main', '--rebase'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'test "$(git rev-list --count FETCH_HEAD..HEAD)" -eq 1'],
             ).exit(0),
             ExpectShell(
                 workdir='wkdir',
@@ -12133,6 +12826,86 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
             ).exit(1),
         )
         self.expect_outcome(result=FAILURE, state_string='Failed to canonicalize commit')
+        return self.run_step()
+
+    def test_failure_rebase_conflict(self):
+        self.setup_step(Canonicalize())
+        self.setProperty('github.number', '1234')
+        self.setProperty('github.base.ref', 'main')
+        self.setProperty('github.head.ref', 'eng/pull-request-branch')
+        self.setProperty('owners', ['webkit-commit-queue'])
+        self.setProperty('remote', 'origin')
+        self.setProperty('build_summary', 'Ignored pre-existing failure: test.html')
+
+        self.expectRemoteCommands(
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm .git/identifiers.json || true'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['git', 'checkout', '--progress', 'eng/pull-request-branch'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['git', 'pull', 'origin', 'main', '--rebase'],
+            ).exit(1)
+            .log('stdio', stdout='CONFLICT (content): Merge conflict in Source/WebCore/platform/ScrollingEffectsController.h\n'),
+        )
+        self.expect_outcome(result=FAILURE, state_string='Failed to canonicalize commit')
+        self.expect_property('build_summary', '')
+        return self.run_step()
+
+    def test_failure_changes_already_landed(self):
+        self.setup_step(Canonicalize())
+        self.setProperty('github.number', '1234')
+        self.setProperty('github.base.ref', 'main')
+        self.setProperty('github.head.ref', 'eng/pull-request-branch')
+        self.setProperty('owners', ['webkit-commit-queue'])
+        self.setProperty('remote', 'origin')
+
+        self.expectRemoteCommands(
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm .git/identifiers.json || true'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['git', 'checkout', '--progress', 'eng/pull-request-branch'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['git', 'pull', 'origin', 'main', '--rebase'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'test "$(git rev-list --count FETCH_HEAD..HEAD)" -eq 1'],
+            ).exit(1),
+        )
+        self.expect_outcome(result=FAILURE, state_string='Changes already landed on main')
+        self.expect_property('build_finish_summary', 'Changes already landed on main')
+        self.expect_property('comment_text', 'Commits in PR #1234 were dropped when rebasing onto main because their changes have already landed, blocking PR #1234. Update the pull request to contain only unlanded changes, or close it.')
         return self.run_step()
 
 
@@ -12756,6 +13529,39 @@ class TestBuildSwift(BuildStepMixinAdditions, unittest.TestCase):
         self.expect_outcome(result=WARNINGS, state_string='Failed to update swift, using previous checkout')
         return self.run_step()
 
+    def test_failure_with_previous_toolchain_without_tag(self):
+        self.configureStep()
+        self.setProperty('has_swift_toolchain', True)
+        self.expectRemoteCommands(
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -rf ../build'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'rm -rf webkit/{SWIFT_DIR}/swift-nightly-install webkit/{SWIFT_DIR}/swift-nightly-symroot'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -rf "$(getconf DARWIN_USER_CACHE_DIR)org.llvm.clang"'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -rf /Users/buildbot/Library/Developer/Xcode/DerivedData'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', self.expectedShellCommand()])
+            .exit(1),
+        )
+        self.expect_outcome(result=WARNINGS, state_string='Failed to update swift, using previous checkout')
+        return self.run_step()
+
     def test_failure_without_previous_checkout(self):
         self.configureStep()
         self.setProperty('has_swift_toolchain', False)
@@ -13128,6 +13934,37 @@ index 8a2d2375b8d2..f7ebc3b11b94 100644
         rc = self.run_step()
         self.expect_property('user_added_tests', ['WebCore/inspector/agents/worker/WorkerWorkerAgent.h/NoUncountedMemberChecker'])
         self.expect_property('user_removed_tests', ['WebCore/inspector/agents/worker/WorkerAuditAgent.h/NoUncountedMemberChecker'])
+        return rc
+
+    def test_expectations_file_removed(self):
+        self.configureStep()
+        self.setProperty('builddir', 'wkdir')
+        self.setProperty('buildnumber', 1234)
+
+        commit_diff = '''
+diff --git a/Source/WebCore/SaferCPPExpectations/NoUncountedMemberCheckerExpectations b/Source/WebCore/SaferCPPExpectations/NoUncountedMemberCheckerExpectations
+deleted file mode 100644
+index 8a2d2375b8d2..000000000000
+--- a/Source/WebCore/SaferCPPExpectations/NoUncountedMemberCheckerExpectations
++++ /dev/null
+@@ -1,3 +0,0 @@
+-inspector/InspectorStyleSheet.cpp
+-loader/appcache/ApplicationCacheStorage.cpp
+'''
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        log_environ=False,
+                        command=['git', 'diff', 'HEAD~1', '--', '*Expectations'])
+            .log('stdio', stdout=commit_diff)
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='Found modified expectations')
+        rc = self.run_step()
+        self.expect_property('user_added_tests', [])
+        self.expect_property('user_removed_tests', [
+            'WebCore/inspector/InspectorStyleSheet.cpp/NoUncountedMemberChecker',
+            'WebCore/loader/appcache/ApplicationCacheStorage.cpp/NoUncountedMemberChecker',
+        ])
         return rc
 
     @expectedFailure

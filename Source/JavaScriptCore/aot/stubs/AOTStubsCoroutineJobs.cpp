@@ -36,7 +36,6 @@ static void emitLoadAddressOfJob(StubAssembler& jit, GPRReg queue, GPRReg indexA
     jit.getEffectiveAddress(BaseIndex(scratch, indexAndResult, CCallHelpers::TimesEight), indexAndResult);
 }
 
-// awaitMustSuspend is set unless JSGlobalObject::queueMicrotask goes straight to MicrotaskQueue::enqueue: it stands for !canFastQueueMicrotask(), for a cross-task token and for a synchronous module load, whose own queue takes some of the jobs.
 void emitReserveJob(StubAssembler& jit, const JobRegisters& registers, JumpList& needsOperation)
 {
     const auto [queue, slot, next, scratch] = registers;
@@ -52,7 +51,6 @@ void emitReserveJob(StubAssembler& jit, const JobRegisters& registers, JumpList&
     emitLoadAddressOfJob(jit, queue, slot, scratch);
 }
 
-// The collector reads the queue while the mutator is stopped, and what it has not visited yet lies behind m_markedBefore, so a new job takes no barrier.
 void emitFillJob(StubAssembler& jit, const JobOperands& operands, const JobRegisters& registers)
 {
     const auto [queue, slot, next, scratch] = registers;
@@ -88,7 +86,6 @@ void emitPublishJob(StubAssembler& jit, InternalMicrotask task, JSPromise::Statu
     jit.store64(next, Address(queue, MicrotaskQueue::offsetOfEnd()));
 }
 
-// MicrotaskQueue::drainImpl takes a job out of the queue before it runs it, and asks afterwards whether the queue is empty, so it does not notice a job that is gone.
 void emitLoadHeadJob(StubAssembler& jit, const HeadJobRegisters& registers, JumpList& noJob)
 {
     const auto [queue, slot, word] = registers;
@@ -144,7 +141,6 @@ void emitTakeReactionJob(StubAssembler& jit, ReactionJob kind, const HeadJobRegi
     isLeftToJobLoop.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, offsetOfPromiseHeader)));
     switch (kind) {
     case ReactionJob::HasNoAsyncContext:
-        // Empty, undefined or null: the handler gets the argument alone, and no async context was captured with a context for it.
         isLeftToJobLoop.append(jit.branchTest64(CCallHelpers::NonZero, argumentOfJob(slot, 3), TrustedImm32(~static_cast<int32_t>(JSValue::ValueUndefined))));
         emitPutAsyncContextOfJobInPlace(jit, std::nullopt, scratch, handler, isLeftToJobLoop);
         break;
@@ -166,7 +162,6 @@ void emitTakePerformMicrotaskJob(StubAssembler& jit, const HeadJobRegisters& reg
     isLeftToJobLoop.append(branchIfNotFunctionType(jit, function, scratch));
     isLeftToJobLoop.append(jit.branchTest64(CCallHelpers::NonZero, argumentOfJob(slot, 2)));
     isLeftToJobLoop.append(jit.branchTest64(CCallHelpers::NonZero, argumentOfJob(slot, 3)));
-    // An error of the function is reported under the context that was in place in front of the job.
     isLeftToJobLoop.append(jit.branch64(CCallHelpers::NotEqual, argumentOfJob(slot, 1), TrustedImm64(JSValue::ValueUndefined)));
     Jump hasNoAsyncContext = emitBranchIfTracksNoAsyncContext(jit, scratch);
     emitLoadCurrentAsyncContext(jit, scratch);
@@ -179,7 +174,6 @@ void emitTakeFunctionResumeJob(StubAssembler& jit, const HeadJobRegisters& regis
 {
     const auto [queue, slot, scratch] = registers;
     RELEASE_ASSERT(noOverlap(queue, slot, scratch, saved, value, instanceGPR));
-    // A function of another realm runs with that realm's instance register.
     jit.load64(argumentOfJob(slot, 2), saved);
     jit.load32(Address(saved, JSCell::structureIDOffset()), scratch);
     isLeftToJobLoop.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader))));
@@ -188,7 +182,6 @@ void emitTakeFunctionResumeJob(StubAssembler& jit, const HeadJobRegisters& regis
     emitDequeueHeadJob(jit, queue, scratch);
 }
 
-// MarkedMicrotaskDeque::dequeue.
 void emitDequeueHeadJob(StubAssembler& jit, GPRReg queue, GPRReg scratch)
 {
     Jump hasMarkedNone = jit.branchTest64(CCallHelpers::Zero, Address(queue, MicrotaskQueue::offsetOfMarkedBefore()));

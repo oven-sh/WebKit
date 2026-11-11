@@ -47,6 +47,7 @@
 #include "WasmAddressType.h"
 #include "WasmBBQDisassembler.h"
 #include "WasmBaselineData.h"
+#include "WasmBinding.h"
 #include "WasmCallProfile.h"
 #include "WasmCallee.h"
 #include "WasmCallingConvention.h"
@@ -69,6 +70,7 @@
 #include <wtf/Compiler.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/MathExtras.h>
+#include <wtf/RecursableLambda.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 
@@ -630,6 +632,7 @@ void ControlData::fillLabels(CCallHelpers::Label label)
 
 BBQJIT::BBQJIT(CompilationContext& compilationContext, const RTT& signature, Module& module, CalleeGroup& calleeGroup, IPIntCallee& profiledCallee, BBQCallee& callee, const FunctionData& function, FunctionCodeIndex functionIndex, const ModuleInformation& info, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, InternalFunction* compilation)
     : m_jit(*compilationContext.wasmEntrypointJIT)
+    , m_codeForImage(compilationContext.codeForImage)
     , m_module(module)
     , m_calleeGroup(calleeGroup)
     , m_profiledCallee(profiledCallee)
@@ -685,7 +688,7 @@ BBQJIT::BBQJIT(CompilationContext& compilationContext, const RTT& signature, Mod
 
     // The frame is laid out before local types are known, so this reserves room for the most
     // pinned locals assignPinnedLocals() could later choose.
-    m_calleeSaves = RegisterAtOffsetList(RegisterSet::bbqCalleeSaveRegisters());
+    m_calleeSaves = RegisterAtOffsetList(registersSavedByEveryFunction());
     size_t calleeSaveSlots = m_calleeSaves.registerCount() + maxPinnedLocals();
     for (size_t i = 0; i < calleeSaveSlots; ++i)
         allocateStack(Value::fromPointer(nullptr));
@@ -712,6 +715,9 @@ BBQJIT::BBQJIT(CompilationContext& compilationContext, const RTT& signature, Mod
 
 bool BBQJIT::canTierUpToOMG() const
 {
+    if (m_codeForImage)
+        return false;
+
     if (!Options::useOMGJIT())
         return false;
 
@@ -727,6 +733,8 @@ bool BBQJIT::canTierUpToOMG() const
 
 void BBQJIT::emitIncrementCallProfileCount(unsigned callProfileIndex)
 {
+    if (m_codeForImage)
+        return;
     m_jit.add32(TrustedImm32(1), CCallHelpers::Address(GPRInfo::jitDataRegister, safeCast<int32_t>(BaselineData::offsetOfData() + sizeof(CallProfile) * callProfileIndex + CallProfile::offsetOfCount())));
 }
 
@@ -1067,7 +1075,7 @@ void BBQJIT::emitWriteBarrier(GPRReg cellGPR)
         toSlowPath.link(&jit);
         jit.prepareWasmCallOperation(GPRInfo::wasmContextInstancePointer);
         jit.setupArguments<decltype(operationWasmWriteBarrierSlowPath)>(GPRInfo::argumentGPR0, wasmScratchGPR);
-        jit.callOperation<OperationPtrTag>(operationWasmWriteBarrierSlowPath);
+        callOperation(jit, operationWasmWriteBarrierSlowPath);
 
         belowBlackThreshold.link(&jit);
     } });
@@ -1863,7 +1871,7 @@ void BBQJIT::pushArrayNewFromSegment(ArraySegmentOperation operation, TypeSignat
         m_slowPaths.append({ origin(), WTF::move(slowPath), WTF::move(doneLabel), copyBindings(), [resultGPR](BBQJIT&, CCallHelpers& jit) {
             jit.prepareWasmCallOperation(GPRInfo::wasmContextInstancePointer);
             jit.setupArguments<decltype(operationWasmAnyConvertExtern)>(resultGPR);
-            jit.callOperation<OperationPtrTag>(operationWasmAnyConvertExtern);
+            callOperation(jit, operationWasmAnyConvertExtern);
             jit.move(GPRInfo::returnValueGPR, resultGPR);
         } });
         consume(reference);
@@ -2145,6 +2153,10 @@ void BBQJIT::addLatePath(WasmOrigin origin, Func&& func)
 void BBQJIT::emitThrowException(ExceptionType type)
 {
     m_jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(type)), GPRInfo::argumentGPR1);
+    if (m_codeForImage) {
+        emitJumpToImageStub(ImageStub::ThrowException);
+        return;
+    }
     m_jit.jumpThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwExceptionFromWasmThunkGenerator).code()));
 }
 
@@ -3242,7 +3254,7 @@ PartialResult BBQJIT::addI32Extend8S(Value operand, Value& result)
         m_slowPaths.append({ origin(), WTF::move(slowPath), WTF::move(done), copyBindings(), [index, resultGPR](BBQJIT&, CCallHelpers& jit) {
             jit.prepareWasmCallOperation(GPRInfo::wasmContextInstancePointer);
             jit.setupArguments<decltype(operationWasmRefFunc)>(GPRInfo::wasmContextInstancePointer, TrustedImm32(static_cast<uint32_t>(index)));
-            jit.callOperation<OperationPtrTag>(operationWasmRefFunc);
+            callOperation(jit, operationWasmRefFunc);
             jit.move(GPRInfo::returnValueGPR, resultGPR);
         } });
     }
@@ -3326,7 +3338,7 @@ void BBQJIT::emitEntryTierUpCheck()
     m_topLevel = ControlData(*this, BlockType::TopLevel, WTF::move(signature), 0);
 
     JIT_COMMENT(m_jit, "Store boxed JIT callee");
-    m_jit.move(CCallHelpers::TrustedImmPtr(CalleeBits::boxNativeCallee(&m_callee)), wasmScratchGPR);
+    emitMoveBoxedCallee(wasmScratchGPR);
     static_assert(CallFrameSlot::codeBlock + 1 == CallFrameSlot::callee);
     m_jit.storePairPtr(GPRInfo::wasmContextInstancePointer, wasmScratchGPR, GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(CallFrameSlot::codeBlock * sizeof(Register)));
 
@@ -3340,22 +3352,30 @@ void BBQJIT::emitEntryTierUpCheck()
     MacroAssembler::JumpList overflow;
     JIT_COMMENT(m_jit, "Stack overflow check");
     overflow.append(m_jit.branchPtr(CCallHelpers::LessThan, wasmScratchGPR, CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfSoftStackLimit())));
-    overflow.linkThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwStackOverflowFromWasmThunkGenerator).code()), &m_jit);
+    if (m_codeForImage) {
+        addLatePath(origin(), [overflow](BBQJIT& generator, CCallHelpers& jit) {
+            overflow.link(&jit);
+            generator.emitJumpToImageStub(ImageStub::ThrowStackOverflow);
+        });
+    } else
+        overflow.linkThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwStackOverflowFromWasmThunkGenerator).code()), &m_jit);
 
     m_jit.move(wasmScratchGPR, MacroAssembler::stackPointerRegister);
 
-    Address baselineDataAddress(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfBaselineData(m_info, m_functionIndex));
-    m_jit.loadPtr(baselineDataAddress, GPRInfo::jitDataRegister);
-    Jump materialize = m_jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::jitDataRegister);
-    MacroAssembler::Label done = m_jit.label();
-    addLatePath(origin(), [materialize = WTF::move(materialize), done, baselineDataAddress](BBQJIT&, CCallHelpers& jit) {
-        materialize.link(&jit);
-        jit.move(GPRInfo::callFrameRegister, GPRInfo::nonPreservedNonArgumentGPR0);
-        jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(materializeBaselineDataGenerator).code()));
-        jit.loadPtr(baselineDataAddress, GPRInfo::jitDataRegister);
-        jit.jump(done);
-    });
-    m_jit.add32(TrustedImm32(1), CCallHelpers::Address(GPRInfo::jitDataRegister, BaselineData::offsetOfTotalCount()));
+    if (!m_codeForImage) {
+        Address baselineDataAddress(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfBaselineData(m_info, m_functionIndex));
+        m_jit.loadPtr(baselineDataAddress, GPRInfo::jitDataRegister);
+        Jump materialize = m_jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::jitDataRegister);
+        MacroAssembler::Label done = m_jit.label();
+        addLatePath(origin(), [materialize = WTF::move(materialize), done, baselineDataAddress](BBQJIT&, CCallHelpers& jit) {
+            materialize.link(&jit);
+            jit.move(GPRInfo::callFrameRegister, GPRInfo::nonPreservedNonArgumentGPR0);
+            jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(materializeBaselineDataGenerator).code()));
+            jit.loadPtr(baselineDataAddress, GPRInfo::jitDataRegister);
+            jit.jump(done);
+        });
+        m_jit.add32(TrustedImm32(1), CCallHelpers::Address(GPRInfo::jitDataRegister, BaselineData::offsetOfTotalCount()));
+    }
 
     LocalOrTempIndex i = 0;
     for (; i < m_arguments.size(); ++i) {
@@ -3644,6 +3664,11 @@ StackMap BBQJIT::makeStackMap(const ControlData& data, std::span<const TypedExpr
 
 void BBQJIT::emitLoopTierUpCheckAndOSREntryData(const ControlData& data, std::span<const TypedExpression> enclosingStack, unsigned loopIndex)
 {
+    if (m_codeForImage) {
+        m_outerLoops.append(loopIndex);
+        return;
+    }
+
     auto& tierUpCounter = m_callee.tierUpCounter();
     ASSERT(tierUpCounter.osrEntryTriggers().size() == loopIndex);
     tierUpCounter.osrEntryTriggers().append(TierUpCount::TriggerReason::DontTrigger);
@@ -4086,12 +4111,18 @@ void BBQJIT::prepareForExceptions()
 
     constexpr unsigned minCasesForTable = 7;
     if (minCasesForTable <= runCount) {
-        auto* jumpTable = m_callee.addJumpTable(targets.size() + 1);
+        EmbeddedFixedVector<CodeLocationLabel<JSSwitchPtrTag>>* jumpTable = nullptr;
+        MacroAssembler::Label tableInImage;
         m_jit.moveConditionally32(RelationalCondition::AboveOrEqual, wasmScratchGPR, TrustedImm32(targets.size()), TrustedImm32(targets.size()), wasmScratchGPR, wasmScratchGPR);
         m_jit.zeroExtend32ToWord(wasmScratchGPR, wasmScratchGPR);
-        m_jit.lshiftPtr(TrustedImm32(3), wasmScratchGPR);
-        m_jit.addPtr(TrustedImmPtr(jumpTable->span().data()), wasmScratchGPR);
-        m_jit.farJump(Address(wasmScratchGPR), JSSwitchPtrTag);
+        if (m_codeForImage)
+            tableInImage = emitJumpThroughTableInImage(targets.size() + 1);
+        else {
+            jumpTable = m_callee.addJumpTable(targets.size() + 1);
+            m_jit.lshiftPtr(TrustedImm32(3), wasmScratchGPR);
+            m_jit.addPtr(TrustedImmPtr(jumpTable->span().data()), wasmScratchGPR);
+            m_jit.farJump(Address(wasmScratchGPR), JSSwitchPtrTag);
+        }
 
         auto labels = WTF::map(targets, [&](auto& target) {
             auto label = Box<CCallHelpers::Label>::create(m_jit.label());
@@ -4108,13 +4139,16 @@ void BBQJIT::prepareForExceptions()
         });
         labels.append(Box<CCallHelpers::Label>::create(m_jit.label()));
 
-        m_jit.addLinkTask([labels = WTF::move(labels), jumpTable](LinkBuffer& linkBuffer) {
-            for (unsigned index = 0; index < labels.size(); ++index)
-                jumpTable->at(index) = linkBuffer.locationOf<JSSwitchPtrTag>(*labels[index]);
-        });
+        if (m_codeForImage)
+            linkTableInImage(tableInImage, WTF::move(labels));
+        else {
+            m_jit.addLinkTask([labels = WTF::move(labels), jumpTable](LinkBuffer& linkBuffer) {
+                for (unsigned index = 0; index < labels.size(); ++index)
+                    jumpTable->at(index) = linkBuffer.locationOf<JSSwitchPtrTag>(*labels[index]);
+            });
+        }
     } else {
-        Vector<std::tuple<uint32_t, size_t>, 16> runs;
-        runs.reserveInitialCapacity(runCount);
+        Vector<std::tuple<uint32_t, size_t>, 16> runs(ReserveCapacityTag { }, runCount);
         for (unsigned i = 0; i < targets.size(); ) {
             unsigned start = i;
             while (i < targets.size() && targets[i] == targets[start])
@@ -4123,7 +4157,7 @@ void BBQJIT::prepareForExceptions()
         }
         ASSERT(runs.size() == runCount);
 
-        BinarySwitch binarySwitch(wasmScratchGPR, runs.span());
+        BinarySwitch binarySwitch(wasmScratchGPR, runs.span(), m_jit.debugOffset());
         while (binarySwitch.advance(m_jit)) {
             unsigned index = binarySwitch.caseIndex();
             ASSERT(index < targets.size());
@@ -4303,8 +4337,10 @@ void BBQJIT::restoreWebAssemblyContextInstance()
 
 void BBQJIT::loadWebAssemblyGlobalState(GPRReg wasmBaseMemoryPointer, GPRReg wasmBoundsCheckingSizeRegister)
 {
+    ASSERT(wasmBaseMemoryPointer == GPRInfo::wasmBaseMemoryPointer && wasmBoundsCheckingSizeRegister == GPRInfo::wasmBoundsCheckingSizeRegister);
+    emitPrepareToCageMemoryBase(m_jit, GPRInfo::wasmContextInstancePointer, wasmScratchGPR);
     m_jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);
-    m_jit.cageConditionally(Gigacage::Primitive, wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister, wasmScratchGPR);
+    emitCageMemoryBase(m_jit, wasmScratchGPR);
 }
 
 void BBQJIT::flushRegistersForException()
@@ -4418,8 +4454,7 @@ void BBQJIT::saveValuesAcrossCallAndPassArguments(const Args& arguments, const C
     }
 
     // Finally, we parallel-move arguments to the parameter locations.
-    WTF::Vector<Location, 8> parameterLocations;
-    parameterLocations.reserveInitialCapacity(callInfo.params.size());
+    WTF::Vector<Location, 8> parameterLocations(ReserveCapacityTag { }, callInfo.params.size());
     for (unsigned i = 0; i < callInfo.params.size(); i++) {
         auto type = signature.argumentType(i);
         auto parameterLocation = Location::fromArgumentLocation(callInfo.params[i], type.kind());
@@ -4480,15 +4515,13 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const RTT& sign
     ASSERT(callInfo.results.size() == wasmCallerInfo.results.size());
     ASSERT(arguments.size() == callInfo.params.size());
 
-    Vector<Value, 8> resolvedArguments;
-    resolvedArguments.reserveInitialCapacity(arguments.size() + isX86());
-    Vector<Location, 8> parameterLocations;
-    parameterLocations.reserveInitialCapacity(arguments.size() + isX86());
+    Vector<Value, 8> resolvedArguments(ReserveCapacityTag { }, arguments.size() + isX86());
+    Vector<Location, 8> parameterLocations(ReserveCapacityTag { }, arguments.size() + isX86());
 
     // Save the old Frame Pointer for later and make sure the return address gets saved to its canonical location.
     emitRestoreCalleeSaves();
     auto preserved = callingConvention.argumentGPRs();
-    if constexpr (isARM64E())
+    if constexpr (isARM64E() || ENABLE_RETURN_ADDRESS_SIGNING)
         preserved.add(callingConvention.prologueScratchGPRs[0], IgnoreVectors);
     ScratchScope<1, 0> scratches(*this, WTF::move(preserved));
     GPRReg callerFramePointer = scratches.gpr(0);
@@ -4555,7 +4588,7 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const RTT& sign
 
     emitShuffle(resolvedArguments, parameterLocations);
 
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     JIT_COMMENT(m_jit, "Untag our return PC");
     // prologue scratch registers should be free as we already moved the arguments into place.
     GPRReg scratch = callingConvention.prologueScratchGPRs[0];
@@ -4580,13 +4613,18 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const RTT& sign
         // Emit the call.
         Vector<UnlinkedWasmToWasmCall>* unlinkedWasmToWasmCalls = &m_unlinkedWasmToWasmCalls;
         ASSERT(!m_info.isImportedFunctionFromFunctionIndexSpace(functionIndexSpace));
-        Ref<IPIntCallee> callee = m_calleeGroup.ipintCalleeFromFunctionIndexSpace(functionIndexSpace);
-        m_jit.storeWasmCalleeToCalleeCallFrame(TrustedImmPtr(CalleeBits::boxNativeCallee(callee.ptr())), sizeof(CallerFrameAndPC) - prologueStackPointerDelta());
-        CCallHelpers::Call call = m_jit.threadSafePatchableNearTailCall();
+        if (m_codeForImage) {
+            // Every function of the module has code, and its prologue stores its own callee.
+            emitNearJumpInImage(imageSymbolOf(m_info.toCodeIndex(functionIndexSpace)));
+        } else {
+            Ref<IPIntCallee> callee = m_calleeGroup.ipintCalleeFromFunctionIndexSpace(functionIndexSpace);
+            m_jit.storeWasmCalleeToCalleeCallFrame(TrustedImmPtr(CalleeBits::boxNativeCallee(callee.ptr())), sizeof(CallerFrameAndPC) - prologueStackPointerDelta());
+            CCallHelpers::Call call = m_jit.threadSafePatchableNearTailCall();
 
-        m_jit.addLinkTask([unlinkedWasmToWasmCalls, call, functionIndexSpace] (LinkBuffer& linkBuffer) {
-            unlinkedWasmToWasmCalls->append({ linkBuffer.locationOfNearCall<WasmEntryPtrTag>(call), functionIndexSpace });
-        });
+            m_jit.addLinkTask([unlinkedWasmToWasmCalls, call, functionIndexSpace] (LinkBuffer& linkBuffer) {
+                unlinkedWasmToWasmCalls->append({ linkBuffer.locationOfNearCall<WasmEntryPtrTag>(call), functionIndexSpace });
+            });
+        }
     }
 
     LOG_INSTRUCTION("ReturnCall", functionIndexSpace, arguments);
@@ -4628,13 +4666,18 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const RTT& sign
         // Emit the call.
         Vector<UnlinkedWasmToWasmCall>* unlinkedWasmToWasmCalls = &m_unlinkedWasmToWasmCalls;
         ASSERT(!m_info.isImportedFunctionFromFunctionIndexSpace(functionIndexSpace));
-        Ref<IPIntCallee> callee = m_calleeGroup.ipintCalleeFromFunctionIndexSpace(functionIndexSpace);
-        m_jit.storeWasmCalleeToCalleeCallFrame(TrustedImmPtr(CalleeBits::boxNativeCallee(callee.ptr())), 0);
-        CCallHelpers::Call call = m_jit.threadSafePatchableNearCall();
+        if (m_codeForImage) {
+            // Every function of the module has code, and its prologue stores its own callee.
+            emitNearCallInImage(imageSymbolOf(m_info.toCodeIndex(functionIndexSpace)));
+        } else {
+            Ref<IPIntCallee> callee = m_calleeGroup.ipintCalleeFromFunctionIndexSpace(functionIndexSpace);
+            m_jit.storeWasmCalleeToCalleeCallFrame(TrustedImmPtr(CalleeBits::boxNativeCallee(callee.ptr())), 0);
+            CCallHelpers::Call call = m_jit.threadSafePatchableNearCall();
 
-        m_jit.addLinkTask([unlinkedWasmToWasmCalls, call, functionIndexSpace] (LinkBuffer& linkBuffer) {
-            unlinkedWasmToWasmCalls->append({ linkBuffer.locationOfNearCall<WasmEntryPtrTag>(call), functionIndexSpace });
-        });
+            m_jit.addLinkTask([unlinkedWasmToWasmCalls, call, functionIndexSpace] (LinkBuffer& linkBuffer) {
+                unlinkedWasmToWasmCalls->append({ linkBuffer.locationOfNearCall<WasmEntryPtrTag>(call), functionIndexSpace });
+            });
+        }
     }
 
     // Push return value(s) onto the expression stack. Read results before restoring SP
@@ -4675,7 +4718,12 @@ void BBQJIT::emitIndirectCall(const char* opcode, unsigned callProfileIndex, con
     JumpList afterCall;
     m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
     m_jit.storeWasmCalleeToCalleeCallFrame(wasmScratchGPR);
-    if (m_profile->isMegamorphic(callProfileIndex)) {
+    if (m_codeForImage) {
+        m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfTargetInstance()), wasmScratchGPR);
+        Jump isSameInstanceBefore = m_jit.branchPtr(RelationalCondition::Equal, wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
+        emitSwitchToInstanceOf(importableFunction);
+        isSameInstanceBefore.link(m_jit);
+    } else if (m_profile->isMegamorphic(callProfileIndex)) {
         m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfTargetInstance()), wasmScratchGPR);
         // Do a context switch if needed.
         Jump isSameInstanceBefore = m_jit.branchPtr(RelationalCondition::Equal, wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
@@ -4711,6 +4759,12 @@ void BBQJIT::emitIndirectCall(const char* opcode, unsigned callProfileIndex, con
     }
 
     m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfEntrypointLoadLocation()), wasmScratchGPR);
+    if (m_codeForImage) {
+        // The callee may be a function of JavaScript that a module without code in the image imports. Where nothing generates code, the way there
+        // is wasm_to_js_wrapper_entry, which finds the record of the import in this slot. Every other callee writes the slot in its prologue.
+        m_jit.subPtr(wasmScratchGPR, TrustedImm32(safeCast<int32_t>(OBJECT_OFFSETOF(WasmOrJSImportableFunction, importFunctionStub))), importableFunction);
+        m_jit.storePtr(importableFunction, CCallHelpers::calleeFrameCodeBlockBeforeCall());
+    }
     m_jit.call(CCallHelpers::Address(wasmScratchGPR), WasmEntryPtrTag);
 
     // Read results before restoring SP since results are at the bottom of the
@@ -4751,7 +4805,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
 #if CPU(ARM64)
     auto preserved = callingConvention.argumentGPRs();
     preserved.add(importableFunction, IgnoreVectors);
-    if constexpr (isARM64E())
+    if constexpr (isARM64E() || ENABLE_RETURN_ADDRESS_SIGNING)
         preserved.add(callingConvention.prologueScratchGPRs[0], IgnoreVectors);
     ScratchScope<1, 0> scratches(*this, WTF::move(preserved));
     GPRReg callerFramePointer = scratches.gpr(0);
@@ -4770,11 +4824,25 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
         Checked<int32_t> topSourceOffsetFromFP = static_cast<int32_t>(roundUpToMultipleOf<stackAlignmentBytes()>(topSource));
 
         m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfTargetInstance()), wasmScratchGPR);
-        Jump isSameInstance = m_jit.branchPtr(RelationalCondition::Equal, wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
+        // We need a restore frame if the wasm instance is different or if the call goes out to JS.
+        // In the latter case JS can grow wasm memory, invalidating memory base cached in a callee save register.
+        Jump needsRestoreFrame = m_jit.branchPtr(RelationalCondition::NotEqual, wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
+        // FIXME: consider overloading WasmCallableFunction::targetInstance to hold a JSFunction when the
+        // callee exits to JS. The instance comparison above would then fail for a JS import on its own and
+        // this second test could go away. See also OMGIRGenerator::emitIndirectCall().
+        Jump skipRestoreFrame;
+        if (m_codeForImage) {
+            // The instance is still the one that runs this code, and its pointer table has the callee that exits to JS.
+            loadImagePointer(m_jit, GPRInfo::wasmContextInstancePointer, ImagePointerTable::wasmToJSCallee, wasmScratchGPR);
+            skipRestoreFrame = m_jit.branchPtr(RelationalCondition::NotEqual, CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
+        } else {
+            m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
+            skipRestoreFrame = branchIfCalleeNotWasmToJS(m_jit, wasmScratchGPR);
+        }
+        needsRestoreFrame.link(m_jit);
         emitRestoreInstanceFrameIfNeeded(m_jit, GPRInfo::wasmContextInstancePointer, callerStackSize, m_frameSize, topSourceOffsetFromFP, wasmScratchGPR, wasmBaseMemoryPointer);
-        m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfTargetInstance()), GPRInfo::wasmContextInstancePointer);
-        loadWebAssemblyGlobalState(wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);
-        isSameInstance.link(m_jit);
+        emitSwitchToInstanceOf(importableFunction);
+        skipRestoreFrame.link(m_jit);
     }
 
     m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
@@ -4783,8 +4851,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
     Vector<Value, 8> resolvedArguments;
     const unsigned calleeArgument = 1;
     resolvedArguments.reserveInitialCapacity(arguments.size() + calleeArgument + isX86() * 2);
-    Vector<Location, 8> parameterLocations;
-    parameterLocations.reserveInitialCapacity(arguments.size() + calleeArgument + isX86() * 2);
+    Vector<Location, 8> parameterLocations(ReserveCapacityTag { }, arguments.size() + calleeArgument + isX86() * 2);
 
     // It's ok if we clobber our Wasm::Callee at this point since we can't hit a GC safepoint / throw an exception until we've tail called into the callee.
     // FIXME: We should just have addCallIndirect put this in the right place to begin with.
@@ -4834,7 +4901,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
 
     emitShuffle(resolvedArguments, parameterLocations);
 
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     JIT_COMMENT(m_jit, "Untag our return PC");
     // prologue scratch registers should be free as we already moved the arguments into place.
     GPRReg scratch = callingConvention.prologueScratchGPRs[0];
@@ -4842,6 +4909,13 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
     m_jit.untagPtr(scratch, ARM64Registers::lr);
     m_jit.validateUntaggedPtr(ARM64Registers::lr, scratch);
 #endif
+
+    if (m_codeForImage) {
+        // As in emitIndirectCall().
+        m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfEntrypointLoadLocation()), wasmScratchGPR);
+        m_jit.subPtr(TrustedImm32(safeCast<int32_t>(OBJECT_OFFSETOF(WasmOrJSImportableFunction, importFunctionStub))), wasmScratchGPR);
+        m_jit.storePtr(wasmScratchGPR, Address(MacroAssembler::framePointerRegister, tailCallStackOffsetFromFP + Checked<int>(CallFrameSlot::codeBlock * sizeof(Register))));
+    }
 
     // Fix SP and FP
 #if CPU(X86_64)
@@ -4956,12 +5030,12 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
 
             m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfRTT()), wasmScratchGPR);
             if (signature.isFinalType())
-                recordJumpToThrowException(ExceptionType::BadSignature, m_jit.branchPtr(CCallHelpers::NotEqual, wasmScratchGPR, TrustedImmPtr(&signature)));
+                recordJumpToThrowException(ExceptionType::BadSignature, branchRTT(CCallHelpers::NotEqual, wasmScratchGPR, signature));
             else {
-                auto indexEqual = m_jit.branchPtr(CCallHelpers::Equal, wasmScratchGPR, TrustedImmPtr(&signature));
+                auto indexEqual = branchRTT(CCallHelpers::Equal, wasmScratchGPR, signature);
                 recordJumpToThrowException(ExceptionType::BadSignature, m_jit.branchTestPtr(ResultCondition::Zero, wasmScratchGPR));
                 recordJumpToThrowException(ExceptionType::BadSignature, m_jit.branch32(CCallHelpers::BelowOrEqual, Address(wasmScratchGPR, RTT::offsetOfDisplaySizeExcludingThis()), TrustedImm32(signature.displaySizeExcludingThis())));
-                recordJumpToThrowException(ExceptionType::BadSignature, m_jit.branchPtr(CCallHelpers::NotEqual, CCallHelpers::Address(wasmScratchGPR, RTT::offsetOfData() + signature.displaySizeExcludingThis() * sizeof(RefPtr<const RTT>)), TrustedImmPtr(&signature)));
+                recordJumpToThrowException(ExceptionType::BadSignature, branchRTT(CCallHelpers::NotEqual, CCallHelpers::Address(wasmScratchGPR, RTT::offsetOfData() + signature.displaySizeExcludingThis() * sizeof(RefPtr<const RTT>)), signature));
 
                 indexEqual.link(&m_jit);
             }
@@ -5572,11 +5646,10 @@ void BBQJIT::emitShuffle(Vector<Value, N, OverflowHandler>& srcVector, Vector<Lo
     ASSERT(srcVector.size() == dstVector.size());
 
 #if ASSERT_ENABLED
-    // Destinations must not overlap: one move would otherwise overwrite another's result, and
-    // disjoint destinations are also what limit the moves to the single cycle emitShuffleMove can
-    // break with one scratch register: https://xavierleroy.org/publi/parallel-move.pdf
-    // Sources may repeat. Two moves that only read the same place need no ordering between them.
+    // Destinations must not overlap, or one move would overwrite another's result. Sources may
+    // repeat: two moves that only read the same place need no ordering between them.
     for (size_t i = 0; i < dstVector.size(); ++i) {
+        ASSERT(!dstVector[i].isNone());
         for (size_t j = i + 1; j < dstVector.size(); ++j)
             ASSERT(!Location::rangesOverlap(dstVector[i], srcVector[i].size(), dstVector[j], srcVector[j].size()));
     }
@@ -5587,13 +5660,198 @@ void BBQJIT::emitShuffle(Vector<Value, N, OverflowHandler>& srcVector, Vector<Lo
         return;
     }
 
-    // For multi-value return, a parallel move might be necessary. This is comparatively complex
-    // and slow, so we limit it to this slow path.
-    Vector<ShuffleStatus, N, OverflowHandler> statusVector(FillWith { }, srcVector.size(), ShuffleStatus::ToMove);
-    for (unsigned i = 0; i < srcVector.size(); i ++) {
-        if (statusVector[i] == ShuffleStatus::ToMove)
-            emitShuffleMove(srcVector, dstVector, statusVector, i);
+    auto otherSourcesUnder = [&](auto& sources, auto& destinations, size_t index) {
+        for (size_t i = 0; i < sources.size(); ++i) {
+            if (i != index && Location::rangesOverlap(locationOf(sources[i]), sources[i].size(), destinations[index], sources[index].size()))
+                return true;
+        }
+        return false;
+    };
+
+    // The walk breaks a cycle by copying a pending source to wasmScratchFPR or
+    // wasmScratchGPR, so at most one copied source per register class may be pending at a time.
+    // That holds if every source lies under at most one destination other than its own. A source
+    // may lie under more if its move writes a register that no other source reads: that move waits
+    // on nothing, so it is never pending.
+    auto walk = [&](auto& sources, auto& destinations) {
+#if ASSERT_ENABLED
+        for (size_t i = 0; i < sources.size(); ++i) {
+            if (destinations[i].isRegister() && !otherSourcesUnder(sources, destinations, i))
+                continue;
+            Location srcLocation = locationOf(sources[i]);
+            unsigned count = 0;
+            for (size_t j = 0; j < destinations.size(); ++j) {
+                if (j != i && Location::rangesOverlap(srcLocation, sources[i].size(), destinations[j], sources[j].size()))
+                    ++count;
+            }
+            ASSERT(count <= 1);
+        }
+#endif
+        Vector<ShuffleStatus, N, OverflowHandler> statusVector(FillWith { }, sources.size(), ShuffleStatus::ToMove);
+        auto emitShuffleMove = recursableLambda([&](auto self, unsigned index) -> void {
+            Location srcLocation = locationOf(sources[index]);
+            Location dst = destinations[index];
+            if (srcLocation == dst)
+                return;
+
+            uint32_t dstSize = sources[index].size();
+            statusVector[index] = ShuffleStatus::BeingMoved;
+            for (unsigned i = 0; i < sources.size(); ++i) {
+                // A source that overlaps its own destination needs no temp, since emitMove reads all
+                // of the source before writing any of the destination.
+                if (i == index)
+                    continue;
+                // A constant has location None, which overlaps nothing since no destination is None.
+                if (!Location::rangesOverlap(locationOf(sources[i]), sources[i].size(), dst, dstSize))
+                    continue;
+                switch (statusVector[i]) {
+                case ShuffleStatus::ToMove:
+                    self(i);
+                    break;
+                case ShuffleStatus::BeingMoved: {
+                    Location temp = sources[i].isFloat() ? Location::fromFPR(wasmScratchFPR) : Location::fromGPR(wasmScratchGPR);
+                    emitMove(sources[i], temp);
+                    sources[i] = Value::pinned(sources[i].type(), temp);
+                    break;
+                }
+                case ShuffleStatus::Moved:
+                    break;
+                }
+            }
+            emitMove(sources[index], dst);
+            statusVector[index] = ShuffleStatus::Moved;
+        });
+        for (unsigned i = 0; i < sources.size(); ++i) {
+            if (statusVector[i] == ShuffleStatus::ToMove)
+                emitShuffleMove(i);
+        }
+    };
+
+    // Destinations are disjoint and 8-byte aligned, so only a v128 stack source can lie under two
+    // of them. A rewritten move to the stack is split into 8-byte halves, each a destination of its
+    // own, which can push another v128 source over the limit, so each split goes on a worklist that
+    // recounts the sources under it.
+    auto piecesUnder = [&](size_t source, size_t destination, int32_t pieceSize) -> unsigned {
+        if (source == destination)
+            return 0;
+
+        if (!dstVector[destination].isStack())
+            return 0;
+
+        unsigned count = 0;
+        Location srcLocation = locationOf(srcVector[source]);
+        int32_t dstSize = srcVector[destination].size();
+        for (int32_t offset = 0; offset < dstSize; offset += pieceSize) {
+            if (Location::rangesOverlap(srcLocation, srcVector[source].size(), Location::fromStack(dstVector[destination].asStackOffset() + offset), pieceSize))
+                ++count;
+        }
+        return count;
+    };
+
+    // A move can need a rewrite only if all of the following hold:
+    // 1. src is a v128 value
+    // 2. src is on the stack
+    // 3. dst is not a register, or it is a register that another move reads.
+    Vector<size_t, N, OverflowHandler> moveCandidates;
+    for (size_t i = 0; i < srcVector.size(); ++i) {
+        if (srcVector[i].type() != TypeKind::V128 || !locationOf(srcVector[i]).isStack())
+            continue;
+        if (!dstVector[i].isRegister() || otherSourcesUnder(srcVector, dstVector, i))
+            moveCandidates.append(i);
     }
+
+    BitVector rewrite;
+    Vector<size_t, N, OverflowHandler> moveWorklist;
+    Vector<unsigned, N, OverflowHandler> pieceCounts(FillWith { }, srcVector.size(), 0u);
+    auto countPiece = [&](size_t index, unsigned count) {
+        pieceCounts[index] += count;
+        if (pieceCounts[index] < 2 || rewrite.get(index))
+            return;
+        rewrite.set(index);
+        if (dstVector[index].isStack())
+            moveWorklist.append(index);
+    };
+
+    // Count every destination as one whole piece; each split below then adds its difference exactly once.
+    for (size_t i : moveCandidates) {
+        for (size_t j = 0; j < dstVector.size(); ++j)
+            countPiece(i, piecesUnder(i, j, srcVector[j].size()));
+    }
+
+    while (!moveWorklist.isEmpty()) {
+        size_t split = moveWorklist.takeLast();
+
+        // split's move is emitted as two 8-byte moves, so recount each remaining candidate with its
+        // destination as two pieces.
+        for (size_t i : moveCandidates) {
+            if (!rewrite.get(i))
+                countPiece(i, piecesUnder(i, split, static_cast<int32_t>(sizeof(Register))) - piecesUnder(i, split, srcVector[split].size()));
+        }
+    }
+    if (rewrite.isEmpty()) {
+        walk(srcVector, dstVector);
+        return;
+    }
+
+    // A source copied away goes below every frame slot the shuffle touches, and above every slot it
+    // addresses from SP, which is m_frameSize below FP.
+    int32_t frameBottom = -static_cast<int32_t>(m_frameSize);
+    int32_t spillOffset = -static_cast<int32_t>(WTF::roundUpToMultipleOf<tempSlotSize>(m_frameSizeForValidation));
+    int32_t spillFloor = frameBottom;
+    auto reserve = [&](Location location, int32_t size) {
+        if (location.isStack())
+            spillOffset = std::min(spillOffset, location.asStackOffset());
+        else if (location.isStackArgument())
+            spillFloor = std::max(spillFloor, frameBottom + location.asStackArgumentOffset() + size);
+    };
+    for (size_t i = 0; i < srcVector.size(); ++i) {
+        reserve(locationOf(srcVector[i]), srcVector[i].size());
+        reserve(dstVector[i], srcVector[i].size());
+    }
+    spillOffset = -static_cast<int32_t>(WTF::roundUpToMultipleOf<tempSlotSize>(static_cast<uint32_t>(-spillOffset)));
+
+    // Split each move whose source lies under two other destinations into 8-byte halves or, if it
+    // writes a register that another move reads, copy its source away first.
+    Vector<Value, N, OverflowHandler> sources;
+    Vector<Location, N, OverflowHandler> destinations;
+    Vector<std::pair<Location, Location>, N, OverflowHandler> copies;
+    for (size_t i = 0; i < srcVector.size(); ++i) {
+        Value src = srcVector[i];
+        Location dst = dstVector[i];
+        if (!rewrite.get(i)) {
+            sources.append(src);
+            destinations.append(dst);
+            continue;
+        }
+        Location srcLocation = locationOf(src);
+        if (dst.isStack()) {
+            for (int32_t half = 0; half < static_cast<int32_t>(src.size()); half += sizeof(Register)) {
+                sources.append(Value::pinned(TypeKind::I64, Location::fromStack(srcLocation.asStackOffset() + half)));
+                destinations.append(Location::fromStack(dst.asStackOffset() + half));
+            }
+            continue;
+        }
+        size_t copyIndex = copies.findIf([&](auto& copy) {
+            return copy.first == srcLocation;
+        });
+        if (copyIndex == notFound) {
+            // Only a tail call gets here, since only its destinations can lie unevenly over v128
+            // slots. Each copied source is a distinct 16-byte slot of this frame inside the callee's
+            // outgoing area, so the copies need at most calleeStackSize - callerStackSize bytes and
+            // at most m_frameSizeForValidation bytes. The frame keeps calleeStackSize below
+            // m_frameSizeForValidation, and callerStackSize covers at least the 48-byte header,
+            // which leaves room for the copies plus the callee slot addressed from SP.
+            spillOffset -= tempSlotSize;
+            RELEASE_ASSERT(spillOffset >= spillFloor);
+            Location temp = Location::fromStack(spillOffset);
+            emitMove(src, temp);
+            copyIndex = copies.size();
+            copies.append({ srcLocation, temp });
+        }
+        sources.append(Value::pinned(src.type(), copies[copyIndex].second));
+        destinations.append(dst);
+    }
+    walk(sources, destinations);
 }
 
 ControlData& BBQJIT::currentControlData()
@@ -5809,7 +6067,7 @@ void BBQJIT::assignPinnedLocals()
     candidates.exclude(RegisterSet::stackRegisters());
     candidates.exclude(RegisterSet::reservedHardwareRegisters());
     candidates.exclude(RegisterSet::wasmPinnedRegisters());
-    candidates.exclude(RegisterSet::bbqCalleeSaveRegisters());
+    candidates.exclude(registersSavedByEveryFunction());
 
     for (uint32_t localIndex : hotLocals) {
         if (m_pinnedLocals.size() >= budget)
@@ -5847,11 +6105,11 @@ void BBQJIT::assignPinnedLocals()
     if (m_pinnedLocals.isEmpty())
         return;
 
-    RegisterSet saves = RegisterSet::bbqCalleeSaveRegisters();
+    RegisterSet saves = registersSavedByEveryFunction();
     saves.merge(m_pinnedLocalRegisters);
     m_calleeSaves = RegisterAtOffsetList(saves);
 
-    RELEASE_ASSERT(m_calleeSaves.registerCount() <= RegisterSet::bbqCalleeSaveRegisters().numberOfSetRegisters() + maxPinnedLocals());
+    RELEASE_ASSERT(m_calleeSaves.registerCount() <= registersSavedByEveryFunction().numberOfSetRegisters() + maxPinnedLocals());
 }
 
 void BBQJIT::loadPinnedLocals()
@@ -5956,7 +6214,7 @@ void BBQJIT::emitArrayGetPayload(StorageType type, GPRReg arrayGPR, GPRReg paylo
     }
     // For all other types, alignment shift is a compile-time constant
     // since JSCell always has >=8-byte alignment.
-    m_jit.addPtr(MacroAssembler::TrustedImm32(JSWebAssemblyArray::alignedOffsetOfData(type.elementSize())), arrayGPR, payloadGPR);
+    m_jit.addPtr(MacroAssembler::TrustedImm32(JSWebAssemblyArray::alignedOffsetOfData(type.elementSize()) + paddingOverShapeWord(type.elementSize())), arrayGPR, payloadGPR);
 }
 
 void BBQJIT::emitZeroExtendI32(Value value, GPRReg resultGPR)
@@ -6030,17 +6288,20 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileBBQ(Comp
 {
     CompilerTimingScope totalTime("BBQ"_s, "Total BBQ"_s);
 
-    Thunks::singleton().stub(catchInWasmThunkGenerator);
+    // Code for an image is written through the assembler that its relocations are recorded with, and is caught through ImageStub::CatchRunway.
+    if (!compilationContext.codeForImage) {
+        Thunks::singleton().stub(catchInWasmThunkGenerator);
+        compilationContext.wasmEntrypointJIT = makeUnique<CCallHelpers>();
+    }
 
     auto result = makeUnique<InternalFunction>();
-
-    compilationContext.wasmEntrypointJIT = makeUnique<CCallHelpers>();
 
     BBQJIT irGenerator(compilationContext, signature, module, calleeGroup, profiledCallee, callee, function, functionIndex, info, unlinkedWasmToWasmCalls, mode, result.get());
     FunctionParser<BBQJIT> parser(irGenerator, function.data, signature, info);
     WASM_FAIL_IF_HELPER_FAILS(parser.parse());
 
-    if (irGenerator.hasLoops())
+    // Nothing interprets a function that has code in an image, so nothing enters it in the middle of a loop.
+    if (irGenerator.hasLoops() && !compilationContext.codeForImage)
         result->bbqSharedLoopEntrypoint = irGenerator.addLoopOSREntrypoint();
 
     irGenerator.finalize();

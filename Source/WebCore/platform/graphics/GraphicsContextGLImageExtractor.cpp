@@ -28,10 +28,12 @@
 
 #if ENABLE(WEBGL)
 
+#include "NativeImage.h"
+
 namespace WebCore {
 
 // Returns whether uploading an image in format reads the alpha of the image.
-static bool LEGACY_NODELETE formatUsesAlpha(GCGLenum format)
+NODELETE static bool formatUsesAlpha(GCGLenum format)
 {
     switch (format) {
     case GraphicsContextGL::RED:

@@ -1,0 +1,185 @@
+# let text = "ab";   function doubles() { const out: number[] = []; for (let at = 0; at < 150000000; at++) { text = text + text; out.push(at); } return out.length; }
+# function doublesUnderTheCounter(n: number) { const out: number[] = []; for (let at = 0; at < n; at++) { text = text + text; out[at] = at; } return out.length; }
+# function joinsTextsFromInFront(a: string, b: string) { const out: string[] = []; for (let at = 0; at < 1000; at++) out.push(a + b); return out.length; }   function joinsWhatIsWritten() { const out: string[] = []; for (let at = 0; at < 1000; at++) out.push("item " + at); return out.length; }
+# function joinsOneTextManyTimes(w: string, n: number) { const out: string[] = []; for (let at = 0; at < n; at++) { const a = w + w, b = a + a, c = b + b; out[at] = c + at; } return out.length; }
+# Room that is asked for in front of a loop and never filled is memory: the first loop ends at its thirtieth turn, where the text has grown too long, and its list of twenty-nine elements held the room of a hundred and fifty million (1,195 MB for 23).
+# So room is asked for only where the count alone ends the loop. Nothing in a turn writes but the stores that fill, so nothing but the counter comes round, neither by a parameter of the head nor by a variable; and all that the operators of a turn take is added up, so no joining can come to a text that is too long: what is written in the turn is added up where the program is built, and the texts from in front, whose lengths nobody knows there, are handed to the reservation, which reads their lengths and asks for nothing where the sum is over the longest text there may be.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: ReserveArrayCapacity
+# RUN(COUNTER): walk f2 mechanisms=all
+# COUNTER-NOT: ReserveArrayCapacity
+# RUN(JOINS): walk f3 mechanisms=all
+# JOINS: ReserveArrayCapacity {{*}}, {{*}}, v0, {{*}}, v1, 
+# RUN(LENGTHS): emit f3 mechanisms=all
+# LENGTHS: JSRopeString_length
+# A text is handed on once, with the number of times that the turns join it behind it, however often that is: the operands of the reservation do not grow with the joins.
+# RUN(ONCE): walk f5 mechanisms=all
+# ONCE: ReserveArrayCapacity {{*}}, {{*}}, v0, 
+# RUN(TWICE): walk f5 mechanisms=all
+# TWICE-NOT: ReserveArrayCapacity {{*}}, v0, {{*}}, v0
+# RUN(TIMES): emit f5 mechanisms=all
+# TIMES: = Mul(
+# A text made of what is written in the turn and of the counter hands nothing on.
+# RUN(WRITTEN): walk f4 mechanisms=all
+# WRITTEN-LABEL: code f4:Body
+# WRITTEN: ReserveArrayCapacity
+# WRITTEN: isLoopHead=true
+# RUN(ANSWER): run-in-shell globalThis.sink = (doubles, doublesUnderTheCounter, joinsTextsFromInFront, joinsWhatIsWritten, joinsOneTextManyTimes) => { try { doubles(); } catch (error) { print(error.constructor.name); } try { doublesUnderTheCounter(150000000); } catch (error) { print(error.constructor.name); } print(joinsTextsFromInFront("a", "b")); print(joinsWhatIsWritten()); print(joinsOneTextManyTimes("ab", 3)); };
+# ANSWER: RangeError
+# ANSWER-NEXT: RangeError
+# ANSWER-NEXT: 1000
+# ANSWER-NEXT: 1000
+# ANSWER-NEXT: 3
+# ANSWER-NEXT: exited with 0
+
+variable g0 name="text" module=m0 declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]}
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="ab"
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = NewClosure function=f3
+    v7 = NewClosure function=f4
+    v8 = NewClosure function=f5
+    v9 = Call v3, -, v4, v5, v6, v7, v8
+    Return v9
+}
+function f1 name="doubles" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=number
+    v1 = Convert v0 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    Jump -> next b1(v3)
+  b1(v4: number):
+    LoopHint
+    v6 = Integer integer=150000000
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = GetModuleVariable variable=g0
+    v9 = CheckInitialized v8 name="text"
+    v10 = GetModuleVariable variable=g0
+    v11 = CheckInitialized v10 name="text"
+    v12 = GetModuleVariable variable=g0
+    v13 = CheckInitialized v12 name="text"
+    v14 = Add v11, v13
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v15 variable=g0
+    v17 = PropGet v1 key="push"
+    v18 = Call v17, v1, v4 calleeKey="push" calleeName="out.push"
+    v19 = Convert v18 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v20 = Increment v4
+    v21 = Convert v20 declared={type=number}
+    Jump -> next b1(v21)
+  b3():
+    v22 = PropGet v1 key="length"
+    Return v22
+}
+function f2 name="doublesUnderTheCounter" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewArray contents=number
+    v2 = Convert v1 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v4)
+  b1(v5: number):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = GetModuleVariable variable=g0
+    v9 = CheckInitialized v8 name="text"
+    v10 = GetModuleVariable variable=g0
+    v11 = CheckInitialized v10 name="text"
+    v12 = GetModuleVariable variable=g0
+    v13 = CheckInitialized v12 name="text"
+    v14 = Add v11, v13
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v15 variable=g0
+    ElemSet v2, v5, v5 mode=Strict
+    v18 = Increment v5
+    v19 = Convert v18 declared={type=number}
+    Jump -> next b1(v19)
+  b3():
+    v20 = PropGet v2 key="length"
+    Return v20
+}
+function f3 name="joinsTextsFromInFront" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|string, v1: undefined|null|string):
+    v2 = NewArray contents=undefined|null|string
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    Jump -> next b1(v5)
+  b1(v6: number):
+    LoopHint
+    v8 = Integer integer=1000
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = PropGet v3 key="push"
+    v11 = Add v0, v1
+    v12 = Call v10, v3, v11 calleeKey="push" calleeName="out.push"
+    v13 = Convert v12 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v14 = Increment v6
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b1(v15)
+  b3():
+    v16 = PropGet v3 key="length"
+    Return v16
+}
+function f4 name="joinsWhatIsWritten" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=undefined|null|string
+    v1 = Convert v0 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    Jump -> next b1(v3)
+  b1(v4: number):
+    LoopHint
+    v6 = Integer integer=1000
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v1 key="push"
+    v9 = String string="item "
+    v10 = Add v9, v4
+    v11 = Call v8, v1, v10 calleeKey="push" calleeName="out.push"
+    v12 = Convert v11 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v13 = Increment v4
+    v14 = Convert v13 declared={type=number}
+    Jump -> next b1(v14)
+  b3():
+    v15 = PropGet v1 key="length"
+    Return v15
+}
+function f5 name="joinsOneTextManyTimes" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|string, v1: number):
+    v2 = NewArray contents=undefined|null|string
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    Jump -> next b1(v5)
+  b1(v6: number):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Add v0, v0
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v6
+    ElemSet v3, v6, v12 mode=Strict
+    v14 = Increment v6
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b1(v15)
+  b3():
+    v16 = PropGet v3 key="length"
+    Return v16
+}

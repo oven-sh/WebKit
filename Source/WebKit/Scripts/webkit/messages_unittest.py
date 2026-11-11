@@ -68,6 +68,8 @@ _test_receiver_names = [
     'TestWithSwift',
     'TestWithSwiftConditionally',
     'TestWithSwiftConditionallyAndEnabledBy',
+    'TestWithSwiftTypes',
+    'TestWithSwiftTypesOptIn',
     'TestWithValidator',
     'TestWithWantsAsyncDispatch',
     'TestWithWantsDispatch',
@@ -129,6 +131,12 @@ class GeneratedFileContentsTest(unittest.TestCase):
         self.assertGeneratedFileContentsEqual(header_contents, os.path.join(tests_directory, 'MessageNames.h'))
         implementation_contents = messages.generate_message_names_implementation(self.receivers)
         self.assertGeneratedFileContentsEqual(implementation_contents, os.path.join(tests_directory, 'MessageNames.cpp'))
+
+    def test_message_names_without_async_with_reply_messages(self):
+        receivers = model.generate_global_model([parse_receiver(receiver_name) for receiver_name in ['TestWithStreamBuffer', 'TestWithoutUsingIPCConnection']])
+        header_contents = messages.generate_message_names_header(receivers)
+        self.assertNotIn('FirstAsyncWithReply', header_contents)
+        self.assertIn('constexpr bool messageIsAsyncWithReply(MessageName name)\n{\n    UNUSED_PARAM(name);\n    return false;\n}\n', header_contents)
 
     def test_message_argument_description(self):
         receiver_header_files = ['{}Messages.h'.format(receiver.name) for receiver in self.receivers]

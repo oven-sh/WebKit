@@ -58,6 +58,7 @@
 #include <WebCore/MediaProducer.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/Pagination.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/ScrollTypes.h>
 #include <WebCore/ShouldRelaxThirdPartyCookieBlocking.h>
 #include <WebCore/UserInterfaceLayoutDirection.h>
@@ -120,9 +121,6 @@ struct WebPageCreationParameters {
     OptionSet<WebCore::ActivityState> activityState { };
     
     WebPreferencesStore store { };
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    DrawingAreaType drawingAreaType { };
-#endif
     DrawingAreaIdentifier drawingAreaIdentifier;
     WebPageProxyIdentifier webPageProxyIdentifier;
     WebPageGroupData pageGroupData;
@@ -243,9 +241,6 @@ struct WebPageCreationParameters {
     Vector<SandboxExtension::Handle> gpuIOKitExtensionHandles { };
     Vector<SandboxExtension::Handle> gpuMachExtensionHandles { };
 #endif
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    SandboxExtension::Handle renderServerMachExtensionHandle { };
-#endif
 #if HAVE(STATIC_FONT_REGISTRY) && !ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)
     Vector<SandboxExtension::Handle> fontMachExtensionHandles { };
 #endif
@@ -306,7 +301,9 @@ struct WebPageCreationParameters {
     bool shouldCaptureAudioInUIProcess { false };
     bool shouldCaptureVideoInUIProcess { false };
     bool shouldCaptureDisplayInUIProcess { false };
+#if !PLATFORM(COCOA)
     bool shouldRenderDOMInGPUProcess { false };
+#endif
 #if ENABLE(APP_BOUND_DOMAINS)
     bool limitsNavigationsToAppBoundDomains { false };
 #endif
@@ -343,6 +340,7 @@ struct WebPageCreationParameters {
     std::optional<ProvisionalFrameCreationParameters> provisionalFrameCreationParameters { };
     WebCore::FrameIdentifier mainFrameIdentifier;
     String openedMainFrameName;
+    WebCore::RegistrableDomain openedByScriptDomain;
     std::optional<WebCore::FrameIdentifier> mainFrameOpenerIdentifier { };
     URL mainFrameOpenerURL;
     WebCore::SandboxFlags initialSandboxFlags;
@@ -395,6 +393,9 @@ struct WebPageCreationParameters {
     bool shouldForceSiteIsolationAlwaysOnForTesting { false };
     bool shouldEnableNetworkInstrumentation { false };
     bool shouldEnablePageInstrumentation { false };
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+    std::optional<bool> imageAnimationEnabledOverride { };
+#endif
 };
 
 } // namespace WebKit

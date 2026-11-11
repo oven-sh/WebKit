@@ -262,7 +262,7 @@ static void testActionParsing(Test*, gconstpointer)
 
     // `action` should be ignored in manifest v2
     extension = parse("{ \"manifest_version\": 2, \"action\": { \"default_title\": \"Button Title\" }, \"name\": \"Test\", \"version\": \"1.0\", \"description\": \"Test description\" }");
-    g_assert_no_error(error.get());
+    g_assert_error(error.get(), WEBKIT_WEB_EXTENSION_ERROR, WEBKIT_WEB_EXTENSION_ERROR_INVALID_MANIFEST_ENTRY);
     g_assert_null(webkit_web_extension_get_display_action_label(extension.get()));
     g_assert_null(webkit_web_extension_get_action_icon(extension.get(), 16, 16));
 
@@ -274,13 +274,13 @@ static void testActionParsing(Test*, gconstpointer)
 
     // Manifest v3 should never find a browser_action.
     extension = parse("{ \"manifest_version\": 3, \"browser_action\": { \"default_title\": \"Button Title\" }, \"name\": \"Test\", \"version\": \"1.0\", \"description\": \"Test description\" }");
-    g_assert_no_error(error.get());
+    g_assert_error(error.get(), WEBKIT_WEB_EXTENSION_ERROR, WEBKIT_WEB_EXTENSION_ERROR_INVALID_MANIFEST_ENTRY);
     g_assert_null(webkit_web_extension_get_display_action_label(extension.get()));
     g_assert_null(webkit_web_extension_get_action_icon(extension.get(), 16, 16));
 
     // Or a page action
     extension = parse("{ \"manifest_version\": 3, \"page_action\": { \"default_title\": \"Button Title\" }, \"name\": \"Test\", \"version\": \"1.0\", \"description\": \"Test description\" }");
-    g_assert_no_error(error.get());
+    g_assert_error(error.get(), WEBKIT_WEB_EXTENSION_ERROR, WEBKIT_WEB_EXTENSION_ERROR_INVALID_MANIFEST_ENTRY);
     g_assert_null(webkit_web_extension_get_display_action_label(extension.get()));
     g_assert_null(webkit_web_extension_get_action_icon(extension.get(), 16, 16));
 
@@ -676,7 +676,7 @@ static void testBackgroundParsing(Test*, gconstpointer)
     g_assert_false(webkit_web_extension_get_has_persistent_background_content(extension.get()));
     g_assert_false(webkit_web_extension_get_has_service_worker_background_content(extension.get()));
     g_assert_false(webkit_web_extension_get_has_modular_background_content(extension.get()));
-    g_assert_no_error(error.get());
+    g_assert_error(error.get(), WEBKIT_WEB_EXTENSION_ERROR, WEBKIT_WEB_EXTENSION_ERROR_INVALID_MANIFEST_ENTRY);
 
     extension = parse("{ \"manifest_version\": 2, \"background\": { \"service_worker\": \"test.js\", \"persistent\": false }, \"name\": \"Test\", \"version\": \"1.0\", \"description\": \"Test description\" }");
     g_assert_true(webkit_web_extension_get_has_background_content(extension.get()));

@@ -1,0 +1,43 @@
+# A call by name looks the name up on each function by itself: what the program laid on one of the two is entered with that one as its receiver, and the other answers by what stands above functions.
+# If the set were asked as one, what lies on `first` would be held against `second` too, or against neither.
+# first.tag = tagged;  function take(h) { return h.tag(); }  take(first);  take(second);
+# RUN: link functions mechanisms=all
+# CHECK: function f4 {{*}}in-queue-from-start
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f4 callers-known
+# NEVER-NOT: unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    PropSet v1, v3 key="tag"
+    v5 = Call v0, -, v1 calleeName="take"
+    v6 = Call v0, -, v2 calleeName="take"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="tag"
+    v2 = Call v1, v0 calleeKey="tag" calleeName="h.tag"
+    Return v2
+}
+function f2 name="first" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="second" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="tagged" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

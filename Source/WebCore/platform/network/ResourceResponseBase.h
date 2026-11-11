@@ -105,7 +105,7 @@ public:
 
     WEBCORE_EXPORT int httpStatusCode() const;
     WEBCORE_EXPORT void setHTTPStatusCode(int);
-    WEBCORE_EXPORT bool LEGACY_NODELETE isRedirection() const;
+    NODELETE WEBCORE_EXPORT bool isRedirection() const;
 
     WEBCORE_EXPORT const String& httpStatusText() const LIFETIME_BOUND;
     WEBCORE_EXPORT void setHTTPStatusText(String&&);
@@ -208,7 +208,7 @@ public:
         return 1280;
     }
 
-    WEBCORE_EXPORT void LEGACY_NODELETE setType(Type);
+    NODELETE WEBCORE_EXPORT void setType(Type);
     Type type() const { return m_type; }
 
     void setRedirected(bool isRedirected) { m_isRedirected = isRedirected; }
@@ -233,6 +233,7 @@ public:
     WEBCORE_EXPORT bool containsInvalidHTTPHeaders() const;
 
     WEBCORE_EXPORT static ResourceResponse dataURLResponse(const URL&, const DataURLDecoder::Result&);
+    WEBCORE_EXPORT static ResourceResponse responseForMIMEType(URL&&, const String& mimeType, long long expectedLength, const String& textEncodingName);
     
     WEBCORE_EXPORT ResourceResponseBase(std::optional<ResourceResponseData>&&);
     
@@ -245,7 +246,7 @@ protected:
         AllFields
     };
 
-    WEBCORE_EXPORT ResourceResponseBase();
+    NODELETE WEBCORE_EXPORT ResourceResponseBase();
     WEBCORE_EXPORT ResourceResponseBase(URL&&, String&& mimeType, long long expectedLength, String&& textEncodingName);
 
     WEBCORE_EXPORT void lazyInit(InitLevel) const;
@@ -259,7 +260,7 @@ protected:
 
 private:
     void parseCacheControlDirectives() const;
-    void LEGACY_NODELETE updateHeaderParsedState(HTTPHeaderName);
+    NODELETE void updateHeaderParsedState(HTTPHeaderName);
     void sanitizeHTTPHeaderFieldsAccordingToTainting();
 
 protected:

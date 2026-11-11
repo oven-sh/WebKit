@@ -28,6 +28,9 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 #include "JSWebExtensionAPINamespace.h"
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionAPINamespaceAdditionsPrefix.h>)
+#include <WebKitAdditions/WebExtensionAPINamespaceAdditionsPrefix.h>
+#endif
 #include "WebExtensionAPIAction.h"
 #include "WebExtensionAPIAlarms.h"
 #if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
@@ -100,7 +103,9 @@ public:
 #if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
     WebExtensionAPIBookmarks& bookmarks();
 #endif
+#endif
     WebExtensionAPIStorage& storage();
+#if PLATFORM(COCOA)
     WebExtensionAPITabs& tabs();
 #endif
     WebExtensionAPITest& test();
@@ -143,6 +148,10 @@ private:
     const RefPtr<WebExtensionAPIWindows> m_windows;
     const RefPtr<WebExtensionAPIWebNavigation> m_webNavigation;
     const RefPtr<WebExtensionAPIWebRequest> m_webRequest;
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionAPINamespaceAdditions.h>)
+#include <WebKitAdditions/WebExtensionAPINamespaceAdditions.h>
+#endif
 };
 
 } // namespace WebKit

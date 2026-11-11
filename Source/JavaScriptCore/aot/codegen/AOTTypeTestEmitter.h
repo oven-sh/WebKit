@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
+#include "AOTShapeTestEmitter.h"
 #include "AOTTypeTestPlan.h"
 #include <array>
 #include <memory>
@@ -15,6 +16,16 @@
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+struct TypeTestPlansKeptAcrossUnits {
+    using Plans = UncheckedKeyHashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    static constexpr unsigned mostPlansOfRepresentation = 512;
+
+    const Plan* plan { nullptr };
+    const TypeTable* table { nullptr };
+    std::array<Plans, numberOfEnumerators<Representation>> plans;
+    KindsInLayoutSets kindsInSets;
+};
 
 class TypeTestEmitter final : public OperationEmitter {
 public:
@@ -25,23 +36,27 @@ public:
 
     const TypeTestPlan& planFor(TypeID from, Representation, TypeID to);
 
-    void emitBranch(Operand, const TypeTestPlan&, BranchTargets, CodeShape);
-    Condition emitBoolean(Operand, const TypeTestPlan&, CodeShape);
+    void emitBranch(Operand, const TypeTestPlan&, BranchTargets);
+    void emitPerFunctionBranch(Operand, const TypeTestPlan&, BranchTargets);
+    Condition emitBoolean(Operand, const TypeTestPlan&);
 
-    Condition passesCellTest(CellPointer, const CellTest&, const Type& from);
+    Condition passesCellTest(CellPointer, const CellTest&, const Type& from, MarkedObjects = MarkedObjects::Pass);
     Condition isCallable(CellPointer);
     Condition inheritsClassInfo(CellPointer, BuiltinClassID);
     Condition isPristine(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
+    Condition nothingWasWrittenAbove(BuiltinClassID);
+    Condition isAsItsClassMadeIt(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
     Condition hasSharingMode(CellPointer, ArrayBufferSharingMode);
     Condition isNamespaceOf(CellPointer, ModuleID);
     Condition isIntegerIn(Number, Range);
+    Condition isInRange(Integer, Range);
 
 private:
     using PlanMap = UncheckedKeyHashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
-    void leaveUnless(Condition, B3::FrequentedBlock failure);
-    void leave(B3::FrequentedBlock failure);
-    void jump(B3::FrequentedBlock);
+    void leaveUnless(Condition, BlockEdge failure);
+    void leave(BlockEdge failure);
+    void jump(BlockEdge);
 
     std::optional<Condition> tryGetSingleCondition(Operand, const TypeTestPlan&);
     std::optional<Condition> tryGetSingleCondition(Boxed, const TypeTestPlan&);
@@ -49,42 +64,40 @@ private:
     std::optional<Condition> tryGetNonCellCondition(Boxed, const TypeTestPlan&);
     std::optional<Condition> tryGetConditionWithAbsent(Boxed, const TypeTestPlan&);
 
-    // A value passes when one of its cases does. visit takes a function that emits the test of one case, likeliest case first.
     void forEachNonCellCase(Boxed, const TypeTestPlan&, const auto& visit);
     void forEachCellCase(CellPointer, const TypeTestPlan&, const auto& visit);
-    void testCases(B3::FrequentedBlock failure, const auto& forEachCase);
+    void testCases(BlockEdge failure, const auto& forEachCase);
 
-    void test(Operand, const TypeTestPlan&, B3::FrequentedBlock failure);
-    void testBoxed(Boxed, const TypeTestPlan&, B3::FrequentedBlock failure);
-    void testNonCell(Boxed, const TypeTestPlan&, B3::FrequentedBlock failure);
+    void test(Operand, const TypeTestPlan&, BlockEdge failure);
+    void testBoxed(Boxed, const TypeTestPlan&, BlockEdge failure);
+    void testNonCell(Boxed, const TypeTestPlan&, BlockEdge failure);
     enum class BoxedValue : uint8_t { IsNumber, MayBeNoNumber };
-    void testBoxedNumber(Boxed, BoxedValue, const TypeTestPlan&, B3::FrequentedBlock failure);
-    void testCell(CellPointer, const TypeTestPlan&, B3::FrequentedBlock failure);
-    void testWithMarkers(Operand, const TypeTestPlan&, B3::FrequentedBlock failure, NOESCAPE const Invocable<void()> auto& testPayload);
+    void testBoxedNumber(Boxed, BoxedValue, const TypeTestPlan&, BlockEdge failure);
+    void testCell(CellPointer, const TypeTestPlan&, BlockEdge failure);
+    void testWithMarkers(Operand, const TypeTestPlan&, BlockEdge failure, NOESCAPE const Invocable<void()> auto& testPayload);
 
     Condition isMarker(Operand);
     Condition isMarker(Operand, uint16_t primitive);
     Condition passesByMarker(Operand, const TypeTestPlan&, bool payloadPasses);
     Condition doublePasses(Number, const TypeTestPlan&);
-    // heldByForm: what the form that the integer was taken out of can hold.
     Condition integerPasses(Integer, const TypeTestPlan&, Range heldByForm = Range::full());
-    Condition isInRange(Integer, Range);
     Condition isExactIntegerIn(Number, Integer truncated, Range);
     Condition cellPasses(CellPointer, const TypeTestPlan&);
     Condition stringPasses(CellPointer, const TypeTestPlan&);
     Condition isCallableByCallData(CellPointer);
-    bool asksStubWhetherCallable() const { return m_shape != CodeShape::Fast; }
-    bool isDecidedByCallableStub(const TypeTestPlan&) const;
     std::optional<BuiltinID> onlyBuiltinThatPasses(const TypeTestPlan&) const;
-    std::optional<FunctionID> functionDecidedByClosureStub(const TypeTestPlan&);
-    Condition isCallableByStub(LValue cellOrOtherValue);
-    Condition isOneOfLiteralStringWords(LiteralStringWord, const TypeTestPlan&);
 
+    TypeTestPlansKeptAcrossUnits& whatIsKeptAcrossUnits();
+    TypeTestPlansKeptAcrossUnits::Plans& plansKeptAcrossUnits(Representation);
+
+    TypeTestPlansKeptAcrossUnits* m_plansKeptAcrossUnits { nullptr };
     std::array<PlanMap, numberOfEnumerators<Representation>> m_plans;
-    CodeShape m_shape { CodeShape::Fast };
+    bool m_casesAreBranchedOn { true };
+    bool m_nextCaseIsUnlikely { false };
+    bool m_isEmittingPerFunctionBranch { false };
 };
 
-void TypeTestEmitter::testCases(B3::FrequentedBlock failure, const auto& forEachCase)
+void TypeTestEmitter::testCases(BlockEdge failure, const auto& forEachCase)
 {
     unsigned numberOfCasesLeft = 0;
     forEachCase([&](const auto&) {
@@ -102,7 +115,8 @@ void TypeTestEmitter::testCases(B3::FrequentedBlock failure, const auto& forEach
             return;
         }
         LBasicBlock nextCase = newBlock();
-        m_out.branch(emitTest().value(), normalEdge(continuation), normalEdge(nextCase));
+        Condition passes = emitTest();
+        m_out.branch(passes.value(), normalEdge(continuation), std::exchange(m_nextCaseIsUnlikely, false) ? unlikelyEdge(nextCase) : normalEdge(nextCase));
         m_out.appendTo(nextCase);
     });
     if (continuation) {

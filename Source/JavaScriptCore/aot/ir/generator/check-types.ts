@@ -17,7 +17,10 @@ import {
   entriesOf,
   fieldsOf,
   idKindsWithRoles,
+  bitsInNarrowFlagWord,
+  bitsInWideFlagWord,
   innermostKindOf,
+  isWideFlagWord,
   nameOf,
   recordsOf,
   wireMembersOf,
@@ -25,7 +28,6 @@ import {
 } from "./model.ts";
 import { compareLocations, type ErrorList, type Location } from "./source.ts";
 
-const maxFlagWordMembers = 32;
 const maxHeaps = 32;
 const maxRecordFields = 22;
 const headerRecordName = "Header";
@@ -133,6 +135,7 @@ function checkEnums(schema: Schema, errors: ErrorList): void {
     const description = `${type.isFlags ? "flag word" : "enum"} ${type.name}`;
     if (type.members.length === 0) errors.add(type.location, `${description} has no members`);
     checkUniqueNames(type.members, type.name, errors);
+    const maxFlagWordMembers = type.isAbi ? bitsInWideFlagWord : bitsInNarrowFlagWord;
     if (type.isFlags && type.members.length > maxFlagWordMembers) {
       errors.add(type.location, `${description} has more than ${maxFlagWordMembers} members`);
     }
@@ -375,11 +378,42 @@ function checkRoles(schema: Schema, errors: ErrorList): void {
   });
 }
 
+function holdsWideFlagWord(kind: Kind): boolean {
+  const inner = innermostKindOf(kind);
+  if (inner.tag === "Flags") return isWideFlagWord(inner.type);
+  return inner.tag === "Record" && inner.record.fields.some(field => holdsWideFlagWord(field.kind));
+}
+
+function checkWideFlagWords(schema: Schema, errors: ErrorList): void {
+  const sentence = "a flag word of more than 32 members stands in abi records alone";
+  forEachField(schema, (type, field) => {
+    if (!holdsWideFlagWord(field.kind)) return;
+    if (formOf(type) !== "abi" || field.kind !== innermostKindOf(field.kind)) {
+      errors.add(field.location, `${describeField(type, field)}: ${sentence}`);
+    }
+  });
+  for (const entry of entriesOf(schema)) {
+    for (const parameter of entry.parameters) {
+      if (parameter.tag === "Payload" && holdsWideFlagWord(parameter.kind)) {
+        errors.add(entry.location, `${entry.name}: ${sentence}`);
+      }
+    }
+  }
+  for (const type of [...schema.enums, ...schema.flagWords]) {
+    for (const column of type.columns) {
+      if (column.kind.tag === "Flags" && isWideFlagWord(column.kind.type)) {
+        errors.add(type.location, `${type.name}: ${sentence}`);
+      }
+    }
+  }
+}
+
 function abiSizeOf(field: Field): number {
   const { kind } = field;
   let size = 4;
   if (kind.tag === "Scalar" && kind.scalar === "UInt8") size = 1;
   else if (kind.tag === "Scalar" && (kind.scalar === "UInt64" || kind.scalar === "Double")) size = 8;
+  else if (kind.tag === "Flags" && isWideFlagWord(kind.type)) size = 8;
   else if (kind.tag === "Record" && kind.record.abiLayout !== null) size = kind.record.abiLayout.size;
   return size * (field.arrayLength ?? 1);
 }
@@ -448,6 +482,7 @@ export function checkTypes(schema: Schema, errors: ErrorList): void {
   for (const type of schema.types) checkRecordShape(type, errors);
   forEachField(schema, (type, field) => checkFieldKinds(type, field, errors));
   checkOptionalFields(schema, errors);
+  checkWideFlagWords(schema, errors);
   checkSpans(schema, errors);
   checkSortedFields(schema, errors);
   checkRoles(schema, errors);

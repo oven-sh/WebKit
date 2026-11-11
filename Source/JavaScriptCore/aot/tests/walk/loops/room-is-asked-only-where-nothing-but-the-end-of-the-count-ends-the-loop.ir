@@ -1,0 +1,81 @@
+# nothing but the end of the count may end the loop, and nothing in the turns but the stores may touch the list: else the room of turns that do not come would be paid and kept
+# function fillByCalls(n, next) { const list = []; for (let i = 0; i < n; i++) list[i] = next(i); return list; }
+# function fillWithWhatMayNotBeThere(n, held) { const list = []; for (let i = 0; i < n; i++) list[i] = held.word; return list; }
+# function fillAndCut(n) { const list = []; for (let i = 0; i < n; i++) { list[list.length] = i; list.length = 0; } return list; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: ReserveArrayCapacity
+# RUN(NAME): walk f2 mechanisms=all
+# NAME-LABEL: code f2:Body
+# NAME-NOT: ReserveArrayCapacity
+# RUN(CUT): walk f3 mechanisms=all
+# CUT-LABEL: code f3:Body
+# CUT-NOT: ReserveArrayCapacity
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f3
+    v7 = Call v1, -, v6
+    Return v7
+}
+function f1 name="fillByCalls" module=m0 length=2 thisType={type=anything} parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    v2 = NewArray contents=number
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Call v1, -, v4
+    ElemSet v2, v4, v7
+    v9 = Increment v4
+    Jump -> next b1(v9)
+  b3():
+    Return v2
+}
+function f2 name="fillWithWhatMayNotBeThere" module=m0 length=2 thisType={type=anything} parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v1 key="word"
+    ElemSet v2, v4, v7
+    v9 = Increment v4
+    Jump -> next b1(v9)
+  b3():
+    Return v2
+}
+function f3 name="fillAndCut" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewArray contents=number
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = PropGet v1 key="length"
+    ElemSet v1, v6, v3
+    v8 = Integer
+    PropSet v1, v8 key="length"
+    v10 = Increment v3
+    Jump -> next b1(v10)
+  b3():
+    Return v1
+}

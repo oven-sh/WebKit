@@ -1,0 +1,114 @@
+# Under the proofs word the key is searched for again in front of a store through a place kept in a map, and where the store's own guard lets it through the two places must be one.
+# function count(k, n) { if (typeof k === "string" && (n | 0) === n) { const m = new Map(); for (let i = 0; i < n; i++) m.set(k, m.get(k) + 1); return m; } }
+# As built nothing changes: one search.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = FindKeyInMap
+# CHECK-NOT: = FindKeyInMap
+# CHECK: = TryPutValueAtPlaceInMap
+# CHECK-NOT: source=RememberedFact
+# RUN(HELD): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# HELD-LABEL: code f1:Body
+# HELD: [[place]]: {{*}} = FindKeyInMap
+# HELD: [[again]]: {{*}} = FindKeyInMap
+# HELD: = TryPutValueAtPlaceInMap {{*}}, [[place]],
+# HELD: = StrictEq [[again]], [[place]]
+# HELD: source=RememberedFact
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="count" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b6()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b6()
+  b2(v5):
+    v6 = Builtin builtin=Map
+    v7 = Construct v6 calleeName="Map"
+    v8 = Integer
+    Jump -> next b3(v8)
+  b3(v9):
+    LoopHint
+    v11 = Less v9, v5
+    Branch v11 -> taken b4(), notTaken b5()
+  b4():
+    v12 = PropGet v7 key="set"
+    v13 = PropGet v7 key="get"
+    v14 = Call v13, v7, v3 calleeKey="get"
+    v15 = Integer integer=1
+    v16 = Add v14, v15
+    v17 = Call v12, v7, v3, v16 calleeKey="set"
+    v18 = Increment v9
+    Jump -> next b3(v18)
+  b5():
+    Return v7
+  b6():
+    v19 = Undefined
+    Return v19
+}
+function f2 name="memo" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b8()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b8()
+  b2(v5):
+    v6 = Builtin builtin=Map
+    v7 = Construct v6 calleeName="Map"
+    v8 = Integer
+    Jump -> next b3(v8)
+  b3(v9):
+    LoopHint
+    v11 = Less v9, v5
+    Branch v11 -> taken b4(), notTaken b7()
+  b4():
+    v12 = PropGet v7 key="get"
+    v13 = Call v12, v7, v3 calleeKey="get"
+    v14 = Undefined
+    v15 = StrictEq v13, v14
+    Branch v15 -> taken b5(), notTaken b6()
+  b5():
+    v16 = PropGet v7 key="set"
+    v17 = Integer integer=1
+    v18 = Call v16, v7, v3, v17 calleeKey="set"
+    Jump -> next b6()
+  b6():
+    v19 = Increment v9
+    Jump -> next b3(v19)
+  b7():
+    Return v7
+  b8():
+    v20 = Undefined
+    Return v20
+}
+function f3 name="once" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Builtin builtin=Map
+    v4 = Construct v3 calleeName="Map"
+    v5 = PropGet v4 key="set"
+    v6 = PropGet v4 key="get"
+    v7 = Call v6, v4, v2 calleeKey="get"
+    v8 = Integer integer=1
+    v9 = Add v7, v8
+    v10 = Call v5, v4, v2, v9 calleeKey="set"
+    Return v4
+  b2():
+    v11 = Undefined
+    Return v11
+}

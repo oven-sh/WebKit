@@ -49,6 +49,7 @@ namespace WebKit {
 
 class IPCConnectionTester;
 class IPCStreamTester;
+class IPCTesterReceiver;
 struct TestParameter;
 
 // Main test interface for initiating various IPC test activities.
@@ -76,6 +77,7 @@ private:
     void releaseConnectionTester(IPCConnectionTesterIdentifier, CompletionHandler<void()>&&);
     void sendSameSemaphoreBack(IPC::Connection&, IPC::Semaphore&&);
     void sendSemaphoreBackAndSignalProtocol(IPC::Connection&, IPC::Semaphore&&);
+    void sendSemaphores(Vector<IPC::Semaphore>&&, CompletionHandler<void(uint64_t)>&&);
     void sendAsyncMessageToReceiver(IPC::Connection&, uint32_t);
     void sendAsyncMessageToReceiverRequestingReply(IPC::Connection&, uint32_t value, CompletionHandler<void(uint32_t, bool)>&&);
     void sendDeferredReplyMessageToReceiver(IPC::Connection&, uint32_t value, CompletionHandler<void(uint64_t, bool)>&&);
@@ -87,6 +89,9 @@ private:
     void emptyMessage() { }
     void emptyMessageWithReply(CompletionHandler<void(uint64_t)>&&);
     void checkTestParameter(IPC::Connection&, TestParameter);
+    void sendSwiftTypesMessagesToReceiver(IPC::Connection&, CompletionHandler<void(String&&)>&&);
+    void addReceiverForSwiftTypesTesting(IPC::Connection&, CompletionHandler<void(bool)>&&);
+    void removeReceiverForSwiftTypesTesting(IPC::Connection&, CompletionHandler<void()>&&);
     void stopIfNeeded();
 
     RefPtr<WorkQueue> m_testQueue;
@@ -97,6 +102,15 @@ private:
 
     using ConnectionTesterMap = HashMap<IPCConnectionTesterIdentifier, IPC::ScopedActiveMessageReceiveQueue<IPCConnectionTester>>;
     ConnectionTesterMap m_connectionTesters;
+
+    // Receives the messages that the IPC testing API sends to IPCTesterReceiver in this process, which,
+    // unlike WebContent's, can be sent malformed messages without crashing.
+#if ENABLE(IPC_TESTING_SWIFT)
+    std::unique_ptr<IPCTesterReceiver> m_receiverForSwiftTypesTesting;
+#else
+    RefPtr<IPCTesterReceiver> m_receiverForSwiftTypesTesting;
+#endif
+    RefPtr<IPC::MessageReceiver> m_threadSafeReceiverForSwiftTypesTesting;
 };
 
 #endif

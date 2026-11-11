@@ -40,10 +40,10 @@ class SharedBuffer;
 class ISOBox {
     WTF_MAKE_TZONE_ALLOCATED(ISOBox);
 public:
-    WEBCORE_EXPORT ISOBox();
-    WEBCORE_EXPORT ISOBox(FourCC boxType);
-    WEBCORE_EXPORT ISOBox(const ISOBox&);
-    WEBCORE_EXPORT ISOBox(ISOBox&&);
+    NODELETE WEBCORE_EXPORT ISOBox();
+    NODELETE WEBCORE_EXPORT ISOBox(FourCC boxType);
+    NODELETE WEBCORE_EXPORT ISOBox(const ISOBox&);
+    NODELETE WEBCORE_EXPORT ISOBox(ISOBox&&);
     WEBCORE_EXPORT virtual ~ISOBox();
 
     ISOBox& operator=(const ISOBox&) = default;
@@ -53,7 +53,7 @@ public:
     using MutableByteView = std::span<uint8_t>;
 
     using PeekResult = std::optional<std::pair<FourCC, uint64_t>>;
-    static PeekResult LEGACY_NODELETE peekBox(const ByteView&, unsigned offset);
+    NODELETE static PeekResult peekBox(const ByteView&, unsigned offset);
     static constexpr size_t minimumBoxSize() { return 2 * sizeof(uint32_t); }
 
     WEBCORE_EXPORT bool read(const ByteView&);
@@ -136,10 +136,10 @@ protected:
 
 class ISOFullBox : public ISOBox {
 public:
-    WEBCORE_EXPORT ISOFullBox();
-    WEBCORE_EXPORT ISOFullBox(FourCC boxType, uint8_t version, uint32_t flags);
-    WEBCORE_EXPORT ISOFullBox(const ISOFullBox&);
-    WEBCORE_EXPORT ISOFullBox(ISOFullBox&&);
+    NODELETE WEBCORE_EXPORT ISOFullBox();
+    NODELETE WEBCORE_EXPORT ISOFullBox(FourCC boxType, uint8_t version, uint32_t flags);
+    NODELETE WEBCORE_EXPORT ISOFullBox(const ISOFullBox&);
+    NODELETE WEBCORE_EXPORT ISOFullBox(ISOFullBox&&);
 
     uint8_t version() const { return m_version; }
     void setVersion(uint8_t version) { m_version = version; }
@@ -150,7 +150,7 @@ public:
 protected:
     uint64_t partialSize() const override { return ISOBox::partialSize() + 4; }
     bool parse(const ByteView&, unsigned& offset) override;
-    bool LEGACY_NODELETE parseVersionAndFlags(const ByteView&, unsigned& offset);
+    NODELETE bool parseVersionAndFlags(const ByteView&, unsigned& offset);
     bool pack(MutableByteView&, unsigned& offset) const override;
 
     uint8_t m_version { 0 };

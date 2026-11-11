@@ -247,6 +247,53 @@ static void testValidateKnownDereferenceableBytes()
     CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
         return graph.root->appendNew<Value>(graph.proc, Add, Origin(), graph.appendPointer(), graph.appendConstant(pointerType()));
     }) == std::nullopt);
+    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
+        return graph.root->appendNew<MemoryValue>(graph.proc, Load, pointerType(), Origin(), graph.appendPointer());
+    }) == std::nullopt);
+    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
+        Value* loaded = graph.root->appendNew<MemoryValue>(graph.proc, Load, pointerType(), Origin(), graph.appendPointer());
+        Value* other = graph.root->appendNew<Value>(graph.proc, Add, Origin(), graph.appendPointer(), graph.appendConstant(pointerType()));
+        return graph.root->appendNew<Value>(graph.proc, Select, Origin(), loaded, loaded, other);
+    }) == std::nullopt);
+
+    auto appendScaledWord = [](ValidationTestGraph& graph, Value* word) {
+        Value* scaled = graph.root->appendNew<Value>(graph.proc, Shl, Origin(), graph.root->appendNew<Value>(graph.proc, ZExt32, Origin(), word), graph.appendConstant(Int32));
+        return graph.root->appendNew<Value>(graph.proc, Add, Origin(), graph.appendPointer(), scaled);
+    };
+    CHECK(validateKnownDereferenceableBytes([&](ValidationTestGraph& graph) {
+        return appendScaledWord(graph, graph.root->appendNew<MemoryValue>(graph.proc, Load, Int32, Origin(), graph.appendPointer()));
+    }) == std::nullopt);
+    CHECK(validateKnownDereferenceableBytes([&](ValidationTestGraph& graph) {
+        return appendScaledWord(graph, graph.appendConstant(Int32));
+    }) == ValidationRule::KnownDereferenceableBytes);
+    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
+        Value* scaled = graph.root->appendNew<Value>(graph.proc, Shl, Origin(), graph.appendPointer(), graph.appendConstant(Int32));
+        return graph.root->appendNew<Value>(graph.proc, Add, Origin(), graph.appendPointer(), scaled);
+    }) == ValidationRule::KnownDereferenceableBytes);
+
+    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
+        Value* loaded = graph.root->appendNew<MemoryValue>(graph.proc, Load, pointerType(), Origin(), graph.appendPointer());
+        return graph.root->appendNew<Value>(graph.proc, Add, Origin(), loaded, graph.appendConstant(pointerType()));
+    }) == ValidationRule::KnownDereferenceableBytes);
+    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
+        return graph.root->appendNew<Value>(graph.proc, Add, Origin(), graph.appendPointer(), graph.appendPointer());
+    }) == ValidationRule::KnownDereferenceableBytes);
+    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
+        return graph.root->appendNew<Value>(graph.proc, Add, Origin(), graph.appendConstant(pointerType()), graph.appendConstant(pointerType()));
+    }) == ValidationRule::KnownDereferenceableBytes);
+    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
+        return graph.root->appendNew<Value>(graph.proc, Sub, Origin(), graph.appendPointer(), graph.appendConstant(pointerType()));
+    }) == ValidationRule::KnownDereferenceableBytes);
+    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
+        return graph.root->appendNew<Value>(graph.proc, Select, Origin(), graph.appendConstant(pointerType()), graph.appendPointer(), graph.appendPointer());
+    }) == ValidationRule::KnownDereferenceableBytes);
+    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
+        return graph.root->appendNew<Value>(graph.proc, Select, Origin(), graph.appendPointer(), graph.appendConstant(pointerType()), graph.appendPointer());
+    }) == ValidationRule::KnownDereferenceableBytes);
+    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
+        Value* sum = graph.root->appendNew<Value>(graph.proc, Add, Origin(), graph.appendPointer(), graph.appendPointer());
+        return graph.root->appendNew<Value>(graph.proc, Select, Origin(), graph.appendPointer(), graph.appendPointer(), sum);
+    }) == ValidationRule::KnownDereferenceableBytes);
 
 #if !ASSERT_ENABLED
     CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) { return graph.appendPhi(Int32); }) == ValidationRule::KnownDereferenceableBytes);

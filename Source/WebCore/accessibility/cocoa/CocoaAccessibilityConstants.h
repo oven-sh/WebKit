@@ -184,6 +184,7 @@
 #define NSAccessibilityFormValidationUnannouncedTextKey @"AXFormValidationUnannouncedText"
 #define NSAccessibilityFormValidationErrorFieldCountKey @"AXFormValidationErrorFieldCount"
 #define NSAccessibilityFormValidationTargetIsSubmitterKey @"AXFormValidationTargetIsSubmitter"
+#define NSAccessibilityFormValidationFieldsKey @"AXFormValidationFields"
 #define NSAccessibilityErrorMessageForAttribute @"AXErrorMessageFor"
 #define NSAccessibilityExpandedTextValueAttribute @"AXExpandedTextValue"
 #define NSAccessibilityFlowFromAttribute @"AXFlowFrom"
@@ -289,6 +290,7 @@
 #define NSAccessibilityTextMarkerDebugDescriptionAttribute @"_AXTextMarkerDebugDescription"
 #define NSAccessibilityTextMarkerForIndexAttribute @"AXTextMarkerForIndex"
 #define NSAccessibilityTextMarkerForPositionAttribute @"AXTextMarkerForPosition" // FIXME: should be AXTextMarkerForPoint.
+#define NSAccessibilityTextMarkerForRelativeIndexAttribute @"AXTextMarkerForRelativeIndex"
 #define NSAccessibilityTextMarkerIsNullParameterizedAttribute @"AXTextMarkerIsNull"
 #define NSAccessibilityTextMarkerIsValidAttribute @"AXTextMarkerIsValid"
 #define NSAccessibilityTextMarkerRangeDescriptionAttribute @"_AXTextMarkerRangeDescription"

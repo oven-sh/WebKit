@@ -362,9 +362,25 @@ void Connection::platformOpen()
     });
 }
 
+auto Connection::platformCreateOutgoingMessage(UniqueRef<Encoder>&& encoder) -> std::optional<OutgoingMessage>
+{
+    return WTF::move(encoder);
+}
+
 bool Connection::platformCanSendOutgoingMessages() const
 {
-    return true;
+    return m_isConnected;
+}
+
+auto Connection::platformSendOutgoingMessage(OutgoingMessage& message) -> PlatformSendResult
+{
+    sendOutgoingMessage(WTF::move(message));
+    return PlatformSendResult::Done;
+}
+
+bool Connection::platformHasMessageInFlight() const
+{
+    return false;
 }
 
 bool Connection::sendOutgoingMessage(UniqueRef<Encoder>&& encoder)

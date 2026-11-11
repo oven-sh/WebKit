@@ -32,6 +32,7 @@
 
 #import <pal/spi/ios/UIKitSPI.h>
 #import <wtf/SoftLinking.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 @class CUICatalog;
 
@@ -44,7 +45,6 @@ SOFT_LINK_CONSTANT_FOR_HEADER(PAL, UIKit, UIApplicationDidBecomeActiveNotificati
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, UIKit, UIApplicationDidEnterBackgroundNotification, NSNotificationName)
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, UIKit, UIContentSizeCategoryDidChangeNotification, NSNotificationName)
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, UIKit, UIApplicationDidChangeStatusBarOrientationNotification, NSNotificationName)
-SOFT_LINK_CONSTANT_FOR_HEADER(PAL, UIKit, UIContentSizeCategoryLarge, UIContentSizeCategory)
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, UIKit, UIFontTextStyleBody, UIFontTextStyle)
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, UIKit, UIFontTextStyleCallout, UIFontTextStyle)
 SOFT_LINK_CONSTANT_FOR_HEADER(PAL, UIKit, UIPasteboardNameGeneral, UIPasteboardName)
@@ -96,6 +96,9 @@ SOFT_LINK_FUNCTION_FOR_HEADER(PAL, UIKit, UIGraphicsPushContext, void, (CGContex
 #define UIGraphicsPushContext PAL::softLink_UIKit_UIGraphicsPushContext
 SOFT_LINK_FUNCTION_FOR_HEADER(PAL, UIKit, UIImagePNGRepresentation, NSData *, (UIImage *image), (image))
 #define UIImagePNGRepresentation PAL::softLink_UIKit_UIImagePNGRepresentation
+
+SPECIALIZE_OBJC_TYPE_TRAITS(UIColor, PAL::getUIColorClassSingleton())
+SPECIALIZE_OBJC_TYPE_TRAITS(UIImageSymbolConfiguration, PAL::getUIImageSymbolConfigurationClassSingleton())
 
 #endif
 

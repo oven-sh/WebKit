@@ -1,0 +1,274 @@
+# `$isPlainHeirOf(object, Stream)` IN A PROGRAM THAT MAKES OBJECTS OF THE HEIRS ALONE. The yes also says `object instanceof Stream`, so the count holds two guards of Stream's own side,
+# and those count from the start until the guards of Stream begin: with its first own object. A server makes requests and never a plain Readable: its door said no for good.
+# So the guards of a constructor function are begun in front of the question, as they are in front of reads off the function.
+# function Stream(level) { this.level = level; this.state = "s"; }
+# Stream.prototype.on = function () { return "on of Stream"; };                            a function of the library
+# function Message(level) { Stream.call(this, level); this.more = 1; }
+# Object.setPrototypeOf(Message.prototype, Stream.prototype);
+# function Leaf(level) { Message.call(this, level); }
+# Object.setPrototypeOf(Leaf.prototype, Message.prototype);
+# function road(object) { if ($isPlainHeirOf(object, Stream)) return "short " + object.level + object.state + ($findsDeclaredMember(object, "on", Stream) ? " on" : " -"); return "full " + object.level + object.state; }
+# print(road(new Message(5)), road(new Leaf(3)));
+# change(Stream, Message);
+# print(road(new Message(6)), road(new Leaf(4)));
+# (Found by reading, borne out on a real server.)
+# f4 = road
+# OPTIONS: mechanisms=all
+# RUN(FORM): walk f4
+# FORM: = BeginMemberGuards layout=L0
+# FORM-NEXT: = IsPlainInstanceOf v0 {{*}}receivers=[L0, L1, L2]
+# RUN(NOTHING): run-in-shell change = function () { };
+# NOTHING: short 5s on short 3s on
+# NOTHING-NEXT: short 6s on short 4s on
+# NOTHING-NEXT: exited with 0
+# RUN(HASINSTANCE): run-in-shell change = function (Stream) { Object.defineProperty(Stream, Symbol.hasInstance, { value() { return false; } }); };
+# HASINSTANCE: short 5s on short 3s on
+# HASINSTANCE-NEXT: full 6s full 4s
+# RUN(PROTOTYPE): run-in-shell change = function (Stream) { Stream.prototype = { }; };
+# PROTOTYPE: short 5s on short 3s on
+# PROTOTYPE-NEXT: full 6s full 4s
+# RUN(ABOVE): run-in-shell change = function (Stream) { Object.defineProperty(Stream.prototype, "state", { get() { return "above"; }, set(value) { }, configurable: true }); };
+# ABOVE: short 5s on short 3s on
+# ABOVE-NEXT: full 6above full 4above
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Stream" module=m0 constructor=f1 fields=[{key="level" declared={type=anything} flags=[IsRequired]}, {key="state" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L1 kind=Instance name="Message" module=m0 position=127 base=L0 constructor=f2 fields=[{key="level" declared={type=anything}}, {key="state" declared={type=anything}}, {key="more" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=3
+layout L2 kind=Instance name="Leaf" module=m0 position=256 base=L1 constructor=f3 fields=[{key="level" declared={type=anything}}, {key="state" declared={type=anything}}, {key="more" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=3
+data d0 root=Array{contents=anything} module=m2
+data d1 root=Array{contents=anything} module=m2
+variable g0 name="Stream" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Message" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = GetModuleVariable variable=g0 @65
+    v5 = PropGet v4 key="prototype" @65
+    v6 = NewClosure function=f5 @87
+    PropSet v5, v6 key="on" @72
+    v8 = Builtin builtin=Object @196
+    v9 = Builtin builtin=ObjectSetPrototypeOf @196
+    v10 = GetModuleVariable variable=g1 @218
+    v11 = PropGet v10 key="prototype" @218
+    v12 = GetModuleVariable variable=g0 @237
+    v13 = PropGet v12 key="prototype" @237
+    v14 = Call v9, v8, v11, v13 calleeName="Object.setPrototypeOf" @203
+    v15 = Builtin builtin=Object @308
+    v16 = Builtin builtin=ObjectSetPrototypeOf @308
+    v17 = PropGet v1 key="prototype" @330
+    v18 = GetModuleVariable variable=g1 @346
+    v19 = PropGet v18 key="prototype" @346
+    v20 = Call v16, v15, v17, v19 calleeName="Object.setPrototypeOf" @315
+    v21 = Builtin builtin=GlobalThis @556
+    v22 = PropGet v21 key="print" [isFreeName] @556
+    v23 = GetModuleVariable variable=g1 @571
+    v24 = Integer integer=5 @579
+    v25 = Construct v23, -, v24 calleeName="Message" @571
+    v26 = Call v3, -, v25 calleeName="road" @562
+    v27 = Integer integer=3 @598
+    v28 = Construct v1, -, v27 calleeName="Leaf" @593
+    v29 = Call v3, -, v28 calleeName="road" @584
+    v30 = Call v22, -, v26, v29 calleeName="print" @556
+    v31 = Builtin builtin=GlobalThis @604
+    v32 = PropGet v31 key="change" [isFreeName] @604
+    v33 = GetModuleVariable variable=g0 @611
+    v34 = GetModuleVariable variable=g1 @619
+    v35 = Call v32, -, v33, v34 calleeName="change" @604
+    v36 = Builtin builtin=GlobalThis @629
+    v37 = PropGet v36 key="print" [isFreeName] @629
+    v38 = GetModuleVariable variable=g1 @644
+    v39 = Integer integer=6 @652
+    v40 = Construct v38, -, v39 calleeName="Message" @644
+    v41 = Call v3, -, v40 calleeName="road" @635
+    v42 = Integer integer=4 @671
+    v43 = Construct v1, -, v42 calleeName="Leaf" @666
+    v44 = Call v3, -, v43 calleeName="road" @657
+    v45 = Call v37, -, v41, v44 calleeName="print" @629
+    v46 = Undefined @629
+    Return v46 @629
+}
+function f1 name="Stream" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="level" @25
+    v3 = String string="s" @58
+    PropSet v0, v3 key="state" @45
+    v5 = Undefined @45
+    Return v5 @45
+}
+function f2 name="Message" module=m0 position=127 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    v2 = GetModuleVariable variable=g0 @153
+    v3 = PropGet v2 key="call" @153
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Stream.call" @160
+    v5 = Integer integer=1 @191
+    PropSet v0, v5 key="more" @179
+    v7 = Undefined @179
+    Return v7 @179
+}
+function f3 name="Leaf" module=m0 position=256 flags=[HasThis, HasExplicitName] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2, v1: anything):
+    v2 = GetModuleVariable variable=g1 @279
+    v3 = PropGet v2 key="call" @279
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Message.call" @287
+    v5 = Undefined @279
+    Return v5 @279
+}
+function f4 name="road" module=m3 position=366 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @394
+    v2 = Undefined @394
+    v3 = GetModuleVariable variable=g0 @409
+    v4 = IsPlainHeirOf v0, v3 @394
+    v5 = ToBoolean v4 @394
+    Branch v5 -> taken b1(| 0), notTaken b5(| 0) @394
+  b1(v6):
+    v7 = String string="short " @425
+    v8 = PropGet v0 key="level" @436
+    v9 = Add v7, v8 @436
+    v10 = PropGet v0 key="state" @451
+    v11 = Add v9, v10 @451
+    v12 = Undefined @467
+    v13 = Undefined @467
+    v14 = GetModuleVariable variable=g0 @483
+    v15 = FindsDeclaredMember v0, v14 key="on" @467
+    v16 = ToBoolean v15 @467
+    Branch v16 -> taken b2(| 0), notTaken b3(| 0) @467
+  b2(v17):
+    v18 = String string=" on" @493
+    Jump -> next b4(v18) @493
+  b3(v19):
+    v20 = String string=" -" @501
+    Jump -> next b4(v20) @501
+  b4(v21):
+    v22 = Add v11, v21 @501
+    Return v22 @501
+  b5(v23):
+    v24 = String string="full " @515
+    v25 = PropGet v0 key="level" @525
+    v26 = Add v24, v25 @525
+    v27 = PropGet v0 key="state" @540
+    v28 = Add v26, v27 @540
+    Return v28 @540
+}
+function f5 module=m3 position=87 role=Library thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = String string="on of Stream" @108
+    Return v0 @108
+}
+function f6 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f7 name="call" module=m2 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):
+    v8 = CreateUnmappedArguments v1, v7, v2, v3, v4, v5, v6 @0
+    v9 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @194
+    v10 = StrictEq v0, v9 @194
+    Branch v10 -> taken b2(), notTaken b1() @194
+  b1():
+    v11 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @229
+    v12 = StrictEq v0, v11 @229
+    Branch v12 -> taken b2(), notTaken b6() @229
+  b2():
+    v13 = Data data=d0 @288
+    v14 = Integer integer=1 @313
+    v15 = Convert v14 declared={type=number} @313
+    Jump -> next b3(v15) @309
+  b3(v16: number):
+    LoopHint @309
+    v18 = Less v16, v1 @320
+    Branch v18 -> taken b4(), notTaken b5() @320
+  b4():
+    v19 = Integer integer=1 @392
+    v20 = Sub v16, v19 @392
+    v21 = ElemGet v8, v16 @395
+    v22 = Convert v13 declared={type=object flags=[IsFromCompiler, IsClaim]} @355
+    ElemDefine v22, v20, v21 @355
+    v24 = Increment v16 @338
+    v25 = Convert v24 declared={type=number} @338
+    Jump -> next b3(v25) @338
+  b5():
+    v26 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @433
+    v27 = Call v26, v0, v2, v13 [isDoneInPlace] @433
+    ReturnCall v27 @433
+  b6():
+    Switch v1 cases=[0, 1, 2, 3, 4, 5] -> case b7(), case b7(), case b8(), case b9(), case b10(), case b11(), otherwise b12() @548
+  b7():
+    v28 = Call v0, v2 @578
+    ReturnCall v28 @578
+  b8():
+    v29 = Call v0, v2, v3 @631
+    ReturnCall v29 @631
+  b9():
+    v30 = Call v0, v2, v3, v4 @698
+    ReturnCall v30 @698
+  b10():
+    v31 = Call v0, v2, v3, v4, v5 @779
+    ReturnCall v31 @779
+  b11():
+    v32 = Call v0, v2, v3, v4, v5, v6 @874
+    ReturnCall v32 @874
+  b12():
+    v33 = Data data=d1 @990
+    v34 = Integer integer=1 @1011
+    v35 = Convert v34 declared={type=number} @1011
+    Jump -> next b13(v35) @1007
+  b13(v36: number):
+    LoopHint @1007
+    v38 = Less v36, v1 @1018
+    Branch v38 -> taken b14(), notTaken b15() @1018
+  b14():
+    v39 = Integer integer=1 @1085
+    v40 = Sub v36, v39 @1085
+    v41 = ElemGet v8, v36 @1088
+    v42 = Convert v33 declared={type=object flags=[IsFromCompiler, IsClaim]} @1049
+    ElemDefine v42, v40, v41 @1049
+    v44 = Increment v36 @1036
+    v45 = Convert v44 declared={type=number} @1036
+    Jump -> next b13(v45) @1036
+  b15():
+    v46 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1115
+    v47 = Call v46, v0, v2, v33 [isDoneInPlace] @1115
+    ReturnCall v47 @1115
+}
+function f8 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1248
+    Branch v4 -> taken b2(), notTaken b1() @1248
+  b1():
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1283
+    Branch v6 -> taken b2(), notTaken b3() @1283
+  b2():
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    ReturnCall v8 @1333
+  b3():
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
+}
+runtimefunction id=FunctionPrototypeApply function=f8
+runtimefunction id=FunctionPrototypeCall function=f7
+runtimefunction id=ArrayIteratorPrototypeNext function=f6 visibility=Private

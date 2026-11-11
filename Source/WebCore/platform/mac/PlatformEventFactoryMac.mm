@@ -101,11 +101,11 @@ DoublePoint pointForEvent(NSEvent *event, NSView *windowView)
     }
 }
 
-static MouseButton currentMouseButton()
+static std::expected<MouseButton, MouseButtonState> currentMouseButton()
 {
     NSUInteger pressedMouseButtons = [NSEvent pressedMouseButtons];
     if (!pressedMouseButtons)
-        return MouseButton::None;
+        return std::unexpected { MouseButtonState::None };
     if (pressedMouseButtons == 1 << 0)
         return MouseButton::Left;
     if (pressedMouseButtons == 1 << 1)
@@ -119,7 +119,7 @@ static MouseButton currentMouseButton()
     return MouseButton::Middle;
 }
 
-static MouseButton buttonFromButtonNumber(NSEvent *event)
+static std::expected<MouseButton, MouseButtonState> buttonFromButtonNumber(NSEvent *event)
 {
     // NSEvent.buttonNumber reports 0 for non-mouse events, so it would be wrong to map 0 to the left button.
     switch ([event buttonNumber]) {
@@ -132,11 +132,11 @@ static MouseButton buttonFromButtonNumber(NSEvent *event)
     case 4:
         return MouseButton::Forward;
     default:
-        return MouseButton::None;
+        return std::unexpected { MouseButtonState::None };
     }
 }
 
-MouseButton mouseButtonForEvent(NSEvent *event)
+std::expected<MouseButton, MouseButtonState> mouseButtonForEvent(NSEvent *event)
 {
     switch ([event type]) {
     case NSEventTypeLeftMouseDown:
@@ -156,7 +156,7 @@ MouseButton mouseButtonForEvent(NSEvent *event)
     case NSEventTypePressure:
         return currentMouseButton();
     default:
-        return MouseButton::None;
+        return std::unexpected { MouseButtonState::None };
     }
 }
 
@@ -206,7 +206,7 @@ int clickCountForEvent(NSEvent *event)
     }
 }
 
-static PlatformWheelEventPhase LEGACY_NODELETE phaseFromNSEventPhase(NSEventPhase eventPhase)
+NODELETE static PlatformWheelEventPhase phaseFromNSEventPhase(NSEventPhase eventPhase)
 {
     switch (eventPhase) {
     case NSEventPhaseNone:
@@ -761,6 +761,11 @@ public:
         m_menuTypeForEvent = typeForEvent(event);
     }
 };
+
+bool PlatformMouseEvent::isContextMenuEvent() const
+{
+    return static_cast<NSMenuType>(m_menuTypeForEvent) == NSMenuTypeContextMenu;
+}
 
 PlatformMouseEvent PlatformEventFactory::createPlatformMouseEvent(NSEvent *event, NSEvent *correspondingPressureEvent, NSView *windowView)
 {

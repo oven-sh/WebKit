@@ -14,6 +14,7 @@
 #include "PropertyOffset.h"
 #include <optional>
 #include <wtf/Noncopyable.h>
+#include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC {
 
@@ -49,6 +50,7 @@ enum class PropertyAnswerKind : uint8_t {
     FieldRemoval,
     NothingToRemove,
     ArrayLength,
+    LastIndexOfRegExp,
     TypedArrayLength,
     StringLength,
     ClosureLength,
@@ -72,6 +74,8 @@ struct PropertyAnswer {
     bool absentIsUndefined { false };
     bool emptySlotMayBeUndefined { false };
     bool undefinedNeedsNoStorage { false };
+    bool fieldTakesAnyValue { false };
+    bool readsByteOffset { false };
     std::optional<std::pair<uint32_t, uint32_t>> orderWords { };
     bool didFlatten { false };
     PropertyOffset offset { invalidOffset };
@@ -83,10 +87,10 @@ struct PropertyAnswer {
     SlotData variable { };
     uint32_t customAccessor { 0 };
     JSValue constant { };
-    // Of an access that is not cacheable because the receiver is a proxy: what the trap is handed as the key.
     JSCell* keyForTrap { nullptr };
     uint16_t columnOfNameForTrap { 0 };
     ChainObjects changeableObjects { };
+    int16_t wordOfInheritedField { 0 };
 };
 
 struct ReadQuery {
@@ -105,9 +109,9 @@ struct StoreQuery {
     UniquedStringImpl* uid;
     const PutPropertySlot& slot;
     PutMode mode;
+    std::optional<uint32_t> orderWordBefore { };
 };
 
-// The deletion has been made and has succeeded.
 struct DeletionQuery {
     JSGlobalObject* globalObject;
     JSObject* base;
@@ -142,33 +146,43 @@ JSValue readThroughAnswer(JSGlobalObject*, JSValue base, const PropertyAnswer&);
 Structure* structureForPrimitive(JSGlobalObject*, JSValue primitive);
 constexpr bool isProxyType(JSType type) { return type == ProxyObjectType || type == GlobalProxyType; }
 bool isNeverCachedName(VM&, UniquedStringImpl*);
-// See PropertyCaches::prepareHoldersBeforeLookupsUnder().
-bool isPreparedBeforeLookups(VM&, UniquedStringImpl*);
-// Calls what the library has registered for the name, if anything, on the compiled object. May throw.
+bool isPreparedBeforeLookupsSlow(VM&, UniquedStringImpl* symbol);
+ALWAYS_INLINE bool isPreparedBeforeLookups(VM& vm, UniquedStringImpl* uid) { return uid->isSymbol() && isPreparedBeforeLookupsSlow(vm, uid); }
 void prepareForLookup(JSGlobalObject*, JSObject* compiledObject, UniquedStringImpl*);
-// The same for each field of the object, before its values are handed out one after the other.
 void prepareForWalk(JSGlobalObject*, JSObject*);
-// An operation of compiled code that names the property. Only the text of the library names one by such a symbol, and it finds there what the library keeps there: while one of these lives, the object is not asked.
 class LookByName {
     WTF_MAKE_NONCOPYABLE(LookByName);
 public:
-    LookByName(VM&, JSValue holder, UniquedStringImpl*);
-    ~LookByName();
+    ALWAYS_INLINE LookByName(VM& vm, JSValue holder, UniquedStringImpl* uid)
+    {
+        if (uid->isSymbol()) [[unlikely]]
+            begin(vm, holder, uid);
+    }
+
+    ALWAYS_INLINE ~LookByName()
+    {
+        if (m_caches) [[unlikely]]
+            end();
+    }
 
 private:
+    void begin(VM&, JSValue holder, UniquedStringImpl* symbol);
+    void end();
+
     PropertyCaches* m_caches { nullptr };
     JSCell* m_previous { nullptr };
+    UniquedStringImpl* m_previousSymbol { nullptr };
 };
 std::optional<PropertyOffset> findOffset(VM&, Structure*, UniquedStringImpl*, ChainWalkMode, unsigned& attributes);
 bool structureProvesOwnAbsence(VM&, JSCell* base, Structure*, UniquedStringImpl*, ChainWalkMode);
 bool hasOrdinaryDefineForName(VM&, JSCell* base, Structure*, UniquedStringImpl*);
 bool isHostObjectOverridingPut(Structure*);
+bool isWriteJudgedByWriter(Structure*, UniquedStringImpl*);
+void holdExtraPropertiesToStructureThatIsNamed(JSGlobalObject*, Object&, ASCIILiteral whatIsDoneHere);
 bool flattenOnce(VM&, JSObject*);
 bool flattenForListing(VM&, JSObject*);
 bool isLastAdditionOfRun(Structure* before, Structure* after, UniquedStringImpl*);
-// For an addition that leads from one Structure to the next. Zero: the storage out of line stays. Nothing: no stub makes the addition.
 std::optional<uint32_t> capacityOfStorageGrownByStub(VM&, Structure* before, Structure* after, PropertyOffset);
-bool slotAgreesWithStructures(VM&, const Slot&, SlotAccess, UniquedStringImpl*);
 
 } } // namespace JSC::AOT
 

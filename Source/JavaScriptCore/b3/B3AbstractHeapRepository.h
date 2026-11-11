@@ -169,6 +169,9 @@ namespace JSC::B3 {
     macro(JSSymbolTableObject_symbolTable, JSSymbolTableObject::offsetOfSymbolTable(), Mutability::Mutable) \
     FOR_EACH_JSWEBASSEMBLY_ABSTRACT_FIELD(macro) \
     macro(NativeExecutable_asString, NativeExecutable::offsetOfAsString(), Mutability::Mutable) \
+    macro(ProxyObject_handlerStructureID, ProxyObject::offsetOfHandlerStructureID(), Mutability::Mutable) \
+    macro(ProxyObject_handlerPrototypeStructureID, ProxyObject::offsetOfHandlerPrototypeStructureID(), Mutability::Mutable) \
+    macro(ProxyObject_handlerTrapsOffsetsCache, ProxyObject::offsetOfHandlerTrapsOffsetsCache(), Mutability::Mutable) \
     macro(RegExp_flags, RegExp::offsetOfFlags(), Mutability::Mutable) \
     macro(RegExp_minimumSize, RegExp::offsetOfMinimumSize(), Mutability::Mutable) \
     macro(RegExpObject_regExpAndFlags, RegExpObject::offsetOfRegExpAndFlags(), Mutability::Mutable) \
@@ -190,16 +193,20 @@ namespace JSC::B3 {
     macro(StringImpl_data, StringImpl::dataOffset(), Mutability::Immutable) \
     macro(StringImpl_hashAndFlags, StringImpl::flagsOffset(), Mutability::Mutable) \
     macro(StringImpl_length, StringImpl::lengthMemoryOffset(), Mutability::Immutable) \
+    macro(BrandedStructure_brand, BrandedStructure::offsetOfBrand(), Mutability::Immutable) \
+    macro(BrandedStructure_parentBrand, BrandedStructure::offsetOfParentBrand(), Mutability::Immutable) \
     macro(Structure_bitField, Structure::bitFieldOffset(), Mutability::Mutable) \
     macro(Structure_classInfo, Structure::classInfoOffset(), Mutability::Immutable) \
     macro(Structure_realm, Structure::realmOffset(), Mutability::Immutable) \
     macro(Structure_indexingModeIncludingHistory, Structure::indexingModeIncludingHistoryOffset(), Mutability::Immutable) \
     macro(Structure_inlineCapacity, Structure::inlineCapacityOffset(), Mutability::Immutable) \
+    macro(Structure_maxOffset, Structure::maxOffsetOffset(), Mutability::Mutable) \
     macro(Structure_outOfLineTypeFlags, Structure::outOfLineTypeFlagsOffset(), Mutability::Immutable) \
     macro(Structure_previousOrRareData, Structure::previousOrRareDataOffset(), Mutability::Mutable) \
     macro(Structure_propertyHash, Structure::propertyHashOffset(), Mutability::Mutable) \
     macro(Structure_prototype, Structure::prototypeOffset(), Mutability::Immutable) \
     macro(Structure_seenProperties, Structure::seenPropertiesOffset(), Mutability::Mutable) \
+    macro(Structure_variant, Structure::variantOffset(), Mutability::Immutable) \
     macro(StructureRareData_cachedEnumerableStrings, StructureRareData::offsetOfCachedPropertyNames(CachedPropertyNamesKind::EnumerableStrings), Mutability::Mutable) \
     macro(StructureRareData_cachedStrings, StructureRareData::offsetOfCachedPropertyNames(CachedPropertyNamesKind::Strings), Mutability::Mutable) \
     macro(StructureRareData_cachedSymbols, StructureRareData::offsetOfCachedPropertyNames(CachedPropertyNamesKind::Symbols), Mutability::Mutable) \
@@ -422,6 +429,14 @@ public:
     DecorationMark markDecorations() const
     {
         return { static_cast<unsigned>(m_heapForMemory.size()), static_cast<unsigned>(m_heapListForCCallWrite.size()), static_cast<unsigned>(m_heapListForPatchpointWrite.size()) };
+    }
+
+    // Whether a load or a store of the procedure so far names exactly this heap.
+    bool isNamedByMemoryAccess(const AbstractHeap& heap) const
+    {
+        return std::ranges::any_of(m_heapForMemory, [&](const HeapForValue& entry) {
+            return entry.heap == &heap;
+        });
     }
 
     template<typename Functor>

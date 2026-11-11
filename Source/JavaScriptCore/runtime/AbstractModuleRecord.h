@@ -48,6 +48,11 @@ class JSModuleLoader;
 class JSModuleNamespaceObject;
 class JSMap;
 class JSPromise;
+#if ENABLE(AOT)
+namespace AOT {
+class ModuleRecord;
+}
+#endif
 
 enum class SourceProviderSourceType : uint8_t;
 
@@ -92,9 +97,9 @@ public:
             Namespace,
         };
 
-        static ExportEntry LEGACY_NODELETE createLocal(const Identifier& exportName, const Identifier& localName);
-        static ExportEntry LEGACY_NODELETE createIndirect(const Identifier& exportName, const Identifier& importName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
-        static ExportEntry LEGACY_NODELETE createNamespace(const Identifier& exportName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
+        NODELETE static ExportEntry createLocal(const Identifier& exportName, const Identifier& localName);
+        NODELETE static ExportEntry createIndirect(const Identifier& exportName, const Identifier& importName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
+        NODELETE static ExportEntry createNamespace(const Identifier& exportName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
 
         Type type;
         ScriptFetchParameters::Type moduleRequestType { ScriptFetchParameters::Type::JavaScript };
@@ -207,6 +212,10 @@ public:
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
     const ModuleMap<LoadedModuleRequest>& loadedModules() const LIFETIME_BOUND { return m_loadedModules; }
 #if USE(BUN_JSC_ADDITIONS)
+    // Caches the key the host resolved each static import to while that import is still loading. See
+    // JSModuleLoader::hostLoadImportedModule(). The map's keys point into requestedModules(), which keeps them alive.
+    ModuleMap<RefPtr<UniquedStringImpl>>& resolvedRequests() LIFETIME_BOUND { return m_resolvedRequests; }
+    void removeResolvedRequest(const ModuleRequest& request) { m_resolvedRequests.remove(ModuleMapKey { request.m_specifier.impl(), request.type() }); }
     // A prelinked record keeps these in its PrelinkedModuleGraph and only builds the maps when asked for them here.
     const ExportEntries& exportEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_exportEntries; }
     const ImportEntries& importEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_importEntries; }
@@ -229,6 +238,7 @@ public:
 
     void appendAsyncParentModule(VM&, AbstractModuleRecord*);
     void setTopLevelCapability(VM&, JSPromise*);
+    void clearTopLevelCapability() { m_topLevelCapability.clear(); }
     void setHasTLA(bool);
 
     static size_t estimatedSize(JSCell*, VM&);
@@ -236,7 +246,7 @@ public:
     void dump();
 
     struct Resolution {
-        enum class Type { Resolved, NotFound, Ambiguous, Error };
+        enum class Type : uint8_t { Resolved, NotFound, Ambiguous, Error };
 
 #if ENABLE(AOT)
         Resolution() = default;
@@ -249,16 +259,23 @@ public:
         }
 #endif
 
-        static Resolution LEGACY_NODELETE notFound();
-        static Resolution LEGACY_NODELETE error();
-        static Resolution LEGACY_NODELETE ambiguous();
+        NODELETE static Resolution notFound();
+        NODELETE static Resolution error();
+        NODELETE static Resolution ambiguous();
 
         JS_EXPORT_PRIVATE bool isSameBinding(const Resolution& other) const;
         bool isEquivalentTo(const Resolution& other) const { return type == other.type && (type != Type::Resolved || isSameBinding(other)); }
+#if USE(BUN_JSC_ADDITIONS)
+        // True if this binding has to be read with moduleRecord->getLiveExport(localName) instead of from the module environment.
+        // `export * as ns` from a live record doesn't count: it resolves to the namespace object, which is an ordinary binding.
+        bool isLiveExport(VM&) const;
+#endif
 
         Type type;
 #if ENABLE(AOT)
-        // In the padding in front of the pointer.
+        // In the padding before the pointer.
+        bool isFromRemovedMock { false };
+        bool cameFromStarExportEntry { false };
         Markable<unsigned> compiledExportIndex;
 #endif
         AbstractModuleRecord* moduleRecord;
@@ -266,10 +283,15 @@ public:
     };
 
     Resolution resolveExport(JSGlobalObject*, const Identifier& exportName);
-    Resolution resolveImport(JSGlobalObject*, const Identifier& localName);
+#if ENABLE(AOT)
+    static_assert(sizeof(Resolution) == 3 * sizeof(void*));
+    Resolution resolveExportViaReexporter(JSGlobalObject*, const Identifier& exportName, AOT::ModuleRecord* reexporter);
+#endif
+    // requestedModule is set to the module the import names. For a re-export, that isn't the resolution's moduleRecord.
+    Resolution resolveImport(JSGlobalObject*, const Identifier& localName, AbstractModuleRecord** requestedModule = nullptr);
     // The same over the by-name entry maps only, never answered from a PrelinkedModuleGraph (a prelinked record builds its maps first).
     Resolution resolveExportByName(JSGlobalObject*, const Identifier& exportName);
-    Resolution resolveImportByName(JSGlobalObject*, const Identifier& localName);
+    Resolution resolveImportByName(JSGlobalObject*, const Identifier& localName, AbstractModuleRecord** requestedModule = nullptr);
 
     AbstractModuleRecord* hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
     void setImportedModule(JSGlobalObject*, const ModuleRequest&, AbstractModuleRecord*);
@@ -330,6 +352,25 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isTypeScript = false;
 
+    // Live exports, used for module mocks. Exports of a live record are never cached: every read, through an import binding or a
+    // namespace object, does liveExportsSource()->get(exportName).
+    // - Any export name resolves to (record, exportName), declared or not. A query that arrives through `export *` only matches
+    //   names the record declares or gets from its own `export *`, or that no other module exports. See resolveExportImpl().
+    // - A live export never makes a name ambiguous. The first `export *` that provides the name wins.
+    // - Imports of live exports get ResolveType Dynamic and never read the exporter's slot. See ModuleProgramExecutable::liveImports().
+    // Must be set before anything links against the record. It can't be unset.
+    bool hasLiveExports() const { return m_hasLiveExports; }
+    void setHasLiveExports();
+    // Null until the embedder sets it. Reading an export before that throws a TDZ error.
+    JSObject* liveExportsSource() const { return m_liveExportsSource.get(); }
+    JS_EXPORT_PRIVATE void setLiveExportsSource(VM&, JSObject*);
+    // All three can run arbitrary JS and throw.
+    JSValue getLiveExport(JSGlobalObject*, PropertyName exportName);
+    bool hasLiveExport(JSGlobalObject*, PropertyName exportName);
+    // For a read through another module's `export { x } from` or `export *`. A name the source doesn't have is undefined, as in
+    // Vitest. The source's [[Get]] can then throw for such a name, and only an import from the live record itself sees that.
+    JSValue getReexportedLiveExport(JSGlobalObject*, PropertyName exportName);
+
     // Options::usePrelinkedModuleInfo(): this record is module `prelinkedIndex()` of an embedder-resolved graph. Its
     // requests, import and export entries live in the graph; a request that names a graph module is answered by the
     // loader's index table, any other request by [[LoadedModules]] as usual (the embedder calls setImportedModule);
@@ -363,11 +404,19 @@ protected:
     // Before the record is visible to anyone: adopts the graph and fills requestedModules() from it.
     void initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&&, uint32_t moduleIndex);
 #endif
+#if ENABLE(AOT)
+    void forgetCachedResolutions() { m_resolutionCache.clear(); }
+    void recordLinkedImport(UniquedStringImpl* localName, const Resolution&);
+#endif
 
 private:
     struct ResolveQuery;
+#if ENABLE(AOT)
+    static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&, AOT::ModuleRecord* reexporter = nullptr);
+#else
     static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&);
-    std::optional<Resolution> LEGACY_NODELETE tryGetCachedResolution(UniquedStringImpl* exportName);
+#endif
+    NODELETE std::optional<Resolution> tryGetCachedResolution(UniquedStringImpl* exportName);
     void cacheResolution(UniquedStringImpl* exportName, const Resolution&);
 #if USE(BUN_JSC_ADDITIONS)
     void ensurePrelinkedEntriesMaterialized() const
@@ -414,11 +463,17 @@ private:
     // and (2) if we cache all the attempts the size of the map becomes infinitely large.
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Resolution, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> Resolutions;
     Resolutions m_resolutionCache;
+#if ENABLE(AOT)
+    Resolutions m_linkedImports;
+#endif
 
 protected:
     WriteBarrier<JSModuleEnvironment> m_moduleEnvironment;
 
     ModuleMap<LoadedModuleRequest> m_loadedModules;
+#if USE(BUN_JSC_ADDITIONS)
+    ModuleMap<RefPtr<UniquedStringImpl>> m_resolvedRequests;
+#endif
 
     Vector<WriteBarrier<AbstractModuleRecord>> m_asyncParentModules;
 
@@ -434,6 +489,8 @@ protected:
     SourceProviderSourceType m_sourceType;
 #if USE(BUN_JSC_ADDITIONS)
     bool m_prelinkedEntriesMaterialized { false };
+    bool m_hasLiveExports { false };
+    WriteBarrier<JSObject> m_liveExportsSource;
     uint32_t m_prelinkedIndex { 0 };
     RefPtr<PrelinkedModuleGraph> m_prelinked;
     // By import index, filled per import on its first resolveImport (at/after Link, so a memoized target is already

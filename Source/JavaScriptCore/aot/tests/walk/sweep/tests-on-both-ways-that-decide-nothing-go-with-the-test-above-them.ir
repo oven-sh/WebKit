@@ -1,0 +1,39 @@
+# if (a === undefined) { if (b === undefined) { if (a === null) { } } } else { if (b === null) { } } return b;
+# Each way of the first branch holds a test that decides nothing, one of them a second one inside it: all four go.
+# RUN: sweep-code
+# CHECK: b0({{*}}dropped v0, v2
+# CHECK-NOT: TypeTest
+# CHECK-NOT: Branch
+# CHECK: Jump -> next b6()
+# CHECK: Return v1
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Branch v2 -> taken b1(), notTaken b4()
+#   b1():
+#     v3: boolean @Boolean = TypeTest v1 testedType=undefined
+#     Branch v3 -> taken b2(), notTaken b6()
+#   b2():
+#     v4: boolean @Boolean = TypeTest v0 testedType=null
+#     Branch v4 -> taken b3(), notTaken b6()
+#   b3():
+#     Jump -> next b6()
+#   b4():
+#     v5: boolean @Boolean = TypeTest v1 testedType=null
+#     Branch v5 -> taken b5(), notTaken b6()
+#   b5():
+#     Jump -> next b6()
+#   b6():
+#     Return v1
+# }
+# -- end of code

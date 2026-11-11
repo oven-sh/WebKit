@@ -102,10 +102,10 @@ public:
     // APIs to control the module loader.
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSValue);
-    JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { }, AbstractModuleRecord* recordInPlaceOfFetch = nullptr);
+    JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { }, AbstractModuleRecord* providedRecord = nullptr);
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
-    JS_EXPORT_PRIVATE JSPromise* requestImportModuleForKey(JSGlobalObject*, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1, AbstractModuleRecord* recordInPlaceOfFetch = nullptr);
+    JS_EXPORT_PRIVATE JSPromise* requestImportModuleForKey(JSGlobalObject*, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1, AbstractModuleRecord* providedRecord = nullptr, JSPromise* resultPromise = nullptr);
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE int64_t asyncEvaluationOrderForKey(const Identifier& key);
 #endif
@@ -170,11 +170,11 @@ public:
     // payload is opaque to callers and is either a ModuleGraphLoadingState* (graph load) or a ModuleLoaderPayload* (top-level dynamic import).
     void finishLoadingImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, ModuleCompletion result, RefPtr<ScriptFetcher>);
 
-    JSPromise* hostLoadImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, bool useImportMap);
+    JSPromise* hostLoadImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, bool useImportMap, JSPromise* deferredPromise = nullptr);
     JSPromise* loadModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>);
     void continueModuleLoading(JSGlobalObject*, ModuleGraphLoadingState*, ModuleCompletion result);
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
-    JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>);
+    JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>, ModuleGraphLoadingState* parentState = nullptr);
 
     // If moduleData is a JSSourceCode, then it's a JavaScript/WebAssembly/JSON/text source code,
     // and JSC is responsible for turning it into a usable module. Otherwise, the host has already
@@ -243,6 +243,10 @@ public:
         m_resolutionFailures.clear();
     }
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
+#if ENABLE(AOT)
+    bool isMakingModuleInline(const Identifier& key) const { return m_moduleBeingMadeInline && m_moduleBeingMadeInline == key.impl(); }
+    bool hasResolutionFailure(const ResolutionMapKey& key) const { return m_resolutionFailures.contains(key); }
+#endif
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
 
     // Options::usePrelinkedModuleInfo(): the embedder's pre-resolved graph for this realm and the record it registered
@@ -271,7 +275,7 @@ public:
     // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
     void removeFailedFetchEntry(ModuleRegistryEntry*);
 #if ENABLE(AOT)
-    void removeEntryOfRecord(AbstractModuleRecord*);
+    void removeEntriesForRecord(AbstractModuleRecord*);
 #endif
 
     ModuleRegistryEntry* getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type);
@@ -312,7 +316,9 @@ private:
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
 #if ENABLE(AOT)
-    bool m_realmLoadedModuleUnderAnotherKey { false };
+    bool m_hasAliasedLoadedModules { false };
+    UniquedStringImpl* m_rootBeingReloaded { nullptr };
+    UniquedStringImpl* m_moduleBeingMadeInline { nullptr };
 #endif
 
     WriteBarrier<JSScope> m_moduleScope;

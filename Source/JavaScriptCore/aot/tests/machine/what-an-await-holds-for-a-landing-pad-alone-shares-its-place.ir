@@ -1,0 +1,86 @@
+# what an await holds for a handler alone is read in a landing pad, and the pads of a handler stand in a row just ahead of it, far behind the blocks that await.
+# Between its block and its pad such a value lies unread, so its place in the part of the frame that is kept at suspensions is another's there:
+# values that follow each other take turns in two places, however long the try is, and every suspension saves and every resumption restores that much less.
+# Without that each has a word of its own: the frame here was 128 bytes, 96 of them kept, and large async functions kept three times what a suspension ever holds.
+# async function waits(make, awaited) { let last = make(make); try { await awaited; last = make(make); .. eight times ..; return await awaited; } catch { return make(last); } }
+# checkAllocation() forgets a spill on an edge into its gap, and finds every pad served.
+# REQUIRES: not-windows
+# RUN: allocate f1:CoroutineBody mechanisms=none
+# CHECK-COUNT-9: 64 bits, gap
+# CHECK-NOT: gap
+# REQUIRES(PLACES): x86_64 not-windows
+# RUN(PLACES): frame f1:CoroutineBody mechanisms=none
+# PLACES: size = 64
+# PLACES: s3 at -[[one]]
+# PLACES-NEXT: s4 at -[[other]]
+# PLACES-NEXT: s5 at -[[one]]
+# PLACES-NEXT: s6 at -[[other]]
+# PLACES-NEXT: s7 at -[[one]]
+# PLACES-NEXT: s8 at -[[other]]
+# PLACES-NEXT: s9 at -[[one]]
+# PLACES-NEXT: s10 at -[[other]]
+# PLACES-NEXT: s11 at -[[one]]
+# PLACES: bytesKeptAtSuspensions = 40
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Call v1, -, v1
+    v3 = Call v0, -, v1, v2
+    Return v3
+}
+function f1 name="waits" module=m0 flags=[IsAsync, HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v1, -, v1
+    Jump -> next b1()
+  b1() handler=b10(v3):
+    v4 = Await v2
+    v5 = Call v1, -, v1
+    Jump -> next b2()
+  b2() handler=b10(v5):
+    v6 = Await v2
+    v7 = Call v1, -, v1
+    Jump -> next b3()
+  b3() handler=b10(v7):
+    v8 = Await v2
+    v9 = Call v1, -, v1
+    Jump -> next b4()
+  b4() handler=b10(v9):
+    v10 = Await v2
+    v11 = Call v1, -, v1
+    Jump -> next b5()
+  b5() handler=b10(v11):
+    v12 = Await v2
+    v13 = Call v1, -, v1
+    Jump -> next b6()
+  b6() handler=b10(v13):
+    v14 = Await v2
+    v15 = Call v1, -, v1
+    Jump -> next b7()
+  b7() handler=b10(v15):
+    v16 = Await v2
+    v17 = Call v1, -, v1
+    Jump -> next b8()
+  b8() handler=b10(v17):
+    v18 = Await v2
+    v19 = Call v1, -, v1
+    Jump -> next b9()
+  b9() handler=b10(v19):
+    v20 = Await v2
+    Return v20
+  b10(v21) role=CatchHandler:
+    v22 = CatchValue
+    v23 = Call v1, -, v21
+    Return v23
+}
+function f2 name="make" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="print" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = NewArray v0 contents=anything
+    Return v4
+}
+entry module=m0

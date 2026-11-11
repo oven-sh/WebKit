@@ -1,0 +1,103 @@
+# `yield v` in an async generator awaits v and yields what that gives. Where the yield alone takes what the await gives, and the arm of a throw only throws on what was sent, the run time does both: one suspension
+# async function* one(a) { yield a; }
+# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = AsyncGeneratorYield
+# RUN(NEVER): walk f1:CoroutineBody mechanisms=none+TypedOperations
+# NEVER-NOT: = AwaitBySavingFrame
+# RUN(ALL): walk f1:CoroutineBody mechanisms=all
+# ALL-LABEL: code f1:CoroutineBody
+# ALL: = AsyncGeneratorYield
+# a rejection of the await would come to an arm that does more than throw it on
+# RUN(ARM): walk f2:CoroutineBody mechanisms=all
+# ARM-LABEL: code f2:CoroutineBody
+# ARM: = AwaitBySavingFrame
+# RUN(APART): walk f2:CoroutineBody mechanisms=all
+# APART-NOT: = AsyncGeneratorYield
+# or to an arm that throws something else
+# RUN(ELSE): walk f4:CoroutineBody mechanisms=all
+# ELSE-NOT: = AsyncGeneratorYield
+# something else reads what the await has given
+# RUN(READ): walk f3:CoroutineBody mechanisms=all
+# READ-LABEL: code f3:CoroutineBody
+# READ: = AwaitBySavingFrame
+# RUN(TWO): walk f3:CoroutineBody mechanisms=all
+# TWO-NOT: = AsyncGeneratorYield
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="one" module=m0 flags=[IsAsync, IsGenerator, TakesCallee] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    InitialYield
+    v3 = Await v1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v5
+  b2():
+    Return v5
+  b3():
+    v7 = Undefined
+    Return v7
+}
+function f2 name="other" module=m0 flags=[IsAsync, IsGenerator, TakesCallee] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    InitialYield
+    v3 = Await v1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v7 = Undefined
+    Throw v5
+  b2():
+    Return v5
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f3 name="both" module=m0 flags=[IsAsync, IsGenerator, TakesCallee] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    InitialYield
+    v3 = Await v1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v5
+  b2():
+    Return v5
+  b3():
+    Return v3
+}
+function f4 name="another" module=m0 flags=[IsAsync, IsGenerator, TakesCallee] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    InitialYield
+    v3 = Await v1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v0
+  b2():
+    Return v5
+  b3():
+    v7 = Undefined
+    Return v7
+}

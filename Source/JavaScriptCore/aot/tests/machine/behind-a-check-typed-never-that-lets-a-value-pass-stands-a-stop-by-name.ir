@@ -1,0 +1,27 @@
+# The code generator, by itself. No walk runs: the Code is written out.
+# An operation typed never ends its block: nothing is generated behind it. RequireObjectCoercible throws on undefined and null alone; it is typed never where its operand is said to be nothing else. If that word is false the
+# check lets the value pass, and behind it stood a bare trap: a crash without a sentence, at an address that many such sites share. Now a stop by name stands there, with the function and the position.
+# RUN: emit-code
+# CHECK-LABEL: unit f1:Body
+# CHECK: = Check(
+# CHECK-NEXT: = Patch({{*}}effects = Terminal|ExitsSideways
+# -- code
+# code f1:Body {
+#   b0(v0: anything @JSValue) entry=0:
+#     v1: never @JSValue = RequireObjectCoercible v0 name="load" traits=[mayThrow, mayThrowByRule]
+#     Unreachable
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="asks" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

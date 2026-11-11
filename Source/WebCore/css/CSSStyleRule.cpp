@@ -43,7 +43,7 @@
 namespace WebCore {
 
 typedef HashMap<const CSSStyleRule*, String> SelectorTextCache;
-static SelectorTextCache& LEGACY_NODELETE selectorTextCache()
+NODELETE static SelectorTextCache& selectorTextCache()
 {
     static NeverDestroyed<SelectorTextCache> cache;
     return cache;
@@ -69,6 +69,11 @@ CSSStyleRule::~CSSStyleRule()
 {
     if (m_propertiesCSSOMWrapper)
         m_propertiesCSSOMWrapper->clearParentRule();
+
+    for (auto& wrapper : m_childRuleCSSOMWrappers) {
+        if (wrapper)
+            wrapper->setParentRule(nullptr);
+    }
 
     if (hasCachedSelectorText()) {
         selectorTextCache().remove(this);
@@ -262,6 +267,8 @@ ExceptionOr<unsigned> CSSStyleRule::insertRule(const String& ruleString, unsigne
         m_styleRule = *styleRuleWithNesting;
     }
 
+    if (styleSheet)
+        protect(styleSheet->contents())->adoptScopeRules(*newRule);
     downcast<StyleRuleWithNesting>(m_styleRule.get()).nestedRules().insert(index, newRule.releaseNonNull());
     m_childRuleCSSOMWrappers.insert(index, RefPtr<CSSRule>());
     return index;
@@ -303,8 +310,7 @@ CSSRule* CSSStyleRule::item(unsigned index) const
 
     auto& rule = m_childRuleCSSOMWrappers[index];
     if (!rule) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST rule = protect(nestedRules()[index])->createCSSOMWrapper(const_cast<CSSStyleRule&>(*this));
+        rule = protect(nestedRules()[index])->createCSSOMWrapper(const_cast<CSSStyleRule&>(*this));
     }
 
     return rule.get();
@@ -313,8 +319,7 @@ CSSRule* CSSStyleRule::item(unsigned index) const
 CSSRuleList& CSSStyleRule::cssRules() const
 {
     if (!m_ruleListCSSOMWrapper) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST lazyInitialize(m_ruleListCSSOMWrapper, makeUniqueWithoutRefCountedCheck<LiveCSSRuleList<CSSStyleRule>>(const_cast<CSSStyleRule&>(*this)));
+        lazyInitialize(m_ruleListCSSOMWrapper, makeUniqueWithoutRefCountedCheck<LiveCSSRuleList<CSSStyleRule>>(const_cast<CSSStyleRule&>(*this)));
     }
 
     return *m_ruleListCSSOMWrapper;

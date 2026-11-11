@@ -33,8 +33,6 @@
 #import <wtf/TZoneMalloc.h>
 #import <wtf/Vector.h>
 
-struct WGPURenderBundleImpl {
-};
 
 @interface ResourceUsageAndRenderStage : NSObject
 - (instancetype)initWithUsage:(MTLResourceUsage)usage renderStages:(MTLRenderStages)renderStages entryUsage:(OptionSet<WebGPU::Metal::BindGroupEntryUsage>)entryUsage binding:(uint32_t)binding resource:(WebGPU::Metal::BindGroupEntryUsageData::Resource)resource;
@@ -61,7 +59,7 @@ class TextureOrTextureView;
 class TextureView;
 
 // https://gpuweb.github.io/gpuweb/#gpurenderbundle
-class RenderBundle final : public WebGPU::RenderBundle, public WGPURenderBundleImpl {
+class RenderBundle final : public WebGPU::RenderBundle {
     WTF_MAKE_TZONE_ALLOCATED(RenderBundle);
 public:
     using MinVertexCountsContainer = HashMap<uint64_t, IndexBufferAndIndexData, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
@@ -79,7 +77,7 @@ public:
 
     void setLabel(String&&) final;
 
-    bool LEGACY_NODELETE isValid() const final;
+    NODELETE bool isValid() const final;
 
     Device& device() const { return m_device; }
     NSArray<RenderBundleICBWithResources*> *renderBundlesResources() const { return m_renderBundlesResources; }
@@ -87,11 +85,11 @@ public:
     void replayCommands(RenderPassEncoder&) const;
     void updateMinMaxDepths(float minDepth, float maxDepth);
     bool validateRenderPass(bool depthReadOnly, bool stencilReadOnly, const Vector<TextureOrTextureView>&, const std::optional<TextureOrTextureView>&) const;
-    bool LEGACY_NODELETE validatePipeline(const RenderPipeline*);
-    uint64_t LEGACY_NODELETE drawCount() const;
-    NSString* LEGACY_NODELETE lastError() const;
-    bool LEGACY_NODELETE requiresCommandReplay() const;
-    bool LEGACY_NODELETE makeSubmitInvalid() const;
+    NODELETE bool validatePipeline(const RenderPipeline*);
+    NODELETE uint64_t drawCount() const;
+    NODELETE NSString* lastError() const;
+    NODELETE bool requiresCommandReplay() const;
+    NODELETE bool makeSubmitInvalid() const;
     bool rebindSamplersIfNeeded() const;
     void releaseDestroyedResources();
     const Vector<WebGPU::Metal::BindableResources>& resources() LIFETIME_BOUND { return m_resources; }

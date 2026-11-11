@@ -28,6 +28,7 @@
 #include "GUniquePtrGStreamer.h"
 #include "VideoEncoderPrivateGStreamer.h"
 #include "VideoFrameGStreamer.h"
+#include "VideoFrameMetadataGStreamer.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -83,6 +84,8 @@ private:
     const RefPtr<WebKitVideoEncoderBitRateAllocation> m_bitrateAllocation;
     int64_t m_timestamp { 0 };
     std::optional<uint64_t> m_duration;
+    VideoFrameRotation m_rotation { VideoFrameRotation::None };
+    bool m_isMirrored { false };
     bool m_isClosed { false };
     bool m_isInitialized { false };
     const RefPtr<GStreamerElementHarness> m_harness;
@@ -287,7 +290,7 @@ GStreamerInternalVideoEncoder::GStreamerInternalVideoEncoder(const VideoEncoder:
         GST_TRACE_OBJECT(m_harness->element(), "Notifying encoded%s frame", isKeyFrame ? " key" : "");
         GstMappedBuffer encodedImage(outputBuffer, GST_MAP_READ);
 
-        VideoEncoder::EncodedFrame encodedFrame { encodedImage.createVector(), isKeyFrame, m_timestamp, m_duration, temporalIndex };
+        VideoEncoder::EncodedFrame encodedFrame { encodedImage.createVector(), isKeyFrame, m_timestamp, m_duration, temporalIndex, m_rotation, m_isMirrored };
         m_outputCallback({ WTF::move(encodedFrame) });
     }));
 }
@@ -305,6 +308,12 @@ String GStreamerInternalVideoEncoder::initialize(const String& codecName)
 {
     GST_DEBUG_OBJECT(m_harness->element(), "Initializing encoder for codec %s", codecName.ascii().data());
     IntSize size { static_cast<int>(m_config.width), static_cast<int>(m_config.height) };
+
+    if ((codecName == "vp8"_s || codecName == "vp08"_s) && (size.width() >= 30000 || size.height() >= 30000)) {
+        GST_WARNING_OBJECT(m_harness->element(), "Rejecting too strenuous VP8 encoding parameters");
+        return "Too strenuous VP8 encoding parameters"_s;
+    }
+
     if (!videoEncoderSetCodec(WEBKIT_VIDEO_ENCODER(m_harness->element()), { codecName, m_config.useAnnexB }, size, { }, true))
         return "Unable to set encoder format"_s;
 
@@ -323,6 +332,8 @@ bool GStreamerInternalVideoEncoder::encode(VideoEncoder::RawFrame&& rawFrame, bo
 
     m_timestamp = rawFrame.timestamp;
     m_duration = rawFrame.duration;
+    m_rotation = rawFrame.frame->rotation();
+    m_isMirrored = rawFrame.frame->isMirrored();
 
     if (shouldGenerateKeyFrame) {
         GST_INFO_OBJECT(m_harness->element(), "Requesting key-frame!");
@@ -332,7 +343,7 @@ bool GStreamerInternalVideoEncoder::encode(VideoEncoder::RawFrame&& rawFrame, bo
     auto& gstVideoFrame = downcast<VideoFrameGStreamer>(rawFrame.frame.get());
     GRefPtr sample = gstVideoFrame.sample();
 
-    auto orientation = makeString(gstVideoFrame.isMirrored() ? "flip-"_s : ""_s, "rotate-"_s, gstVideoFrame.rotation());
+    auto orientation = webkitGstImageOrientationTag(gstVideoFrame.rotation(), gstVideoFrame.isMirrored());
     if (orientation != m_orientation) {
         auto orientationCString = orientation.utf8();
         GST_DEBUG_OBJECT(m_harness->element(), "New orientation: %s", orientationCString);

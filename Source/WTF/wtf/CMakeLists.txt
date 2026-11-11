@@ -212,6 +212,7 @@ set(WTF_PUBLIC_HEADERS
     NoLock.h
     NoTailCalls.h
     NoVirtualDestructorBase.h
+    NonEscapableBorrow.h
     Nonallocatable.h
     Noncopyable.h
     Nonmovable.h
@@ -309,6 +310,7 @@ set(WTF_PUBLIC_HEADERS
     SchedulePair.h
     Scope.h
     ScopedLambda.h
+    ScopedLeakSanitizerDisabler.h
     ScopedPrintStream.h
     Seconds.h
     SegmentedVector.h
@@ -865,6 +867,12 @@ if (NOT APPLE AND SWIFT_REQUIRED)
     # an empty stub.
     file(MAKE_DIRECTORY "${WTF_HEADERS_DIR}/ios")
     file(WRITE "${WTF_HEADERS_DIR}/ios/WebCoreThread.h" "")
+endif ()
+
+if (NOT MSVC)
+    set_source_files_properties(FastMalloc.cpp PROPERTIES
+        COMPILE_OPTIONS $<$<CONFIG:Debug>:-O3>
+        SKIP_PRECOMPILE_HEADERS ON)
 endif ()
 
 WEBKIT_FRAMEWORK(WTF)

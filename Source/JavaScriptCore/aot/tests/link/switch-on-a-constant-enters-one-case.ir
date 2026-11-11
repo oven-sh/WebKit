@@ -1,0 +1,77 @@
+# If a switch on a constant counted as entering each of its cases, what the other cases alone call would be compiled for nobody
+# switch (2) { case 1: one(); break; case 2: two(); break; default: other() }   switch ("b") { case "a": one(); break; default: third() }   switch (undefined) { case 1: one() }
+# A case is chosen as `===` chooses. A subject that no case equals goes to the last target.
+# RUN: summary f0 mechanisms=all
+# CHECK: never-entered b1, b3, b5, b8
+# RUN(REACH): link functions mechanisms=all
+# REACH: function f1 unreached
+# REACH: function f2 callers-known
+# REACH: function f3 unreached
+# REACH: function f4 callers-known
+# RUN(WALK): walk f0 mechanisms=all
+# WALK-NOT: Switch
+# RUN(WITHHELD): link functions mechanisms=-Folding
+# WITHHELD-NOT: unreached
+# RUN(RUNS): run-in-shell mechanisms=all
+# RUNS: exited with 0
+# RUN(CLOSED): run-in-shell mechanisms=none
+# CLOSED: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Integer integer=2
+    Switch v4 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v5 = Call v0 calleeName="one"
+    Jump -> next b4()
+  b2():
+    v6 = Call v1 calleeName="two"
+    Jump -> next b4()
+  b3():
+    v7 = Call v2 calleeName="other"
+    Jump -> next b4()
+  b4():
+    v8 = String string="b"
+    SwitchString v8 strings=["a"] -> case b5(), otherwise b6()
+  b5():
+    v9 = Call v0 calleeName="one"
+    Jump -> next b7()
+  b6():
+    v10 = Call v3 calleeName="third"
+    Jump -> next b7()
+  b7():
+    v11 = Undefined
+    Switch v11 cases=[1] -> case b8(), otherwise b9()
+  b8():
+    v12 = Call v0 calleeName="one"
+    Jump -> next b9()
+  b9():
+    v13 = Undefined
+    Return v13
+}
+function f1 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="two" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="other" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="third" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -80,10 +80,14 @@ void RemoteMesh::setLabel(String&& label)
     m_backing->setLabel(WTF::move(label));
 }
 
-void RemoteMesh::update(Vector<WebModel::UpdateMeshDescriptor>&& descriptor, CompletionHandler<void(bool)>&& completionHandler)
+void RemoteMesh::updateModel(WebCore::NodeIdentifier nodeIdentifier, Vector<WebModel::UpdateMeshDescriptor>&& descriptor)
 {
-    m_backing->update(WTF::move(descriptor));
-    completionHandler(true);
+    m_backing->updateModel(nodeIdentifier, WTF::move(descriptor));
+}
+
+void RemoteMesh::removeModel(WebCore::NodeIdentifier nodeIdentifier)
+{
+    m_backing->removeModel(nodeIdentifier);
 }
 
 void RemoteMesh::render(uint32_t textureIndex, CompletionHandler<void(bool)>&& completionHandler)
@@ -113,6 +117,13 @@ void RemoteMesh::updateTransform(const WebModel::Float4x4& transform)
     m_backing->setEntityTransform(transform);
 }
 
+#if ENABLE(SPATIAL_PORTAL)
+void RemoteMesh::updatePortalChildTransform(WebCore::NodeIdentifier nodeIdentifier, const WebModel::Float4x4& transform)
+{
+    m_backing->setPortalChildTransform(nodeIdentifier, transform);
+}
+#endif
+
 void RemoteMesh::setFOV(float fovY)
 {
     m_backing->setFOV(fovY);
@@ -127,6 +138,18 @@ void RemoteMesh::setEnvironmentMap(WebModel::UpdateTextureDescriptor&& imageAsse
 {
     m_backing->setEnvironmentMap(WTF::move(imageAsset));
 }
+
+#if ENABLE(SPATIAL_PORTAL)
+void RemoteMesh::setDefaultEnvironmentMap()
+{
+    m_backing->setDefaultEnvironmentMap();
+}
+
+void RemoteMesh::removeEnvironmentMap()
+{
+    m_backing->removeEnvironmentMap();
+}
+#endif
 
 void RemoteMesh::updateContentsHeadroom(float headroom)
 {

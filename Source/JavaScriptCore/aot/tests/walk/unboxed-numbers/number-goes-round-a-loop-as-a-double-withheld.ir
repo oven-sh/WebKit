@@ -1,0 +1,6 @@
+# the same loop with unboxed numbers withheld: the operators are still typed, and what flows between blocks is boxed
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[s]]: number @JSValue){{*}}isLoopHead=true
+# CHECK: = Add {{*}}form=Numbers
+# PROGRAM-OF: number-goes-round-a-loop-as-a-double.ir

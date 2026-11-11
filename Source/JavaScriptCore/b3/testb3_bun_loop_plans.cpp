@@ -10,6 +10,7 @@
 
 #include "B3CheckValue.h"
 #include "B3CountedLoops.h"
+#include "B3LoopUtilities.h"
 #include "B3LoopVersionPlan.h"
 #include "B3PhiChildren.h"
 #include "B3RegisterPressure.h"
@@ -171,8 +172,10 @@ static void checkExcursion(bool hasSmallPath, uint64_t additions, bool copiesLar
     endBodyAndRotate(loop, block);
 
     CHECK(versionLoopsAndValidate(proc));
-    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), hasSmallPath ? 2u : 0u);
-    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(2000); }), copiesLargePath ? 2u : 1u);
+    // A turn that takes a path that the fast loop has no copy of ends in a copy of the whole turn.
+    unsigned copiesOfTurn = copiesLargePath ? 0 : 1;
+    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(1000); }), hasSmallPath ? 2u + copiesOfTurn : 0u);
+    CHECK_EQ(numberOfValues(proc, [](Value* value) { return value->isInt64(2000); }), 2u);
     CHECK_EQ(limitHits(proc, Limit::MaxClonedValuesPerExcursion), copiesLargePath ? 0u : 1u);
     if (additions > defaultValueOf(Limit::MaxClonedValuesPerExcursion))
         CHECK(hasNumber(proc.report().firstOriginOf(Limit::MaxClonedValuesPerExcursion), 2000));
@@ -237,7 +240,8 @@ static void testVersionLoopsHoistsLoadAfterPeeledGuard()
             checkAccessCountInEachLoop(proc, secondHeap, { 1, 1 });
         else {
             checkAccessCountInEachLoop(proc, secondHeap, { 0, 1 });
-            checkAccessCountInEachLoop(proc, thirdHeap, { 1, 1 });
+            // A turn of the original loop ends in front of the guards, so the flag of the next turn is read there too.
+            checkAccessCountInEachLoop(proc, thirdHeap, { 1, 2 });
             CHECK_EQ(numberOfValues(proc, [](Value* value) { return accessesHeap(value, thirdHeap); }), 3u);
         }
 
@@ -319,7 +323,8 @@ static void testVersionLoopsSharesEqualPureValues()
             CHECK(versionLoopsAndValidate(proc));
             B3::Opcode opcode = operation == Operation::Product ? Mul : Patchpoint;
             checkAccessCountInEachLoop(proc, secondHeap, { 0, 1 });
-            checkValueCountInEachLoop(proc, opcode, { 0, 2 });
+            // Where nothing is shared, a turn of the original loop ends in front of the guards, with what is hoisted there.
+            checkValueCountInEachLoop(proc, opcode, { 0, areEqual ? 2u : 4u });
             CHECK_EQ(numberOfValues(proc, opcode), areEqual ? 3u : 4u);
 
             auto code = compileProc(proc);
@@ -592,19 +597,266 @@ static int64_t sumBelowUnsignedBound(const CheckedArray& array, int64_t bound)
     return sum;
 }
 
-static void testVersionLoopsKeepsRangeCheckOfDecreasingLoop()
+static int64_t sumDownFrom(const CheckedArray& array, int64_t first, int64_t step, B3::Opcode relation, int64_t bound, int64_t neighborOffset)
 {
-    LoopProcedure procedure(loopPolicy(), GreaterThan, -1, 9);
-    auto& [proc, graph, state, loop] = procedure;
-    buildLoopWithRangeCheck(graph, loop, state);
+    int64_t sum = 0;
+    for (int64_t i = first; holds(relation, i, bound); i += step) {
+        if (!holds(Below, i, array.words[0]) || !holds(Below, i + neighborOffset, array.words[1]))
+            return -1;
+        sum += array.words[2 + i];
+    }
+    return sum;
+}
 
-    CHECK(versionLoopsAndValidate(proc));
-    CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 0u);
-    checkRangeCheckCountInEachLoop(proc, { 1 });
-    auto code = compileProc(proc);
-    for (int64_t length : { 20, 5 }) {
-        CheckedArray array(length, 0);
-        CHECK_EQ(run(*code, -1, array.words), sumBelowUnsignedBound(array, 10));
+static void testVersionLoopsRemovesRangeCheckOfDecreasingLoop()
+{
+    for (B3::Opcode relation : { GreaterThan, GreaterEqual }) {
+        for (int64_t step : { -1, -2 }) {
+            LoopProcedure procedure(loopPolicy(), relation, step, 9);
+            auto& [proc, graph, state, loop] = procedure;
+            buildLoopWithRangeCheck(graph, loop, state);
+
+            CHECK(versionLoopsAndValidate(proc));
+            CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
+            checkRangeCheckCountInEachLoop(proc, { 0, 1 });
+            auto code = compileProc(proc);
+            for (int64_t length : { 20, 10, 9, 5, 1, 0 }) {
+                for (int64_t bound : { -5, -2, -1, 0, 1, 8, 9, 10 }) {
+                    CheckedArray array(length, std::numeric_limits<int64_t>::max());
+                    CHECK_EQ(run(*code, bound, array.words), sumDownFrom(array, 9, step, relation, bound, 0));
+                }
+            }
+        }
+    }
+}
+
+namespace {
+
+// do { sum += words[2 + low + lowOffset] - words[2 + high + highOffset], each behind its range check; low += 1; high -= 1; } while (low REL high), entered if low REL high.
+struct MeetingCountersLoop {
+    MeetingCountersLoop(const Policy& policy, B3::Opcode relation, int64_t lowOffset, int64_t highOffset, bool publishesRanges = true)
+        : proc(policy)
+    {
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* lowInBounds = proc.addBlock();
+        BasicBlock* highInBounds = proc.addBlock();
+        BasicBlock* out = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Variable* low = proc.addVariable(Int64);
+        Variable* high = proc.addVariable(Int64);
+        Variable* sum = proc.addVariable(Int64);
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
+        Value* pointer = arguments[1];
+        graph.set(root, high, arguments[0]);
+        graph.set(root, low, arguments[2]);
+        graph.set(root, sum, graph.int64(root, 0));
+        graph.branch(root, graph.make(root, relation, arguments[2], arguments[0]), body, exit);
+
+        appendPoll(graph, body, state);
+        auto elementAt = [&](BasicBlock* block, BasicBlock* inBounds, Variable* counter, int64_t offset) {
+            Value* index = graph.make(block, Add, graph.get(block, counter), graph.int64(block, offset));
+            Value* length = graph.make(block, ZExt32, graph.load(block, Int32, pointer, 0, firstHeap));
+            graph.branch(block, graph.make(block, Below, index, length), FrequentedBlock(inBounds), rarely(out));
+            return graph.load(inBounds, Int64, graph.make(inBounds, Add, pointer, graph.make(inBounds, Shl, index, graph.int32(inBounds, 3))), 16, secondHeap);
+        };
+        Value* atLow = elementAt(body, lowInBounds, low, lowOffset);
+        Value* atHigh = elementAt(lowInBounds, highInBounds, high, highOffset);
+        graph.increase(highInBounds, sum, graph.make(highInBounds, Sub, atLow, atHigh));
+        graph.increase(highInBounds, low, 1);
+        graph.increase(highInBounds, high, -1);
+        graph.branch(highInBounds, graph.make(highInBounds, relation, graph.get(highInBounds, low), graph.get(highInBounds, high)), body, exit);
+        graph.ret(out, graph.int64(out, -1));
+        graph.ret(exit, graph.get(exit, sum));
+        proc.resetReachability();
+        fixSSA(proc);
+        if (publishesRanges) {
+            for (Value* value : *body) {
+                if (value->opcode() == Phi)
+                    proc.setKnownRange(value, IntRange(-1000000, 1000000));
+            }
+        }
+        validate(proc);
+    }
+
+    static int64_t expected(const CheckedArray& array, B3::Opcode relation, int64_t low, int64_t high, int64_t lowOffset, int64_t highOffset)
+    {
+        int64_t sum = 0;
+        for (; holds(relation, low, high); ++low, --high) {
+            if (!holds(Below, low + lowOffset, array.words[0]) || !holds(Below, high + highOffset, array.words[0]))
+                return -1;
+            sum += array.words[2 + low + lowOffset] - array.words[2 + high + highOffset];
+        }
+        return sum;
+    }
+
+    Procedure proc;
+    Graph graph { proc };
+    PollState state;
+};
+
+} // anonymous namespace
+
+// The limits of the range checks are read out of firstHeap. From here on they are read out of that heap of the procedure.
+static void readLimitsOutOf(Procedure& proc, AbstractHeap AbstractHeapRepository::* heap)
+{
+    AbstractHeapRepository& heaps = proc.heaps();
+    heaps.computeRangesAndDecorateInstructions();
+    for (Value* value : proc.values()) {
+        if (auto* load = value->as<MemoryValue>(); load && load->range() == firstHeap)
+            load->setRange(heaps.rangeOf(heaps.*heap));
+    }
+}
+
+static void readLimitsOutOfLengthOfView(Procedure& proc) { readLimitsOutOf(proc, &AbstractHeapRepository::JSArrayBufferView_length); }
+
+static void testVersionLoopsRemovesRangeChecksOfCountersThatMeet()
+{
+    for (B3::Opcode relation : { LessThan, LessEqual }) {
+        for (int64_t lowOffset : { 0, -1, 2 }) {
+            for (int64_t highOffset : { 0, 1, -2 }) {
+                MeetingCountersLoop loop(loopPolicy(), relation, lowOffset, highOffset);
+                CHECK(versionLoopsAndValidate(loop.proc));
+                CHECK_EQ(loop.proc.report().countOf(Counter::RangeChecksRemoved), 2u);
+                checkRangeCheckCountInEachLoop(loop.proc, { 0, 2 });
+                checkValueCountInEachLoop(loop.proc, isLoopPoll, "polls"_s, { 1u, 1u });
+                auto code = compileProc(loop.proc);
+                for (int64_t length : { 0, 1, 9, 10, 11, 12, 13, 30 }) {
+                    for (int64_t low : { -3, -1, 0, 1, 2, 5 }) {
+                        for (int64_t high : { -2, 0, 4, 5, 8, 9, 10, 11, 12 }) {
+                            CheckedArray array(length, 0);
+                            CHECK_EQ(run(*code, high, array.words, low), MeetingCountersLoop::expected(array, relation, low, high, lowOffset, highOffset));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void testVersionLoopsKeepsRangeChecksOfCountersThatMayWrap()
+{
+    MeetingCountersLoop loop(loopPolicy(), LessThan, 0, 0, false);
+    versionLoopsAndValidate(loop.proc);
+    CHECK_EQ(loop.proc.report().countOf(Counter::RangeChecksRemoved), 0u);
+    auto code = compileProc(loop.proc);
+    CheckedArray array(10, 0);
+    CHECK_EQ(run(*code, 9, array.words, 0), MeetingCountersLoop::expected(array, LessThan, 0, 9, 0, 0));
+    CHECK_EQ(run(*code, 10, array.words, 0), -1);
+}
+
+// However many elements a view holds, its length is no small number of turns. What bounds the turns between two polls is decided where the turns are counted, in unrollLoops.
+static void testVersionLoopsFastLoopKeepsItsPoll()
+{
+    struct Direction {
+        B3::Opcode relation;
+        int64_t step;
+        int64_t first;
+        int64_t bound;
+    };
+    for (Direction direction : { Direction { LessThan, 1, 0, 10 }, Direction { GreaterThan, -1, 9, -1 } }) {
+        LoopProcedure procedure(loopPolicy(), direction.relation, direction.step, direction.first);
+        auto& [proc, graph, state, loop] = procedure;
+        buildLoopWithRangeCheck(graph, loop, state);
+        readLimitsOutOfLengthOfView(proc);
+
+        CHECK(versionLoopsAndValidate(proc));
+        CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
+        checkValueCountInEachLoop(proc, isLoopPoll, "polls"_s, { 1u, 1u });
+        auto code = compileProc(proc);
+        CheckedArray array(20, 0);
+        CHECK_EQ(run(*code, direction.bound, array.words), sumBelowUnsignedBound(array, 10));
+        CHECK_EQ(state.numberOfPolls, 10);
+    }
+}
+
+// What a fast version asks in front of its loop may be a value that the loop does not use: the address that a length was read from, the length under its extension.
+// Here they stand on an unlikely path of the loop around, which that loop's fast version copies: the path that goes round an inner loop of no turns.
+static void testVersionLoopsAsksInFrontOfLoopAboutValuesOnPathThatLoopAroundCopies()
+{
+    struct List {
+        int32_t length;
+        int32_t room;
+    };
+    struct Memory {
+        int64_t key;
+        List* list;
+    };
+    for (bool readsLengthTwice : { false, true }) {
+        LoopProcedure procedure(loopPolicy());
+        auto& [proc, graph, state, outer] = procedure;
+        BasicBlock* beforeInner = proc.addBlock();
+        BasicBlock* innerHeader = proc.addBlock();
+        BasicBlock* innerBody = proc.addBlock();
+        BasicBlock* outerLatch = proc.addBlock();
+        Variable* innerIndex = proc.addVariable(Int64);
+        auto appendKeyGuard = [&](BasicBlock* block) {
+            return appendGuard(graph, block, graph.make(block, Equal, graph.load(block, Int64, outer.pointer, OBJECT_OFFSETOF(Memory, key), secondHeap), outer.extra), outer.sum, 1000);
+        };
+        auto appendLength = [&](BasicBlock* block) {
+            Value* list = graph.load(block, Int64, outer.pointer, OBJECT_OFFSETOF(Memory, list), thirdHeap);
+            return graph.make(block, ZExt32, graph.load(block, Int32, list, OBJECT_OFFSETOF(List, length), firstHeap));
+        };
+
+        BasicBlock* hot = appendKeyGuard(outer.body);
+        graph.branch(hot, graph.make(hot, BitAnd, graph.get(hot, outer.index), graph.int64(hot, 3)), FrequentedBlock(outerLatch), unlikely(beforeInner));
+        Value* length = appendLength(beforeInner);
+        graph.set(beforeInner, innerIndex, graph.int64(beforeInner, 0));
+        graph.jump(beforeInner, innerHeader);
+        graph.branch(innerHeader, graph.make(innerHeader, Below, graph.get(innerHeader, innerIndex), readsLengthTwice ? appendLength(innerHeader) : length), innerBody, outerLatch);
+        appendPoll(graph, innerBody, state);
+        BasicBlock* innerHot = appendKeyGuard(innerBody);
+        graph.increase(innerHot, outer.sum, graph.get(innerHot, innerIndex));
+        Value* nextInnerIndex = graph.make(innerHot, Add, graph.get(innerHot, innerIndex), graph.int64(innerHot, 1));
+        graph.set(innerHot, innerIndex, nextInnerIndex);
+        graph.jump(innerHot, innerHeader);
+        proc.setKnownInduction(DemotedInduction { innerIndex, innerHeader, nextInnerIndex, innerHeader->last()->child(0), 1, false });
+        endBodyAndRotate(outer, outerLatch);
+        readLimitsOutOf(proc, &AbstractHeapRepository::Butterfly_publicLength);
+
+        CHECK(versionLoopsAndValidate(proc));
+        CHECK_EQ(proc.report().countOf(Counter::LoopsVersioned), 2u);
+        auto code = compileProc(proc);
+        for (int32_t length : { 0, 1, 5 }) {
+            for (int32_t room : { 0, 5, 6 }) {
+                for (int64_t bound : { 0, 1, 4, 5, 9 }) {
+                    for (int64_t key : { 7, 8 }) {
+                        List list { length, room };
+                        Memory memory { 7, &list };
+                        int64_t entries = (bound + 3) / 4;
+                        state = { };
+                        CHECK_EQ(run(*code, bound, reinterpret_cast<int64_t*>(&memory), key), entries * sumBelow(length) + (key == 7 ? 0 : 1000 * (bound + entries * length)));
+                        CHECK_EQ(state.numberOfPolls, entries * length);
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void testVersionLoopsRemovesRangeChecksOfNeighborsInDecreasingLoop()
+{
+    struct Neighbor {
+        NeighborMaker make;
+        int64_t offset;
+    };
+    for (Neighbor neighbor : { Neighbor { indexPlusOne, 1 }, Neighbor { indexPlusNegativeOne, -1 } }) {
+        LoopProcedure procedure(loopPolicy(), GreaterThan, -1, 9);
+        auto& [proc, graph, state, loop] = procedure;
+        buildLoopWithTwoRangeChecks(graph, loop, state, neighbor.make, false);
+
+        CHECK(versionLoopsAndValidate(proc));
+        CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 2u);
+        checkRangeCheckCountInEachLoop(proc, { 0, 2 });
+        auto code = compileProc(proc);
+        for (int64_t firstLength : { 20, 10, 9 }) {
+            for (int64_t secondLength : { 20, 11, 10, 9, 8, 1, 0 }) {
+                for (int64_t bound : { -3, -1, 0, 1, 5, 9 }) {
+                    CheckedArray array(firstLength, secondLength);
+                    CHECK_EQ(run(*code, bound, array.words, -1), sumDownFrom(array, 9, -1, GreaterThan, bound, neighbor.offset));
+                }
+            }
+        }
     }
 }
 
@@ -687,6 +939,180 @@ static void testVersionLoopsRemovesRangeCheckOfInt32Counter()
             CHECK_EQ(run(*code, iterations, reinterpret_cast<int64_t*>(memory)), staysInBounds ? 3 * sumBelow(iterations) : -1);
         }
     }
+}
+
+namespace {
+
+struct CheckedLoopKind {
+    bool increases() const { return relation == LessThan || relation == LessEqual || relation == Below || relation == BelowEqual; }
+    bool isUnsigned() const { return relation == Below || relation == BelowEqual || relation == Above || relation == AboveEqual; }
+    int64_t step() const { return increases() ? stepSize : -stepSize; }
+
+    void dump(PrintStream& out) const
+    {
+        out.print(relation, " ", type, isTopTested ? " top-tested" : " bottom-tested", " step ", step(), " scale ", scale, " offset ", offset);
+    }
+
+    B3::Opcode relation;
+    Type type;
+    bool isTopTested;
+    int64_t stepSize;
+    int64_t scale;
+    int64_t offset;
+};
+
+} // anonymous namespace
+
+// for (i = start; i REL bound; i += step), or do .. while (i REL bound): sum += words[2 + i * scale + offset] behind its range check against words[0]. An index out of range returns -1.
+static void buildCheckedLoop(Procedure& proc, const CheckedLoopKind& kind)
+{
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* head = proc.addBlock();
+    BasicBlock* body = kind.isTopTested ? proc.addBlock() : head;
+    BasicBlock* inBounds = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    BasicBlock* out = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t*>(proc, root).eager();
+    bool isNarrow = kind.type == Int32;
+    auto narrow = [&](Value* value) {
+        return isNarrow ? graph.make(root, Trunc, value) : value;
+    };
+    auto constant = [&](BasicBlock* block, int64_t value) {
+        return isNarrow ? graph.int32(block, static_cast<int32_t>(value)) : graph.int64(block, value);
+    };
+    Value* bound = narrow(arguments[1]);
+    Value* pointer = arguments[2];
+    Variable* counter = proc.addVariable(kind.type);
+    Variable* sum = proc.addVariable(Int64);
+    graph.set(root, counter, narrow(arguments[0]));
+    graph.set(root, sum, graph.int64(root, 0));
+    graph.jump(root, head);
+
+    Value* test = nullptr;
+    if (kind.isTopTested) {
+        test = graph.make(head, kind.relation, graph.get(head, counter), bound);
+        graph.branch(head, test, body, exit);
+    }
+    Value* length = graph.load(body, Int32, pointer, 0, firstHeap);
+    if (!isNarrow)
+        length = graph.make(body, ZExt32, length);
+    Value* index = graph.get(body, counter);
+    if (kind.scale != 1)
+        index = graph.make(body, Mul, index, constant(body, kind.scale));
+    if (kind.offset)
+        index = graph.make(body, Add, index, constant(body, kind.offset));
+    graph.branch(body, graph.make(body, Below, index, length), FrequentedBlock(inBounds), rarely(out));
+    Value* wideIndex = isNarrow ? graph.make(inBounds, ZExt32, index) : index;
+    Value* address = graph.make(inBounds, Add, pointer, graph.make(inBounds, Shl, wideIndex, graph.int32(inBounds, 3)));
+    graph.increase(inBounds, sum, graph.load(inBounds, Int64, address, 16, secondHeap));
+    Value* next = graph.make(inBounds, Add, graph.get(inBounds, counter), constant(inBounds, kind.step()));
+    graph.set(inBounds, counter, next);
+    if (kind.isTopTested)
+        graph.jump(inBounds, head);
+    else {
+        test = graph.make(inBounds, kind.relation, next, bound);
+        graph.branch(inBounds, test, head, exit);
+    }
+    graph.ret(exit, graph.get(exit, sum));
+    graph.ret(out, graph.int64(out, -1));
+    proc.setKnownInduction(DemotedInduction { counter, head, next, test, kind.step(), false });
+    proc.resetReachability();
+    fixSSA(proc);
+    validate(proc);
+}
+
+template<typename Integer>
+static int64_t sumOfCheckedLoop(const CheckedLoopKind& kind, int64_t start, int64_t boundArgument, const CheckedArray& array)
+{
+    using UnsignedInteger = std::make_unsigned_t<Integer>;
+    auto add = [](Integer left, int64_t right) {
+        return static_cast<Integer>(static_cast<UnsignedInteger>(left) + static_cast<UnsignedInteger>(right));
+    };
+    auto widen = [&](Integer value) {
+        return kind.isUnsigned() ? static_cast<int64_t>(static_cast<UnsignedInteger>(value)) : static_cast<int64_t>(value);
+    };
+    Integer counter = static_cast<Integer>(start);
+    Integer bound = static_cast<Integer>(boundArgument);
+    int64_t sum = 0;
+    if (kind.isTopTested && !holds(kind.relation, widen(counter), widen(bound)))
+        return sum;
+    while (true) {
+        UnsignedInteger index = static_cast<UnsignedInteger>(counter) * static_cast<UnsignedInteger>(kind.scale) + static_cast<UnsignedInteger>(kind.offset);
+        if (index >= static_cast<uint32_t>(array.words[0]))
+            return -1;
+        sum += array.words[2 + index];
+        counter = add(counter, kind.step());
+        if (!holds(kind.relation, widen(counter), widen(bound)))
+            return sum;
+    }
+}
+
+static bool checkedLoopMatchesModel(const CheckedLoopKind& kind, Compilation& code)
+{
+    constexpr int64_t minInt32 = std::numeric_limits<int32_t>::min();
+    constexpr int64_t maxInt32 = std::numeric_limits<int32_t>::max();
+    constexpr int64_t minInt64 = std::numeric_limits<int64_t>::min();
+    constexpr int64_t maxInt64 = std::numeric_limits<int64_t>::max();
+    // The small ones come first: a wrong loop is caught by its sum before it reads far outside the array.
+    static constexpr int64_t extremes[] = { 0, 1, 2, 5, 9, 37, 38, -1, -2, -5, maxInt32, maxInt32 - 1, minInt32, minInt32 + 1, 0xffffffffll, 0x100000000ll, 0x80000000ll, maxInt64, maxInt64 - 1, minInt64, minInt64 + 1 };
+    for (int64_t length : { 38, 5, 1, 0 }) {
+        CheckedArray array(length, 0);
+        for (int64_t start : extremes) {
+            for (int64_t bound : extremes) {
+                int64_t expected = kind.type == Int32 ? sumOfCheckedLoop<int32_t>(kind, start, bound, array) : sumOfCheckedLoop<int64_t>(kind, start, bound, array);
+                int64_t actual = invoke<int64_t>(code, start, bound, array.words);
+                if (actual == expected)
+                    continue;
+                dataLogLn("The loop ", kind, " from ", start, " to ", bound, " over ", length, " elements returned ", actual, " and not ", expected);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static Vector<CheckedLoopKind> allCheckedLoopKinds()
+{
+    Vector<CheckedLoopKind> kinds;
+    for (B3::Opcode relation : { LessThan, LessEqual, Below, BelowEqual, GreaterThan, GreaterEqual, Above, AboveEqual }) {
+        for (Type type : { Int32, Int64 }) {
+            for (bool isTopTested : { true, false }) {
+                for (int64_t stepSize : { 1, 2 }) {
+                    for (int64_t scale : { 1, 2, 3 }) {
+                        for (int64_t offset : { 0, 1, -1 })
+                            kinds.append(CheckedLoopKind { relation, type, isTopTested, stepSize, scale, offset });
+                    }
+                }
+            }
+        }
+    }
+    return kinds;
+}
+
+static void testVersionLoopsMatchesModelAtExtremeStartsAndBounds()
+{
+    unsigned numberOfClampedKinds = 0;
+    unsigned numberOfClampedKindsThatDecreaseUnsigned = 0;
+    unsigned numberOfScaledKindsWithoutCheck = 0;
+    unsigned numberOfWrongKinds = 0;
+    Vector<CheckedLoopKind> kinds = allCheckedLoopKinds();
+    for (const CheckedLoopKind& kind : kinds) {
+        Procedure proc(loopPolicy());
+        buildCheckedLoop(proc, kind);
+        versionLoopsAndValidate(proc);
+        bool isClamped = proc.report().countOf(Counter::LoopBoundsClamped);
+        numberOfClampedKinds += isClamped;
+        numberOfClampedKindsThatDecreaseUnsigned += isClamped && !kind.increases() && kind.isUnsigned();
+        numberOfScaledKindsWithoutCheck += kind.scale != 1 && proc.report().countOf(Counter::RangeChecksRemoved);
+        auto code = compileProc(proc);
+        numberOfWrongKinds += !checkedLoopMatchesModel(kind, *code);
+    }
+    CHECK_EQ(numberOfWrongKinds, 0u);
+    CHECK_EQ(kinds.size(), 576u);
+    CHECK_EQ(numberOfClampedKinds, 144u);
+    CHECK_EQ(numberOfClampedKindsThatDecreaseUnsigned, 0u);
+    CHECK_EQ(numberOfScaledKindsWithoutCheck, 144u);
 }
 
 static void checkPollsStayInFastLoop(const Policy& policy, unsigned pollsPerIteration)
@@ -892,10 +1318,16 @@ void addBunLoopPlanTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsRemovesRangeCheckAgainstOtherLimit());
     RUN(testVersionLoopsRangeCheckBoundLimit());
     RUN(testVersionLoopsFirstIterationLeaves());
-    RUN(testVersionLoopsKeepsRangeCheckOfDecreasingLoop());
+    RUN(testVersionLoopsRemovesRangeCheckOfDecreasingLoop());
+    RUN(testVersionLoopsRemovesRangeChecksOfNeighborsInDecreasingLoop());
+    RUN(testVersionLoopsFastLoopKeepsItsPoll());
+    RUN(testVersionLoopsAsksInFrontOfLoopAboutValuesOnPathThatLoopAroundCopies());
+    RUN(testVersionLoopsRemovesRangeChecksOfCountersThatMeet());
+    RUN(testVersionLoopsKeepsRangeChecksOfCountersThatMayWrap());
     RUN(testVersionLoopsRemovesRangeCheckOfLaggingIndex());
     RUN(testVersionLoopsRemovesRangeCheckUnderUnsignedRelation());
     RUN(testVersionLoopsRemovesRangeCheckOfInt32Counter());
+    RUN(testVersionLoopsMatchesModelAtExtremeStartsAndBounds());
     RUN(testVersionLoopsPollsStayInFastLoop());
     RUN(testVersionLoopsReportsUnclampedBound());
     RUN(testVersionLoopsUnswitchLimit());

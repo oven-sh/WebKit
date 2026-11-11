@@ -306,7 +306,7 @@ bool LoopInvariance::matchesValueBeforeLoop(Value* inside, Value* before, Invali
             if (!load || !load->isLoad() || load->offset() != before->as<MemoryValue>()->offset() || !m_executedValues.contains(before))
                 return false;
             Effects effects = load->effects();
-            if (effects.readsMutability != Mutability::Immutable && effects.reads.overlaps(m_writes))
+            if (effects.readsMutability != Mutability::Immutable && effects.reads.overlaps(m_writes) && !m_proc.policy().validation.ignoresWritesToLocationsReloadedInLoops)
                 return false;
             walked.add(effects);
         }
@@ -658,17 +658,21 @@ bool LoopInvariance::tryPeelPendingGuards()
         return false;
     PeelingAttempt attempt;
     attempt.values = m_peeledValues;
+    bool firstTurnMayFail = false;
     for (const PendingGuard& guard : m_pendingGuards) {
         attempt.numberOfVisitedValues = 0;
         HoistStep::Kind kind = guard.guard->opcode() == Check ? HoistStep::Kind::PeeledCheck : HoistStep::Kind::PeeledGuard;
         FirstIterationValue onFirstIteration = stagePeeledCopy(guard.guard, kind, attempt);
-        if (onFirstIteration == FirstIterationValue::NotConstant)
+        if (onFirstIteration == FirstIterationValue::NotConstant) {
+            firstTurnMayFail = true;
             continue;
+        }
         if (onFirstIteration == FirstIterationValue::Constant && passesOnFirstIteration(guard))
             continue;
         m_peelingFailed = true;
         return false;
     }
+    m_plan.firstTurnMayFailPeeledGuard |= firstTurnMayFail;
     for (const HoistStep& step : attempt.steps)
         m_plan.numberOfPeeledValues += emitsInstructions(step.value);
     m_plan.steps.appendVector(attempt.steps);

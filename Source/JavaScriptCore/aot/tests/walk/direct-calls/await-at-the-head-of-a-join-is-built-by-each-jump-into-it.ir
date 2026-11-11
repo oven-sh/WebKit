@@ -1,0 +1,51 @@
+# the await stands at the head of a join and takes the parameter of the join alone. IT STAYS THERE (the name of the file says what was): a block may be passed by, and its jump is then led on by a door that builds no await
+# function cached(k) { return k; }  async function load(k) { await k; return k; }  async function run(hit, k) { return await (hit === undefined ? cached(k) : load(k)); }  sink(run);
+# RUN: walk f3:CoroutineBody mechanisms=none+DirectCalls
+# CHECK-LABEL: code f3:CoroutineBody
+# CHECK-NOT: = AwaitCallBySavingFrame
+# RUN(OTHER): walk f3:CoroutineBody mechanisms=none+DirectCalls
+# OTHER-LABEL: code f3:CoroutineBody
+# OTHER: [[value]]: {{*}} = CallDirect
+# OTHER: = AwaitBySavingFrame
+# RUN(ONCE): walk f3:CoroutineBody mechanisms=none+DirectCalls
+# ONCE: = AwaitBySavingFrame
+# ONCE-NOT: = AwaitBySavingFrame
+# RUN(ALL): walk f3:CoroutineBody mechanisms=all-Inlining
+# ALL-LABEL: code f3:CoroutineBody
+# ALL-NOT: = AwaitCallBySavingFrame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="load" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v0
+}
+function f2 name="cached" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="run" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=undefined
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewClosure function=f2
+    v4 = Call v3, -, v1 calleeName="cached"
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v1 calleeName="load"
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = Await v7
+    Return v8
+}

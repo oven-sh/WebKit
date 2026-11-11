@@ -40,7 +40,7 @@ namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSPromisePrototype);
 
-static JSC_DECLARE_HOST_FUNCTION(promiseProtoFuncCatch);
+JSC_DECLARE_HOST_FUNCTION(promiseProtoFuncCatch);
 static JSC_DECLARE_HOST_FUNCTION(promiseProtoFuncFinally);
 
 static JSC_DECLARE_HOST_FUNCTION(promiseFinallyThenFinallyFunc);

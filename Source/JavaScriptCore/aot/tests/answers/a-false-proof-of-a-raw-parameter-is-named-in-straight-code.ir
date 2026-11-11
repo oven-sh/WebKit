@@ -1,0 +1,44 @@
+# function takes(whole: number, half: number, flag: boolean) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return (flag ? whole * 2 : whole) + half + work; }
+# function handsOnWhole() { return takes(id("text"), 1.5, true) + 1; }
+# function handsOnHalf() { return takes(5, id("text"), true) + 1; }
+# function handsOnFlag() { return takes(5, 1.5, id("text")) + 1; }
+# function leavesByIt() { return takes(id("text"), 1.5, true); }
+# print(takes(1, 2.5, false));
+# if (which === 1) print(handsOnWhole());
+# if (which === 2) print(handsOnHalf());
+# if (which === 3) print(handsOnFlag());
+# if (which === 4) print(leavesByIt());
+# print("went on");
+# a-false-proof-of-a-raw-parameter-traps-in-straight-code.ir, its program and its lie. WHERE PROOFS ARE CHECKED THE FAULT IS NAMED IN FRONT OF THE TRAP, in straight code as in walked code.
+# OPTIONS: testing=ForceStraightCompilation,CheckProofsAtEntries
+# RUN(WHOLE): run-in-shell mechanisms=all globalThis.which = 1;
+# WHOLE: 4.5
+# WHOLE: bun: internal AOT error: type check failed
+# WHOLE-NEXT: found string in an argument
+# WHOLE-NOT: went on
+# WHOLE: crashed with
+# RUN(HALF): run-in-shell mechanisms=all globalThis.which = 2;
+# HALF: 4.5
+# HALF: bun: internal AOT error: type check failed
+# HALF-NEXT: found string in an argument
+# HALF-NOT: went on
+# HALF: crashed with
+# RUN(LEAVES): run-in-shell mechanisms=all globalThis.which = 4;
+# LEAVES: 4.5
+# LEAVES: bun: internal AOT error: type check failed
+# LEAVES-NEXT: found string in an argument
+# LEAVES-NOT: went on
+# LEAVES: crashed with
+# Where no false proof is come by, nothing stops.
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: 4.5
+# NONE-NEXT: went on
+# NONE-NEXT: exited with 0
+# The stop is a throw site: one word says the source of the proof, and the run time finds the function and the position of the text by the site beside the code. Neither stands in the code, which is the same wherever the text stands.
+# `takes` has a loop, and straight code has a form for a loop poll only where a poll is a load that faults: elsewhere the body is walked.
+# REQUIRES(BYTES): faulting-loop-polls
+# RUN(BYTES): bytes f1 mechanisms=all
+# BYTES: ThrowAtSite.WordInRegister
+# RUN(NOWORD): bytes f1 mechanisms=all
+# NOWORD-NOT: operationAOTStopAtFalseProof
+# PROGRAM-OF: a-false-proof-of-a-raw-parameter-traps-in-straight-code.ir

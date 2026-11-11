@@ -7,17 +7,17 @@
 
 #if ENABLE(AOT)
 
-#include "AOTRecordTypes.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTVector.h"
+#include "AOTWireEnums.h"
+#include "CodeType.h"
 #include "JSCJSValue.h"
-#include "LineColumn.h"
-#include <optional>
+#include "JSExportMacros.h"
+#include <array>
 #include <span>
+#include <wtf/Forward.h>
 #include <wtf/HashMap.h>
-#include <wtf/HashSet.h>
-#include <wtf/Lock.h>
-#include <wtf/SegmentedVector.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
@@ -25,78 +25,62 @@ namespace JSC {
 
 class VM;
 
-namespace Wasm {
-enum class InterpreterFallbackReason : uint8_t;
-}
-
 namespace AOT {
 
-struct CompiledFrame;
-struct Instance;
-struct RuntimeType;
+class Image;
+enum class Entry : uint16_t;
+using RuntimeCounterID = Wire::RuntimeCounterID;
 
-struct ReportDestination {
-    std::optional<intptr_t> descriptor;
-    bool isJSON { false };
-    bool isExplicit { false };
-};
+inline constexpr unsigned maxNumberOfReportedFrames = 3;
 
-class RuntimeReporter {
-    WTF_MAKE_NONCOPYABLE(RuntimeReporter);
+class RuntimeCounts {
+    WTF_MAKE_TZONE_ALLOCATED(RuntimeCounts);
+    WTF_MAKE_NONCOPYABLE(RuntimeCounts);
 public:
-    static constexpr unsigned maxNumberOfSites = 200;
-    static constexpr unsigned maxNumberOfKindsAtSite = 8;
-    static constexpr unsigned maxLengthOfType = 80;
-    static constexpr unsigned maxNumberOfCallers = 3;
+    explicit RuntimeCounts(VM&);
+    ~RuntimeCounts();
 
-    // However the process ends by itself.
-    static void callAtExit(void (*)());
+    void didCall(Entry entry) { ++m_calls[static_cast<unsigned>(entry)]; }
+    void add(RuntimeCounterID counter, uint64_t times) { m_values[static_cast<unsigned>(counter)] += times; }
+    void didLeaveSlot(uint32_t layout, uint16_t field, RuntimeCounterID counter, JSValue property);
+    void didPassMockDoor(const String& transition) { m_mockTransitions.add(transition, 0).iterator->value++; }
+    uint64_t numberOfCalls(Entry entry) const { return m_calls[static_cast<unsigned>(entry)]; }
+    uint64_t valueOf(RuntimeCounterID counter) const { return m_values[static_cast<unsigned>(counter)]; }
 
-    explicit RuntimeReporter(VM&);
-    ~RuntimeReporter();
-
-    // Null unless a log was asked for.
-    static RuntimeReporter* ifExplicitlyEnabled(VM&);
-
-    void reportFailedCheck(Instance&, TypeSiteID, const RuntimeType& expected, JSValue actual);
-    void reportNativeCall(ValidationFailureKind, const String& callee, const String& mismatch);
-    void writeAtExit();
+    JS_EXPORT_PRIVATE void dump(PrintStream&) const;
+    void write();
 
 private:
-    struct Site {
-        uint64_t id { 0 };
-        ASCIILiteral kind;
-        String file;
-        LineColumn position;
-        String function;
-        String expected;
-        Vector<std::pair<String, uint64_t>, 2> counts;
-    };
-
-    static void installExitHook();
-
-    Site* findOrAddSite(Instance&, TypeSiteID, const RuntimeType& expected, const CompiledFrame*);
-    void write(const Site&, const String& got, uint64_t count, std::span<const String> callers, bool isTotal);
-
     VM& m_vm;
-    const ReportDestination m_destination;
-    Lock m_lock;
-    bool m_hasOverflowed { false };
-    bool m_hasWrittenAtExit { false };
-    SegmentedVector<Site, 8> m_sites;
-    UncheckedKeyHashMap<uint64_t, Site*, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_sitesByCallSite;
-    HashSet<String> m_reportedNativeCalls;
+    bool m_hasWritten { false };
+    std::array<uint64_t, numberOfEnumerators<RuntimeCounterID>> m_values { };
+    using FieldThatLeftSlot = std::pair<uint64_t, uint64_t>;
+    UncheckedKeyHashMap<FieldThatLeftSlot, uint64_t, DefaultHash<FieldThatLeftSlot>, PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_fieldsThatLeftSlots;
+    UncheckedKeyHashMap<String, uint64_t> m_mockTransitions;
+    Vector<uint64_t> m_calls;
 };
 
-uint64_t typeCheckIDOf(std::span<const uint8_t> path, uint32_t position, TypeSiteKind);
+std::span<uint8_t> makeEffectsNetExercised();
+std::span<const uint8_t> effectsNetExercised();
+bool noteFalseRowOfEffects(const String&);
+void printRowOfEffectsNet(PrintStream&, unsigned row);
 
-void reportFailedCheck(Instance&, uint32_t typeSite, const RuntimeType& expected, JSValue actual);
-// A log that was asked for gets every mismatch of a run. Without one the first mismatch ends the run.
-void reportOrCrash(VM&, const ValidationFailure&, ASCIILiteral whatIsCalled, const String& callee, const String& mismatch);
-void writeToStandardError(const String& line);
-#if ENABLE(WEBASSEMBLY)
-void reportInterpreterFallback(Wasm::InterpreterFallbackReason);
+JS_EXPORT_PRIVATE void countEvent(VM&, RuntimeCounterID, uint64_t times = 1);
+void countFieldThatLeftSlot(VM&, uint32_t layout, uint16_t field, RuntimeCounterID, JSValue property = { });
+JS_EXPORT_PRIVATE bool countsCallsOf(Entry);
+
+constexpr RuntimeCounterID counterFor(CodeType codeType)
+{
+    using enum RuntimeCounterID;
+    return std::array { InterpretedGlobalCode, InterpretedEvalCode, InterpretedFunctionCode, InterpretedModuleCode }[codeType];
+}
+static_assert(counterFor(GlobalCode) == RuntimeCounterID::InterpretedGlobalCode && counterFor(EvalCode) == RuntimeCounterID::InterpretedEvalCode);
+static_assert(counterFor(FunctionCode) == RuntimeCounterID::InterpretedFunctionCode && counterFor(ModuleCode) == RuntimeCounterID::InterpretedModuleCode);
+
+#if !defined(BUN_HARDENED)
+void writePerfMap(const Image&);
 #endif
+void writeToStandardError(const String& line);
 
 } } // namespace JSC::AOT
 

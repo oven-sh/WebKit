@@ -1,0 +1,26 @@
+# sink(require.main && require.main.filename);
+# The table lists which object require.main holds, so the look at bodies follows it from the read. On the way where it is falsy it is no object: no module object goes to sink() there, and with it no loader.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: causes mechanisms=all
+# CHECK-NOT: cause
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs body=f0
+entry module=m0
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v3 = PropGet v2 key="main"
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = PropGet v5 key="filename"
+    Jump -> next b3(v6)
+  b2(v7):
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = Call v1, -, v8
+    v10 = Undefined
+    Return v10
+}

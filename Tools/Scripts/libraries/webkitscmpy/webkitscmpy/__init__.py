@@ -50,7 +50,7 @@ except ImportError:
         "See https://github.com/WebKit/WebKit/tree/main/Tools/Scripts/libraries/webkitcorepy"
     )
 
-version = Version(7, 0, 9)
+version = Version(7, 1, 0)
 
 AutoInstall.register(Package('fasteners', Version(0, 15, 0)))
 AutoInstall.register(Package('markupsafe', Version(3, 0, 3), pypi_name='MarkupSafe', wheel=True))
@@ -59,8 +59,10 @@ AutoInstall.register(Package('monotonic', Version(1, 5)))
 AutoInstall.register(Package('xmltodict', Version(0, 11, 0)))
 AutoInstall.register(Package('webkitbugspy', Version(0, 15, 4)), local=True)
 
-if sys.version_info >= (3, 10):
+if sys.version_info >= (3, 11):
     AutoInstall.register(Package('rapidfuzz', Version(3, 14, 6), wheel=True))
+elif sys.version_info >= (3, 10):
+    AutoInstall.register(Package('rapidfuzz', Version(3, 14, 5), wheel=True))
 else:
     AutoInstall.register(Package('rapidfuzz', Version(3, 4, 0)))
 

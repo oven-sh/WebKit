@@ -272,7 +272,7 @@ public:
 #endif
 
     void addSupportedPlugin(String&& matchingDomain, String&& name, HashSet<String>&& mimeTypes, HashSet<String> extensions);
-    void LEGACY_NODELETE clearSupportedPlugins();
+    NODELETE void clearSupportedPlugins();
 
     HashSet<ProcessID> prewarmedProcessIdentifiers();
     HashSet<ProcessID> crossOriginIsolatedProcessIdentifiers();
@@ -337,9 +337,9 @@ public:
 
     Ref<WebProcessProxy> processForSite(WebsiteDataStore&, WebProcessProxy::IsolatedProcessType, const std::optional<WebCore::Site>&, const std::optional<WebCore::Site>& mainFrameSite, WebProcessProxy::LockdownMode, EnhancedSecurity, const API::PageConfiguration&, WebCore::ProcessSwapDisposition, ProcessCrossOriginIsolation, const std::optional<WebCore::SecurityOriginData>& coopOrigin = std::nullopt, WebProcessProxy* reusableProvisionalProcess = nullptr, const std::optional<WebCore::SecurityOriginData>& cachedCOOPProcessOrigin = std::nullopt); // Will return an existing one if limit is met or due to caching.
 
-    void prewarmProcess();
+    void prewarmProcess(WebsiteDataStore* = nullptr);
 
-    bool LEGACY_NODELETE shouldTerminate(WebProcessProxy&);
+    NODELETE bool shouldTerminate(WebProcessProxy&);
 
     void disableProcessTermination();
     void enableProcessTermination();
@@ -355,7 +355,7 @@ public:
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(const IPC::Connection&) const;
 
     bool javaScriptConfigurationFileEnabled() { return m_javaScriptConfigurationFileEnabled; }
-    void LEGACY_NODELETE setJavaScriptConfigurationFileEnabled(bool flag);
+    NODELETE void setJavaScriptConfigurationFileEnabled(bool flag);
 #if PLATFORM(IOS_FAMILY)
     void setJavaScriptConfigurationFileEnabledFromDefaults();
 #endif
@@ -369,7 +369,7 @@ public:
         GameControllerFramework,
     };
     size_t numberOfConnectedGamepadsForTesting(GamepadType);
-    void LEGACY_NODELETE setUsesOnlyHIDGamepadProviderForTesting(bool);
+    NODELETE void setUsesOnlyHIDGamepadProviderForTesting(bool);
 
 #if PLATFORM(COCOA)
     static bool omitPDFSupport();
@@ -390,6 +390,13 @@ public:
 
     GPUProcessProxy& ensureGPUProcess();
     GPUProcessProxy* gpuProcess() const { return m_gpuProcess.get(); }
+#endif
+
+#if ENABLE(GPU_PROCESS) && PLATFORM(COCOA)
+    PrintProcessUseCounter::Token ensurePrintProcess(WebProcessProxy::LockdownMode);
+    void whenPrintProcessReady(WebProcessProxy::LockdownMode, CompletionHandler<void(WebProcessProxy*)>&&);
+    std::optional<WebCore::ProcessIdentifier> readyPrintProcessIdentifier(WebProcessProxy::LockdownMode);
+    void setPrintProcessIdleTimeoutForTesting(Seconds timeout) { m_printProcessIdleTimeout = timeout; }
 #endif
 
 #if ENABLE(MODEL_PROCESS)
@@ -417,12 +424,12 @@ public:
     static void establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWorkerType, WebCore::Site&&, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PAL::SessionID, WebCore::CrossOriginEmbedderPolicyValue, CompletionHandler<void(WebCore::ProcessIdentifier)>&&);
 
 #if PLATFORM(COCOA)
-    bool LEGACY_NODELETE processSuppressionEnabled() const;
+    NODELETE bool processSuppressionEnabled() const;
 #endif
 
     void windowServerConnectionStateChanged();
 
-    static void LEGACY_NODELETE setInvalidMessageCallback(void (*)(WKStringRef));
+    NODELETE static void setInvalidMessageCallback(void (*)(WKStringRef));
     static void didReceiveInvalidMessage(IPC::MessageName);
 
     static void registerGlobalURLSchemeAsHavingCustomProtocolHandlers(const String&);
@@ -471,7 +478,7 @@ public:
 
 #if PLATFORM(COCOA)
     bool cookieStoragePartitioningEnabled() const { return m_cookieStoragePartitioningEnabled; }
-    void LEGACY_NODELETE setCookieStoragePartitioningEnabled(bool);
+    NODELETE void setCookieStoragePartitioningEnabled(bool);
 
     void clearPermanentCredentialsForProtectionSpace(WebCore::ProtectionSpace&&);
 
@@ -488,9 +495,9 @@ public:
     bool hasBackgroundWebProcessesWithModels() const;
 #endif
 
-    void processForNavigation(WebPageProxy&, WebFrameProxy&, const API::Navigation&, const URL& sourceURL, BrowsingContextGroup&, WebProcessProxy::IsolatedProcessType, const WebCore::Site& mainFrameSite, ProcessSwapRequestedByClient, WebProcessProxy::LockdownMode, EnhancedSecurity, LoadedWebArchive, const FrameInfoData&, Ref<WebsiteDataStore>&&, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&&);
+    void processForNavigation(WebPageProxy&, WebFrameProxy&, const API::Navigation&, const URL& sourceURL, BrowsingContextGroup&, WebProcessProxy::IsolatedProcessType, const WebCore::Site& mainFrameSite, ProcessSwapRequestedByClient, WebProcessProxy::LockdownMode, EnhancedSecurity, LoadedWebArchive, const FrameInfoData&, Ref<WebsiteDataStore>&&, const std::optional<WebCore::Site>& backForwardInheritedSite, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&&);
 
-    void didReachGoodTimeToPrewarm();
+    void didReachGoodTimeToPrewarm(WebsiteDataStore*);
 
     void didCollectPrewarmInformation(const WebCore::RegistrableDomain&, const WebCore::PrewarmInformation&);
 
@@ -628,8 +635,9 @@ public:
     void initializeAccessibilityIfNecessary();
 #endif
 
-    void setAllowAXAuthenticationForTesting(bool allow) { m_allowAXAuthenticationForTesting = allow; }
-    bool allowAXAuthenticationForTesting() const { return m_allowAXAuthenticationForTesting; }
+    enum class AXAuthenticationTestingMode : uint8_t { Default, Allow, Deny };
+    void setAXAuthenticationTestingMode(AXAuthenticationTestingMode mode) { m_axAuthenticationTestingMode = mode; }
+    AXAuthenticationTestingMode axAuthenticationTestingMode() const { return m_axAuthenticationTestingMode; }
 
     void setPLTResourceDelayInterval(Seconds interval) { m_pltResourceDelayInterval = interval; }
     Seconds pltResourceDelayInterval() const { return m_pltResourceDelayInterval; }
@@ -643,7 +651,7 @@ private:
     enum class NeedsGlobalStaticInitialization : bool { No, Yes };
     void platformInitialize(NeedsGlobalStaticInitialization);
 
-    RefPtr<WebProcessProxy> LEGACY_NODELETE webProcessProxyFromConnection(const IPC::Connection&) const;
+    NODELETE RefPtr<WebProcessProxy> webProcessProxyFromConnection(const IPC::Connection&) const;
 
     void platformInitializeWebProcess(const WebProcessProxy&, WebProcessCreationParameters&);
     void platformInvalidateContext();
@@ -652,12 +660,13 @@ private:
     void setSandboxEnabledInternal(bool, bool ignoreEnvironmentForTesting);
 #endif
 
-    std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> processForNavigationInternal(WebPageProxy&, WebFrameProxy&, const API::Navigation&, const URL& sourceURL, BrowsingContextGroup&, WebProcessProxy::IsolatedProcessType, const WebCore::Site& mainFrameSite, ProcessSwapRequestedByClient, WebProcessProxy::LockdownMode, EnhancedSecurity, const FrameInfoData&, Ref<WebsiteDataStore>&&);
+    std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> processForNavigationInternal(WebPageProxy&, WebFrameProxy&, const API::Navigation&, const URL& sourceURL, BrowsingContextGroup&, WebProcessProxy::IsolatedProcessType, const WebCore::Site& mainFrameSite, ProcessSwapRequestedByClient, WebProcessProxy::LockdownMode, EnhancedSecurity, const FrameInfoData&, Ref<WebsiteDataStore>&&, const std::optional<WebCore::Site>& backForwardInheritedSite);
     void prepareProcessForNavigation(Ref<WebProcessProxy>&&, WebPageProxy&, SuspendedPageProxy*, ASCIILiteral reason, WebProcessProxy::IsolatedProcessType, const WebCore::Site&, const WebCore::Site& mainFrameSite, const API::Navigation&, WebProcessProxy::LockdownMode, EnhancedSecurity, LoadedWebArchive, Ref<WebsiteDataStore>&&, BrowsingContextGroup&, WebProcessProxy& sourceProcess, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&&, unsigned previousAttemptsCount = 0);
 
     Ref<WebProcessProxy> createNewWebProcess(WebsiteDataStore*, WebProcessProxy::LockdownMode, EnhancedSecurity, WebProcessProxy::EnableWebAssemblyDebugger = WebProcessProxy::EnableWebAssemblyDebugger::No, WebProcessProxy::IsPrewarmed = WebProcessProxy::IsPrewarmed::No, ProcessCrossOriginIsolation = ProcessCrossOriginIsolation::None, JSCOptionsForWebProcess = { });
 
     RefPtr<WebProcessProxy> tryTakePrewarmedProcess(WebsiteDataStore&, WebProcessProxy::LockdownMode, EnhancedSecurity, const API::PageConfiguration&, ProcessCrossOriginIsolation);
+    void shutDownPrewarmedProcessesForWebsiteDataStore(WebsiteDataStore&);
 
     void initializeNewWebProcess(WebProcessProxy&, WebsiteDataStore*, WebProcessProxy::IsPrewarmed = WebProcessProxy::IsPrewarmed::No, WebProcessProxy::EnableWebAssemblyDebugger = WebProcessProxy::EnableWebAssemblyDebugger::No, JSCOptionsForWebProcess = { });
 
@@ -734,6 +743,7 @@ private:
 
 #if PLATFORM(MAC)
     static void colorPreferencesDidChangeCallback(CFNotificationCenterRef, void* observer, CFStringRef name, const void* postingObject, CFDictionaryRef userInfo);
+    static void preferredContentSizeCategoryDidChangeCallback(CFNotificationCenterRef, void* observer, CFStringRef name, const void* postingObject, CFDictionaryRef userInfo);
 #endif
 
 #if HAVE(POWERLOG_TASK_MODE_QUERY) && ENABLE(GPU_PROCESS)
@@ -778,7 +788,7 @@ private:
 #endif
 
 #if ENABLE(MODEL_PROCESS)
-    ModelProcessProxy& LEGACY_NODELETE ensureModelProcess();
+    NODELETE ModelProcessProxy& ensureModelProcess();
     void updateModelProcessAssertion();
     void terminateAllWebContentProcessesWithModelPlayers();
 #endif
@@ -788,7 +798,7 @@ private:
 
     void platformLoadResourceMonitorRuleList(CompletionHandler<void(RefPtr<WebCompiledContentRuleList>)>&&);
     void platformCompileResourceMonitorRuleList(const String& rulesText, CompletionHandler<void(RefPtr<WebCompiledContentRuleList>)>&&);
-    String LEGACY_NODELETE platformResourceMonitorRuleListSourceForTesting();
+    NODELETE String platformResourceMonitorRuleListSourceForTesting();
 #endif
 
     const Ref<API::ProcessPoolConfiguration> m_configuration;
@@ -802,7 +812,7 @@ private:
 
     HashMap<PAL::SessionID, WeakPtr<WebProcessProxy>> m_dummyProcessProxies; // Lightweight WebProcessProxy objects without backing process.
 
-    static WeakHashSet<WebProcessProxy>& LEGACY_NODELETE remoteWorkerProcesses();
+    NODELETE static WeakHashSet<WebProcessProxy>& remoteWorkerProcesses();
 
     std::optional<WebPreferencesStore> m_remoteWorkerPreferences;
     RefPtr<WebUserContentControllerProxy> m_userContentControllerForRemoteWorkers;
@@ -810,6 +820,25 @@ private:
 
 #if ENABLE(GPU_PROCESS)
     RefPtr<GPUProcessProxy> m_gpuProcess;
+#endif
+#if ENABLE(GPU_PROCESS) && PLATFORM(COCOA)
+    struct PrintProcessState {
+        PrintProcessState(WebProcessPool&, WebProcessProxy::LockdownMode);
+
+        RefPtr<WebProcessProxy> process;
+        RefPtr<WebsiteDataStore> dataStore;
+        RefPtr<ProcessThrottlerActivity> activity;
+        WebProcessProxy::ShutdownPreventingScopeCounter::Token shutdownPreventingScope;
+        bool isReady { false };
+        Vector<CompletionHandler<void(WebProcessProxy*)>> readyCallbacks;
+        RunLoop::Timer idleTimer;
+        PrintProcessUseCounter useCounter;
+    };
+
+    PrintProcessState& printProcessState(WebProcessProxy::LockdownMode lockdownMode) { return lockdownMode == WebProcessProxy::LockdownMode::Enabled ? m_lockdownPrintProcessState : m_printProcessState; }
+    void shutDownPrintProcess(WebProcessProxy::LockdownMode);
+    void printProcessDidDisconnect(WebProcessProxy&);
+    void printProcessUseCountDidChange(WebProcessProxy::LockdownMode);
 #endif
 #if ENABLE(MODEL_PROCESS)
     RefPtr<ModelProcessProxy> m_modelProcess;
@@ -886,6 +915,9 @@ private:
     std::unique_ptr<WebCore::PowerSourceNotifier> m_powerSourceNotifier;
     const RetainPtr<NSObject> m_activationObserver;
     const RetainPtr<NSObject> m_accessibilityEnabledObserver;
+#if PLATFORM(IOS) || PLATFORM(VISION)
+    const RetainPtr<NSObject> m_contentSizeCategoryObserver;
+#endif
     const RetainPtr<NSObject> m_applicationLaunchObserver;
     const RetainPtr<NSObject> m_finishedMobileAssetFontDownloadObserver;
 
@@ -910,6 +942,12 @@ private:
 #if ENABLE(GPU_PROCESS)
     RunLoop::Timer m_resetGPUProcessCrashCountTimer;
     unsigned m_recentGPUProcessCrashCount { 0 };
+#endif
+
+#if ENABLE(GPU_PROCESS) && PLATFORM(COCOA)
+    Seconds m_printProcessIdleTimeout { 1_min };
+    PrintProcessState m_printProcessState;
+    PrintProcessState m_lockdownPrintProcessState;
 #endif
 
 #if ENABLE(MODEL_PROCESS)
@@ -1066,7 +1104,7 @@ private:
 #endif
 
     bool m_hasReceivedAXRequestInUIProcess { false };
-    bool m_allowAXAuthenticationForTesting { false };
+    AXAuthenticationTestingMode m_axAuthenticationTestingMode { AXAuthenticationTestingMode::Default };
     bool m_suppressEDR { false };
 
     Seconds m_pltResourceDelayInterval { 100_ms };

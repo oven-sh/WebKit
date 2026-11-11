@@ -139,6 +139,7 @@ WKRetainPtr<WKMutableDictionaryRef> TestInvocation::createTestSettingsDictionary
     setValue(beginTestMessageBody, "TestIdentifier", m_identifier);
     setValue(beginTestMessageBody, "UseFlexibleViewport", options().useFlexibleViewport());
     setValue(beginTestMessageBody, "DumpPixels", m_dumpPixels);
+    setValue(beginTestMessageBody, "DumpCSSPageBoxes", options().dumpCSSPageBoxes());
     setValue(beginTestMessageBody, "Timeout", static_cast<uint64_t>(m_timeout.milliseconds()));
     setValue(beginTestMessageBody, "additionalSupportedImageTypes", options().additionalSupportedImageTypes().c_str());
     auto allowedHostsValue = adoptWK(WKMutableArrayCreate());
@@ -224,8 +225,12 @@ end:
         WKInspectorClose(WKPageGetInspector(TestController::singleton().mainWebView()->page()));
 #endif // !PLATFORM(IOS_FAMILY)
 
-    if (TestController::singleton().resetStateToConsistentValues(m_options, TestController::ResetStage::AfterTest))
+    if (TestController::singleton().resetStateToConsistentValues(m_options, TestController::ResetStage::AfterTest)) {
+#if PLATFORM(MAC)
+        TestController::singleton().terminateWebContentProcessesIfAXAuthenticationWasDenied();
+#endif
         return;
+    }
 
     // The process is unresponsive, so let's start a new one.
     TestController::singleton().terminateWebContentProcess();
@@ -684,6 +689,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         TestController::singleton().initializeWebProcessAccessibility();
         return nullptr;
     }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "SetAXAuthenticationDeniedForTesting")) {
+        TestController::singleton().setAXAuthenticationDeniedForTesting(booleanValue(messageBody));
+        return nullptr;
+    }
 #endif
 
     if (WKStringIsEqualToUTF8CString(messageName, "SetPrinting")) {
@@ -771,6 +781,10 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         TestController::singleton().simulateClickBackgroundFetch(stringValue(messageBody));
         return nullptr;
     }
+#if HAVE(TEXT_SCALE_FACTOR)
+    if (WKStringIsEqualToUTF8CString(messageName, "TextScaleFactorForContentSizeCategory"))
+        return adoptWK(WKDoubleCreate(TestController::singleton().textScaleFactorForContentSizeCategory(stringValue(messageBody))));
+#endif
     if (WKStringIsEqualToUTF8CString(messageName, "LastAddedBackgroundFetchIdentifier"))
         return TestController::singleton().lastAddedBackgroundFetchIdentifier();
     if (WKStringIsEqualToUTF8CString(messageName, "LastRemovedBackgroundFetchIdentifier"))
@@ -1089,6 +1103,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         return nullptr;
     }
 
+    if (WKStringIsEqualToUTF8CString(messageName, "SetStatisticsLinkDecorationFilteringData")) {
+        TestController::singleton().setStatisticsLinkDecorationFilteringData(stringValue(messageBody));
+        return nullptr;
+    }
+
     if (WKStringIsEqualToUTF8CString(messageName, "SetStatisticsTimeToLiveUserInteraction")) {
         TestController::singleton().setStatisticsTimeToLiveUserInteraction(doubleValue(messageBody));
         return nullptr;
@@ -1391,6 +1410,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
 
     if (WKStringIsEqualToUTF8CString(messageName, "SetHasMouseDeviceForTesting")) {
         TestController::singleton().setHasMouseDeviceForTesting((booleanValue(messageBody)));
+        return nullptr;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "SetHasFakePaymentUIForTesting")) {
+        TestController::singleton().setHasFakePaymentUIForTesting(booleanValue(messageBody));
         return nullptr;
     }
 

@@ -1,0 +1,70 @@
+# If the link that `Object.setPrototypeOf(B.prototype, A.prototype)` lays let both escape, no row of constructor functions would keep a layout. If it were taken for laid from the start, a method of A would count as found on an object of B.
+# function A() { this.a = 1; }  A.prototype.m = function () { return "A"; };  function B() { A.call(this); this.b = 2; }  Object.setPrototypeOf(B.prototype, A.prototype);  new B().m();  new A();
+# The link is the one that the layouts are written with (base=L0), so nothing is lost. A lookup on an object of B takes what is stored on either prototype object.
+# RUN: link functions calls fields members layouts mechanisms=all
+# CHECK: function f3 callers-known one-callee {{*}}result=string
+# CHECK: call f0 v12 -> f3
+# CHECK: field L0.0 "a" proven=i32 writers-known
+# CHECK: field L1.1 "b" proven=i32 writers-known
+# CHECK: on-prototype L0 "m" function=f3
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[]
+# Any other object laid above a prototype object lets both go.
+# RUN(OTHER): link layouts mechanisms=all
+# OTHER: layout L2 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="B" module=m0 base=L0 constructor=f2 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="C" module=m0 constructor=f4 fields=[{key="c" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure v0 function=f2
+    v2 = PropGet v0 key="prototype"
+    v3 = NewClosure function=f3
+    PropSet v2, v3 key="m"
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectSetPrototypeOf
+    v7 = PropGet v1 key="prototype"
+    v8 = PropGet v0 key="prototype"
+    v9 = Call v6, v5, v7, v8 calleeName="Object.setPrototypeOf"
+    v10 = Construct v1
+    v11 = PropGet v10 key="m"
+    v12 = Call v11, v10 calleeKey="m"
+    v13 = Construct v0
+    v14 = NewClosure function=f4
+    v15 = PropGet v14 key="prototype"
+    v16 = NewDictionary
+    v17 = Call v6, v5, v15, v16 calleeName="Object.setPrototypeOf"
+    v18 = Construct v14
+    Return v12
+}
+function f1 name="A" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="B" module=m0 flags=[HasThis, HasExplicitName] captures=[{type=f1 flags=[IsFromCompiler]}] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: f1, v1: L1):
+    v2 = Call v0, v1
+    v3 = Integer integer=2
+    PropSet v1, v3 key="b"
+    v5 = Undefined
+    Return v5
+}
+function f3 module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="A"
+    Return v1
+}
+function f4 name="C" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Integer integer=3
+    PropSet v0, v1 key="c"
+    v3 = Undefined
+    Return v3
+}

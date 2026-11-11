@@ -1,0 +1,29 @@
+# the ramp of an async function in which nothing suspends calls the body with no promise, makes the promise behind the call and settles it with what the body returns; the body returns the value as it is
+# async function plain(a) { return a; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK: code f1:Body {
+# CHECK: [[driver]]: undefined @JSValue = Undefined
+# CHECK: = CallDirect {{*}}, [[driver]] function=f1 role=CoroutineBody
+# CHECK: = NewPromise
+# RUN(BODY): walk f1:CoroutineBody mechanisms=none+TypedOperations
+# BODY: code f1:CoroutineBody {
+# BODY: Return
+# RUN(NEVER): walk f1:CoroutineBody mechanisms=none+TypedOperations
+# NEVER-NOT: ReturnAsyncResult
+# RUN(ALL): walk f1:CoroutineBody mechanisms=all
+# ALL-NOT: ReturnAsyncResult
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="plain" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

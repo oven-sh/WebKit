@@ -1,0 +1,37 @@
+# A function that only passes its rest list on is handed to code that nobody sees, which calls it with whatever it likes and with as little as it likes. If that came to the list alone and not to the places that are passed on, the parameters of `take`, whose one caller is known, would be proven `i32` and `string`.
+# It comes by the escape alone, so what is expected stays what was seen.
+#   function take(a, b) { return b; }  function wrap(...list) { return take(...list); }  wrap(1, "x"); globalThis.handed = wrap;
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f2 callers-known
+# CHECK-NOT: proven=
+# RUN(HELD): link held functions mechanisms=all
+# HELD: function f2 callers-known {{*}}result=string returns=
+# HELD-NEXT: parameter 0 expected=i32 proven=i32
+# HELD-NEXT: parameter 1 expected=string proven=string
+
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = Integer integer=1
+    v4 = String string="x"
+    v5 = Call v2, -, v3, v4 calleeName="wrap"
+    v6 = Builtin builtin=GlobalThis
+    PropSet v6, v2 key="handed"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="wrap" module=m0 flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = GetModuleVariable variable=g0
+    v2 = CallList v1, -, v0 calleeName="take"
+    Return v2
+}
+function f2 name="take" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

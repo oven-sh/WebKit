@@ -135,7 +135,7 @@ void HTMLFormattingElementList::clearToLastMarker()
     }
 }
 
-static bool LEGACY_NODELETE itemsHaveMatchingNames(const HTMLStackItem& a, const HTMLStackItem& b)
+NODELETE static bool itemsHaveMatchingNames(const HTMLStackItem& a, const HTMLStackItem& b)
 {
     if (a.elementName() != b.elementName())
         return false;
@@ -185,8 +185,7 @@ void HTMLFormattingElementList::ensureNoahsArkCondition(HTMLStackItem& newItem)
         return;
 
     // We pre-allocate and re-use this second vector to save one malloc per attribute that we verify.
-    Vector<const HTMLStackItem*> remainingCandidates;
-    remainingCandidates.reserveInitialCapacity(candidates.size());
+    Vector<const HTMLStackItem*> remainingCandidates(ReserveCapacityTag { }, candidates.size());
 
     for (auto& attribute : newItem.attributes()) {
         for (auto* candidate : candidates) {

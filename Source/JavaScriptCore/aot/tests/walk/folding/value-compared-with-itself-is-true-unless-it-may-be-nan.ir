@@ -1,0 +1,42 @@
+# both operands are one value, under two names. Only NaN differs from itself: where either name says that the value is no number, the comparison is true
+# function same(v) { return typeof v === "object" ? v === v : false; }   function any(v) { return v === v; }
+# handed to sink, so nothing is known of `v` but what the test of the program says
+# without TypedOperations the proof that the test hands along its edge has no type, and nothing says that the value is no number
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding
+# NEVER-NOT: StrictEq
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-NOT: StrictEq
+# RUN(KEPT): walk f2 mechanisms=all
+# KEPT-LABEL: code f2:Body
+# KEPT: = StrictEq
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = StrictEq v2, v0
+    Return v3
+  b2(v4):
+    v5 = Boolean
+    Return v5
+}
+function f2 name="any" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = StrictEq v0, v0
+    Return v1
+}

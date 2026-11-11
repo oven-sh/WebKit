@@ -1,0 +1,46 @@
+# The list follows from the program alone. A built-in that is not entered leaves what it was called on as it was, and what is known of it is then no longer true: so those that write what they are called on are entered.
+# const stack = [1, 2, 3]; while (stack.length) stack.pop(); new RegExp("d".toUpperCase() + stack.length); const table = new Map(); table.set("k", "v"); new RegExp("^" + table.get("k"));
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /D0/
+# CHECK-NOT: text /^undefined/
+# CHECK: text /^v/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = Integer integer=3
+    v3 = NewArray v0, v1, v2 contents=anything
+    v4 = PropGet v3 key="pop"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = PropGet v3 key="length"
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Call v4, v3 calleeKey="pop"
+    Jump -> next b1()
+  b3():
+    v9 = String string="d"
+    v10 = PropGet v9 key="toUpperCase"
+    v11 = Call v10, v9 calleeKey="toUpperCase"
+    v12 = Builtin builtin=RegExp
+    v13 = Add v11, v6
+    v14 = Construct v12, -, v13
+    v15 = Builtin builtin=Map
+    v16 = Construct v15, -
+    v17 = String string="k"
+    v18 = String string="v"
+    v19 = PropGet v16 key="set"
+    v20 = Call v19, v16, v17, v18 calleeKey="set"
+    v21 = PropGet v16 key="get"
+    v22 = Call v21, v16, v17 calleeKey="get"
+    v23 = Builtin builtin=RegExp
+    v24 = String string="^"
+    v25 = Add v24, v22
+    v26 = Construct v23, -, v25
+    Return v26
+}

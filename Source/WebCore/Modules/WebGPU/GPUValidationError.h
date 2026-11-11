@@ -45,23 +45,18 @@ public:
         return adoptRef(*new GPUValidationError(WTF::move(backing)));
     }
 
+    ~GPUValidationError();
+
     Type type() const final { return Type::Validation; }
-    const String& LEGACY_NODELETE message() const LIFETIME_BOUND final;
+    NODELETE const String& message() const LIFETIME_BOUND final;
 
     WebGPUValidationError* backing() { return m_backing.get(); }
     const WebGPUValidationError* backing() const { return m_backing.get(); }
     String stack() const { return "_"_s; }
 
 private:
-    GPUValidationError(String&& message)
-        : m_message(WTF::move(message))
-    {
-    }
-
-    GPUValidationError(Ref<WebGPUValidationError>&& backing)
-        : m_backing(WTF::move(backing))
-    {
-    }
+    GPUValidationError(String&& message);
+    GPUValidationError(Ref<WebGPUValidationError>&&);
 
     String m_message;
     const RefPtr<WebGPUValidationError> m_backing;

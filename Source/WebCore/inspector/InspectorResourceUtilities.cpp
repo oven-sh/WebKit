@@ -31,6 +31,8 @@
 #include "CachedScript.h"
 #include "CertificateInfo.h"
 #include "CertificateSummary.h"
+#include "Cookie.h"
+#include "CookieJar.h"
 #include "DocumentInlines.h"
 #include "DocumentLoader.h"
 #include "DocumentPage.h"
@@ -49,11 +51,13 @@
 #include "MemoryCache.h"
 #include "NetworkLoadMetrics.h"
 #include "Page.h"
+#include "RegistrableDomain.h"
 #include "ResourceLoader.h"
 #include "ResourceLoaderOptions.h"
 #include "ResourceRequest.h"
 #include "ScriptExecutionContext.h"
 #include "ScriptableDocumentParser.h"
+#include "SecurityOrigin.h"
 #include "SharedBuffer.h"
 #include "ThreadableLoader.h"
 #include <JavaScriptCore/AsyncStackTrace.h>
@@ -109,7 +113,7 @@ Inspector::Protocol::Page::ResourceType resourceTypeToProtocol(Inspector::Resour
     return Inspector::Protocol::Page::ResourceType::Other;
 }
 
-static Inspector::Protocol::Network::ReferrerPolicy LEGACY_NODELETE referrerPolicyToProtocol(ReferrerPolicy referrerPolicy)
+NODELETE static Inspector::Protocol::Network::ReferrerPolicy referrerPolicyToProtocol(ReferrerPolicy referrerPolicy)
 {
     switch (referrerPolicy) {
     case ReferrerPolicy::EmptyString:
@@ -192,6 +196,47 @@ Vector<CachedResource*> cachedResourcesForFrame(LocalFrame* frame)
     return result;
 }
 
+static Vector<URL> allResourcesURLsForFrame(LocalFrame& frame)
+{
+    Vector<URL> result;
+
+    result.append(protect(frame.loader().documentLoader())->url());
+
+    for (RefPtr cachedResource : cachedResourcesForFrame(&frame))
+        result.append(cachedResource->url());
+
+    return result;
+}
+
+void collectRawCookiesForFrame(LocalFrame& frame, ListHashSet<Cookie>& cookies, SubresourceSites subresourceSites)
+{
+    RefPtr document = frame.document();
+    if (!document || !document->page())
+        return;
+
+    // The origin, not the URL, so about:blank and srcdoc frames get the site they inherit from their parent.
+    RegistrableDomain frameSite { document->securityOrigin().data() };
+    if (frameSite.isEmpty())
+        frameSite = RegistrableDomain { document->url() };
+
+    for (auto& url : allResourcesURLsForFrame(frame)) {
+        // Mirrors NetworkConnectionToWebProcess::validateCookieAccess, which under Site Isolation refuses (and logs) a
+        // lookup for a site this process doesn't host and skips the check for a URL without a site.
+        if (subresourceSites == SubresourceSites::FrameSiteOnly && !frameSite.isEmpty()) {
+            RegistrableDomain urlSite { url };
+            if (!urlSite.isEmpty() && urlSite != frameSite)
+                continue;
+        }
+
+        Vector<Cookie> rawCookiesForURLInDocument;
+        if (!protect(document->page()->cookieJar())->getRawCookies(*document, url, rawCookiesForURLInDocument))
+            continue;
+
+        for (auto& rawCookieForURLInDocument : rawCookiesForURLInDocument)
+            cookies.add(rawCookieForURLInDocument);
+    }
+}
+
 bool mainResourceContent(LocalFrame* frame, bool withBase64Encode, String* result)
 {
     RefPtr<FragmentedSharedBuffer> buffer = protect(frame->loader().documentLoader())->mainResourceData();
@@ -233,9 +278,10 @@ Ref<JSON::ArrayOf<Inspector::Protocol::Page::FrameResource>> buildResourceObject
 Vector<Inspector::FrameResource> buildResourceDataForFrame(LocalFrame& frame)
 {
     Vector<Inspector::FrameResource> resources;
+    Ref cachedResourceLoader = protect(frame.document())->cachedResourceLoader();
     for (RefPtr cachedResource : cachedResourcesForFrame(&frame)) {
         Inspector::FrameResource resource;
-        resource.url = cachedResource->url().string();
+        resource.url = cachedResourceLoader->urlWithRequestedFragmentIdentifier(*cachedResource).string();
         resource.type = inspectorResourceType(*cachedResource);
         resource.mimeType = cachedResource->response().mimeType();
         if (cachedResource->wasCanceled())
@@ -409,18 +455,18 @@ bool shouldTreatAsText(const String& mimeType)
 Ref<TextResourceDecoder> createTextDecoder(const String& mimeType, const String& textEncodingName)
 {
     if (!textEncodingName.isEmpty())
-        return TextResourceDecoder::create("text/plain"_s, textEncodingName);
+        return TextResourceDecoder::create(TextResourceDecoder::ContentType::PlainText, textEncodingName);
 
     if (MIMETypeRegistry::isTextMIMEType(mimeType))
-        return TextResourceDecoder::create(mimeType, "UTF-8"_s);
+        return TextResourceDecoder::create(TextResourceDecoder::contentTypeForMIMEType(mimeType), PAL::UTF8Encoding());
 
     if (MIMETypeRegistry::isXMLMIMEType(mimeType)) {
-        auto decoder = TextResourceDecoder::create("application/xml"_s);
+        Ref decoder = TextResourceDecoder::create(TextResourceDecoder::ContentType::XML);
         decoder->useLenientXMLDecoding();
         return decoder;
     }
 
-    return TextResourceDecoder::create("text/plain"_s, "UTF-8"_s);
+    return TextResourceDecoder::create(TextResourceDecoder::ContentType::PlainText, PAL::UTF8Encoding());
 }
 
 std::optional<String> textContentForCachedResource(CachedResource& cachedResource)
@@ -522,7 +568,7 @@ Ref<Inspector::Protocol::Network::Headers> buildObjectForHeaders(const HTTPHeade
     return headersValue;
 }
 
-static Inspector::Protocol::Network::Metrics::Priority LEGACY_NODELETE toProtocol(NetworkLoadPriority priority)
+NODELETE static Inspector::Protocol::Network::Metrics::Priority toProtocol(NetworkLoadPriority priority)
 {
     switch (priority) {
     case NetworkLoadPriority::Low:
@@ -646,8 +692,7 @@ Ref<Inspector::Protocol::Security::Security> buildObjectForSecurity(const Certif
 
 static Vector<InitiatorCallFrame> copyCallFrames(const ScriptCallStack& callStack)
 {
-    Vector<InitiatorCallFrame> callFrames;
-    callFrames.reserveInitialCapacity(callStack.size());
+    Vector<InitiatorCallFrame> callFrames(ReserveCapacityTag { }, callStack.size());
     for (size_t i = 0; i < callStack.size(); ++i) {
         auto& frame = callStack.at(i);
         callFrames.append({ frame.functionName(), frame.sourceURL(), frame.sourceID(), frame.lineNumber(), frame.columnNumber() });
@@ -671,8 +716,7 @@ static void appendAsyncStackTraceLevels(const AsyncStackTrace* asyncStackTrace, 
         if (levels.size() >= InitiatorData::maxStackTraceLevels)
             return;
 
-        Vector<InitiatorCallFrame> callFrames;
-        callFrames.reserveInitialCapacity(level->size());
+        Vector<InitiatorCallFrame> callFrames(ReserveCapacityTag { }, level->size());
         for (size_t i = 0; i < level->size(); ++i) {
             auto& frame = level->at(i);
             callFrames.append({ frame.functionName(), frame.sourceURL(), frame.sourceID(), frame.lineNumber(), frame.columnNumber() });
@@ -710,7 +754,7 @@ InitiatorData copyInitiatorData(Document* document, const ResourceRequest* resou
     return data;
 }
 
-static Inspector::Protocol::Network::Initiator::Type LEGACY_NODELETE toProtocol(InitiatorType type)
+NODELETE static Inspector::Protocol::Network::Initiator::Type toProtocol(InitiatorType type)
 {
     switch (type) {
     case InitiatorType::Parser:

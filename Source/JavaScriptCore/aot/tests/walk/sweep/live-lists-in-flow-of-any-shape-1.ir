@@ -1,0 +1,65 @@
+# Flow of no particular shape, written by a script: 3 edges lead back, and a loop is entered past its head by an edge on which only what is live at the head tells what is live.
+# b0 makes every value, so a value is live behind an await exactly where some way leads on from there to a block that reads it. The lists below come from going over the blocks again and again until nothing changes.
+# RUN: sweep-code
+# CHECK: # live at v8 [v0, v1, v2, v3]
+# CHECK: # live at v10 [v0, v1, v2, v3, v5]
+# CHECK: # live at v12 [v0, v1, v2, v3]
+# CHECK: # live at v18 [v0]
+# CHECK: # live at v19 [v0, v1, v2, v3, v5]
+# CHECK: # live at v20 [v0, v1, v2, v3, v5]
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+entry module=m0
+
+# -- code
+# code f0:CoroutineBody {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b10()
+#   b1():
+#     v6: anything @JSValue = Call v0, -, v2 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v7: anything @JSValue = Call v0, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v8: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v9: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Branch v9 -> taken b1(), notTaken b4()
+#   b2():
+#     v10: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v11: anything @JSValue = Call v0, -, v5 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b1()
+#   b3():
+#     v12: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b8()
+#   b4():
+#     v13: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Branch v13 -> taken b9(), notTaken b5()
+#   b5():
+#     v14: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Branch v14 -> taken b8(), notTaken b1()
+#   b6():
+#     Jump -> next b7()
+#   b7():
+#     v15: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Branch v15 -> taken b2(), notTaken b3()
+#   b8():
+#     v16: anything @JSValue = Call v0, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v17: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Branch v17 -> taken b4(), notTaken b9()
+#   b9():
+#     v18: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v0
+#   b10():
+#     v19: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v20: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v21: anything @JSValue = Call v0, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v22: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Branch v22 -> taken b7(), notTaken b1()
+# }
+# -- end of code

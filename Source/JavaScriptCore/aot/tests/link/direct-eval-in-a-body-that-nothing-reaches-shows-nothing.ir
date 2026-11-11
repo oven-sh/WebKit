@@ -1,0 +1,38 @@
+# function never() { return eval("1"); }  function once() { return eval("held"); }  var held = 1; once()
+# The scope of a direct eval lists what the text can name: the variables of the file among them, and so the function that holds the eval.
+# All of it was let go when the program was entered, whoever held the eval: so `never` let its own closure go, was reached by that, and its eval opened the whole program.
+# What a scope shows is let go once a body that holds an eval of that scope is reached. The control in the same file: `once` is called, and what its scope shows holds anything.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# RUN(VARIABLES): link variables mechanisms=all
+# CHECK: function f1 unreached
+# CHECK-NOT: function f2 unreached
+# VARIABLES-NOT: variable g2 proven=i32
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="never" module=m0 declared={type=anything} initialization=Function function=f1
+variable g1 name="once" module=m0 declared={type=anything} initialization=Function function=f2
+variable g2 name="held" module=m0 declared={type=anything} initialization=Undefined
+evalscope e0 flags=[IsInFunction, AllowsNewTarget] bindings=[{name="never" depth=1 variable=g0}]
+evalscope e1 flags=[IsInFunction, AllowsNewTarget] bindings=[{name="held" depth=1 variable=g2}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g2
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v2, -
+    Return v3
+}
+function f1 name="never" module=m0 flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="1"
+    v3 = DirectEval v2, v0, v1 evalScope=e0
+    Return v3
+}
+function f2 name="once" module=m0 flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="held"
+    v3 = DirectEval v2, v0, v1 evalScope=e1
+    Return v3
+}

@@ -1,0 +1,9 @@
+# The typed way of the question looks at the shape, the order word and the slot. Under the word that checks the walk both of its answers go to the leaf that asks the object again by an inquiry: 2816 says "answered by a typed question whether an object has a name of its own".
+# RUN: walk f1 mechanisms=all testing=CheckWalkAtRunTime
+# CHECK: : boolean @Boolean = PropHasOwn v0 key="filled" calledBuiltin=ObjectHasOwn receivers=[L0]
+# RUN(EMIT): emit f1 mechanisms=all testing=CheckWalkAtRunTime
+# EMIT: = Const32(2816)
+# without the word nothing is asked
+# RUN(PLAIN): emit f1 mechanisms=all
+# PLAIN-NOT: = Const32(2816)
+# PROGRAM-OF: own-property-question-is-stamped-with-the-layouts-that-are-expected.ir

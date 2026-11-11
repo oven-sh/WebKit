@@ -55,14 +55,16 @@ namespace WebKit {
 
 class RemoteVideoFrameProxy;
 
+enum class ShouldApplyRotation : bool { No, Yes };
+
 class RemoteVideoFrameObjectHeapProxyProcessor : public IPC::WorkQueueMessageReceiver<WTF::DestructionThread::MainRunLoop>, public GPUProcessConnection::Client {
 public:
     static Ref<RemoteVideoFrameObjectHeapProxyProcessor> create(GPUProcessConnection&);
     ~RemoteVideoFrameObjectHeapProxyProcessor();
 
     using Callback = Function<void(RetainPtr<CVPixelBufferRef>&&)>;
-    void getVideoFrameBuffer(const RemoteVideoFrameProxy&, bool canUseIOSurfce, Callback&&);
-    RefPtr<WebCore::NativeImage> getNativeImage(const WebCore::VideoFrame&);
+    void getVideoFrameBuffer(const RemoteVideoFrameProxy&, Callback&&);
+    RefPtr<WebCore::NativeImage> getNativeImage(const WebCore::VideoFrame&, ShouldApplyRotation = ShouldApplyRotation::No);
 
     ThreadSafeWeakPtrControlBlock& controlBlock() const final { return IPC::WorkQueueMessageReceiver<WTF::DestructionThread::MainRunLoop>::controlBlock(); }
     uint32_t weakRefCount() const final { return IPC::WorkQueueMessageReceiver<WTF::DestructionThread::MainRunLoop>::weakRefCount(); }

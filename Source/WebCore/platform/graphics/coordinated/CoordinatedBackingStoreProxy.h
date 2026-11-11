@@ -48,7 +48,7 @@ public:
     void setAffectedByTransformAnimation(bool);
     CoordinatedAnimatedBackingStoreClient* animatedBackingStoreClient() const { return m_animatedBackingStoreClient.get(); }
 
-    void invalidate();
+    void invalidate(CoordinatedPlatformLayer&);
 
     class Update {
         WTF_MAKE_NONCOPYABLE(Update);
@@ -68,41 +68,41 @@ public:
         const Vector<uint32_t>& tilesToCreate() const LIFETIME_BOUND { return m_tilesToCreate; }
         const Vector<TileUpdate>& tilesToUpdate() const LIFETIME_BOUND { return m_tilesToUpdate; }
         const Vector<uint32_t>& tilesToRemove() const LIFETIME_BOUND { return m_tilesToRemove; }
+        const HashMap<uint32_t, bool>& tilesToUpdateVisibility() const LIFETIME_BOUND { return m_tilesToUpdateVisibility; }
 
-        void appendUpdate(Vector<uint32_t>&&, Vector<TileUpdate>&&, Vector<uint32_t>&&);
-        void waitUntilPaintingComplete();
+        void appendUpdate(Vector<uint32_t>&&, Vector<TileUpdate>&&, Vector<uint32_t>&&, HashMap<uint32_t, bool>&&);
+        void waitUntilPaintingFinished();
 
-        bool isEmpty() const { return m_tilesToCreate.isEmpty() && m_tilesToUpdate.isEmpty() && m_tilesToRemove.isEmpty(); }
+        bool isEmpty() const { return m_tilesToCreate.isEmpty() && m_tilesToUpdate.isEmpty() && m_tilesToRemove.isEmpty() && m_tilesToUpdateVisibility.isEmpty(); }
 
     private:
         Vector<uint32_t> m_tilesToCreate;
         Vector<TileUpdate> m_tilesToUpdate;
         Vector<uint32_t> m_tilesToRemove;
+        HashMap<uint32_t, bool> m_tilesToUpdateVisibility;
     };
 
     enum class UpdateResult : uint8_t {
         BuffersChanged = 1 << 0,
-        TilesPending = 1 << 1,
-        TilesChanged = 1 << 2
+        TilesChanged = 1 << 1,
+#if USE(CAIRO)
+        TilesPending = 1 << 2
+#endif
     };
     OptionSet<UpdateResult> updateIfNeeded(const IntRect& unscaledVisibleRect, const FloatSize& unscaledSize, const FloatRect& unscaledViewportRect, float contentsScale, bool contentsOpaque, bool shouldCreateAndDestroyTiles, const Vector<IntRect, 1>&, Damage&, CoordinatedPlatformLayer&);
     Update takePendingUpdate();
 
-    void waitUntilPaintingComplete();
+    void waitUntilPaintingFinished();
 
 private:
     struct Tile {
         Tile() = default;
-        Tile(uint32_t id, IntRect&& tileRect)
-            : id(id)
-            , rect(WTF::move(tileRect))
-            , dirtyRect(rect)
-        {
-        }
+        Tile(uint32_t id, IntRect&&);
         Tile(const Tile&) = delete;
         Tile& operator=(const Tile&) = delete;
         Tile(Tile&&) = default;
         Tile& operator=(Tile&&) = default;
+        ~Tile();
 
         void resize(const IntSize& size)
         {
@@ -127,15 +127,34 @@ private:
             dirtyRect = { };
         }
 
+#if USE(SKIA)
+        void setDistance(unsigned newDistance)
+        {
+            if (distance == newDistance)
+                return;
+
+            distance = newDistance;
+            distanceChanged = true;
+        }
+
+        void cancelActiveBuffers(CoordinatedPlatformLayer&);
+#endif
+
         uint32_t id { 0 };
         IntRect rect;
         IntRect dirtyRect;
+#if USE(SKIA)
+        unsigned distance { std::numeric_limits<unsigned>::max() };
+        bool isVisible { false };
+        bool distanceChanged { false };
+        Vector<Ref<CoordinatedTileBuffer>, 1> activeBuffers;
+#endif
     };
 
     CoordinatedBackingStoreProxy() = default;
 
     void invalidateRegion(const Vector<IntRect, 1>&);
-    void createOrDestroyTiles(const IntRect& unscaledVisibleRect, const IntRect& unscaledContentsRect, const IntSize& unscaledViewportSize, float contentsScale, int maxTextureSize, Damage&, Vector<uint32_t>& tilesToCreate, Vector<uint32_t>& tilesToRemove);
+    void createOrDestroyTiles(CoordinatedPlatformLayer&, const IntRect& unscaledVisibleRect, const IntRect& unscaledContentsRect, const IntSize& unscaledViewportSize, float contentsScale, int maxTextureSize, Damage&, Vector<uint32_t>& tilesToCreate, Vector<uint32_t>& tilesToRemove);
     IntSize computeTileSize(const IntSize& viewportSize, int maxTextureSize) const;
     std::pair<IntRect, IntRect> computeCoverAndKeepRect() const;
     void adjustForContentsRect(IntRect&) const;
@@ -149,7 +168,9 @@ private:
     float m_contentsScale { 1 };
     IntSize m_tileSize;
     float m_coverAreaMultiplier { 2 };
+#if USE(CAIRO)
     bool m_pendingTileCreation { false };
+#endif
     IntRect m_contentsRect;
     IntRect m_visibleRect;
     IntRect m_coverRect;

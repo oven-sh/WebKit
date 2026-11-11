@@ -1,0 +1,65 @@
+# function read(payload) { return payload.value + payload.issues }   register(read, { value: one, issues: two })
+# The program evaluates text and the record has escaped, so makers that nobody saw are counted on, and the image lists the record among those that parsers make.
+# The interpreter gives an object literal of text under the names of the record its layout, so compiled code meets the shape that it tests for. A literal under other names stays an ordinary object.
+# A Structure lists the properties of an ordinary object and none of a compiled one: that is what `ordinary` looks at.
+# RUN: run-in-shell globalThis.one = 1; globalThis.two = 2; globalThis.register = (read, kept) => { const ordinary = o => describe(o).includes("value:"); const made = { value: 3, issues: 4 }; const other = { value: 7, more: 8 }; print(read(made), read(other), ordinary(kept), ordinary(made), ordinary(other), Object.keys(made), JSON.stringify(made)); };
+# CHECK: 7 NaN false false true value,issues {"value":3,"issues":4}
+# CHECK-NEXT: exited with 0
+# RUN(VALUES): run-in-shell globalThis.one = 1; globalThis.two = 2; globalThis.register = (read, kept) => { const ordinary = o => describe(o).includes("value:"); for (const value of [undefined, null, true, 1.5, "text", Symbol.iterator, 10n, [], print]) { const made = { value: value, issues: value }; print(typeof made.value, made.value === value, made.issues === value, ordinary(made)); } };
+# VALUES: undefined true true false
+# VALUES-NEXT: object true true false
+# VALUES-NEXT: boolean true true false
+# VALUES-NEXT: number true true false
+# VALUES-NEXT: string true true false
+# VALUES-NEXT: symbol true true false
+# VALUES-NEXT: bigint true true false
+# VALUES-NEXT: object true true false
+# VALUES-NEXT: function true true false
+# VALUES-NEXT: exited with 0
+# RUN(CHANGED): run-in-shell globalThis.one = 1; globalThis.two = 2; globalThis.register = (read, kept) => { let made = { value: 3, issues: 4 }; made.more = 5; delete made.value; print(Object.keys(made), read(made)); made.value = 6; print(Object.keys(made), read(made)); made = { value: 3, issues: 4 }; Object.defineProperty(made, "issues", { get() { return 40; } }); print(read(made)); made = Object.freeze({ value: 3, issues: 4 }); made.value = 9; print(read(made)); };
+# CHANGED: issues,more NaN
+# CHANGED-NEXT: issues,more,value 10
+# CHANGED-NEXT: 43
+# CHANGED-NEXT: 7
+# CHANGED-NEXT: exited with 0
+# RUN(MANY): run-in-shell globalThis.one = 1; globalThis.two = 2; globalThis.register = (read, kept) => { let sum = 0; for (let i = 0; i < 300000; i++) sum += read({ value: i, issues: 1 }); print(sum); };
+# MANY: 45000150000
+# MANY-NEXT: exited with 0
+# What stands behind the two stores in the literal is done to the finished record.
+# RUN(CONTINUED): run-in-shell globalThis.one = 1; globalThis.two = 2; globalThis.register = (read, kept) => { const ordinary = o => describe(o).includes("value:"); const a = 3, b = 4; const show = made => print(ordinary(made), read(made), Reflect.ownKeys(made), made.memo, Object.getPrototypeOf(made) === Object.prototype); show({ value: a, issues: b, get memo() { return 1; } }); show({ value: a, issues: b, set memo(v) { } }); show({ value: a, issues: b, ["memo"]: 1 }); show({ value: a, issues: b, ...{ memo: 2, value: 5 } }); show({ value: a, issues: b, __proto__: null }); };
+# CONTINUED: false 7 value,issues,memo 1 true
+# CONTINUED-NEXT: false 7 value,issues,memo undefined true
+# CONTINUED-NEXT: false 7 value,issues,memo 1 true
+# CONTINUED-NEXT: false 9 value,issues,memo 2 true
+# CONTINUED-NEXT: false 7 value,issues undefined false
+# CONTINUED-NEXT: exited with 0
+# A name that comes twice: no plan, and the later value stands.
+# RUN(TWICE): run-in-shell globalThis.one = 1; globalThis.two = 2; globalThis.register = (read, kept) => { const a = 3, b = 4; const made = { value: a, issues: b, value: b }; print(read(made), Object.keys(made)); };
+# TWICE: 8 value,issues
+# TWICE-NEXT: exited with 0
+
+layout L0 module=m0 position=79 fields=[{key="issues" declared={type=anything}}, {key="value" declared={type=anything}}] declaredOrder=[1, 0] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="one" [isFreeName]
+    v3 = PropGet v1 key="two" [isFreeName]
+    v4 = NewObject -, v3, v2 layout=L0 fields=[0, 1]
+    v5 = Builtin builtin=Function
+    v6 = String string="return globalThis.register"
+    v7 = Construct v5, -, v6
+    v8 = Call v7
+    v9 = Call v8, -, v0, v4
+    v10 = Undefined
+    Return v10
+}
+function f1 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0):
+    v1 = PropGet v0 key="value"
+    v2 = PropGet v0 key="issues"
+    v3 = Add v1, v2
+    Return v3
+}

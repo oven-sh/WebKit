@@ -31,8 +31,6 @@
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
 
-struct WGPUXRViewImpl {
-};
 
 namespace WebGPU::Metal {
 
@@ -40,7 +38,7 @@ class CommandEncoder;
 class Device;
 class XRProjectionLayer;
 
-class XRView final : public WebGPU::XRView, public WGPUXRViewImpl {
+class XRView final : public WebGPU::XRView {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(XRView);
 public:
     static Ref<XRView> create(Device& device)
@@ -54,7 +52,7 @@ public:
 
     ~XRView();
 
-    void LEGACY_NODELETE setLabel(String&&) final;
+    NODELETE void setLabel(String&&) final;
 
     bool isValid() const final { return true; }
     Device& device() { return m_device; }

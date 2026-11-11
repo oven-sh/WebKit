@@ -1,0 +1,40 @@
+# The list follows from the program alone. A built-in that is handed a built-in is refused only where it would call it; one that only keeps it or looks at it takes it like any object.
+# new RegExp("a" + Object.getPrototypeOf(Uint8Array).name) . ("b" + [1, 2, 3].at(1)) . ("c" + [String.prototype.slice].includes(String.prototype.slice))
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /aTypedArray/
+# CHECK: text /b2/
+# CHECK: text /ctrue/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=Object
+    v2 = PropGet v1 key="getPrototypeOf"
+    v3 = Builtin builtin=Uint8Array
+    v4 = Call v2, v1, v3 calleeKey="getPrototypeOf"
+    v5 = PropGet v4 key="name"
+    v6 = String string="a"
+    v7 = Add v6, v5
+    v8 = Construct v0, -, v7
+    v9 = Integer integer=1
+    v10 = Integer integer=2
+    v11 = Integer integer=3
+    v12 = NewArray v9, v10, v11 contents=anything
+    v13 = PropGet v12 key="at"
+    v14 = Call v13, v12, v9 calleeKey="at"
+    v15 = String string="b"
+    v16 = Add v15, v14
+    v17 = Construct v0, -, v16
+    v18 = String string="xyz"
+    v19 = PropGet v18 key="slice"
+    v20 = NewArray v19 contents=anything
+    v21 = PropGet v20 key="includes"
+    v22 = Call v21, v20, v19 calleeKey="includes"
+    v23 = String string="c"
+    v24 = Add v23, v22
+    v25 = Construct v0, -, v24
+    v26 = NewArray v8, v17, v25 contents=anything
+    Return v26
+}

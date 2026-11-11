@@ -566,9 +566,9 @@ public:
     bool multiline() const { return m_flags.contains(Flags::Multiline); }
     bool hasIndices() const { return m_flags.contains(Flags::HasIndices); }
     bool sticky() const { return m_flags.contains(Flags::Sticky); }
-    bool LEGACY_NODELETE unicode() const { return m_flags.contains(Flags::Unicode); }
-    bool LEGACY_NODELETE unicodeSets() const { return m_flags.contains(Flags::UnicodeSets); }
-    bool LEGACY_NODELETE eitherUnicode() const { return unicode() || unicodeSets(); }
+    NODELETE bool unicode() const { return m_flags.contains(Flags::Unicode); }
+    NODELETE bool unicodeSets() const { return m_flags.contains(Flags::UnicodeSets); }
+    NODELETE bool eitherUnicode() const { return unicode() || unicodeSets(); }
     bool dotAll() const { return m_flags.contains(Flags::DotAll); }
 
     std::unique_ptr<ByteDisjunction> m_body;
@@ -609,5 +609,6 @@ private:
 
 JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr, const String& source = { });
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
+bool collectMatchesOfOneSetOrRun(BytecodePattern*, StringView input, Vector<unsigned, 128>& matches);
 
 } } // namespace JSC::Yarr

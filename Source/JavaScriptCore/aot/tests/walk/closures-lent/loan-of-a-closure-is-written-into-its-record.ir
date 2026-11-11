@@ -1,0 +1,98 @@
+# The sweep has counted who uses each closure, and writes into the record of one that a single call takes where it lies and who borrows it. Nobody works that out again.
+# v2 goes to `go`, which is entered and only calls what arrives there. v5 is the first argument of a call by value, and the stub of the call looks at whoever is called.
+# v4 is captured by v5, whose function only calls that capture, so it lies where v5 lies. `keep` lays what arrives in a variable, and v9 is returned: v7 and v9 are made in the heap.
+# function go(bus, f) { return twice(() => f()) + 1; }  function twice(job) { return job() + job(); }  function keep(job) { held = job; return 1; }
+# function maker(bus, k) { return go(bus, () => k) + keep(() => k) + twice(() => k); }  publish(maker, () => held);
+# RUN: sweep-code mechanisms=all
+# CHECK: v2: f6 @Cell = NewClosure v1 function=f6 {{*}}storage=Frame {{*}}loan=ToFunctionEntered
+# CHECK: v4: f6 @Cell = NewClosure v1 function=f6 {{*}}storage=Frame {{*}}loan=ToFunctionEntered
+# CHECK: v5: f5 @Cell = NewClosure v4 function=f5 {{*}}storage=Frame {{*}}loan=LeftToStubOfCall
+# CHECK: v7: f6 @Cell = NewClosure v1 function=f6
+# CHECK-NOT: storage=Frame
+# CHECK: # cells of the frame: verified
+# RUN(WITHHELD): sweep-code mechanisms=all-CellsInFrames
+# WITHHELD-NOT: storage=Frame
+# The walk of `maker` enters `go`, and that of `go` enters `twice`.
+# RUN(MAKER): walk f4 mechanisms=all-Inlining
+# MAKER-LABEL: code f4:Body
+# MAKER: = NewClosure {{*}}storage=Frame {{*}}loan=ToFunctionEntered
+# MAKER: = CallDirect {{*}}function=f1
+# RUN(GO): walk f1 mechanisms=all-Inlining
+# GO-LABEL: code f1:Body
+# GO: = NewClosure {{*}}function=f5 {{*}}storage=Frame {{*}}loan=ToFunctionEntered
+# -- code
+# code f4:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: f6 @Cell = NewClosure v1 function=f6 closureForm=Slim traits=[mayCollect, mayTouchMemory]
+#     v3: anything @JSValue = CallDirect v0, v2 function=f1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: f6 @Cell = NewClosure v1 function=f6 closureForm=Slim traits=[mayCollect, mayTouchMemory]
+#     v5: f5 @Cell = NewClosure v4 function=f5 closureForm=Slim traits=[mayCollect, mayTouchMemory]
+#     v6: anything @JSValue = Call v0, -, v5 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v7: f6 @Cell = NewClosure v1 function=f6 closureForm=Slim traits=[mayCollect, mayTouchMemory]
+#     v8: anything @JSValue = CallDirect v7 function=f3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v9: f6 @Cell = NewClosure v1 function=f6 closureForm=Slim traits=[mayCollect, mayTouchMemory]
+#     Return v9
+# }
+# -- end of code
+
+variable g0 name="held" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewClosure function=f7
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v0, v1 calleeName="publish"
+    Return v4
+}
+function f1 name="go" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = NewClosure v1 function=f5
+    v3 = CallDirect v2 function=f2
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    Return v5
+}
+function f2 name="twice" module=m0 length=1 thisType={type=anything} parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Call v0 calleeName="job"
+    v2 = Call v0 calleeName="job"
+    v3 = Add v1, v2
+    Return v3
+}
+function f3 name="keep" module=m0 length=1 thisType={type=anything} parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=1
+    Return v2
+}
+function f4 name="maker" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure v1 function=f6
+    v3 = CallDirect v0, v2 function=f1
+    v4 = NewClosure v1 function=f6
+    v5 = CallDirect v4 function=f3
+    v6 = NewClosure v1 function=f6
+    v7 = CallDirect v6 function=f2
+    v8 = Add v3, v5
+    v9 = Add v8, v7
+    Return v9
+}
+function f5 name="wrapped" module=m0 kind=Arrow captures=[{type=function variableName="f"}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Call v0 calleeName="f"
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+}
+function f6 name="job" module=m0 kind=Arrow captures=[{type=anything variableName="k"}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 name="reader" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

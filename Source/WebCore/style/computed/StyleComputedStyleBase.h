@@ -67,6 +67,9 @@ enum class CSSPropertyID : uint16_t;
 enum class AlignmentBaseline : uint8_t;
 enum class ApplePayButtonStyle : uint8_t;
 enum class ApplePayButtonType : uint8_t;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+enum class AppleColorFilterOverride : uint8_t;
+#endif
 enum class AppleVisualEffect : uint8_t;
 enum class BackfaceVisibility : uint8_t;
 enum class BaselineSource : uint8_t;
@@ -488,6 +491,9 @@ public:
     inline const Color& colorForHighlight() const;
     inline void setColorForHighlight(Color&&);
 
+    inline bool hasAuthorHighlightColors() const;
+    inline void setHasAuthorHighlightColors();
+
     inline bool isLink() const;
     inline void setIsLink(bool);
 
@@ -549,13 +555,18 @@ public:
 
     inline void setOverrideBlendMode(std::optional<BlendMode>);
 
-    inline bool LEGACY_NODELETE effectiveInert() const;
-    bool LEGACY_NODELETE effectiveInertOutOfLine() const;
+    NODELETE inline bool effectiveInert() const;
+    NODELETE bool effectiveInertOutOfLine() const;
     inline void setEffectiveInert(bool);
 
 #if ENABLE(SMART_IMAGE_RESIZER)
     inline bool isAffectedBySmartImageResizer() const;
     inline void setIsAffectedBySmartImageResizer(bool);
+#endif
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    inline AppleColorFilterOverride appleColorFilterOverride() const;
+    inline void setAppleColorFilterOverride(AppleColorFilterOverride);
 #endif
 
     inline bool isEffectivelyTransparent() const; // This or any ancestor has opacity 0.
@@ -599,8 +610,8 @@ public:
 
     // MARK: - Text Autosizing
 
-    AutosizeStatus LEGACY_NODELETE autosizeStatus() const;
-    void LEGACY_NODELETE setAutosizeStatus(AutosizeStatus);
+    NODELETE AutosizeStatus autosizeStatus() const;
+    NODELETE void setAutosizeStatus(AutosizeStatus);
 
     // MARK: - Pseudo element/style
 
@@ -609,7 +620,7 @@ public:
     inline bool isListMarkerStyle() const;
     const AtomString& pseudoElementNameArgument() const LIFETIME_BOUND;
 
-    std::optional<PseudoElementIdentifier> LEGACY_NODELETE pseudoElementIdentifier() const;
+    NODELETE std::optional<PseudoElementIdentifier> pseudoElementIdentifier() const;
     void setPseudoElementIdentifier(std::optional<PseudoElementIdentifier>&&);
 
     inline bool hasAnyPublicPseudoStyles() const;
@@ -618,7 +629,7 @@ public:
     inline void setHasPseudoStyles(EnumSet<PseudoElementType>, PseudoElementBoxGeneration);
     inline PseudoElementBoxGeneration pseudoElementBoxGeneration() const;
 
-    Style::ComputedStyle* LEGACY_NODELETE pseudoElementStyle(const PseudoElementIdentifier&) const;
+    NODELETE Style::ComputedStyle* pseudoElementStyle(const PseudoElementIdentifier&) const;
     Style::ComputedStyle* addPseudoElementStyle(std::unique_ptr<Style::ComputedStyle>);
 
     bool hasPseudoElementStyles() const { return !m_pseudoElementStyles.isEmpty(); }
@@ -641,6 +652,11 @@ public:
     // MARK: - Zoom
 
     inline bool useSVGZoomRulesForLength() const;
+
+    // All effective border widths are zero, or all padding edges are known zeros. These hold for any zoom
+    // and device scale factor, so UsedStyle can skip evaluating them.
+    inline bool hasZeroEffectiveBorderWidths() const;
+    inline bool hasZeroPadding() const;
     inline void setUseSVGZoomRulesForLength(bool);
 
     inline float usedZoom() const;
@@ -656,22 +672,22 @@ public:
     // MARK: - Fonts
 
     inline const FontCascade& fontCascade() const;
-    const FontCascade& LEGACY_NODELETE fontCascadeOutOfLine() const;
+    NODELETE const FontCascade& fontCascadeOutOfLine() const;
     WEBCORE_EXPORT FontCascade& mutableFontCascadeWithoutUpdate();
     void setFontCascade(FontCascade&&);
 
-    WEBCORE_EXPORT const FontCascadeDescription& LEGACY_NODELETE fontDescription() const;
+    NODELETE WEBCORE_EXPORT const FontCascadeDescription& fontDescription() const;
     WEBCORE_EXPORT FontCascadeDescription& mutableFontDescriptionWithoutUpdate();
     WEBCORE_EXPORT void setFontDescription(FontCascadeDescription&&);
     bool setFontDescriptionWithoutUpdate(FontCascadeDescription&&);
 
     WEBCORE_EXPORT const Font& primaryFont() const LIFETIME_BOUND;
     WEBCORE_EXPORT const FontMetrics& metricsOfPrimaryFont() const LIFETIME_BOUND;
-    std::pair<FontOrientation, NonCJKGlyphOrientation> LEGACY_NODELETE fontAndGlyphOrientation();
-    float LEGACY_NODELETE usedFontSize() const;
+    NODELETE std::pair<FontOrientation, NonCJKGlyphOrientation> fontAndGlyphOrientation();
+    NODELETE float usedFontSize() const;
     inline WebkitLocale usedLocale() const;
 
-    const LineHeight& LEGACY_NODELETE textAutosizingAdjustedLineHeight() const;
+    NODELETE const LineHeight& textAutosizingAdjustedLineHeight() const;
     void setTextAutosizingAdjustedLineHeight(LineHeight&&);
     void setLineHeightFromAnimation(LineHeight&&);
 
@@ -688,7 +704,7 @@ public:
 
     // MARK: - Used Counter Directives
 
-    const CounterDirectiveMap& LEGACY_NODELETE usedCounterDirectives() const;
+    NODELETE const CounterDirectiveMap& usedCounterDirectives() const;
     void updateUsedCounterIncrementDirectives();
     void updateUsedCounterResetDirectives();
     void updateUsedCounterSetDirectives();
@@ -803,7 +819,10 @@ public:
         PREFERRED_TYPE(bool) unsigned isContainerDependent : 1;
         PREFERRED_TYPE(bool) unsigned useTreeCountingFunctions : 1;
         PREFERRED_TYPE(bool) unsigned hasExplicitlyInheritedProperties : 1; // Explicitly inherits a non-inherited property.
+        PREFERRED_TYPE(bool) unsigned hasAuthorHighlightColors : 1; // Highlight pseudo-element color or background-color comes from the author origin.
         PREFERRED_TYPE(bool) unsigned disallowsFastPathInheritance : 1;
+        PREFERRED_TYPE(bool) unsigned hasZeroEffectiveBorderWidths : 1; // Maintained by the border setters.
+        PREFERRED_TYPE(bool) unsigned hasZeroPadding : 1; // Maintained by the padding setters.
 
         // Non-property related state bits. These do not get copied by copyNonInheritedFrom().
         PREFERRED_TYPE(bool) unsigned firstChildState : 1;
@@ -867,6 +886,11 @@ public:
     };
 
 protected:
+    WEBCORE_EXPORT bool computeHasZeroEffectiveBorderWidths() const;
+    bool computeHasZeroPadding() const;
+    void updateHasZeroEffectiveBorderWidths();
+    void updateHasZeroPadding();
+
     friend class Adjuster;
     friend class ChangedAnimatablePropertiesFunctions;
     friend class DifferenceFunctions;

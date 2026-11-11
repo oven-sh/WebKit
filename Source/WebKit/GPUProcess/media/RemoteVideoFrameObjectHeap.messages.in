@@ -29,11 +29,10 @@
 ]
 messages -> RemoteVideoFrameObjectHeap {
 #if PLATFORM(COCOA)
-    GetVideoFrameBuffer(WebKit::RemoteVideoFrameReadReference read, bool canSendIOSurface) AllowedWhenWaitingForSyncReply
-    PixelBuffer(WebKit::RemoteVideoFrameReadReference read) -> (RetainPtr<CVPixelBufferRef> result) Synchronous
+    GetVideoFrameBuffer(WebKit::RemoteVideoFrameReadReference read) AllowedWhenWaitingForSyncReply
     SetSharedVideoFrameSemaphore(IPC::Semaphore semaphore)
     SetSharedVideoFrameMemory(WebCore::SharedMemory::Handle storageHandle)
-    ConvertFrameBuffer(struct WebKit::SharedVideoFrame frame) -> (WebCore::ColorSpace space) Synchronous
+    ConvertFrameBuffer(struct WebKit::SharedVideoFrame frame, bool shouldApplyRotation) -> (WebCore::ColorSpace space) Synchronous
 #endif
     ReleaseVideoFrame(WebKit::RemoteVideoFrameWriteReference write) AllowedWhenWaitingForSyncReply
 }

@@ -24,7 +24,7 @@ void ErrorBuiltinEmitter::generateNewError(const InlineCall& call)
     ErrorKind kind = call.parameter<ErrorKind>(0);
     Boxed message = argument(0);
     Boxed options = argument(1);
-    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::NewError, { word32(static_cast<int32_t>(kind)), message, options }));
+    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::NewError, { word32(static_cast<int32_t>(kind)), message, options }, { .capturesStackTrace = true }));
 }
 
 } } } // namespace JSC::AOT::Typed

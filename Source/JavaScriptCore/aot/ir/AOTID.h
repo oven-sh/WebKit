@@ -13,11 +13,14 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+struct ValueIDTag;
+
 template<typename Tag>
 class ID {
 public:
     static constexpr uint32_t hashTableDeletedIndex = UINT32_MAX - 1;
     static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
+    static constexpr uint32_t largestIndex = hashTableDeletedIndex - 1;
 
     constexpr ID() = default;
     constexpr ID(std::nullptr_t) { }
@@ -25,18 +28,30 @@ public:
     constexpr explicit ID(uint32_t value)
         : m_value(value)
     {
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(value <= largestIndex || value >= hashTableDeletedIndex);
     }
     constexpr explicit ID(size_t value)
         : m_value(static_cast<uint32_t>(value))
     {
-        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(value < hashTableDeletedIndex);
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(value <= largestIndex);
     }
 
+    static constexpr ID fromBits(uint32_t bits)
+    {
+        ID id;
+        id.m_value = bits;
+        return id;
+    }
+    constexpr uint32_t bits() const { return m_value; }
+
     constexpr explicit operator bool() const { return m_value != UINT32_MAX; }
-    constexpr uint32_t index() const { return m_value; }
-    unsigned hash() const { return intHash(m_value); }
-    friend constexpr bool operator==(ID, ID) = default;
-    friend constexpr auto operator<=>(ID, ID) = default;
+    constexpr uint32_t index() const
+    {
+        return m_value;
+    }
+    unsigned hash() const { return intHash(index()); }
+    friend constexpr bool operator==(ID a, ID b) { return a.index() == b.index(); }
+    friend constexpr auto operator<=>(ID a, ID b) { return a.index() <=> b.index(); }
 
 private:
     uint32_t m_value { UINT32_MAX };
@@ -48,8 +63,24 @@ inline void add(Hasher& hasher, ID<Tag> id)
     add(hasher, id.index());
 }
 
-using ValueID = ID<struct ValueIDTag>;
+using ValueID = ID<ValueIDTag>;
 using BlockID = ID<struct BlockIDTag>;
+
+class RootThroughCasts {
+public:
+    RootThroughCasts() = default;
+    explicit RootThroughCasts(ValueID root)
+        : m_root(root)
+    {
+    }
+
+    explicit operator bool() const { return !!m_root; }
+    friend bool operator==(RootThroughCasts, RootThroughCasts) = default;
+    friend bool operator==(RootThroughCasts root, ValueID value) { return root.m_root == value; }
+
+private:
+    ValueID m_root;
+};
 
 using StringID = ID<struct StringIDTag>;
 using PropertyKeyID = ID<struct PropertyKeyIDTag>;
@@ -66,15 +97,7 @@ using ExpectedResultID = ID<struct ExpectedResultIDTag>;
 
 using LayoutSetID = ID<struct LayoutSetIDTag>;
 using CalleeSetID = ID<struct CalleeSetIDTag>;
-using AccessSiteID = ID<struct AccessSiteIDTag>;
-using AllocationSiteID = ID<struct AllocationSiteIDTag>;
-using AllocationClassID = ID<struct AllocationClassIDTag>;
-using FieldAccessID = ID<struct FieldAccessIDTag>;
-using AllocationID = ID<struct AllocationIDTag>;
 using RegExpRecordID = ID<struct RegExpRecordIDTag>;
-using SiteCacheID = ID<struct SiteCacheIDTag>;
-using GlobalBindingID = ID<struct GlobalBindingIDTag>;
-using GuardBitID = ID<struct GuardBitIDTag>;
 
 } } } // namespace JSC::AOT::Typed
 

@@ -254,7 +254,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [self addSubview:_scrollView.get()];
 
     [self _dispatchSetDeviceOrientation:[self _deviceOrientationIgnoringOverrides]];
-    [self _dispatchSetOrientationForMediaCapture:[self _deviceOrientationIgnoringOverrides]];
+    [self _dispatchSetOrientationForMediaCapture:[self _deviceOrientationForMediaCapture]];
 
     [_contentView layer].anchorPoint = CGPointZero;
     [_contentView setFrame:bounds];
@@ -401,6 +401,20 @@ ALLOW_DEPRECATED_DECLARATIONS_END
             return windowScene.effectiveGeometry.interfaceOrientation;
         return UIInterfaceOrientationUnknown;
     }());
+}
+
+- (void)_setCameraRotationAdjustment:(WebCore::IntDegrees)degrees
+{
+    if (_cameraRotationAdjustment == degrees)
+        return;
+
+    _cameraRotationAdjustment = degrees;
+    [self _dispatchSetOrientationForMediaCapture:[self _deviceOrientationForMediaCapture]];
+}
+
+- (WebCore::IntDegrees)_deviceOrientationForMediaCapture
+{
+    return [self _deviceOrientationIgnoringOverrides] + _cameraRotationAdjustment;
 }
 
 - (void)_dynamicUserInterfaceTraitDidChange
@@ -646,6 +660,9 @@ static CGSize roundScrollViewContentSize(const WebKit::WebPageProxy& page, CGSiz
 - (void)_didFinishLoadingDataForCustomContentProviderWithSuggestedFilename:(const String&)suggestedFilename data:(NSData *)data
 {
     ASSERT(_customContentView);
+    if (!_customContentView)
+        return;
+
     [_customContentView web_setContentProviderData:data suggestedFilename:suggestedFilename.createNSString().get() completionHandler:^{
         _page->didLayoutForCustomContentProvider();
     }];
@@ -1123,7 +1140,7 @@ static void changeContentOffsetBoundedInValidRange(UIScrollView *scrollView, Web
     [_scrollView setMaximumZoomScale:maximumScaleFactor];
     [_scrollView _setZoomEnabledInternal:allowsUserScaling && self._allowsMagnification];
 
-    CheckedPtr scrollingCoordinator = _page->scrollingCoordinatorProxy();
+    RefPtr scrollingCoordinator = _page->scrollingCoordinatorProxy();
     if ([_scrollView showsHorizontalScrollIndicator] && [_scrollView showsVerticalScrollIndicator]) {
         [_scrollView setShowsHorizontalScrollIndicator:(scrollingCoordinator->mainFrameScrollbarWidth() != WebCore::ScrollbarWidth::None)];
         [_scrollView setShowsVerticalScrollIndicator:(scrollingCoordinator->mainFrameScrollbarWidth() != WebCore::ScrollbarWidth::None)];
@@ -1212,7 +1229,12 @@ static void changeContentOffsetBoundedInValidRange(UIScrollView *scrollView, Web
 
         if (WebKit::scalesAreEssentiallyEqual(contentZoomScale(self), _scaleToRestore)) {
             scaledScrollOffset.scale(_scaleToRestore);
-            WebCore::FloatPoint contentOffsetInScrollViewCoordinates = [self _contentOffsetAdjustedForObscuredInset:scaledScrollOffset];
+
+            WebCore::FloatPoint contentOffsetInScrollViewCoordinates;
+            if (_gestureController && _gestureController->isShowingSwipeSnapshotImage())
+                contentOffsetInScrollViewCoordinates = scaledScrollOffset - WebCore::FloatSize(_obscuredInsetsWhenSaved.left(), _obscuredInsetsWhenSaved.top());
+            else
+                contentOffsetInScrollViewCoordinates = [self _contentOffsetAdjustedForObscuredInset:scaledScrollOffset];
 
             changeContentOffsetBoundedInValidRange(_scrollView.get(), contentOffsetInScrollViewCoordinates);
             _perProcessState.commitDidRestoreScrollPosition = YES;
@@ -1586,7 +1608,8 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
         return;
 
     // Don't allow content to do programmatic scrolls for non-scrollable pages when zoomed.
-    if (!protect(_page->scrollingCoordinatorProxy())->hasScrollableMainFrame() && !WebKit::scalesAreEssentiallyEqual([_scrollView zoomScale], [_scrollView minimumZoomScale])) {
+    RefPtr scrollingCoordinatorProxy = _page->scrollingCoordinatorProxy();
+    if (scrollingCoordinatorProxy && !scrollingCoordinatorProxy->hasScrollableMainFrame() && !WebKit::scalesAreEssentiallyEqual([_scrollView zoomScale], [_scrollView minimumZoomScale])) {
         [self _scheduleForcedVisibleContentRectUpdate];
         return;
     }
@@ -2144,7 +2167,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
 
     // FIXME: We will want to detect whether snapping will occur before beginning to drag. See WebPageProxy::didCommitLayerTree.
     ASSERT(scrollView == _scrollView.get());
-    if (CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
+    if (RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
         [_scrollView _setDecelerationRateInternal:(coordinator->shouldSetScrollViewDecelerationRateFast()) ? UIScrollViewDecelerationRateFast : UIScrollViewDecelerationRateNormal];
         coordinator->setRootNodeIsInUserScroll(true);
 
@@ -2168,6 +2191,11 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
     _isScrollingWithOverlayRegion = NO;
 #endif
 
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+    if (RefPtr drawingArea = dynamicDowncast<WebKit::RemoteLayerTreeDrawingAreaProxy>(_page->drawingArea()))
+        drawingArea->updateDeferredInteractionRegions();
+#endif
+
     [self _scheduleVisibleContentRectUpdate];
     [_contentView didFinishScrolling];
 
@@ -2177,7 +2205,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
     _page->scheduleAccessibilityFrameGeometryUpdate();
 #endif
 
-    if (CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
+    if (RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
         coordinator->setRootNodeIsInUserScroll(false);
 
         auto scrollOffset = [self _scrollOffsetAdjustedForObscuredInset:scrollView.contentOffset];
@@ -2199,7 +2227,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
             targetContentOffset->y = scrollView.contentOffset.y;
     }
 
-    if (CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
+    if (RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
         UIEdgeInsets obscuredInsets;
         id<WKUIDelegatePrivate> uiDelegatePrivate = static_cast<id <WKUIDelegatePrivate>>([self UIDelegate]);
         if ([uiDelegatePrivate respondsToSelector:@selector(_webView:finalObscuredInsetsForScrollView:withVelocity:targetContentOffset:)])
@@ -2225,7 +2253,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
 
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
 {
-    if (CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
+    if (RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
         if (coordinator->scrollingPerformanceTestingEnabled()) {
             if (_scrollPerfIntervalState == ScrollPerfIntervalState::FingerDown) {
                 WTFEndSignpostAlways(nullptr, ScrollingPerformanceTestFingerDownInterval, "isAnimation=YES;");
@@ -2245,7 +2273,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
 
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
 {
-    if (CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
+    if (RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
         if (coordinator->scrollingPerformanceTestingEnabled()) {
             if (_scrollPerfIntervalState == ScrollPerfIntervalState::Momentum) {
                 WTFEndSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES;");
@@ -3307,7 +3335,7 @@ static bool scrollViewCanScroll(UIScrollView *scrollView)
     auto contentInsets = [self currentlyVisibleContentInsetsWithScale:scaleFactor obscuredInsets:computedContentInsetUnadjustedForKeyboard];
 
     if (viewStability.isEmpty()) {
-        CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy());
+        RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy());
         if (coordinator && coordinator->hasActiveSnapPoint()) {
             CGPoint currentScrollOffset = [self _scrollOffsetAdjustedForObscuredInset:[_scrollView contentOffset]];
             CGPoint snappedScrollOffset = coordinator->scrollOffsetSnappedToNearestSnapPoint(currentScrollOffset, scaleFactor);
@@ -3784,7 +3812,7 @@ static WebCore::IntDegrees activeOrientation(WKWebView *webView)
 {
     if (!_overridesInterfaceOrientation)
         [self _dispatchSetDeviceOrientation:[self _deviceOrientationIgnoringOverrides]];
-    [self _dispatchSetOrientationForMediaCapture:[self _deviceOrientationIgnoringOverrides]];
+    [self _dispatchSetOrientationForMediaCapture:[self _deviceOrientationForMediaCapture]];
 }
 
 - (void)_contentSizeCategoryDidChange:(NSNotification *)notification
@@ -4852,8 +4880,8 @@ static bool isLockdownModeWarningNeeded()
 - (void)_detectDataWithTypes:(WKDataDetectorTypes)types completionHandler:(dispatch_block_t)completion
 {
 #if ENABLE(DATA_DETECTION)
-    _page->detectDataInAllFrames(fromWKDataDetectorTypes(types), [completion = makeBlockPtr(completion), page = WeakPtr { _page.get() }] (auto&& result) {
-        if (page)
+    _page->detectDataInAllFrames(fromWKDataDetectorTypes(types), [completion = makeBlockPtr(completion), weakPage = WeakPtr { _page.get() }](auto&& result) {
+        if (RefPtr page = weakPage)
             page->setDataDetectionResult(WTF::move(result));
         if (completion)
             completion();
@@ -5195,7 +5223,7 @@ static bool isLockdownModeWarningNeeded()
         CGContextScaleCTM(context.get(), imageScale, imageScale);
         [customContentView.get().layer renderInContext:context.get()];
 
-        completionHandler([protect(UIGraphicsGetImageFromCurrentImageContext()) CGImage]);
+        completionHandler(protect([protect(UIGraphicsGetImageFromCurrentImageContext()) CGImage]));
 
         UIGraphicsEndImageContext();
         return;
@@ -5721,14 +5749,6 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 - (Class)_printFormatterClass
 {
     return [_WKWebViewPrintFormatter class];
-}
-
-- (id <_WKWebViewPrintProvider>)_printProvider
-{
-    RetainPtr printProvider = _customContentView ? _customContentView.get() : _contentView.get();
-    if ([printProvider conformsToProtocol:@protocol(_WKWebViewPrintProvider)])
-        return (id<_WKWebViewPrintProvider>)printProvider.autorelease();
-    return nil;
 }
 
 @end

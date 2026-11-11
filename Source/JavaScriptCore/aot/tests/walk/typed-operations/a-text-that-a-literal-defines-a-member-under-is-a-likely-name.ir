@@ -1,0 +1,43 @@
+# function made(kind, value) { return { first: 1, [`${kind}Types`]: value }; }
+# A written key of a literal is converted to a key before its value is evaluated. The key of a text is the text, and the member is defined under it: it is made as a name.
+# f1 = made
+# RUN: walk f1:Body mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = Strcat {{*}}[isLikelyKey, isLikelyName]
+# CHECK: ElemDefine
+# RUN(HANDED): walk f2:Body mechanisms=none+TypedOperations
+# HANDED-LABEL: code f2:Body
+# HANDED-NOT: isLikelyKey
+# HANDED: Return
+
+layout L0 module=m0 position=40 fields=[{key="first" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="made" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="Types"
+    v3 = Strcat v0, v2
+    v4 = ToPropertyKey v3
+    v5 = PropGet v1 key="inner"
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    ElemDefine v7, v4, v5
+    Return v7
+}
+function f2 name="handed" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="Types"
+    v3 = Strcat v0, v2
+    v4 = ToPropertyKey v3
+    v5 = Call v1, -, v4
+    Return v5
+}

@@ -1,3 +1,6 @@
+// Bun: upstream runs this beside the other tests. The worker stores the new language first and bumps the epoch that resets the cache second;
+// if it loses its processor in between, the main thread has time for its 25 turns. On its own the test passes.
+//@ serial!
 //@ runDefault("--useDollarVM=1")
 
 // A worker changes the user language from another thread while the main thread keeps

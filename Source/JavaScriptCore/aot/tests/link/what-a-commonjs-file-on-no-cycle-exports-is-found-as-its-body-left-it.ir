@@ -1,0 +1,85 @@
+# symbols.cjs   exports.kA = Symbol("a");
+# ring.cjs      const early = require("./early.cjs"); exports.kB = Symbol("b");
+# early.cjs     const { kB } = require("./ring.cjs");
+# main.cjs      const { kA } = require("./symbols.cjs"); const { kB } = require("./ring.cjs"); function readA(o) { return o[kA]; } function readB(o) { return o[kB]; }
+# The front end puts the variable of the file in place of `lib.kA` only behind a site that evaluates the file, and says of each request whether the file has run to its end behind every such site (completes). Where it has, whoever names its variable
+# finds what the body stored and never the `undefined` that the variable held at first: the key is one symbol, and the access goes by its name. On a cycle the file may be in the middle of its body: early.cjs finds undefined, and so may anybody.
+# RUN: link variables mechanisms=all
+# CHECK: variable g0 proven=symbol("a")@m0:0 writers-known
+# CHECK: variable g1 proven=undefined|symbol("b")@m2:1 writers-known
+# RUN(NAMED): walk f4 mechanisms=all-Inlining
+# NAMED-LABEL: code f4:Body
+# NAMED: PropGet {{*}}key=symbol("a")@m0:0
+# NAMED-NOT: ElemGet
+# RUN(RING): walk f5 mechanisms=all-Inlining
+# RING-LABEL: code f5:Body
+# RING: ElemGet
+
+layout L0 module=m0 fields=[{key=symbol("a")@m0:0 declared={type=anything} flags=[IsNeverWritten]}, {key=symbol("b")@m2:1 declared={type=anything} flags=[IsNeverWritten]}] flags=[IsNeverAllocated]
+module m0 path="symbols.cjs" displayPath="symbols.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="early.cjs" displayPath="early.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 requests=[{target=m2 kind=Require}]
+module m2 path="ring.cjs" displayPath="ring.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 requests=[{target=m1 kind=Require}]
+module m3 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f3 requests=[{target=m0 kind=Require completes=true}, {target=m2 kind=Require}]
+entry module=m3
+variable g0 name="kA" module=m3 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="kB" module=m3 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="kB" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+variable g3 name="kA" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="kB" module=m2 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="a"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    PutModuleVariable v2 variable=g3
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m1 [isBare, isCallOfRequire]
+    v1 = GetModuleVariable variable=g4
+    PutModuleVariable v1 variable=g2
+    v3 = Undefined
+    Return v3
+}
+function f2 module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m2 [isBare, isCallOfRequire]
+    v1 = Builtin builtin=Symbol
+    v2 = String string="b"
+    v3 = Call v1, -, v2 calleeName="Symbol" callNumber=1
+    PutModuleVariable v3 variable=g4
+    v5 = Undefined
+    Return v5
+}
+function f3 module=m3 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewClosure function=f5
+    EvaluateModule module=m0 referrer=m3 [isBare, isCallOfRequire]
+    v3 = GetModuleVariable variable=g3
+    PutModuleVariable v3 variable=g0
+    EvaluateModule module=m2 referrer=m3 [isBare, isCallOfRequire]
+    v6 = GetModuleVariable variable=g4
+    PutModuleVariable v6 variable=g1
+    v8 = Builtin builtin=GlobalThis
+    PropSet v8, v0 key="readA"
+    PropSet v8, v1 key="readB"
+    v11 = Undefined
+    Return v11
+}
+function f4 name="readA" module=m3 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="kA"
+    v3 = ElemGet v0, v2
+    Return v3
+}
+function f5 name="readB" module=m3 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="kB"
+    v3 = ElemGet v0, v2
+    Return v3
+}

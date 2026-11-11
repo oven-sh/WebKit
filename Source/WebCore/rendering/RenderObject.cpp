@@ -62,6 +62,7 @@
 #include "RenderElementStyleInlines.h"
 #include "RenderFragmentedFlow.h"
 #include "RenderGrid.h"
+#include "RenderHTMLCanvas.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
@@ -151,7 +152,6 @@ struct SameSizeAsRenderObject : public CanMakeSingleThreadWeakPtr<SameSizeAsRend
     SingleThreadPackedWeakPtr<RenderObject> m_next;
     uint8_t m_type;
     uint8_t m_typeSpecificFlags;
-    CheckedPtr<Layout::Box> layoutBox;
     void* cachedResourceClient;
 };
 
@@ -181,25 +181,7 @@ RenderObject::RenderObject(Type type, Node& node, OptionSet<TypeFlag> typeFlags,
 
 RenderObject::~RenderObject()
 {
-    clearLayoutBox();
     ASSERT(!hasRareData());
-}
-
-void RenderObject::setLayoutBox(Layout::Box& box)
-{
-    m_layoutBox = &box;
-    m_layoutBox->setRendererForIntegration(this);
-}
-
-void RenderObject::clearLayoutBox()
-{
-    if (!m_layoutBox)
-        return;
-
-    ASSERT(m_layoutBox->rendererForIntegration() == this);
-
-    m_layoutBox->setRendererForIntegration(nullptr);
-    m_layoutBox = nullptr;
 }
 
 RenderTheme& RenderObject::theme() const
@@ -491,14 +473,12 @@ RenderLayer* RenderObject::enclosingLayer() const
 
 RenderBox& RenderObject::enclosingBox() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return *lineageOfType<RenderBox>(const_cast<RenderObject&>(*this)).first();
+    return *lineageOfType<RenderBox>(const_cast<RenderObject&>(*this)).first();
 }
 
 RenderBoxModelObject& RenderObject::enclosingBoxModelObject() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return *lineageOfType<RenderBoxModelObject>(const_cast<RenderObject&>(*this)).first();
+    return *lineageOfType<RenderBoxModelObject>(const_cast<RenderObject&>(*this)).first();
 }
 
 RenderBox* RenderObject::enclosingScrollableContainer() const
@@ -661,9 +641,9 @@ RenderElement* RenderObject::markContainingBlocksForLayout(RenderElement* layout
     return { };
 }
 
-void RenderObject::invalidateContentLogicalWidths(MarkingBehavior markParents, const RenderBlock* ancestorUpdateBoundary)
+void RenderObject::invalidateContentLogicalWidths(MarkingBehavior markParents, const RenderBoxModelObject* ancestorUpdateBoundary)
 {
-    ASSERT_IMPLIES(ancestorUpdateBoundary, markParents == MarkingBehavior::MarkContainingBlockChain);
+    ASSERT_IMPLIES(ancestorUpdateBoundary, markParents == MarkingBehavior::ContainingBlockChain);
 
     if (hasInvalidContentLogicalWidths() && (!hasRareData() || !rareData().contentLogicalWidthsInvalidationIsMarkOnlyThis)) {
         // Both this and our ancestor chain are already marked dirty.
@@ -676,7 +656,7 @@ void RenderObject::invalidateContentLogicalWidths(MarkingBehavior markParents, c
         return;
     }
 
-    if (markParents == MarkingBehavior::MarkOnlyThis) {
+    if (markParents == MarkingBehavior::OnlyThis) {
         ensureRareData().contentLogicalWidthsInvalidationIsMarkOnlyThis = true;
         return;
     }
@@ -686,7 +666,7 @@ void RenderObject::invalidateContentLogicalWidths(MarkingBehavior markParents, c
         ensureRareData().contentLogicalWidthsInvalidationIsMarkOnlyThis = false;
 }
 
-void RenderObject::invalidateContainerContentLogicalWidths(const RenderBlock* ancestorUpdateBoundary)
+void RenderObject::invalidateContainerContentLogicalWidths(const RenderBoxModelObject* ancestorUpdateBoundary)
 {
     // In order to avoid pathological behavior when inlines are deeply nested, we do include them
     // in the chain that we mark dirty (even though they're kind of irrelevant).
@@ -731,8 +711,7 @@ void RenderObject::setLayerNeedsFullRepaintForOutOfFlowMovementLayout()
 
 RenderBlock* RenderElement::nearestNonAnonymousContainingBlockIncludingSelf() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto* renderer = const_cast<RenderElement*>(this);
+    auto* renderer = const_cast<RenderElement*>(this);
     while (renderer && (!is<RenderBlock>(*renderer) || renderer->isAnonymousBlock()))
         renderer = renderer->containingBlock();
     return downcast<RenderBlock>(renderer);
@@ -752,15 +731,11 @@ RenderBlock* RenderObject::containingBlockForPositionType(PositionType positionT
 
     if (positionType == PositionType::Absolute) {
         auto containingBlockForAbsolutePosition = [&] {
-            if (renderer.isInlineBox() && renderer.style().position() == PositionType::Relative) {
-                // A relatively positioned inline box forwards its absolute positioned descendants to
-                // its nearest non-anonymous containing block (to avoid having positioned objects list in inline boxes).
-                return renderer.parent() ? renderer.parent()->nearestNonAnonymousContainingBlockIncludingSelf() : nullptr;
-            }
             CheckedPtr ancestor = renderer.parent();
             while (ancestor && !ancestor->canContainAbsolutelyPositionedObjects())
                 ancestor = ancestor->parent();
-            // Make sure we only return non-anonymous RenderBlock as containing block.
+            // Make sure we only return non-anonymous RenderBlock as containing block (e.g. a relatively positioned inline box
+            // forwards its absolute positioned descendants to its nearest non-anonymous containing block).
             return ancestor ? ancestor->nearestNonAnonymousContainingBlockIncludingSelf() : nullptr;
         };
         return containingBlockForAbsolutePosition();
@@ -865,7 +840,7 @@ void RenderObject::absoluteFocusRingQuads(Vector<FloatQuad>& quads)
     // descendants.
     FloatPoint absolutePoint = localToAbsolute();
     auto rects = OutlinePainter::collectFocusRingRects(*elementRenderer, flooredLayoutPoint(absolutePoint), nullptr);
-    float deviceScaleFactor = protect(document())->deviceScaleFactor();
+    float deviceScaleFactor = document().deviceScaleFactor();
     for (auto rect : rects) {
         rect.moveBy(LayoutPoint(-absolutePoint));
         quads.append(localToAbsoluteQuad(FloatQuad(snapRectToDevicePixels(rect, deviceScaleFactor))));
@@ -973,6 +948,17 @@ void RenderObject::propagateRepaintToParentWithOutlineAutoIfNeeded(const RenderL
     ASSERT_NOT_REACHED();
 }
 
+static void requestCanvasPaintEventIfNeeded(const RenderObject& renderer, const RenderLayerModelObject* repaintContainer)
+{
+    auto* renderElement = dynamicDowncast<RenderElement>(renderer);
+    if (!renderElement)
+        return;
+
+    CheckedPtr canvasRenderer = dynamicDowncast<RenderHTMLCanvas>(repaintContainer);
+    if (canvasRenderer && canvasRenderer.get() != renderElement)
+        canvasRenderer->requestPaintEventIfNeeded(*renderElement);
+}
+
 void RenderObject::repaintUsingContainer(SingleThreadWeakPtr<const RenderLayerModelObject>&& repaintContainer, const LayoutRect& r, ClipRepaintToLayer clipRepaintToLayer, RepaintRectIsPartial rectIsPartial) const
 {
     if (r.isEmpty())
@@ -980,6 +966,8 @@ void RenderObject::repaintUsingContainer(SingleThreadWeakPtr<const RenderLayerMo
 
     if (!repaintContainer)
         repaintContainer = &view();
+
+    requestCanvasPaintEventIfNeeded(*this, repaintContainer.get());
 
     if (CheckedPtr fragmentedFlow = dynamicDowncast<RenderFragmentedFlow>(*repaintContainer)) {
         fragmentedFlow->repaintRectangleInFragments(r);
@@ -1020,7 +1008,7 @@ void RenderObject::repaintUsingContainer(SingleThreadWeakPtr<const RenderLayerMo
     }
 }
 
-static inline bool LEGACY_NODELETE fullRepaintIsScheduled(const RenderObject& renderer)
+NODELETE static inline bool fullRepaintIsScheduled(const RenderObject& renderer)
 {
     if (!renderer.view().usesCompositing() && !renderer.document().ownerElement())
         return false;
@@ -1039,8 +1027,10 @@ void RenderObject::issueRepaint(std::optional<LayoutRect> partialRepaintRect, Cl
     if (!repaintContainer.renderer)
         repaintContainer = { fullRepaintIsScheduled(*this), &view() };
 
-    if (repaintContainer.fullRepaintIsScheduled && forceRepaint == ForceRepaint::No)
+    if (repaintContainer.fullRepaintIsScheduled && forceRepaint == ForceRepaint::No) {
+        requestCanvasPaintEventIfNeeded(*this, repaintContainer.renderer.get());
         return;
+    }
 
     LayoutRect repaintRect;
 
@@ -1134,7 +1124,7 @@ auto RenderObject::rectsForRepaintingAfterLayout(const RenderLayerModelObject* r
 
     auto result = computeRects(localRects, repaintContainer, visibleRectContextForRepaint());
     if (result.outlineBoundsRect)
-        result.outlineBoundsRect = LayoutRect(snapRectToDevicePixels(*result.outlineBoundsRect, protect(document())->deviceScaleFactor()));
+        result.outlineBoundsRect = LayoutRect(snapRectToDevicePixels(*result.outlineBoundsRect, document().deviceScaleFactor()));
 
     return result;
 }
@@ -1203,7 +1193,7 @@ LayoutRect RenderObject::localBoundsForIntersection() const
     if (CheckedPtr renderLineBreak = dynamicDowncast<RenderLineBreak>(*this))
         return renderLineBreak->linesBoundingBox();
 
-    if (CheckedPtr svgModelObject = dynamicDowncast<RenderSVGModelObject>(*this))
+    if (auto* svgModelObject = dynamicDowncast<RenderSVGModelObject>(*this))
         return svgModelObject->borderBoxRectEquivalent();
 
     if (CheckedPtr legacySVGModelObject = dynamicDowncast<LegacyRenderSVGModelObject>(*this))
@@ -1529,7 +1519,6 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
     }
 
     stream << " renderer (" << this << ")";
-    stream << " layout box (" << layoutBox() << ")";
 
     if (node())
         stream << " node (" << node() << ")";
@@ -1696,9 +1685,7 @@ void RenderObject::getTransformFromContainer(const LayoutSize& offsetInContainer
     if (hasLayer() && (layer = downcast<RenderLayerModelObject>(*this).layer()) && layer->transform())
         transform.multiply(layer->currentTransform());
     else if (document().settings().layerBasedSVGEngineEnabled() && isSVGLayerAwareRenderer()) {
-        // Non-layered SVG elements: use the cached local transform. localTransform() is virtual,
-        // returning m_localTransform for RenderSVGModelObject and RenderSVGText, identity otherwise.
-        if (auto svgTransform = localTransform(); !svgTransform.isIdentity())
+        if (auto svgTransform = downcast<RenderLayerModelObject>(*this).nominalTransform(); !svgTransform.isIdentity())
             transform.multiply(TransformationMatrix(svgTransform));
     }
 
@@ -1916,7 +1903,7 @@ bool RenderObject::setCapturedInViewTransition(bool captured)
         layerToInvalidate->setNeedsCompositingGeometryUpdate();
     }
 
-    if (CheckedPtr renderBox = dynamicDowncast<RenderBox>(*this))
+    if (auto* renderBox = dynamicDowncast<RenderBox>(*this))
         renderBox->invalidateAncestorBackgroundObscurationStatus();
 
     if (CheckedPtr layerModelRenderer = dynamicDowncast<RenderLayerModelObject>(this)) {
@@ -1963,7 +1950,7 @@ void RenderObject::willBeRemovedFromTree()
 {
     // FIXME: We should ASSERT(isRooted()) but we have some out-of-order removals which would need to be fixed first.
     // Update cached boundaries in SVG renderers, if a child is removed.
-    protect(parent())->invalidateCachedBoundaries();
+    parent()->invalidateCachedBoundaries();
 
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
     AXCustomColorSVGClassifier::invalidateCharacteristics(*this);
@@ -2101,10 +2088,10 @@ PositionWithAffinity RenderObject::createPositionWithAffinity(int offset, Affini
         if (!node->hasEditableStyle()) {
             // If it can be found, we prefer a visually equivalent position that is editable. 
             Position position = makeDeprecatedLegacyPosition(node.get(), convertOffsetInTextFragmentToNodeOffset(*this, offset));
-            Position candidate = position.downstream(CanCrossEditingBoundary);
+            Position candidate = position.downstream(EditingBoundaryCrossingRule::CanCross);
             if (protect(candidate.deprecatedNode())->hasEditableStyle())
                 return PositionWithAffinity(candidate, affinity);
-            candidate = position.upstream(CanCrossEditingBoundary);
+            candidate = position.upstream(EditingBoundaryCrossingRule::CanCross);
             if (protect(candidate.deprecatedNode())->hasEditableStyle())
                 return PositionWithAffinity(candidate, affinity);
         }
@@ -2159,7 +2146,7 @@ PositionWithAffinity RenderObject::createPositionWithAffinity(const Position& po
 
 CursorDirective RenderObject::getCursor(const LayoutPoint&, Cursor&) const
 {
-    return CursorDirective::SetCursorBasedOnStyle;
+    return CursorDirective::SetBasedOnStyle;
 }
 
 bool RenderObject::useDarkAppearance() const
@@ -2422,7 +2409,7 @@ Vector<IntRect> RenderObject::absoluteTextRects(const SimpleRange& range, Option
 
 static RefPtr<Node> nodeAfter(const BoundaryPoint& point)
 {
-    if (RefPtr node = point.container->traverseToChildAt(point.offset + 1))
+    if (auto* node = point.container->traverseToChildAt(point.offset + 1))
         return node;
     return point.container.ptr();
 }
@@ -2460,7 +2447,7 @@ static Vector<FloatRect> borderAndTextRects(const SimpleRange& range, Coordinate
                     auto rootClippedBounds = renderer->computeClippedRectInContentCoordinates(renderer->borderBoundingBox());
                     if (!rootClippedBounds)
                         continue;
-                    auto snappedBounds = snapRectToDevicePixels(*rootClippedBounds, protect(node->document())->deviceScaleFactor());
+                    auto snappedBounds = snapRectToDevicePixels(*rootClippedBounds, node->document().deviceScaleFactor());
                     if (space == CoordinateSpace::Client)
                         protect(node->document())->convertAbsoluteToClientRect(snappedBounds, renderer->style());
                     rects.append(snappedBounds);
@@ -2559,7 +2546,7 @@ PointerEvents RenderObject::usedPointerEvents() const
     return style().usedPointerEvents();
 }
 
-static bool LEGACY_NODELETE intervalsSufficientlyOverlap(int startA, int endA, int startB, int endB)
+NODELETE static bool intervalsSufficientlyOverlap(int startA, int endA, int startB, int endB)
 {
     if (endA <= startA || endB <= startB)
         return false;
@@ -2774,7 +2761,7 @@ static void adjustTextDirectionForCoalescedGeometries(const SelectionEndpointDir
     }
 }
 
-static bool LEGACY_NODELETE shouldRenderSelectionOnSeparateLine(const RenderObject* currentRenderer)
+NODELETE static bool shouldRenderSelectionOnSeparateLine(const RenderObject* currentRenderer)
 {
     if (!currentRenderer)
         return false;
@@ -2782,13 +2769,13 @@ static bool LEGACY_NODELETE shouldRenderSelectionOnSeparateLine(const RenderObje
     if (currentRenderer->isOutOfFlowPositioned())
         return true;
 
-    if (CheckedPtr blockFlow = dynamicDowncast<const RenderBlockFlow>(*currentRenderer))
+    if (auto* blockFlow = dynamicDowncast<const RenderBlockFlow>(*currentRenderer))
         return blockFlow->multiColumnFlow();
 
     return false;
 }
 
-static bool LEGACY_NODELETE hasAncestorWithSelectionOnSeparateLine(RenderObject* descendant, const RenderObject* stayWithin)
+NODELETE static bool hasAncestorWithSelectionOnSeparateLine(RenderObject* descendant, const RenderObject* stayWithin)
 {
     for (auto* current = descendant; current; current = current->parent()) {
         if (current->isOutOfFlowPositioned())
@@ -2801,7 +2788,7 @@ static bool LEGACY_NODELETE hasAncestorWithSelectionOnSeparateLine(RenderObject*
     return false;
 }
 
-static bool LEGACY_NODELETE shouldRenderPreviousSelectionOnSeparateLine(RenderObject* previousRenderer, const RenderObject* stayWithin)
+NODELETE static bool shouldRenderPreviousSelectionOnSeparateLine(RenderObject* previousRenderer, const RenderObject* stayWithin)
 {
     if (!previousRenderer || !stayWithin)
         return false;
@@ -3219,13 +3206,6 @@ bool RenderObject::CachedImageListener::allowsAnimation() const
     if (CheckedPtr renderer = m_renderer.get())
         return renderer->allowsAnimation();
     return true;
-}
-
-bool RenderObject::CachedImageListener::useSystemDarkAppearance() const
-{
-    if (CheckedPtr renderer = m_renderer.get())
-        return renderer->useSystemDarkAppearance();
-    return false;
 }
 
 bool RenderObject::CachedImageListener::canDestroyDecodedData() const

@@ -1,0 +1,10 @@
+# nobody knows the tag at this `new`, so nobody knows the layout of the cell: no allocation under the layout of the maker stands here, and none that lists a store
+# f2 = ofAnyKind, f3 = ofOneKind
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: = NewObject {{*}}layout=L0
+# NEVER-NOT: = NewObject {{*}}fields=[
+# where the tag is known the cell is made here, under the layout of the member
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = NewObject {{*}}layout=
+# PROGRAM-OF: new-with-a-known-tag-makes-the-member.ir

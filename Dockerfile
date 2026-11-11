@@ -377,6 +377,7 @@ RUN --mount=type=tmpfs,target=/icu \
     tar -xf /icu.tgz --strip-components=1 && \
     rm /icu.tgz && \
     patch -p1 < /icu-bun/udata-decompress-hook.patch && \
+    patch -p1 < /icu-bun/decnum-allocation-failure.patch && \
     cd source && \
     ./configure $ICU_CROSS --enable-static --disable-shared --disable-layoutex --disable-layout --with-data-packaging=static --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \
     make -j$(nproc) && \
@@ -403,7 +404,10 @@ ENV MARCH_FLAG=${MARCH_FLAG}
 ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 
 # After linking, the newest glibc symbol version jsc needs is read off it: that is the oldest glibc the artifact runs
-# on, and it must not be past the container's, 2.31.
+# on, and it must not be past the container's, 2.31. A version of glibc that is not a number says what the loader has to
+# be able to do, and jsc must need none: the loader of 2.31 is older than all of them. GLIBC_ABI_DT_RELR is the loader
+# of 2.36, for the relative relocations that LD_PACK_RELATIVE_RELOCS packs. Upstream turns that on wherever the linker
+# can do it, so it is turned off here.
 #
 # With ENABLE_FUZZILLI the libraries must call the coverage callbacks and leave them undefined: Bun defines its own.
 #
@@ -411,6 +415,8 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # archives of an LTO lane are bitcode, which does not name __stack_chk_fail yet. That jsc imports a checked function says
 # little: one caller is enough. So jsc must also hold no copy of glibc's always-inline wrappers (memcpy.inline, ...): a
 # wrapper that was not inlined cannot see the size of the destination, and calls the plain function.
+#
+# Where HARDENING_FLAGS has -mbranch-protection=pac-ret: Tools/Scripts/check-signed-return-addresses.py.
 #
 # clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
 # resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=nehalem)
@@ -441,6 +447,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
     -DCMAKE_BUILD_TYPE=$WEBKIT_RELEASE_TYPE \
     -DUSE_THIN_ARCHIVES=OFF \
+    -DLD_PACK_RELATIVE_RELOCS=OFF \
     -DUSE_BUN_JSC_ADDITIONS=ON \
     -DUSE_BUN_EVENT_LOOP=ON \
     -DENABLE_FTL_JIT=ON \
@@ -478,6 +485,10 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     glibc=$(llvm-readelf --version-info $WEBKIT_OUT_DIR/bin/jsc | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -1) && \
     echo "jsc needs glibc symbols up to $glibc" && \
     { [ -n "$glibc" ] && [ "$(printf '%s\n' GLIBC_2.31 "$glibc" | sort -V | tail -1)" = GLIBC_2.31 ] || { echo "error: that is newer than GLIBC_2.31" >&2; exit 1; }; } && \
+    { ! llvm-readelf --version-info $WEBKIT_OUT_DIR/bin/jsc | grep -o 'GLIBC_[A-Z][A-Z0-9_]*' | sort -u | grep . || { echo "error: jsc needs that of the loader, and the loader of glibc 2.31 has none of it" >&2; exit 1; }; } && \
+    if [ "$WEBKIT_RELEASE_TYPE" = Release ]; then \
+        ! llvm-nm --undefined-only --print-file-name $WEBKIT_OUT_DIR/lib/libJavaScriptCore.a | grep -E 'UnifiedSource-aot-[0-9]+\.cpp\.o: .*__glibcxx_assert_fail' || { echo "error: these sources of aot/ print when an assertion of libstdc++ fails; behind aot/support/AOTStandardLibraryAssertions.h they trap" >&2; exit 1; }; \
+    fi && \
     if [ "$ENABLE_FUZZILLI" = ON ]; then \
         for callback in __sanitizer_cov_trace_pc_guard __sanitizer_cov_trace_pc_guard_init; do \
             llvm-nm --undefined-only $WEBKIT_OUT_DIR/lib/libJavaScriptCore.a | grep -qw $callback || { echo "error: libJavaScriptCore.a does not call $callback" >&2; exit 1; }; \
@@ -491,6 +502,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
         grep -qv __stack_chk /tmp/chk || { echo "error: jsc calls no checked libc function, _FORTIFY_SOURCE did nothing" >&2; exit 1; }; \
         ! llvm-nm --defined-only $WEBKIT_OUT_DIR/bin/jsc | grep -E ' [a-z_0-9]+\.inline(\.llvm\.[0-9]+)?$' || { echo "error: these _FORTIFY_SOURCE wrappers were not inlined, so they check nothing" >&2; exit 1; }; \
     fi && \
+    case "$HARDENING_FLAGS" in *-mbranch-protection=pac-ret*) python3 /webkit/Tools/Scripts/check-signed-return-addresses.py $WEBKIT_OUT_DIR/bin/jsc ;; esac && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \

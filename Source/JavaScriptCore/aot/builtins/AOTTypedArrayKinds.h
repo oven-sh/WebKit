@@ -131,6 +131,25 @@ constexpr std::optional<TypedArrayType> elementsMovedBy(unsigned byteCount, Numb
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
+constexpr unsigned numberOfValuesTakenBy(AtomicsOperation operation)
+{
+    switch (operation) {
+    case AtomicsOperation::Load:
+        return 0;
+    case AtomicsOperation::Add:
+    case AtomicsOperation::And:
+    case AtomicsOperation::Exchange:
+    case AtomicsOperation::Or:
+    case AtomicsOperation::Store:
+    case AtomicsOperation::Sub:
+    case AtomicsOperation::Xor:
+        return 1;
+    case AtomicsOperation::CompareExchange:
+        return 2;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
 static_assert(hasIntegerElements(TypeUint32) && !hasIntegerElements(TypeUint8Clamped));
 static_assert(hasInlineElementAccess(TypeUint8Clamped) && !hasInlineElementAccess(TypeBigInt64) && !hasInlineElementAccess(TypeFloat16));
 static_assert(elementStore(TypeUint8Clamped) == elementStore(TypeUint8) && elementStore(TypeBigUint64) == SlotRepresentation::Int64);

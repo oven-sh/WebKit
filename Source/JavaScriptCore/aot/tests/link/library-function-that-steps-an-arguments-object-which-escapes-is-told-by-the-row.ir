@@ -1,0 +1,28 @@
+# new WeakSet() walks its operand as the language says. An arguments object may answer the walk with something of the program's, so it escapes; next() of array iterators runs all the same, and the row that walks says so.
+# It was brought by the product of native code and the names of protocols alone, which a build does not stop for.
+# function held() { return new WeakSet(arguments); } held({});
+# LIBRARY: own
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup called-out-of-sight ArrayIteratorPrototypeNext
+# RUN: lacked
+# CHECK: lacked ArrayIteratorPrototypeNext
+
+layout L0 module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+data d0 root=Object{layout=L0} module=m0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Data data=d0
+    v2 = Call v0, -, v1 calleeName="held"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="held" module=m0 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1
+    v3 = Builtin builtin=WeakSet
+    v4 = Construct v3, -, v2 calleeName="WeakSet"
+    Return v4
+}

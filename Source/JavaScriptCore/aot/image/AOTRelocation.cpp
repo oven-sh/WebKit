@@ -8,57 +8,92 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
 #include "AOTCodeTemplates.h"
-#include "AOTConvention.h"
 #include "AOTImageFormat.h"
-#include "AOTInstance.h"
-#include "AOTRelocationLowering.h"
-#include "B3ArgumentRegValue.h"
-#include "B3InsertionSetInlines.h"
-#include "B3MemoryValue.h"
-#include "B3PatchpointValue.h"
-#include "B3StackmapGenerationParams.h"
-#include "B3ValueInlines.h"
+#include "AOTInstanceLayout.h"
+#include "AOTStubRegisters.h"
 
 namespace JSC { namespace AOT {
 
 static_assert(sizeOfNearCall == MacroAssembler::relocationSize(RelocationKind::Call) && sizeOfJump == MacroAssembler::relocationSize(RelocationKind::Jump));
+static_assert(MacroAssembler::relocationSize(RelocationKind::Distance32) == sizeof(int32_t) && MacroAssembler::relocationSize(RelocationKind::NumberWord) == sizeof(uint32_t));
+static constexpr size_t reachOfInstanceWord = isARM64() ? static_cast<size_t>(std::numeric_limits<int32_t>::max()) : static_cast<size_t>(MacroAssembler::relocationReach(RelocationKind::InstanceAccess));
+static_assert(InstanceLayout::reachAboveInstance <= reachOfInstanceWord && InstanceLayout::reachBelowInstance <= reachOfInstanceWord);
 
+// LinkBuffer's shouldPerformBranchCompaction must stay true: on ARM64 only its compaction loop picks the encoding of a jump that was linked inside the assembler, and a jump without an encoding is never linked.
 ImageLinkBuffer::ImageLinkBuffer(CCallHelpers& jit, LinkBuffer::Profile profile)
     : m_end(jit.label())
-    , m_storage(roundUpToMultipleOf<sizeof(uint32_t)>(std::max<size_t>(jit.m_assembler.codeSize(), sizeof(uint32_t))) / sizeof(uint32_t))
-    , m_linkBuffer(jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(m_storage.mutableSpan().data()), m_storage.sizeInBytes(), profile)
+    , m_storage(roundUpToMultipleOf<sizeof(uint32_t)>(std::max<size_t>(jit.m_assembler.codeSize() + planBranchIslands(jit), sizeof(uint32_t))))
+    , m_linkBuffer(jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(m_storage.mutableSpan().data()), m_storage.size(), profile)
 {
     RELEASE_ASSERT(jit.policy().recordsProcessAddresses);
+}
+
+size_t ImageLinkBuffer::planBranchIslands([[maybe_unused]] CCallHelpers& jit)
+{
+#if CPU(ARM64)
+    const uint32_t reach = jit.policy().branchReach;
+    if (jit.m_assembler.codeSize() <= reach / 2) [[likely]]
+        return 0;
+    m_branchIslands = jit.m_assembler.planBranchIslands(reach);
+    if (m_branchIslands.islands.isEmpty())
+        return 0;
+    m_hasBranchIslands = true;
+    jit.m_assembler.setBranchIslands(&m_branchIslands);
+    return m_branchIslands.size();
+#else
+    return 0;
+#endif
 }
 
 void ImageLinkBuffer::finalize(bool dumpsDisassembly, ASCIILiteral name)
 {
     RELEASE_ASSERT(!didFailToAllocate() && !m_didFinalize);
     FINALIZE_CODE_IF(dumpsDisassembly, m_linkBuffer, JITThunkPtrTag, nullptr, "%s", name.characters());
+    m_sizeOfCode = m_linkBuffer.offsetOf(m_end);
     m_didFinalize = true;
 }
 
 std::span<uint8_t> ImageLinkBuffer::bytes()
 {
     RELEASE_ASSERT(m_didFinalize);
-    // Not m_linkBuffer.size(): LinkBuffer fills the storage that jump shortening and branch compaction leave over with nops.
-    return asMutableByteSpan(m_storage.mutableSpan()).first(m_linkBuffer.offsetOf(m_end));
+    return m_storage.mutableSpan().first(m_sizeOfCode);
+}
+
+Vector<uint8_t> ImageLinkBuffer::takeBytes()
+{
+    RELEASE_ASSERT(m_didFinalize);
+    m_storage.shrink(m_sizeOfCode);
+    return std::exchange(m_storage, { });
+}
+
+void emitPadding(CCallHelpers& jit)
+{
+#if CPU(X86_64)
+    constexpr uint8_t halt = 0xf4;
+    jit.m_assembler.buffer().putByte(static_cast<int8_t>(halt));
+#else
+    jit.breakpoint();
+#endif
+}
+
+void emitUnreachable(CCallHelpers& jit)
+{
+#if CPU(X86_64)
+    constexpr uint8_t undefinedInstruction = 0xd6;
+    jit.m_assembler.buffer().putByte(static_cast<int8_t>(undefinedInstruction));
+#else
+    jit.oops();
+#endif
 }
 
 RelocationRecorder::RelocationRecorder(CCallHelpers& jit, const AssemblerPolicy& policy)
     : m_jit(jit)
 {
     RELEASE_ASSERT(policy.recordsProcessAddresses && !policy.blindsConstants);
-    jit.setPolicy(policy);
-}
-
-uint32_t RelocationRecorder::append(CCallHelpers::Label site, RelocationKind kind, CodeSymbol symbol)
-{
-    uint32_t index = numberOfRelocations();
-    m_pending.append({ site, kind, symbol });
-    return index;
+    AssemblerPolicy policyOfCode = policy;
+    policyOfCode.recordsLinkedSites = false;
+    jit.setPolicy(policyOfCode);
 }
 
 void RelocationRecorder::moveAddress(CodeSymbol symbol, GPRReg dest, PCRelativeReach reach)
@@ -71,31 +106,120 @@ void RelocationRecorder::load64(CodeSymbol symbol, GPRReg dest)
     append(m_jit.loadPCRelative64(dest), RelocationKind::Load64, symbol);
 }
 
-uint32_t RelocationRecorder::call(CodeSymbol symbol)
+#if CPU(X86_64)
+void RelocationRecorder::compare64(GPRReg left, CodeSymbol symbol)
 {
-    CCallHelpers::Label site = m_jit.label();
-    m_jit.nearCall();
-    return append(site, RelocationKind::Call, symbol);
+    append(m_jit.comparePCRelative64(left), RelocationKind::Load64, symbol);
 }
 
-uint32_t RelocationRecorder::jump(CodeSymbol symbol)
+void RelocationRecorder::loadDouble(CodeSymbol symbol, FPRReg dest)
+{
+    append(m_jit.loadPCRelativeDouble(dest), RelocationKind::Load64, symbol);
+}
+#endif
+
+void RelocationRecorder::emitNumber32(CodeSymbol symbol)
 {
     CCallHelpers::Label site = m_jit.label();
-    m_jit.nearTailCall();
-    return append(site, RelocationKind::Jump, symbol);
+    m_jit.m_assembler.buffer().putInt(0);
+    append(site, RelocationKind::NumberWord, symbol);
 }
 
 void RelocationRecorder::moveInstanceAddress(CodeSymbol symbol, GPRReg instance, GPRReg dest)
 {
-    RELEASE_ASSERT(symbol.space == SymbolSpace::SiteCache);
     append(m_jit.moveInstanceAddress(instance, dest), RelocationKind::InstanceOffset, symbol);
 }
 
-void RelocationRecorder::emitDistance32(CodeSymbol symbol, int32_t addend)
+void RelocationRecorder::loadInstanceWord(CodeSymbol symbol, InstanceWordWidth width, GPRReg instance, GPRReg dest)
 {
-    CCallHelpers::Label site = m_jit.label();
-    m_jit.m_assembler.buffer().putInt(addend);
-    append(site, RelocationKind::Distance32, symbol);
+    switch (width) {
+    case InstanceWordWidth::Byte:
+        append(m_jit.loadInstanceWord8(instance, dest), RelocationKind::InstanceAccess, symbol);
+        return;
+    case InstanceWordWidth::Word32:
+        append(m_jit.loadInstanceWord32(instance, dest), RelocationKind::InstanceAccess, symbol);
+        return;
+    case InstanceWordWidth::Word64:
+        append(m_jit.loadInstanceWord64(instance, dest), RelocationKind::InstanceAccess, symbol);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void RelocationRecorder::loadInstanceDouble(CodeSymbol symbol, GPRReg instance, FPRReg dest)
+{
+    append(m_jit.loadInstanceDouble(instance, dest), RelocationKind::InstanceAccess, symbol);
+}
+
+void RelocationRecorder::storeInstanceWord(CodeSymbol symbol, InstanceWordWidth width, GPRReg source, GPRReg instance)
+{
+#if CPU(ARM64)
+    RELEASE_ASSERT(source != MacroAssembler::memoryTempRegister);
+#endif
+    switch (width) {
+    case InstanceWordWidth::Byte:
+        append(m_jit.storeInstanceWord8(source, instance), RelocationKind::InstanceAccess, symbol);
+        return;
+    case InstanceWordWidth::Word32:
+        append(m_jit.storeInstanceWord32(source, instance), RelocationKind::InstanceAccess, symbol);
+        return;
+    case InstanceWordWidth::Word64:
+        append(m_jit.storeInstanceWord64(source, instance), RelocationKind::InstanceAccess, symbol);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void RelocationRecorder::storeInstanceDouble(CodeSymbol symbol, FPRReg source, GPRReg instance)
+{
+    append(m_jit.storeInstanceDouble(source, instance), RelocationKind::InstanceAccess, symbol);
+}
+
+bool RelocationRecorder::exceedsBranchReach() const
+{
+    return isARM64() && m_jit.m_assembler.codeSize() > m_jit.policy().branchReach / 2;
+}
+
+CCallHelpers::Label RelocationRecorder::returnAddressOf(uint32_t call) const
+{
+    RELEASE_ASSERT(m_pending[call].kind == RelocationKind::Call);
+    const CCallHelpers::Label start = CCallHelpers::Jump(AssemblerLabel(0)).label();
+    return CCallHelpers::Jump(AssemblerLabel(static_cast<uint32_t>(MacroAssembler::differenceBetween(start, m_pending[call].site) + sizeOfNearCall))).label();
+}
+
+void RelocationRecorder::routeTransfersThroughEnd()
+{
+#if CPU(ARM64)
+    if (!exceedsBranchReach()) [[likely]]
+        return;
+
+    const CCallHelpers::Label start = CCallHelpers::Jump(AssemblerLabel(0)).label();
+    auto labelOf = [&](CCallHelpers::Label site) {
+        return AssemblerLabel(static_cast<uint32_t>(MacroAssembler::differenceBetween(start, site)));
+    };
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> jumpOfSymbol;
+    Vector<PendingRelocation, 32> others;
+    Vector<PendingRelocation> jumps;
+    for (const PendingRelocation& pending : m_pending) {
+        if (pending.kind != RelocationKind::Call && pending.kind != RelocationKind::Jump) {
+            others.append(pending);
+            continue;
+        }
+        uint64_t key = static_cast<uint64_t>(pending.space) << 48 | static_cast<uint64_t>(pending.entry) << 32 | pending.symbol;
+        uint32_t jump = jumpOfSymbol.ensure(key, [&] {
+            CCallHelpers::Label site = m_jit.label();
+            m_jit.nearTailCall();
+            jumps.append(PendingRelocation { site, pending.symbol, pending.entry, RelocationKind::Jump, pending.space });
+            return static_cast<uint32_t>(jumps.size() - 1);
+        }).iterator->value;
+        if (pending.kind == RelocationKind::Call)
+            m_jit.m_assembler.linkNearCall(labelOf(pending.site), labelOf(jumps[jump].site));
+        else
+            m_jit.m_assembler.linkJump(labelOf(pending.site), labelOf(jumps[jump].site), ARM64Assembler::JumpNoCondition, ARM64Assembler::ConditionInvalid);
+    }
+    others.appendVector(jumps);
+    m_pending = WTF::move(others);
+#endif
 }
 
 std::expected<RelocatableCode, LinkFailure> RelocationRecorder::finalize(LinkBuffer::Profile profile, BuildContext* context)
@@ -114,20 +238,109 @@ std::expected<RelocatableCode, LinkFailure> RelocationRecorder::finalize(LinkBuf
     return RelocatableCode { Vector<uint8_t>(buffer.bytes()), WTF::move(*relocations) };
 }
 
+namespace {
+
+#if CPU(X86_64)
+
+class OffsetsOfAscendingSites {
+public:
+    OffsetsOfAscendingSites(CCallHelpers& jit, ImageLinkBuffer& buffer)
+        : m_jumps(jit.m_assembler.takeLinkedJumps())
+        , m_start(CCallHelpers::Jump(AssemblerLabel(0)).label())
+    {
+        RELEASE_ASSERT(!buffer.linkBuffer().policy().recordsLinkedSites);
+        findNextShortJump();
+    }
+
+    ALWAYS_INLINE uint32_t offsetOf(CCallHelpers::Label site)
+    {
+        uint32_t emittedOffset = static_cast<uint32_t>(MacroAssembler::differenceBetween(m_start, site));
+        while (m_emittedEndOfNextShortJump <= emittedOffset) {
+            m_shift = m_shiftBehindNextShortJump;
+            ++m_nextJump;
+            findNextShortJump();
+        }
+        return emittedOffset - m_shift;
+    }
+
+private:
+    ALWAYS_INLINE void findNextShortJump()
+    {
+        std::span<const X86LinkedJump> jumps = m_jumps.span();
+        while (m_nextJump < jumps.size() && !jumps[m_nextJump].isShort)
+            ++m_nextJump;
+        if (m_nextJump == jumps.size()) {
+            m_emittedEndOfNextShortJump = std::numeric_limits<uint64_t>::max();
+            return;
+        }
+        const X86LinkedJump& jump = jumps[m_nextJump];
+        m_shiftBehindNextShortJump = m_shift + X86JumpShortener::savingsOf(jump.kind);
+        m_emittedEndOfNextShortJump = static_cast<uint64_t>(jump.from) + m_shiftBehindNextShortJump;
+    }
+
+    Vector<X86LinkedJump> m_jumps;
+    CCallHelpers::Label m_start;
+    size_t m_nextJump { 0 };
+    uint32_t m_shift { 0 };
+    uint32_t m_shiftBehindNextShortJump { 0 };
+    uint64_t m_emittedEndOfNextShortJump { 0 };
+};
+
+#else
+
+class OffsetsOfAscendingSites {
+public:
+    OffsetsOfAscendingSites(CCallHelpers&, ImageLinkBuffer& buffer)
+        : m_buffer(buffer)
+        , m_sizeOfCode(static_cast<uint32_t>(buffer.bytes().size()))
+    {
+    }
+
+    ALWAYS_INLINE uint32_t offsetOf(CCallHelpers::Label site)
+    {
+        uint32_t distanceToEnd = static_cast<uint32_t>(MacroAssembler::differenceBetween(site, m_buffer.end()));
+        if (m_buffer.hasBranchIslands()) [[unlikely]]
+            return m_buffer.linkBuffer().offsetOf(site);
+        if (m_isBehindLastShortenedJump)
+            return m_sizeOfCode - distanceToEnd;
+        uint32_t offset = m_buffer.linkBuffer().offsetOf(site);
+        m_isBehindLastShortenedJump = m_sizeOfCode - offset == distanceToEnd;
+        return offset;
+    }
+
+private:
+    ImageLinkBuffer& m_buffer;
+    uint32_t m_sizeOfCode;
+    bool m_isBehindLastShortenedJump { false };
+};
+
+#endif
+
+} // anonymous namespace
+
 std::expected<Vector<Relocation>, LinkFailure> RelocationRecorder::link(ImageLinkBuffer& buffer, BuildContext*)
 {
     LinkBuffer& linkBuffer = buffer.linkBuffer();
     if (linkBuffer.hasProcessAddress())
         return makeUnexpected(LinkFailure::ProcessAddressInCode);
-
-    Vector<Relocation> relocations = m_pending.map([&](const PendingRelocation& pending) {
-        return Relocation { linkBuffer.offsetOf(pending.site), pending.kind, pending.symbol.space, pending.symbol.entry, pending.symbol.index };
-    });
-    RELEASE_ASSERT(std::ranges::is_sorted(relocations, { }, &Relocation::offset));
+    if (linkBuffer.hasBranchOutOfReach())
+        return makeUnexpected(LinkFailure::OutOfPCRelativeReach);
 
     std::span<uint8_t> bytes = buffer.bytes();
-    for (const Relocation& relocation : relocations)
-        MacroAssembler::clearRelocation(relocation.kind, bytes.subspan(relocation.offset, MacroAssembler::relocationSize(relocation.kind)));
+    std::span<const PendingRelocation> pendingRelocations = m_pending.span();
+    uint32_t previousOffset = 0;
+    OffsetsOfAscendingSites offsets(m_jit, buffer);
+    Vector<Relocation> relocations(pendingRelocations.size(), [&](size_t index) {
+        const PendingRelocation& pending = pendingRelocations[index];
+        uint32_t offset = offsets.offsetOf(pending.site);
+        ASSERT(offset == linkBuffer.offsetOf(pending.site));
+        RELEASE_ASSERT(offset >= previousOffset);
+        previousOffset = offset;
+        withKindAsConstant(pending.kind, [&](auto kind) ALWAYS_INLINE_LAMBDA {
+            MacroAssembler::clearRelocation(kind, bytes.subspan(offset, MacroAssembler::relocationSize(kind)));
+        });
+        return Relocation { offset, pending.kind, pending.space, pending.entry, pending.symbol };
+    });
 
     m_pending.clear();
     return relocations;
@@ -159,10 +372,11 @@ std::expected<CodeTemplates, LinkFailure> CodeTemplates::create(const AssemblerP
         jit.ret();
     });
     RelocatableCode breakpoint = emit([](CCallHelpers& jit, RelocationRecorder&) {
-        jit.breakpoint();
+        emitPadding(jit);
     });
     RelocatableCode veneer = emit([]([[maybe_unused]] CCallHelpers& jit, RelocationRecorder& recorder) {
 #if CPU(ARM64)
+        static_assert(scratchImmediateGPR != ARM64Registers::ip0);
         recorder.moveAddress(placeholderSymbol, ARM64Registers::ip0, PCRelativeReach::Far);
         jit.farJump(ARM64Registers::ip0, NoPtrTag);
 #else
@@ -205,114 +419,6 @@ void fillWithNops(std::span<uint8_t> bytes)
 #else
     X86Assembler::fillNops(bytes.data(), bytes.size());
 #endif
-}
-
-static_assert(static_cast<uint32_t>(RelocationSpace::B3RuntimeFunction) == B3::runtimeFunctionSpace);
-
-static constexpr int64_t slotSize = sizeof(void*);
-
-static B3::Value* insertImmutableLoad(B3::InsertionSet& insertionSet, size_t index, B3::Origin origin, B3::Value* base, int32_t offset)
-{
-    B3::MemoryValue* load = insertionSet.insert<B3::MemoryValue>(index, B3::Load, B3::pointerType(), origin, base, offset);
-    load->setControlDependent(false);
-    load->setReadsMutability(B3::Mutability::Immutable);
-    return load;
-}
-
-static B3::Value* insertAddPtr(B3::InsertionSet& insertionSet, size_t index, B3::Origin origin, B3::Value* base, int64_t offset)
-{
-    if (!offset)
-        return base;
-    B3::Value* constant = insertionSet.insertIntConstant(index, origin, B3::pointerType(), offset);
-    return insertionSet.insert<B3::Value>(index, B3::Add, origin, base, constant);
-}
-
-auto ImageRelocationLowering::instanceRuntimeTable() -> PointerTable
-{
-    return {
-        .space = RelocationSpace::B3RuntimeFunction,
-        .base = instanceGPR,
-        .offset = static_cast<int32_t>(AOT_INSTANCE_OFFSET(runtimeTable)),
-        .offsetHoldsTablePointer = true,
-        .runtimeFunctionSlot = nullptr,
-    };
-}
-
-ImageRelocationLowering::ImageRelocationLowering(PointerTable table, RelocationRecorder& relocations)
-    : m_table(table)
-    , m_relocations(relocations)
-{
-    RELEASE_ASSERT(table.space == RelocationSpace::B3RuntimeFunction || table.space == RelocationSpace::WebAssemblyPointers);
-}
-
-B3::Value* ImageRelocationLowering::lower(B3::Procedure&, B3::InsertionSet& insertionSet, size_t index, const B3::RelocatableValue& value)
-{
-    B3::RelocationSymbol symbol = value.symbol();
-    B3::Origin origin = value.origin();
-    if (symbol.space > static_cast<uint32_t>(RelocationSpace::JumpTables))
-        return nullptr;
-
-    RelocationSpace space = static_cast<RelocationSpace>(symbol.space);
-    B3::Value* address = nullptr;
-    switch (space) {
-    case RelocationSpace::B3RuntimeFunction: {
-        if (!m_table.runtimeFunctionSlot || symbol.index >= B3::numberOfRuntimeFunctions)
-            return nullptr;
-        std::optional<uint32_t> slot = m_table.runtimeFunctionSlot(static_cast<B3::RuntimeFunction>(symbol.index));
-        if (!slot)
-            return nullptr;
-        address = loadSlot(insertionSet, index, origin, *slot);
-        break;
-    }
-    case RelocationSpace::WebAssemblyPointers:
-        if (space != m_table.space)
-            return nullptr;
-        address = loadSlot(insertionSet, index, origin, symbol.index);
-        break;
-    case RelocationSpace::SiteCaches:
-        if (m_table.space != RelocationSpace::B3RuntimeFunction)
-            return nullptr;
-        address = insertAddressOf(insertionSet, index, origin, { SymbolSpace::SiteCache, symbol.index });
-        break;
-    case RelocationSpace::Constants:
-        address = insertAddressOf(insertionSet, index, origin, { SymbolSpace::Constant, symbol.index });
-        break;
-    case RelocationSpace::JumpTables:
-        address = insertAddressOf(insertionSet, index, origin, { SymbolSpace::JumpTable, symbol.index });
-        break;
-    }
-    if (!address)
-        return nullptr;
-    return insertAddPtr(insertionSet, index, origin, address, value.addend());
-}
-
-B3::Value* ImageRelocationLowering::loadSlot(B3::InsertionSet& insertionSet, size_t index, B3::Origin origin, uint32_t slot) const
-{
-    int64_t offset = slotSize * slot;
-    if (!m_table.offsetHoldsTablePointer)
-        offset += m_table.offset;
-    if (!isRepresentableAs<int32_t>(offset))
-        return nullptr;
-
-    B3::Value* table = insertionSet.insert<B3::ArgumentRegValue>(index, origin, m_table.base);
-    if (m_table.offsetHoldsTablePointer)
-        table = insertImmutableLoad(insertionSet, index, origin, table, m_table.offset);
-    return insertImmutableLoad(insertionSet, index, origin, table, static_cast<int32_t>(offset));
-}
-
-B3::Value* ImageRelocationLowering::insertAddressOf(B3::InsertionSet& insertionSet, size_t index, B3::Origin origin, CodeSymbol symbol)
-{
-    B3::PatchpointValue* patchpoint = insertionSet.insert<B3::PatchpointValue>(index, B3::pointerType(), origin);
-    patchpoint->effects = B3::Effects::none();
-    patchpoint->resultConstraints = { B3::ValueRep::SomeRegister };
-    patchpoint->setRunsWithoutFrame(true);
-    patchpoint->setGenerator([this, symbol](CCallHelpers&, const B3::StackmapGenerationParams& params) {
-        if (symbol.space == SymbolSpace::SiteCache)
-            m_relocations.moveInstanceAddress(symbol, instanceGPR, params[0].gpr());
-        else
-            m_relocations.moveAddress(symbol, params[0].gpr(), PCRelativeReach::Far);
-    });
-    return patchpoint;
 }
 
 } } // namespace JSC::AOT

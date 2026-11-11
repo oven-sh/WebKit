@@ -1,0 +1,74 @@
+# A file that may run again keeps the variables of its scope with each run: what a function reads of them it captures, and what a function stores into lies in an environment. A heap snapshot shows them
+# where the interpreter has them: in the scope of the module, each once, however many functions capture it. What a call of a function declares stays in a scope of its own, captured or kept in an
+# environment, and that scope leads on to the scope of the module.
+# const keptByValue = fresh(); let keptInEnvironment; const set = () => { keptInEnvironment = fresh(); }; const first = () => keptByValue; const second = () => keptByValue === keptInEnvironment;
+# const make = keptInCall => { let keptInScope = fresh(); return () => { const was = keptInScope; keptInScope = keptInCall; return was === keptByValue; }; }; set(); hold(first, second, make(fresh())); print(namesOfVariables());
+# RUN(TABLES): image ProgramTables
+# TABLES-LABEL: ProgramTables:
+# TABLES-COUNT-3: namedCapture closure={{*}} slot={{*}} name=[[byValue]] isVariableOfModule
+# RUN: run-in-shell globalThis.fresh = () => ({}); globalThis.held = []; globalThis.hold = (...values) => { held.push(...values); }; globalThis.namesOfVariables = () => { const snapshot = generateHeapSnapshot(); const kind = snapshot.edgeTypes.indexOf("Variable"); const internal = snapshot.edgeTypes.indexOf("Internal"); const classes = new Map(); for (let i = 0; i < snapshot.nodes.length; i += 4) classes.set(snapshot.nodes[i], snapshot.nodeClassNames[snapshot.nodes[i + 2]]); const underLoader = new Set(); for (let i = 0; i < snapshot.edges.length; i += 4) { if (snapshot.edges[i + 2] === internal && classes.get(snapshot.edges[i]) === "ModuleLoader") underLoader.add(snapshot.edges[i + 1]); } const overModule = new Set(); for (let i = 0; i < snapshot.edges.length; i += 4) { if (snapshot.edges[i + 2] === internal && underLoader.has(snapshot.edges[i + 1])) overModule.add(snapshot.edges[i]); } const found = []; for (let i = 0; i < snapshot.edges.length; i += 4) { const name = snapshot.edgeNames[snapshot.edges[i + 3]]; if (snapshot.edges[i + 2] === kind && name.startsWith("kept")) found.push(name + " in " + classes.get(snapshot.edges[i]) + (underLoader.has(snapshot.edges[i]) ? " under the loader" : overModule.has(snapshot.edges[i]) ? " over the module" : "")); } return found.sort().join(", "); };
+# CHECK: keptByValue in JSModuleEnvironment under the loader, keptInCall in JSLexicalEnvironment over the module, keptInEnvironment in JSModuleEnvironment under the loader, keptInScope in JSLexicalEnvironment over the module
+# CHECK-NEXT: exited with 0
+
+layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything flags=[IsVariableOfModule]} variableName="keptInEnvironment"}]
+layout L1 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="keptInScope"}]
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="fresh" [isFreeName]
+    v2 = Call v1 calleeName="fresh"
+    v3 = Undefined
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = NewClosure v4 function=f1
+    v6 = NewClosure v2 function=f2
+    v7 = NewClosure v2, v4 function=f3
+    v8 = NewClosure v2 function=f4
+    v9 = Call v5 calleeName="set" [isNeverInlined]
+    v10 = Call v1 calleeName="fresh"
+    v11 = Call v8, -, v10 calleeName="make" [isNeverInlined]
+    v12 = PropGet v0 key="hold" [isFreeName]
+    v13 = Call v12, -, v6, v7, v11 calleeName="hold"
+    v14 = PropGet v0 key="namesOfVariables" [isFreeName]
+    v15 = Call v14 calleeName="namesOfVariables"
+    v16 = PropGet v0 key="print" [isFreeName]
+    v17 = Call v16, -, v15 calleeName="print"
+    v18 = Undefined
+    Return v18
+}
+function f1 name="set" module=m0 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="fresh" [isFreeName]
+    v3 = Call v2 calleeName="fresh"
+    PutEnvironmentField v0, v3 layout=L0
+    v5 = Undefined
+    Return v5
+}
+function f2 name="first" module=m0 kind=Arrow captures=[{type=anything flags=[IsVariableOfModule] variableName="keptByValue"}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="second" module=m0 kind=Arrow captures=[{type=anything flags=[IsVariableOfModule] variableName="keptByValue"}, {type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: env L0):
+    v2 = GetEnvironmentField v1 layout=L0
+    v3 = StrictEq v0, v2
+    Return v3
+}
+function f4 name="make" module=m0 kind=Arrow length=1 captures=[{type=anything flags=[IsVariableOfModule] variableName="keptByValue"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="fresh" [isFreeName]
+    v4 = Call v3 calleeName="fresh"
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = NewClosure v1, v0, v5 function=f5
+    Return v6
+}
+function f5 module=m0 kind=Arrow captures=[{type=anything variableName="keptInCall"}, {type=anything flags=[IsVariableOfModule] variableName="keptByValue"}, {type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: env L1):
+    v3 = GetEnvironmentField v2 layout=L1
+    PutEnvironmentField v2, v0 layout=L1
+    v5 = StrictEq v3, v1
+    Return v5
+}

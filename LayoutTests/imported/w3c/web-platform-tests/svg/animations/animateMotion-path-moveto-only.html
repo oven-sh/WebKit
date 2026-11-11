@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>&lt;animateMotion> with a motion path that is a single moveto</title>
-<link rel="help" href="https://svgwg.org/specs/animations/#AnimateMotionElement">
+<link rel="help" href="https://w3c.github.io/svgwg/specs/animations/#AnimateMotionElement">
 <script src="/resources/testharness.js"></script>
 <script src="/resources/testharnessreport.js"></script>
 
@@ -61,6 +61,9 @@ function assertTransform(rect, x, y, angle, description) {
   const degrees = Math.atan2(m.b, m.a) * 180 / Math.PI;
   assert_approx_equals(degrees, angle, epsilon, `${description}: rotation angle`);
 }
+
+promise_setup(() => new Promise(
+  resolve => window.addEventListener('load', resolve, {once: true})));
 
 promise_test(async t => {
   const svg = document.getElementById('svg-path');

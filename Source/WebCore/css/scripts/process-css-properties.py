@@ -610,6 +610,7 @@ class StylePropertyCodeGenProperties:
         Schema.Entry("computed-style-setter-custom", allowed_types=[bool], default_value=False),
         Schema.Entry("computed-style-setter-exported", allowed_types=[bool], default_value=False),
         Schema.Entry("computed-style-setter-inline", allowed_types=[bool], default_value=True),
+        Schema.Entry("computed-style-setter-did-set-function", allowed_types=[str]),
         Schema.Entry("computed-style-setter-requires-did-set", allowed_types=[bool], default_value=False),
         Schema.Entry("computed-style-setter-returns-if-changed", allowed_types=[bool], default_value=False),
         Schema.Entry("computed-style-setter", allowed_types=[str]),
@@ -6287,6 +6288,8 @@ class ComputedStylePropertyFunctionSignature(object):
 
     def generate_function_declaration(self, *, to):
         function_specifiers = []
+        if self.function_nodelete:
+            function_specifiers.append('NODELETE')
         if self.function_static:
             function_specifiers.append('static')
         if self.function_constexpr:
@@ -6298,7 +6301,6 @@ class ComputedStylePropertyFunctionSignature(object):
         to.write(
               f"{''.join(map(lambda x: x + ' ', function_specifiers))}"
             + f"{self.function_return_type} "
-            + f"{'LEGACY_NODELETE ' if self.function_nodelete else ''}"
             + f"{self.function_name}"
             + f"({', '.join(map(lambda x: x.value_for_function_declaration, self.function_arguments))})"
             + f"{''.join(map(lambda x: ' ' + x, self.function_qualifiers))};"
@@ -6514,6 +6516,9 @@ class ComputedStylePropertyPrincipleSetter(ComputedStyleFunctionBase):
     def generate_function_definition(self, *, to):
         if self.property.codegen_properties.computed_style_setter_requires_did_set:
             did_set_expression = f"didSet{self.property.codegen_properties.computed_style_name_for_methods}()"
+        elif self.property.codegen_properties.computed_style_setter_did_set_function:
+            # A ComputedStyleProperties member called after the value changes.
+            did_set_expression = f"{self.property.codegen_properties.computed_style_setter_did_set_function}()"
         else:
             did_set_expression = None
 
@@ -8468,7 +8473,7 @@ class GenerateUsedStyle:
                 writer.write(f"protected:")
 
                 with writer.indent():
-                    writer.write(f"UsedStyleProperties(const RenderElement& renderer LIFETIME_BOUND, const Style::ComputedStyle& computedStyle LIFETIME_BOUND)")
+                    writer.write(f"UsedStyleProperties(const RenderObject& renderer LIFETIME_BOUND, const Style::ComputedStyle& computedStyle LIFETIME_BOUND)")
                     with writer.indent():
                         writer.write(f": m_renderer(renderer)")
                         writer.write(f", m_computedStyle(computedStyle)")
@@ -8482,7 +8487,7 @@ class GenerateUsedStyle:
                     writer.newline()
 
                     writer.write(f"// const: a UsedStyle view never rebinds its members, so they can be read without a stack-local guard.")
-                    writer.write(f"const CheckedRef<const RenderElement> m_renderer;")
+                    writer.write(f"const CheckedRef<const RenderObject> m_renderer;")
                     writer.write(f"// The renderer's style, or one of its pseudo-element styles.")
                     writer.write(f"const CheckedRef<const Style::ComputedStyle> m_computedStyle;")
                 writer.write(f"}};")

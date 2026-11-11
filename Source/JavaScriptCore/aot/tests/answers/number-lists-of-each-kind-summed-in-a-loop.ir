@@ -1,0 +1,83 @@
+# function total(xs: number[]) { let s = 0; for (let i = 0; i < xs.length; i++) s = s + xs[i]; return s; }
+# function totalWhile(xs: number[], change: (i: number) => void) { let s = 0; for (let i = 0; i < xs.length; i++) { change(i); s = s + xs[i]; } return s; }
+# The text hands over lists with storage for integers, for fractions and for any value, with holes, without elements, frozen, and with a text among the numbers. Each is summed twice.
+# Then a list of a hundred integers gets another kind of storage, another length or a hole in turn 50 of the loop that sums it.
+# RUN: run-in-shell globalThis.register = (total, totalWhile) => { const tell = value => print(Object.is(value, -0) ? "-0" : String(value)); for (const list of [[1, 2, 3], [1.5, 2, 3], [1, , 3], [1.5, , 3], [], [1.5, NaN, 2], [1, "2", 3], Object.freeze([4, 5]), new Array(2), [2147483647, 1], [-0]]) { tell(total(list)); tell(total(list)); } const run = change => { const list = []; for (let i = 0; i < 100; i++) list.push(i); tell(totalWhile(list, i => { if (i === 50) change(list); })); }; run(list => { list[60] = 0.5; }); run(list => { list[60] = NaN; }); run(list => { list.length = 55; }); run(list => { delete list[70]; }); run(list => { list.push(0.25); }); run(list => { }); };
+# CHECK: 6
+# CHECK-NEXT: 6
+# CHECK-NEXT: 6.5
+# CHECK-NEXT: 6.5
+# CHECK-NEXT: NaN
+# CHECK-NEXT: NaN
+# CHECK-NEXT: NaN
+# CHECK-NEXT: NaN
+# CHECK-NEXT: 0
+# CHECK-NEXT: 0
+# CHECK-NEXT: NaN
+# CHECK-NEXT: NaN
+# CHECK-NEXT: 123
+# CHECK-NEXT: 123
+# CHECK-NEXT: 9
+# CHECK-NEXT: 9
+# CHECK-NEXT: NaN
+# CHECK-NEXT: NaN
+# CHECK-NEXT: 2147483648
+# CHECK-NEXT: 2147483648
+# CHECK-NEXT: 0
+# CHECK-NEXT: 0
+# CHECK-NEXT: 4890.5
+# CHECK-NEXT: NaN
+# CHECK-NEXT: 1485
+# CHECK-NEXT: NaN
+# CHECK-NEXT: 4950.25
+# CHECK-NEXT: 4950
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3 calleeName="register"
+    Return v4
+}
+function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = PropGet v0 key="length"
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = ElemGet v0, v3
+    v8 = Convert v7 declared={type=number} illTypedCause=FromLooseType
+    v9 = Add v2, v8
+    v10 = Increment v3
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v2
+}
+function f2 name="totalWhile" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Call v1, -, v4 calleeName="change"
+    v9 = ElemGet v0, v4
+    v10 = Convert v9 declared={type=number} illTypedCause=FromLooseType
+    v11 = Add v3, v10
+    v12 = Increment v4
+    Jump -> next b1(v11, v12)
+  b3():
+    Return v3
+}

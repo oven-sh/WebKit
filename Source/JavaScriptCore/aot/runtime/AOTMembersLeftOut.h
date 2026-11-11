@@ -9,9 +9,11 @@
 
 #include <JavaScriptCore/JSExportMacros.h>
 #include <wtf/Forward.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC {
 
+class JSCell;
 class JSGlobalObject;
 class JSObject;
 class JSValue;
@@ -19,19 +21,30 @@ class VM;
 
 namespace AOT {
 
-// A NAME NEVER THROWS.
+void noteOmittedCodeError(JSGlobalObject*, JSObject* error);
+JS_EXPORT_PRIVATE JSValue takeOmittedMemberPlaceholder(JSGlobalObject*, const String& nameOfMember);
+struct OmittedFunction {
+    ASCIILiteral name;
+    unsigned length { 0 };
+    bool canBeConstructed { false };
+    bool hasPrototype { true };
+};
+JS_EXPORT_PRIVATE JSValue takeOmittedFunctionPlaceholder(JSGlobalObject*, const OmittedFunction&, JSObject* owner);
+bool isOmittedFunctionPlaceholder(JSCell*);
+JS_EXPORT_PRIVATE bool isPlaceholderForOmittedBuiltin(JSCell*);
+class MemberReificationScope {
+public:
+    explicit MemberReificationScope(bool isPresenceCheck);
+    ~MemberReificationScope();
 
-// The error is about to be thrown because code of the library that is not in the image was to run.
-void noteErrorOfCodeLeftOut(JSGlobalObject*, JSObject* error);
-// Where the host was making or getting a member and an exception is pending.
-JS_EXPORT_PRIVATE JSValue takeStandInForMemberLeftOut(JSGlobalObject*, const String& nameOfMember, JSObject* answeredBy = nullptr);
-// The same for a getter of the host that needs code of the library to make what it answers (`require.main`).
-JSValue takeStandInForGetterLeftOut(JSGlobalObject*, JSObject* getter);
-// What a compiled getter answers when its body was left out.
-JSObject* standInForCompiledGetter(JSGlobalObject*, JSObject* getter, const String& name);
-// The error says that what was read from `base` is no function.
-void explainErrorBehindMemberLeftOut(JSGlobalObject*, JSObject* error, JSValue base);
-void forgetErrorOfCodeLeftOut(VM&);
+private:
+    bool m_previous;
+    bool m_previousForRead;
+};
+bool isReifyingForPresenceCheck();
+void explainOmittedMemberError(JSGlobalObject*, JSObject* error, JSValue base);
+void clearOmittedCodeError(VM&);
+bool hasOmittedMemberNotes(const VM*);
 
 } } // namespace JSC::AOT
 

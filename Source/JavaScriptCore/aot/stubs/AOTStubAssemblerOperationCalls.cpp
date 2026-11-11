@@ -11,6 +11,7 @@
 #include "AOTInstance.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
+#include "AOTStubsOperations.h"
 #include "VM.h"
 #include <algorithm>
 #include <iterator>
@@ -59,16 +60,42 @@ void StubAssembler::prepareCallOperation()
 #endif
 }
 
-void StubAssembler::callOperationAndReturn(Entry entry, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
+
+void StubAssembler::callOperationAndReturn(Entry entry, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead savedRegistersAreRead)
 {
-    // An operation that cannot throw leaves the register that reports an exception undefined.
     bool exceptionIsInRegister = operationCall.returns == OperationCall::Returns::Value || operationCall.returns == OperationCall::Returns::Void;
     RELEASE_ASSERT(!operationCall.checksException || !exceptionIsInRegister || effectsOf(entry).mayThrow);
-    emitOperationCallAndReturn(entry, operationCall, beforeReturn);
+    OperationCall call = operationCall;
+    call.pollsBeforeReturning = mayFailToAllocate(entry, call.firstArgument);
+    if (m_boxesBooleanAtEveryReturn) {
+        RELEASE_ASSERT(call.returns == OperationCall::Returns::Value && !call.valueDestination);
+        emitOperationCallAndReturn(entry, call, [&] {
+            beforeReturn();
+            or32(TrustedImm32(JSValue::ValueFalse), result());
+        }, SavedRegistersAreRead::BeforeReturnToo);
+        return;
+    }
+    emitOperationCallAndReturn(entry, call, beforeReturn, savedRegistersAreRead);
 }
 
-void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
+bool StubAssembler::resultsInFPRsComeFromOperation(const OperationCall& operationCall) const
 {
+    for (Reg result : { m_signature.firstResult, m_signature.secondResult }) {
+        if (result && result.isFPR() && (operationCall.returns != OperationCall::Returns::Double || result != Reg(FPRInfo::returnValueFPR)))
+            return false;
+    }
+    return true;
+}
+
+void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation, const OperationCall& givenCall, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead savedRegistersAreRead)
+{
+    OperationCall operationCall = givenCall;
+    if (m_key.operandRegister() && namesRegisterOfResult(descriptorOf(m_key.family()).operandRegisters) && operationCall.returns == OperationCall::Returns::Value && !operationCall.valueDestination)
+        operationCall.valueDestination = result();
+    const bool savesFPRs = operationCall.saves == OperationCall::Saves::CallerSavedRegisters || operationCall.saves == OperationCall::Saves::CallerSavedGPRsAndFewFPRs;
+    const bool savesNoFPRsForCaller = callerKeepsNoFPRs() && savesFPRs && savedRegistersAreRead == SavedRegistersAreRead::ByCallerAlone && resultsInFPRsComeFromOperation(operationCall);
+    if (savesNoFPRsForCaller)
+        operationCall.saves = OperationCall::Saves::CallerSavedGPRs;
     RELEASE_ASSERT(m_savedRegisterStack.isEmpty());
     checkHasNoBorrowedFPRs();
     RELEASE_ASSERT(!operationCall.valueDestination || operationCall.returns == OperationCall::Returns::Value);
@@ -82,7 +109,8 @@ void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation,
         emitOperationCallSavingNothing(operation, operationCall, beforeReturn);
         return;
     case OperationCall::Saves::CallerSavedGPRs:
-        RELEASE_ASSERT(operationCall.returns != OperationCall::Returns::Double);
+    case OperationCall::Saves::CallerSavedGPRsAndFewFPRs:
+        RELEASE_ASSERT(operationCall.returns != OperationCall::Returns::Double || savesNoFPRsForCaller);
         [[fallthrough]];
     case OperationCall::Saves::CallerSavedRegisters:
         RELEASE_ASSERT(operationCall.returns != OperationCall::Returns::Pair);
@@ -123,7 +151,7 @@ void StubAssembler::loadFirstArgument(OperationCall::FirstArgument firstArgument
     }
 }
 
-GPRReg StubAssembler::setUpOperationCall(const CalledOperation& operation, const OperationCall& operationCall)
+StubAssembler::OperationToCall StubAssembler::setUpOperationCall(const CalledOperation& operation, const OperationCall& operationCall)
 {
     constexpr GPRReg second = operationArgumentGPR(1);
     constexpr GPRReg third = operationArgumentGPR(2);
@@ -154,15 +182,44 @@ GPRReg StubAssembler::setUpOperationCall(const CalledOperation& operation, const
         move(TrustedImm32(static_cast<int32_t>(constant->value)), constant->argument);
     }
     loadFirstArgument(operationCall.firstArgument);
+#if CPU(X86_64)
+    return WTF::switchOn(operation,
+        [&](Entry entry) {
+            recordCall(entry);
+            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), function);
+            return Address(function, offsetInRuntimeTable(entry));
+        },
+        [&](GPRReg offset) {
+            RELEASE_ASSERT(noOverlap(offset, operationArgumentGPR(0), operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3)));
+            m_recording.hasUnknownEffects = true;
+#if ASSERT_ENABLED
+            static_assert(assertionScratchGPR == preservingCallImmediateGPR);
+            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), function);
+            add64(offset, function);
+            return Address(function);
+#else
+            recordClobber(offset);
+            add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), offset);
+            return Address(offset);
+#endif
+        });
+#else
     loadCalledOperation(operation, function);
     return function;
+#endif
 }
+
+#if CPU(X86_64)
+static constexpr GPRReg scratchAfterOperation = CCallHelpers::s_scratchRegister;
+#else
+static constexpr GPRReg scratchAfterOperation = ARM64Registers::x16;
+#endif
 
 void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless && !operationCall.spilledArguments);
     const bool callerIsStub = key().callerFrame() == CallerFrame::StubFrame;
-    const GPRReg function = setUpOperationCall(operation, operationCall);
+    const OperationToCall function = setUpOperationCall(operation, operationCall);
     if (callerIsStub) {
 #if CPU(ARM64)
         pushToSave(linkRegister);
@@ -173,6 +230,8 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
         emitFunctionPrologue();
     prepareCallOperation();
     call(function, OperationPtrTag);
+    if (!callerIsStub)
+        bindReturnLabel(StubFrameKind::ReturnsAfterOperation);
     if (callerIsStub) {
 #if CPU(ARM64)
         popToRestore(linkRegister);
@@ -181,42 +240,53 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
 #endif
     } else
         emitFunctionEpilogueWithEmptyFrame();
-    Jump exception;
+    const bool polls = operationCall.pollsBeforeReturning && !callerIsStub;
+    static_assert(noOverlap(scratchAfterOperation, GPRInfo::returnValueGPR, GPRInfo::returnValueGPR2, instanceGPR));
+    JumpList exceptionOrPoll;
+    bool hasPolled = false;
     if (operationCall.checksException) {
         switch (operationCall.returns) {
         case OperationCall::Returns::Value:
-            exception = branchTestPtr(NonZero, GPRInfo::returnValueGPR2);
-            break;
-        case OperationCall::Returns::Void:
-            exception = branchTestPtr(NonZero, GPRInfo::returnValueGPR);
-            break;
-        case OperationCall::Returns::Double:
-            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), function);
-            exception = branchTestPtr(NonZero, Address(function, VM::exceptionOffset()));
-            break;
-        case OperationCall::Returns::Pair: {
-            static_assert(noOverlap(gprOf(StubRegister::A3), GPRInfo::returnValueGPR, GPRInfo::returnValueGPR2));
-            GPRReg vm = reuseScratch(StubRegister::A3);
-            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
-            exception = branchTestPtr(NonZero, Address(vm, VM::exceptionOffset()));
+        case OperationCall::Returns::Void: {
+            const GPRReg exception = operationCall.returns == OperationCall::Returns::Value ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR;
+            exceptionOrPoll.append(polls ? branchIfNonZeroOrPollIsDue(exception, scratchAfterOperation) : branchTestPtr(NonZero, exception));
+            hasPolled = polls;
             break;
         }
+        case OperationCall::Returns::Double:
+        case OperationCall::Returns::Pair:
+            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratchAfterOperation);
+            exceptionOrPoll.append(branchTestPtr(NonZero, Address(scratchAfterOperation, VM::exceptionOffset())));
+            break;
         }
     }
+    if (polls && !hasPolled)
+        exceptionOrPoll.append(branchTestPtr(NonZero, pollIsDueWord()));
+    Label afterPoll = label();
     if (operationCall.valueDestination) {
         recordClobber(*operationCall.valueDestination);
         move(GPRInfo::returnValueGPR, *operationCall.valueDestination);
     }
     beforeReturn();
     ret();
-    if (!operationCall.checksException)
+    if (exceptionOrPoll.empty())
         return;
-    exception.link(this);
-    jumpToExceptionHandler();
+    exceptionOrPoll.link(this);
+    Jump hasNoException;
+    if (polls && operationCall.checksException) {
+        loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratchAfterOperation);
+        hasNoException = branchTestPtr(Zero, Address(scratchAfterOperation, VM::exceptionOffset()));
+    }
+    if (operationCall.checksException)
+        jumpToExceptionHandler();
+    if (!polls)
+        return;
+    if (hasNoException.isSet())
+        hasNoException.link(this);
+    pollBeforeReturningFromOperation(afterPoll);
 }
 
 #if CPU(X86_64)
-// The fault handler pushed the frame pointer of a frameless caller, then the address to resume at.
 void StubAssembler::emitFramelessCallerEpilogue()
 {
     RELEASE_ASSERT(key().callerFrame() == CallerFrame::Frameless);
@@ -225,24 +295,35 @@ void StubAssembler::emitFramelessCallerEpilogue()
     push(s_scratchRegister);
 }
 
+static constexpr GPRReg gprsSavedAroundOperation[] = { X86Registers::eax, X86Registers::ecx, X86Registers::edx, X86Registers::esi, X86Registers::edi, X86Registers::r8, X86Registers::r9, X86Registers::r10 };
+
+template<typename Functor>
+static void forEachFPRSavedAroundOperation(OperationCall::Saves saves, const Functor& functor)
+{
+    if (saves == OperationCall::Saves::CallerSavedGPRs)
+        return;
+    const RegisterSet unsaved = saves == OperationCall::Saves::CallerSavedGPRsAndFewFPRs ? floatingPointRegistersLostToAccessors(StubCallee::Operation) : RegisterSet();
+    for (unsigned i = 0; i < 16; ++i) {
+        FPRReg fpr = static_cast<FPRReg>(X86Registers::xmm0 + i);
+        if (!unsaved.contains(fpr, IgnoreVectors))
+            functor(fpr, i);
+    }
+}
+
 void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless);
     constexpr GPRReg sp = stackPointerRegister;
     constexpr GPRReg scratch = s_scratchRegister;
-    constexpr GPRReg saved[] = { X86Registers::eax, X86Registers::ecx, X86Registers::edx, X86Registers::esi, X86Registers::edi, X86Registers::r8, X86Registers::r9, X86Registers::r10 };
+    constexpr auto& saved = gprsSavedAroundOperation;
     constexpr unsigned numberOfGPRs = std::size(saved);
     static_assert(!(numberOfGPRs % 2));
     static_assert(FPRInfo::returnValueFPR == X86Registers::xmm0);
     const bool returnsValue = operationCall.returns == OperationCall::Returns::Value;
     const bool returnsDouble = operationCall.returns == OperationCall::Returns::Double;
     const std::optional<GPRReg> valueDestination = operationCall.valueDestination;
-    const unsigned numberOfFPRs = operationCall.saves == OperationCall::Saves::CallerSavedRegisters ? 16 : 0;
     const unsigned numberOfSpillSlots = operationCall.spilledArguments ? std::max(operationCall.spilledArguments->count, 1u) : 0;
-    auto fpr = [](unsigned i) { return static_cast<FPRReg>(X86Registers::xmm0 + i); };
-    auto slot = [&](unsigned i) { return Address(sp, (numberOfSpillSlots + i) * sizeof(CPURegister)); };
-    RELEASE_ASSERT(!valueDestination || std::ranges::find(saved, *valueDestination) != std::end(saved));
-
+    const bool valueGoesThroughFrame = valueDestination && std::ranges::find(saved, *valueDestination) != std::end(saved);
     RegisterSet restored;
     for (GPRReg reg : saved) {
         if (returnsValue && reg == GPRInfo::returnValueGPR && !valueDestination)
@@ -250,17 +331,39 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         if (reg == valueDestination || !m_recording.clobbered().contains(Reg(reg), IgnoreVectors))
             restored.add(reg);
     }
-    for (unsigned i = returnsDouble; i < numberOfFPRs; ++i)
-        restored.add(fpr(i), IgnoreVectors);
+    forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned) {
+        if (!returnsDouble || fpr != FPRInfo::returnValueFPR)
+            restored.add(fpr, IgnoreVectors);
+    });
 
     emitFunctionPrologue();
-    subPtr(TrustedImm32(alignedSizeOfRegisters(numberOfSpillSlots + numberOfGPRs + numberOfFPRs)), sp);
+    std::array<unsigned, 16> indexOfFPR { };
+    std::array<unsigned, numberOfGPRs> indexOfGPR { };
+    unsigned numberOfSlots = 0;
     for (unsigned i = 0; i < numberOfGPRs; ++i) {
-        if (restored.contains(Reg(saved[i]), IgnoreVectors))
-            store64(saved[i], slot(i));
+        if (restored.contains(Reg(saved[i]), IgnoreVectors)) {
+            indexOfGPR[i] = numberOfSlots++;
+            push(saved[i]);
+        }
     }
-    for (unsigned i = returnsDouble; i < numberOfFPRs; ++i)
-        storeDouble(fpr(i), slot(numberOfGPRs + i));
+    const int32_t sizeOfPushedRegisters = numberOfSlots * sizeof(CPURegister);
+    forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
+        if (restored.contains(fpr, IgnoreVectors))
+            indexOfFPR[i] = numberOfSlots++;
+    });
+    const int32_t sizeOfFrame = alignedSizeOfRegisters(numberOfSpillSlots + numberOfSlots);
+    if (sizeOfFrame != sizeOfPushedRegisters)
+        subPtr(TrustedImm32(sizeOfFrame - sizeOfPushedRegisters), sp);
+    auto slot = [&](unsigned index) {
+        int32_t belowFramePointer = (index + 1) * sizeof(CPURegister);
+        return belowFramePointer <= 128 ? Address(GPRInfo::callFrameRegister, -belowFramePointer) : Address(sp, sizeOfFrame - belowFramePointer);
+    };
+    auto slotOfGPR = [&](unsigned i) { return slot(indexOfGPR[i]); };
+    auto slotOfFPR = [&](unsigned i) { return slot(indexOfFPR[i]); };
+    forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
+        if (restored.contains(fpr, IgnoreVectors))
+            storeDouble(fpr, slotOfFPR(i));
+    });
     withSavedRegisters(restored, [&] {
         if (operationCall.spilledArguments) {
             for (unsigned i = 0; i < operationCall.spilledArguments->count; ++i)
@@ -268,43 +371,77 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
             move(sp, operationArgumentGPR(2));
             move(TrustedImm32(operationCall.spilledArguments->countWord), operationArgumentGPR(1));
         }
-        const GPRReg function = setUpOperationCall(operation, operationCall);
+        const OperationToCall function = setUpOperationCall(operation, operationCall);
         prepareCallOperation();
         call(function, OperationPtrTag);
+        bindReturnLabel(StubFrameKind::ReturnsAfterOperation);
     });
-    if (operationCall.checksException) {
+    const bool testsException = operationCall.checksException;
+    const bool polls = operationCall.pollsBeforeReturning && key().callerFrame() != CallerFrame::StubFrame;
+    if (testsException) {
         if (returnsDouble) {
             loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
             loadPtr(Address(scratch, VM::exceptionOffset()), scratch);
         } else
             move(returnsValue ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR, scratch);
-    }
+        if (polls)
+            or64(pollIsDueWord(), scratch);
+    } else if (polls)
+        loadPtr(pollIsDueWord(), scratch);
     for (unsigned i = 0; i < numberOfGPRs; ++i) {
         if (saved[i] == valueDestination)
-            store64(GPRInfo::returnValueGPR, slot(i));
+            store64(GPRInfo::returnValueGPR, slotOfGPR(i));
     }
-    for (unsigned i = 0; i < numberOfGPRs; ++i) {
-        if (restored.contains(Reg(saved[i]), IgnoreVectors))
-            load64(slot(i), saved[i]);
-    }
-    for (unsigned i = returnsDouble; i < numberOfFPRs; ++i)
-        loadDouble(slot(numberOfGPRs + i), fpr(i));
+    if (valueDestination && !valueGoesThroughFrame)
+        move(GPRInfo::returnValueGPR, *valueDestination);
+    forEachFPRSavedAroundOperation(operationCall.saves, [&](FPRReg fpr, unsigned i) {
+        if (restored.contains(fpr, IgnoreVectors))
+            loadDouble(slotOfFPR(i), fpr);
+    });
     if (valueDestination)
         recordClobber(*valueDestination);
-    emitFunctionEpilogue();
-    Jump exception;
-    if (operationCall.checksException)
-        exception = branchTestPtr(NonZero, scratch);
+    if (sizeOfFrame != sizeOfPushedRegisters)
+        addPtr(TrustedImm32(sizeOfFrame - sizeOfPushedRegisters), sp);
+    for (unsigned i = numberOfGPRs; i--;) {
+        if (restored.contains(Reg(saved[i]), IgnoreVectors))
+            pop(saved[i]);
+    }
+    emitFunctionEpilogueWithEmptyFrame();
+    Jump exceptionOrPoll;
+    if (testsException || polls)
+        exceptionOrPoll = branchTestPtr(NonZero, scratch);
+    Label afterPoll = label();
     beforeReturn();
     ret();
-    if (!operationCall.checksException)
+    if (!exceptionOrPoll.isSet())
         return;
-    exception.link(this);
-    if (key().callerFrame() == CallerFrame::StubFrame)
-        emitFunctionEpilogue();
-    jumpToStub(handleException(true));
+    exceptionOrPoll.link(this);
+    Jump hasNoException;
+    if (polls && testsException) {
+        loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
+        hasNoException = branchTestPtr(Zero, Address(scratch, VM::exceptionOffset()));
+    }
+    if (testsException) {
+        if (key().callerFrame() == CallerFrame::StubFrame)
+            emitFunctionEpilogue();
+        jumpToStub(handleException(true));
+    }
+    if (!polls)
+        return;
+    if (hasNoException.isSet())
+        hasNoException.link(this);
+    pollBeforeReturningFromOperation(afterPoll);
 }
 #else
+void StubAssembler::emitFramelessCallerEpilogueAndReturn(GPRReg scratch)
+{
+    RELEASE_ASSERT(key().callerFrame() == CallerFrame::Frameless && m_savedRegisterStack.isEmpty());
+    checkHasNoBorrowedFPRs();
+    move(linkRegister, scratch);
+    popPair(GPRInfo::callFrameRegister, linkRegister);
+    m_assembler.ret(scratch);
+}
+
 void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless);
@@ -316,40 +453,62 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     const bool returnsDouble = operationCall.returns == OperationCall::Returns::Double;
     const std::optional<GPRReg> valueDestination = operationCall.valueDestination;
     const bool valueStaysInRegister = returnsValue && !valueDestination;
-    const unsigned numberOfFPRs = operationCall.saves == OperationCall::Saves::CallerSavedRegisters ? 24 : 0;
+    const unsigned numberOfFPRs = operationCall.saves == OperationCall::Saves::CallerSavedGPRs ? 0 : 24;
     auto gpr = [](unsigned i) { return static_cast<GPRReg>(ARM64Registers::x0 + i); };
     auto fpr = [](unsigned i) { return static_cast<FPRReg>(i < 8 ? ARM64Registers::q0 + i : ARM64Registers::q16 + (i - 8)); };
+    const RegisterSet unsavedFPRs = operationCall.saves == OperationCall::Saves::CallerSavedGPRsAndFewFPRs ? floatingPointRegistersLostToAccessors(StubCallee::Operation) : RegisterSet();
+    auto savesFPR = [&](unsigned i) { return i < numberOfFPRs && (!unsavedFPRs.contains(fpr(i & ~1u), IgnoreVectors) || !unsavedFPRs.contains(fpr(i | 1u), IgnoreVectors)); };
+    std::array<unsigned, 24> slotOfFPR { };
+    unsigned numberOfSlots = numberOfGPRs;
+    for (unsigned i = 0; i < numberOfFPRs; i += 2) {
+        if (!savesFPR(i))
+            continue;
+        slotOfFPR[i] = numberOfSlots++;
+        slotOfFPR[i + 1] = numberOfSlots++;
+    }
     RELEASE_ASSERT(!valueDestination || static_cast<unsigned>(*valueDestination - ARM64Registers::x0) < numberOfGPRs);
 
     RegisterSet restored;
     for (unsigned i = valueStaysInRegister; i < numberOfGPRs; ++i)
         restored.add(gpr(i));
-    for (unsigned i = returnsDouble; i < numberOfFPRs; ++i)
-        restored.add(fpr(i), IgnoreVectors);
-    // Compiled code pins x18 and no stub names it, so nobody sees an operation change it.
+    for (unsigned i = returnsDouble; i < numberOfFPRs; ++i) {
+        if (savesFPR(i))
+            restored.add(fpr(i), IgnoreVectors);
+    }
     restored.add(ARM64Registers::x18);
 
     emitFunctionPrologue();
-    subPtr(TrustedImm32((numberOfGPRs + numberOfFPRs) * 8), sp);
+    subPtr(TrustedImm32(numberOfSlots * 8), sp);
     for (unsigned i = 0; i < numberOfGPRs; i += 2)
         storePair64(gpr(i), gpr(i + 1), sp, TrustedImm32(i * 8));
-    for (unsigned i = 0; i < numberOfFPRs; i += 2)
-        storePairDouble(fpr(i), fpr(i + 1), Address(sp, (numberOfGPRs + i) * 8));
+    for (unsigned i = 0; i < numberOfFPRs; i += 2) {
+        if (savesFPR(i))
+            storePairDouble(fpr(i), fpr(i + 1), Address(sp, slotOfFPR[i] * 8));
+    }
     withSavedRegisters(restored, [&] {
         if (operationCall.spilledArguments) {
             move(TrustedImm32(operationCall.spilledArguments->countWord), operationArgumentGPR(1));
             addPtr(TrustedImm32(8), sp, operationArgumentGPR(2));
         }
-        const GPRReg function = setUpOperationCall(operation, operationCall);
+        const OperationToCall function = setUpOperationCall(operation, operationCall);
         prepareCallOperation();
         call(function, OperationPtrTag);
+        bindReturnLabel(StubFrameKind::ReturnsAfterOperation);
     });
-    if (operationCall.checksException) {
+    const bool testsException = operationCall.checksException;
+    const bool polls = operationCall.pollsBeforeReturning && key().callerFrame() != CallerFrame::StubFrame;
+    if (polls)
+        loadPtr(pollIsDueWord(), scratch);
+    if (testsException) {
+        const GPRReg exception = returnsValue ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR;
         if (returnsDouble) {
-            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
-            loadPtr(Address(scratch, VM::exceptionOffset()), scratch);
-        } else
-            move(returnsValue ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR, scratch);
+            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), exception);
+            loadPtr(Address(exception, VM::exceptionOffset()), exception);
+        }
+        if (polls)
+            or64(exception, scratch);
+        else
+            move(exception, scratch);
     }
     if (valueDestination) {
         recordClobber(*valueDestination);
@@ -359,29 +518,47 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         load64(Address(sp, 8), gpr(1));
     for (unsigned i = valueStaysInRegister ? 2 : 0; i < numberOfGPRs; i += 2)
         loadPair64(sp, TrustedImm32(i * 8), gpr(i), gpr(i + 1));
-    if (returnsDouble)
-        loadDouble(Address(sp, (numberOfGPRs + 1) * 8), fpr(1));
-    for (unsigned i = returnsDouble ? 2 : 0; i < numberOfFPRs; i += 2)
-        loadPairDouble(Address(sp, (numberOfGPRs + i) * 8), fpr(i), fpr(i + 1));
+    if (returnsDouble && savesFPR(1))
+        loadDouble(Address(sp, slotOfFPR[1] * 8), fpr(1));
+    for (unsigned i = returnsDouble ? 2 : 0; i < numberOfFPRs; i += 2) {
+        if (savesFPR(i))
+            loadPairDouble(Address(sp, slotOfFPR[i] * 8), fpr(i), fpr(i + 1));
+    }
     emitFunctionEpilogue();
-    Jump exception;
-    if (operationCall.checksException)
-        exception = branchTestPtr(NonZero, scratch);
+    Jump exceptionOrPoll;
+    if (testsException || polls)
+        exceptionOrPoll = branchTestPtr(NonZero, scratch);
+    Label afterPoll = label();
     beforeReturn();
     ret();
-    if (!operationCall.checksException)
+    if (!exceptionOrPoll.isSet())
         return;
-    exception.link(this);
-    if (key().callerFrame() == CallerFrame::StubFrame)
-        emitFunctionEpilogue();
-    jumpToStub(handleException(true));
+    exceptionOrPoll.link(this);
+    Jump hasNoException;
+    if (polls && testsException) {
+        loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
+        hasNoException = branchTestPtr(Zero, Address(scratch, VM::exceptionOffset()));
+    }
+    if (testsException) {
+        if (key().callerFrame() == CallerFrame::StubFrame)
+            emitFunctionEpilogue();
+        jumpToStub(handleException(true));
+    }
+    if (!polls)
+        return;
+    if (hasNoException.isSet())
+        hasNoException.link(this);
+    pollBeforeReturningFromOperation(afterPoll);
 }
 #endif
 
 void StubAssembler::emitOperationTailCall(const CalledOperation& operation, OperationCall::FirstArgument firstArgument)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless);
-    // No operand is live here: the arguments are in place, and this is none of their registers.
+    if (const Entry* entry = std::get_if<Entry>(&operation); entry && mayFailToAllocate(*entry, firstArgument) && !effectsOf(*entry).mayThrow && !isRawOperation(*entry)) {
+        callOperationAndReturn(*entry, { .firstArgument = firstArgument, .checksException = false });
+        return;
+    }
     constexpr GPRReg function = gprOf(StubRegister::Operation);
     loadFirstArgument(firstArgument);
     loadCalledOperation(operation, function);

@@ -28,6 +28,7 @@
 
 #if ENABLE(GPU_PROCESS)
 
+#include "Logging.h"
 #include "RemoteBufferProxy.h"
 #include "RemoteGPU.h"
 #include "RemoteQueueMessages.h"
@@ -45,6 +46,8 @@
 #include <WebCore/MediaPlayer.h>
 #include <WebCore/VideoFrame.h>
 #endif
+
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, m_streamConnection)
 
 namespace WebKit {
 
@@ -91,8 +94,7 @@ void RemoteQueue::stopListeningForIPC()
 
 void RemoteQueue::submit(Vector<WebGPUIdentifier>&& commandBuffers)
 {
-    Vector<Ref<::WebGPU::CommandBuffer>> convertedCommandBuffers;
-    convertedCommandBuffers.reserveInitialCapacity(commandBuffers.size());
+    Vector<Ref<::WebGPU::CommandBuffer>> convertedCommandBuffers(ReserveCapacityTag { }, commandBuffers.size());
     for (WebGPUIdentifier identifier : commandBuffers) {
         auto convertedCommandBuffer = protect(m_objectHeap)->convertCommandBufferFromBacking(identifier);
         ASSERT(convertedCommandBuffer);
@@ -141,6 +143,7 @@ void RemoteQueue::writeBufferWithCopy(
     if (!convertedBuffer)
         return;
 
+    MESSAGE_CHECK(data.size() <= WebGPU::maxCrossProcessResourceCopySize);
     protect(m_backing)->writeBuffer(protect(*convertedBuffer), bufferOffset, data.span());
 }
 
@@ -155,15 +158,13 @@ void RemoteQueue::writeTexture(
     Ref objectHeap = m_objectHeap.get();
     auto convertedDestination = objectHeap->convertFromBacking(destination);
     ASSERT(convertedDestination);
-    auto convertedDataLayout = objectHeap->convertFromBacking(dataLayout);
-    ASSERT(convertedDataLayout);
-    if (!convertedDestination || !convertedDataLayout || !data || data->size() <= WebGPU::maxCrossProcessResourceCopySize) {
+    if (!convertedDestination || !data || data->size() <= WebGPU::maxCrossProcessResourceCopySize) {
         completionHandler(false);
         return;
     }
 
     Ref backing = protect(m_backing);
-    backing->writeTexture(*convertedDestination, data->span(), *convertedDataLayout, size);
+    backing->writeTexture(*convertedDestination, data->span(), dataLayout, size);
     keepAliveUntilSubmittedWorkDone(backing, WTF::move(data));
     completionHandler(true);
 }
@@ -177,12 +178,11 @@ void RemoteQueue::writeTextureWithCopy(
     Ref objectHeap = m_objectHeap.get();
     auto convertedDestination = objectHeap->convertFromBacking(destination);
     ASSERT(convertedDestination);
-    auto convertedDataLayout = objectHeap->convertFromBacking(dataLayout);
-    ASSERT(convertedDataLayout);
-    if (!convertedDestination || !convertedDataLayout)
+    if (!convertedDestination)
         return;
 
-    protect(m_backing)->writeTexture(*convertedDestination, data.span(), *convertedDataLayout, size);
+    MESSAGE_CHECK(data.size() <= WebGPU::maxCrossProcessResourceCopySize);
+    protect(m_backing)->writeTexture(*convertedDestination, data.span(), dataLayout, size);
 }
 
 void RemoteQueue::copyExternalImageToTexture(

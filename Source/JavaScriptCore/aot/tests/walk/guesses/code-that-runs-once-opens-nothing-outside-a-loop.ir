@@ -1,0 +1,34 @@
+# the body of a module runs once, so a test in front of one read there gains nothing: outside a loop it opens no guess. In a loop of that body the read comes again, and it does
+# declare const given: Point; const x = given.x; for (;;) { if (!sink(given.x)) break; }
+# RUN: walk f0 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f0:Body
+# CHECK-NOT: Test
+# CHECK: = PropGet {{*}}key="x"
+# CHECK: isLoopHead=true
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = GetSlot {{*}}key="x"
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewObject layout=L0
+    PropDefine v2, v1 key="x"
+    PropDefine v2, v1 key="y"
+    v5 = FinishObject v2
+    v6 = Call v1, -, v5
+    v7 = Convert v6 declared={type=L0}
+    v8 = PropGet v7 key="x"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v10 = PropGet v7 key="x"
+    v11 = Call v1, -, v10, v8
+    v12 = ToBoolean v11
+    Branch v12 -> taken b1(), notTaken b2()
+  b2():
+    Return v8
+}

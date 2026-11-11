@@ -1,0 +1,38 @@
+# plain = 1; Object.defineProperty(globalThis, key(), { get() { return 2; }, configurable: true });
+# function readPlain() { return plain }  publish(readPlain)
+# RUN(SHELL): run-in-shell globalThis.key = () => "plain"; globalThis.publish = readPlain => { print(readPlain()); };
+# SHELL: 2
+# SHELL-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    PropSet v0, v1 key="plain" mode=Sloppy [isFreeName]
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = PropGet v0 key="key" [isFreeName]
+    v6 = Call v5
+    v7 = NewObject layout=L0
+    v8 = NewClosure function=f2
+    PropDefine v7, v8 key="get"
+    v10 = Boolean boolean=true
+    PropDefine v7, v10 key="configurable"
+    v12 = FinishObject v7
+    v13 = Call v4, v3, v0, v6, v12 calleeName="Object.defineProperty"
+    v14 = PropGet v0 key="publish" [isFreeName]
+    v15 = NewClosure function=f1
+    v16 = Call v14, -, v15
+    Return
+}
+function f1 name="readPlain" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="plain" [isFreeName]
+    Return v1
+}
+function f2 name="get" results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}

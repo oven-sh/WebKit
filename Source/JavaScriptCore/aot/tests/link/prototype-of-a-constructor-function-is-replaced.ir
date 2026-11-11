@@ -1,0 +1,59 @@
+# If only what is stored on the object that the function was made with were followed, the objects made behind `P.prototype = other` would find what nobody has listed.
+# function P() { this.x = 1; }  P.prototype = { get: function () { return "other"; } };  function ask(p) { return p.get(); }  ask(new P());
+# The store of an object under `prototype` lets the function and the layout escape: everything about them is closed, nothing is wrong.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.0 "x"
+# CHECK-NOT: proven=
+# CHECK: field L1.0 "get"
+# CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# A primitive stored there does the same: a read of `prototype` gives it, and what `new` makes from then on stands below Object.prototype and no longer below the object that the function was made with.
+# RUN(PRIMITIVE): link fields layouts mechanisms=all
+# PRIMITIVE-NOT: field L2.0 "y" proven=
+# PRIMITIVE: layout L2 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="Q" module=m0 constructor=f4 fields=[{key="y" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    PropSet v0, v2 key="prototype"
+    v4 = Construct v0
+    v5 = NewClosure function=f3
+    v6 = Call v5, -, v4 calleeName="ask"
+    v7 = NewClosure function=f4
+    v8 = Integer integer=5
+    PropSet v7, v8 key="prototype"
+    v10 = Construct v7
+    v11 = PropGet v10 key="y"
+    Return v11
+}
+function f1 name="P" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="other"
+    Return v1
+}
+function f3 name="ask" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="get"
+    v2 = Call v1, v0 calleeKey="get"
+    Return v2
+}
+function f4 name="Q" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="y"
+    v3 = Undefined
+    Return v3
+}

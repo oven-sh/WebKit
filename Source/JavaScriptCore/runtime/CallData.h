@@ -42,7 +42,8 @@ class JSScope;
 class JSValue;
 
 struct CallData {
-    enum class Type : uint8_t { None, Native, JS, Compiled };
+    // Word-sized: a one-byte store over a stale pointer on the stack changes only its low byte, and conservative scanning then marks a different cell.
+    enum class Type : uintptr_t { None, Native, JS, Compiled };
     Type type { Type::None };
 
     CallData() { } // Needed for the anonymous union below.

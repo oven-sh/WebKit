@@ -8,7 +8,9 @@
 #if ENABLE(B3_JIT)
 
 #include "B3BasicBlock.h"
+#include "B3MovedLoadCheck.h"
 #include "B3Value.h"
+#include <optional>
 #include <span>
 #include <wtf/HashMap.h>
 #include <wtf/IndexSet.h>
@@ -47,9 +49,12 @@ public:
     }
     JS_EXPORT_PRIVATE Value* appendClone(Value* original, BasicBlock* destination, ValueMap&);
     JS_EXPORT_PRIVATE void substitute(ValueMap&, Value* original, Value* replacement);
+    JS_EXPORT_PRIVATE void substituteOnOnePath(ValueMap&, Value* original, Value* replacement);
     JS_EXPORT_PRIVATE void substitutePhisFedBy(BasicBlock* predecessor, BasicBlock* block, ValueMap&);
     JS_EXPORT_PRIVATE BlockMap cloneBlocks(std::span<BasicBlock* const>);
 
+    // No other block names a value of a block that was declared: what leaves such a block goes through a variable.
+    JS_EXPORT_PRIVATE bool valuesStayInDeclaredBlocks() const;
     JS_EXPORT_PRIVATE bool finish();
 
 private:
@@ -61,6 +66,8 @@ private:
     bool m_didChange { false };
     IndexSet<BasicBlock*> m_sources;
     IndexSet<BasicBlock*> m_declaredBlocks;
+    IndexSet<Value*> m_valuesOfOnePath;
+    std::optional<MovedLoadLog::OriginalsKeepTheirMeaning> m_originalsKeepTheirMeaning;
 };
 
 } } // namespace JSC::B3

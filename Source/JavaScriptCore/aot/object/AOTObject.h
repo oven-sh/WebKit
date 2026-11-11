@@ -14,7 +14,6 @@
 #include "AOTPropertyList.h"
 #include "AOTPropertyWalk.h"
 #include "AOTSlotAccess.h"
-#include "AOTVector.h"
 #include "JSObject.h"
 #include <algorithm>
 #include <wtf/OptionSet.h>
@@ -40,7 +39,6 @@ enum class SlotExitReason : uint8_t { Delete, Redefinition, StoreOfOtherType };
 
 using PropertyWalk::isCompiledObject;
 
-// What RuntimeLayoutTable::slotAdmits() lets into the slot of one field.
 class AcceptedValue {
 public:
     static AcceptedValue provenAtBuildTime(JSValue value) { return AcceptedValue(value); }
@@ -58,7 +56,6 @@ private:
     JSValue m_value;
 };
 
-// An entry of a key order below the number of fields lists that field.
 class ExtraKeyCounter {
 public:
     explicit ExtraKeyCounter(uint32_t numberOfFields)
@@ -77,7 +74,6 @@ public:
         m_count = std::max(m_count, count);
     }
 
-    // What add() makes of each entry of the list that lists extra keys. Without a full entry among them each counts on top of the same number, so the largest says it all.
     void addAll(std::span<const uint16_t> entries)
     {
         uint16_t largest = 0;
@@ -127,29 +123,35 @@ public:
 
     static CompiledStructure* createStructure(VM&, const CompiledStructure::ObjectParameters&);
     static Object* create(VM&, Structure*, const LayoutData&, size_t size, uint32_t orderWord);
-    // The bytes that create() left behind the header of an earlier object of the Structure's layout, order word and shape word among them.
-    static Object* createAsAtBirth(VM&, Structure*, std::span<const uint8_t> bodyAtBirth, bool isBornUnfinished);
-    static Object* createWithBody(VM&, Structure*, std::span<const uint8_t> body);
 
     const CompiledStructure& compiledStructure() const { return *uncheckedDowncast<CompiledStructure>(structure()); }
     const LayoutData& layout() const { return compiledStructure().layout(); }
     Instance& instance() const;
     State& state() const;
-    // An object may lie in a frame, where its address leads to no block of the heap and says nothing about the cage.
     bool isInFrame() const { return static_cast<uint8_t>(cellState()) == frameCellState; }
     VM& vm() const;
 
     template<typename T> T& at(uint32_t offset) const { return *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(const_cast<Object*>(this)) + offset); }
     uint32_t orderWord() const { return at<uint32_t>(offsetOfOrderWord); }
-    uint32_t shapeWord() const { return at<uint32_t>(offsetOfShapeWord); }
+    uint32_t shapeWordWithMark() const { return at<uint32_t>(offsetOfShapeWord); }
+    uint64_t orderAndShapeWordsWithMark() const { return static_cast<uint64_t>(shapeWordWithMark()) << 32 | orderWord(); }
+    uint32_t shapeWord() const { return shapeWordWithoutMark(shapeWordWithMark()); }
     uint32_t shape() const { return shapeOf(shapeWord()); }
     uint64_t orderAndShapeWords() const { return static_cast<uint64_t>(shapeWord()) << 32 | orderWord(); }
+    bool bearsMark() const { return perCellBit() || !(shapeWordWithMark() & shapeWordIsUnmarked); }
+    void setIsInBirth(bool isInBirth) { at<uint32_t>(offsetOfShapeWord) = isInBirth && mayBearMark() ? shapeWordWithMark() & ~shapeWordIsUnmarked : shapeWord(); }
+    void setBearsMark(bool bearsMark)
+    {
+        setPerCellBit(bearsMark);
+        setIsInBirth(bearsMark);
+    }
     bool hasFlagsInOrderWord() const { return orderWord() & ~orderAndCountMask; }
     bool isFrozen() const { return orderWord() & orderWordIsFrozen; }
     bool isSealed() const { return orderWord() & orderWordIsSealed; }
     bool isNotExtensible() const { return orderWord() & orderWordIsNotExtensible; }
     bool hasExtraProperties() const { return orderWord() & orderWordHasExtraProperties; }
     bool hasOutOfLineKeyOrder() const { return isOrderStoredOutOfLine(orderWord()); }
+    bool hasKeyOrderOfItsOwn() const { return hasOutOfLineKeyOrder() && compiledStructure().hasKeyOrderOfOneObject(); }
     void setOrderAndCount(uint32_t orderAndCount) { at<uint32_t>(offsetOfOrderWord) = (orderWord() & ~orderAndCountMask) | orderAndCount; }
     unsigned attributesOfPublicFields() const
     {
@@ -172,7 +174,6 @@ public:
     bool isInSlot(const FieldData&) const;
     JSValue read(const FieldData&) const;
     JSValue readInline(const FieldData&) const;
-    // Calls the functor with an int32_t, a bool or a double where the slot holds one, and with a JSValue otherwise, which is empty for an absent field.
     template<typename Functor> auto readInlineUnboxed(const FieldData&, const Functor&) const;
     bool tryStore(VM&, const FieldData&, JSValue);
     bool tryInitialize(VM&, const FieldData&, JSValue);
@@ -193,10 +194,17 @@ public:
         unsigned attributes { 0 };
     };
     void moveFieldToExtraProperties(VM&, const FieldData&, LeavingProperty, SlotExitReason);
+    bool tryRepeat(VM&, const FieldExit&, JSValue);
+    bool tryRepeat(VM&, const FieldReturn&, JSValue);
+    bool tryRepeat(VM&, const AddedExtraProperty&, JSValue);
+    bool tryDefineAsOnTheLastObject(VM&, PropertyName, const PropertyDescriptor&);
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
     void deleteField(VM&, const FieldData&);
     bool hasEveryFieldOfBirth() const;
+    bool holdsEveryFieldHeldFilled() const;
+    bool mayBearMark() const;
     JS_EXPORT_PRIVATE void tryFinishBirth();
+    bool hasAccessorAmongExtraProperties() const;
 
     enum class Integrity : uint8_t { NotExtensible, Sealed, Frozen };
     void setIntegrity(JSGlobalObject*, Integrity);
@@ -204,13 +212,22 @@ public:
     void setPrototypeKeepingShape(VM&, JSValue prototype);
     void setPrototypeAtCreation(VM&, JSValue prototype);
 
-    static bool putWithKnownField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*);
+    static bool putWithKnownField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*, bool chainLetsStoresPass = false);
     JSValue getDirectFromNativeCode(VM&, PropertyName, unsigned* attributes);
-    // False with a TypeError thrown, and the object as it was, where the layout keeps the field from what the caller asks for. A caller that looks at neither meets the error at its next check.
     bool putDirectFromNativeCode(VM&, PropertyName, JSValue, unsigned attributes);
-    bool tryDefineAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    bool storeDirectFromNativeCode(VM&, PropertyName, JSValue);
+    bool tryDefineAbsentProperty(VM&, const FieldData*, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    struct ExtraPropertyFound {
+        enum class Kind : uint8_t { Absent, MayBeRedefinedInEveryWay, Other };
+        Kind kind;
+        LeavingProperty property;
+    };
+    ExtraPropertyFound findExtraProperty(VM&, PropertyName) const;
+    enum class MemoryOfAddedNames : bool { IsAsked, WasAskedInVain };
+    bool tryAddAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes, MemoryOfAddedNames = MemoryOfAddedNames::IsAsked);
+    void replaceExtraProperty(VM&, PropertyName, LeavingProperty);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
-    // The keys are strings, each followed by its function. Bit i of `getters` says that function i is a getter. True if all of them now lie in slots. Otherwise the object is as it was.
+    bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, const FieldData&, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     bool tryDefineAccessorsOfLiteral(VM&, JSGlobalObject*, std::span<const EncodedJSValue> keysAndFunctions, uint32_t getters, uint32_t enumerable);
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
@@ -234,7 +251,6 @@ public:
         JSValue value;
     };
     static JSObject* createExtraProperties(JSGlobalObject* realm, std::span<const ExtraProperty> inOrder);
-    // For an object that nobody has seen yet and names that are none of its fields. False where the layout has no place for extra properties.
     bool tryCreateExtraPropertiesOfNewObject(VM&, std::span<const ExtraProperty> inOrder);
     void didChangeExtraProperties(VM&);
     void ensureStructureForExtraProperties(VM&);
@@ -244,22 +260,21 @@ public:
         IsKnownNotToBeField = 1,
         IsDefinition = 2,
         NamesExtraPropertiesStructure = 4,
+        IsKnownToBeAbsent = 8,
+        IsMadeAtRunTime = 16,
     };
     struct ExtraPropertyStoreResult {
         ExtraPropertyStore kind { ExtraPropertyStore::NotHandled };
         PropertyOffset offset { invalidOffset };
     };
     ExtraPropertyStoreResult tryStoreExtraProperty(VM&, PropertyName, JSValue, OptionSet<ExtraPropertyStoreFlag>);
-    // False for the first object that gets this property after the extra properties it has. Most such objects stay the only one.
-    bool repeatsExtraPropertyStore(VM&, PropertyName) const;
-    void willAddExtraProperty(VM&, PropertyName);
+    void willAddExtraProperty(VM&, PropertyName, bool isSpelledByProgram = true);
+    [[nodiscard]] bool mayAddExtraProperty(VM&, PropertyName, bool isSpelledByProgram = true);
 
-    using KeyOrderStorage = Vector<uint16_t, 16>;
-    std::span<const uint16_t> keyOrder(State&, KeyOrderStorage&) const;
+    std::span<const uint16_t> keyOrder(State&) const;
     void forEachKeyInOrder(State& state, const Invocable<void(uint16_t)> auto& functor) const
     {
-        KeyOrderStorage storage;
-        for (uint16_t key : keyOrder(state, storage))
+        for (uint16_t key : keyOrder(state))
             functor(key);
     }
     static size_t forEachPositionedKey(std::span<const uint16_t> entries, uint32_t numberOfFields, size_t numberOfExtraKeys, const Invocable<void(uint16_t)> auto& fieldFunctor, const Invocable<void(size_t)> auto& extraKeyFunctor)
@@ -282,43 +297,38 @@ public:
     std::optional<uint32_t> numberOfExtraKeysByStructure() const;
     void willCreateField(State&, const FieldData&);
     void didCreateField(State&, const FieldData&, bool withStorage = true);
+    bool tryRepeatCreationAtSlot(State&, uint32_t slotKey);
+    void rememberCreationAtSlot(State&, StructureID before, uint32_t orderAndCountBefore, uint32_t slotKey) const;
     void setKeyOrder(VM&, State&, std::span<const uint16_t> keys);
-    struct InitialKeyOrder {
-        uint32_t orderAndCount;
-        CompiledStructure* structure;
+    bool trySetNumberedKeyOrder(VM&, State&, std::span<const uint16_t> keys);
+    struct PlaceOfExtraKey {
+        std::optional<uint32_t> ordinal;
+        std::optional<uint32_t> indexAmongNamedKeys;
+        UniquedStringImpl* extraKeyInFront { nullptr };
+        bool orderCountsExtraKeys { false };
     };
-    std::optional<InitialKeyOrder> initialKeyOrder(VM&, std::span<const uint16_t> keys, JSObject* extraProperties);
-    void setInitialKeyOrder(VM&, InitialKeyOrder, JSObject* extraProperties);
-    Vector<UniquedStringImpl*, 16> extraKeyNames() const;
-    // For removeExtraKeyFromOrder(): a number that is below the count of exactly those entries of the key order that count the key. Nothing: no entry counts it.
-    std::optional<uint32_t> extraKeyOrdinal(PropertyName) const;
+    PlaceOfExtraKey placeOfExtraKey(PropertyName);
     bool keyOrderCountsExtraKeys() const;
-    void removeExtraKeyFromOrder(VM&, State&, uint32_t ordinal);
-    // The key that extraKeyOrdinal() was last asked for is gone from the extra properties, and from the key order if that counted it.
-    void didRemoveExtraKey(State&);
+    void didRemoveExtraKey(VM&, State&, const PlaceOfExtraKey&);
     void forgetPlacesOfPositionedKeys(State&);
+    void takeKeyOrderOfItsOwn(VM&, State&);
 
     bool tryCopyFieldsOf(VM&, const Object& source);
     static Object* tryCreateCopyOfFields(VM&, const Object& source);
-    // To make a plan costs several copies by name. A caller that can copy by name asks for one only from the second copy between the same shapes on.
-    bool tryAssignPropertiesOf(VM&, JSObject* source, std::span<UniquedStringImpl* const> excludedNames = { });
-    // Defines data properties in this order where each is a field that takes its value. The key order is looked up once, however many fields are created.
-    bool tryDefineFields(VM&, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> values);
+    bool tryDefineFields(VM&, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> valuesOrAccessors, std::span<const unsigned> attributes = { });
 
     enum class SymbolKeys : bool { Skip, Include };
     bool forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&, SymbolKeys = SymbolKeys::Skip) const;
-    // The fields with string keys in key order. Nothing for an object that has extra properties or whose order has no number.
     std::optional<std::span<const FieldAsProperty>> fieldsInKeyOrder() const;
     JSValue readListedField(const FieldAsProperty&) const;
     const Vector<PropertyListEntry>* fieldsAndExtraPropertiesInKeyOrder(VM&) const;
     JSValue readPropertyListEntry(const PropertyListEntry&, JSObject* extraProperties) const;
-    JSCellButterfly* keys(VM&, KeyListKind = KeyListKind::Strings) const;
     JSCellButterfly* keysWithExtraProperties(VM&) const;
     JSArray* tryCreateKeysArrayWithExtraProperties(JSGlobalObject*) const;
+    JSCellButterfly* keys(VM&, KeyListKind = KeyListKind::Strings) const;
     JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject*);
     bool keysDependOnlyOnStructureAndOrderWord() const;
 
-    static JSValue tryGetOwnDataProperty(VM&, JSCell*, PropertyName);
     static bool structureGuaranteesAbsence(Structure*, UniquedStringImpl*);
 
 private:
@@ -328,18 +338,22 @@ private:
     }
 
     bool store(VM&, const FieldData&, JSValue);
-    void willStoreMarker(VM&, const FieldData&, JSValue marker);
+    void willStoreMarker(const FieldData&);
     void copyFieldsOfSameLayout(VM&, const Object& source);
-    bool tryCopyWordsOfSameStructure(VM&, const Object& source);
+    bool tryCopyWordsOfSameLayout(VM&, const Object& source);
     static Object* createCopyOfWords(VM&, const Object& source, Structure*);
     static Object* tryCreateCopyOfFieldsAndExtraProperties(VM&, const Object& source);
     std::optional<std::span<const FieldAsProperty>> fieldsInKeyOrderSlow() const;
+    void removeExtraKeyFromOrder(VM&, State&, uint32_t ordinal);
+    void didRemoveCountedExtraKey(State&);
+    bool tryListFieldBehindNamedKey(State&, const FieldData&);
 };
 static_assert(sizeof(Object) == offsetOfOrderWord);
 
+JSObject* extraPropertiesIfCreated(const Object&);
+
 class Extension {
 public:
-    // Every granule starts as zero, and so does the room for more.
     static Extension* create(VM&, uint64_t granuleBits);
 
     uint64_t granuleBits() const { return m_granuleBits; }
@@ -353,9 +367,7 @@ public:
     uint64_t* granules() { return reinterpret_cast<uint64_t*>(this) + offsetOfFirstExtensionSlot / sizeof(uint64_t); }
     size_t sizeInBytes() const { return offsetOfFirstExtensionSlot + std::popcount(m_granuleBits) * extensionGranuleSize; }
 
-    // Granules that come after every granule held take the room that extensionCapacityFor() has left. It is zero since the Extension was created, so the collector may see the bits at any time.
     bool tryAppend(uint64_t granuleBits);
-    // Granules that belong between others take the same room, and the granules behind them move. Only while no thread of the collector visits cells.
     bool tryInsert(uint64_t granuleBits);
 
     static constexpr ptrdiff_t offsetOfGranuleBits() { return OBJECT_OFFSETOF(Extension, m_granuleBits); }
@@ -370,6 +382,13 @@ ALWAYS_INLINE Object* compiledObjectOrNull(JSValue value)
     if (!value || !value.isCell() || !isCompiledObject(value.asCell()))
         return nullptr;
     return uncheckedDowncast<Object>(value.asCell());
+}
+
+ALWAYS_INLINE Object* compiledObjectOrNull(const JSCell* cell)
+{
+    if (!cell || !isCompiledObject(cell))
+        return nullptr;
+    return uncheckedDowncast<Object>(const_cast<JSCell*>(cell));
 }
 
 inline Extension* Object::extension() const
@@ -424,27 +443,27 @@ ALWAYS_INLINE auto Object::readInlineUnboxed(const FieldData& field, const Funct
     case SlotRepresentation::Float:
     case SlotRepresentation::OptionalInt64:
     case SlotRepresentation::OptionalDouble:
-    case SlotRepresentation::LiteralString:
-    case SlotRepresentation::LiteralString32:
     case SlotRepresentation::DeferredClosure:
         return functor(read(field));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+inline constexpr auto boxValueOfSlot = [](auto value) ALWAYS_INLINE_LAMBDA -> JSValue {
+    using Unboxed = decltype(value);
+    if constexpr (std::same_as<Unboxed, bool>)
+        return jsBoolean(value);
+    else if constexpr (std::same_as<Unboxed, double>)
+        return jsNumber(withoutPayload(value));
+    else if constexpr (std::same_as<Unboxed, int32_t>)
+        return jsNumber(value);
+    else
+        return value;
+};
+
 ALWAYS_INLINE JSValue Object::readInline(const FieldData& field) const
 {
-    return readInlineUnboxed(field, [](auto value) ALWAYS_INLINE_LAMBDA -> JSValue {
-        using Unboxed = decltype(value);
-        if constexpr (std::same_as<Unboxed, bool>)
-            return jsBoolean(value);
-        else if constexpr (std::same_as<Unboxed, double>)
-            return jsNumber(withoutPayload(value));
-        else if constexpr (std::same_as<Unboxed, int32_t>)
-            return jsNumber(value);
-        else
-            return value;
-    });
+    return readInlineUnboxed(field, boxValueOfSlot);
 }
 
 ALWAYS_INLINE std::optional<std::span<const FieldAsProperty>> Object::fieldsInKeyOrder() const
@@ -466,8 +485,11 @@ ALWAYS_INLINE JSValue Object::readListedField(const FieldAsProperty& property) c
 
 void Object::forEachFieldInKeyOrder(State& state, const Invocable<void(uint16_t)> auto& functor) const
 {
-    KeyOrderStorage storage;
-    forEachPositionedKey(keyOrder(state, storage), layout().numberOfFields, 0, functor, [](size_t) { });
+    uint32_t numberOfFields = layout().numberOfFields;
+    for (uint16_t entry : keyOrder(state)) {
+        if (entry < numberOfFields)
+            functor(entry);
+    }
 }
 
 template<typename Visitor>

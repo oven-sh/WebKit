@@ -25,7 +25,6 @@
 #include "Color.h"
 #include "CommonAtomStrings.h"
 #include "DragData.h"
-#include "Image.h"
 #include "MIMETypeRegistry.h"
 #include "NotImplemented.h"
 #include "PasteboardStrategy.h"
@@ -150,9 +149,7 @@ void Pasteboard::writePlainText(const String& text, SmartReplaceOption smartRepl
     } else {
         SelectionData data;
         data.setText(text);
-#if PLATFORM(GTK)
         data.setCanSmartReplace(smartReplaceOption == CanSmartReplace);
-#endif
         platformStrategies()->pasteboardStrategy()->writeToClipboard(m_name, WTF::move(data));
     }
 }
@@ -211,9 +208,7 @@ void Pasteboard::write(const PasteboardWebContent& pasteboardContent)
         SelectionData data;
         data.setText(pasteboardContent.text);
         data.setMarkup(pasteboardContent.markup);
-#if PLATFORM(GTK)
         data.setCanSmartReplace(pasteboardContent.canSmartCopyOrDelete);
-#endif
         PasteboardCustomData customData;
         customData.setOrigin(pasteboardContent.contentOrigin);
         data.setCustomData(customData.createSharedBuffer());
@@ -259,7 +254,7 @@ void Pasteboard::clear(const String& type)
 }
 
 #if ENABLE(DRAG_SUPPORT)
-void Pasteboard::setDragImage(DragImage, const IntPoint&)
+void Pasteboard::setDragImage(DragImage&&, const IntPoint&)
 {
 }
 #endif

@@ -1,0 +1,41 @@
+# function found(k, look) { const map = new Map(); look(map); return map.get(k); }
+# The call stands in tail position, so the read and the call are not one call of a stub: whatever is called leaves the frame behind, and an error of the call is worded at this site while the frame still stands.
+# In front of the two stands a call of a stub that takes the receiver and the arguments: for a map as its class makes it the built-in answers, and the unit returns the answer.
+# For every other receiver the stub has done nothing and answers the empty value, and the read and the tail call follow as they are written.
+# RUN: bytes f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: Stub TryCallMethodOfBuiltinClass.MapGet count 1
+# CHECK: Stub CallValueCell.InTailPosition count 1
+# The read stands between the two, as a call of the stub or of a thunk that names it.
+# RUN(READ): bytes f1:Body mechanisms=all
+# READ: GetById
+# RUN(WITHHELD): bytes f1:Body mechanisms=all-BuiltinCalls
+# WITHHELD-NOT: TryCallMethodOfBuiltinClass
+# RUN(ANSWERS): run-in-shell globalThis.sink = found => { print(found(1, map => { map.set(1, "a"); })); print(found(1, map => { map.get = () => "own"; })); print(found(1, map => { Object.setPrototypeOf(map, { get() { return "moved"; } }); })); print(found(2, map => { map.extra = 1; map.set(2, "b"); })); print(found(3, map => { })); try { found(1, map => { map.get = 5; }); } catch (error) { print(error instanceof TypeError); } };
+# ANSWERS: a
+# ANSWERS-NEXT: own
+# ANSWERS-NEXT: moved
+# ANSWERS-NEXT: b
+# ANSWERS-NEXT: undefined
+# ANSWERS-NEXT: true
+# ANSWERS-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="found" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Map
+    v3 = Construct v2
+    v4 = Call v1, -, v3
+    v5 = PropGet v3 key="get"
+    v6 = Call v5, v3, v0 calleeKey="get"
+    ReturnCall v6
+}

@@ -1,0 +1,47 @@
+# the same loop, and what is called may be the mark of a dead zone: the stub that resolves takes that word for a cell. So nothing is asked in front of the loop, and each turn calls the value as it is written.
+# switch (k) { case 0: let cb = given; case 1: for (let i = 0; i < n; i++) cb(i); }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = Call
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# NEVER-NOT: ResolveCallTarget
+# NEVER-NOT: CallResolved
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-NOT: ResolveCallTarget
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="each" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v1 testedType=i32
+    Branch v3 -> taken b1(| 0), notTaken b6()
+  b1(v4):
+    v5 = ToBoolean v2
+    Branch v5 -> taken b2(), notTaken b3(v0)
+  b2():
+    v6 = Absent
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = Integer
+    Jump -> next b4(v8)
+  b4(v9):
+    LoopHint
+    v11 = Less v9, v4
+    Branch v11 -> taken b5(), notTaken b6()
+  b5():
+    v12 = Call v7, -, v9
+    v13 = Increment v9
+    Jump -> next b4(v13)
+  b6():
+    v14 = Undefined
+    Return v14
+}

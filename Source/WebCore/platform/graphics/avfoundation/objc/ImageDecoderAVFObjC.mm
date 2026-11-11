@@ -42,6 +42,9 @@
 #import "SharedBuffer.h"
 #import "UTIUtilities.h"
 #import "WebCoreDecompressionSession.h"
+#if ENABLE(LOCKDOWN_MODE_API)
+#import <pal/cocoa/LockdownModeCocoa.h>
+#endif
 #import <AVFoundation/AVAsset.h>
 #import <AVFoundation/AVAssetReader.h>
 #import <AVFoundation/AVAssetReaderOutput.h>
@@ -246,7 +249,7 @@ public:
         return adoptRef(*new ImageDecoderAVFObjCSample(WTF::move(sampleBuffer)));
     }
 
-    CGImageRef LEGACY_NODELETE image() const { return m_image.get(); }
+    NODELETE CGImageRef image() const { return m_image.get(); }
     void setImage(RetainPtr<CGImageRef>&& image)
     {
         m_image = WTF::move(image);
@@ -314,13 +317,13 @@ SPECIALIZE_TYPE_TRAITS_END()
 
 namespace WebCore {
 
-static ImageDecoderAVFObjCSample* LEGACY_NODELETE toSample(const PresentationOrderSampleMap::value_type& pair)
+NODELETE static ImageDecoderAVFObjCSample* toSample(const PresentationOrderSampleMap::value_type& pair)
 {
     return downcast<ImageDecoderAVFObjCSample>(pair.second.ptr());
 }
 
 template <typename Iterator>
-ImageDecoderAVFObjCSample* LEGACY_NODELETE toSample(Iterator iter)
+NODELETE ImageDecoderAVFObjCSample* toSample(Iterator iter)
 {
     return downcast<ImageDecoderAVFObjCSample>(iter->second.ptr());
 }
@@ -367,6 +370,10 @@ ImageDecoderAVFObjC::~ImageDecoderAVFObjC() = default;
 
 bool ImageDecoderAVFObjC::supportsMediaType(MediaType type)
 {
+#if ENABLE(LOCKDOWN_MODE_API)
+    if (PAL::isLockdownModeEnabledForCurrentProcess())
+        return false;
+#endif
     return type == MediaType::Video && AVAssetMIMETypeCache::singleton().isAvailable();
 }
 
@@ -377,6 +384,10 @@ bool ImageDecoderAVFObjC::supportsContainerType(const String& type)
 
 bool ImageDecoderAVFObjC::canDecodeType(const String& mimeType)
 {
+#if ENABLE(LOCKDOWN_MODE_API)
+    if (PAL::isLockdownModeEnabledForCurrentProcess())
+        return false;
+#endif
     return AVAssetMIMETypeCache::singleton().canDecodeType(mimeType) != MediaPlayerEnums::SupportsType::IsNotSupported;
 }
 

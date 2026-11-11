@@ -119,6 +119,9 @@
         "JSONValue": {
             "contextsAllowed": ["argument", "attribute", "operation"]
         },
+        "JSONObject": {
+            "contextsAllowed": ["argument", "attribute", "operation"]
+        },
         "NSObject": {
             "contextsAllowed": ["argument", "attribute", "operation"]
         },
@@ -142,7 +145,7 @@
         },
         "Serialization": {
             "contextsAllowed": ["argument"],
-            "values": ["JSON", "Web"]
+            "values": ["JSON", "Message", "Web"]
         },
         "SetProperty": {
             "contextsAllowed": ["operation"]

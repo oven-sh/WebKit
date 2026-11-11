@@ -1,0 +1,24 @@
+# function callIt(object) { return object.m(); }   publish(callIt);
+# As a read by name (an-access-by-name-is-compiled-alike-whether-or-not-its-name-has-a-column.ir): the unit names the one stub for every name.
+# RUN: bytes f1:Body
+# CHECK-LABEL: unit f1:Body
+# CHECK: Call Stub CallMethodAtSite
+# CHECK-NOT: UnderNameWithColumn
+# The image lays the call on the sibling under a name with a column, which loads the sixteen bits of the site's name behind a miss and asks nothing: `m` has one.
+# RUN(LAID): compile ColumnStubVariantsSelected NamesWithoutColumn
+# LAID: ColumnStubVariantsSelected 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="callIt" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m" @10
+    v2 = Call v1, v0 @10
+    Return v2
+}

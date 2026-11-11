@@ -34,13 +34,26 @@ struct PrologueCheck {
     friend constexpr bool operator==(const PrologueCheck&, const PrologueCheck&) = default;
 };
 
-#if CPU(X86_64) && OS(LINUX)
+#if CPU(X86_64) && (OS(LINUX) || OS(DARWIN) || OS(WINDOWS))
+#define AOT_LOOP_POLLS_FAULT 1
 static constexpr size_t sizeOfLoopPoll = 7;
+#elif CPU(ARM64) && (OS(LINUX) || OS(DARWIN) || OS(WINDOWS)) && !defined(BUN_HARDENED)
+#define AOT_LOOP_POLLS_FAULT 1
+static constexpr size_t sizeOfLoopPoll = 4;
 #else
+#define AOT_LOOP_POLLS_FAULT 0
 static constexpr size_t sizeOfLoopPoll = 0;
 #endif
 static constexpr bool hasFaultingLoopPolls = !!sizeOfLoopPoll;
-static constexpr ptrdiff_t offsetOfLeafPollInLoopPollPage = 4;
+
+static_assert(hasFaultingLoopPolls == !!AOT_LOOP_POLLS_FAULT);
+#if CPU(ARM64)
+static constexpr size_t sizeOfWordLoadedByLoopPoll = sizeof(uint64_t);
+#else
+static constexpr size_t sizeOfWordLoadedByLoopPoll = sizeof(uint32_t);
+#endif
+static constexpr ptrdiff_t offsetOfLeafPollInLoopPollPage = sizeOfWordLoadedByLoopPoll;
+static constexpr ptrdiff_t offsetOfPollLeavingOwedErrorInLoopPollPage = 2 * sizeOfWordLoadedByLoopPoll;
 
 struct PollSite {
     uint32_t offset { 0 };
@@ -53,7 +66,7 @@ struct PollSite {
 
 static_assert(std::is_trivially_copyable_v<PrologueCheck> && sizeof(PrologueCheck) == 12);
 static_assert(std::is_trivially_copyable_v<PollSite> && sizeof(PollSite) == 12);
-static_assert(!(offsetOfLeafPollInLoopPollPage % sizeof(uint32_t)));
+static_assert(!(offsetOfLeafPollInLoopPollPage % sizeOfWordLoadedByLoopPoll) && !(offsetOfPollLeavingOwedErrorInLoopPollPage % sizeOfWordLoadedByLoopPoll));
 static_assert(PollSite { 16, false }.returnOffset() == 16 + sizeOfLoopPoll && !PollSite { 16, false }.offsetInLoopPollPage());
 static_assert(PollSite { 16, true }.offsetInLoopPollPage() == offsetOfLeafPollInLoopPollPage);
 

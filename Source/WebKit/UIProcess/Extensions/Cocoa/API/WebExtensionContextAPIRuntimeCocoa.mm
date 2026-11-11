@@ -57,6 +57,26 @@ void WebExtensionContext::runtimeGetBackgroundPage(CompletionHandler<void(std::e
     });
 }
 
+static RefPtr<WebExtensionTab> findTabWithURLIgnoringFragment(WebExtensionWindow& window, const URL& url)
+{
+    auto tabs = window.tabs();
+    if (tabs.isEmpty())
+        return nullptr;
+
+    RefPtr activeTab = window.activeTab();
+    auto startIndex = tabs.find(activeTab.get());
+    if (startIndex == notFound)
+        startIndex = 0;
+
+    for (size_t i = 0; i < tabs.size(); ++i) {
+        Ref tab = tabs[(startIndex + i) % tabs.size()];
+        if (equalIgnoringFragmentIdentifier(tab->url(), url))
+            return tab;
+    }
+
+    return nullptr;
+}
+
 void WebExtensionContext::runtimeOpenOptionsPage(CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&& completionHandler)
 {
     static NSString * const apiName = @"runtime.openOptionsPage()";
@@ -97,29 +117,57 @@ void WebExtensionContext::runtimeOpenOptionsPage(CompletionHandler<void(std::exp
 
     ASSERT(respondsToOpenNewTab);
 
-    auto frontmostWindow = this->frontmostWindow();
+    RefPtr frontmostWindow = this->frontmostWindow();
 
-    auto *configuration = [[WKWebExtensionTabConfiguration alloc] _init];
-    configuration.shouldBeActive = YES;
-    configuration.shouldAddToSelection = YES;
-    configuration.window = frontmostWindow ? frontmostWindow->delegate() : nil;
-    configuration.index = frontmostWindow ? frontmostWindow->tabs().size() : 0;
-    configuration.url = optionsPageURL().createNSURL().get();
+    auto openInNewTab = [this, protectedThis = Ref { *this }, extensionController, frontmostWindow](CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&& completionHandler) {
+        auto *configuration = [[WKWebExtensionTabConfiguration alloc] _init];
+        configuration.shouldBeActive = YES;
+        configuration.shouldAddToSelection = YES;
+        configuration.window = frontmostWindow ? frontmostWindow->delegate() : nil;
+        configuration.index = frontmostWindow ? frontmostWindow->tabs().size() : 0;
+        configuration.url = optionsPageURL().createNSURL().get();
 
-    [delegate webExtensionController:extensionController->wrapper() openNewTabUsingConfiguration:configuration forExtensionContext:wrapper() completionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler)](id<WKWebExtensionTab> newTab, NSError *error) mutable {
-        if (error) {
-            RELEASE_LOG_ERROR(Extensions, "Error opening options page in new tab: %{public}@", privacyPreservingDescription(error));
-            completionHandler(toWebExtensionError(apiName, nullString(), error.localizedDescription));
+        [extensionController->delegate() webExtensionController:extensionController->wrapper() openNewTabUsingConfiguration:configuration forExtensionContext:wrapper() completionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler)](id<WKWebExtensionTab> newTab, NSError *error) mutable {
+            if (error) {
+                RELEASE_LOG_ERROR(Extensions, "Error opening options page in new tab: %{public}@", privacyPreservingDescription(error));
+                completionHandler(toWebExtensionError(apiName, nullString(), error.localizedDescription));
+                return;
+            }
+
+            if (!newTab) {
+                completionHandler(toWebExtensionError(apiName, nullString(), @"the options page cound not be opened"));
+                return;
+            }
+
+            completionHandler({ });
+        }).get()];
+    };
+
+    RefPtr optionsPageTab = frontmostWindow ? findTabWithURLIgnoringFragment(*frontmostWindow, optionsPageURL()) : nullptr;
+    if (!optionsPageTab) {
+        openInNewTab(WTF::move(completionHandler));
+        return;
+    }
+
+    auto focusWindow = [frontmostWindow](CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&& completionHandler) {
+        frontmostWindow->focus([completionHandler = WTF::move(completionHandler)](std::expected<void, WebExtensionError>&&) mutable {
+            completionHandler({ });
+        });
+    };
+
+    if (optionsPageTab->isActive()) {
+        focusWindow(WTF::move(completionHandler));
+        return;
+    }
+
+    optionsPageTab->activate([focusWindow = WTF::move(focusWindow), openInNewTab = WTF::move(openInNewTab), completionHandler = WTF::move(completionHandler)](std::expected<void, WebExtensionError>&& result) mutable {
+        if (!result) {
+            openInNewTab(WTF::move(completionHandler));
             return;
         }
 
-        if (!newTab) {
-            completionHandler(toWebExtensionError(apiName, nullString(), @"the options page cound not be opened"));
-            return;
-        }
-
-        completionHandler({ });
-    }).get()];
+        focusWindow(WTF::move(completionHandler));
+    });
 }
 
 void WebExtensionContext::runtimeReload()
@@ -127,7 +175,7 @@ void WebExtensionContext::runtimeReload()
     std::ignore = reload();
 }
 
-void WebExtensionContext::runtimeSendMessage(const String& extensionID, const String& messageJSON, const WebExtensionMessageSenderParameters& senderParameters, bool userGesture, CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&& completionHandler)
+void WebExtensionContext::runtimeSendMessage(const String& extensionID, const WebExtensionMessage& message, const WebExtensionMessageSenderParameters& senderParameters, bool userGesture, CompletionHandler<void(std::expected<WebExtensionMessage, WebExtensionError>&&)>&& completionHandler)
 {
     static NSString * const apiName = @"runtime.sendMessage()";
 
@@ -140,11 +188,8 @@ void WebExtensionContext::runtimeSendMessage(const String& extensionID, const St
     WebExtensionMessageSenderParameters completeSenderParameters = senderParameters;
     if (RefPtr tab = getTab(senderParameters.pageProxyIdentifier))
         completeSenderParameters.tabParameters = tab->parameters();
-    else if (senderParameters.contentWorldType == WebExtensionContentWorldType::ContentScript) {
-        RELEASE_LOG_ERROR(Extensions, "Tab not found for message for content script message");
-        completionHandler(toWebExtensionError(apiName, nullString(), @"tab not found"));
-        return;
-    }
+
+    completeSenderParameters.windowIdentifier = windowIdentifierForPage(senderParameters.pageProxyIdentifier);
 
     // Don't propagate web page gestures from content scripts to extension pages. Only gestures
     // from extension-originated events (action.onClicked, commands.onCommand, menus.onClicked)
@@ -160,16 +205,16 @@ void WebExtensionContext::runtimeSendMessage(const String& extensionID, const St
             return;
         }
 
-        auto callbackAggregator = EagerCallbackAggregator<void(std::expected<String, WebExtensionError>)>::create(WTF::move(completionHandler), { });
+        auto callbackAggregator = EagerCallbackAggregator<void(std::expected<WebExtensionMessage, WebExtensionError>)>::create(WTF::move(completionHandler), { });
 
         for (auto& process : mainWorldProcesses) {
-            process->sendWithAsyncReply(Messages::WebExtensionContextProxy::DispatchRuntimeMessageEvent(targetContentWorldType, messageJSON, std::nullopt, completeSenderParameters, resolvedUserGesture), [callbackAggregator](String&& replyJSON) {
-                // A null reply means no listeners replied. Don't call the callbackAggregator
+            process->sendWithAsyncReply(Messages::WebExtensionContextProxy::DispatchRuntimeMessageEvent(targetContentWorldType, message, std::nullopt, completeSenderParameters, resolvedUserGesture), [callbackAggregator](std::optional<WebExtensionMessage>&& reply) {
+                // A missing reply means no listeners replied. Don't call the callbackAggregator
                 // to give other listeners in a different process a chance to reply.
-                if (replyJSON.isNull())
+                if (!reply)
                     return;
 
-                callbackAggregator.get()(WTF::move(replyJSON));
+                callbackAggregator.get()(WTF::move(*reply));
             }, identifier());
         }
     });
@@ -194,11 +239,8 @@ void WebExtensionContext::runtimeConnect(const String& extensionID, WebExtension
     WebExtensionMessageSenderParameters completeSenderParameters = senderParameters;
     if (RefPtr tab = getTab(senderParameters.pageProxyIdentifier))
         completeSenderParameters.tabParameters = tab->parameters();
-    else if (senderParameters.contentWorldType == WebExtensionContentWorldType::ContentScript) {
-        RELEASE_LOG_ERROR(Extensions, "Tab not found for message for content script port");
-        completionHandler(toWebExtensionError(apiName, nullString(), @"tab not found"));
-        return;
-    }
+
+    completeSenderParameters.windowIdentifier = windowIdentifierForPage(senderParameters.pageProxyIdentifier);
 
     // Don't propagate web page gestures from content scripts to extension pages.
     bool resolvedUserGesture = userGesture && senderParameters.contentWorldType != WebExtensionContentWorldType::ContentScript;
@@ -459,6 +501,7 @@ void WebExtensionContext::runtimeWebPageSendMessage(const String& extensionID, c
 
     WebExtensionMessageSenderParameters completeSenderParameters = senderParameters;
     completeSenderParameters.tabParameters = tab->parameters();
+    completeSenderParameters.windowIdentifier = windowIdentifierForPage(senderParameters.pageProxyIdentifier);
 
     auto url = completeSenderParameters.url;
     auto validMatchPatterns = protect(destinationExtension->extension())->externallyConnectableMatchPatterns();
@@ -484,13 +527,15 @@ void WebExtensionContext::runtimeWebPageSendMessage(const String& extensionID, c
         auto callbackAggregator = EagerCallbackAggregator<void(std::expected<String, WebExtensionError>)>::create(WTF::move(completionHandler), { });
 
         for (auto& process : mainWorldProcesses) {
-            process->sendWithAsyncReply(Messages::WebExtensionContextProxy::DispatchRuntimeMessageEvent(WebExtensionContentWorldType::Main, messageJSON, std::nullopt, completeSenderParameters, resolvedUserGesture), [callbackAggregator](String&& replyJSON) {
-                // A null reply means no listeners replied. Don't call the callbackAggregator
+            process->sendWithAsyncReply(Messages::WebExtensionContextProxy::DispatchRuntimeMessageEvent(WebExtensionContentWorldType::Main, WebExtensionMessage { messageJSON }, std::nullopt, completeSenderParameters, resolvedUserGesture), [callbackAggregator](std::optional<WebExtensionMessage>&& reply) {
+                // A missing reply means no listeners replied. Don't call the callbackAggregator
                 // to give other listeners in a different process a chance to reply.
-                if (replyJSON.isNull())
+                if (!reply)
                     return;
 
-                callbackAggregator.get()(WTF::move(replyJSON));
+                // Replies to a web page are always JSON.
+                if (auto replyJSON = reply->json())
+                    callbackAggregator.get()(WTF::move(*replyJSON));
             }, identifier());
         }
     });
@@ -523,6 +568,7 @@ void WebExtensionContext::runtimeWebPageConnect(const String& extensionID, WebEx
 
     WebExtensionMessageSenderParameters completeSenderParameters = senderParameters;
     completeSenderParameters.tabParameters = tab->parameters();
+    completeSenderParameters.windowIdentifier = windowIdentifierForPage(senderParameters.pageProxyIdentifier);
 
     auto url = completeSenderParameters.url;
     auto validMatchPatterns = protect(destinationExtension->extension())->externallyConnectableMatchPatterns();

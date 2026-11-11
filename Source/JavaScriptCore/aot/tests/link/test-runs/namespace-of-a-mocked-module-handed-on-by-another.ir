@@ -1,0 +1,44 @@
+# under a mock a module may have two objects. Which of them another module hands on goes by when that one was linked, which only the run time knows: so the name finds anything
+# space.js, which a test mocks: export const inner = "real inner"   lib.js: export * as space from "./space.js"   main.test.js: import * as ns from "./lib.js"; held = ns.space
+# the control: own, which lib.js declares itself, is proven: lib.js leads to a mock and is none
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link variables mechanisms=all
+# CHECK-NOT: variable g1 proven=
+# CHECK: variable g3 proven={{*}}string
+# RUN(MOCKS): test-run
+# MOCKS-NOT: through-mock m1 "own"
+# MOCKS: through-mock m1 "space"
+# MOCKS: through-mock m2 "inner"
+
+module m0 path="/main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/lib.js" displayPath="lib.js" body=f1 requests=[{target=m2 completes=true}] exports=[{name="own" variable=g2}, {name="space" kind=Namespace module=m2}]
+module m2 path="/space.js" displayPath="space.js" flags=[MayBeMocked] body=f2 exports=[{name="inner" variable=g0}]
+entry module=m0
+variable g0 name="inner" module=m2 declared={type=anything} flags=[IsReplaceable]
+variable g1 name="held" module=m0 declared={type=anything}
+variable g2 name="own" module=m1 declared={type=anything}
+variable g3 name="out" module=m0 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="space"
+    PutModuleVariable v1 variable=g1
+    v3 = PropGet v0 key="own"
+    PutModuleVariable v3 variable=g3
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="own"
+    PutModuleVariable v0 variable=g2
+    v2 = Undefined
+    Return v2
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="real inner"
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}

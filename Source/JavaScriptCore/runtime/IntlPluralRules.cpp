@@ -27,6 +27,7 @@
 #include "config.h"
 #include "IntlPluralRules.h"
 
+#include "AOTRemovableFeature.h"
 #include "IntlNumberFormatInlines.h"
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
@@ -49,6 +50,12 @@ void UPluralRulesDeleter::operator()(UPluralRules* pluralRules)
 }
 
 const ClassInfo IntlPluralRules::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlPluralRules) };
+
+NEVER_INLINE void IntlPluralRules::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(IntlOther, &IntlPluralRules::destroy);
+    static_cast<IntlPluralRules*>(cell)->IntlPluralRules::~IntlPluralRules();
+}
 
 // Approximate size of UPluralRules for GC memory pressure reporting, measured empirically with uplrules_open + select.
 static constexpr size_t estimatedUPluralRulesSize = 1000;

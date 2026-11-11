@@ -70,9 +70,13 @@ dictionary WebExtensionSendMessageOptions {
     [MainWorldOnly] void openOptionsPage([Optional, CallbackHandler] function callback);
     [MainWorldOnly] void reload();
 
-    [MainWorldOnly] readonly attribute any lastError;
+    readonly attribute any lastError;
 
-    [ProcessArgumentsLeftToRight, RaisesStringException, NeedsPageIdentifier, NeedsFrame] void sendMessage([Optional] DOMString extensionID, [Serialization=JSON] any message, [Optional, JSONValue] any options, [Optional, CallbackHandler] function callback);
+    [MainWorldOnly, NeedsScriptContext, ImplementedAs=onInstalledReason] readonly attribute any OnInstalledReason;
+    [MainWorldOnly, NeedsScriptContext, ImplementedAs=platformArch] readonly attribute any PlatformArch;
+    [MainWorldOnly, NeedsScriptContext, ImplementedAs=platformOS] readonly attribute any PlatformOs;
+
+    [ProcessArgumentsLeftToRight, RaisesStringException, NeedsPageIdentifier, NeedsFrame] void sendMessage([Optional] DOMString extensionID, [Serialization=Message] any message, [Optional, JSONValue] any options, [Optional, CallbackHandler] function callback);
     [RaisesStringException, NeedsPageIdentifier, NeedsFrame, NeedsScriptContext] WebExtensionAPIPort connect([Optional] DOMString extensionID, [Optional, JSONValue] any options);
 
     [MainWorldOnly, Dynamic, NeedsFrame] void sendNativeMessage([Optional] DOMString applicationID, [Serialization=JSON] any message, [Optional, CallbackHandler] function callback);

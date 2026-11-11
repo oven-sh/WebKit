@@ -65,6 +65,7 @@
 #include "StyleComputedStyle+InitialInlines.h"
 #include "StyleFontPaletteInlines.h"
 #include "StyleExtractorState.h"
+#include "StyleFontSizeFunctions.h"
 #include "StyleInterpolation.h"
 #include "StyleKeyword+CSSValueConversion.h"
 #include "StyleKeyword+CSSValueCreation.h"
@@ -655,6 +656,15 @@ template<CSSPropertyID> struct WebkitColumnBreakSharedAdaptor {
     }
 };
 
+// Text zoom is part of the exposed font size. Pages read it to detect text zoom.
+inline float fontSizeIncludingTextZoom(const ExtractorState& state)
+{
+    auto size = state.style->fontDescription().unzoomedUsedSize();
+    if (is<SVGElement>(state.element))
+        return size;
+    return size * textZoomFactorForFontSize(state.style, state.element->document());
+}
+
 // MARK: - Adaptors
 
 // Adaptors are used to implement the logic for extracting a value from a ComputedStyle and performing some operation of the CSS value equivalent. This allows the same code to be used for CSS creation and serialization.
@@ -732,7 +742,7 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyID::LineHeight> {
                 if (state.valueType == ExtractorState::PropertyValueType::Computed)
                     return functor(number);
 
-                return functor(LineHeight::Length { number.value * state.style->fontDescription().unzoomedUsedSize() });
+                return functor(LineHeight::Length { number.value * fontSizeIncludingTextZoom(state) });
             }
         );
     }
@@ -751,7 +761,7 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyID::FontFamily> {
 template<> struct PropertyExtractorAdaptor<CSSPropertyID::FontSize> {
     template<typename F> decltype(auto) computedValue(ExtractorState& state, NOESCAPE const F& functor) const
     {
-        return functor(Length<CSS::Nonnegative> { state.style->fontDescription().unzoomedUsedSize() });
+        return functor(Length<CSS::Nonnegative> { fontSizeIncludingTextZoom(state) });
     }
 };
 
@@ -2047,8 +2057,7 @@ template<CSSPropertyID property> inline Ref<CSSValue> extractFillLayerPropertySh
         if (layerCount == 1)
             return const_cast<CSSValue&>(shorthandValue);
         auto& list = downcast<CSSValueList>(shorthandValue);
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<CSSValue&>(*list.item(layerIndex % list.size()));
+        return const_cast<CSSValue&>(*list.item(layerIndex % list.size()));
     };
 
     CSSValueListBuilder layers;
@@ -3191,7 +3200,7 @@ inline RefPtr<CSSValue> ExtractorCustom::extractFontShorthand(ExtractorState& st
     if (!propertiesResetByShorthandAreExpressible())
         return computedFont;
 
-    computedFont->size = createCSSValue(state.pool, state.style, Length<> { description.unzoomedUsedSize() });
+    computedFont->size = createCSSValue(state.pool, state.style, Length<> { fontSizeIncludingTextZoom(state) });
 
     auto computedLineHeight = ExtractorGenerated::extractValue(state, CSSPropertyID::LineHeight);
     if (computedLineHeight && !isValueID(*computedLineHeight, CSSValueID::Normal))

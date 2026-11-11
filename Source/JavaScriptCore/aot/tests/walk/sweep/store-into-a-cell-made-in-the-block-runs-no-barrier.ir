@@ -1,0 +1,26 @@
+# const made = make(); made.left = l; made.right = r; return made;
+# v3 is made in the block of v4 and v5, and between it and them nothing collects, runs other code or takes the cell to keep it: the collector cannot have marked it, so neither store runs a barrier.
+# v6, into a cell that came from outside, keeps its own.
+# RUN: sweep-code
+# CHECK: v4 @Void = SetMappedArgument v3{{*}}OwnerIsYoung
+# CHECK: v5 @Void = SetMappedArgument v3{{*}}OwnerIsYoung
+# CHECK: v6 @Void = SetMappedArgument v0
+# CHECK-NOT: OwnerIsYoung
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Return v0
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @Cell, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     v3: anything @Cell = NewPromise traits=[mayCollect, mayTouchMemory]
+#     v4 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v5 @Void = SetMappedArgument v3, v1 index=1 traits=[mayWriteObservableState, mayTouchMemory]
+#     v6 @Void = SetMappedArgument v0, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     Return v3
+# }
+# -- end of code

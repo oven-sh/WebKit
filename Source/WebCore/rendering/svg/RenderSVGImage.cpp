@@ -47,13 +47,9 @@
 #include "SVGImageIntrinsicSizing.h"
 #include "SVGVisitedRendererTracking.h"
 #include "Settings.h"
-#include "StyleImageDrawingExtras.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
-
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-#include <WebKitAdditions/AXCustomColorModeController.h>
-#endif
 
 namespace WebCore {
 
@@ -95,7 +91,7 @@ void RenderSVGImage::layout()
 
     setCurrentSVGLayoutRect({ SVGContainerLayout::layoutLocationRelativeToContainer(*this), enclosingLayoutRect(m_objectBoundingBox).size() });
 
-    updateLayerTransform();
+    updateTransform();
     updateCachedVisualOverflowRect();
 
     repainter.repaintAfterLayout();
@@ -157,34 +153,8 @@ ImageDrawResult RenderSVGImage::paintIntoRect(PaintInfo& paintInfo, const FloatR
     if (!styleImage || !styleImage->canDrawAtSize(*this, rect.size()))
         return ImageDrawResult::DidNothing;
 
-    auto concreteObjectSize = ConcreteObjectSize::fixed(imageRenderingSize);
-
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-    auto invertContent = [&] {
-        if (styleImage->drawsSVGImage())
-            return AXCustomColorModeController::shouldInvertSVGImage(*this, *styleImage);
-
-        return AXCustomColorModeController::shouldInvertContentImage(*this, rect.size());
-    };
-#endif
-
-    ImageDrawingOptions options {
-        CompositeOperator::SourceOver,
-        DecodingMode::Synchronous,
-        imageOrientation(),
-        styleImage->interpolationQualityForImageDraw(paintInfo.context(), *this, concreteObjectSize, styleImage.get(), LayoutSize(rect.size())),
-        settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-        invertContent() ? InvertContent::Yes : InvertContent::No,
-#endif
-        settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No,
-        IgnoreRootPreserveAspectRatio::Yes,
-        settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No,
-        paintInfo.paintBehavior.contains(PaintBehavior::DrawsHDRContent) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
-        style().dynamicRangeLimit().toPlatformDynamicRangeLimit()
-    };
-
-    auto drawResult = styleImage->draw(paintInfo.context(), *this, concreteObjectSize, rect, sourceRect, options);
+    auto descriptor = calculateSVGImageDrawDescriptor(*styleImage, *this, paintInfo.context(), imageRenderingSize, rect.size(), paintInfo.paintBehavior);
+    auto drawResult = styleImage->draw(paintInfo.context(), *this, descriptor, rect, sourceRect);
     if (drawResult == ImageDrawResult::DidRequestDecoding)
         protect(imageResource().cachedImage())->addClientWaitingForAsyncDecoding(protect(cachedImageClient()));
 
@@ -326,6 +296,13 @@ void RenderSVGImage::notifyFinished(CachedResource& newImage, const NetworkLoadM
     RenderSVGModelObject::notifyFinished(newImage, metrics, loadWillContinueInAnotherProcess);
 }
 
+void RenderSVGImage::forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>& function)
+{
+    RenderSVGModelObject::forEachStyleImage(function);
+    if (RefPtr image = imageResource().styleImage())
+        function(*image);
+}
+
 void RenderSVGImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
 {
     if (renderTreeBeingDestroyed() || !parent())
@@ -341,7 +318,7 @@ void RenderSVGImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
 
     repaintOrMarkForLayout(rect);
 
-    if (CheckedPtr cache = protect(document())->existingAXObjectCache())
+    if (CheckedPtr cache = document().existingAXObjectCache())
         cache->deferRecomputeIsIgnoredIfNeeded(protect(imageElement()).ptr());
 
     if (RefPtr image = imageResource().cachedImage(); image && image->currentFrameIsComplete()) {

@@ -1,0 +1,425 @@
+# `const table = new Uint8Array(256).fill(1)`: A METHOD THAT A BUILT-IN CLASS BELOW REDEFINES. Buffer stands below Uint8Array and has a fill, an indexOf, a lastIndexOf, an includes, a slice .. of its own.
+# A call by name on an instance of a built-in class went to unseen code wherever a class below has a member of that name: the table was typed `anything`, every read off it stayed generic, and the library came into the image.
+# Now a site knows whether its objects are of the class itself: what a constructor constructs for itself, what a row says `.exactly`, what an operation of the engine makes. There the member of the class itself is called.
+# Any other site (what slice() gives; a site of the class itself that met such a one) calls EVERY definition that an instance may find: that of the class and that of each class below.
+# export const filled = new Uint8Array(8).fill(1);
+# export const twice = new Uint8Array(8).fill(1).fill(2);
+# export const found = new Uint8Array(8).indexOf(1);
+# export const last = new Uint8Array(8).lastIndexOf(1);
+# export const has = new Uint8Array(8).includes(1);
+# export const sliced = new Uint8Array(8).slice(1);
+# export const slicedFilled = new Uint8Array(8).slice(1).fill(2);
+# export const slicedFound = new Uint8Array(8).slice(1).indexOf(2);
+# function either(first) { return first ? new Uint8Array(8) : new Uint8Array(8).slice(1); }
+# export const eitherFilled = either(found === 1).fill(3);
+# export const eitherFound = either(found === 2).indexOf(3);
+# g0 = eitherFilled, g1 = eitherFound, g2 = filled, g3 = found, g4 = has, g5 = last, g6 = sliced, g7 = slicedFilled, g8 = slicedFound, g9 = twice
+# OPTIONS: mechanisms=all exclude=CodeOutsideImage
+# RUN: link variables
+# CHECK: variable g0 proven=absent|Uint8Array
+# CHECK: variable g1 proven=int|absent
+# CHECK: variable g2 proven=absent|Uint8Array
+# CHECK: variable g3 proven=int|absent
+# CHECK: variable g4 proven=boolean|absent
+# CHECK: variable g5 proven=int|absent
+# CHECK: variable g6 proven=absent|Uint8Array
+# CHECK: variable g7 proven=absent|Uint8Array
+# CHECK: variable g8 proven=int|absent
+# CHECK: variable g9 proven=absent|Uint8Array
+module m0 path="chains3.js" displayPath="chains3.js" body=f0 exports=[{name="eitherFilled" variable=g0}, {name="eitherFound" variable=g1}, {name="filled" variable=g2}, {name="found" variable=g3}, {name="has" variable=g4}, {name="last" variable=g5}, {name="sliced" variable=g6}, {name="slicedFilled" variable=g7}, {name="slicedFound" variable=g8}, {name="twice" variable=g9}] namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/prelude/array-search.ts" displayPath="/$bun/js/prelude/array-search.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/prelude/decorators.ts" displayPath="/$bun/js/prelude/decorators.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+entry module=m0
+layout L0 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+variable g0 name="eitherFilled" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="eitherFound" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="filled" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g3 name="found" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g4 name="has" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g5 name="last" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g6 name="sliced" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g7 name="slicedFilled" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g8 name="slicedFound" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g9 name="twice" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g10 name="firstSearchedIndex" module=m2 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g11 name="holdsBoxedValues" module=m2 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g12 name="indexOfUndefined" module=m2 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g13 name="metadataSymbol" module=m3 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g14 name="defineNormalProperty" module=m3 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=Uint8Array @26
+    v3 = Integer integer=8 @37
+    v4 = Construct v2, -, v3 calleeName="Uint8Array" @26
+    v5 = PropGet v4 key="fill" @38
+    v6 = Integer integer=1 @45
+    v7 = Call v5, v4, v6 calleeKey="fill" calleeName="fill" @40
+    PutModuleVariable v7 variable=g2 @13
+    v9 = Builtin builtin=Uint8Array @74
+    v10 = Integer integer=8 @85
+    v11 = Construct v9, -, v10 calleeName="Uint8Array" @74
+    v12 = PropGet v11 key="fill" @86
+    v13 = Integer integer=1 @93
+    v14 = Call v12, v11, v13 calleeKey="fill" calleeName="fill" @88
+    v15 = PropGet v14 key="fill" @94
+    v16 = Integer integer=2 @101
+    v17 = Call v15, v14, v16 calleeKey="fill" calleeName="fill" @96
+    PutModuleVariable v17 variable=g9 @62
+    v19 = Builtin builtin=Uint8Array @130
+    v20 = Integer integer=8 @141
+    v21 = Construct v19, -, v20 calleeName="Uint8Array" @130
+    v22 = PropGet v21 key="indexOf" @142
+    v23 = Integer integer=1 @152
+    v24 = Call v22, v21, v23 calleeKey="indexOf" calleeName="indexOf" @144
+    PutModuleVariable v24 variable=g3 @118
+    v26 = Builtin builtin=Uint8Array @180
+    v27 = Integer integer=8 @191
+    v28 = Construct v26, -, v27 calleeName="Uint8Array" @180
+    v29 = PropGet v28 key="lastIndexOf" @192
+    v30 = Integer integer=1 @206
+    v31 = Call v29, v28, v30 calleeKey="lastIndexOf" calleeName="lastIndexOf" @194
+    PutModuleVariable v31 variable=g5 @169
+    v33 = Builtin builtin=Uint8Array @233
+    v34 = Integer integer=8 @244
+    v35 = Construct v33, -, v34 calleeName="Uint8Array" @233
+    v36 = PropGet v35 key="includes" @245
+    v37 = Integer integer=1 @256
+    v38 = Call v36, v35, v37 calleeKey="includes" calleeName="includes" @247
+    PutModuleVariable v38 variable=g4 @223
+    v40 = Builtin builtin=Uint8Array @286
+    v41 = Integer integer=8 @297
+    v42 = Construct v40, -, v41 calleeName="Uint8Array" @286
+    v43 = PropGet v42 key="slice" @298
+    v44 = Integer integer=1 @306
+    v45 = Call v43, v42, v44 calleeKey="slice" calleeName="slice" @300
+    PutModuleVariable v45 variable=g6 @273
+    v47 = Builtin builtin=Uint8Array @342
+    v48 = Integer integer=8 @353
+    v49 = Construct v47, -, v48 calleeName="Uint8Array" @342
+    v50 = PropGet v49 key="slice" @354
+    v51 = Integer integer=1 @362
+    v52 = Call v50, v49, v51 calleeKey="slice" calleeName="slice" @356
+    v53 = PropGet v52 key="fill" @363
+    v54 = Integer integer=2 @370
+    v55 = Call v53, v52, v54 calleeKey="fill" calleeName="fill" @365
+    PutModuleVariable v55 variable=g7 @323
+    v57 = Builtin builtin=Uint8Array @405
+    v58 = Integer integer=8 @416
+    v59 = Construct v57, -, v58 calleeName="Uint8Array" @405
+    v60 = PropGet v59 key="slice" @417
+    v61 = Integer integer=1 @425
+    v62 = Call v60, v59, v61 calleeKey="slice" calleeName="slice" @419
+    v63 = PropGet v62 key="indexOf" @426
+    v64 = Integer integer=2 @436
+    v65 = Call v63, v62, v64 calleeKey="indexOf" calleeName="indexOf" @428
+    PutModuleVariable v65 variable=g8 @387
+    v67 = Integer integer=1 @575
+    v68 = StrictEq v24, v67 @575
+    v69 = Call v1, -, v68 calleeName="either" @558
+    v70 = PropGet v69 key="fill" @576
+    v71 = Integer integer=3 @583
+    v72 = Call v70, v69, v71 calleeKey="fill" calleeName="fill" @578
+    PutModuleVariable v72 variable=g0 @543
+    v74 = Integer integer=2 @631
+    v75 = StrictEq v24, v74 @631
+    v76 = Call v1, -, v75 calleeName="either" @614
+    v77 = PropGet v76 key="indexOf" @632
+    v78 = Integer integer=3 @642
+    v79 = Call v77, v76, v78 calleeKey="indexOf" calleeName="indexOf" @634
+    PutModuleVariable v79 variable=g1 @600
+    v81 = Undefined @600
+    Return v81 @600
+}
+function f1 name="either" module=m0 position=440 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: boolean):
+    v1 = ToBoolean v0 @472
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0) @472
+  b1(v2):
+    v3 = Builtin builtin=Uint8Array @484
+    v4 = Integer integer=8 @495
+    v5 = Construct v3, -, v4 calleeName="Uint8Array" @484
+    Return v5 @518
+  b2(v6):
+    v7 = Builtin builtin=Uint8Array @504
+    v8 = Integer integer=8 @515
+    v9 = Construct v7, -, v8 calleeName="Uint8Array" @504
+    v10 = PropGet v9 key="slice" @516
+    v11 = Integer integer=1 @524
+    v12 = Call v10, v9, v11 calleeKey="slice" calleeName="slice" @518
+    ReturnCall v12 @518
+}
+function f2 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f3 name="firstSearchedIndex" module=m2 position=399 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|number, v1: number):
+    v2 = TypeTest v0 testedType=undefined @490
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @490
+  b1(v3):
+    v4 = Integer @522
+    v5 = Convert v4 declared={type=number} @522
+    Return v5 @522
+  b2(v6):
+    v7 = NarrowByTest v0, v6 @490
+    v8 = Integer @544
+    v9 = GreaterEq v7, v8 @544
+    Branch v9 -> taken b3(), notTaken b7() @544
+  b3():
+    v10 = Less v7, v1 @567
+    Branch v10 -> taken b4(), notTaken b5() @567
+  b4():
+    Jump -> next b6(v7) @576
+  b5():
+    Jump -> next b6(v1) @588
+  b6(v11):
+    v12 = Integer @600
+    v13 = URShift v11, v12 @600
+    v14 = Convert v13 declared={type=number} @600
+    Return v14 @600
+  b7():
+    v15 = Negate v7 @630
+    v16 = Integer integer=1 @669
+    v17 = GreaterEq v15, v16 @669
+    Branch v17 -> taken b8(), notTaken b10() @669
+  b8():
+    v18 = Less v15, v1 @692
+    Branch v18 -> taken b9(), notTaken b10() @692
+  b9():
+    v19 = Integer @732
+    v20 = URShift v15, v19 @732
+    v21 = Sub v1, v20 @732
+    v22 = Integer @740
+    v23 = URShift v21, v22 @740
+    Jump -> next b11(v23) @740
+  b10():
+    v24 = Integer @744
+    Jump -> next b11(v24) @744
+  b11(v25):
+    v26 = Convert v25 declared={type=number} @744
+    Return v26 @744
+}
+function f4 name="holdsBoxedValues" module=m2 position=750 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: number):
+    v1 = Integer integer=3 @819
+    v2 = StrictEq v0, v1 @819
+    v3 = ToBoolean v2 @810
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0) @810
+  b1(v4):
+    Jump -> next b3(v4) @810
+  b2(v5):
+    v6 = Integer integer=1 @855
+    v7 = StrictEq v0, v6 @855
+    Jump -> next b3(v7) @855
+  b3(v8):
+    v9 = Convert v8 declared={type=boolean} @855
+    Return v9 @855
+}
+function f5 name="indexOfUndefined" module=m2 position=878 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|Array, v1: number, v2: number):
+    Jump -> next b1(v1) @965
+  b1(v3: number):
+    LoopHint @965
+    v5 = Less v3, v2 @980
+    Branch v5 -> taken b2(), notTaken b8() @980
+  b2():
+    v6 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @1024
+    v7 = Convert v3 declared={type=int flags=[IsFromCompiler, IsClaim]} @1024
+    v8 = HasContiguousIndex v6, v7 @1024
+    v9 = Convert v8 declared={type=boolean} @1024
+    v10 = ToBoolean v9 @1067
+    Branch v10 -> taken b3(| 0), notTaken b6(| 0) @1067
+  b3(v11):
+    v12 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @1074
+    v13 = Convert v3 declared={type=int flags=[IsFromCompiler, IsClaim]} @1074
+    v14 = GetContiguousIndex v12, v13 @1074
+    v15 = TypeTest v14 testedType=undefined @1074
+    Branch v15 -> taken b4(| 0), notTaken b5(| 0) @1074
+  b4(v16):
+    v17 = Convert v3 declared={type=number} @1139
+    Return v17 @1139
+  b5(v18):
+    Jump -> next b7() @1074
+  b6(v19):
+    Jump -> next b7() @1067
+  b7():
+    v20 = Increment v3 @988
+    v21 = Convert v20 declared={type=number} @988
+    Jump -> next b1(v21) @988
+  b8():
+    v22 = Integer integer=-1 @1159
+    v23 = Convert v22 declared={type=number} @1159
+    Return v23 @1159
+}
+function f6 name="indexOf" module=m2 position=1166 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=ArraySearchIndexOf thisType={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} parameters=[{type=anything}, {type=undefined|number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|Array, v1: anything, v2: undefined|number):
+    v3 = PropGet v0 key="length" @1284
+    v4 = Integer @1300
+    v5 = URShift v3, v4 @1300
+    v6 = GetModuleVariable variable=g10 @1317
+    v7 = Call v6, -, v2, v5 calleeName="firstSearchedIndex" @1317
+    v8 = Convert v7 declared={type=number} @1317
+    v9 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @1371
+    v10 = ArrayStorageKind v9 @1371
+    v11 = Integer integer=2 @1411
+    v12 = StrictEq v10, v11 @1411
+    Branch v12 -> taken b1(), notTaken b9() @1411
+  b1():
+    v13 = TypeTest v1 testedType=number @1442
+    Branch v13 -> taken b2(| 0), notTaken b8(| 0) @1442
+  b2(v14):
+    v15 = NarrowByTest v1, v14 @1442
+    Jump -> next b3(v8) @1487
+  b3(v16: number):
+    LoopHint @1487
+    v18 = Less v16, v5 @1502
+    Branch v18 -> taken b4(), notTaken b7() @1502
+  b4():
+    v19 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @1531
+    v20 = Convert v16 declared={type=int flags=[IsFromCompiler, IsClaim]} @1531
+    v21 = GetDoubleIndex v19, v20 @1531
+    v22 = StrictEq v21, v15 @1564
+    Branch v22 -> taken b5(), notTaken b6() @1564
+  b5():
+    v23 = Convert v16 declared={type=number} @1581
+    Return v23 @1581
+  b6():
+    v24 = Increment v16 @1510
+    v25 = Convert v24 declared={type=number} @1510
+    Jump -> next b3(v25) @1510
+  b7():
+    v26 = Integer integer=-1 @1605
+    v27 = Convert v26 declared={type=number} @1605
+    Return v27 @1605
+  b8(v28):
+    v29 = Integer integer=-1 @1479
+    v30 = Convert v29 declared={type=number} @1479
+    Return v30 @1479
+  b9():
+    v31 = GetModuleVariable variable=g11 @1619
+    v32 = Call v31, -, v10 calleeName="holdsBoxedValues" @1619
+    v33 = ToBoolean v32 @1619
+    Branch v33 -> taken b10(| 0), notTaken b18(| 0) @1619
+  b10(v34):
+    v35 = TypeTest v1 testedType=undefined @1653
+    Branch v35 -> taken b11(| 0), notTaken b12(| 0) @1653
+  b11(v36):
+    v37 = GetModuleVariable variable=g12 @1684
+    v38 = Call v37, -, v0, v8, v5 calleeName="indexOfUndefined" @1684
+    ReturnCall v38 casts=[{declared={type=number}}] @1684
+  b12(v39):
+    v40 = NarrowByTest v1, v39 @1653
+    Jump -> next b13(v8) @1727
+  b13(v41: number):
+    LoopHint @1727
+    v43 = Less v41, v5 @1742
+    Branch v43 -> taken b14(), notTaken b17() @1742
+  b14():
+    v44 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @1771
+    v45 = Convert v41 declared={type=int flags=[IsFromCompiler, IsClaim]} @1771
+    v46 = GetContiguousIndex v44, v45 @1771
+    v47 = StrictEq v46, v40 @1817
+    Branch v47 -> taken b15(), notTaken b16() @1817
+  b15():
+    v48 = Convert v41 declared={type=number} @1834
+    Return v48 @1834
+  b16():
+    v49 = Increment v41 @1750
+    v50 = Convert v49 declared={type=number} @1750
+    Jump -> next b13(v50) @1750
+  b17():
+    v51 = Integer integer=-1 @1858
+    v52 = Convert v51 declared={type=number} @1858
+    Return v52 @1858
+  b18(v53):
+    Jump -> next b19(v8) @1868
+  b19(v54: number):
+    LoopHint @1868
+    v56 = Less v54, v5 @1883
+    Branch v56 -> taken b20(), notTaken b25() @1883
+  b20():
+    v57 = ElemHas v0, v54 @1916
+    v58 = ToBoolean v57 @1910
+    Branch v58 -> taken b21(| 0), notTaken b23(| 0) @1910
+  b21(v59):
+    v60 = ElemGet v0, v54 @1927
+    v61 = StrictEq v60, v1 @1943
+    Branch v61 -> taken b22(), notTaken b24() @1943
+  b22():
+    v62 = Convert v54 declared={type=number} @1960
+    Return v62 @1960
+  b23(v63):
+    Jump -> next b24() @1910
+  b24():
+    v64 = Increment v54 @1891
+    v65 = Convert v64 declared={type=number} @1891
+    Jump -> next b19(v65) @1891
+  b25():
+    v66 = Integer integer=-1 @1980
+    v67 = Convert v66 declared={type=number} @1980
+    Return v67 @1980
+}
+function f7 name="metadataSymbol" module=m3 position=2395 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0():
+    v0 = Builtin builtin=Symbol @2468
+    v1 = PropGet v0 key="metadata" @2468
+    v2 = ToBoolean v1 @2467
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @2467
+  b1(v3):
+    Return v3 @2502
+  b2(v4):
+    v5 = Builtin builtin=Symbol @2495
+    v6 = Builtin builtin=SymbolFor @2495
+    v7 = String string="Symbol.metadata" @2506
+    v8 = Call v6, v5, v7 calleeName="Symbol.for" @2502
+    ReturnCall v8 casts=[{declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]}}] @2502
+}
+function f8 name="defineNormalProperty" module=m3 position=2638 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ElemHas v0, v1 @2753
+    v4 = ToBoolean v3 @2749
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0) @2749
+  b1(v5):
+    v6 = Builtin builtin=Object @2769
+    v7 = Builtin builtin=ObjectDefineProperty @2769
+    v8 = Boolean boolean=true @2818
+    v9 = Convert v8 declared={type=undefined|boolean} @2818
+    v10 = Boolean boolean=true @2838
+    v11 = Convert v10 declared={type=undefined|boolean} @2838
+    v12 = Boolean boolean=true @2854
+    v13 = Convert v12 declared={type=undefined|boolean} @2854
+    v14 = NewObject -, v9, v11, v13, v2 layout=L0 fields=[1, 0, 5, 4] @2804
+    v15 = FinishObject v14 @2804
+    v16 = Call v7, v6, v0, v1, v15 calleeName="Object.defineProperty" @2776
+    ReturnCall v16 @2776
+  b2(v17):
+    ElemSet v0, v1, v2 @2876
+    Return v2 @2876
+}
+function f9 name="setDecoratorMetadata" module=m3 position=3436 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=DecoratorsSetDecoratorMetadata thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g14 @3547
+    v3 = GetModuleVariable variable=g13 @3576
+    v4 = Call v3 calleeName="metadataSymbol" @3576
+    v5 = Call v2, -, v0, v4, v1 calleeName="defineNormalProperty" @3547
+    ReturnCall v5 @3547
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
+runtimefunction id=ArraySearchIndexOf function=f6
+runtimefunction id=DecoratorsSetDecoratorMetadata function=f9

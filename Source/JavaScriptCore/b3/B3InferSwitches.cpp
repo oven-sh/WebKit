@@ -33,7 +33,9 @@
 #include "B3InsertionSet.h"
 #include "B3Limits.h"
 #include "B3PhaseScope.h"
+#include "B3ProcedureInlines.h"
 #include "B3SwitchValue.h"
+#include "B3UpsilonValue.h"
 #include "B3UseCounts.h"
 #include "B3ValueInlines.h"
 #include <wtf/HashSet.h>
@@ -70,7 +72,7 @@ public:
                 dataLog("Performing fixpoint iteration:\n");
             
             for (BasicBlock* block : m_proc)
-                changed |= attemptToMergeWithPredecessor(block);
+                changed |= attemptToMergeWithPredecessor(block) || attemptToMergeComparisonUsedAsValue(block);
 
             everChanged |= changed;
         }
@@ -248,6 +250,79 @@ private:
                 switchValue->appendCase(switchCase);
         }
         return true;
+    }
+
+    // When `a == 1 || a == 2 || a == 3 || a == 4` is used as a value, the first three comparisons branch to a block that produces true and the last comparison is the result.
+    // Turn the last comparison into a case with the same target, as long as all the cases fit in one bit test.
+    bool attemptToMergeComparisonUsedAsValue(BasicBlock* block)
+    {
+        if (!m_proc.policy().switchLowering.usesBitTests || block->numPredecessors() != 1 || block->last()->opcode() != Jump)
+            return false;
+        BasicBlock* predecessor = block->predecessor(0);
+        SwitchValue* switchValue = predecessor->last()->as<SwitchValue>();
+        if (!switchValue || predecessor->fallThrough().block() != block || switchValue->numCaseValues() + 1 < Limits::minCasesForBitTests)
+            return false;
+
+        UpsilonValue* upsilon = nullptr;
+        for (Value* value : *block) {
+            if (value->isFree() || value == block->last())
+                continue;
+            if (auto* candidate = value->as<UpsilonValue>(); candidate && !upsilon) {
+                upsilon = candidate;
+                continue;
+            }
+            if ((value->opcode() == Equal || value->opcode() == NotEqual) && value->child(0) == switchValue->child(0) && value->child(1)->hasInt())
+                continue;
+            return false;
+        }
+        if (!upsilon)
+            return false;
+        Value* comparison = upsilon->child(0);
+        if ((comparison->opcode() != Equal && comparison->opcode() != NotEqual) || comparison->child(0) != switchValue->child(0) || !comparison->child(1)->hasInt() || useCounts().numUses(comparison) != 1)
+            return false;
+        if (!block->values().contains(comparison))
+            return false;
+
+        int32_t resultOnMatch = comparison->opcode() == Equal;
+        int64_t caseValue = comparison->child(1)->asInt();
+        int64_t smallest = caseValue;
+        int64_t largest = caseValue;
+        std::optional<FrequentedBlock> target;
+        for (SwitchCase switchCase : switchValue->cases(predecessor)) {
+            if (switchCase.caseValue() == caseValue)
+                return false;
+            smallest = std::min(smallest, switchCase.caseValue());
+            largest = std::max(largest, switchCase.caseValue());
+            if (!target && onlyProducesConstant(switchCase.targetBlock(), upsilon->phi(), resultOnMatch, block->successorBlock(0)))
+                target = switchCase.target();
+        }
+        if (!target || static_cast<uint64_t>(largest) - static_cast<uint64_t>(smallest) >= 64)
+            return false;
+
+        m_grown = nullptr;
+        Value* resultOnMismatch = m_proc.add<Const32Value>(comparison->origin(), !resultOnMatch);
+        block->values().insert(0, resultOnMismatch);
+        resultOnMismatch->owner = block;
+        upsilon->child(0) = resultOnMismatch;
+        comparison->replaceWithNopIgnoringType();
+        switchValue->appendCase(predecessor, SwitchCase(caseValue, *target));
+        return true;
+    }
+
+    static bool onlyProducesConstant(BasicBlock* block, Value* phi, int32_t constant, BasicBlock* successor)
+    {
+        if (block->last()->opcode() != Jump || block->successorBlock(0) != successor)
+            return false;
+        bool foundUpsilon = false;
+        for (Value* value : *block) {
+            if (value->isFree() || value == block->last())
+                continue;
+            auto* upsilon = value->as<UpsilonValue>();
+            if (!upsilon || foundUpsilon || upsilon->phi() != phi || !upsilon->child(0)->isInt32(constant))
+                return false;
+            foundUpsilon = true;
+        }
+        return foundUpsilon;
     }
 
     struct SwitchDescription {

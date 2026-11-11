@@ -43,14 +43,14 @@ class CSSAnimation final : public StyleOriginatedAnimation {
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CSSAnimation);
 public:
     static Ref<CSSAnimation> create(const Styleable&, Style::Animation&&, Style::ZoomFactor, const Style::ComputedStyle* oldStyle, const Style::ComputedStyle& newStyle, const Style::ResolutionContext&);
-    ~CSSAnimation() = default;
+    ~CSSAnimation();
 
     const String& animationName() const LIFETIME_BOUND { return m_animationName.name; }
     const Style::ScopedName& scopedAnimationName() const LIFETIME_BOUND { return m_animationName; }
 
-    void LEGACY_NODELETE effectTimingWasUpdatedUsingBindings(const OptionalEffectTiming&);
-    void LEGACY_NODELETE effectKeyframesWereSetUsingBindings();
-    void LEGACY_NODELETE effectCompositeOperationWasSetUsingBindings();
+    NODELETE void effectTimingWasUpdatedUsingBindings(const OptionalEffectTiming&);
+    NODELETE void effectKeyframesWereSetUsingBindings();
+    NODELETE void effectCompositeOperationWasSetUsingBindings();
     void keyframesRuleDidChange();
     void updateKeyframesIfNeeded(const Style::ComputedStyle* oldStyle, const Style::ComputedStyle& newStyle, const Style::ResolutionContext&);
 

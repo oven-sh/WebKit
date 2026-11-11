@@ -27,6 +27,7 @@
 #if USE(AVFOUNDATION)
 
 #include "BitrateMode.h"
+#include "MediaChannelLayout.h"
 #include <CoreMedia/CoreMedia.h>
 #include <wtf/Forward.h>
 #include <wtf/ThreadSafeWeakPtr.h>
@@ -39,6 +40,27 @@ OBJC_CLASS NSNumber;
 namespace WebCore {
 
 class WebAudioBufferList;
+
+class UniqueAudioConverter {
+public:
+    UniqueAudioConverter() = default;
+    explicit UniqueAudioConverter(AudioConverterRef converter)
+        : m_converter(converter)
+    {
+    }
+    UniqueAudioConverter(UniqueAudioConverter&&) = default;
+    UniqueAudioConverter& operator=(UniqueAudioConverter&&) = default;
+
+    operator AudioConverterRef() const LIFETIME_BOUND { return m_converter.get(); }
+    explicit operator bool() const { return !!m_converter; }
+    bool operator!() const { return !m_converter; }
+
+private:
+    struct Deleter {
+        void operator()(AudioConverterRef) const;
+    };
+    std::unique_ptr<OpaqueAudioConverter, Deleter> m_converter;
+};
 
 class AudioSampleBufferConverter : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<AudioSampleBufferConverter> {
 public:
@@ -66,6 +88,8 @@ public:
         std::optional<bool> usedtx { };
     };
     static RefPtr<AudioSampleBufferConverter> create(Function<void()>&&, const Options&);
+    // Whether a converter created with these options can convert content described by the CMFormatDescription.
+    static bool canConvert(CMFormatDescriptionRef, const Options&);
     ~AudioSampleBufferConverter();
 
     bool isEmpty() const;
@@ -76,7 +100,7 @@ public:
     CMSampleBufferRef getOutputSampleBuffer() const;
     RetainPtr<CMSampleBufferRef> takeOutputSampleBuffer();
 
-    unsigned LEGACY_NODELETE bitRate() const;
+    NODELETE unsigned bitRate() const;
     unsigned preSkip() const { return m_preSkip; }
 
     static void converterOutputBufferCallback(void*, CMBufferQueueTriggerToken);
@@ -84,7 +108,7 @@ public:
 private:
     AudioSampleBufferConverter(Function<void()>&&, const Options&);
     bool initialize();
-    UInt32 LEGACY_NODELETE defaultOutputBitRate(const AudioStreamBasicDescription&) const;
+    NODELETE UInt32 defaultOutputBitRate(const AudioStreamBasicDescription&) const;
 
     static OSStatus audioConverterComplexInputDataProc(AudioConverterRef, UInt32*, AudioBufferList*, AudioStreamPacketDescription**, void*);
 
@@ -97,7 +121,7 @@ private:
     OSStatus provideSourceDataNumOutputPackets(UInt32*, AudioBufferList*, AudioStreamPacketDescription**);
     Ref<GenericPromise> flushInternal(bool isFinished);
 
-    bool LEGACY_NODELETE isPCM() const;
+    NODELETE bool isPCM() const;
     void setTimeFromSample(CMSampleBufferRef);
     void setTimeFromSampleIfDiscontinuous(CMSampleBufferRef);
 
@@ -111,10 +135,11 @@ private:
 
     const Function<void()> m_outputCallback;
 
-    AudioConverterRef m_converter WTF_GUARDED_BY_CAPABILITY(queue()) { nullptr };
+    UniqueAudioConverter m_converter WTF_GUARDED_BY_CAPABILITY(queue());
     AudioStreamBasicDescription m_sourceFormat WTF_GUARDED_BY_CAPABILITY(queue());
     AudioStreamBasicDescription m_destinationFormat WTF_GUARDED_BY_CAPABILITY(queue());
     RetainPtr<CMFormatDescriptionRef> m_destinationFormatDescription WTF_GUARDED_BY_CAPABILITY(queue());
+    std::optional<MediaChannelLayout> m_destinationChannelLayout WTF_GUARDED_BY_CAPABILITY(queue());
     RetainPtr<NSNumber> m_gdrCountNum WTF_GUARDED_BY_CAPABILITY(queue());
     UInt32 m_maxOutputPacketSize WTF_GUARDED_BY_CAPABILITY(queue()) { 0 };
     Vector<AudioStreamPacketDescription> m_destinationPacketDescriptions WTF_GUARDED_BY_CAPABILITY(queue());

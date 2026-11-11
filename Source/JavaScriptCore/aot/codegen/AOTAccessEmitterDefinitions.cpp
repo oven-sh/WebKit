@@ -9,31 +9,29 @@
 #if ENABLE(AOT)
 
 #include "AOTBarrierEmitter.h"
+#include "AOTBuiltinIDTypes.h"
 #include "AOTCellAllocationEmitter.h"
-#include "AOTCodeSizeEstimate.h"
+#include "AOTCellFormat.h"
 #include "AOTConstantEmitter.h"
-#include "AOTDerivedFunctions.h"
 #include "AOTFunctionKinds.h"
+#include "AOTIRProgram.h"
 #include "AOTObjectWords.h"
-#include "AOTPlacement.h"
-#include "AOTPropertyAccessMembers.h"
-#include "AOTPropertyCachesFront.h"
+#include "AOTPendingStars.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTSlotEmitter.h"
+#include "AOTStubCalls.h"
 #include "AOTStubsAllocation.h"
+#include "AOTStubsObjectCopy.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include "JSTypeInfo.h"
+#include <algorithm>
+#include <utility>
+#include <wtf/MathExtras.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-static bool isDefinedByClass(const Program& program, LayoutID classLayout)
-{
-    FunctionID constructor = program.at(classLayout).constructor;
-    if (!constructor)
-        return false;
-    FunctionKind kind = program.at(constructor).kind;
-    return kind == FunctionKind::BaseConstructor || kind == FunctionKind::DerivedConstructor;
-}
 
 static bool operandIsHomeObject(HomeObjectKind kind)
 {
@@ -46,11 +44,32 @@ static bool operandIsHomeObject(HomeObjectKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool captureIsHeldAsBoxedWord(Representation held)
+{
+    switch (held) {
+    case Representation::JSValue:
+    case Representation::Cell:
+        return true;
+    case Representation::Unchosen:
+    case Representation::Void:
+    case Representation::Boolean:
+    case Representation::Int32:
+    case Representation::Int64:
+    case Representation::Double:
+    case Representation::OptionalInt64:
+    case Representation::OptionalDouble:
+    case Representation::Cell32:
+    case Representation::RawWord:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 Boxed AccessEmitter::keyOperand(const OperationContext& context, PropertyKeyID key, ValueID computedKey)
 {
-    if (key)
-        return boxCell(emitter<ConstantEmitter>().keyConstant(context, key));
-    return in<Boxed>(computedKey);
+    if (!key)
+        return in<Boxed>(computedKey);
+    return boxCell(emitter<ConstantEmitter>().keyConstant(context, key));
 }
 
 void AccessEmitter::defineAccessor(const ValueContext& value, uint32_t accessorFlags)
@@ -83,17 +102,23 @@ void AccessEmitter::generateTryDefineLiveBinding(const ValueContext& value)
 
 void AccessEmitter::generateTryReExportFields(const ValueContext& value)
 {
-    const Function& getter = m_program.at(value->function());
-    FunctionID entrypoint = inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, value->function()));
-    Boxed target = in<Boxed>(value->targetOperand());
-    Boxed source = in<Boxed>(value->sourceOperand());
-    // A pass that took a capture away from the getter knows nothing of closures made here: then the written call does the work.
-    if (!entrypoint || getter.captures.size() != 2 || closureCaptureCountsOf(m_program, getter).references != 2) {
+    FunctionID function = value->function();
+    unsigned keyCapture = value->keyIsFirstCapture() ? 0 : 1;
+    auto isHeldAsBoxedWord = [&](unsigned capture) {
+        return captureIsHeldAsBoxedWord(closureCaptureRepresentationOf(m_program, conventions(), function, capture));
+    };
+    if (!conventions().exists(conventions().closureEntryOf(function)) || m_program.at(function).captures.size() != 2 || !isHeldAsBoxedWord(0) || !isHeldAsBoxedWord(1)) {
         defineTest(value, boolean(false));
         return;
     }
-    uint32_t rule = closureCaptureSlotOf(m_program, getter, value->keyIsFirstCapture() ? 0 : 1) | static_cast<uint32_t>(value->reusesDescriptors()) << 1;
-    defineTest(value, callOperation<Condition>(value, RuntimeOperation::TryReExportFields, { target, source, word32(static_cast<int32_t>(entrypoint.index())), word32(static_cast<int32_t>(rule)) }));
+    RELEASE_ASSERT(closureCaptureCountsOf(m_program, conventions(), function).references == 2);
+    Boxed target = in<Boxed>(value->targetOperand());
+    Boxed source = in<Boxed>(value->sourceOperand());
+    Word32 closureNumber = numberOf(m_mentions.add(NumberSpace::ClosureFunction, function));
+    uint32_t keySlot = closureCaptureSlotOf(m_program, conventions(), function, keyCapture);
+    RELEASE_ASSERT(!(keySlot & ~starRuleKeyCaptureSlot));
+    uint32_t rule = keySlot | (value->reusesDescriptors() ? starRuleReusesDescriptors : 0);
+    defineTest(value, callOperation<Condition>(value, RuntimeOperation::TryReExportFields, { target, source, closureNumber, word32(static_cast<int32_t>(rule)) }));
 }
 
 void AccessEmitter::generateSetFunctionName(const ValueContext& value)
@@ -109,9 +134,9 @@ Word32 AccessEmitter::findPrototypeTransition(CellPointer object, Boxed prototyp
     static_assert(hasOneBitSet(numberOfPrototypeTransitions));
     static_assert(indexOfPrototypeTransition(5 << prototypeTransitionHashShift, 3 << prototypeTransitionHashShift) == 6);
     LBasicBlock isKnown = newBlock();
-    const B3::AbstractHeap& heap = m_heaps.collectorState;
+    const Machine::AbstractHeap& heap = m_heaps.collectorState;
     Word32 before = loadStructureID(object);
-    Word32 hash = shiftRightUnsigned(bitXor(before, low32(prototype)), word32(prototypeTransitionHashShift));
+    Word32 hash = shiftRightUnsigned(bitXor(before, low32(prototype)), prototypeTransitionHashShift);
     Integer index = zeroExtended(bitAnd(hash, word32(numberOfPrototypeTransitions - 1)));
     LValue transition = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.prototypeTransitions)), index, 4).value();
     Condition hasPrototype = equal(Boxed(m_out.load64(m_out.address(heap, transition, OBJECT_OFFSETOF(PrototypeTransition, prototype)))), prototype);
@@ -135,7 +160,6 @@ void AccessEmitter::generateSetLiteralPrototype(const ValueContext& value)
     Boxed prototype = in<Boxed>(value->prototypeOperand());
     LBasicBlock isUnknown = newBlock();
     LBasicBlock continuation = newBlock();
-    // What Object.create makes is born below the object that the first call was handed.
     LBasicBlock isOther = newBlock();
     branch(equal(prototype, loadField<Boxed>(loadStructure(object), m_heaps.Structure_prototype)), { normalEdge(continuation), normalEdge(isOther) });
     m_out.appendTo(isOther);
@@ -144,54 +168,47 @@ void AccessEmitter::generateSetLiteralPrototype(const ValueContext& value)
     m_out.jump(continuation);
 
     m_out.appendTo(isUnknown);
-    callVoidOperation(value, RuntimeOperation::SetLiteralPrototype, { object, prototype, word32(value->refusesOtherValues()) }, { .isOnRarePath = true });
+    callVoidOperation(value, RuntimeOperation::SetLiteralPrototype, { object, prototype, word32(value->refusesOtherValues()) }, { .calledBuiltin = value->refusesOtherValues() ? Builtins::ObjectCreate : BuiltinID(), .isOnRarePath = true });
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
 }
 
-// The keys that the source text names lie in the image as a run, which the operation gets by its number plus one.
 AccessEmitter::ExcludedKeys AccessEmitter::excludedKeysOf(const ValueContext& value)
 {
-    std::optional<Request> run = value->request();
+    static_assert(sizeof(PropertyKeyID) == sizeof(uint32_t));
+    std::span<const PropertyKeyID> namedKeys = value->excludedKeys();
+    std::span<const uint32_t> namedKeyWords = spanReinterpretCast<const uint32_t>(namedKeys);
+    bool hasRun = canBePropertyRun(m_program, namedKeyWords);
+    Word32 run = hasRun ? numberOf(m_mentions.add(NumberSpace::PropertyRun, namedKeyWords, 1)) : word32(0);
     Vector<Boxed, 8> keys;
-    if (!run) {
-        // A key that the operation takes is a string or a symbol, so a number among the keys is the number of an identifier.
-        for (PropertyKeyID key : value->excludedKeys())
-            keys.append(boxedConstant(jsNumber(findIdentifierNumber(value, key).value_or(0))));
+    if (!hasRun) {
+        for (PropertyKeyID key : namedKeys)
+            keys.append(boxInt32(identifierNumber(key)));
     }
     for (ValueID key : value->excludedOperands())
         keys.append(in<Boxed>(key));
-    return { word32(run ? static_cast<int32_t>(run->value() + 1) : 0), word32(static_cast<int32_t>(keys.size())), argumentBuffer(keys.span()) };
+    return { run, word32(static_cast<int32_t>(keys.size())), argumentBuffer(keys.span()) };
 }
 
-void AccessEmitter::generateCopyDataProperties(const ValueContext& value)
+AccessEmitter::ExcludedKeys AccessEmitter::noExcludedKeys()
 {
-    if (std::optional<CopyOfTwo> copyOfTwo = std::exchange(m_copyOfTwo, std::nullopt)) {
-        RELEASE_ASSERT(copyOfTwo->second == value.valueID());
-        ifElse(Condition(m_out.notNull(copyOfTwo->copy.value())), [] { }, [&] {
-            copyDataProperties(value);
-        });
-        return;
-    }
-    copyDataProperties(value);
+    return { word32(0), word32(0), argumentBuffer(std::span<const Boxed>()) };
 }
 
-void AccessEmitter::copyDataProperties(const ValueContext& value)
+void AccessEmitter::copyDataProperties(const ValueContext& value, CellPointer target, ValueID sourceID, Origin origin, NOESCAPE const Invocable<ExcludedKeys()> auto& excludedKeys)
 {
-    CellPointer target = in<CellPointer>(value->targetOperand());
-    Boxed source = in<Boxed>(value->sourceOperand());
+    Boxed source = in<Boxed>(sourceID);
     auto copyByOperation = [&] {
-        ExcludedKeys excluded = excludedKeysOf(value);
-        callVoidOperation(value, RuntimeOperation::CopyDataProperties, { target, source, excluded.run, excluded.count, excluded.keys });
+        ExcludedKeys excluded = excludedKeys();
+        callVoidOperation(value, RuntimeOperation::CopyDataProperties, { target, source, excluded.run, excluded.count, excluded.keys }, { .origin = origin });
     };
-    bool sourceIsAlwaysCell = !(typeOf(value->sourceOperand()).primitives & ~cellPrimitives);
+    bool sourceIsAlwaysCell = !(typeOf(sourceID).primitives & ~cellPrimitives);
     if (sourceIsAlwaysCell) {
         copyByOperation();
         return;
     }
 
-    // In code of every shape: the test is shorter than what it saves is long, `...(condition && { .. })` in code that runs once a turn.
     LBasicBlock mayHaveOwnProperties = newBlock();
     LBasicBlock continuation = newBlock();
     branch(isCell(source), { normalEdge(mayHaveOwnProperties), normalEdge(continuation) });
@@ -203,90 +220,192 @@ void AccessEmitter::copyDataProperties(const ValueContext& value)
     m_out.appendTo(continuation);
 }
 
+void AccessEmitter::generateCopyDataProperties(const ValueContext& value)
+{
+    copyDataProperties(value, in<CellPointer>(value->targetOperand()), value->sourceOperand(), value.origin(), [&] {
+        return excludedKeysOf(value);
+    });
+}
+
+CellPointer AccessEmitter::copyObject(const ValueContext& value, Boxed source, ExcludedKeys excluded)
+{
+    return CellPointer(callStub(value, copyObjectFrontEnd(), { source.value(), excluded.run.value(), excluded.count.value(), excluded.keys.value() }).first);
+}
+
 void AccessEmitter::generateCopyObject(const ValueContext& value)
 {
     Boxed source = in<Boxed>(value->sourceOperand());
-    auto copyByOperation = [&]() -> CellPointer {
-        ExcludedKeys excluded = excludedKeysOf(value);
-        return callOperation<CellPointer>(value, RuntimeOperation::CopyObject, { source, excluded.run, excluded.count, excluded.keys });
+    ExcludedKeys excluded = excludedKeysOf(value);
+    if (value->assigns()) {
+        define(value, CellPointer(callStub(value, assignToNewObjectFrontEnd(), { source.value(), excluded.run.value(), excluded.count.value(), excluded.keys.value() }, { .calledBuiltin = Builtins::ObjectAssign }).first));
+        return;
+    }
+    define(value, copyObject(value, source, excluded));
+}
+
+void AccessEmitter::generateCopyObjectAndDefine(const ValueContext& value)
+{
+    std::span<const PropertyKeyID> keys = value->definedKeys();
+    std::span<const ValueID> values = value->valuesOperands();
+    RELEASE_ASSERT(!keys.empty() && keys.size() == values.size());
+    Boxed source = in<Boxed>(value->sourceOperand());
+    auto copyByOperation = [&] {
+        Word32 count = word32(static_cast<int32_t>(keys.size()));
+        Vector<Boxed, 12> list { boxInt32(count) };
+        for (PropertyKeyID key : keys)
+            list.append(boxInt32(identifierNumber(key)));
+        for (ValueID defined : values)
+            list.append(in<Boxed>(defined));
+        return callOperation<CellPointer>(value, RuntimeOperation::CopyObjectAndDefine, { source, identifierNumber(keys[0]), count, argumentBuffer(list.span()) });
     };
-    ValueID second = findCopyIntoCopy(m_function, m_function.at(value.block()), value.valueID());
-    // The copy of a compiled object is an object of its layout, which only the copy by itself makes.
-    const Type& typeOfSource = typeOf(value->sourceOperand());
-    bool mayBeOtherThanCompiledObject = typeOfSource.anyObject || typeOfSource.primitives & ~cellPrimitives;
-    if (!second || !mayBeOtherThanCompiledObject) {
+    Type sourceType = typeOf(value->sourceOperand());
+    if (!sourceType.hasObjects()) {
         define(value, copyByOperation());
         return;
     }
 
-    LBasicBlock isCellBlock = newBlock();
-    LBasicBlock isCompiledObject = newBlock();
-    LBasicBlock mayCopyBoth = newBlock();
+    LBasicBlock sourceIsCompiled = newBlock();
+    LBasicBlock sourceIsOtherValue = newBlock();
     Join<CellPointer> join(m_out);
-    branch(isCell(source), { normalEdge(isCellBlock), normalEdge(mayCopyBoth) });
+    if (sourceType.primitives & ~cellPrimitives) {
+        LBasicBlock sourceIsCell = newBlock();
+        branch(isCell(source), { normalEdge(sourceIsCell), normalEdge(sourceIsOtherValue) });
+        m_out.appendTo(sourceIsCell);
+    }
+    branch(emitter<ShapeTestEmitter>().isCompiledObject(unboxCell(source)), { normalEdge(sourceIsCompiled), normalEdge(sourceIsOtherValue) });
 
-    m_out.appendTo(isCellBlock);
-    branch(hasMutableCellType(unboxCell(source), CompiledObjectType), { normalEdge(isCompiledObject), normalEdge(mayCopyBoth) });
+    m_out.appendTo(sourceIsCompiled);
+    CellPointer copy = copyObject(value, source, noExcludedKeys());
+    for (size_t index = 0; index < keys.size(); ++index)
+        putById(value, boxCell(copy), keys[index], in<Boxed>(values[index]), PutMode::Define);
+    join.add(copy);
 
-    m_out.appendTo(isCompiledObject);
-    join.add(CellPointer(m_out.constIntPtr(0)));
-
-    m_out.appendTo(mayCopyBoth);
-    join.add(callOperation<CellPointer>(value, RuntimeOperation::TryCopyTwoObjects, { source, in<Boxed>(m_function.at(second).sourceOperand()) }));
-
-    CellPointer copyOfTwo = join.finish();
-    m_copyOfTwo = CopyOfTwo { second, copyOfTwo };
-    define(value, either<CellPointer>(Condition(m_out.notNull(copyOfTwo.value())), [&] {
-        return copyOfTwo;
-    }, copyByOperation));
+    m_out.appendTo(sourceIsOtherValue);
+    join.add(copyByOperation());
+    define(value, join.finish());
 }
 
-// Only an object of the layout's ordered shape keeps its key order in its order word. That word then says that the source has nothing but fields, no integrity level, and a key order that the word alone names. What lies in an Extension is copied by the run time.
-std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueContext& allocation, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty)
+void AccessEmitter::generateCopyTwoObjects(const ValueContext& value)
 {
-    LayoutID layout = m_function.at(copy).layout();
-    const PlannedLayout& planned = m_placement.layout(layout);
-    const ShapeTable& shapes = m_placement.shapes();
+    Boxed first = in<Boxed>(value->sourceOperand());
+    Boxed second = in<Boxed>(value->secondSourceOperand());
+
+    LBasicBlock firstIsCompiledObject = newBlock();
+    LBasicBlock mayHavePlan = newBlock();
+    Join<CellPointer> join(m_out);
+    if (typeOf(value->sourceOperand()).primitives & ~cellPrimitives) {
+        LBasicBlock firstIsCell = newBlock();
+        branch(isCell(first), { normalEdge(firstIsCell), normalEdge(mayHavePlan) });
+        m_out.appendTo(firstIsCell);
+    }
+    branch(emitter<ShapeTestEmitter>().isCompiledObject(unboxCell(first)), { normalEdge(firstIsCompiledObject), normalEdge(mayHavePlan) });
+
+    m_out.appendTo(firstIsCompiledObject);
+    join.add(CellPointer(m_out.constInt64(0)));
+
+    m_out.appendTo(mayHavePlan);
+    join.add(callOperation<CellPointer>(value, RuntimeOperation::TryCopyTwoObjects, { first, second }));
+
+    CellPointer copyOfBoth = join.finish();
+    define(value, either<CellPointer>(Condition(m_out.notZero64(copyOfBoth.value())), [&] {
+        return copyOfBoth;
+    }, [&] {
+        CellPointer copy = copyObject(value, first, noExcludedKeys());
+        copyDataProperties(value, copy, value->secondSourceOperand(), value->secondOrigin(), [&] {
+            return noExcludedKeys();
+        });
+        return copy;
+    }));
+}
+
+std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueContext& allocation, const MentionedAllocation& mentioned, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty)
+{
+    LayoutID layout = m_code.at(copy).layout();
+    const PlannedLayout& planned = m_plan.layout(layout);
+    const ShapeTable& shapes = m_plan.shapes();
     ShapeRange shapesOfLayout = shapes.shapesOf(layout);
-    if (planned.storage != LayoutStorage::CompiledObject || planned.isEscapedOffset || shapesOfLayout.count != 1 || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated)
+    if (!planned.holdsCompiledObjects() || planned.cellsAreHandedBack || shapesOfLayout.count != 1 || m_code.at(copy).sourceLayout())
         return std::nullopt;
-    if (m_placement.allocation(allocation->allocation()).layout != layout || m_placement.freeCellOffset(layout) || m_placement.slots().extensionWord(layout).hasStorage())
+    if (mentioned.placed.layout != layout || m_plan.slots().extensionWord(layout).hasStorage() || planned.size <= offsetOfFirstField)
         return std::nullopt;
-    if (planned.size <= offsetOfFirstField)
-        return std::nullopt;
-    for (uint32_t field = 0; field < m_program.at(layout).fields.size(); ++field) {
-        const PlacedSlot& slot = m_placement.slot(layout, field);
+    for (const PlacedSlot& slot : planned.slots.span().first(planned.numberOfFields())) {
         if (slot.hasStorage() && (slot.isOutOfLine() || slot.representation == SlotRepresentation::DeferredClosure))
             return std::nullopt;
     }
 
-    CellPointer source = in<CellPointer>(m_function.at(copy).sourceOperand());
+    ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
+    CellPointer source = in<CellPointer>(m_code.at(copy).sourceOperand());
     LBasicBlock hasShape = newBlock();
     LBasicBlock copies = newBlock();
     LBasicBlock fills = newBlock();
     LBasicBlock continuation = newBlock();
-    Word32 orderedShape = word32(static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first)));
-    branch(equal(emitter<ShapeTestEmitter>().shapeWordOf(source), orderedShape), { normalEdge(hasShape), rareEdge(fills) });
+    {
+        Machine::DeclaredAccessesSuspension readsForCopy(m_out);
+        branch(equal(shapeTests.shapeWordWithMarkOf(source), static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first))), { normalEdge(hasShape), rareEdge(fills) });
 
-    m_out.appendTo(hasShape);
-    Word32 orderWord = loadField<Word32>(source, m_heaps.AOTObject_orderWord);
-    Condition hasOnlyFields = logicalAnd(hasNoBits(orderWord, ~orderAndCountMask), notEqual(bitAnd(orderWord, word32(orderWordOrderMask)), word32(orderStoredOutOfLine)));
-    branch(hasOnlyFields, { normalEdge(copies), rareEdge(fills) });
+        m_out.appendTo(hasShape);
+        Word32 orderWord = shapeTests.orderWordOf(source);
+        Condition hasNoOtherBits = hasNoBits(orderWord, ~(orderAndCountMask | orderWordIntegrityBits));
+        branch(logicalAnd(hasNoOtherBits, notEqual(bitAnd(orderWord, orderWordOrderMask), orderStoredOutOfLine)), { normalEdge(copies), rareEdge(fills) });
+    }
 
     m_out.appendTo(copies);
-    unsigned fieldBytes = WTF::roundUpToMultipleOf<copyChunkBytes>(planned.size) - offsetOfFirstField;
-    ValueFromBlock copiedCell = m_out.anchor(emitter<CellAllocationEmitter>().allocateObjectCopy(allocation, allocation->allocation(), source, fieldBytes).value());
-    ValueFromBlock didCopy = m_out.anchor(m_out.constInt32(1));
+    unsigned fieldBytes = static_cast<unsigned>(WTF::roundUpToMultipleOf<copyChunkBytes>(planned.size)) - offsetOfFirstField;
+    ValueFromBlock copiedCell = m_out.anchor(emitter<CellAllocationEmitter>().allocateObjectCopy(allocation, mentioned, source, fieldBytes).value());
+    ValueFromBlock didCopy = m_out.anchor(m_out.booleanTrue);
     m_out.jump(continuation);
 
     m_out.appendTo(fills);
     ValueFromBlock emptyCell = m_out.anchor(allocateEmpty().value());
-    ValueFromBlock didNotCopy = m_out.anchor(m_out.constInt32(0));
+    ValueFromBlock didNotCopy = m_out.anchor(m_out.booleanFalse);
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
-    m_copyAtAllocation = CopyAtAllocation { copy, Condition(m_out.phi(B3::Int32, didCopy, didNotCopy)) };
-    return CellPointer(m_out.phi(B3::Int64, copiedCell, emptyCell));
+    m_copyAtAllocation = CopyAtAllocation { copy, Condition(m_out.phi(Machine::Int32, didCopy, didNotCopy)) };
+    return CellPointer(m_out.phi(Machine::pointerType(), copiedCell, emptyCell));
+}
+
+Vector<FieldIndex, 8> AccessEmitter::fieldsThatTakeCopyFromOtherLayout(const Operation& copy)
+{
+    Vector<FieldIndex, 8> takers;
+    for (FieldIndex field : copy.fields())
+        takers.append(findField(m_program, copy.layout(), m_program.at(copy.sourceLayout()).fields[field].key)->field);
+    return takers;
+}
+
+void AccessEmitter::copyFieldsFromOtherLayout(const Operation& copy, CellPointer source, CellPointer target)
+{
+    const PlannedLayout& read = m_plan.layout(copy.sourceLayout());
+    const PlannedLayout& written = m_plan.layout(copy.layout());
+    std::span<const FieldIndex> fieldsRead = copy.fields();
+    Vector<FieldIndex, 8> fieldsWritten = fieldsThatTakeCopyFromOtherLayout(copy);
+    const Machine::AbstractHeap& fields = m_heaps.entire(AbstractHeap::ObjectFields);
+    SlotEmitter& slots = emitter<SlotEmitter>();
+    size_t numberOfWords = read.size / sizeof(uint64_t);
+    Vector<uint32_t, 64> offsetsInTarget(FillWith { }, numberOfWords, 0);
+    for (size_t index = 0; index < fieldsRead.size(); ++index) {
+        const PlacedSlot& slotRead = read.slots[fieldsRead[index]];
+        const PlacedSlot& slotWritten = written.slots[fieldsWritten[index]];
+        RELEASE_ASSERT(slotRead.storage == SlotStorage::Inline && slotWritten.storage == SlotStorage::Inline && slotRead.representation == slotWritten.representation);
+        if (widthOf(slotRead.representation) == sizeof(uint64_t) && !(slotRead.offset % sizeof(uint64_t))) {
+            offsetsInTarget[slotRead.offset / sizeof(uint64_t)] = slotWritten.offset;
+            continue;
+        }
+        slots.copyBits(m_out.address(fields, source.value(), slotRead.offset), m_out.address(fields, target.value(), slotWritten.offset), slotRead.representation);
+    }
+    for (size_t begin = 0, end = 0; begin < numberOfWords; begin = end) {
+        end = begin + 1;
+        if (!offsetsInTarget[begin])
+            continue;
+        while (end < numberOfWords && offsetsInTarget[end] == offsetsInTarget[end - 1] + sizeof(uint64_t))
+            ++end;
+        emitter<CellAllocationEmitter>().copyWords(source, static_cast<unsigned>(begin * sizeof(uint64_t)), target, offsetsInTarget[begin], static_cast<unsigned>((end - begin) * sizeof(uint64_t)));
+    }
+}
+
+void AccessEmitter::noteCopyMadeAtAllocation(ValueID copy)
+{
+    m_copyAtAllocation = CopyAtAllocation { copy, boolean(true) };
 }
 
 void AccessEmitter::generateTryCopyFields(const ValueContext& value)
@@ -297,50 +416,61 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
     }
 
     LayoutID layout = value->layout();
-    const PlannedLayout& planned = m_placement.layout(layout);
-    const ShapeTable& shapes = m_placement.shapes();
+    const PlannedLayout& planned = m_plan.layout(layout);
+    if (value->sourceLayout()) {
+        CellPointer target = in<CellPointer>(value->objectOperand());
+        copyFieldsFromOtherLayout(value.value(), in<CellPointer>(value->sourceOperand()), target);
+        m_out.store32(m_out.constInt32(static_cast<int32_t>(*m_plan.keyOrders().findOrderWord(layout, fieldsThatTakeCopyFromOtherLayout(value.value()).span()))), m_out.address(m_heaps.AOTObject_orderWord, target.value(), offsetOfOrderWord));
+        emitter<BarrierEmitter>().barrier(value, target);
+        defineTest(value, boolean(true));
+        return;
+    }
+    const ShapeTable& shapes = m_plan.shapes();
     ShapeRange shapesOfLayout = shapes.shapesOf(layout);
-    if (planned.storage != LayoutStorage::CompiledObject || planned.isEscapedOffset || shapesOfLayout.isEmpty() || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated) {
+    if (!planned.holdsCompiledObjects() || planned.cellsAreHandedBack || shapesOfLayout.isEmpty()) {
         defineTest(value, boolean(false));
         return;
     }
 
-    // The words that are no fields are zero in a source that is copied.
-    bool mayCopyCell = std::ranges::any_of(planned.slots.span().first(planned.numberOfFields()), [](const PlacedSlot& slot) {
+    std::span<const PlacedSlot> slots = planned.slots.span().first(planned.numberOfFields());
+    bool mayCopyCell = std::ranges::any_of(slots, [](const PlacedSlot& slot) {
         return slot.hasStorage() && traitsOf(slot.representation).holdsCell;
     });
 
+    ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
     CellPointer target = in<CellPointer>(value->objectOperand());
     CellPointer source = in<CellPointer>(value->sourceOperand());
-    const B3::AbstractHeap& fields = m_heaps.entire(AbstractHeap::ObjectFields);
-    ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
-    auto hasOrderedShape = [&](CellPointer cell) {
-        return equal(shapeTests.shapeWordOf(cell), word32(static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first))));
+    const Machine::AbstractHeap& fields = m_heaps.entire(AbstractHeap::ObjectFields);
+    auto isGeneralShape = [&](Word32 shapeWord) {
+        return equal(shapeWord, static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first)));
     };
     auto refuse = [&] {
         return boolean(false);
     };
-    defineTest(value, either<Condition>(hasOrderedShape(source), [&] {
-        Word32 orderWord = loadField<Word32>(source, m_heaps.AOTObject_orderWord);
-        Condition hasOnlyFields = logicalAnd(hasNoBits(orderWord, ~orderAndCountMask), notEqual(bitAnd(orderWord, word32(orderWordOrderMask)), word32(orderStoredOutOfLine)));
-        if (const PlacedSlot& extensionWord = m_placement.slots().extensionWord(layout); extensionWord.hasStorage()) {
+    defineTest(value, either<Condition>(isGeneralShape(shapeTests.shapeWordWithMarkOf(source)), [&] {
+        Word32 orderWord = shapeTests.orderWordOf(source);
+        Condition hasNoOtherBits = hasNoBits(orderWord, ~(orderAndCountMask | orderWordIntegrityBits));
+        Condition hasOnlyFields = logicalAnd(hasNoOtherBits, notEqual(bitAnd(orderWord, orderWordOrderMask), orderStoredOutOfLine));
+        if (const PlacedSlot& extensionWord = m_plan.slots().extensionWord(layout); extensionWord.hasStorage()) {
             TypedPointer address = m_out.address(fields, source.value(), extensionWord.offset);
             bool isNarrow = traitsOf(extensionWord.representation).isNarrowReference;
             hasOnlyFields = logicalAnd(hasOnlyFields, isNarrow ? isZero(Word32(m_out.load32(address))) : isZero(Integer(m_out.load64(address))));
         }
-        // The copy holds the function objects of the source. One that the source has not made yet is made first, by the operation that copies after a refusal.
-        for (uint32_t field = 0; field < m_program.at(layout).fields.size(); ++field) {
-            const PlacedSlot& slot = m_placement.slot(layout, field);
+        for (const PlacedSlot& slot : slots) {
             if (!slot.hasStorage() || slot.isOutOfLine() || slot.representation != SlotRepresentation::DeferredClosure)
                 continue;
             Word32 word(m_out.load32(m_out.address(fields, source.value(), slot.offset)));
-            hasOnlyFields = logicalAnd(hasOnlyFields, notEqual(word, word32(uncreatedDeferredClosure)));
+            hasOnlyFields = logicalAnd(hasOnlyFields, notEqual(word, uncreatedDeferredClosure));
         }
         return either<Condition>(hasOnlyFields, [&] {
-            for (uint32_t offset = offsetOfFirstField; offset < planned.size; offset += sizeof(uint64_t))
-                m_out.store64(m_out.load64(m_out.address(fields, source.value(), offset)), m_out.address(fields, target.value(), offset));
-            bool targetMayBeUnordered = shapesOfLayout.count > 1;
-            storeField(target, m_heaps.AOTObject_orderWord, targetMayBeUnordered ? select(hasOrderedShape(target), orderWord, word32(unorderedOrderWord)) : orderWord);
+            if (planned.size > offsetOfFirstField)
+                emitter<CellAllocationEmitter>().copyFieldWords(source, target, static_cast<unsigned>(WTF::roundUpToMultipleOf<copyChunkBytes>(planned.size)) - offsetOfFirstField);
+            LValue orderWordOfTarget = bitAnd(orderWord, static_cast<int32_t>(orderAndCountMask)).value();
+            if (shapesOfLayout.count > 1)
+                orderWordOfTarget = m_out.select(isGeneralShape(shapeTests.shapeWordOf(target)).value(), orderWordOfTarget, m_out.constInt32(unorderedOrderWord));
+            m_out.store32(orderWordOfTarget, m_out.address(m_heaps.AOTObject_orderWord, target.value(), offsetOfOrderWord));
+            if (planned.mayBearMark)
+                shapeTests.clearMark(target);
             if (mayCopyCell)
                 emitter<BarrierEmitter>().barrier(value, target);
             return boolean(true);
@@ -350,25 +480,30 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
 
 void AccessEmitter::generateGetSuperBase(const ValueContext& value)
 {
-    CellPointer home = in<CellPointer>(value->homeOperand());
     HomeObjectKind homeKind = value->homeKind();
-    bool isCompact = value.shape() == CodeShape::Compact;
+    if (ValueID read = m_code.useCountOf(value.id()) == 1 ? m_code.onlyUserOf(value.id()) : ValueID(); read && homeKind == HomeObjectKind::ClassPrototype && m_code.at(value.block()).frequency == BlockFrequency::Rare && m_code.blockOf(read) == value.block()) {
+        const auto& user = m_code.at(read);
+        std::span<const ValueID> behind = value.operationsBehind();
+        while (!behind.empty() && behind.front() != read && (m_code.at(behind.front()).opcode == Opcode::Box || m_code.at(behind.front()).traits().isPure()))
+            behind = behind.subspan(1);
+        bool nothingSeenStandsBetween = !behind.empty() && behind.front() == read;
+        if (nothingSeenStandsBetween && user.opcode == Opcode::SuperGet && user.baseOperand() == value.id() && user.receiverOperand() != value.id() && user.key() && !liesInThread(user.key()) && !isSymbolOfRealm(user.key())) {
+            RELEASE_ASSERT(!m_baseOfSuperLeftToRead);
+            m_baseOfSuperLeftToRead = value.id();
+            define(value, undefined());
+            return;
+        }
+    }
+    CellPointer home = in<CellPointer>(value->homeOperand());
     auto readByOperation = [&](bool isOnRarePath) {
         return callWithoutSite<Boxed>(RuntimeOperation::GetSuperBase, { boxCell(home), word32(static_cast<int32_t>(homeKind)) }, { .isOnRarePath = isOnRarePath });
     };
     if (!operandIsHomeObject(homeKind)) {
-        // The operand is the class object. Nobody can give a class another prototype object, and that of a class that is evaluated once is in ClassWords::classPrototypes.
-        LayoutID classLayout = classOfClassObject(m_program, m_program.typeOf(m_function, value->homeOperand()));
-        std::optional<uint32_t> rank = classLayout && isEvaluatedOnce(m_program, m_program.at(classLayout)) ? m_placement.rankOfClass(classLayout) : std::nullopt;
-        if (!rank || !isDefinedByClass(m_program, classLayout)) {
-            define(value, readByOperation(isCompact));
+        if (LayoutID classLayout = value->layout(); classLayout && m_plan.hasClassRecord(classLayout) && m_facts.isEvaluatedAtMostOnce(classLayout)) {
+            define(value, Boxed(callStub(value, getSuperBaseOfClass(), { boxCell(home).value() }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::ClassRank, classLayout) } }).first));
             return;
         }
-        define(value, Boxed(callStub(value, getSuperBaseOfClass(), { boxCell(home).value() }, { .immediate = *rank }).first));
-        return;
-    }
-    if (isCompact) {
-        define(value, readByOperation(true));
+        define(value, readByOperation(false));
         return;
     }
 
@@ -385,34 +520,37 @@ void AccessEmitter::generateGetSuperBase(const ValueContext& value)
 
 void AccessEmitter::generateSuperGet(const ValueContext& value)
 {
-    Boxed base = in<Boxed>(value->baseOperand());
     Boxed receiver = in<Boxed>(value->receiverOperand());
     PropertyKeyID key = value->key();
-    if (!key) {
-        define(value, Boxed(callStub(value, getSuperByVal(), { base.value(), in<Boxed>(value->computedKeyOperand()).value(), receiver.value() }).first));
+    if (ValueID left = std::exchange(m_baseOfSuperLeftToRead, ValueID())) {
+        RELEASE_ASSERT(left == value->baseOperand());
+        define(value, callOperation<Boxed>(value, RuntimeOperation::GetSuperPropertyOfClassById, { boxCell(in<CellPointer>(m_code.at(left).homeOperand())), receiver, numberOf(mentionOfName(key)) }, { .isOnRarePath = true }));
+        return;
+    }
+    Boxed base = in<Boxed>(value->baseOperand());
+    bool keyIsThreadLocal = liesInThread(key);
+    if (!key || (!keyIsThreadLocal && isSymbolOfRealm(key))) {
+        Boxed property = keyOperand(value, key, value->computedKeyOperand());
+        define(value, Boxed(callStub(value, getSuperByVal(), { base.value(), property.value(), receiver.value() }).first));
         return;
     }
 
-    // A lookup that starts at the receiver is a read by name: so reads a field whose slot was found empty.
-    if (value->baseOperand() == value->receiverOperand()) {
-        define(value, getById(value, receiver, key, SiteCacheID()));
+    if (!keyIsThreadLocal && value->baseOperand() == value->receiverOperand()) {
+        define(value, getById(value, receiver, key));
         return;
     }
 
-    std::optional<uint32_t> identifier = findIdentifierNumber(value, key);
-    if (!identifier) {
-        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
-        return;
-    }
+    uint32_t name = mentionOfName(key);
     auto readByOperation = [&](bool isOnRarePath) {
-        return callOperation<Boxed>(value, RuntimeOperation::GetSuperPropertyById, { base, receiver, word32(static_cast<int32_t>(*identifier)) }, { .isOnRarePath = isOnRarePath });
+        return callOperation<Boxed>(value, RuntimeOperation::GetSuperPropertyById, { base, receiver, numberOf(name) }, { .isOnRarePath = isOnRarePath });
     };
-    if (!RowDisplacementTable::hasColumn(*identifier)) {
-        define(value, readByOperation(false));
+    bool standsInRareBlock = m_code.at(value.block()).frequency == BlockFrequency::Rare;
+    if (keyIsThreadLocal || standsInRareBlock) {
+        define(value, readByOperation(standsInRareBlock));
         return;
     }
 
-    Boxed found(callStub(value, tryGetSuperById(), { base.value() }, { .immediate = *identifier }).first);
+    Boxed found(callStub(value, tryGetSuperById(), { base.value() }, { .numberedImmediate = NumberedImmediate { name } }).first);
     define(value, either<Boxed>(isNotEmpty(found), [&] {
         return found;
     }, [&] {

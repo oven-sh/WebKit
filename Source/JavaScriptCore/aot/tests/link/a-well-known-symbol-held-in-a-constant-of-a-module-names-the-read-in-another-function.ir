@@ -1,0 +1,26 @@
+# const steps = Symbol.iterator;  function walkOf(holder) { return holder[steps]; }  typeof walkOf(String.prototype);
+# The look sees one body at a time. Link follows the constant through the variable: what arrives at the key of the read is one symbol, and the read goes by it.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link accesses mechanisms=all
+# CHECK: access f1 v3 under @@iterator
+
+variable g0 name="steps" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=SymbolIterator
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = Builtin builtin=StringPrototype
+    v4 = Call v2, -, v3 calleeName="walkOf"
+    v5 = TypeOf v4
+    Return v5
+}
+function f1 name="walkOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="steps"
+    v3 = ElemGet v0, v2
+    Return v3
+}

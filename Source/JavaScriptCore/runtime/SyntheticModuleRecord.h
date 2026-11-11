@@ -62,7 +62,7 @@ public:
     static SyntheticModuleRecord* createTextModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, SourceCode&&);
 
     Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
-    JS_EXPORT_PRIVATE JSValue LEGACY_NODELETE evaluate(JSGlobalObject*);
+    NODELETE JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*);
 
 #if USE(BUN_JSC_ADDITIONS)
     // Creates a record (reported as a JavaScript module, SourceProviderSourceType::Module) exporting exportValues
@@ -70,7 +70,10 @@ public:
     // and is filled in by materializeLazyExport(), which reads the property of the same name off lazyExportsSource.
     // That happens the first time something binds to the export, i.e. when an importing module links a named import
     // of it or when it is read off a module namespace object.
-    JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
+    // LazyExports::Live gives the record live exports (AbstractModuleRecord::hasLiveExports) backed by lazyExportsSource.
+    // Its bindings stay uninitialized.
+    enum class LazyExports : bool { ReadOnce, Live };
+    JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource, LazyExports = LazyExports::ReadOnce);
 
     // Creates a record without exports for a SyntheticSourceProvider::createDeferred() provider. runDeferredGenerator()
     // gives the record its exports; AbstractModuleRecord::link() calls it before it links anything.
@@ -95,7 +98,7 @@ private:
 
     static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType);
 #if USE(BUN_JSC_ADDITIONS)
-    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType, JSObject* lazyExportsSource);
+    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType, JSObject* lazyExportsSource, LazyExports = LazyExports::ReadOnce);
 #endif
 
     void finishCreation(JSGlobalObject*, VM&);

@@ -1,0 +1,18 @@
+# typeof JSON.parse('"text"')[JSON.parse('"at"')]
+# The control: nobody knows what is read, so the key may spell a member of any class.
+# RUN: features
+# CHECK: feature WebAssembly by WebAssemblyCompileError unnamed
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = PropGet v0 key="parse"
+    v2 = String string="\"text\""
+    v3 = Call v1, v0, v2 calleeKey="parse"
+    v4 = String string="\"at\""
+    v5 = Call v1, v0, v4 calleeKey="parse"
+    v6 = ElemGet v3, v5
+    v7 = TypeOf v6
+    Return v7
+}

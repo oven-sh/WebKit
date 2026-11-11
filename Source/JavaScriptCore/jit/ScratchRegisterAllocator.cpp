@@ -156,7 +156,7 @@ unsigned ScratchRegisterAllocator::preserveRegistersToStackForCall(AssemblyHelpe
     RELEASE_ASSERT(extraBytesAtTopOfStack % sizeof(void*) == 0);
     if (!usedRegisters.numberOfSetRegisters())
         return 0;
-    ASSERT(!usedRegisters.hasAnyWideRegisters() || Options::useWasmSIMD());
+    // Bun: no ASSERT on Options::useWasmSIMD(), here and in restoreRegistersFromStackForCall(). A compile may use SIMD where WebAssembly may not: B3::UpstreamPolicy::allowsSIMD.
     JIT_COMMENT(jit, "Preserve registers to stack for call: ", usedRegisters, "; Extra bytes at top of stack: ", extraBytesAtTopOfStack);
 
     unsigned byteSizeOfSetRegisters = usedRegisters.byteSizeOfSetRegisters();
@@ -201,7 +201,6 @@ void ScratchRegisterAllocator::restoreRegistersFromStackForCall(AssemblyHelpers&
         RELEASE_ASSERT(numberOfStackBytesUsedForRegisterPreservation == 0);
         return;
     }
-    ASSERT(!usedRegisters.hasAnyWideRegisters() || Options::useWasmSIMD());
     JIT_COMMENT(jit, "Restore registers from stack for call: ", usedRegisters, "; Extra bytes at top of stack: ", extraBytesAtTopOfStack);
 
     AssemblyHelpers::LoadRegSpooler spooler(jit, MacroAssembler::stackPointerRegister);

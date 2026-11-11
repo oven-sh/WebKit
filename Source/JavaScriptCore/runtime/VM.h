@@ -297,6 +297,9 @@ public:
 
     WTF::AdaptiveStringSearcherTables& adaptiveStringSearcherTables() { return m_stringSearcherTables.get(*this); }
 
+    uint64_t& recentLatin1JSONStringifyLengths() { return m_recentLatin1JSONStringifyLengths; }
+    uint64_t& recentUTF16JSONStringifyLengths() { return m_recentUTF16JSONStringifyLengths; }
+
     bool isAnalyzingHeap() const { return m_activeHeapAnalyzer; }
     HeapAnalyzer* activeHeapAnalyzer() const { return m_activeHeapAnalyzer; }
     void setActiveHeapAnalyzer(HeapAnalyzer* analyzer) { m_activeHeapAnalyzer = analyzer; }
@@ -320,7 +323,7 @@ public:
     JS_EXPORT_PRIVATE JSGlobalObject* topFrameGlobalObject();
 
     // Global object in which execution began.
-    JS_EXPORT_PRIVATE JSGlobalObject* LEGACY_NODELETE deprecatedVMEntryGlobalObject(JSGlobalObject*) const;
+    NODELETE JS_EXPORT_PRIVATE JSGlobalObject* deprecatedVMEntryGlobalObject(JSGlobalObject*) const;
 
     WeakRandom& random() LIFETIME_BOUND { return m_random; }
     WeakRandom& heapRandom() LIFETIME_BOUND { return m_heapRandom; }
@@ -339,7 +342,7 @@ public:
             traps().didClearTerminationRequest();
 #endif
     }
-    void LEGACY_NODELETE setHasTerminationRequest();
+    NODELETE void setHasTerminationRequest();
 
     bool executionForbidden() const { return m_executionForbidden; }
     void setExecutionForbidden() { m_executionForbidden = true; }
@@ -514,10 +517,12 @@ public:
     using AOTState = AOT::VMState;
     AOTState& aotState() LIFETIME_BOUND { return m_aotState; }
     bool hasCompiledCode() const { return m_aotState.hasCompiledCode; }
+    bool runsOnlyStaticCode() const { return Options::disallowNonStaticCode() && (hasCompiledCode() || !Options::disallowNonStaticCodeOnlyWithCompiledCode()); }
     static constexpr ptrdiff_t offsetOfAOTState() { return OBJECT_OFFSETOF(VM, m_aotState); }
     AOTState m_aotState;
 #else
     static constexpr bool hasCompiledCode() { return false; }
+    static bool runsOnlyStaticCode() { return Options::disallowNonStaticCode(); }
 #endif
     ArrayStoragePolicy arrayStoragePolicy() const { return hasCompiledCode() || Options::keepDenseArraysDense() ? ArrayStoragePolicy::KeepsDenseArraysDense : ArrayStoragePolicy::UsesArrayStorageForSpeed; }
     PropertyRunTable propertyRuns;
@@ -647,6 +652,7 @@ public:
     WriteBarrier<NativeExecutable> m_promiseAllSettledSlowRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnyRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnySlowRejectFunctionExecutable;
+    WriteBarrier<NativeExecutable> m_proxyRevokeExecutable;
 
     WriteBarrier<JSCell> m_orderedHashTableDeletedValue;
     WriteBarrier<JSCell> m_orderedHashTableSentinel;
@@ -741,6 +747,8 @@ public:
     }
     static constexpr ptrdiff_t offsetOfOrderedHashTableDeletedValue() { return OBJECT_OFFSETOF(VM, m_orderedHashTableDeletedValue); }
 
+    static constexpr ptrdiff_t offsetOfOrderedHashTableSentinel() { return OBJECT_OFFSETOF(VM, m_orderedHashTableSentinel); }
+
     Structure* sentinelStructure() { return m_sentinelStructure.get(); }
     JSSentinel* fastArrayValuesSentinel() { return m_fastArrayValuesSentinel.get(); }
     JSSentinel* fastArrayKeysSentinel() { return m_fastArrayKeysSentinel.get(); }
@@ -771,6 +779,7 @@ public:
     inline NativeExecutable* promiseAllSettledSlowRejectFunctionExecutable();
     inline NativeExecutable* promiseAnyRejectFunctionExecutable();
     inline NativeExecutable* promiseAnySlowRejectFunctionExecutable();
+    inline NativeExecutable* proxyRevokeExecutable();
 
     WeakGCMap<WTF::SymbolImpl*, Symbol, PtrHash<WTF::SymbolImpl*>> symbolImplToSymbolMap;
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> atomStringToJSStringMap;
@@ -954,8 +963,7 @@ public:
     }
 
     void* lastStackTop() { return m_lastStackTop; }
-    void lowerLastStackTop(void* lowestAddress) { m_lastStackTop = std::min(m_lastStackTop, lowestAddress); }
-    void LEGACY_NODELETE setLastStackTop(const Thread&);
+    NODELETE void setLastStackTop(const Thread&);
     
 #if ENABLE(C_LOOP)
     ALWAYS_INLINE CLoopStack& cloopStack() { return traps().cloopStack(); }
@@ -1198,7 +1206,7 @@ public:
         DrainMicrotaskDelayScope& operator=(const DrainMicrotaskDelayScope&);
 
     private:
-        void LEGACY_NODELETE increment();
+        NODELETE void increment();
         void decrement();
 
         RefPtr<VM> m_vm;
@@ -1246,7 +1254,13 @@ public:
     void setShouldBuildPCToCodeOriginMapping() { m_shouldBuildPCToCodeOriginMapping = true; }
     bool shouldBuilderPCToCodeOriginMapping() const { return m_shouldBuildPCToCodeOriginMapping; }
 
-    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry() { return *m_bytecodeIntrinsicRegistry; }
+    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry()
+    {
+        if (!m_bytecodeIntrinsicRegistry) [[unlikely]]
+            createBytecodeIntrinsicRegistry();
+        return *m_bytecodeIntrinsicRegistry;
+    }
+    bool hasBytecodeIntrinsicRegistry() const { return !!m_bytecodeIntrinsicRegistry; }
     
     ShadowChicken* shadowChicken() { return m_shadowChicken.getIfExists(); }
     ShadowChicken& ensureShadowChicken() { return m_shadowChicken.get(*this); }
@@ -1323,7 +1337,7 @@ public:
 
     WTF::RunLoop& runLoop() const { return m_runLoop; }
 
-    static void LEGACY_NODELETE setCrashOnVMCreation(bool);
+    NODELETE static void setCrashOnVMCreation(bool);
 
     void addLoopHintExecutionCounter(const JSInstruction*);
     uintptr_t* getLoopHintExecutionCounter(const JSInstruction*);
@@ -1352,8 +1366,8 @@ public:
     void reconcileWeakReferencesAtGCEnd();
     DECLARE_VISIT_AGGREGATE;
 
-    void LEGACY_NODELETE addDebugger(Debugger&);
-    void LEGACY_NODELETE removeDebugger(Debugger&);
+    NODELETE void addDebugger(Debugger&);
+    NODELETE void removeDebugger(Debugger&);
     template<typename Func>
     void forEachDebugger(NOESCAPE const Func&);
 
@@ -1364,7 +1378,7 @@ public:
 
     int64_t numberOfActiveJITPlans() const { return m_numberOfActiveJITPlans.load(std::memory_order_relaxed); }
 
-    Ref<Waiter> LEGACY_NODELETE syncWaiter();
+    NODELETE Ref<Waiter> syncWaiter();
 
     void notifyDebuggerHookInjected() { m_isDebuggerHookInjected = true; }
     bool isDebuggerHookInjected() const { return m_isDebuggerHookInjected; }
@@ -1372,7 +1386,7 @@ public:
 
 #if ENABLE(WEBASSEMBLY_DEBUGGER)
     Wasm::DebugState* debugStateIfExists() { return m_debugState.get(); }
-    JS_EXPORT_PRIVATE Wasm::DebugState* LEGACY_NODELETE debugState();
+    NODELETE JS_EXPORT_PRIVATE Wasm::DebugState* debugState();
 #endif
 
 private:
@@ -1396,6 +1410,7 @@ private:
     NativeExecutable* promiseAllSettledSlowRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnyRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnySlowRejectFunctionExecutableSlow();
+    NativeExecutable* proxyRevokeExecutableSlow();
 
     void updateStackLimits();
 
@@ -1509,6 +1524,8 @@ private:
     void createBytecodeIntrinsicRegistry();
     std::unique_ptr<BytecodeIntrinsicRegistry> m_bytecodeIntrinsicRegistry;
     uint64_t m_drainMicrotaskDelayScopeCount { 0 };
+    uint64_t m_recentLatin1JSONStringifyLengths { 0 };
+    uint64_t m_recentUTF16JSONStringifyLengths { 0 };
 
     // FIXME: We should remove handled promises from this list at GC flip. <https://webkit.org/b/201005>
     Vector<Strong<JSPromise>> m_aboutToBeNotifiedRejectedPromises;
@@ -1551,6 +1568,21 @@ public:
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
+#if ENABLE(AOT)
+    // While the innermost queue is this one, reactions go to the normal microtask queue. It stays in the chain so that the collector still visits it.
+    SynchronousModuleQueue* m_suspendedSynchronousModuleQueue { nullptr };
+#endif
+    // The queue that reactions are diverted to.
+    SynchronousModuleQueue* synchronousModuleQueue() const
+    {
+        if (!m_synchronousModuleQueue) [[likely]]
+            return nullptr;
+#if ENABLE(AOT)
+        if (m_synchronousModuleQueue == m_suspendedSynchronousModuleQueue) [[unlikely]]
+            return nullptr;
+#endif
+        return m_synchronousModuleQueue;
+    }
 
     class SynchronousModuleQueueScope {
         WTF_MAKE_NONCOPYABLE(SynchronousModuleQueueScope);
@@ -1636,8 +1668,6 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 #endif
 
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
-// sanitizeStackForVM() clears from where its last call stood. What ran since then may have gone deeper.
-JS_EXPORT_PRIVATE void sanitizeStackForVMFrom(VM&, void* lowestAddress);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
 // While one of these is alive, properties can be put directly on an object whose Structure says hasImmutableProperties(); it changes

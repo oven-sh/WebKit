@@ -1,13 +1,11 @@
 import { describeOverload } from "./check-overloads.ts";
 import type { Problems } from "./declarations.ts";
-import type { ModelClass, ModelOverload, ModelParameter, ModelType, TableModel } from "./model.ts";
+import type { ModelOverload, ModelParameter, ModelType, TableModel } from "./model.ts";
 import {
   directValuesInTwoRegisters,
   directValueTypes,
   maximumDirectParameterCount,
   type DirectParameterSpec,
-  type DirectValue,
-  type OperandUse,
   type Primitive,
 } from "./vocabulary.ts";
 
@@ -47,14 +45,11 @@ function holdsOnlyInstances({
   );
 }
 
-const bytesOfReceiver: readonly DirectValue[] = ["BytesOfReceiver", "BytesOfReceiverInRange"];
-const bytesInRange: readonly DirectValue[] = ["BytesInRange", "BytesOfReceiverInRange"];
 const takesReceiver = ({ value }: DirectParameterSpec) =>
-  value === "NativeObjectOfReceiver" || value === "Receiver" || bytesOfReceiver.includes(value) || value === "FrameOfValues";
+  value === "NativeObjectOfReceiver" || value === "Receiver" || value === "FrameOfValues";
 const takesArgument = (parameter: DirectParameterSpec) =>
   parameter.value === "FrameOfValues" || (parameter.value !== "Realm" && !takesReceiver(parameter));
 
-// The address of a cell is handed over where the function declares a pointer, so nothing else may come.
 function fitsPointer(cppType: string, accepted: ModelType): boolean {
   const { isAnything, hasAnyObject, hasAnyFunction, hasPlainData, integers, parts } = accepted;
   const primitives = accepted.primitives.filter(primitive => primitive !== "NotPassed");
@@ -67,43 +62,6 @@ function fitsPointer(cppType: string, accepted: ModelType): boolean {
       return primitives.length === 0 && accepted.stringLiterals.length === 0;
     default:
       return primitives.every(primitive => primitive === "String" || primitive === "Symbol");
-  }
-}
-
-const isViewClass = (builtinClass: ModelClass | null): boolean =>
-  builtinClass !== null &&
-  (builtinClass.token === "TypedArray" || builtinClass.token === "DataView" || isViewClass(builtinClass.parent));
-
-function holdsOnlyViews(type: ModelType): boolean {
-  return holdsOnlyInstances(type) && type.parts.every(part => part.part === "Instance" && isViewClass(part.class));
-}
-
-// What a function can do to an operand of which it has nothing but the memory, and only until it returns.
-const usesOfContentsDuringCall: readonly OperandUse[] = ["Inspects", "ReadsContents", "WritesContents"];
-
-function runsNoCodeOf({ protocols, namedMembers, calledMembers, convertedMembers }: ModelParameter): boolean {
-  return [protocols, namedMembers, calledMembers, convertedMembers].every(list => list.length === 0);
-}
-
-// The uses of the row decide. A function that keeps, returns or calls an operand, or reads it after it has returned, gets the operand itself.
-function findContentsProblems({ value }: DirectParameterSpec, parameter: ModelParameter): string[] {
-  const { name, accepted, uses, roles } = parameter;
-  switch (value) {
-    case "Bytes":
-    case "BytesOfReceiver":
-    case "BytesInRange":
-    case "BytesOfReceiverInRange": {
-      const others = uses.filter(use => !usesOfContentsDuringCall.includes(use));
-      if (others.length > 0 || !runsNoCodeOf(parameter))
-        return [`${name}: ${value} hands over memory for the time of the call, and the row says more: ${others.join(", ") || "it runs code of the operand"}`];
-      return holdsOnlyViews(accepted) ? [] : [`${name}: ${value} is for typed arrays and DataViews, and for nothing else`];
-    }
-    case "Characters":
-      if (uses.some(use => use !== "Inspects") || !runsNoCodeOf(parameter) || roles.filter(role => role !== "DescribedWhenRefused").join() !== "ReadAsCharacters")
-        return [`${name}: Characters is for a string that is read as characters, and for nothing else`];
-      return holdsOnlyPrimitive({ ...accepted, stringLiterals: [] }, "String") ? [] : [`${name}: Characters is for strings`];
-    default:
-      return [];
   }
 }
 
@@ -136,7 +94,7 @@ function findArgumentProblems(direct: DirectParameterSpec, parameter: ModelParam
   }
   if (!isHandedOverAs(direct, parameter))
     problems.push(`${parameter.name} can be something that ${direct.value} does not hand over`);
-  return [...problems, ...findContentsProblems(direct, parameter)];
+  return problems;
 }
 
 function findFormProblems(symbol: string, direct: readonly DirectParameterSpec[]): string[] {
@@ -166,7 +124,6 @@ function findReceiverProblems({ mode, receiver, code: { directEntry } }: ModelOv
     return [`${symbol}: offsetOfNativeObject goes with a parameter that is NativeObjectOfReceiver`];
   }
   if (!parameters.some(takesReceiver)) {
-    // A receiver that the function only tests is tested by whoever picked the overload.
     const isOnlyTested =
       receiver !== null && receiver.conversion === "None" && receiver.uses.join() === "Inspects" && holdsOnlyInstances(receiver.accepted);
     return mode === "Call" && (receiver === null || isOnlyTested)
@@ -174,38 +131,20 @@ function findReceiverProblems({ mode, receiver, code: { directEntry } }: ModelOv
       : [`${symbol} takes the arguments of a call and no receiver`];
   }
   if (receiver === null) return [`${symbol} takes the receiver, and the overload has none`];
-  const takingBytes = parameters.find(({ value }) => bytesOfReceiver.includes(value));
-  if (takingBytes !== undefined) return findContentsProblems(takingBytes, receiver);
   if (takesNativeObject && (receiver.conversion !== "None" || !holdsOnlyInstances(receiver.accepted))) {
     return [`${symbol} takes what the receiver wraps, so the receiver is an instance of a class`];
   }
   return [];
 }
 
-const valuesWithoutRealm: readonly DirectValue[] = [
-  "Bytes",
-  "BytesOfReceiver",
-  "BytesInRange",
-  "BytesOfReceiverInRange",
-  "Characters",
-  "Boolean",
-  "Int32",
-  "Double",
-];
-
-// Two registers come back. Nothing says that the function failed, so it has no realm to throw in or to allocate in.
-function findFieldsProblems({ result, code: { directEntry } }: ModelOverload): string[] {
-  const { symbol, parameters, returnsFields = false } = directEntry!;
-  if (!returnsFields) return [];
-  const [part] = result.type.parts;
-  const isOneLayout = result.type.parts.length === 1 && part.part === "Layout" && result.type.primitives.length === 0;
-  if (!isOneLayout || part.part !== "Layout" || part.layout.isTuple) return [`${symbol} returns fields, so the row returns one layout`];
-  const { fields } = part.layout;
+function findNumberProblems({ result, effects, flags, code: { directEntry } }: ModelOverload): string[] {
+  const { symbol, returnsNumber = false } = directEntry!;
+  if (!returnsNumber) return [];
   const problems: string[] = [];
-  if (fields.length > 2 || fields.some(({ isOptional, type }) => isOptional || type.integers === null || type.primitives.length > 0))
-    problems.push(`${symbol} returns fields in two registers, so the layout has at most two fields, and they are integers`);
-  if (parameters.some(({ value }) => !valuesWithoutRealm.includes(value)))
-    problems.push(`${symbol} returns fields, so it takes nothing with which it could throw, allocate or call`);
+  if (!holdsOnlyPrimitive({ ...result.type, integers: null }, "Number")) problems.push(`${symbol} returns a number, so the row returns nothing else`);
+  if (result.type.integers !== null) problems.push(`${symbol} returns a number that no test looks at, so the row writes no range`);
+  if (effects.capability !== "none" || flags.includes("Throws"))
+    problems.push(`${symbol} returns a number, so it neither throws nor allocates nor calls`);
   return problems;
 }
 
@@ -229,67 +168,25 @@ function findProblems(overload: ModelOverload): string[] {
   }
   if (implementation.how !== "HostCall")
     problems.push(`${symbol} stands in for native code of the host, so the overload is a call of the host`);
-  problems.push(...findFieldsProblems(overload));
+  problems.push(...findNumberProblems(overload));
   const taken = directEntry.parameters.filter(takesArgument);
   if (taken.length === 1 && taken[0].value === "FrameOfValues") return problems;
-  // The bounds of each part of a view come last, and go into the address and the count of that view.
-  const numberOfBounds = 2 * directEntry.parameters.filter(({ value }) => bytesInRange.includes(value)).length;
-  if (taken.length + numberOfBounds !== parameters.length) {
+  if (taken.length !== parameters.length) {
     return [
       ...problems,
-      `${symbol} takes ${taken.length + numberOfBounds} arguments, and the overload has ${parameters.length}`,
+      `${symbol} takes ${taken.length} arguments, and the overload has ${parameters.length}`,
     ];
   }
   return [
     ...problems,
-    ...parameters
-      .slice(0, taken.length)
-      .flatMap((parameter, index) => findArgumentProblems(taken[index], parameter, index === taken.length - 1)),
-    ...parameters
-      .slice(taken.length)
-      .flatMap(({ name, mode, uses }) =>
-        mode === "Required" && uses.join() === "Inspects" ? [] : [`${name}: a bound of a part of a view is only looked at`],
-      ),
+    ...parameters.flatMap((parameter, index) => findArgumentProblems(taken[index], parameter, index === taken.length - 1)),
   ];
 }
 
-const columnsOfParameter = (parameter: ModelParameter): Record<string, string> => ({
-  "accepted type": parameter.accepted.key,
-  mode: parameter.mode,
-  conversion: parameter.conversion,
-  uses: parameter.uses.join(),
-  roles: parameter.roles.join(),
-  protocols: parameter.protocols.join(),
-  "named members": [parameter.namedMembers, parameter.calledMembers, parameter.convertedMembers]
-    .map(names => names.map(({ text }) => text).join())
-    .join(" | "),
-});
-
-// Both enter the same C function with the same memory. What the compiler believes about a call must not change when the call moves from one to the other.
-function findProblemsOfFormInRanges({ parameters, effects, result, code: { inRanges } }: ModelOverload): string[] {
-  if (inRanges == null) return [];
-  const form = inRanges.overload;
-  const differs = (what: string, ofRow: string, ofForm: string) =>
-    ofRow === ofForm ? [] : [`its form in ranges has other ${what}: ${ofForm || "none"}, and the row has ${ofRow || "none"}`];
-  return [
-    ...differs("reads", effects.reads.join(), form.effects.reads.join()),
-    ...differs("writes", effects.writes.join(), form.effects.writes.join()),
-    ...differs("capability", effects.capability, form.effects.capability),
-    ...differs("result", result.type.key, form.result.type.key),
-    ...parameters.flatMap((parameter, index) => {
-      const ofRow = columnsOfParameter(parameter);
-      const ofForm = columnsOfParameter(form.parameters[index]);
-      return Object.keys(ofRow).flatMap(column => differs(`${column} of ${parameter.name}`, ofRow[column], ofForm[column]));
-    }),
-  ];
-}
-
-// Compiled code enters the C function where it would have called the function object, which stays the way in for every other caller.
 export function checkDirectEntries({ overloads }: Pick<TableModel, "overloads">, problems: Problems): void {
   for (const overload of overloads) {
-    // What is written for a native binding describes the function that it makes, whose entry has the same overloads.
     if (overload.builtin.kind === "NativeBinding") continue;
-    for (const problem of [...findProblems(overload), ...findProblemsOfFormInRanges(overload)])
+    for (const problem of findProblems(overload))
       problems.add(overload.source, `${describeOverload(overload)}: ${problem}`);
   }
 }

@@ -9,6 +9,7 @@
 
 #include "AOTRecordTypes.h"
 #include "AOTSlotRepresentation.h"
+#include <bit>
 #include <iterator>
 #include <optional>
 #include <span>
@@ -29,7 +30,6 @@ constexpr std::optional<ID> optionalIDInImage(Number24 number)
     return number == Number24::max ? std::nullopt : std::optional<ID>(ID(number));
 }
 
-// None is the largest number.
 constexpr Number24 optionalNumber24(uint32_t word)
 {
     if (word == UINT32_MAX)
@@ -38,17 +38,25 @@ constexpr Number24 optionalNumber24(uint32_t word)
     return Number24(word);
 }
 
+enum class ModuleAliasKind : uint8_t;
+constexpr uint32_t encodeModuleAlias(uint32_t module, ModuleAliasKind name) { return module << 2 | static_cast<uint32_t>(name); }
+
 struct ModuleData {
     enum class Flag : uint16_t {
         HasTopLevelAwait = 1 << 0,
+        RunsAgainAfterThrow = 1 << 0,
         IsSynchronous = 1 << 1,
         IsSimple = 1 << 2,
         NeedsLink = 1 << 3,
         ReachesUncompiledCode = 1 << 4,
         HasDynamicStarExport = 1 << 5,
+        HasUnescapedExports = 1 << 5,
         IsEntryPoint = 1 << 6,
-        KeepsError = 1 << 7,
+        CachesEvaluationError = 1 << 7,
+        BodyMayRunAgain = 1 << 7,
+        IsDataFoundByName = 1 << 7,
         HasDeferredRequest = 1 << 8,
+        IsImportedAsESModule = 1 << 8,
         HasValue = 1 << 9,
         NeedsEvaluation = 1 << 10,
         IsLinkedWithEntryPoint = 1 << 11,
@@ -56,18 +64,15 @@ struct ModuleData {
         IsLibraryCodeWithFilePath = 1 << 13,
         IsOfLibrary = 1 << 14,
         CapturesOnDemand = 1 << 15,
+        OnlyPassesLinkOn = 1 << 15,
     };
 
     static constexpr uint8_t hasNoDisplayPath = UINT8_MAX - 1;
     static constexpr uint8_t displayPathIsListed = UINT8_MAX;
 
-    // The public path. Of a module that has a directory: what stands behind the last slash of it.
     uint32_t publicPathOrName;
-    // In ProgramTables::moduleDirectories(). The largest number: none.
     Number24 directory;
-    // The display path is the public path without as many characters at its start. Where it is not, it stands in ProgramTables::moduleDisplayPaths().
     uint8_t charactersInFrontOfDisplayPath;
-    // With HasValue.
     SlotData value;
     uint16_t flags;
     ModuleKind kind : 3;
@@ -75,8 +80,7 @@ struct ModuleData {
     SyntheticExportRule exportRule : 2;
     RequireResult requireResult : 2;
     Number24 body;
-    // Of a module outside the image: the module that names it. Of a module of the library: its number in the host's registry. No other module has either.
-    Number24 referrerOrRuntimeModule;
+    Number24 referrerRuntimeModuleOrLoadGroup;
     Number24 firstRequest;
     Number24 firstExport;
     Number24 firstSyntheticExport;
@@ -85,61 +89,77 @@ struct ModuleData {
     Number24 firstEvaluationRequest;
     uint8_t hasInstalledPositions : 1;
     uint8_t loadedByLoader : 1;
-    uint8_t faceOfFile : 1;
+    uint8_t wrapsCommonJSModule : 1;
     uint8_t importedByModule : 1;
-    uint8_t firstEntryPoint : 1;
-    uint8_t loadedWithFirstEntryPoint : 1;
-    uint8_t importedWhileItRuns : 1;
-    uint8_t unusedBits : 1;
+    uint8_t importedWhileItRunsOrAsNamespace : 1;
+    uint8_t wrappedByFacade : 1;
+    uint8_t evictableOrRejectsOverride : 1;
+    uint8_t bodyThrowsAtLoad : 1 { 0 };
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
-    bool hasTopLevelAwait() const { return has(Flag::HasTopLevelAwait); }
+    bool hasTopLevelAwait() const { return kind != ModuleKind::CommonJs && has(Flag::HasTopLevelAwait); }
+    bool runsAgainAfterThrow() const { return kind == ModuleKind::CommonJs && has(Flag::RunsAgainAfterThrow); }
     bool isSynchronous() const { return has(Flag::IsSynchronous); }
     bool isSimple() const { return has(Flag::IsSimple); }
     bool needsLink() const { return has(Flag::NeedsLink); }
+    bool onlyPassesLinkOn() const { return has(Flag::OnlyPassesLinkOn) && kind != ModuleKind::CommonJs; }
     bool reachesUncompiledCode() const { return has(Flag::ReachesUncompiledCode); }
-    bool hasDynamicStarExport() const { return has(Flag::HasDynamicStarExport); }
+    bool hasDynamicStarExport() const { return kind != ModuleKind::CommonJs && has(Flag::HasDynamicStarExport); }
+    bool hasUnescapedExports() const { return kind == ModuleKind::CommonJs && has(Flag::HasUnescapedExports); }
     bool isEntryPoint() const { return has(Flag::IsEntryPoint); }
-    // Whoever asks for the module after its body threw gets the same error. Without it the module counts as evaluated, with what it had exported by then.
-    bool keepsError() const { return has(Flag::KeepsError); }
-    bool hasDeferredRequest() const { return has(Flag::HasDeferredRequest); }
+    bool cachesEvaluationError() const { return kind != ModuleKind::CommonJs || has(Flag::CachesEvaluationError); }
+    bool bodyOfESModuleMayRunAgain() const { return kind == ModuleKind::SourceText && has(Flag::BodyMayRunAgain); }
+    bool isDataFoundByName() const { return kind == ModuleKind::Data && has(Flag::IsDataFoundByName); }
+    bool hasDeferredRequest() const { return kind != ModuleKind::CommonJs && has(Flag::HasDeferredRequest); }
+    bool isImportedAsESModule() const { return kind == ModuleKind::CommonJs && has(Flag::IsImportedAsESModule); }
     bool hasValue() const { return has(Flag::HasValue); }
     bool needsEvaluation() const { return has(Flag::NeedsEvaluation); }
     bool isLinkedWithEntryPoint() const { return has(Flag::IsLinkedWithEntryPoint); }
-    // Its body evaluates what the module requests, runs the code of the module and stores the status, all of it once.
     bool evaluatesItself() const { return has(Flag::EvaluatesItself); }
     bool isLoadedByLoader() const { return loadedByLoader; }
-    // Its first request is the CommonJS file that it stands for where ES modules import the file.
-    bool isFaceOfFile() const { return faceOfFile; }
-    // Some module requests it with what it writes, and not by a require(): a graph of imports can come to it from above.
+    bool isFacade() const { return wrapsCommonJSModule; }
+    bool hasFacade() const { return wrappedByFacade; }
+    bool mayBeEvicted() const { return !isOfLibrary() && evictableOrRejectsOverride; }
+    bool rejectsRequireCacheOverride() const { return isOfLibrary() && evictableOrRejectsOverride; }
     bool isImportedByModule() const { return importedByModule; }
-    // The entry point that the program starts with.
-    bool isFirstEntryPoint() const { return firstEntryPoint; }
-    // A graph of imports leads to it from that entry point: whoever loads the one loads the other.
-    bool isLoadedWithFirstEntryPoint() const { return loadedWithFirstEntryPoint; }
-    // A CommonJS file that leads by a require() to an ES module that imports it. No code of the image takes what a require() of it answers for what the file exports.
-    bool mayBeImportedWhileItRuns() const { return importedWhileItRuns; }
-    // The helpers of the bundler, which have the form of a file of the program and answer to their name like a module of the library.
+    bool isImportableDuringEvaluation() const { return kind == ModuleKind::CommonJs && importedWhileItRunsOrAsNamespace; }
+    bool isImportedAsNamespace() const { return kind == ModuleKind::SourceText && importedWhileItRunsOrAsNamespace; }
+    bool loaderReturnsNamespace() const { return kind == ModuleKind::Data && importedWhileItRunsOrAsNamespace; }
+    bool hasRequireCacheValue() const { return (kind == ModuleKind::RuntimeSource || kind == ModuleKind::Runtime) && importedWhileItRunsOrAsNamespace; }
+    SlotData requireCacheValue() const { return SlotData::create(value.offset + sizeof(EncodedJSValue), SlotRepresentation::JSValue); }
     bool isLibraryCodeWithFilePath() const { return has(Flag::IsLibraryCodeWithFilePath); }
-    // Code of the host, whatever its form.
     bool isOfLibrary() const { return has(Flag::IsOfLibrary); }
-    // Of the entry points, only the one that entryPointLinkPlan belongs to is linked with it.
     bool hasLinkPlan() const { return isEntryPoint() && isLinkedWithEntryPoint(); }
 
     bool hasExportTable() const;
+    bool isESModuleOfProgram() const { return kind == ModuleKind::SourceText && !isOfLibrary(); }
     bool isUncompiledCode() const { return kind == ModuleKind::External && externalKind == ExternalKind::UncompiledCode; }
+    bool isUncompiledCodeImportedAsNamespace() const { return isUncompiledCode() && importedWhileItRunsOrAsNamespace; }
     bool isHostValue() const { return kind == ModuleKind::External && externalKind == ExternalKind::HostValue; }
+    static constexpr ExternalKind mayBeMockedBit = static_cast<ExternalKind>(1);
+    bool mayBeMocked() const { return kind != ModuleKind::External && externalKind == mayBeMockedBit; }
     bool capturesExports() const;
-    // A file whose names an ES importer finds only in the object that the file exports. They are captured behind its evaluation, which no link starts.
     bool capturesExportsBehindEvaluation() const { return capturesExports() && (kind == ModuleKind::SourceText || kind == ModuleKind::CommonJs); }
+    bool linkFollowsRequests() const { return capturesExportsBehindEvaluation() || (!capturesExports() && !isUncompiledCode()); }
     bool holdsNamespaceInValue() const { return hasValue() && (hasExportTable() || isUncompiledCode()); }
 
     std::optional<FunctionID> bodyFunction() const { return optionalIDInImage<FunctionID>(body); }
-    std::optional<ModuleID> referrerModule() const { return kind == ModuleKind::External ? optionalIDInImage<ModuleID>(referrerOrRuntimeModule) : std::nullopt; }
-    // Of a text that the program evaluates: the file that evaluates it.
-    std::optional<ModuleID> evaluatorModule() const { return kind == ModuleKind::CommonJs ? optionalIDInImage<ModuleID>(referrerOrRuntimeModule) : std::nullopt; }
-    std::optional<uint32_t> registryID() const { return kind == ModuleKind::External || kind == ModuleKind::CommonJs ? std::nullopt : optionalIDInImage<uint32_t>(referrerOrRuntimeModule); }
+    std::optional<ModuleID> referrerModule() const { return kind == ModuleKind::External ? optionalIDInImage<ModuleID>(referrerRuntimeModuleOrLoadGroup) : std::nullopt; }
+    std::optional<ModuleID> evaluatorModule() const { return kind == ModuleKind::CommonJs ? optionalIDInImage<ModuleID>(referrerRuntimeModuleOrLoadGroup) : std::nullopt; }
+    std::optional<uint32_t> registryID() const { return kind == ModuleKind::RuntimeSource || kind == ModuleKind::Runtime ? optionalIDInImage<uint32_t>(referrerRuntimeModuleOrLoadGroup) : std::nullopt; }
+
+    enum class PlaceInLoadGroup : uint8_t { BelowHead, InCycleWithHead, Head, HeadThatRequestsUncompiledCode };
+    static constexpr unsigned bitsOfNumberInLoadGroup = 22;
+    static constexpr uint32_t endOfNumbersInLoadGroups = 1u << bitsOfNumberInLoadGroup;
+    static Number24 encodeLoadGroup(PlaceInLoadGroup place, uint32_t number)
+    {
+        RELEASE_ASSERT(number < endOfNumbersInLoadGroups);
+        return Number24(static_cast<uint32_t>(place) << bitsOfNumberInLoadGroup | number);
+    }
+    PlaceInLoadGroup placeInLoadGroup() const { return static_cast<PlaceInLoadGroup>(static_cast<uint32_t>(referrerRuntimeModuleOrLoadGroup) >> bitsOfNumberInLoadGroup); }
+    uint32_t numberInLoadGroup() const { return static_cast<uint32_t>(referrerRuntimeModuleOrLoadGroup) & ((1u << bitsOfNumberInLoadGroup) - 1); }
+    bool isHeadOfLoadGroup() const { return placeInLoadGroup() >= PlaceInLoadGroup::Head; }
 };
 
 inline bool ModuleData::hasExportTable() const
@@ -157,10 +177,9 @@ inline bool ModuleData::hasExportTable() const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// No importer binds a name of a CommonJS file with CapturesOnDemand at run time. Its rule says what its namespace object shows, for whoever asks for that object.
 inline bool ModuleData::capturesExports() const
 {
-    if (has(Flag::CapturesOnDemand))
+    if (kind == ModuleKind::CommonJs && has(Flag::CapturesOnDemand))
         return false;
     switch (exportRule) {
     case SyntheticExportRule::CommonJs:
@@ -173,7 +192,6 @@ inline bool ModuleData::capturesExports() const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The files of a large program lie in a few thousand directories, and each of those in another: a directory is the one above it and its own name, which ends with the slash.
 struct ModuleDirectoryData {
     Number24 parent;
     Number24 name;
@@ -181,10 +199,16 @@ struct ModuleDirectoryData {
     std::optional<uint32_t> parentDirectory() const { return optionalIDInImage<uint32_t>(parent); }
 };
 
-// In the order of the modules.
 struct ModuleDisplayPathData {
     Number24 module;
     Number24 path;
+};
+
+struct UncompiledModuleData {
+    static constexpr uint32_t noTypeAttribute = UINT32_MAX;
+
+    uint32_t module;
+    uint32_t typeAttribute;
 };
 
 struct ModuleRequestData {
@@ -192,11 +216,9 @@ struct ModuleRequestData {
 
     uint8_t targetBytes[2];
     uint8_t highBitsOfTarget : 4;
-    // The build put the request in front of those that the module writes: something below the module asks for the target, which runs while the graph is loaded.
     uint8_t isHoisted : 1;
     uint8_t isDeferred : 1;
     uint8_t isDynamicStarExport : 1;
-    // A require() that the code of the requesting module answers by itself: it evaluates the target where it stands, so no walk of an evaluation follows it.
     uint8_t isRequire : 1;
 
     static constexpr ModuleRequestData create(uint32_t target, bool isDeferred, bool isDynamicStarExport, bool isRequire = false, bool isHoisted = false)
@@ -208,7 +230,6 @@ struct ModuleRequestData {
     ModuleID targetModule() const { return ModuleID(target()); }
 };
 
-// The numbers of modules in a table of 16-bit words: one word each while every module of the program has a number under 2^16, and two words, the low one first, in a larger program.
 class ModuleNumbers {
 public:
     static constexpr bool needsTwoWords(size_t numberOfModules) { return numberOfModules > (1u << 16); }
@@ -266,7 +287,6 @@ public:
         }
         return false;
     }
-    // The place of the first number from `start` on that has no bit in the set, or `end`.
     size_t findFirstOutside(std::span<const uint64_t> set, size_t start, size_t end) const
     {
         auto isOutside = [&](uint32_t number) ALWAYS_INLINE_LAMBDA {
@@ -292,25 +312,19 @@ private:
     bool m_hasTwoWords { false };
 };
 
-// What a walk of all the requests of the entry point does while no module is linked, in the order of that walk.
 struct LinkPlanStepData {
     uint32_t module : 31;
-    // Otherwise the module captures exports.
     uint32_t resolvesNames : 1;
 
     ModuleID targetModule() const { return ModuleID(static_cast<uint32_t>(module)); }
 };
 
-// A link also starts at a module that an import() names, or that no module requests.
-struct LinkPlanRootData {
-    uint32_t module;
-    uint32_t firstStep;
-    uint32_t memberOfCycle;
-};
-
 struct ModuleExportData {
     uint32_t name : 24;
-    uint32_t kindBits : 6;
+    uint32_t kindBits : 3;
+    uint32_t isHiddenUntilInitialized : 1;
+    uint32_t staysIn : 1;
+    uint32_t isReplaceable : 1;
     uint32_t isDeferred : 1;
     uint32_t isFromStarExport : 1;
     union {
@@ -318,6 +332,8 @@ struct ModuleExportData {
         uint32_t module;
         uint32_t indirectExport;
     };
+
+    static constexpr uint32_t kindBitsOfWordOfMock = 3;
 
     ModuleExportKind kind() const { return static_cast<ModuleExportKind>(kindBits); }
     ModuleID targetModule() const { return ModuleID(module); }
@@ -334,9 +350,9 @@ struct SyntheticExportData {
     uint32_t name : 24;
     uint32_t absentIsUndefined : 1;
     uint32_t hasVariable : 1;
-    // Of a module of the library: every module that binds the name has it among its required names. Where the host defers the export, the link of the first of them reads it.
     uint32_t isBoundByRequiredName : 1;
-    uint32_t unused : 5;
+    uint32_t isReplaceable : 1;
+    uint32_t unused : 4;
     SlotData variable;
 };
 
@@ -348,23 +364,111 @@ struct RequiredNameData {
     ModuleID exporterModule() const { return ModuleID(static_cast<uint32_t>(exporter)); }
 };
 
-// A specifier that an importer could not resolve at the build, or a name that a module turned out to lack: then the module stands in the place of the importer and the name in that of the specifier.
+struct ExportStatementData {
+    uint32_t requiredName;
+    uint32_t exportName : 31;
+    uint32_t dropsExportIfAbsent : 1;
+    uint32_t specifier : 31;
+    uint32_t isOfStar : 1;
+
+    StringID exportNameString() const { return StringID(exportName); }
+    StringID specifierString() const { return StringID(specifier); }
+};
+
+struct AmbiguousExportData {
+    uint32_t module;
+    uint32_t name;
+
+    StringID nameString() const { return StringID(name); }
+};
+
+struct SourceStampData {
+    uint32_t module;
+    uint32_t low;
+    uint32_t high;
+
+    uint64_t stamp() const { return static_cast<uint64_t>(high) << 32 | low; }
+};
+
+struct NameOfStatementData {
+    uint32_t module;
+    uint32_t name;
+
+    StringID nameString() const { return StringID(name); }
+};
+
+struct RequestedOriginalData {
+    uint32_t function;
+    uint32_t specifier;
+};
+
+struct StarAsWrittenData {
+    uint32_t module;
+    uint32_t target;
+    uint32_t place : 31;
+    uint32_t isFollowed : 1;
+};
+
+struct WriterOfExportData {
+    uint32_t module;
+    uint32_t place;
+    uint32_t writer;
+};
+
 struct ModuleFailureData {
     static constexpr uint32_t isAbsentExportBit = 1u << 31;
+    static constexpr uint32_t isFromExportStatementBit = 1u << 30;
+    static constexpr uint32_t isLoadOfModuleBit = 1u << 29;
+    static constexpr uint32_t bits = isAbsentExportBit | isFromExportStatementBit | isLoadOfModuleBit;
 
-    static ModuleFailureData ofAbsentExport(ModuleID exporter, uint32_t name) { return { exporter.index() | isAbsentExportBit, name }; }
+    static ModuleFailureData ofAbsentExport(ModuleID referrer, ModuleID exporter, uint32_t name) { return { exporter.index() | isAbsentExportBit, name, referrer.index() }; }
+    static ModuleFailureData ofExportStatement(ModuleID referrer, uint32_t exportSpecifier, uint32_t exportName)
+    {
+        RELEASE_ASSERT(!(exportSpecifier & bits));
+        return { exportSpecifier | isAbsentExportBit | isFromExportStatementBit, exportName, referrer.index() };
+    }
+    static ModuleFailureData ofLoad(ModuleID module, ModuleFailureID failure) { return { module.index() | isLoadOfModuleBit, failure.index(), module.index() }; }
 
     uint32_t importer;
     uint32_t specifier;
+    uint32_t referrer;
 
     bool isAbsentExport() const { return importer & isAbsentExportBit; }
-    ModuleID importerModule() const { return ModuleID(importer & ~isAbsentExportBit); }
+    bool isFromExportStatement() const { return importer & isFromExportStatementBit; }
+    bool isLoadOfModule() const { return importer & isLoadOfModuleBit; }
+    ModuleFailureID failureOfLoad() const { ASSERT(isLoadOfModule()); return ModuleFailureID(specifier); }
+    ModuleID importerModule() const { ASSERT(!isFromExportStatement()); return ModuleID(importer & ~bits); }
+    ModuleID referrerModule() const { return ModuleID(referrer); }
+    StringID exportSpecifierString() const { ASSERT(isFromExportStatement()); return StringID(importer & ~bits); }
     StringID specifierString() const { return StringID(specifier); }
+};
+
+struct ImportOfHeldFileData {
+    uint64_t key() const { return static_cast<uint64_t>(file) << 32 | importer; }
+
+    uint32_t file;
+    uint32_t importer;
 };
 
 struct CompiledRuntimeModuleData {
     uint32_t registryID;
-    uint32_t module;
+    uint32_t module : 30;
+    uint32_t valueStaysWithCompiledCode : 1;
+    uint32_t recordIsHandedOutFrozen : 1;
+};
+
+struct StateOfLibraryModuleData {
+    enum class Kind : uint32_t { Classes, Closures, Variables };
+    static constexpr unsigned kindBits = 2;
+
+    static constexpr StateOfLibraryModuleData create(uint32_t module, Kind kind, uint32_t first, uint32_t count) { return { module << kindBits | static_cast<uint32_t>(kind), first, count }; }
+
+    uint32_t moduleAndKind;
+    uint32_t first;
+    uint32_t count;
+
+    uint32_t module() const { return moduleAndKind >> kindBits; }
+    Kind kind() const { return static_cast<Kind>(moduleAndKind & ((1u << kindBits) - 1)); }
 };
 
 struct CompiledRuntimeFunctionData {
@@ -373,22 +477,96 @@ struct CompiledRuntimeFunctionData {
     uint32_t visibility;
 };
 
+struct ModuleStartStepData {
+    enum class Operation : uint32_t {
+        Trap,
+        CallStart,
+        CallBody,
+        Begin,
+        BeginOrReturn,
+        Finish,
+        ReturnIfLoadingStops,
+        AbandonOnThrow,
+        Return,
+    };
+
+    static constexpr unsigned numberOfOperationBits = 4;
+    static constexpr uint32_t operationMask = (1u << numberOfOperationBits) - 1;
+    static constexpr uint32_t flagBit = 1u << numberOfOperationBits;
+    static constexpr unsigned operandShift = numberOfOperationBits + 1;
+    static constexpr uint32_t maxOperand = UINT32_MAX >> operandShift;
+
+    static constexpr ModuleStartStepData create(Operation operation, uint32_t operand = 0, bool hasFlag = false)
+    {
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(operand <= maxOperand);
+        return { static_cast<uint32_t>(operation) | (hasFlag ? flagBit : 0) | operand << operandShift };
+    }
+    constexpr Operation operation() const { return static_cast<Operation>(bits & operationMask); }
+    constexpr bool hasFlag() const { return bits & flagBit; }
+    constexpr uint32_t operand() const { return bits >> operandShift; }
+
+    uint32_t bits;
+};
+static_assert(sizeof(ModuleStartStepData) == 4 && isImageRecord<ModuleStartStepData>);
+static_assert(static_cast<uint32_t>(ModuleStartStepData::Operation::Return) <= ModuleStartStepData::operationMask && Number24::max <= ModuleStartStepData::maxOperand);
+static_assert(!ModuleStartStepData::create(ModuleStartStepData::Operation::Trap).bits);
+static_assert(ModuleStartStepData::create(ModuleStartStepData::Operation::Finish, 0xabcdef, true).operand() == 0xabcdef && ModuleStartStepData::create(ModuleStartStepData::Operation::Finish, 0xabcdef, true).hasFlag());
+static_assert(ModuleStartStepData::create(ModuleStartStepData::Operation::CallBody, ModuleStartStepData::maxOperand).operation() == ModuleStartStepData::Operation::CallBody && !ModuleStartStepData::create(ModuleStartStepData::Operation::CallBody, ModuleStartStepData::maxOperand).hasFlag());
+
 static_assert(sizeof(ModuleData) == 40 && isImageRecord<ModuleData>);
 static_assert(sizeof(ModuleDirectoryData) == 6 && isImageRecord<ModuleDirectoryData> && sizeof(ModuleDisplayPathData) == 6 && isImageRecord<ModuleDisplayPathData>);
+static_assert(sizeof(UncompiledModuleData) == 8 && isImageRecord<UncompiledModuleData>);
 static_assert(sizeof(ModuleRequestData) == 3 && alignof(ModuleRequestData) == 1 && isImageRecord<ModuleRequestData>);
 static_assert(ModuleRequestData::create(0xbcdef, true, false, true).target() == 0xbcdef);
 static_assert(sizeof(LinkPlanStepData) == 4 && isImageRecord<LinkPlanStepData>);
-static_assert(sizeof(LinkPlanRootData) == 12 && isImageRecord<LinkPlanRootData>);
 static_assert(sizeof(ModuleExportData) == 8 && isImageRecord<ModuleExportData>);
 static_assert(sizeof(IndirectExportData) == 8 && isImageRecord<IndirectExportData>);
 static_assert(sizeof(SyntheticExportData) == 8 && isImageRecord<SyntheticExportData>);
 static_assert(sizeof(RequiredNameData) == 8 && isImageRecord<RequiredNameData>);
-static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
+static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatementData>);
+static_assert(sizeof(AmbiguousExportData) == 8 && isImageRecord<AmbiguousExportData>);
+static_assert(sizeof(SourceStampData) == 12 && isImageRecord<SourceStampData>);
+static_assert(sizeof(NameOfStatementData) == 8 && isImageRecord<NameOfStatementData>);
+static_assert(sizeof(RequestedOriginalData) == 8 && isImageRecord<RequestedOriginalData>);
+static_assert(sizeof(StarAsWrittenData) == 12 && isImageRecord<StarAsWrittenData>);
+static_assert(sizeof(WriterOfExportData) == 12 && isImageRecord<WriterOfExportData>);
+static_assert(sizeof(ModuleFailureData) == 12 && isImageRecord<ModuleFailureData>);
+static_assert(sizeof(ImportOfHeldFileData) == 8 && isImageRecord<ImportOfHeldFileData>);
+static_assert(sizeof(StateOfLibraryModuleData) == 12 && isImageRecord<StateOfLibraryModuleData>);
 static_assert(sizeof(CompiledRuntimeModuleData) == 8 && isImageRecord<CompiledRuntimeModuleData>);
 static_assert(sizeof(CompiledRuntimeFunctionData) == 12 && isImageRecord<CompiledRuntimeFunctionData>);
 static_assert(sizeof(ModuleData::Flag) == sizeof(ModuleData::flags));
 static_assert(sizeof(ModuleKind) == 1 && sizeof(ExternalKind) == 1 && sizeof(SyntheticExportRule) == 1 && sizeof(RequireResult) == 1);
-static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<unsigned>(ExternalKind::HostValue) < 2 && static_cast<unsigned>(SyntheticExportRule::RuntimeModule) < 4 && static_cast<unsigned>(RequireResult::DefaultExport) < 4);
+static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<unsigned>(ExternalKind::HostValue) < 2 && static_cast<unsigned>(SyntheticExportRule::RuntimeModule) < 4 && static_cast<unsigned>(RequireResult::NamespaceIfImported) < 4);
+
+struct HashOfDirectory {
+    static constexpr uint32_t ofNoText = 2166136261u;
+    static constexpr unsigned bitsPerDirectory = 16;
+    static constexpr uint32_t with(uint32_t hash, char16_t character) { return (hash ^ character) * 16777619u; }
+    static constexpr size_t bit(uint32_t hash, size_t numberOfBits) { return (hash ^ hash >> 15) & (numberOfBits - 1); }
+};
+
+class ModuleByHashOfPath {
+public:
+    constexpr ModuleByHashOfPath(size_t numberOfModuleRecords, unsigned hashOfPath)
+        : m_bitsOfModule(std::bit_width(numberOfModuleRecords))
+        , m_hash(hashOfPath * 0x9e3779b1u)
+        , m_hashInEntry(m_hash << m_bitsOfModule)
+    {
+    }
+
+    static constexpr size_t numberOfBuckets(size_t numberOfModules) { return (numberOfModules + 1) / 2; }
+    constexpr size_t bucket(size_t numberOfBuckets) const { return static_cast<uint64_t>(m_hash) * numberOfBuckets >> 32; }
+    constexpr uint32_t hash() const { return m_hash; }
+    constexpr uint32_t entryFor(uint32_t module) const { return m_hashInEntry | module; }
+    constexpr uint32_t moduleOrMore(uint32_t entry) const { return entry ^ m_hashInEntry; }
+    constexpr bool isModule(uint32_t moduleOrMore) const { return !(moduleOrMore >> m_bitsOfModule); }
+
+private:
+    unsigned m_bitsOfModule;
+    uint32_t m_hash;
+    uint32_t m_hashInEntry;
+};
 
 #define FOR_EACH_AOT_MODULE_PROGRAM_TABLE(v) \
     v(modules, ModuleData) \
@@ -397,18 +575,37 @@ static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<uns
     v(moduleRequests, ModuleRequestData) \
     v(linkRequests, uint16_t) \
     v(evaluationRequests, uint16_t) \
+    v(groupsLoadedWithGroups, uint16_t) \
     v(entryPointLinkPlan, LinkPlanStepData) \
-    v(linkPlanRoots, LinkPlanRootData) \
-    v(linkPlanStepsOfRoots, LinkPlanStepData) \
     v(moduleExports, ModuleExportData) \
     v(indirectExports, IndirectExportData) \
     v(syntheticExports, SyntheticExportData) \
     v(requiredNames, RequiredNameData) \
+    v(exportStatements, ExportStatementData) \
+    v(ambiguousExports, AmbiguousExportData) \
+    v(sourceStamps, SourceStampData) \
     v(moduleFailures, ModuleFailureData) \
+    v(namesOfStatements, NameOfStatementData) \
+    v(starsAsWritten, StarAsWrittenData) \
+    v(writersOfExports, WriterOfExportData) \
     v(modulesByPath, uint16_t) \
-    v(modulesOfUncompiledCode, uint32_t) \
+    v(modulesByHashOfPath, uint32_t) \
+    v(firstModulesByHashOfPath, uint16_t) \
+    v(directoriesOfModulesByPath, uint32_t) \
+    v(modulesOfUncompiledCode, UncompiledModuleData) \
+    v(modulesRejectingUncompiledCode, uint32_t) \
+    v(modulesWithReadOnlyBuiltins, uint32_t) \
+    v(importedModuleAliases, uint32_t) \
+    v(modulesThatDependOnMoreThanSource, uint32_t) \
+    v(asyncFunctionsWithoutAwait, uint32_t) \
+    v(functionsImportingOwnOriginal, uint32_t) \
+    v(requestedOriginals, RequestedOriginalData) \
+    v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(compiledRuntimeModules, CompiledRuntimeModuleData) \
-    v(compiledRuntimeFunctions, CompiledRuntimeFunctionData)
+    v(stateOfLibraryModules, StateOfLibraryModuleData) \
+    v(compiledRuntimeFunctions, CompiledRuntimeFunctionData) \
+    v(moduleStarts, uint32_t) \
+    v(moduleStartSteps, ModuleStartStepData)
 
 } } // namespace JSC::AOT
 

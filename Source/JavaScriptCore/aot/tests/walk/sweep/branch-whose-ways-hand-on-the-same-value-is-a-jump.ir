@@ -1,0 +1,31 @@
+# return a === undefined ? b : b;
+# What arrives is read, and both ways bring the same value: the branch decides nothing.
+# RUN: sweep-code
+# CHECK: dropped v0, v2
+# CHECK-NOT: Branch
+# CHECK: Jump -> next b3(v1)
+# CHECK: dropped b1
+# CHECK: dropped b2
+# CHECK: Return v3
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="name"
+    Return v2
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: boolean @Boolean = TypeTest v0 testedType=undefined
+#     Branch v2 -> taken b1(), notTaken b2()
+#   b1():
+#     Jump -> next b3(v1)
+#   b2():
+#     Jump -> next b3(v1)
+#   b3(v3: anything @JSValue):
+#     Return v3
+# }
+# -- end of code

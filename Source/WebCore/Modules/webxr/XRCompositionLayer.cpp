@@ -77,6 +77,28 @@ PlatformXR::LayerHandle XRCompositionLayer::layerHandle() const
     return m_backing->handle();
 }
 
+// https://www.w3.org/TR/webxrlayers-1/#dom-xrcompositionlayer-destroy
+void XRCompositionLayer::destroy()
+{
+    if (m_destroyed)
+        return;
+    m_destroyed = true;
+
+    destroyResources();
+
+    if (RefPtr session = m_session)
+        session->layerDestroyed(*this);
+}
+
+// https://www.w3.org/TR/webxrlayers-1/#destroy-the-resources-for-a-layer
+void XRCompositionLayer::destroyResources()
+{
+    m_backing->invalidateTextures();
+    m_colorTextures.clear();
+    m_depthStencilTextures.clear();
+    m_backing->releaseResources();
+}
+
 void XRCompositionLayer::setColorTextures(Vector<RefPtr<WebGLOpaqueTexture>>&& colorTextures)
 {
     m_colorTextures = WTF::move(colorTextures);
@@ -153,12 +175,14 @@ std::optional<PlatformXR::FrameData::Pose> computeXRCompositionLayerPose(const T
 void XRCompositionLayer::recomputePose()
 {
     std::optional<TransformationMatrix> spaceTransform;
-    if (m_space)
-        spaceTransform = m_space->nativeOrigin();
+    RefPtr space = m_space;
+    if (space)
+        spaceTransform = space->nativeOrigin();
     if (!spaceTransform)
         spaceTransform = TransformationMatrix();
 
-    auto pose = computeXRCompositionLayerPose(*spaceTransform, m_transform ? &m_transform->rawTransform() : nullptr);
+    RefPtr transform = m_transform;
+    auto pose = computeXRCompositionLayerPose(*spaceTransform, transform ? &transform->rawTransform() : nullptr);
     if (!pose) {
         RELEASE_LOG_ERROR(XR, "Failed to decompose space transform, using identity transform for layer pose");
         m_poseInLocalSpace = PlatformXR::FrameData::Pose { .position = { 0, 0, 0 }, .orientation = { 0, 0, 0, 1 } };

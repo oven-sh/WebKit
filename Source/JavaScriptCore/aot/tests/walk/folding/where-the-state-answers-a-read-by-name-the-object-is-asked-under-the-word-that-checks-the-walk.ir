@@ -1,0 +1,38 @@
+# function make() { return { n: 1 }; }
+# function write(box) { box.n = 7; return box.n; }
+# The read behind the store is answered by what the walk remembers: no read is built, so none can be asked again. Under the word that checks the walk the object is asked at the place where the read stood: 3072 says "a value, answered by what the compiler remembers in place of a read by name".
+# RUN: walk f1:Body mechanisms=all testing=CheckWalkAtRunTime
+# CHECK: AskObjectAgain v0, {{*}}key="n"
+# RUN(EMIT): emit f1:Body mechanisms=all testing=CheckWalkAtRunTime
+# EMIT: = Const32(3072)
+# without the word nothing is asked
+# RUN(PLAIN): walk f1:Body mechanisms=all
+# PLAIN-NOT: AskObjectAgain
+
+layout L0 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Call v1, -
+    v3 = Call v0, -, v2
+    v4 = Call v1, -
+    v5 = Call v0, -, v4
+    Return v5
+}
+function f1 name="write" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=7
+    PropSet v0, v1 key="n"
+    v3 = PropGet v0 key="n"
+    Return v3
+}
+function f2 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}

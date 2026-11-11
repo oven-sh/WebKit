@@ -295,6 +295,9 @@
 /* Display name for closed captions text tracks. */
 "CC (text track)" = "CC";
 
+/* Accessibility label for the camera menu in the user media prompt */
+"Camera (usermedia)" = "Camera";
+
 /* Cancel */
 "Cancel" = "Cancel";
 
@@ -498,6 +501,9 @@
 
 /* Disallow button title in window and screen sharing prompt */
 "Don’t Allow (window and screen sharing)" = "Don’t Allow";
+
+/* PIP Call-to-action button label */
+"Download" = "Download";
 
 /* Download Audio To Disk context menu item */
 "Download Audio" = "Download Audio";
@@ -772,6 +778,9 @@
 /* WKWebExtensionErrorInvalidManifestEntry description for commands */
 "Invalid `commands` manifest entry." = "Invalid `commands` manifest entry.";
 
+/* WKWebExtensionErrorInvalidManifestEntry description for message_serialization */
+"Invalid `message_serialization` manifest entry. The value must be `json` or `structured_clone`." = "Invalid `message_serialization` manifest entry. The value must be `json` or `structured_clone`.";
+
 /* WKWebExtensionErrorInvalidBackgroundPersistence description */
 "Invalid `persistent` manifest entry." = "Invalid `persistent` manifest entry.";
 
@@ -1009,6 +1018,9 @@
 /* WKWebExtensionErrorInvalidBackgroundContent description for empty or invalid preferred environment key */
 "Manifest `background` entry has an empty or invalid `preferred_environment` key." = "Manifest `background` entry has an empty or invalid `preferred_environment` key.";
 
+/* WKWebExtensionErrorInvalidBackgroundContent description for both background page and scripts keys */
+"Manifest `background` entry has both `page` and `scripts` keys. The `page` key is used and `scripts` is ignored." = "Manifest `background` entry has both `page` and `scripts` keys. The `page` key is used and `scripts` is ignored.";
+
 /* WKWebExtensionErrorInvalidBackgroundContent description for missing background page or scripts keys */
 "Manifest `background` entry has missing or empty required `page` or `scripts` key for `preferred_environment` of `document`." = "Manifest `background` entry has missing or empty required `page` or `scripts` key for `preferred_environment` of `document`.";
 
@@ -1056,6 +1068,12 @@
 
 /* Display name for text track kind 'metadata'. */
 "Metadata (text track)" = "Metadata";
+
+/* Accessibility label for the microphone menu in the user media prompt */
+"Microphone (usermedia)" = "Microphone";
+
+/* Accessibility label for the microphone level meter in the user media prompt */
+"Microphone level (usermedia)" = "Microphone level";
 
 /* Label text to be used when a plugin is missing */
 "Missing Plug-in" = "Missing Plug-in";
@@ -1254,6 +1272,9 @@
 
 /* Title for file upload progress view */
 "Preparing (file upload)" = "Preparing…";
+
+/* Badge label identifying the live camera preview in the user media prompt */
+"Preview (usermedia)" = "Preview";
 
 /* Previous Page context menu item */
 "Previous Page" = "Previous Page";
@@ -1531,6 +1552,12 @@
 /* WKErrorWebContentProcessTerminated description */
 "The Web Content process was terminated" = "The Web Content process was terminated";
 
+/* WKWebExtensionErrorInvalidManifestEntry description for action in manifest version 2 */
+"The `action` manifest entry requires manifest version 3 or higher." = "The `action` manifest entry requires manifest version 3 or higher.";
+
+/* WKWebExtensionErrorInvalidManifestEntry description for browser_action or page_action in manifest version 3 */
+"The `browser_action` and `page_action` manifest entries require manifest version 2 or lower." = "The `browser_action` and `page_action` manifest entries require manifest version 2 or lower.";
+
 /* WKWebExtensionContextErrorBackgroundContentFailedToLoad description */
 "The background content failed to load due to an error." = "The background content failed to load due to an error.";
 
@@ -1782,6 +1809,12 @@
 
 /* View in AR? */
 "View in AR?" = "View in AR?";
+
+/* PIP Call-to-action button label */
+"Visit App Store" = "Visit App Store";
+
+/* PIP Call-to-action button label */
+"Visit Website" = "Visit Website";
 
 /* Codec Strings */
 "Vorbis Codec String" = "Vorbis";

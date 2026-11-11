@@ -1,9 +1,7 @@
-// What the generator needs of its surroundings. It runs under node in WebKit's build and under Bun in Bun's.
 import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Under an older node a generator would stop at the first type, or run and write nothing. It says what it needs instead.
 export function requireRuntime(): void {
   if ("Bun" in globalThis) return;
   const [major, minor] = process.versions.node.split(".").map(Number);
@@ -14,7 +12,6 @@ export function requireRuntime(): void {
   process.exit(1);
 }
 
-/** Whether the module at `url` is the program that was started, not a module that another one imports. */
 export function isProgram(url: string): boolean {
   const started = process.argv[1];
   return started !== undefined && realpathSync(started) === realpathSync(fileURLToPath(url));
@@ -24,7 +21,6 @@ export function cap(text: string): string {
   return text[0].toUpperCase() + text.slice(1);
 }
 
-/** `--name=value` and `--name`, which reads as true. */
 export function readFlags(names: readonly string[]): Record<string, string | boolean | undefined> {
   const flags: Record<string, string | boolean | undefined> = {};
   for (const argument of process.argv.slice(2)) {
@@ -39,7 +35,6 @@ export function readFlags(names: readonly string[]): Record<string, string | boo
   return flags;
 }
 
-// A file that stays as it is keeps its time, so nothing that depends on it is built again. Through a rename, so that nobody reads half a file.
 export function writeIfChanged(file: string, written: string): void {
   const text = `${written.replaceAll("\r\n", "\n").trim()}\n`;
   try {
@@ -53,7 +48,6 @@ export function writeIfChanged(file: string, written: string): void {
 
 const setPattern = (name: string): RegExp => new RegExp(String.raw`^set\(${name}\s([^)]*)\)`, "m");
 
-/** The words of `set(<name> ..)` in a CMake file that writes the list out in one piece, with `${variable}` replaced. */
 export function readCMakeList(file: string, name: string, variables: Readonly<Record<string, string>> = {}): string[] {
   const words = setPattern(name).exec(readFileSync(file, "utf8"))?.[1];
   if (words === undefined) return [];

@@ -24,7 +24,6 @@
 
 #include "ConservativeRoots.h"
 #include "MachineContext.h"
-#include "Options.h"
 #include <wtf/BitVector.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
@@ -53,7 +52,7 @@ void MachineThreads::gatherFromConductor(ConservativeRoots& conservativeRoots, J
     conservativeRoots.add(conductingMutatorState.stackTop, conductingMutatorState.stackOrigin, jitStubRoutines, codeBlocks);
 }
 
-static inline int LEGACY_NODELETE osRedZoneAdjustment()
+NODELETE static inline int osRedZoneAdjustment()
 {
     int redZoneAdjustment = 0;
 #if CPU(X86_64)
@@ -74,7 +73,7 @@ static inline int LEGACY_NODELETE osRedZoneAdjustment()
     return redZoneAdjustment;
 }
 
-static std::pair<void*, size_t> LEGACY_NODELETE captureStack(Thread& thread, void* stackTop)
+NODELETE static std::pair<void*, size_t> captureStack(Thread& thread, void* stackTop)
 {
     char* begin = reinterpret_cast_ptr<char*>(thread.stack().origin());
     char* end = std::bit_cast<char*>(WTF::roundUpToMultipleOf<sizeof(void*)>(reinterpret_cast<uintptr_t>(stackTop)));
@@ -91,7 +90,7 @@ static std::pair<void*, size_t> LEGACY_NODELETE captureStack(Thread& thread, voi
 }
 
 SUPPRESS_ASAN
-static void LEGACY_NODELETE copyMemory(void* dst, const void* src, size_t size)
+NODELETE static void copyMemory(void* dst, const void* src, size_t size)
 {
     size_t dstAsSize = reinterpret_cast<size_t>(dst);
     size_t srcAsSize = reinterpret_cast<size_t>(src);
@@ -102,16 +101,6 @@ static void LEGACY_NODELETE copyMemory(void* dst, const void* src, size_t size)
     CPURegister* dstPtr = reinterpret_cast<CPURegister*>(dst);
     const CPURegister* srcPtr = reinterpret_cast<const CPURegister*>(src);
     size /= sizeof(CPURegister);
-#if JSC_CONSERVATIVE_SCAN_SKIPS_POISONED_WORDS
-    if (Options::runsCompiledImage()) {
-        // ConservativeRoots::genericAddSpanOfCompiledProcess scans the copy, and the addressable half of a poisoned word may hold a narrow reference.
-        while (size--) {
-            *dstPtr++ = isPoisonedForConservativeScan(srcPtr) ? addressableHalvesForConservativeScan(srcPtr) : *srcPtr;
-            ++srcPtr;
-        }
-        return;
-    }
-#endif
     // The copy is scanned in place of the stack, and only the stack knows which of its words are poisoned.
     while (size--) {
         *dstPtr++ = isPoisonedForConservativeScan(srcPtr) ? 0 : *srcPtr;

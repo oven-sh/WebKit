@@ -1,0 +1,29 @@
+# a written type is a guess. With every mechanism withheld Convert becomes the value itself: nothing is tested, and nothing leans on the type
+# function twice(n: number) { return n * 2; }
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[n]]: {{*}}@JSValue {{*}})
+# CHECK: @JSValue = Mul [[n]], {{*}}form=Generic
+# RUN(NOTHING): walk f1 mechanisms=none
+# NOTHING-NOT: Convert
+# NOTHING-NOT: TypeTest
+# NOTHING-NOT: form=Numbers
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="twice" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Convert v0 declared={type=number}
+    v2 = Integer integer=2
+    v3 = Mul v1, v2
+    v4 = Convert v3 declared={type=number}
+    Return v4
+}

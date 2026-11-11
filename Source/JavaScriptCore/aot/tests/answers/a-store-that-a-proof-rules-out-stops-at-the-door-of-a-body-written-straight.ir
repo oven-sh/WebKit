@@ -1,0 +1,57 @@
+# const box = { inner: { n: 1 } };
+# function texts(b) { b.inner = "text"; }   function inner(b) { return b.inner.n; }
+# if (which === 1) id(texts)(box);   print(inner(box));   print("went on");
+# Fault injection: Link assumes that the shell's `id` returns undefined, so `box` never escapes from compiled code and every writer is known.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined,ForceStraightCompilation
+# RUN(TEXT): run-in-shell mechanisms=all globalThis.which = 1;
+# TEXT: bun: internal AOT error: object mutation check failed
+# TEXT-NEXT: StoreOfOtherType on an {{*}}, but the compiler proved that
+# TEXT-NOT: went on
+# TEXT: crashed with
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: 1
+# NONE-NEXT: went on
+# NONE-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="which" [isFreeName]
+    v5 = StrictEq v4, v0
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = PropGet v3 key="id" [isFreeName]
+    v7 = NewClosure function=f1
+    v8 = Call v6, -, v7 calleeName="id"
+    v9 = Call v8, -, v2
+    Jump -> next b2()
+  b2():
+    v10 = NewClosure function=f2
+    v11 = Call v10, -, v2 calleeName="inner"
+    v12 = PropGet v3 key="print" [isFreeName]
+    v13 = Call v12, -, v11 calleeName="print"
+    v14 = String string="went on"
+    v15 = Call v12, -, v14 calleeName="print"
+    v16 = Undefined
+    Return v16
+}
+function f1 name="texts" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="text"
+    PropSet v0, v1 key="inner"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="inner" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner"
+    v2 = PropGet v1 key="n"
+    Return v2
+}

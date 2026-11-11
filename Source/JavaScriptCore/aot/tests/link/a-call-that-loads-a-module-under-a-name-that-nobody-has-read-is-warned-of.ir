@@ -1,0 +1,41 @@
+# If the build said nothing, a program that hands a name from outside to a built-in that loads modules would learn only at run time that its executable loads nothing but what was compiled into it
+# sink(name => process.getBuiltinModule(name), () => process.getBuiltinModule("node:fs"));  function nobodyCallsThis(name) { return process.getBuiltinModule(name); }
+# One warning, at the first call. The name of the second is written out. Nothing reaches the third
+# OPTIONS: exclude=CodeOutsideImage
+# DIAGNOSTIC: NonConstantModuleName 1
+# RUN: link functions mechanisms=all
+# CHECK: function f3 unreached
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="byName" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Process
+    v2 = PropGet v1 key="getBuiltinModule"
+    v3 = Call v2, v1, v0 calleeKey="getBuiltinModule"
+    Return v3
+}
+function f2 name="writtenOut" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="getBuiltinModule"
+    v2 = String string="node:fs"
+    v3 = Call v1, v0, v2 calleeKey="getBuiltinModule"
+    Return v3
+}
+function f3 name="nobodyCallsThis" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Process
+    v2 = PropGet v1 key="getBuiltinModule"
+    v3 = Call v2, v1, v0 calleeKey="getBuiltinModule"
+    Return v3
+}

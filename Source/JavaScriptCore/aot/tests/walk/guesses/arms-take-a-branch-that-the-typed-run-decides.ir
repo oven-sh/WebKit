@@ -1,0 +1,43 @@
+# function first(o: Options) { if (o.memo) return o; return undefined; }
+# No Options has a `memo`: behind the looks at the cell the read finds nothing, and the truth of undefined is known. Each arm of the guess ends with the branch: the typed run folds it,
+# and the truth is asked in the closed arm alone: nothing meets, and no stub is asked for the truth of what met.
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasNoExtraProperties
+# CHECK: frequency=Rare
+# CHECK-NEXT: = PropGet {{*}}key="memo"
+# CHECK-NEXT: = ToBoolean
+# CHECK-NEXT: Branch
+# RUN(ONCE): walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# ONCE-COUNT-1: = ToBoolean
+# ONCE-NOT: = ToBoolean
+# RUN(MEETING): walk f1 mechanisms=none+TypedOperations+Guesses+Folding
+# MEETING-NOT: Jump -> next b{{*}}(v
+
+layout L0 name="Options" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="x"
+    v6 = FinishObject v4
+    v7 = Call v1, -, v6
+    Return v7
+}
+function f1 name="first" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="memo"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    v4 = Undefined
+    Return v4
+}

@@ -1,0 +1,47 @@
+# function matcher(prefix, word) { return new RegExp(prefix + word); }   Gone through by itself it is handed nothing that anybody knows. Whoever names it is gone through next.
+# export function first() { return matcher("^", "a+"); }   export function second() { return matcher("\\b", "c+"); }   Two callers give two texts, and not four.
+# RUN: regexp-texts mechanisms=all
+# CHECK-COUNT-2: text /
+# CHECK-NOT: text /
+# RUN(FIRST): regexp-texts mechanisms=all
+# FIRST: text /^a+/
+# RUN(SECOND): regexp-texts mechanisms=all
+# SECOND: text /\bc+/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="matcher" module=m0 declared={type=f1} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="first" module=m0 declared={type=f2} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="second" module=m0 declared={type=f3} initialization=Function function=f3 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = GetModuleVariable variable=g1
+    v3 = GetModuleVariable variable=g2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="matcher" module=m0 position=10 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=RegExp
+    v3 = Add v0, v1
+    v4 = Construct v2, -, v3
+    Return v4
+}
+function f2 name="first" module=m0 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = String string="^"
+    v2 = String string="a+"
+    v3 = Call v0, -, v1, v2
+    ReturnCall v3
+}
+function f3 name="second" module=m0 position=30 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = String string="\\b"
+    v2 = String string="c+"
+    v3 = Call v0, -, v1, v2
+    ReturnCall v3
+}

@@ -1,7 +1,10 @@
 import * as b from "bun-builtins-table";
 
 const serialized = [b.runsTransitively("OwnKeys", "OwnValues", "ToJSON", "ToPrimitive"), b.onlyBoxedPrimitivesConverted];
-// It refuses a BigInt, an object that holds itself and a text longer than a string may be: what is admitted reaches no string but those that the program spells out.
+const serializedByListOfNames = [
+  b.runsTransitively("OwnKeys", "OwnValues", "ToJSON", "ToPrimitive", b.named()),
+  b.onlyBoxedPrimitivesConverted,
+];
 const dataWithTextThatFitsInString = b.union(b.plainData, b.null, b.bool, b.f64, b.symbol);
 
 export default b.declarations(
@@ -14,7 +17,7 @@ export default b.declarations(
           returns: b.union(b.plainData, b.strictNull, b.bool, b.f64, b.string),
           capability: "heap",
           throws: true,
-          uses: { text: [b.readAsCharacters] },
+          uses: { text: b.inspected },
           typedResultForm: { form: "ParsedText", source: "text" },
           implementation: b.hostCall,
         },
@@ -25,9 +28,8 @@ export default b.declarations(
           throws: true,
           runsOnlyOperandCode: true,
           uses: {
-            text: [b.readAsCharacters],
+            text: b.inspected,
             reviver: [
-              // The walk goes into whatever the reviver has put into a holder in the meantime, and deletes and defines there.
               b.called({
                 afterwards: "WritesIntoWhatItFinds",
                 times: "Repeatedly",
@@ -71,7 +73,7 @@ export default b.declarations(
           throws: true,
           runsOnlyOperandCode: true,
           uses: {
-            value: [...serialized, b.readByKey(b.keysIn("replacer"), b.nativeMemory)],
+            value: [...serializedByListOfNames, b.readByKey(b.keysIn("replacer"), b.nativeMemory)],
             replacer: [b.runsTransitively("OwnValues", "ToPrimitive", b.named("length"))],
             space: [b.runs("ToPrimitive")],
           },
@@ -97,6 +99,5 @@ export default b.declarations(
     },
     { locksMembers: true, mutability: "AlwaysLocked", table: b.staticTable("runtime/JSONObject.cpp", "jsonTable") },
   ),
-  // Tests spy on them, and libraries that revive dates or big integers wrap them on request (jju).
   b.replacedByPackages("JSON.parse", "JSON.stringify"),
 );

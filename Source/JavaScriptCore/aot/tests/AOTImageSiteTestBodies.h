@@ -37,6 +37,7 @@ struct InlineFrameShape {
     uint32_t callee;
     bool isTailCall;
     bool isConstruct;
+    BuiltinID calledBuiltin { };
 };
 
 struct BodiesImage {
@@ -74,10 +75,9 @@ inline SiteBody finishBody(CodeSketch& sketch, Vector<ExpectedSite>&& sites)
     return { sketch.take(), WTF::move(sites) };
 }
 
-// Pinned: the offsets that these bodies expect are those of the sketch, so the outliner must find nothing to take.
 inline void appendCall(CodeSketch& sketch, Vector<ExpectedSite>& sites, uint32_t word)
 {
-    sketch.pinned(word);
+    sketch.plain(word);
     OptionalIndex site = sketch.addSite(0, 10 + word, 1 + word % 7);
     uint32_t call = sketch.callStub(writeBarrier(), site);
     sites.append(ExpectedSite { returnOffsetOf(call), *site });
@@ -110,7 +110,7 @@ inline SiteBody bodyWithInlineFrames(uint32_t function, unsigned numberOfSuspens
     sites.inlineFrames.append(InlineFrame { 0, 0, 0, false, false });
     for (const InlineFrameShape& frame : frames) {
         OptionalIndex callSite = addPosition(frame.parent);
-        sites.inlineFrames.append(InlineFrame { frame.parent, *callSite, sketch.calleeIndex(frame.callee), frame.isTailCall, frame.isConstruct });
+        sites.inlineFrames.append(InlineFrame { frame.parent, *callSite, sketch.calleeIndex(frame.callee), frame.isTailCall, frame.isConstruct, frame.calledBuiltin });
     }
     sites.numberOfSitesWithoutCode = numberOfSuspensionSites + static_cast<unsigned>(frames.size());
 

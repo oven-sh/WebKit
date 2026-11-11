@@ -1,0 +1,31 @@
+# function merge(s) { return Object.assign({}, s); }  merge({ ["__proto__"]: { y: 1 } });
+# The source lists an own property under `__proto__`: the assignment finds the setter of Object.prototype and lays what is copied above the target.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L1 {{*}}ChangesPrototype
+
+layout L0 module=m0 fields=[{key="__proto__" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything}}]
+layout L2 module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v4 calleeName="merge"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="merge" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectAssign
+    v3 = NewObject layout=L1
+    v4 = FinishObject v3
+    v5 = Call v2, v1, v4, v0 calleeName="Object.assign"
+    Return v5
+}

@@ -1,0 +1,48 @@
+# If a test for one member let the whole set pass, what stands behind the test would be built for both shapes. Where the test passes the set is cut member by member. Where it fails all that came goes on: failing-side-of-a-test-for-a-layout-cuts-nothing.ir says why
+# function first(o) { return o; }  function second(o) { return o; }  function pick(o) { return isShapedAsP(o) ? first(o) : second(o); }  pick({ x: 1, p: 1 });  pick({ x: 1, q: 1 });
+# RUN: link functions layouts mechanisms=all
+# CHECK: function f1 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1
+# CHECK: function f2 callers-known one-callee {{*}}result=L0 returns=
+# CHECK-NEXT: parameter 0 {{*}}proven=L0
+# CHECK: function f3 callers-known one-callee {{*}}result=L0|L1 returns=
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+
+layout L0 name="P" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Q" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v2 calleeName="pick"
+    v7 = Call v5, -, v4 calleeName="pick"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="pick" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = CallDirect v2 function=f2
+    Return v3
+  b2(v4):
+    v5 = CallDirect v4 function=f3
+    Return v5
+}
+function f2 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

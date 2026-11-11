@@ -1,0 +1,39 @@
+# `held` is what a function hands back that reads a variable with a dead zone behind CheckInitialized. The closure that captures it is in sight at its call, so the direct call hands the capture over as it stands
+# function stock() { return STOCK; }  function run() { const held = stock(); const look = () => held; return look(); }  const STOCK = "kept";  run()
+# RUN: walk f2 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: [[held]]: string @{{*}} = CallDirect {{*}}function=f1
+# CHECK: = CallDirect [[held]] {{*}}function=f3
+
+variable g0 name="stock" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="run" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="STOCK" module=m0 declared={type=string|absent} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="kept"
+    PutModuleVariable v0 variable=g2
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v2 calleeName="run"
+    Return v3
+}
+function f1 name="stock" module=m0 thisType={type=anything} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="STOCK"
+    Return v1
+}
+function f2 name="run" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0 calleeName="stock"
+    v2 = NewClosure v1 function=f3
+    v3 = Call v2 calleeName="look"
+    v4 = Add v3, v3
+    Return v4
+}
+function f3 name="look" module=m0 kind=Arrow captures=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: string):
+    Return v0
+}

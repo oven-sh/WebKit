@@ -1,0 +1,73 @@
+# barrel.mjs: export * from "./first.mjs"; export * from "./second.cjs"   first.mjs: export const level = 1   second.cjs: exports.level = "two"
+# the run finds the name behind both stars, so the barrel exports nothing under it, and a read off its namespace object finds undefined: Modules::isExportAmbiguous()
+# above.mjs: export * from "./barrel.mjs": its one star leads to names that show in the run
+# the controls: the same name read off the object of first.mjs itself, and off still.mjs, whose one star leads to a table alone
+# RUN: link variables mechanisms=all
+# CHECK: variable g1 proven=undefined|int[0, 2147483647]
+# CHECK: variable g2 proven=int[0, 2147483647] writers-known
+# CHECK: variable g3 proven=int[0, 2147483647] writers-known
+# CHECK: variable g4 proven=undefined|int[0, 2147483647]
+
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}]
+module m1 path="/barrel.mjs" displayPath="barrel.mjs" body=f1 requests=[{target=m2 completes=true}, {target=m4 isDynamicStarExport=true completes=true}] exports=[{name="level" variable=g0 isFromStarExport=true}]
+module m2 path="/first.mjs" displayPath="first.mjs" body=f2 exports=[{name="level" variable=g0}]
+module m3 path="/second.cjs" displayPath="second.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g5
+module m4 path="#4" displayPath="second.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f4 requests=[{target=m3 kind=Require completes=true}] syntheticExports=[{name="default" variable=g6}]
+module m5 path="/still.mjs" displayPath="still.mjs" body=f5 requests=[{target=m2 completes=true}] exports=[{name="level" variable=g0 isFromStarExport=true}]
+module m6 path="/above.mjs" displayPath="above.mjs" body=f6 requests=[{target=m1 isDynamicStarExport=true completes=true}] exports=[{name="level" variable=g0 isFromStarExport=true}]
+entry module=m0
+variable g0 name="level" module=m2 declared={type=anything}
+variable g1 name="throughBarrel" module=m0 declared={type=anything}
+variable g2 name="straight" module=m0 declared={type=anything}
+variable g3 name="throughStill" module=m0 declared={type=anything}
+variable g4 name="throughAbove" module=m0 declared={type=anything}
+variable g5 name="exports" module=m3 declared={type=anything} initialization=Undefined
+variable g6 name="default" module=m4 declared={type=anything|absent}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="level"
+    PutModuleVariable v1 variable=g1
+    v3 = ModuleNamespace module=m2
+    v4 = PropGet v3 key="level"
+    PutModuleVariable v4 variable=g2
+    v6 = ModuleNamespace module=m5
+    v7 = PropGet v6 key="level"
+    PutModuleVariable v7 variable=g3
+    v9 = ModuleNamespace module=m6
+    v10 = PropGet v9 key="level"
+    PutModuleVariable v10 variable=g4
+    v12 = Undefined
+    Return v12
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f3 name="file" module=m3 kind=CommonJsModule results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="facade" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m3 referrer=m4 [isBare]
+    Return
+}
+function f5 module=m5 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f6 module=m6 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

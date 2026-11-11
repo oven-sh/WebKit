@@ -8,41 +8,44 @@
 
 #if ENABLE(AOT)
 
-#include "AOTEdgeResults.h"
+#include "AOTTypeNarrowing.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/OptionSet.h>
-#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class BlockAttribute : uint8_t {
+static_assert(std::ranges::none_of(allMembersOf<TerminatorKind>, [](TerminatorKind kind) { return wireFlagsOf(kind); }), "A terminator has no flags word on the wire.");
+
+static constexpr uint32_t largestPositionInBodyText = Wire::none - 1;
+
+enum class BlockAttributeInBodyText : uint8_t {
     Role = 1 << 0,
     Subject = 1 << 1,
-    Frequency = 1 << 2,
-    Handler = 1 << 3,
+    Handler = 1 << 2,
+    Frequency = 1 << 3,
 };
 
-template<typename WireRecord>
-static size_t appendRecord(Vector<uint32_t>& code, const WireRecord& record)
+template<typename WireHead>
+static size_t appendHeadToBodyWords(Vector<uint32_t>& code, const WireHead& head)
 {
     size_t position = code.size();
-    code.append(spanReinterpretCast<const uint32_t>(singleElementSpan(record)));
+    code.append(spanReinterpretCast<const uint32_t>(singleElementSpan(head)));
     return position;
 }
 
-template<typename WireRecord>
-static void overwriteRecord(Vector<uint32_t>& code, size_t position, const WireRecord& record)
+template<typename WireHead>
+static void overwriteHeadInBodyWords(Vector<uint32_t>& code, size_t position, const WireHead& head)
 {
-    reinterpretCastSpanStartTo<WireRecord>(code.mutableSpan().subspan(position)) = record;
+    reinterpretCastSpanStartTo<WireHead>(code.mutableSpan().subspan(position)) = head;
 }
 
-static uint32_t numberOfDefinedValues(ValueID lastDefined)
+static uint32_t numberOfValuesDefinedInBodyText(ValueID lastDefined)
 {
     return lastDefined ? lastDefined.index() + 1 : 0;
 }
 
-static void expectID(TextParser& parser, IDPrefix prefix, uint32_t number)
+static void expectIDInBodyText(TextParser& parser, IDPrefix prefix, uint32_t number)
 {
     if (!parser.atID(prefix) || parser.token().number != number) {
         parser.fail();
@@ -51,7 +54,7 @@ static void expectID(TextParser& parser, IDPrefix prefix, uint32_t number)
     parser.advance();
 }
 
-static uint32_t parseIDWordBelow(TextParser& parser, IDPrefix prefix, uint32_t limit)
+static uint32_t parseIDWordInBodyText(TextParser& parser, IDPrefix prefix, uint32_t limit)
 {
     TextPosition position = parser.token().position;
     uint32_t word = parser.parseIDWord(prefix);
@@ -61,32 +64,30 @@ static uint32_t parseIDWordBelow(TextParser& parser, IDPrefix prefix, uint32_t l
     return 0;
 }
 
-static bool hasAnyField(const ValueEngineFields& fields)
-{
-    return fields.typeWord != Wire::none || fields.expectedWord != Wire::none || fields.representation;
-}
-
-static bool isAtTerminator(const TextParser& parser)
+static bool isAtTerminatorInBodyText(const TextParser& parser)
 {
     return parser.at(TokenKind::Word) && parseEnum<TerminatorKind>(parser.token().view());
 }
 
-static uint32_t parseEntryFlags(TextParser& parser, std::span<const ASCIILiteral> names)
+static uint32_t parseFlagsInBodyText(TextParser& parser, Opcode opcode)
 {
     uint32_t flags = 0;
     if (!parser.at(TokenKind::LeftBracket))
         return flags;
-    if (names.empty()) {
+
+    uint32_t wireFlags = wireFlagsOf(opcode);
+    if (!wireFlags) {
         parser.fail();
         return flags;
     }
 
+    std::span<const ASCIILiteral> names = flagNamesOf(opcode);
     parser.parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
         auto name = std::ranges::find_if(names, [&](ASCIILiteral candidate) {
             return parser.atWord(candidate);
         });
         uint32_t flag = 1u << (name - names.begin());
-        if (name == names.end() || flags & flag) {
+        if (name == names.end() || !(wireFlags & flag) || flags & flag) {
             parser.fail();
             return;
         }
@@ -94,25 +95,6 @@ static uint32_t parseEntryFlags(TextParser& parser, std::span<const ASCIILiteral
         parser.advance();
     });
     return flags;
-}
-
-static Origin parseOrigin(TextParser& parser)
-{
-    Origin origin { Wire::none, 0 };
-    if (!parser.accept(TokenKind::At))
-        return origin;
-    origin.position = parser.parseUInt32(Wire::none - 1);
-    if (parser.accept(TokenKind::Colon))
-        origin.inlineFrame = parser.parseUInt32();
-    if (parser.token().isWord("tail"_s)) {
-        origin.isTailCall = true;
-        parser.advance();
-    }
-    if (parser.token().isWord("constructs"_s)) {
-        origin.isPartOfConstruction = true;
-        parser.advance();
-    }
-    return origin;
 }
 
 Wire::Body TextParser::parseBody(const TextItem& item, const Wire::Function& function)
@@ -137,37 +119,37 @@ Wire::Body TextParser::parseBody(const TextItem& item, const Wire::Function& fun
     expect(TokenKind::RightBrace);
     if (hasFailed())
         return { };
-    return { builder().appendCode(code().span()), m_body.scan.numberOfBlocks, numberOfDefinedValues(m_body.value) };
+    return { builder().appendCode(code().span()), m_body.scan.numberOfBlocks, numberOfValuesDefinedInBodyText(m_body.value) };
 }
 
 void TextParser::parseBlock(uint32_t blockIndex, const Wire::Function& function)
 {
     m_body.block = BlockID(blockIndex);
     Wire::BlockHead head;
-    size_t headPosition = appendRecord(code(), head);
+    size_t headPosition = appendHeadToBodyWords(code(), head);
     if (!blockIndex && m_body.scan.leavesOutEntryHead)
         appendEntryParameters(function, head);
     else
         parseBlockHead(blockIndex, head);
 
-    while (!hasFailed() && !isAtTerminator(*this)) {
+    while (!hasFailed() && !isAtTerminatorInBodyText(*this)) {
         parseValue();
         ++head.valueCount;
     }
     parseTerminator();
-    overwriteRecord(code(), headPosition, head);
+    overwriteHeadInBodyWords(code(), headPosition, head);
 }
 
 void TextParser::appendEntryParameters(const Wire::Function& function, Wire::BlockHead& head)
 {
     auto append = [&](uint32_t typeWord) {
-        appendBlockParameter(ValueID(numberOfDefinedValues(m_body.value)), typeWord, { });
+        appendBlockParameter(typeWord);
         ++head.parameterCount;
         ++m_body.scan.numberOfValues;
     };
-    auto appendEach = [&](Wire::Span declaredTypes) {
-        for (uint32_t index = 0; index < declaredTypes.count; ++index)
-            append(builder().sections().listOf<Wire::DeclaredType>()[declaredTypes.start + index].type);
+    auto appendEach = [&]<typename Position>(Wire::Span positions) {
+        for (uint32_t index = 0; index < positions.count; ++index)
+            append(builder().sections().listOf<Position>()[positions.start + index].type);
     };
 
     auto flags = OptionSet<FunctionFlags>::fromRaw(static_cast<OptionSet<FunctionFlags>::StorageType>(function.flags));
@@ -175,10 +157,10 @@ void TextParser::appendEntryParameters(const Wire::Function& function, Wire::Blo
         bool isPresent = flags.containsAll(presentWithOf(kind));
         switch (kind) {
         case EntryParameter::Capture:
-            appendEach(function.captures);
+            appendEach.template operator()<Wire::DeclaredCapture>(function.captures);
             break;
         case EntryParameter::Parameter:
-            appendEach(function.parameters);
+            appendEach.template operator()<Wire::DeclaredType>(function.parameters);
             break;
         case EntryParameter::This:
             if (isPresent)
@@ -203,14 +185,14 @@ void TextParser::appendEntryParameters(const Wire::Function& function, Wire::Blo
 
 void TextParser::parseBlockHead(uint32_t blockIndex, Wire::BlockHead& head)
 {
-    expectID(*this, IDPrefix::Block, blockIndex);
+    expectIDInBodyText(*this, IDPrefix::Block, blockIndex);
     parseList(TokenKind::LeftParenthesis, TokenKind::RightParenthesis, [&] {
         parseBlockParameter();
         ++head.parameterCount;
     });
 
-    OptionSet<BlockAttribute> seenAttributes;
-    auto acceptAttribute = [&](ASCIILiteral name, BlockAttribute attribute) {
+    OptionSet<BlockAttributeInBodyText> seenAttributes;
+    auto acceptAttribute = [&](ASCIILiteral name, BlockAttributeInBodyText attribute) {
         TextPosition position = token().position;
         if (!acceptField(name))
             return false;
@@ -220,66 +202,43 @@ void TextParser::parseBlockHead(uint32_t blockIndex, Wire::BlockHead& head)
         return true;
     };
     while (atField()) {
-        if (acceptAttribute("role"_s, BlockAttribute::Role))
+        if (acceptAttribute("role"_s, BlockAttributeInBodyText::Role))
             head.role = static_cast<uint32_t>(parseEnumerator<BlockRole>());
-        else if (acceptAttribute("subject"_s, BlockAttribute::Subject))
+        else if (acceptAttribute("subject"_s, BlockAttributeInBodyText::Subject))
             head.subject = parseValueUseWord();
-        else if (acceptAttribute("frequency"_s, BlockAttribute::Frequency))
-            head.frequency = static_cast<uint32_t>(parseEnumerator<BlockFrequency>());
-        else if (acceptAttribute("handler"_s, BlockAttribute::Handler))
+        else if (acceptAttribute("handler"_s, BlockAttributeInBodyText::Handler))
             parseTarget();
+        else if (acceptAttribute("frequency"_s, BlockAttributeInBodyText::Frequency))
+            head.frequency = static_cast<uint32_t>(parseEnumerator<BlockFrequency>());
         else
             fail();
     }
-    head.hasHandler = seenAttributes.contains(BlockAttribute::Handler);
+    head.hasHandler = seenAttributes.contains(BlockAttributeInBodyText::Handler);
     expect(TokenKind::Colon);
     expectEndOfLine();
 }
 
 void TextParser::parseBlockParameter()
 {
-    ValueID id(numberOfDefinedValues(m_body.value));
-    expectID(*this, IDPrefix::Value, id.index());
-    m_body.value = id;
-
-    uint32_t typeWord = accept(TokenKind::Colon) ? parseTypeWord() : Wire::none;
-    if (at(TokenKind::Colon)) {
-        fail();
-        return;
-    }
-
-    ValueEngineFields engineFields;
-    parseEngineValueFields(engineFields);
-    appendBlockParameter(id, typeWord, WTF::move(engineFields));
+    expectIDInBodyText(*this, IDPrefix::Value, numberOfValuesDefinedInBodyText(m_body.value));
+    appendBlockParameter(accept(TokenKind::Colon) ? parseTypeWord() : Wire::none);
 }
 
-void TextParser::appendBlockParameter(ValueID id, uint32_t typeWord, ValueEngineFields&& engineFields)
+void TextParser::appendBlockParameter(uint32_t typeWord)
 {
-    m_body.value = id;
-    appendRecord(code(), Wire::ParameterHead { typeWord });
-    engineFields.function = m_body.function;
-    engineFields.value = id;
-    if (m_form != IRForm::AsRead)
-        engineFields.typeWord = typeWord;
-    if (hasAnyField(engineFields))
-        m_valueEngineFields.append(engineFields);
+    m_body.value = ValueID(numberOfValuesDefinedInBodyText(m_body.value));
+    appendHeadToBodyWords(code(), Wire::ParameterHead { typeWord });
 }
 
 void TextParser::parseValue()
 {
-    ValueID id(numberOfDefinedValues(m_body.value));
+    ValueID id(numberOfValuesDefinedInBodyText(m_body.value));
     m_body.value = id;
 
     bool hasResult = atID(IDPrefix::Value);
     if (hasResult) {
-        ValueEngineFields engineFields;
-        engineFields.function = m_body.function;
-        engineFields.value = id;
-        expectID(*this, IDPrefix::Value, id.index());
-        parseEngineValueFields(engineFields);
+        expectIDInBodyText(*this, IDPrefix::Value, id.index());
         expect(TokenKind::Equal);
-        if (hasAnyField(engineFields))
-            m_valueEngineFields.append(engineFields);
     }
 
     TextPosition opcodePosition = token().position;
@@ -287,54 +246,38 @@ void TextParser::parseValue()
     if (hasResult != (resultRuleOf(opcode) != ResultRule::None))
         fail(InternalErrorKind::IRTextError, opcodePosition);
 
-    size_t headPosition = appendRecord(code(), Wire::ValueHead { });
-    uint32_t wireFlags = wireFlagsOf(opcode);
+    Wire::ValueHead head { static_cast<uint32_t>(opcode), Wire::none };
+    size_t headPosition = appendHeadToBodyWords(code(), head);
+    bool hasFlagsWord = wireFlagsOf(opcode);
     size_t flagsPosition = code().size();
-    if (wireFlags)
-        code().append(0);
+    if (hasFlagsWord)
+        code().append(0u);
     parseFields(*this, opcode);
 
-    uint32_t flags = parseEntryFlags(*this, flagNamesOf(opcode));
-    if (wireFlags)
-        code()[flagsPosition] = flags & wireFlags;
-    auto engineFlags = static_cast<uint16_t>(flags & ~wireFlags);
+    uint32_t flags = parseFlagsInBodyText(*this, opcode);
+    if (hasFlagsWord)
+        code()[flagsPosition] = flags;
 
-    Origin origin = parseOrigin(*this);
-    uint32_t writtenPositionBits = 0;
     if (accept(TokenKind::At)) {
-        writtenPositionBits = Wire::WrittenPositionFollows;
-        code().append(parseUInt32());
-        if (acceptWord("callers"_s))
-            writtenPositionBits |= Wire::WrittenPositionIsForCallers;
+        head.position = parseUInt32(largestPositionInBodyText);
+        if (acceptWord("tail"_s))
+            head.opcode |= Wire::StandsInTailPosition;
+        acceptWord("constructs"_s);
+        if (accept(TokenKind::At)) {
+            head.opcode |= Wire::WrittenPositionFollows;
+            code().append(parseUInt32(largestPositionInBodyText));
+            if (acceptWord("callers"_s))
+                head.opcode |= Wire::WrittenPositionIsForCallers;
+        }
     }
-    overwriteRecord(code(), headPosition, Wire::ValueHead { static_cast<uint32_t>(opcode) | writtenPositionBits, origin.position });
-    if (engineFlags || origin.inlineFrame || origin.isTailCall || origin.isPartOfConstruction) {
-        addPatch([function = m_body.function, id, engineFlags, origin](PatchContext& context) {
-            Value& value = context.program.at(function).edit(id);
-            value.flags |= engineFlags;
-            value.setOrigin(origin);
-        });
-    }
+    overwriteHeadInBodyWords(code(), headPosition, head);
     expectEndOfLine();
-}
-
-void TextParser::parseEngineValueFields(ValueEngineFields& fields)
-{
-    {
-        SetForScope layoutsAreExact(m_layoutsAreExact, true);
-        if (accept(TokenKind::Colon))
-            fields.typeWord = parseTypeWord();
-        if (accept(TokenKind::Tilde))
-            fields.expectedWord = parseTypeWord();
-    }
-    if (accept(TokenKind::At))
-        fields.representation = parseEnumerator<Representation>();
 }
 
 void TextParser::parseTerminator()
 {
     TerminatorKind kind = parseEnumerator<TerminatorKind>();
-    size_t headPosition = appendRecord(code(), Wire::TerminatorHead { });
+    size_t headPosition = appendHeadToBodyWords(code(), Wire::TerminatorHead { });
     parseFields(*this, kind);
 
     Vector<Token, 4> targetNames;
@@ -352,13 +295,8 @@ void TextParser::parseTerminator()
             fail(InternalErrorKind::IRTextError, targetNames[targetIndex].position);
     }
 
-    Origin origin = parseOrigin(*this);
-    overwriteRecord(code(), headPosition, Wire::TerminatorHead { static_cast<uint32_t>(kind), origin.position, static_cast<uint32_t>(targetNames.size()) });
-    if (origin.inlineFrame || origin.isTailCall || origin.isPartOfConstruction) {
-        addPatch([function = m_body.function, block = m_body.block, origin](PatchContext& context) {
-            context.program.at(function).edit(block).terminator.setOrigin(origin);
-        });
-    }
+    uint32_t position = accept(TokenKind::At) ? parseUInt32(largestPositionInBodyText) : Wire::none;
+    overwriteHeadInBodyWords(code(), headPosition, Wire::TerminatorHead { static_cast<uint32_t>(kind), position, numberOfTargets });
     expectEndOfLine();
 }
 
@@ -366,7 +304,7 @@ void TextParser::parseTarget()
 {
     Wire::TargetHead head;
     head.block = parseBlockUseWord();
-    size_t headPosition = appendRecord(code(), head);
+    size_t headPosition = appendHeadToBodyWords(code(), head);
 
     expect(TokenKind::LeftParenthesis);
     if (atID(IDPrefix::Value)) {
@@ -382,17 +320,17 @@ void TextParser::parseTarget()
         } while (accept(TokenKind::Comma));
     }
     expect(TokenKind::RightParenthesis);
-    overwriteRecord(code(), headPosition, head);
+    overwriteHeadInBodyWords(code(), headPosition, head);
 }
 
 uint32_t TextParser::parseBlockUseWord()
 {
-    return parseIDWordBelow(*this, IDPrefix::Block, m_body.scan.numberOfBlocks);
+    return parseIDWordInBodyText(*this, IDPrefix::Block, m_body.scan.numberOfBlocks);
 }
 
 uint32_t TextParser::parseValueUseWord()
 {
-    return parseIDWordBelow(*this, IDPrefix::Value, m_body.scan.numberOfValues);
+    return parseIDWordInBodyText(*this, IDPrefix::Value, m_body.scan.numberOfValues);
 }
 
 uint32_t TextParser::parseOptionalValueUseWord()

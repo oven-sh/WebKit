@@ -109,6 +109,7 @@ function formatIntrinsic(meaning: ModelIntrinsicMeaning): string {
       return `Intrinsic::HasJSType { first: CheckedJSType::${meaning.first}, last: CheckedJSType::${meaning.last} }`;
     case "Builtin":
     case "Construct":
+    case "IsHolderWithoutAddedNames":
     case "NativeBinding":
       return `Intrinsic::${meaning.intrinsic}(${formatBuiltinId(meaning.builtin)})`;
     case "LinkTimeConstant":
@@ -136,6 +137,7 @@ function formatIntrinsic(meaning: ModelIntrinsicMeaning): string {
     case "HasPromiseStatus":
       return `Intrinsic::HasPromiseStatus(PromiseStatus::${meaning.status})`;
     case "LinkedFunction":
+      if (meaning.expansion !== undefined) return `Intrinsic::${meaning.expansion}`;
       return `Intrinsic::LinkedFunction(${formatRuntimeFunction(meaning.function.id)})`;
     case "IfAbruptCloseIterator":
     case "IsNullish":

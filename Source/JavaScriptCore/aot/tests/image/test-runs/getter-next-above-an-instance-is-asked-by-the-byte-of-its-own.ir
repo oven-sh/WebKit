@@ -1,0 +1,63 @@
+# hidden(Map.prototype); say(); lay(); say(); replace(); say(); restore(); say()   with   say = () => { print(sizes(map, 2)); }
+# function sizes(things: Map<number, number>, turns: number) { let sum = 0; for (let at = 0; at < turns; at++) sum += things.size; return sum; }
+# The prototype of Maps is handed to code that nobody has seen, so `size` is open in this test run. It is a getter that no cell of the image names. It is found NEXT ABOVE the instance, so it is asked as a method there is:
+# the cell alone and ONE BYTE OF THAT MEMBER, not the byte of the class, which any write on any prototype above sets for the rest of the process.
+# lay() lays a name that has nothing to do with it; replace() lays another getter, and the closed arm finds it; put back, the byte stays set and the built-in answers through the closed arm.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell mechanisms=all const aboveMaps = Map.prototype, kept = Object.getOwnPropertyDescriptor(aboveMaps, "size"); globalThis.hidden = () => {}; globalThis.map = new Map([[1, 4], [2, 5]]); globalThis.lay = () => { aboveMaps.laid = 1; }; globalThis.replace = () => { Object.defineProperty(aboveMaps, "size", { get() { return 70; }, configurable: true }); }; globalThis.restore = () => { Object.defineProperty(aboveMaps, "size", kept); };
+# CHECK: 4
+# CHECK-NEXT: 4
+# CHECK-NEXT: 140
+# CHECK-NEXT: 4
+# CHECK-NEXT: exited with 0
+# RUN(LOCKS): locks open
+# LOCKS: open MapPrototypeSize holder-let-go-by-program
+# RUN(GETTER): walk f1 mechanisms=all
+# GETTER-LABEL: code f1:Body
+# GETTER: = IsPristine {{*}}builtinClass=Map aspects=[{{*}}CellAlone]
+# GETTER: = IsMemberAsBuilt builtin=MapPrototypeSize
+
+module m0 path="/a.test.ts" displayPath="a.test.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = PropGet v0 key="hidden" [isFreeName]
+    v3 = Builtin builtin=MapPrototype
+    v4 = Call v2, -, v3
+    v5 = PropGet v0 key="map" [isFreeName]
+    v6 = PropGet v0 key="print" [isFreeName]
+    v7 = Integer integer=2
+    v8 = Call v1, -, v5, v7
+    v9 = Call v6, -, v8
+    v10 = PropGet v0 key="lay" [isFreeName]
+    v11 = Call v10, -
+    v12 = Call v1, -, v5, v7
+    v13 = Call v6, -, v12
+    v14 = PropGet v0 key="replace" [isFreeName]
+    v15 = Call v14, -
+    v16 = Call v1, -, v5, v7
+    v17 = Call v6, -, v16
+    v18 = PropGet v0 key="restore" [isFreeName]
+    v19 = Call v18, -
+    v20 = Call v1, -, v5, v7
+    v21 = Call v6, -, v20
+    Return v21
+}
+function f1 name="sizes" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Map<number, number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map<number, number>, v1: number):
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3: anything, v4: anything):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v0 key="size"
+    v8 = Add v3, v7
+    v9 = Increment v4
+    Jump -> next b1(v8, v9)
+  b3():
+    Return v3
+}

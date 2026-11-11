@@ -62,8 +62,11 @@ static void enableEveryAirSwitch(Air::Policy& air)
     air.registers.usesSecondPreferredRegister = true;
     air.registers.evictsHolderOfPreferredRegister = true;
     air.splitting.splitsAroundClobbersEarly = true;
+    air.splitting.splitsAroundClobbersThatRead = true;
+    air.splitting.keepsUnusedTmpsOnStackThroughLoops = true;
+    air.splitting.spillsTmpsReadInPlaceFirst = true;
     air.splitting.spansStretchesOfClobbers = true;
-    air.splitting.limitsClobberSitesPerSplit = true;
+    air.splitting.leastCostOfSplitAroundClobber = 1.0f / 1024;
     air.splitting.splitsIntoClustersOverBlocks = true;
     air.splitting.splitsAroundFrame = true;
     air.frame.shrinkWraps = true;
@@ -99,6 +102,9 @@ static Policy policyWithEverySwitchOn()
     policy.loops.foldsComparisonsWithBounds = true;
     policy.loops.versions = true;
     policy.loops.clampsLoopBounds = true;
+    policy.loops.vectorizes = true;
+    policy.loops.unrolls = true;
+    policy.loops.promotesMemory = true;
     policy.switchLowering.usesBitTests = true;
     enableEveryAirSwitch(policy.air);
     return policy;
@@ -128,7 +134,7 @@ static bool hasSamePreferredRegisters(const Policy& policy, const Policy& other)
 static bool hasSameLiveRangeSplitting(const Policy& policy, const Policy& other)
 {
     auto fieldsOf = [](const Air::LiveRangeSplitPolicy& splitting) {
-        return std::tuple(splitting.splitsAroundClobbersEarly, splitting.spansStretchesOfClobbers, splitting.limitsClobberSitesPerSplit, splitting.splitsIntoClustersOverBlocks);
+        return std::tuple(splitting.splitsAroundClobbersEarly, splitting.splitsAroundClobbersThatRead, splitting.keepsUnusedTmpsOnStackThroughLoops, splitting.spillsTmpsReadInPlaceFirst, splitting.spansStretchesOfClobbers, splitting.leastCostOfSplitAroundClobber, splitting.splitsIntoClustersOverBlocks);
     };
     return fieldsOf(policy.air.splitting) == fieldsOf(other.air.splitting);
 }
@@ -174,6 +180,9 @@ static std::span<const SwitchFields> switchFields()
         SWITCH_FIELD(FoldComparisonsWithBounds, loops, foldsComparisonsWithBounds),
         SWITCH_FIELD(VersionLoops, loops, versions),
         SWITCH_FIELD(ClampLoopBounds, loops, clampsLoopBounds),
+        SWITCH_FIELD(VectorizeLoops, loops, vectorizes),
+        SWITCH_FIELD(UnrollLoops, loops, unrolls),
+        SWITCH_FIELD(PromoteLoopMemory, loops, promotesMemory),
         SWITCH_FIELD(BitTests, switchLowering, usesBitTests),
         SWITCH_FIELD(KnownRanges, knownProperties, trustsKnownRanges),
         SWITCH_FIELD(KnownDereferenceableBytes, knownProperties, trustsKnownDereferenceableBytes),

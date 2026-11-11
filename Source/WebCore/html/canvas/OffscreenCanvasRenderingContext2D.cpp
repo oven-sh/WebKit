@@ -82,10 +82,7 @@ void OffscreenCanvasRenderingContext2D::drawText(const String& text, double x, d
     if (!canDrawText(x, y, fill, maxWidth))
         return;
 
-    String normalizedText = normalizeSpaces(text);
-    auto direction = (state().direction == Direction::Rtl) ? TextDirection::RTL : TextDirection::LTR;
-    TextRun textRun(normalizedText, 0, 0, ExpansionBehavior::allowRightOnly(), direction, false, true);
-    drawTextUnchecked(textRun, x, y, fill, maxWidth);
+    drawTextUnchecked(TextRun { normalizeSpaces(text), 0, 0, ExpansionBehavior::allowRightOnly(), toTextDirection(state().direction) }, x, y, fill, maxWidth);
 }
 
 OffscreenCanvasRenderingContext2D::~OffscreenCanvasRenderingContext2D() = default;
@@ -97,7 +94,7 @@ void OffscreenCanvasRenderingContext2D::setFont(const String& newFont)
     if (newFont.isEmpty())
         return;
 
-    if (newFont == state().unparsedFont && state().font.realized())
+    if (newFont == state().unparsedFont && protect(state().font)->realized())
         return;
 
     // According to http://lists.w3.org/Archives/Public/public-html/2009Jul/0947.html,
@@ -118,10 +115,11 @@ void OffscreenCanvasRenderingContext2D::setFont(const String& newFont)
     fontDescription.setComputedSize(DefaultFontSize);
     fontDescription.setUsedSize(DefaultFontSize);
     carryOverKerningAndTextRendering(fontDescription);
+    fontDescription.setComputedLocale(effectiveLanguage());
 
     if (auto fontCascade = Style::resolveForUnresolvedFont(*unresolvedFont, WTF::move(fontDescription), context)) {
         ASSERT(context->cssFontSelector());
-        modifiableState().font.initialize(protect(*context->cssFontSelector()), protect(*fontCascade));
+        protect(modifiableState().font)->initialize(protect(*context->cssFontSelector()), protect(*fontCascade));
 
         String letterSpacing;
         setLetterSpacing(std::exchange(modifiableState().letterSpacing, letterSpacing));
@@ -151,24 +149,29 @@ RefPtr<ImageBuffer> OffscreenCanvasRenderingContext2D::transferToImageBuffer()
     return result;
 }
 
-CanvasDirection OffscreenCanvasRenderingContext2D::direction() const
+AtomString OffscreenCanvasRenderingContext2D::inheritedLanguage() const
 {
-    // FIXME: What should we do about inherit here?
-    switch (state().direction) {
+    return canvas().inheritedLanguage();
+}
+
+TextDirection OffscreenCanvasRenderingContext2D::toTextDirection(Direction direction) const
+{
+    switch (direction) {
     case Direction::Inherit:
-    case Direction::Ltr:
-        return Direction::Ltr;
+        return canvas().inheritedDirection();
     case Direction::Rtl:
-        return Direction::Rtl;
+        return TextDirection::RTL;
+    case Direction::Ltr:
+        return TextDirection::LTR;
     }
     ASSERT_NOT_REACHED();
-    return Direction::Ltr;
+    return TextDirection::LTR;
 }
 
 auto OffscreenCanvasRenderingContext2D::fontProxy() -> const FontProxy* {
-    if (!state().font.realized())
+    if (!protect(state().font)->realized())
         setFont(state().unparsedFont);
-    return &state().font;
+    return state().font.ptr();
 }
 
 void OffscreenCanvasRenderingContext2D::fillText(const String& text, double x, double y, std::optional<double> maxWidth)
@@ -183,7 +186,7 @@ void OffscreenCanvasRenderingContext2D::strokeText(const String& text, double x,
 
 Ref<TextMetrics> OffscreenCanvasRenderingContext2D::measureText(const String& text)
 {
-    return measureTextInternal(text);
+    return measureTextInternal(TextRun { normalizeSpaces(text), 0, 0, ExpansionBehavior::allowRightOnly(), toTextDirection(state().direction) });
 }
 
 } // namespace WebCore

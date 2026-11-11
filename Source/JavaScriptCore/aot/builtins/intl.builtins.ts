@@ -84,21 +84,24 @@ const formatterCreation = (className: string, optionNames: readonly string[]) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// What native code makes of a Date, of a wrapper or of an array depends on what that holds.
 const readByFormatting = [hostSettings, "InternalFields", "Elements", "ArrayStorage", "TypedArrayElements", "TypedArrayStorage", "NamedProperties", "ObjectFields", "ShapeWords", "PrototypeLinks"];
 
-// A receiver that has the prototype object above it and is no formatter may hold one, under a symbol: what `Intl.DateTimeFormat.call(object)` has put there.
 const mayHoldFormatter = b.runs("PrototypeChain", b.named());
 
-const boundFormat = (inlineBuiltin: string, parameter: string) =>
-  ({
+const boundFormat = (inlineBuiltin: string, parameter: string, objectsFormattedInLine: readonly b.FunctionField[] = []) => [
+  {
+    getter: b.instance("BoundFunction"),
+    capability: "heap",
+    uses: { this: [b.storedIn(b.resultSlot("boundThis"))] },
+    implementation: b.hostCall,
+  },
+  {
     this: b.any,
     getter: b.callable,
     capability: "js",
     throws: true,
     runsOnlyOperandCode: true,
     uses: { this: [b.retained, mayHoldFormatter] },
-    // A custom accessor of a static table: it has no function object, and a read of it leaves no frame of a getter in a stack trace.
     implementation: b.generic,
     call: [
       {
@@ -110,6 +113,7 @@ const boundFormat = (inlineBuiltin: string, parameter: string) =>
         reads: [hostSettings],
         implementation: b.inline(inlineBuiltin, { otherwise: b.hostCall }),
       },
+      ...objectsFormattedInLine,
       {
         args: { [parameter]: b.any.optional },
         returns: b.string,
@@ -120,18 +124,38 @@ const boundFormat = (inlineBuiltin: string, parameter: string) =>
         reads: readByFormatting,
         implementation: b.generic,
       },
-      b.otherwise,
+      {
+        this: b.any,
+        args: { [parameter]: b.any.optional },
+        returns: b.string,
+        capability: "js",
+        throws: true,
+        runsOnlyOperandCode: true,
+        uses: { this: [b.retained, mayHoldFormatter], [parameter]: [b.runs("ToPrimitive"), b.readsContents()] },
+        reads: readByFormatting,
+        implementation: b.generic,
+      },
     ],
-  }) satisfies b.GetterField;
+  },
+] satisfies readonly b.GetterField[];
+
+const pristineDateFormatted = {
+  args: { date: b.instance("Date").pristine("Names") },
+  returns: b.string,
+  capability: "heap",
+  throws: true,
+  uses: { this: b.inspected, date: [b.readsContents("time")] },
+  reads: [hostSettings],
+  implementation: b.inline("FormatDateTime", { otherwise: b.hostCall }),
+} satisfies b.FunctionField;
 
 const formatterClass = (
   name: string,
   tablePrefix: string,
   usesFeature: readonly b.FeatureUseSpec[],
   optionNames: readonly string[],
-  format: b.GetterField,
+  format: readonly b.GetterField[],
 ) => {
-  // An operand is converted to a primitive. An object of Temporal among the dates is only looked at.
   const method = (operands: readonly string[], returns: b.TableType) =>
     ({
       this: b.any,
@@ -156,13 +180,14 @@ const formatterClass = (
     reads: [hostSettings],
     implementation: b.hostCall,
   } satisfies b.FunctionField;
-  return b.class(`Intl.${name}`, {
+  const declaredClass = b.class(`Intl.${name}`, {
     instanceCppClass: b.cppClass(`Intl${name}`),
     types: [b.exactType(`Intl.${name}`)],
     usesFeature,
     prototypeUsesFeature: true,
     nativeSymbols: [`callIntl${name}`, `constructIntl${name}`],
     requiresHolderAsThis: true,
+    lockedMembers: ["prototype"],
     constructorTable: b.staticTable(`runtime/Intl${name}Constructor.cpp`, `${tablePrefix}ConstructorTable`),
     prototypeTable: b.staticTable(`runtime/Intl${name}Prototype.cpp`, `${tablePrefix}PrototypeTable`),
     call: [
@@ -187,6 +212,11 @@ const formatterClass = (
       },
     },
   });
+  const membersThatProgramsMayReplace = ["format", "formatToParts", "formatRange", "formatRangeToParts", "resolvedOptions"];
+  return [
+    ...declaredClass,
+    ...membersThatProgramsMayReplace.flatMap(member => b.extend(`Intl.${name}.prototype.${member}`, { mutability: "ConstantUnlessWritten" })),
+  ];
 };
 
 const temporalDateToLocaleString = {
@@ -202,7 +232,6 @@ const temporalDateToLocaleString = {
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
-// Without options, and without a locale or with a well-formed one, there is nothing to refuse and nothing to ask.
 const numberToLocaleString = (receiver: b.TableType) =>
   [
     {
@@ -248,7 +277,6 @@ export default b.declarations(
         returns: newStringArray,
         capability: "heap",
         throws: true,
-        // For "collation" ICU opens the collation data of every locale and lists the keys it finds there.
         uses: { key: [b.readAsLocale] },
         usesFeature: ["IntlOther", { feature: "IntlCollation", when: b.whenOperand("key", "collation") }],
         implementation: b.hostCall,
@@ -262,7 +290,7 @@ export default b.declarations(
     "dateTimeFormat",
     ["IntlDateTimeFormat"],
     dateTimeFormatOptions,
-    boundFormat("FormatDateTime", "date"),
+    boundFormat("FormatDateTime", "date", [pristineDateFormatted]),
   ),
   formatterClass(
     "NumberFormat",

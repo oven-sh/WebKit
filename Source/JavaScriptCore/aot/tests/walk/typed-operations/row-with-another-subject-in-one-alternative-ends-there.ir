@@ -1,0 +1,50 @@
+# every alternative of a row compares the same value. The third compares another, so the row ends in front of it, and two constants are no switch
+# function isEither(kind, other) { return kind === 1 || kind === 4 || other === 9; }
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: Branch
+# CHECK: Branch
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: Switch
+# RUN(SHELL): run-in-shell globalThis.sink = isEither => { print([isEither(1, 0), isEither(4, 0), isEither(9, 0), isEither(0, 9), isEither(9, 9)].join()); };
+# SHELL: true,true,false,true,true
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="isEither" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = StrictEq v0, v2
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    Jump -> next b4(v5)
+  b2(v6):
+    Jump -> next b3()
+  b3():
+    v7 = Integer integer=4
+    v8 = StrictEq v0, v7
+    Jump -> next b4(v8)
+  b4(v9):
+    v10 = ToBoolean v9
+    Branch v10 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v11):
+    Jump -> next b8(v11)
+  b6(v12):
+    Jump -> next b7()
+  b7():
+    v13 = Integer integer=9
+    v14 = StrictEq v1, v13
+    Jump -> next b8(v14)
+  b8(v15):
+    Return v15
+}

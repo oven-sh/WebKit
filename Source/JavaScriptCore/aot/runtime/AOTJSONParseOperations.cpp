@@ -8,12 +8,15 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
+#include "AOTConvention.h"
 #include "AOTHeapCacheRegistry.h"
+#include "AOTInliningAcrossFiles.h"
+#include "AOTInstance.h"
 #include "AOTJSONHooks.h"
-#include "AOTJSONKeyOrder.h"
 #include "AOTJSONRuntime.h"
 #include "AOTJSONValueParser.h"
-#include "AOTModuleHost.h"
+#include "AOTKeyOrderTable.h"
 #include "AOTObject.h"
 #include "AOTObjectBuilder.h"
 #include "AOTObjectBuilderInlines.h"
@@ -21,24 +24,28 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramIdentifiers.h"
-#include "AOTProgramStrings.h"
-#include "AOTRuntimeCounters.h"
-#include "AOTRuntimeTable.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "AOTVector.h"
 #include "DeferTermination.h"
 #include "GCMemoryOperations.h"
-#include "GlobalObjectMethodTable.h"
 #include "JSArrayBufferView.h"
+#include "JSArrayInlines.h"
 #include "JSCInlines.h"
-#include "JSONObject.h"
 #include "ObjectConstructor.h"
 #include "ObjectInitializationScope.h"
 #include "TopExceptionScope.h"
+#include "WeakGCMapInlines.h"
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <optional>
 #include <span>
+#include <utility>
 #include <wtf/FastFloat.h>
+#include <wtf/Scope.h>
 #include <wtf/text/ASCIIFastPath.h>
 #include <wtf/unicode/UTF8Conversion.h>
 
@@ -68,54 +75,55 @@ static void freeSourceStorage(uint8_t* start, size_t capacity)
     fastFree(start);
 }
 
-JSONRuntime::JSONRuntime(Instance& instance, CacheRegistry& registry)
+JSONRuntime::JSONRuntime(Instance& instance, CacheRegistry& registry, ZeroedTableArena& arena)
     : m_instance(instance)
+    , m_recordPlanCache(arena)
+    , m_learnedNames(arena)
 {
     instance.json.runtime = this;
-    m_hasParsedRecords = instance.state && !instance.state->tables.parsedRecordFields().empty();
+    m_hasParsedRecords = instance.state && !instance.state->tables.parsedRecordShapes().empty();
     registry.add(CacheKind::ClearedEachCollection, "JSON source copy"_s, *this);
 }
 
 JSONValueParser::LearnedNames& JSONRuntime::learnedNames()
 {
     if (!m_learnedNames) [[unlikely]]
-        m_learnedNames = makeUnique<JSONValueParser::LearnedNames>();
+        m_learnedNames.make();
     return *m_learnedNames;
 }
 
-std::unique_ptr<ObjectBuilderPlan> JSONRuntime::createRecordPlan(VM& vm, std::span<UniquedStringImpl* const> names)
+void JSONRuntime::forgetRecordPlansNotFoundLately(VM& vm)
 {
-    State& state = *m_instance.state;
-    RuntimeLayoutTable& layouts = state.objects->layouts;
-    std::optional<uint32_t> lastName = vm.aotState().identifiers->numberOf(names.back());
-    if (!lastName)
-        return nullptr;
-
-    std::unique_ptr<ObjectBuilderPlan> best;
-    for (const ParsedRecordFieldData& row : std::ranges::equal_range(state.tables.parsedRecordFields(), *lastName, { }, &ParsedRecordFieldData::name)) {
-        const LayoutData& layout = layouts.layoutForShape(row.shape);
-        if (layout.numberOfFields < names.size() || (best && best->layout().numberOfFields <= layout.numberOfFields) || !ObjectBuilder::canBuildWithoutCompilerKnowledge(layout))
-            continue;
-        bool hasEveryName = std::ranges::all_of(names, [&](UniquedStringImpl* name) {
-            return !!layouts.field(vm, layout, name);
+    if (m_numberOfRecordPlans < fewestRecordPlansLookedThrough || m_numberOfTimesAskedForRecordPlan - m_numberOfTimesAskedWhenPlansWereForgotten <= 2 * static_cast<uint64_t>(m_numberOfRecordPlans))
+        return;
+    m_numberOfTimesAskedWhenPlansWereForgotten = m_numberOfTimesAskedForRecordPlan;
+    uint32_t numberOfRecordPlansBefore = m_numberOfRecordPlans;
+    m_recordPlans.removeIf([&](auto& plansUnderHash) {
+        m_numberOfRecordPlans -= plansUnderHash.value.removeAllMatching([&](const RecordPlanForNames& known) {
+            return m_numberOfCollections - known.numberOfCollectionsWhenLastFound > 1 && m_numberOfTimesAskedForRecordPlan - known.numberOfTimesAskedWhenLastFound > 2 * static_cast<uint64_t>(numberOfRecordPlansBefore);
         });
-        if (!hasEveryName)
-            continue;
-        std::unique_ptr<ObjectBuilderPlan> plan = ObjectBuilder::tryCreatePlan(state, layout, names);
-        if (plan && plan->hasFastPath())
-            best = WTF::move(plan);
-    }
-    return best;
+        return plansUnderHash.value.isEmpty();
+    });
+    if (m_numberOfRecordPlans != numberOfRecordPlansBefore)
+        countEvent(vm, RuntimeCounterID::RecordPlansEvicted, numberOfRecordPlansBefore - m_numberOfRecordPlans);
 }
 
-const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* structure)
+auto JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* structure) -> RecordPlanFound
 {
-    if (structure->isDictionary())
-        return nullptr;
+    if (structure->isDictionary() || (m_structuresThatNoPlanFits && m_structuresThatNoPlanFits->get(structure)))
+        return { };
     UniquedStringImpl* lastName = structure->transitionPropertyName();
-    std::optional<uint32_t> lastNameNumber = lastName ? vm.aotState().identifiers->numberOf(lastName) : std::nullopt;
-    if (!lastNameNumber || std::ranges::equal_range(m_instance.state->tables.parsedRecordFields(), *lastNameNumber, { }, &ParsedRecordFieldData::name).empty())
-        return nullptr;
+    UniquedStringImpl* lastNameThatProgramSpells = lastName;
+    Structure* structureOfNamesInRecord = structure;
+    while (lastNameThatProgramSpells && !identifiersOf(m_instance).numberOf(lastNameThatProgramSpells)) {
+        structureOfNamesInRecord = structureOfNamesInRecord->previousID();
+        lastNameThatProgramSpells = structureOfNamesInRecord ? structureOfNamesInRecord->transitionPropertyName() : nullptr;
+    }
+    if (structureOfNamesInRecord && structureOfNamesInRecord != structure && m_structuresThatNoPlanFits && m_structuresThatNoPlanFits->get(structureOfNamesInRecord))
+        return { };
+    std::optional<uint32_t> lastNameNumber = lastNameThatProgramSpells ? identifiersOf(m_instance).numberOf(lastNameThatProgramSpells) : std::nullopt;
+    if (!lastNameNumber || m_instance.state->tables.parsedRecordShapesWithName(*lastNameNumber).empty())
+        return { };
 
     unsigned inlineCapacity = structure->inlineCapacity();
     Vector<UniquedStringImpl*, 16> names;
@@ -130,38 +138,79 @@ const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* 
         return hasOnlyPlainProperties;
     });
     if (!hasOnlyPlainProperties || names.contains(nullptr) || names.last() != lastName)
-        return nullptr;
+        return { };
+    size_t numberInRecord = names.size();
+    while (numberInRecord && names[numberInRecord - 1] != lastNameThatProgramSpells)
+        --numberInRecord;
+    if (!numberInRecord)
+        return { };
+    std::span<UniquedStringImpl*> namesInRecord = names.mutableSpan().first(numberInRecord);
+    auto found = [&](const ObjectBuilderPlan* plan) {
+        return RecordPlanFound { plan, static_cast<unsigned>(numberInRecord), numberInRecord < names.size() };
+    };
 
-    for (const RecordPlanForNames& known : m_recordPlans) {
-        if (std::ranges::equal(known.names, names, { }, &RefPtr<UniquedStringImpl>::get))
-            return known.plan.get();
+    uint32_t hash = 0;
+    for (UniquedStringImpl* name : namesInRecord)
+        hash = pairIntHash(hash, name->existingSymbolAwareHash());
+    hash >>= 1;
+    if (auto underHash = m_recordPlans.find(hash); underHash != m_recordPlans.end()) {
+        for (RecordPlanForNames& known : underHash->value) {
+            if (std::ranges::equal(known.names, namesInRecord, { }, &RefPtr<UniquedStringImpl>::get)) {
+                known.numberOfCollectionsWhenLastFound = m_numberOfCollections;
+                known.numberOfTimesAskedWhenLastFound = m_numberOfTimesAskedForRecordPlan;
+                return found(known.plan.get());
+            }
+        }
     }
-    if (m_recordPlans.size() == maxRecordPlans)
-        return nullptr;
-    m_recordPlans.append({ { }, createRecordPlan(vm, names.span()) });
-    m_recordPlans.last().names.appendContainerWithMapping(names, [](UniquedStringImpl* name) {
+    bool imageHasEveryName = std::ranges::all_of(namesInRecord, [&](UniquedStringImpl* name) {
+        return !!identifiersOf(m_instance).numberOf(name);
+    });
+    if (!imageHasEveryName)
+        return { };
+    std::unique_ptr<ObjectBuilderPlan> plan = ObjectBuilder::tryCreatePlanOfSmallestRecord(*m_instance.state, namesInRecord, [](const ObjectBuilderPlan&) { return true; });
+    if (!plan) {
+        if (!m_structuresThatNoPlanFits)
+            m_structuresThatNoPlanFits = makeUnique<WeakGCMap<Structure*, Structure>>(vm);
+        m_structuresThatNoPlanFits->set(structureOfNamesInRecord, structureOfNamesInRecord);
+        return { };
+    }
+    Vector<RecordPlanForNames, 1>& plansUnderHash = m_recordPlans.add(hash, Vector<RecordPlanForNames, 1> { }).iterator->value;
+    plansUnderHash.append({ { }, WTF::move(plan), m_numberOfCollections, m_numberOfTimesAskedForRecordPlan });
+    if (++m_numberOfRecordPlans > m_mostRecordPlansHeld) {
+        m_mostRecordPlansHeld = m_numberOfRecordPlans;
+        countEvent(vm, RuntimeCounterID::PeakRecordPlansCached);
+    }
+    plansUnderHash.last().names.appendContainerWithMapping(namesInRecord, [](UniquedStringImpl* name) {
         return RefPtr { name };
     });
-    return m_recordPlans.last().plan.get();
+    return found(plansUnderHash.last().plan.get());
 }
 
 NEVER_INLINE JSONRuntime::RecordPlan JSONRuntime::findRecordPlan(VM& vm, Structure* ordinaryStructure)
 {
     if (!m_recordPlanCache)
-        m_recordPlanCache = makeUniqueWithoutFastMallocCheck<RecordPlanCache>();
-    RecordPlan recordPlan;
-    if (const ObjectBuilderPlan* plan = findOrCreateRecordPlan(vm, ordinaryStructure))
-        recordPlan = { plan, m_instance.state->objects->structures.objectStructure(vm, plan->layout().shape) };
+        m_recordPlanCache.make();
+    ++m_numberOfTimesAskedForRecordPlan;
+    forgetRecordPlansNotFoundLately(vm);
+    uint32_t numberOfCollectionsAtFirst = m_numberOfCollections;
     uint32_t id = ordinaryStructure->id().bits();
-    (*m_recordPlanCache)[recordPlanCacheIndex(id)] = { id, recordPlan };
+    RecordPlan recordPlan;
+    RecordBesideNames besideNames;
+    if (RecordPlanFound found = findOrCreateRecordPlan(vm, ordinaryStructure); found.plan) {
+        Structure* structure = m_instance.state->objects->structures.objectStructure(vm, found.plan->layout().shape);
+        if (found.hasNamesBeyondRecord)
+            besideNames = { found.plan, structure, found.numberOfNamesInRecord };
+        else
+            recordPlan = { found.plan, structure };
+    }
+    if (m_numberOfCollections == numberOfCollectionsAtFirst)
+        (*m_recordPlanCache)[recordPlanCacheIndex(id)] = { id, recordPlan, besideNames };
     return recordPlan;
 }
 
 JSONRuntime::~JSONRuntime()
 {
     freeCurrent();
-    for (JSONSource& source : m_suspendedSources)
-        freeSourceStorage(source.start, source.capacity);
     m_instance.json.sourceOwnerStackPointer = nullptr;
     m_instance.json.canEndSourceInline = false;
 }
@@ -187,7 +236,7 @@ NEVER_INLINE uint8_t* JSONRuntime::replace(size_t size)
     return poisonUnusedCapacity(static_cast<uint8_t*>(storage), size, capacity);
 }
 
-ALWAYS_INLINE uint8_t* JSONRuntime::reserve(size_t size)
+ALWAYS_INLINE_INTO_OTHER_FILES uint8_t* JSONRuntime::reserve(size_t size)
 {
     size_t capacity = m_sourceCapacity;
     if (size <= capacity && (capacity <= maxRetainedJSONSourceCapacity || size > maxRetainedJSONSourceCapacity)) [[likely]]
@@ -195,112 +244,37 @@ ALWAYS_INLINE uint8_t* JSONRuntime::reserve(size_t size)
     return replace(size);
 }
 
-void JSONRuntime::suspend()
-{
-    JSONWords& words = m_instance.json;
-    m_suspendedSources.append(JSONSource {
-        .start = const_cast<uint8_t*>(words.sourceStart),
-        .end = words.sourceEnd,
-        .capacity = m_sourceCapacity,
-        .ownerStackPointer = words.sourceOwnerStackPointer,
-        .wideText = WTF::move(m_wideText),
-        .numberOfKeyOrderLists = m_keyOrderLists.size(),
-        .encoding = words.sourceEncoding,
-        .canEndInline = words.canEndSourceInline,
-        .valueParserFailed = words.valueParserFailed,
-    });
-    words.sourceStart = nullptr;
-    m_sourceCapacity = 0;
-}
-
-void JSONRuntime::resume()
-{
-    JSONWords& words = m_instance.json;
-    ASSERT(!words.sourceStart);
-    JSONSource source = m_suspendedSources.takeLast();
-    words.sourceStart = source.start;
-    words.sourceEnd = source.end;
-    m_sourceCapacity = source.capacity;
-    words.sourceOwnerStackPointer = source.ownerStackPointer;
-    m_wideText = WTF::move(source.wideText);
-    m_keyOrderLists.shrink(source.numberOfKeyOrderLists);
-    words.sourceEncoding = source.encoding;
-    words.canEndSourceInline = source.canEndInline;
-    words.valueParserFailed = source.valueParserFailed;
-}
-
 void JSONRuntime::end()
 {
     JSONWords& words = m_instance.json;
     ASSERT(words.sourceOwnerStackPointer);
     m_wideText = nullptr;
-    if (m_suspendedSources.isEmpty()) [[likely]] {
-        words.sourceOwnerStackPointer = nullptr;
-        words.canEndSourceInline = false;
-        m_keyOrderLists.shrink(0);
-        return;
-    }
-    freeCurrent();
-    resume();
+    words.sourceOwnerStackPointer = nullptr;
+    words.canEndSourceInline = false;
 }
 
-ALWAYS_INLINE uint8_t* JSONRuntime::beginIn(uint8_t* start, void* stackPointer, size_t length, bool isNested)
+ALWAYS_INLINE_INTO_OTHER_FILES uint8_t* JSONRuntime::beginIn(uint8_t* start, void* stackPointer, size_t length)
 {
     JSONWords& words = m_instance.json;
     words.sourceEnd = start + length;
     memset(start + length, 0, jsonSourcePadding);
     words.sourceOwnerStackPointer = stackPointer;
-    words.canEndSourceInline = !isNested;
+    words.canEndSourceInline = true;
     words.valueParserFailed = false;
     return start;
 }
 
-NEVER_INLINE uint8_t* JSONRuntime::beginBesideOpenSource(void* stackPointer, size_t length)
-{
-    JSONWords& words = m_instance.json;
-    while (words.sourceOwnerStackPointer && !mayHaveOpenSource(words, stackPointer))
-        end();
-
-    bool isNested = !!words.sourceOwnerStackPointer;
-    if (isNested) {
-        VM& vm = *m_instance.vm;
-        if (m_suspendedSources.size() + 1 >= runtimeLimitValue(vm, LimitID::MaxOpenJSONSources)) {
-            countLimitHit(vm, LimitID::MaxOpenJSONSources);
-            return nullptr;
-        }
-        suspend();
-    } else
-        m_keyOrderLists.shrink(0);
-
-    uint8_t* start = reserve(length + jsonSourcePadding);
-    if (!start) [[unlikely]] {
-        if (isNested)
-            resume();
-        return nullptr;
-    }
-    return beginIn(start, stackPointer, length, isNested);
-}
-
-ALWAYS_INLINE uint8_t* JSONRuntime::begin(void* stackPointer, size_t length)
+ALWAYS_INLINE_INTO_OTHER_FILES uint8_t* JSONRuntime::begin(void* stackPointer, size_t length)
 {
     ASSERT(stackPointer);
-    if (m_instance.json.sourceOwnerStackPointer) [[unlikely]]
-        return beginBesideOpenSource(stackPointer, length);
-
-    m_keyOrderLists.shrink(0);
+    m_wideText = nullptr;
     uint8_t* start = reserve(length + jsonSourcePadding);
     if (!start) [[unlikely]]
         return nullptr;
-    return beginIn(start, stackPointer, length, false);
+    return beginIn(start, stackPointer, length);
 }
 
-static NEVER_INLINE StringImpl* flattenJSONSource(JSString* string)
-{
-    auto value = string->tryGetValue();
-    return value.data.impl();
-}
-
-ALWAYS_INLINE bool JSONRuntime::openLatin1(std::span<const Latin1Character> characters, void* stackPointer)
+ALWAYS_INLINE_INTO_OTHER_FILES bool JSONRuntime::openLatin1(std::span<const Latin1Character> characters, void* stackPointer)
 {
     uint8_t* start = begin(stackPointer, characters.size());
     if (!start) [[unlikely]]
@@ -324,43 +298,6 @@ NEVER_INLINE bool JSONRuntime::open16Bit(std::span<const char16_t> characters, v
     return true;
 }
 
-bool JSONRuntime::open(std::span<const uint8_t> bytes, void* stackPointer)
-{
-    uint8_t* start = begin(stackPointer, bytes.size());
-    if (!start)
-        return false;
-    if (!bytes.empty())
-        memcpy(start, bytes.data(), bytes.size());
-    bool isASCII = charactersAreAllASCII(std::span<const uint8_t> { start, bytes.size() });
-    m_instance.json.sourceEncoding = isASCII ? JSONSourceEncoding::Latin1 : JSONSourceEncoding::UTF8;
-    return true;
-}
-
-bool JSONRuntime::open(JSValue textOrBytes, void* stackPointer)
-{
-    if (!textOrBytes.isCell()) [[unlikely]]
-        return false;
-    JSCell* cell = textOrBytes.asCell();
-    if (cell->type() == StringType) [[likely]] {
-        JSString* string = asString(textOrBytes);
-        StringImpl* text = string->tryGetValueImpl();
-        if (!text) [[unlikely]] {
-            text = flattenJSONSource(string);
-            if (!text)
-                return false;
-        }
-        if (text->is8Bit()) [[likely]]
-            return openLatin1(text->span8(), stackPointer);
-        if (!open16Bit(text->span16(), stackPointer))
-            return false;
-        m_wideText = text;
-        return true;
-    }
-    if (cell->type() == Uint8ArrayType)
-        return open(withoutByteOrderMark(uncheckedDowncast<JSArrayBufferView>(cell)->span()), stackPointer);
-    return false;
-}
-
 bool JSONRuntime::open(StringView text, void* stackPointer)
 {
     if (text.is8Bit()) [[likely]]
@@ -371,60 +308,32 @@ bool JSONRuntime::open(StringView text, void* stackPointer)
     return true;
 }
 
-bool JSONRuntime::close(const uint8_t* cursor)
-{
-    JSONWords& words = m_instance.json;
-    if (!words.sourceOwnerStackPointer)
-        return false;
-    bool isComplete = skipJSONWhitespaceCharacters(cursor) == words.sourceEnd;
-    end();
-    return isComplete;
-}
-
 void JSONRuntime::abandon()
 {
     if (m_instance.json.sourceOwnerStackPointer)
         end();
 }
 
-void JSONRuntime::dropSourcesBelow(void* stackPointer)
-{
-    JSONWords& words = m_instance.json;
-    while (words.sourceOwnerStackPointer && std::bit_cast<uintptr_t>(words.sourceOwnerStackPointer) < std::bit_cast<uintptr_t>(stackPointer))
-        end();
-}
-
 void JSONRuntime::clear()
 {
-    m_finishedObjects.fill({ });
+    ++m_numberOfCollections;
     if (m_learnedNames)
         m_learnedNames->clear();
     if (m_recordPlanCache)
         m_recordPlanCache->fill({ });
-    for (const RecordPlanForNames& known : m_recordPlans) {
-        if (known.plan)
+    for (const Vector<RecordPlanForNames, 1>& plansUnderHash : m_recordPlans.values()) {
+        for (const RecordPlanForNames& known : plansUnderHash)
             known.plan->clearAcceptedStructures();
     }
     if (m_instance.json.sourceOwnerStackPointer)
         return;
-    m_keyOrderLists.shrink(0);
     if (m_sourceCapacity > maxRetainedJSONSourceCapacity)
         freeCurrent();
-}
-
-void JSONWords::dropSourcesBelow(void* stackPointer)
-{
-    runtime->dropSourcesBelow(stackPointer);
 }
 
 bool JSONSourceScope::open(StringView text, void* stackPointer)
 {
     return m_instance.json.runtime->open(text, stackPointer);
-}
-
-bool JSONSourceScope::open(std::span<const uint8_t> utf8, void* stackPointer)
-{
-    return m_instance.json.runtime->open(utf8, stackPointer);
 }
 
 JSONSourceScope::~JSONSourceScope()
@@ -439,33 +348,8 @@ const uint8_t* JSONSourceScope::start() const
     return m_instance.json.sourceStart;
 }
 
-JSValue decodeJSONBody(JSGlobalObject* globalObject, JSValue value)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!value.isCell() || value.asCell()->type() != Uint8ArrayType)
-        return value;
-    std::span<const uint8_t> bytes = uncheckedDowncast<JSArrayBufferView>(value.asCell())->span();
-    if (bytes.empty()) {
-        const ModuleHost* host = globalObject->globalObjectMethodTable()->moduleHost;
-        if (host && host->createEmptyJSONBodyError)
-            throwException(globalObject, scope, host->createEmptyJSONBodyError(globalObject));
-        else {
-            scope.release();
-            JSONParseWithException(globalObject, emptyString());
-        }
-        return { };
-    }
-    if (!StringImpl::isValidLength<char16_t>(bytes.size()))
-        return value;
-    String text = String::fromUTF8ReplacingInvalidSequences(withoutByteOrderMark(bytes));
-    return text.isNull() ? value : jsString(vm, WTF::move(text));
-}
-
 bool isLatin1AfterDecoding(const JSONWords& words, std::span<const uint8_t> characters)
 {
-    if (words.sourceEncoding == JSONSourceEncoding::UTF8)
-        return charactersAreAllASCII(characters);
     return !memchr(characters.data(), saturatedJSONCharacter, characters.size());
 }
 
@@ -484,22 +368,10 @@ static bool appendPlainCharacters(const JSONWords& words, StringBuilder& builder
     case JSONSourceEncoding::UTF16:
         builder.append(original16BitCharacters(words, characters));
         return true;
-    case JSONSourceEncoding::UTF8:
-        break;
     }
-    if (!StringImpl::isValidLength<char16_t>(characters.size()))
-        return false;
-    Vector<char16_t, JSONCache::maxLongStringLength> decoded;
-    if (!decoded.tryGrow(characters.size()))
-        return false;
-    auto result = WTF::Unicode::convert(byteCast<char8_t>(characters), decoded.mutableSpan());
-    if (result.code != WTF::Unicode::ConversionResultCode::Success)
-        return false;
-    builder.append(result.buffer);
-    return true;
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-// JSON.parse() keeps a string of over JSONCache's atomized length in the width of its source.
 static JSString* tryMakeJSONStringOfWideSource(const JSONWords& words, VM& vm, std::span<const uint8_t> latin1)
 {
     if (words.sourceEncoding == JSONSourceEncoding::UTF16)
@@ -586,16 +458,9 @@ NEVER_INLINE ParsedJSONString makeUncachedJSONString(Instance& instance, VM& vm,
     JSString* string = vm.jsonCache().tryMakeJSString(vm, std::span<const Latin1Character> { byteCast<Latin1Character>(start), byteCast<Latin1Character>(cursor) });
     if (!string) [[unlikely]]
         return { jsEmptyString(vm) };
-    // Only a source that is no Latin-1 text asks, so only there is it worth finding out.
     bool textIsASCII = words.sourceEncoding != JSONSourceEncoding::Latin1 && charactersAreAllASCII(std::span<const uint8_t> { start, cursor });
     vm.jsonCache().addString(std::span<const Latin1Character> { byteCast<Latin1Character>(start - 1), jsonSourcePadding }, cursor + 2 - start, string, textIsASCII);
     return { string, cursor + 1 };
-}
-
-static NEVER_INLINE NOT_TAIL_CALLED ParsedJSONString makeUncachedJSONStringInFrame(Instance& instance, CallerFrameAndPC* frameRecord, const uint8_t* start)
-{
-    AOT_OPERATION_BEGIN_IN_FRAME(&instance, frameRecord, Entry::operationAOTJSONParseString);
-    return makeUncachedJSONString(instance, vm, start);
 }
 
 NEVER_INLINE ParsedJSONNumber parseJSONNumberSlow(const uint8_t* start, const uint8_t* sourceEnd)
@@ -632,13 +497,8 @@ JSONValueParser::JSONValueParser(Instance& instance, VM& vm, JSGlobalObject* glo
 
 ParsedJSONValue JSONValueParser::parse(const uint8_t* start)
 {
-    JSONWords& words = m_instance.json;
-    if (words.valueParserFailed) [[unlikely]]
-        return { };
     DeferTerminationForAWhile deferTermination(m_vm);
-    ParsedJSONValue parsed = parseValue(start);
-    words.valueParserFailed = !parsed.end;
-    return parsed;
+    return parseValue(start);
 }
 
 ParsedJSONValue JSONValueParser::parseWholeSource(const uint8_t* start)
@@ -654,7 +514,6 @@ ParsedJSONValue JSONValueParser::parseValue(Cursor cursor)
     cursor = skipWhitespace(cursor);
     switch (*cursor) {
     case '"':
-        // "$", " ", ",": one plain ASCII character between the quotes is a string that the engine keeps.
         if (cursor[2] == '"' && cursor[1] - 0x20u < 0x60u && cursor[1] != '"' && cursor[1] != '\\')
             return { m_vm.smallStrings.singleCharacterString(cursor[1]), cursor + 3 };
         return parseString(cursor);
@@ -704,13 +563,11 @@ void JSONValueParser::NamesOfElementInFront::note(const JSONWords& words, unsign
 {
     if (index > count || index == capacity)
         return;
-    // What stood behind this name went on from another Structure.
     count = index;
     size_t length = next.value - quote;
     if (length > maxTextLength)
         return;
-    // One byte of the source stands for every character that is no Latin-1: equal bytes are not equal names.
-    if (words.sourceEncoding != JSONSourceEncoding::Latin1 && !isShortTextLatin1AfterDecoding(words, quote, length))
+    if (words.sourceEncoding != JSONSourceEncoding::Latin1 && !isShortTextLatin1AfterDecoding(quote, length))
         return;
     static_assert(maxTextLength <= jsonSourcePadding);
     auto maskFor = [](size_t bytes) -> uint64_t {
@@ -821,7 +678,7 @@ auto JSONValueParser::findKnownMember(const Members& members, Cursor quote) -> N
     auto* entry = m_cache.findName(StructureID::encode(members.structure), members.nameIndex, std::span<const Latin1Character> { byteCast<Latin1Character>(quote), jsonSourcePadding });
     if (!entry || entry->offset != memberPropertyOffset(members.count))
         return { };
-    if (m_words.sourceEncoding != JSONSourceEncoding::Latin1 && !entry->textIsASCII && !isShortTextLatin1AfterDecoding(m_words, quote, entry->textLength))
+    if (m_words.sourceEncoding != JSONSourceEncoding::Latin1 && !entry->textIsASCII && !isShortTextLatin1AfterDecoding(quote, entry->textLength))
         return { };
     return { entry->to.get(), quote + entry->textLength, entry->toNameIndex };
 }
@@ -843,6 +700,7 @@ auto JSONValueParser::findOrAddMember(const Members& members, Cursor quote) -> N
     PropertyOffset offset = to ? to->transitionOffset() : invalidOffset;
     if (!to)
         to = Structure::addPropertyTransitionToExistingStructure(from, name, 0, offset);
+    bool isMadeNow = !to;
     if (!to) {
         if (isValidOffset(from->get(m_vm, name)))
             return { };
@@ -851,7 +709,8 @@ auto JSONValueParser::findOrAddMember(const Members& members, Cursor quote) -> N
     if (to->isDictionary() || offset != memberPropertyOffset(members.count))
         return { };
 
-    if (to->isCacheableTransitionFrom(from)) {
+    if (!isMadeNow && to->isCacheableTransitionFrom(from)) {
+        ++m_numberOfTransitionsCached;
         if (from->trySingleTransition() == to)
             m_cache.addName(from, to, offset);
         else {
@@ -867,31 +726,74 @@ auto JSONValueParser::findOrAddMember(const Members& members, Cursor quote) -> N
     return { to, parsed.afterColon, JSONCache::nameIndex(StructureID::encode(to)) };
 }
 
+static ALWAYS_INLINE JSObject* createOrdinaryObject(VM& vm, Structure* structure, EncodedJSValue* values, unsigned count)
+{
+    unsigned inlineCapacity = structure->inlineCapacity();
+    for (unsigned i = count; i < inlineCapacity; ++i)
+        values[i] = JSValue::encode(JSValue());
+    auto* inlineValues = reinterpret_cast<const WriteBarrierBase<Unknown>*>(values);
+    unsigned outOfLineCapacity = structure->outOfLineCapacity();
+    if (!outOfLineCapacity)
+        return JSFinalObject::createWithButterflyCopyingInlineStorage(vm, structure, nullptr, inlineValues);
+
+    DeferGC deferGC(vm);
+    Butterfly* butterfly = Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, IndexingHeader(), 0);
+    for (unsigned i = inlineCapacity; i < count; ++i)
+        butterfly->propertyStorage()[offsetInOutOfLineStorage(offsetForPropertyNumber(i, inlineCapacity))].setWithoutWriteBarrier(JSValue::decode(values[i]));
+    return JSFinalObject::createWithButterflyCopyingInlineStorage(vm, structure, butterfly, inlineValues);
+}
+
 JSObject* JSONValueParser::createObject(Members& members, ObjectKind kind)
 {
     JSONRuntime& runtime = *m_words.runtime;
     if (kind == ObjectKind::RecordIfPlanned && runtime.hasParsedRecords()) {
         JSONRuntime::RecordPlan record = runtime.recordPlanFor(m_vm, members.structure);
         if (record.plan) {
-            if (JSObject* object = ObjectBuilder::tryBuild(m_vm, *record.plan, record.structure, members.values))
+            if (JSObject* object = ObjectBuilder::tryBuild(m_vm, *record.plan, record.structure, members.values)) {
+                ++m_numberOfRecordsMade;
                 return object;
+            }
+        } else if (JSONRuntime::RecordBesideNames* cached = runtime.recordBesideNamesFor(members.structure)) {
+            JSONRuntime::RecordBesideNames beside = *cached;
+            unsigned numberInRecord = beside.numberOfNamesInRecord;
+            unsigned numberBeyondRecord = members.count - numberInRecord;
+            auto layNamesBeyondRecord = [&](Object& row) {
+                if (beside.structureOfNamesBeyondRecord) {
+                    row.setExtraProperties(m_vm, createOrdinaryObject(m_vm, beside.structureOfNamesBeyondRecord, members.values + numberInRecord, numberBeyondRecord), beside.structureWithNamesBeyondRecord);
+                    return true;
+                }
+                Vector<Object::ExtraProperty, 8> properties(numberBeyondRecord, [&](size_t index) {
+                    return Object::ExtraProperty { nullptr, JSValue::decode(members.values[numberInRecord + index]) };
+                });
+                unsigned inlineCapacity = members.structure->inlineCapacity();
+                members.structure->forEachProperty(m_vm, [&](const auto& entry) -> bool {
+                    size_t index = isInlineOffset(entry.offset()) ? entry.offset() : inlineCapacity + (entry.offset() - firstOutOfLineOffset);
+                    if (index >= numberInRecord)
+                        properties[index - numberInRecord].name = entry.key();
+                    return true;
+                });
+                if (!row.tryCreateExtraPropertiesOfNewObject(m_vm, properties.span()))
+                    return false;
+                Structure* ofNamesBeyondRecord = row.extraProperties()->structure();
+                if (ofNamesBeyondRecord->isDictionary() || numberInRecord + ofNamesBeyondRecord->inlineCapacity() > JSFinalObject::maxInlineCapacity)
+                    return true;
+                if (JSONRuntime::RecordBesideNames* stillCached = runtime.recordBesideNamesFor(members.structure)) {
+                    stillCached->structureOfNamesBeyondRecord = ofNamesBeyondRecord;
+                    stillCached->structureWithNamesBeyondRecord = uncheckedDowncast<CompiledStructure>(row.structure());
+                }
+                return true;
+            };
+            JSObject* object = ObjectBuilder::tryBuild(m_vm, *beside.plan, beside.structure, members.values);
+            if (object && layNamesBeyondRecord(*uncheckedDowncast<Object>(object))) {
+                ++m_numberOfRecordsMade;
+                return object;
+            }
+            if (JSONRuntime::RecordBesideNames* stillCached = object ? runtime.recordBesideNamesFor(members.structure) : nullptr)
+                *stillCached = { };
         }
     }
-
-    Structure* structure = members.structure;
-    unsigned inlineCapacity = structure->inlineCapacity();
-    for (unsigned i = members.count; i < inlineCapacity; ++i)
-        members.values[i] = JSValue::encode(JSValue());
-    auto* inlineValues = reinterpret_cast<const WriteBarrierBase<Unknown>*>(members.values);
-    unsigned outOfLineCapacity = structure->outOfLineCapacity();
-    if (!outOfLineCapacity)
-        return JSFinalObject::createWithButterflyCopyingInlineStorage(m_vm, structure, nullptr, inlineValues);
-
-    DeferGC deferGC(m_vm);
-    Butterfly* butterfly = Butterfly::create(m_vm, nullptr, 0, outOfLineCapacity, false, IndexingHeader(), 0);
-    for (unsigned i = inlineCapacity; i < members.count; ++i)
-        butterfly->propertyStorage()[offsetInOutOfLineStorage(offsetForPropertyNumber(i, inlineCapacity))].setWithoutWriteBarrier(JSValue::decode(members.values[i]));
-    return JSFinalObject::createWithButterflyCopyingInlineStorage(m_vm, structure, butterfly, inlineValues);
+    ++m_numberOfOrdinaryObjectsMade;
+    return createOrdinaryObject(m_vm, members.structure, members.values, members.count);
 }
 
 auto JSONValueParser::parseNameAndColon(const uint8_t* quote) -> ParsedName
@@ -911,7 +813,7 @@ auto JSONValueParser::parseNameAndColon(const uint8_t* quote) -> ParsedName
         StringImpl* impl = decoded.string->tryGetValueImpl();
         if (!impl)
             return { };
-        parsed.name = Identifier::fromString(m_vm, String { impl });
+        parsed.name = impl->is8Bit() ? Identifier::fromString(m_vm, String { impl }) : Identifier::fromString(m_vm, impl->span16());
         end = decoded.end;
     }
     Cursor colon = skipWhitespace(end);
@@ -960,7 +862,6 @@ NEVER_INLINE ParsedJSONValue JSONValueParser::parseArray(Cursor bracket)
     } else {
         size_t base = m_elements.size();
         NamesOfElementInFront inFront;
-        // The first object has no element in front. `["$", "td", null, { .. }]` has one object and no more: its names are looked for among those of the objects parsed last.
         bool hasObjectInFront = false;
         for (;;) {
             ParsedJSONValue parsed;
@@ -1029,13 +930,6 @@ JSArray* JSONValueParser::createArray(const JSValue* values, unsigned length)
     return array;
 }
 
-ParsedJSONValue parseJSONValueAt(Instance& instance, VM& vm, JSGlobalObject* globalObject, const uint8_t* start)
-{
-    if (auto scalar = tryParseJSONScalarAt(instance, vm, start); scalar && scalar->end)
-        return *scalar;
-    return JSONValueParser(instance, vm, globalObject).parse(start);
-}
-
 template<typename Source>
 static ALWAYS_INLINE JSValue tryParse(JSGlobalObject* globalObject, size_t length, Source source)
 {
@@ -1047,8 +941,13 @@ static ALWAYS_INLINE JSValue tryParse(JSGlobalObject* globalObject, size_t lengt
     JSONSourceScope sourceScope(*instance, source);
     if (!sourceScope)
         return { };
-    ParsedJSONValue parsed = JSONValueParser(*instance, vm, globalObject).parseWholeSource(sourceScope.start());
+    JSONValueParser parser(*instance, vm, globalObject);
+    ParsedJSONValue parsed = parser.parseWholeSource(sourceScope.start());
     CLEAR_AND_RETURN_IF_EXCEPTION(scope, { });
+    countEvent(vm, RuntimeCounterID::JSONParseFastPaths);
+    countEvent(vm, RuntimeCounterID::ObjectsParsedIntoRecords, parser.numberOfRecordsMade());
+    countEvent(vm, RuntimeCounterID::ObjectsParsedIntoOrdinaryObjects, parser.numberOfOrdinaryObjectsMade());
+    countEvent(vm, RuntimeCounterID::TransitionsCachedForParsedNames, parser.numberOfTransitionsCached());
     return parsed.end ? parsed.value : JSValue();
 }
 
@@ -1057,379 +956,6 @@ JSValue tryParseJSON(JSGlobalObject* globalObject, StringView text)
     return tryParse(globalObject, text.length(), text);
 }
 
-JSValue tryParseUTF8JSON(JSGlobalObject* globalObject, std::span<const uint8_t> bytes)
-{
-    return tryParse(globalObject, bytes.size(), bytes);
-}
-
-static ALWAYS_INLINE UGPRPair toRegisterPair(ParsedJSONString parsed)
-{
-    return encodeResult(parsed.string, parsed.end);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONSourceOpen, size_t, (Instance* instance, EncodedJSValue text, void* stackPointer))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONSourceOpen);
-    OPERATION_RETURN(scope, instance->json.runtime->open(JSValue::decode(text), stackPointer));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONSourceClose, size_t, (Instance* instance, const uint8_t* cursor))
-{
-    return instance->json.runtime->close(cursor);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONSourceAbandon, void, (Instance* instance))
-{
-    instance->json.runtime->abandon();
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTJSONDecodeBytes, EncodedJSValue, (Instance* instance, EncodedJSValue value))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONDecodeBytes);
-    OPERATION_RETURN(scope, JSValue::encode(decodeJSONBody(globalObject, JSValue::decode(value))));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseString, UGPRPair, (Instance* instance, const uint8_t* cursor))
-{
-    VM& vm = *instance->vm;
-    if (*cursor != '"') [[unlikely]]
-        return toRegisterPair({ jsEmptyString(vm) });
-    if (auto cached = findCachedJSONString(instance->json, vm, cursor)) [[likely]]
-        return toRegisterPair(*cached);
-    return toRegisterPair(makeUncachedJSONStringInFrame(*instance, AOT_OPERATION_FRAME_RECORD(), cursor + 1));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseKey, UGPRPair, (Instance* instance, const uint8_t* cursor))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONParseKey);
-    if (*cursor != '"') [[unlikely]]
-        OPERATION_RETURN(scope, toRegisterPair({ jsEmptyString(vm) }));
-    const uint8_t* start = cursor + 1;
-    const uint8_t* end = findEndOfPlainJSONCharacters(start);
-    if (*end != '"') [[unlikely]]
-        OPERATION_RETURN(scope, toRegisterPair({ jsEmptyString(vm) }));
-    if (!isLatin1(instance->json, { start, end })) [[unlikely]]
-        OPERATION_RETURN(scope, toRegisterPair(makeJSONStringWithEscapes(*instance, vm, start, end)));
-    JSString* string = vm.jsonCache().tryMakeJSString(vm, std::span<const Latin1Character> { byteCast<Latin1Character>(start), byteCast<Latin1Character>(end) });
-    if (!string) [[unlikely]]
-        OPERATION_RETURN(scope, toRegisterPair({ jsEmptyString(vm) }));
-    OPERATION_RETURN(scope, toRegisterPair({ string, end + 1 }));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseValue, UGPRPair, (Instance* instance, const uint8_t* cursor))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONParseValue);
-    DeferTerminationForAWhile deferTermination(vm);
-    ParsedJSONValue parsed = parseJSONValueAt(*instance, vm, globalObject, cursor);
-    OPERATION_RETURN(scope, makeUGPRPair(static_cast<UCPURegister>(JSValue::encode(parsed.value)), std::bit_cast<UCPURegister>(parsed.end)));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseNumber, UGPRPair, (Instance* instance, const uint8_t* cursor))
-{
-    ParsedJSONNumber parsed = parseJSONNumber(cursor, instance->json.sourceEnd);
-    return makeUGPRPair(std::bit_cast<uint64_t>(parsed.number), std::bit_cast<UCPURegister>(parsed.end));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseInteger, UGPRPair, (Instance*, const uint8_t* cursor))
-{
-    ParsedJSONInteger parsed = parseJSONInteger(cursor);
-    return makeUGPRPair(static_cast<uint64_t>(parsed.integer), std::bit_cast<UCPURegister>(parsed.end));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONFindMember, UGPRPair, (Instance* instance, const uint8_t* cursor, uint32_t name))
-{
-    FoundJSONMember found = findJSONMember(instance->json, cursor, [&](StringView text) {
-        return ProgramStrings::hasText(*instance->vm->aotState().image, StringID(name), text);
-    });
-    return makeUGPRPair(static_cast<UCPURegister>(found.search), std::bit_cast<UCPURegister>(found.value));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONMemberRepeats, size_t, (Instance* instance, const uint8_t* valueStart, uint32_t name))
-{
-    return jsonMemberRepeats(instance->json, skipJSONValue(valueStart), [&](StringView text) {
-        return ProgramStrings::hasText(*instance->vm->aotState().image, StringID(name), text);
-    });
-}
-
-struct ExtraMembers {
-    Instance& instance;
-    const LayoutData& layout;
-    JSObject* properties;
-    std::optional<uint16_t> unpositionedEntry { };
-};
-
-enum class ExtraMemberStatus : uint8_t { Unknown, Failed, Added };
-
-struct ParsedExtraMember {
-    ExtraMemberStatus status { ExtraMemberStatus::Unknown };
-    const uint8_t* end { nullptr };
-};
-
-uint32_t JSONKeyOrderLists::add(std::span<const uint16_t> entries)
-{
-    uint32_t list = m_lists.size();
-    m_lists.append(List(entries));
-    return list;
-}
-
-static const LayoutData& layoutOf(Instance& instance, uint32_t shape)
-{
-    return instance.state->objects->layouts.layoutForShape(shape);
-}
-
-static std::span<const uint16_t> entriesOf(Instance& instance, const LayoutData& layout, JSONKeyOrder order)
-{
-    switch (order.kind()) {
-    case JSONKeyOrder::Kind::Numbered:
-        return instance.state->objects->keyOrders.entriesInOrder(layout, orderOf(order.orderAndCount())).first(countOf(order.orderAndCount()));
-    case JSONKeyOrder::Kind::Listed:
-        return instance.json.runtime->keyOrderLists().entries(order.list()).first(order.countInList());
-    case JSONKeyOrder::Kind::Unknown:
-        return { };
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static JSONKeyOrder advanceInList(JSONKeyOrderLists& lists, JSONKeyOrder order, uint16_t entry)
-{
-    uint32_t list = order.list();
-    uint32_t count = order.countInList();
-    std::span<const uint16_t> entries = lists.entries(list);
-    if (count > entries.size() || count == JSONKeyOrder::maxCountInList) [[unlikely]]
-        return JSONKeyOrder::unknown();
-    if (count < entries.size() && entries[count] == entry)
-        return JSONKeyOrder::listed(list, count + 1);
-    if (count < entries.size())
-        list = lists.add(entries.first(count));
-    lists.append(list, entry);
-    return JSONKeyOrder::listed(list, count + 1);
-}
-
-static JSONKeyOrder advance(Instance& instance, const LayoutData& layout, JSONKeyOrder order, uint16_t entry)
-{
-    if (layout.keysAreNeverEnumerated)
-        return order;
-    JSONKeyOrderLists& lists = instance.json.runtime->keyOrderLists();
-    switch (order.kind()) {
-    case JSONKeyOrder::Kind::Unknown:
-        return order;
-    case JSONKeyOrder::Kind::Listed:
-        return advanceInList(lists, order, entry);
-    case JSONKeyOrder::Kind::Numbered:
-        break;
-    }
-    if (std::optional<uint32_t> next = instance.state->objects->keyOrders.orderAfterCreating(layout, order.orderAndCount(), entry)) [[likely]]
-        return JSONKeyOrder::numbered(*next);
-    uint32_t list = lists.add(entriesOf(instance, layout, order));
-    lists.append(list, entry);
-    return JSONKeyOrder::listed(list, countOf(order.orderAndCount()) + 1);
-}
-
-static bool tryFinishObject(VM& vm, Instance& instance, Object& object, JSObject* extraProperties, JSONKeyOrder order)
-{
-    if (order.kind() == JSONKeyOrder::Kind::Unknown)
-        return false;
-    if (order.kind() == JSONKeyOrder::Kind::Numbered && !extraProperties) {
-        object.setOrderAndCount(order.orderAndCount());
-        return true;
-    }
-    // A list of keys lasts as long as its text; a number lasts.
-    bool isFinishedAlikeNextTime = extraProperties && order.kind() == JSONKeyOrder::Kind::Numbered;
-    JSONRuntime::FinishedObject* finished = isFinishedAlikeNextTime ? &instance.json.runtime->finishedObjectFor(object.structure(), extraProperties->structure()) : nullptr;
-    if (finished && finished->structureAtBirth == object.structure() && finished->extraStructure == extraProperties->structure() && finished->order == order.word() && finished->orderWordAtBirth == object.orderWord()) {
-        object.setInitialKeyOrder(vm, { finished->orderAndCount, finished->structure }, extraProperties);
-        return true;
-    }
-    JSONRuntime::FinishedObject born { object.structure(), extraProperties ? extraProperties->structure() : nullptr, order.word(), object.orderWord() };
-    Object::KeyOrderStorage keys(entriesOf(instance, object.layout(), order));
-    std::optional<Object::InitialKeyOrder> initial = object.initialKeyOrder(vm, keys.span(), extraProperties);
-    if (!initial)
-        return false;
-    object.setInitialKeyOrder(vm, *initial, extraProperties);
-    if (finished) {
-        born.orderAndCount = initial->orderAndCount;
-        born.structure = initial->structure;
-        *finished = born;
-    }
-    return true;
-}
-
-static JSObject* ensureExtraProperties(Instance& instance, uint64_t& encodedExtra)
-{
-    JSValue extra = JSValue::decode(encodedExtra);
-    if (extra.isCell())
-        return dynamicDowncast<JSFinalObject>(extra.asCell());
-    JSObject* created = Object::createExtraProperties(instance.globalObject, { });
-    encodedExtra = JSValue::encode(created);
-    return created;
-}
-
-static ALWAYS_INLINE unsigned propertyCountOf(Structure* structure)
-{
-    return numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity());
-}
-
-static ALWAYS_INLINE bool canPositionExtraKey(const LayoutData& layout, unsigned ordinal)
-{
-    return layout.numberOfFields + ordinal < maxKeyOrderEntry;
-}
-
-static ALWAYS_INLINE void didAddExtraKey(ExtraMembers& members, unsigned ordinal)
-{
-    members.unpositionedEntry = static_cast<uint16_t>(members.layout.numberOfFields + ordinal);
-}
-
-static JSONKeyOrder positionAddedKeys(const ExtraMembers& members, JSONKeyOrder order)
-{
-    if (!members.unpositionedEntry)
-        return order;
-    return advance(members.instance, members.layout, order, *members.unpositionedEntry);
-}
-
-static void cacheTransitionName(JSONCache& cache, Structure* before, Structure* after)
-{
-    if (before->isDictionary() || after->isDictionary() || !after->isCacheableTransitionFrom(before))
-        return;
-    if (before->trySingleTransition() == after)
-        cache.addName(before, after, after->transitionOffset());
-    else
-        cache.addPrefixedName(before, after, after->transitionOffset());
-}
-
-static bool addExtraProperty(VM& vm, ExtraMembers& members, UniquedStringImpl* name, JSValue value)
-{
-    JSObject* properties = members.properties;
-    if (auto index = parseIndex(*name)) [[unlikely]] {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        properties->putDirectIndex(members.instance.globalObject, *index, value);
-        if (catchScope.exception()) [[unlikely]] {
-            catchScope.clearException();
-            return false;
-        }
-        return true;
-    }
-    Structure* before = WTF::opaque(properties->structure());
-    unsigned attributes;
-    if (PropertyOffset offset = before->get(vm, name, attributes); isValidOffset(offset)) {
-        properties->putDirectOffset(vm, offset, value);
-        return true;
-    }
-    unsigned ordinal = propertyCountOf(before);
-    if (!canPositionExtraKey(members.layout, ordinal)) [[unlikely]]
-        return false;
-    properties->putDirect(vm, name, value);
-    cacheTransitionName(vm.jsonCache(), before, properties->structure());
-    didAddExtraKey(members, ordinal);
-    return true;
-}
-
-static ParsedExtraMember parseKnownExtraMember(VM& vm, ExtraMembers& members, JSONValueParser& parser, const uint8_t* quote)
-{
-    const JSONWords& words = members.instance.json;
-    JSObject* properties = members.properties;
-    Structure* before = properties->structure();
-    StructureID beforeID = before->id();
-    auto* entry = vm.jsonCache().findName(beforeID, JSONCache::nameIndex(beforeID), std::span<const Latin1Character> { byteCast<Latin1Character>(quote), jsonSourcePadding });
-    if (!entry || (words.sourceEncoding != JSONSourceEncoding::Latin1 && !entry->textIsASCII && !isShortTextLatin1AfterDecoding(words, quote, entry->textLength)))
-        return { };
-    // The cache is weak and no object need have this Structure: this pointer alone keeps it alive while the value is parsed.
-    Structure* after = WTF::opaque(entry->to.unvalidatedGet());
-    PropertyOffset offset = entry->offset;
-    const uint8_t* valueStart = quote + entry->textLength;
-    if (members.instance.state->objects->layouts.field(vm, members.layout, after->transitionPropertyName()))
-        return { };
-    unsigned ordinal = propertyCountOf(before);
-    if (!canPositionExtraKey(members.layout, ordinal)) [[unlikely]]
-        return { ExtraMemberStatus::Failed };
-    ParsedJSONValue parsed = parser.parse(valueStart);
-    if (!parsed.end) [[unlikely]]
-        return { ExtraMemberStatus::Failed };
-    if (offset >= firstOutOfLineOffset && before->outOfLineCapacity() != after->outOfLineCapacity()) [[unlikely]]
-        properties->putDirect(vm, after->transitionPropertyName(), parsed.value);
-    else {
-        properties->putDirectOffset(vm, offset, parsed.value);
-        properties->setStructure(vm, after);
-    }
-    didAddExtraKey(members, ordinal);
-    return { ExtraMemberStatus::Added, parsed.end };
-}
-
-static NEVER_INLINE ParsedExtraMember parseNewExtraMember(VM& vm, ExtraMembers& members, JSONValueParser& parser, const uint8_t* quote)
-{
-    JSONValueParser::ParsedName key = parser.parseNameAndColon(quote);
-    if (!key.afterColon || members.instance.state->objects->layouts.field(vm, members.layout, key.name.impl()))
-        return { ExtraMemberStatus::Failed };
-    ParsedJSONValue parsed = parser.parse(key.afterColon);
-    if (!parsed.end || !addExtraProperty(vm, members, key.name.impl(), parsed.value))
-        return { ExtraMemberStatus::Failed };
-    return { ExtraMemberStatus::Added, parsed.end };
-}
-
-static const uint8_t* parseExtraMembers(VM& vm, ExtraMembers& members, const uint8_t* quote)
-{
-    JSONValueParser parser(members.instance, vm, members.instance.globalObject);
-    ParsedExtraMember member = parseKnownExtraMember(vm, members, parser, quote);
-    if (member.status == ExtraMemberStatus::Unknown)
-        member = parseNewExtraMember(vm, members, parser, quote);
-    const uint8_t* end = nullptr;
-    while (member.status == ExtraMemberStatus::Added) {
-        end = member.end;
-        if (*end != ',')
-            return end;
-        quote = skipJSONWhitespaceCharacters(end + 1);
-        if (*quote != '"')
-            return end;
-        member = parseKnownExtraMember(vm, members, parser, quote);
-    }
-    return member.status == ExtraMemberStatus::Failed ? nullptr : end;
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONObjectKey, uint64_t, (Instance* instance, uint64_t order, uint32_t shape, uint32_t field))
-{
-    const LayoutData& layout = layoutOf(*instance, shape);
-    if (field >= layout.numberOfFields) [[unlikely]]
-        return JSONKeyOrder::unknown().word();
-    return advance(*instance, layout, JSONKeyOrder::fromWord(order), static_cast<uint16_t>(field)).word();
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONObjectFinish, size_t, (Instance* instance, JSCell* cell, EncodedJSValue encodedExtra, uint64_t order))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONObjectFinish);
-    DeferTerminationForAWhile deferTermination(vm);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* object = cellArgument<Object>(cell, Entry::operationAOTJSONObjectFinish);
-    JSValue extra = JSValue::decode(encodedExtra);
-    bool isFinished = tryFinishObject(vm, *instance, *object, extra.isObject() ? asObject(extra) : nullptr, JSONKeyOrder::fromWord(order));
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearException();
-        isFinished = false;
-    }
-    if (!isFinished)
-        count(*instance, RuntimeCounterID::TypedParsesFellBackPerValue);
-    return static_cast<size_t>(isFinished ? Typed::JSONOutcome::Parsed : Typed::JSONOutcome::Unknown);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseExtraMembers, const uint8_t*, (Instance* instance, uint32_t shape, const uint8_t* cursor, uint64_t* extraAndOrder))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONParseExtraMembers);
-    DeferTerminationForAWhile deferTermination(vm);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSONKeyOrder order = JSONKeyOrder::fromWord(extraAndOrder[1]);
-    const LayoutData& layout = layoutOf(*instance, shape);
-    bool canParse = order.kind() != JSONKeyOrder::Kind::Unknown && *cursor == '"';
-    ExtraMembers members { *instance, layout, canParse ? ensureExtraProperties(*instance, extraAndOrder[0]) : nullptr };
-    const uint8_t* end = members.properties ? parseExtraMembers(vm, members, cursor) : nullptr;
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearException();
-        end = nullptr;
-    }
-    if (!end) [[unlikely]] {
-        count(*instance, RuntimeCounterID::TypedParsesFellBackPerValue);
-        return nullptr;
-    }
-    extraAndOrder[1] = positionAddedKeys(members, order).word();
-    return end;
-}
 } } // namespace JSC::AOT
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -1,0 +1,27 @@
+# The program constructs a class once, and the shell gets hold of it and constructs too
+# class Steady { }  register(Steady); new Steady()
+# RUN(SHELL): run-in-shell globalThis.register = Steady => { print(new Steady() instanceof Steady); };
+# SHELL: true
+# SHELL: exited with 0
+
+layout L0 kind=Instance name="Steady" module=m0 constructor=f1
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v2 calleeName="register"
+    v6 = Undefined
+    v7 = Construct v2
+    Return v6
+}
+function f1 name="Steady" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}

@@ -36,6 +36,7 @@
 #include "PixelBuffer.h"
 #include "PixelBufferConformerCV.h"
 #include "ProcessIdentity.h"
+#include "WebRTCProvider.h"
 #include <Accelerate/Accelerate.h>
 #include <pal/avfoundation/MediaTimeAVFoundation.h>
 #include <wtf/CheckedArithmetic.h>
@@ -77,7 +78,7 @@ static std::span<const uint8_t> copyToCVPixelBufferPlane(CVPixelBufferRef pixelB
     return source;
 }
 
-static vImage_Buffer LEGACY_NODELETE makeVImageBuffer8888(std::span<uint8_t> data, size_t width, size_t height, size_t rowBytes)
+NODELETE static vImage_Buffer makeVImageBuffer8888(std::span<uint8_t> data, size_t width, size_t height, size_t rowBytes)
 {
     constexpr size_t bytesPerPixel = 4;
     size_t minRowBytes = 0;
@@ -235,6 +236,10 @@ RefPtr<VideoFrame> VideoFrame::createBGRX(std::span<const uint8_t> span, size_t 
 RefPtr<VideoFrame> VideoFrame::createI420(std::span<const uint8_t> buffer, size_t width, size_t height, const ComputedPlaneLayout& layoutY, const ComputedPlaneLayout& layoutU, const ComputedPlaneLayout& layoutV, Rotation rotation, PlatformVideoColorSpace&& colorSpace)
 {
 #if USE(LIBWEBRTC)
+    ASSERT(WebRTCProvider::webRTCAvailable());
+    if (!WebRTCProvider::webRTCAvailable())
+        return nullptr;
+
     // Plane offsets must step over the full coded plane heights (layout*.sourceHeight), not the
     // visible output height, otherwise a frame whose codedHeight exceeds visibleRect.height (e.g.
     // a 1920x1088 frame cropped to 1920x1080) reads the chroma planes from the wrong offset.
@@ -267,6 +272,10 @@ RefPtr<VideoFrame> VideoFrame::createI420(std::span<const uint8_t> buffer, size_
 RefPtr<VideoFrame> VideoFrame::createI420A(std::span<const uint8_t> buffer, size_t width, size_t height, const ComputedPlaneLayout& layoutY, const ComputedPlaneLayout& layoutU, const ComputedPlaneLayout& layoutV, const ComputedPlaneLayout& layoutA, Rotation rotation, PlatformVideoColorSpace&& colorSpace)
 {
 #if USE(LIBWEBRTC)
+    ASSERT(WebRTCProvider::webRTCAvailable());
+    if (!WebRTCProvider::webRTCAvailable())
+        return nullptr;
+
     size_t offsetLayoutU = layoutY.sourceLeftBytes + layoutY.sourceWidthBytes * layoutY.sourceHeight;
     size_t offsetLayoutV = offsetLayoutU + layoutU.sourceLeftBytes + layoutU.sourceWidthBytes * layoutU.sourceHeight;
     size_t offsetLayoutA = offsetLayoutV + layoutV.sourceLeftBytes + layoutV.sourceWidthBytes * layoutV.sourceHeight;
@@ -679,21 +688,6 @@ void VideoFrameCV::setOwnershipIdentity(const ProcessIdentity& resourceOwner)
     RetainPtr buffer = pixelBuffer();
     ASSERT(buffer);
     setOwnershipIdentityForCVPixelBuffer(buffer.get(), resourceOwner);
-}
-
-ImageOrientation VideoFrameCV::orientation() const
-{
-    // Sample transform first flips x-coordinates, then rotates.
-    switch (rotation()) {
-    case VideoFrame::Rotation::None:
-        return isMirrored() ? ImageOrientation::Orientation::OriginTopRight : ImageOrientation::Orientation::OriginTopLeft;
-    case VideoFrame::Rotation::Right:
-        return isMirrored() ? ImageOrientation::Orientation::OriginRightBottom : ImageOrientation::Orientation::OriginRightTop;
-    case VideoFrame::Rotation::UpsideDown:
-        return isMirrored() ? ImageOrientation::Orientation::OriginBottomLeft : ImageOrientation::Orientation::OriginBottomRight;
-    case VideoFrame::Rotation::Left:
-        return isMirrored() ? ImageOrientation::Orientation::OriginLeftTop : ImageOrientation::Orientation::OriginLeftBottom;
-    }
 }
 
 Ref<VideoFrame> VideoFrameCV::clone()

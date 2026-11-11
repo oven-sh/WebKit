@@ -110,8 +110,19 @@ public:
         HasMoreMessages
     };
     DispatchResult dispatchStreamMessages(size_t messageLimit);
-    void LEGACY_NODELETE markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral error);
-    void LEGACY_NODELETE markCurrentlyDispatchedMessageAsInvalid(const String&);
+    NODELETE void markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral error);
+    NODELETE void markCurrentlyDispatchedMessageAsInvalid(const String&);
+
+    // Called from a stream message handler. True if the handler can defer the message, i.e. the message is
+    // an asynchronous message without a reply or attachments.
+    bool canCurrentlyDispatchedMessageWait() const { return m_canCurrentlyDispatchedMessageWait; }
+    // Called from a stream message handler that cannot handle the message yet, for example because it waits
+    // for an object that another connection produces. The message stays in the stream and holds back the
+    // messages after it. The work queue dispatches it again when woken up, so the handler must arrange that,
+    // and must not have done anything with the message. Only when canCurrentlyDispatchedMessageWait().
+    void markCurrentlyDispatchedMessageAsDeferred();
+    // The work queue that dispatches the messages of this connection. Null until open().
+    StreamConnectionWorkQueue* workQueue() const { return m_workQueue.get(); }
 
     void open(Client&, StreamConnectionWorkQueue&);
     void invalidate();
@@ -141,10 +152,16 @@ private:
     void didReceiveInvalidMessage(Connection&, MessageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding) final;
 
     bool processSetStreamDestinationID(Decoder&, RefPtr<StreamMessageReceiver>& currentReceiver);
-    bool processStreamMessage(Decoder&, StreamMessageReceiver&);
-    bool processOutOfStreamMessage(Decoder&);
+    enum class ProcessResult : uint8_t { Processed, Deferred, Invalid };
+    ProcessResult processStreamMessage(Decoder&, StreamMessageReceiver&);
+    ProcessResult processOutOfStreamMessage(Decoder&);
+    ProcessResult dispatchDeferrableStreamMessage(Decoder&, StreamMessageReceiver&);
     bool dispatchStreamMessage(Decoder&, StreamMessageReceiver&);
     void dispatchDidReceiveInvalidMessage(Decoder&);
+    // If an async-reply message was not handled (no receiver, or the receiver did not take ownership
+    // of the reply handler), tell the sender to cancel its pending reply handler over the underlying
+    // connection so it is not orphaned.
+    void sendAsyncReplyCancelIfNeeded(const Decoder&);
 
     using WakeUpClient = StreamServerConnectionBuffer::WakeUpClient;
     const Ref<IPC::Connection> m_connection;
@@ -163,6 +180,8 @@ private:
     // Signalled to release the client from ring buffer backpressure.
     Signal m_clientWaitSignal;
     bool m_isProcessingStreamMessage { false };
+    bool m_canCurrentlyDispatchedMessageWait { false };
+    bool m_isCurrentlyDispatchedMessageDeferred { false };
     bool m_didReceiveInvalidMessage { false };
 #if ASSERT_ENABLED
     bool m_isDispatchingMessage { false };

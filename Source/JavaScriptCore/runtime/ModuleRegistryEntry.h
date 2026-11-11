@@ -102,6 +102,7 @@ public:
     bool isLoaded() const;
     // loadPromise(), materializing it first for an entry that was markLoaded().
     JSPromise* loadedPromise(JSGlobalObject*);
+    void replaceRecord(JSGlobalObject*, AbstractModuleRecord*);
 #endif
 
 private:

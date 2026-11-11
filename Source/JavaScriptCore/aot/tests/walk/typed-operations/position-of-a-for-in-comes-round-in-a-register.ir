@@ -1,0 +1,64 @@
+# the one step of a for-in stands in the head of a loop that the open stands in front of, so its position comes round in a parameter of the head: no cell of heap words is made, loaded or stored
+# function count(o) { let n = 0; for (const k in o) n++; return n; }   function first(o) { for (const k in o) return k; }
+# both are handed to sink, so nothing is known of o. In `first` nothing comes round: the block of the step is no head of a loop, and the closed form stays
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK: mechanisms TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = ForInOpen v
+# CHECK: isLoopHead=true
+# CHECK: = ForInStep
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: NewHeapWords
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = ForInStep
+# RUN(ALLNEVER): walk f1 mechanisms=all
+# ALLNEVER-NOT: NewHeapWords
+# RUN(CLOSED): walk f2 mechanisms=none+TypedOperations
+# CLOSED-LABEL: code f2:Body
+# CLOSED: = NewHeapWords
+# CLOSED: = ForInStep
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="count" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ForInOpen v0
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = ForInStep v1, v0
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = Increment v3
+    Jump -> next b1(v8)
+  b3():
+    Return v3
+}
+function f2 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ForInOpen v0
+    Jump -> next b1()
+  b1():
+    v2 = ForInStep v1, v0
+    v3 = ResultAt v2
+    v4 = ResultAt v2 index=1
+    Branch v3 -> taken b3(), notTaken b2()
+  b2():
+    Return v4
+  b3():
+    v5 = Undefined
+    Return v5
+}

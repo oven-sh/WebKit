@@ -58,6 +58,7 @@
 #include "RemoteScrollingCoordinatorTransaction.h"
 #include "RemoteSharedResourceCache.h"
 #include "RemoteSharedResourceCacheMessages.h"
+#include "RotationMonitoringReason.h"
 #include "ScopedRenderingResourcesRequest.h"
 #include "WebErrors.h"
 #include "WebGPUObjectHeap.h"
@@ -234,7 +235,10 @@ private:
 #if ENABLE(APP_PRIVACY_REPORT)
     void setTCCIdentity() final
     {
-        m_process.get()->setTCCIdentity();
+#if !PLATFORM(MACCATALYST)
+        RefPtr process = m_process;
+        process->gpuProcess().setCaptureTCCIdentity(process->applicationBundleIdentifier());
+#endif
     }
 #endif
 
@@ -258,6 +262,7 @@ private:
     void startProducingData(CaptureDevice::DeviceType type, WebCore::PageIdentifier pageIdentifier) final
     {
         RefPtr process = m_process.get();
+        protect(process->gpuProcess())->didApplyCaptureEnvironment(process->webProcessIdentifier(), pageIdentifier);
         if (type == CaptureDevice::DeviceType::Microphone)
             process->startCapturingAudio();
 #if PLATFORM(IOS_FAMILY)
@@ -537,8 +542,12 @@ bool GPUConnectionToWebProcess::allowsExitUnderMemoryPressure() const
     if (hasOutstandingRenderingResourceUsage())
         return false;
 
+#if PLATFORM(COCOA)
+    return false;
+#else
     if (m_sharedPreferencesForWebProcess.useGPUProcessForDOMRenderingEnabled)
         return false;
+#endif
 
 #if ENABLE(WEB_AUDIO)
     RefPtr remoteAudioDestinationManager = m_remoteAudioDestinationManager.get();
@@ -726,6 +735,9 @@ void GPUConnectionToWebProcess::releaseRenderingBackend(RemoteRenderingBackendId
 void GPUConnectionToWebProcess::createGraphicsContextGL(RemoteGraphicsContextGLIdentifier identifier, WebCore::GraphicsContextGLAttributes attributes, RemoteRenderingBackendIdentifier renderingBackendIdentifier, IPC::StreamServerConnection::Handle&& connectionHandle)
 {
     MESSAGE_CHECK(!isLockdownModeEnabled());
+#if !PLATFORM(COCOA)
+    MESSAGE_CHECK(m_sharedPreferencesForWebProcess.useGPUProcessForWebGLEnabled);
+#endif
     MESSAGE_CHECK(!attributes.supportWebGLDraftExtensions || m_sharedPreferencesForWebProcess.webGLDraftExtensionsEnabled);
 
     auto it = m_remoteRenderingBackendMap.find(renderingBackendIdentifier);
@@ -931,6 +943,23 @@ void GPUConnectionToWebProcess::postNowPlayingRemoteControlCommandForTesting(Web
 {
     gpuProcess().nowPlayingManager().didReceiveRemoteControlCommand(type, argument);
 }
+
+#if PLATFORM(COCOA) && ENABLE(VIDEO)
+void GPUConnectionToWebProcess::hostedVideoLayerBoundsForTesting(WebCore::MediaPlayerClientIdentifier mediaElementIdentifier, CompletionHandler<void(std::optional<WebCore::FloatRect>)>&& completionHandler)
+{
+    if (auto bounds = protect(remoteMediaPlayerManagerProxy())->hostedVideoLayerBoundsForTesting(mediaElementIdentifier)) {
+        completionHandler(WTF::move(bounds));
+        return;
+    }
+
+    if (RefPtr rendererManager = m_remoteAudioVideoRendererProxyManager) {
+        completionHandler(rendererManager->hostedVideoLayerBoundsForTesting(mediaElementIdentifier));
+        return;
+    }
+
+    completionHandler(std::nullopt);
+}
+#endif
 
 void GPUConnectionToWebProcess::updateSupportedRemoteCommands()
 {
@@ -1268,10 +1297,20 @@ void GPUConnectionToWebProcess::setOrientationForMediaCapture(IntDegrees orienta
 #endif
 }
 
+void GPUConnectionToWebProcess::reapplyCaptureEnvironment(WebCore::PageIdentifier pageIdentifier)
+{
+#if PLATFORM(COCOA)
+    if (RefPtr userMediaCaptureManagerProxy = m_userMediaCaptureManagerProxy)
+        userMediaCaptureManagerProxy->reapplyCaptureEnvironment(pageIdentifier);
+#else
+    UNUSED_PARAM(pageIdentifier);
+#endif
+}
+
 void GPUConnectionToWebProcess::startMonitoringCaptureDeviceRotation(WebCore::PageIdentifier pageIdentifier, const String& persistentId)
 {
 #if PLATFORM(COCOA)
-    protect(gpuProcess().parentProcessConnection())->send(Messages::GPUProcessProxy::StartMonitoringCaptureDeviceRotation(pageIdentifier, persistentId), 0);
+    protect(gpuProcess().parentProcessConnection())->send(Messages::GPUProcessProxy::StartMonitoringCaptureDeviceRotation(pageIdentifier, persistentId, RotationMonitoringReason::Capture), 0);
 #else
     UNUSED_PARAM(pageIdentifier);
     UNUSED_PARAM(persistentId);
@@ -1281,7 +1320,7 @@ void GPUConnectionToWebProcess::startMonitoringCaptureDeviceRotation(WebCore::Pa
 void GPUConnectionToWebProcess::stopMonitoringCaptureDeviceRotation(WebCore::PageIdentifier pageIdentifier, const String& persistentId)
 {
 #if PLATFORM(COCOA)
-    protect(gpuProcess().parentProcessConnection())->send(Messages::GPUProcessProxy::StopMonitoringCaptureDeviceRotation(pageIdentifier, persistentId), 0);
+    protect(gpuProcess().parentProcessConnection())->send(Messages::GPUProcessProxy::StopMonitoringCaptureDeviceRotation(pageIdentifier, persistentId, RotationMonitoringReason::Capture), 0);
 #else
     UNUSED_PARAM(pageIdentifier);
     UNUSED_PARAM(persistentId);

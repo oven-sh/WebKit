@@ -1,0 +1,36 @@
+# Two types are each written as the other, layouts are written as each of them, and types stand above the ring. What converts to one of the two is a member of both and of all above.
+# A tag turns a member away from the type that says another tag, and so from what it would have come to through that type alone. Two classes that each may stand above the other are members of each other too; that neither is WRITTEN as the base of the other is the verifier's rule (verifier/a-row-of-bases-that-comes-round.ir).
+# RUN: members
+# CHECK: L0: members [L0, L1, L2, L3, L4]
+# CHECK-NEXT: L1: members [L0, L1, L2, L3, L4]
+# CHECK-NEXT: L2: members [L2, L3]
+# CHECK-NEXT: L3: members [L2, L3]
+# CHECK-NEXT: L4: members [L4]
+# CHECK-NEXT: L5: members [L0, L1, L2, L3, L4, L5]
+# CHECK-NEXT: L6: members [L1, L2, L3, L6]
+# CHECK-NEXT: L7: members [L0, L1, L2, L3, L4, L5, L7]
+# CHECK-NEXT: L8: members [L8]
+# CHECK-NEXT: L9: members [L9, L10, L11]
+# CHECK-NEXT: L10: members [L9, L10, L11]
+# CHECK-NEXT: L11: members [L11]
+# CHECK-NEXT: t0: members [L0, L1, L2, L3, L4] only-layouts: yes
+# CHECK-NEXT: t1: members [L2, L3] only-layouts: yes
+# CHECK-NEXT: t2: members [L1, L2, L3, L6] only-layouts: yes
+# CHECK-NEXT: t3: members [L0, L1, L2, L3, L4, L5, L7] only-layouts: yes
+# CHECK-NEXT: t4: members [L9, L10, L11] only-layouts: yes
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="First" module=m0 supertypes=[L1]
+layout L1 name="Second" module=m0 supertypes=[L0, L2, L5]
+layout L2 name="AboveWithTag" module=m0 fields=[{key="kind" declared={type=0} flags=[IsRequired]}] supertypes=[L6] ownFieldCount=1
+layout L3 name="BelowFirst" module=m0 fields=[{key="kind" declared={type=0} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=1
+layout L4 name="BelowSecond" module=m0 fields=[{key="kind" declared={type=1} flags=[IsRequired]}] supertypes=[L1] ownFieldCount=1
+layout L5 name="AboveWithoutTag" module=m0 supertypes=[L7]
+layout L6 name="AboveTheTag" module=m0
+layout L7 name="Top" module=m0
+layout L8 name="Apart" module=m0
+layout L9 kind=Instance name="Head" module=m0 supertypes=[L10] flags=[HasHeritage]
+layout L10 kind=Instance name="Tail" module=m0 supertypes=[L9] flags=[HasHeritage]
+layout L11 kind=Instance name="BelowTheRing" module=m0 supertypes=[L9] flags=[HasHeritage]
+function f0 name="types" role=Signature parameters=[{type=L0}, {type=L2}, {type=L6}, {type=L7}, {type=L9}] results=[{type=undefined}]
+entry module=m0

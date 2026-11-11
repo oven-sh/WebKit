@@ -385,7 +385,7 @@ void BifurcatedGraphicsContext::setMiterLimit(float miterLimit)
     VERIFY_STATE_SYNCHRONIZATION();
 }
 
-void BifurcatedGraphicsContext::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void BifurcatedGraphicsContext::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     m_primaryContext.drawNativeImage(nativeImage, destRect, srcRect, options);
     m_secondaryContext.drawNativeImage(nativeImage, destRect, srcRect, options);
@@ -409,7 +409,7 @@ void BifurcatedGraphicsContext::drawControlPart(ControlPart& part, const FloatRo
     VERIFY_STATE_SYNCHRONIZATION();
 }
 
-void BifurcatedGraphicsContext::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void BifurcatedGraphicsContext::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     m_primaryContext.drawPattern(nativeImage, destRect, tileRect, patternTransform, phase, spacing, options);
     m_secondaryContext.drawPattern(nativeImage, destRect, tileRect, patternTransform, phase, spacing, options);
@@ -417,18 +417,8 @@ void BifurcatedGraphicsContext::drawPattern(const NativeImage& nativeImage, cons
     VERIFY_STATE_SYNCHRONIZATION();
 }
 
-ImageDrawResult BifurcatedGraphicsContext::drawImage(Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options, const ImageDrawingExtras* extras)
-{
-    auto result = m_primaryContext.drawImage(image, concreteObjectSize, destination, source, options, extras);
-    m_secondaryContext.drawImage(image, concreteObjectSize, destination, source, options, extras);
-
-    VERIFY_STATE_SYNCHRONIZATION();
-
-    return result;
-}
-
 #if ENABLE(VIDEO)
-void BifurcatedGraphicsContext::drawVideoFrame(const VideoFrame& videoFrame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImageDrawingOptions options)
+void BifurcatedGraphicsContext::drawVideoFrame(const VideoFrame& videoFrame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, RasterDrawingOptions options)
 {
     m_primaryContext.drawVideoFrame(videoFrame, destination, shouldDiscardAlpha, options);
     m_secondaryContext.drawVideoFrame(videoFrame, destination, shouldDiscardAlpha, options);
@@ -552,6 +542,14 @@ void BifurcatedGraphicsContext::drawDotsForDocumentMarker(const FloatRect& rect,
 {
     m_primaryContext.drawDotsForDocumentMarker(rect, markerStyle);
     m_secondaryContext.drawDotsForDocumentMarker(rect, markerStyle);
+
+    VERIFY_STATE_SYNCHRONIZATION();
+}
+
+void BifurcatedGraphicsContext::drawMeshGradient(MeshGradient& gradient, const FloatRect& destination)
+{
+    m_primaryContext.drawMeshGradient(gradient, destination);
+    m_secondaryContext.drawMeshGradient(gradient, destination);
 
     VERIFY_STATE_SYNCHRONIZATION();
 }

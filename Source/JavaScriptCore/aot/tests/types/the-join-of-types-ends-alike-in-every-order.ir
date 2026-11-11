@@ -1,0 +1,35 @@
+# The walk and the arrivals join types in whatever order ways, callers and compile threads come. If the join hung on the order, the bytes of the image would hang on the clock.
+# interface Shape { }  Circle, Square, Triangle, Oval, Kite: Shape    interface Tool { }  Hammer, Saw: Tool    Point, Nail, Bolt, Screw, Pin: strangers
+# Four of the types are sets as they may be written: Point | Nail, Bolt | Screw | Pin, Circle | Square, Circle | Point. A union that is written is a declared family itself unless it cuts across one: so Circle | Square, Point | Nail and Bolt | Screw | Pin are families here.
+# Every two, three and four of the types below are joined in every order, the fours also two by two. Members that a family holds together stand for that family; then up to four layouts in all stay a set, and more are any object.
+# RUN: join
+# CHECK: t0 t1 = L1|L2
+# CHECK: t0 t1 t2 = L1|L2|L8
+# CHECK: t0 t2 = L1|L8
+# CHECK: t0 t3 = L1|L6
+# CHECK: t2 t3 t8 = L6|L7|L8
+# CHECK: t2 t4 = L8|L9
+# CHECK: t2 t4 t5 t6 = object
+# CHECK: t2 t9 = L8|L9
+# CHECK: t9 t10 = object
+# CHECK: every order ends alike
+# RUN(NONE): join
+# NONE-NOT: HANGS ON THE ORDER
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Shape" module=m0 flags=[IsNeverAllocated]
+layout L1 name="Circle" module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Square" module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Triangle" module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L4 name="Oval" module=m0 fields=[{key="d" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L5 name="Kite" module=m0 fields=[{key="e" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L6 name="Hammer" module=m0 fields=[{key="f" declared={type=anything} flags=[IsRequired]}] supertypes=[L13]
+layout L7 name="Saw" module=m0 fields=[{key="g" declared={type=anything} flags=[IsRequired]}] supertypes=[L13]
+layout L8 name="Point" module=m0 fields=[{key="h" declared={type=anything} flags=[IsRequired]}]
+layout L9 name="Nail" module=m0 fields=[{key="i" declared={type=anything} flags=[IsRequired]}]
+layout L10 name="Bolt" module=m0 fields=[{key="j" declared={type=anything} flags=[IsRequired]}]
+layout L11 name="Screw" module=m0 fields=[{key="k" declared={type=anything} flags=[IsRequired]}]
+layout L12 name="Pin" module=m0 fields=[{key="l" declared={type=anything} flags=[IsRequired]}]
+layout L13 name="Tool" module=m0 flags=[IsNeverAllocated]
+function f0 name="types" role=Signature parameters=[{type=L1}, {type=L2}, {type=L8}, {type=L6}, {type=L9}, {type=L10}, {type=L11}, {type=L12}, {type=L7}, {type=L8|L9}, {type=L10|L11|L12}, {type=L1|L2}, {type=L1|L8}] results=[{type=undefined}]
+entry module=m0

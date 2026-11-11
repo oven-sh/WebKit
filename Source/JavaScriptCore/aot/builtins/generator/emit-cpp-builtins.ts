@@ -1,4 +1,6 @@
+import { collectNativeReads, type NativeReads } from "./check-host-uses.ts";
 import { GeneratorError, Problems } from "./declarations.ts";
+import { hashOfHostBindings } from "./emit-cpp-bindings.ts";
 import { collectArrayDeclarations } from "./emit-cpp-ids.ts";
 import { textNamesArray, textNameSlotsArray } from "./emit-cpp-names.ts";
 import {
@@ -12,6 +14,7 @@ import {
   formatUnlessDefault,
   formatUnlessEmpty,
   formatUnlessZero,
+  hashOfText,
   joinBlocks,
   Pool,
   wrapFile,
@@ -24,11 +27,9 @@ import {
   type ModelClass,
   type ModelClosedKeys,
   type ModelFunction,
-  type ModelHostRead,
   type ModelLayout,
   type ModelLayoutField,
   type ModelModule,
-  type ModelNamesReadByNativeCode,
   type ModelRealmStructure,
   type ModelSlot,
   type TableModel,
@@ -77,13 +78,13 @@ const tokenSpans: readonly SpanMember[] = [
 const attachmentSpans: readonly SpanMember[] = [
   ["featureUses", "builtinTableFeatureUses"],
   ["unseenCode", "builtinTableUnseenCode"],
+  ["instancesThatAnswerEveryName", "builtinTableInstancesThatAnswerEveryName"],
   ["moduleLoads", "builtinTableModuleLoads"],
   ["startupLoads", "builtinTableStartupLoads"],
   ["calledFunctions", "builtinTableCalledFunctions"],
   ["startupCalledFunctions", "builtinTableStartupCalledFunctions"],
   ["hostObjects", "builtinTableHostObjects"],
-  ["namedMemberCalls", "builtinTableNamedMemberCalls"],
-  ["hostMethodCalls", "builtinTableHostMethodCalls"],
+  ["nativeCellsFilledByCalledFunctions", "builtinTableNativeCellsFilledByCalledFunctions"],
   ["forms", "builtinTableForms"],
   ["boxedCalls", "builtinTableBoxedCalls"],
   ["numberConstants", "builtinTableNumberConstants"],
@@ -98,12 +99,10 @@ const runtimeSpans: readonly SpanMember[] = [
   ["functionsCalledWithStartupLoads", "builtinTableFunctionsCalledWithStartupLoads"],
   ["namesOfHostMethodsCallingStartupLoads", "builtinTableNamesOfHostMethodsCallingStartupLoads"],
   ["moduleLoaderFunctions", "builtinTableModuleLoaderFunctions"],
-  ["hostReads", "builtinTableHostReads"],
   ["lockedObjects", "builtinTableLockedObjects"],
   ["marks", "builtinTableMarks"],
   ["loadersOfMachineCode", "builtinTableLoadersOfMachineCode"],
   ["closedKeys", "builtinTableClosedKeys"],
-  ["namesReadByNativeCode", "builtinTableNamesReadByNativeCode"],
 ];
 
 function checkAscendingIds(cppType: string, items: readonly { id: number }[], problems: Problems): void {
@@ -169,6 +168,9 @@ function isLockedObject(builtin: ModelBuiltin): boolean {
 
 function formatBuiltin(builtin: ModelBuiltin): string {
   const { prototype, members, overloads } = builtin;
+  const reads = overloads.filter(overload => overload.mode === "Get");
+  const isReadWithoutType =
+    builtin.kind === "DataProperty" && reads.length > 0 && reads.every(read => read.result.type.isAnything);
   return formatAggregate([
     ["kind", formatUnlessDefault("BuiltinKind", builtin.kind, "Namespace")],
     ["origin", formatUnlessDefault("BuiltinOrigin", builtin.origin, "Engine")],
@@ -183,6 +185,15 @@ function formatBuiltin(builtin: ModelBuiltin): string {
         builtinFlags.filter(flag => builtin.flags.includes(flag)),
       ),
     ],
+    [
+      "marks",
+      builtin.marks.length === 0
+        ? null
+        : builtinMarks
+            .filter(mark => builtin.marks.includes(mark))
+            .map(mark => `bitOfMark(${formatEnumerator("BuiltinMark", mark)})`)
+            .join(" | "),
+    ],
     ["holder", formatId("BuiltinID", builtin.holder)],
     ["name", formatName(builtin.name)],
     ["inheritsFrom", formatId("BuiltinID", prototype.link === "Builtin" ? prototype.builtin : null)],
@@ -193,22 +204,21 @@ function formatBuiltin(builtin: ModelBuiltin): string {
     ["firstOverload", formatId("BuiltinOverloadID", overloads.length === 0 ? null : overloads[0])],
     ["overloadCount", formatUnlessZero(overloads.length)],
     ["isNamedByText", builtin.hostNumber === noHostNumber ? null : "true"],
+    ["isAddedAtFirstRead", builtin.isAddedAtFirstRead ? "true" : null],
+    ["isAddedAsEnumerable", builtin.isAddedAsEnumerable ? "true" : null],
+    ["canBeListed", builtin.canBeListed ? "true" : null],
+    ["isReadWithoutType", isReadWithoutType ? "true" : null],
   ]);
 }
 
 interface ClassPools {
   slots: Pool;
   names: Pool;
-  typesOfNames: Pool;
-  makersOfNames: Pool;
 }
 
 function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
   const { slots: classSlots, names: classNames } = pools;
   const names = builtinClass.namesDefinedOnNewInstances?.toSorted((left, right) => left.number - right.number);
-  const typesOfNames = builtinClass.typesOfNamesDefinedOnNewInstances.toSorted(
-    (left, right) => left.name.number - right.name.number,
-  );
   return formatAggregate([
     ["id", formatId("BuiltinClassID", builtinClass)],
     ["origin", formatUnlessDefault("BuiltinOrigin", builtinClass.origin, "Engine")],
@@ -222,37 +232,17 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
     ["isNeverPristine", formatUnlessFalse(builtinClass.isNeverPristine)],
     ["pristineTest", formatUnlessDefault("BuiltinPristineTest", builtinClass.pristineTest, "Mark")],
     ["hasClosureInstances", formatUnlessFalse(builtinClass.hasClosureInstances)],
+    ["isFollowedBesideUnseenObject", formatUnlessFalse(builtinClass.isFollowedBesideUnseenObject)],
     ["instancesAreEntries", formatUnlessFalse(builtinClass.instancesAreEntries)],
+    ["keepsStructuresOfClassesBelow", formatUnlessFalse(builtinClass.keepsStructuresOfClassesBelow)],
     ["definesCharactersOnNewInstances", formatUnlessFalse(builtinClass.definesCharactersOnNewInstances)],
     ["listsNamesDefinedOnNewInstances", formatUnlessFalse(names !== undefined)],
     ["namesDefinedOnNewInstances", names === undefined ? null : classNames.add(names.map(name => formatName(name)))],
     [
-      "typesOfNamesDefinedOnNewInstances",
-      pools.typesOfNames.add(
-        typesOfNames.map(({ name, type }) =>
-          formatAggregate([
-            ["name", formatName(name)],
-            ["type", formatId("BuiltinTypeID", type)],
-          ]),
-        ),
-      ),
-    ],
-    [
-      "makersOfNamesDefinedOnNewInstances",
-      pools.makersOfNames.add(
-        builtinClass.namesMadeByStaticMembers.map(({ name, member }) =>
-          formatAggregate([
-            ["name", formatName(name)],
-            ["holder", formatId("BuiltinID", builtinClass.constructor)],
-            ["member", formatName(member)],
-          ]),
-        ),
-      ),
-    ],
-    [
       "constructorOnlyReadsPrototypeOfNewTarget",
       formatUnlessFalse(builtinClass.constructorOnlyReadsPrototypeOfNewTarget),
     ],
+    ["constructorAdder", formatName(builtinClass.constructorAdder)],
     ["slots", classSlots.add(builtinClass.slots.map(slot => formatId("BuiltinSlotID", slot)))],
     ["stateHeap", formatHeap(builtinClass.stateHeap)],
   ]);
@@ -269,6 +259,10 @@ function formatSlot(slot: ModelSlot): string {
     ["indexInType", indexInType === null ? null : String(indexInType)],
     ["heap", formatHeap(slot.heap)],
     ["holds", formatId("BuiltinTypeID", slot.holds)],
+    ["internalField", slot.internalField === null ? null : String(slot.internalField)],
+    ["holdsStepValues", formatUnlessFalse(slot.holdsStepValues)],
+    ["holdsWhatIsThrown", formatUnlessFalse(slot.holdsWhatIsThrown)],
+    ["wordOfCell", formatUnlessDefault("BuiltinWordOfCell", slot.wordOfCell, "None")],
   ]);
 }
 
@@ -288,7 +282,6 @@ function formatLayout(layout: ModelLayout, layoutFields: Pool): string {
   ]);
 }
 
-// A getter that JSGlobalObject does not have fails the build of the engine.
 function formatRealmStructure({ getter, names }: ModelRealmStructure, realmStructureNames: Pool): string {
   return formatAggregate([
     ["findInitialStructure", `[](JSGlobalObject* realm) -> Structure* { return realm->${getter}(); }`],
@@ -296,7 +289,12 @@ function formatRealmStructure({ getter, names }: ModelRealmStructure, realmStruc
   ]);
 }
 
-function formatModule(module: ModelModule): string {
+function formatModule(
+  module: ModelModule,
+  exportsHeldByNamespaces: Pool,
+  nativeReads: NativeReads | undefined,
+  exportsReadByNativeCode: Pool,
+): string {
   return formatAggregate([
     ["id", formatId("RuntimeModuleID", module)],
     ["namespaceObject", formatId("BuiltinID", module.namespace)],
@@ -307,7 +305,26 @@ function formatModule(module: ModelModule): string {
         ["HasOpenNamespace", module.hasOpenNamespace],
         ["ListsAllExports", module.listsAllExports],
         ["IsPublic", module.isPublic],
+        ["NativeCodeReadsEveryExport", nativeReads?.readsEveryExport ?? false],
       ]),
+    ],
+    ["exportsHeldByNamespace", exportsHeldByNamespaces.add(module.exportsHeldByNamespace.map(name => formatName(name)))],
+    [
+      "exportsReadByNativeCode",
+      exportsReadByNativeCode.add(
+        [...(nativeReads?.names.values() ?? [])]
+          .sort((left, right) => left.number - right.number)
+          .map(name => formatName(name)),
+      ),
+    ],
+    [
+      "memberOnlyExports",
+      exportsReadByNativeCode.add(
+        [...(nativeReads?.names.values() ?? [])]
+          .filter(name => !nativeReads!.readsEveryExport && !nativeReads!.namesWithOtherUses.has(name.number))
+          .sort((left, right) => left.number - right.number)
+          .map(name => formatName(name)),
+      ),
     ],
   ]);
 }
@@ -329,29 +346,11 @@ function formatFunction(runtimeFunction: ModelFunction, implementedBuiltins: Poo
   ]);
 }
 
-function formatHostRead({ context, exportName, use }: ModelHostRead): string {
-  return formatAggregate([
-    ["context", formatUnlessDefault("BuiltinHostReadContext", context, "EntryPoint")],
-    ["exportName", formatName(exportName)],
-    ["use", formatUnlessDefault("BuiltinHostReadUse", use.read, "Inspected")],
-    ["passedTo", formatId("BuiltinID", use.read === "PassedTo" ? use.builtin : null)],
-    ["argumentIndex", use.read === "PassedTo" ? formatUnlessZero(use.argument) : null],
-  ]);
-}
-
 function formatClosedKeys({ holder, keys, openNames }: ModelClosedKeys, closedKeyNames: Pool): string {
   return formatAggregate([
     ["holder", formatId("BuiltinID", holder)],
     ["names", closedKeyNames.add(keys.map(key => formatName(key)))],
     ["openNames", closedKeyNames.add(openNames.map(name => formatName(name)))],
-  ]);
-}
-
-function formatNamesReadByNativeCode(read: ModelNamesReadByNativeCode, namesRead: Pool): string {
-  return formatAggregate([
-    ["holder", formatId("BuiltinID", read.holder)],
-    ["names", namesRead.add(read.names.map(name => formatName(name)))],
-    ["namesOnlyInspected", namesRead.add(read.namesOnlyInspected.map(name => formatName(name)))],
   ]);
 }
 
@@ -407,23 +406,16 @@ function emitTableData(arrays: DeclaredArrays, lockedMembers: string | null, rea
   return `constinit const BuiltinTableData builtinTableData = ${data};`;
 }
 
-// An executable says with which table it was built: numbers of the table are in the code of a compiled program.
-function emitDescription(model: TableModel): string {
+function emitDescription(model: TableModel, textsOfTable: readonly string[]): string {
   const description = formatAggregate([
     ["hashOfBuiltinTokens", "builtinTableHashOfBuiltinTokens"],
-    ["numberOfBuiltins", String(model.builtins.length)],
-    ["numberOfOverloads", String(model.overloads.length)],
-    ["numberOfTypes", String(model.types.length)],
-    ["numberOfClasses", String(model.classes.length)],
-    ["numberOfSlots", String(model.slots.length)],
-    ["numberOfLayouts", String(model.layouts.length)],
-    ["numberOfModules", String(model.modules.length)],
-    ["numberOfFunctions", String(model.functions.length)],
+    ["hashOfTable", `0x${hashOfText(textsOfTable.join("\0")).toString(16)}`],
+    ["hashOfHostBindings", `0x${hashOfHostBindings(model).toString(16)}`],
   ]);
   return `extern "C" AOT_KEPT_BY_EVERY_LINKER constinit const BuiltinTableDescription describedBuiltinTable = ${description};`;
 }
 
-export function emitCppBuiltins(model: TableModel): string {
+export function emitCppBuiltins(model: TableModel, otherFilesOfTable: readonly string[]): string {
   checkModel(model);
   const arrays = collectDeclaredArrays(model);
   checkArrayReferences(arrays);
@@ -432,15 +424,15 @@ export function emitCppBuiltins(model: TableModel): string {
   const classPools: ClassPools = {
     slots: classSlots,
     names: classNames,
-    typesOfNames: new Pool("BuiltinResultProperty", "typesOfClassNames"),
-    makersOfNames: new Pool("BuiltinPropertyMaker", "makersOfClassNames"),
   };
   const layoutFields = new Pool("BuiltinLayoutField", "layoutFields");
   const implementedBuiltins = new Pool("BuiltinID", "implementedBuiltins");
+  const exportsHeldByNamespaces = new Pool("BuiltinName", "exportsHeldByNamespaces");
+  const exportsReadByNativeCode = new Pool("BuiltinName", "exportsReadByNativeCode");
+  const nativeReads = collectNativeReads(model);
   const lockedMembers = new Pool("BuiltinID", "lockedMembers");
   const lockedMemberSpan = lockedMembers.add(formatBuiltinIds(model.membersLockedByName));
   const closedKeyNames = new Pool("BuiltinName", "closedKeyNames");
-  const namesReadByNativeCode = new Pool("BuiltinName", "namesReadByNativeCode");
   const realmStructureNames = new Pool("BuiltinName", "realmStructureNames");
   const realmStructures = new Pool("BuiltinRealmStructure", "realmStructures");
   const realmStructureSpan = realmStructures.add(
@@ -460,7 +452,13 @@ export function emitCppBuiltins(model: TableModel): string {
       "builtinTableLayouts",
       model.layouts.map(layout => formatLayout(layout, layoutFields)),
     ),
-    emitTableArray(arrays, "builtinTableRuntimeModules", model.modules.map(formatModule)),
+    emitTableArray(
+      arrays,
+      "builtinTableRuntimeModules",
+      model.modules.map(module =>
+        formatModule(module, exportsHeldByNamespaces, nativeReads.get(module), exportsReadByNativeCode),
+      ),
+    ),
     emitTableArray(
       arrays,
       "builtinTableRuntimeFunctions",
@@ -486,7 +484,6 @@ export function emitCppBuiltins(model: TableModel): string {
       "builtinTableModuleLoaderFunctions",
       startup.moduleLoaderFunctions.map(runtimeFunction => formatId("RuntimeFunctionID", runtimeFunction)),
     ),
-    emitTableArray(arrays, "builtinTableHostReads", model.hostReads.map(formatHostRead)),
     emitTableArray(arrays, "builtinTableLockedObjects", formatBuiltinIds(model.builtins.filter(isLockedObject))),
     emitTableArray(
       arrays,
@@ -521,28 +518,22 @@ export function emitCppBuiltins(model: TableModel): string {
       "builtinTableClosedKeys",
       model.closedKeys.map(closedKeys => formatClosedKeys(closedKeys, closedKeyNames)),
     ),
-    emitTableArray(
-      arrays,
-      "builtinTableNamesReadByNativeCode",
-      model.namesReadByNativeCode.map(read => formatNamesReadByNativeCode(read, namesReadByNativeCode)),
-    ),
   ];
-  const body = joinBlocks([
+  const blocks = [
     classSlots.emit(),
     classNames.emit(),
-    classPools.typesOfNames.emit(),
-    classPools.makersOfNames.emit(),
     layoutFields.emit(),
     implementedBuiltins.emit(),
+    exportsHeldByNamespaces.emit(),
+    exportsReadByNativeCode.emit(),
     lockedMembers.emit(),
     closedKeyNames.emit(),
-    namesReadByNativeCode.emit(),
     realmStructureNames.emit(),
     realmStructures.emit(),
     `static_assert(${model.realmStructures.length} <= RealmStructureID::hashTableDeletedIndex);`,
     ...tableArrays,
     emitTableData(arrays, lockedMemberSpan, realmStructureSpan),
-    emitDescription(model),
-  ]);
+  ];
+  const body = joinBlocks([...blocks, emitDescription(model, [...otherFilesOfTable, ...blocks])]);
   return wrapFile(["AOTBuiltinTable.h", "AOTBuiltinTableArrays.h", "AOTRuntimeDescription.h", "JSCInlines.h"], body);
 }

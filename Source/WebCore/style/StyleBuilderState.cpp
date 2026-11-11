@@ -44,6 +44,7 @@
 #include "CSSImageSetValue.h"
 #include "CSSImageValue.h"
 #include "CSSLightDarkImageValue.h"
+#include "CSSMeshGradientValue.h"
 #include "CSSNamedImageValue.h"
 #include "CSSPaintImageValue.h"
 #include "CSSParserIdioms.h"
@@ -150,6 +151,8 @@ RefPtr<Image> BuilderState::createStyleImage(const CSSValue& value) const
         return filterImageValue->createStyleImage(*this);
     if (auto* gradientValue = dynamicDowncast<CSSGradientValue>(value))
         return gradientValue->createStyleImage(*this);
+    if (auto* meshGradientValue = dynamicDowncast<CSSMeshGradientValue>(value))
+        return meshGradientValue->createStyleImage(*this);
     if (auto* colorImageValue = dynamicDowncast<CSSColorImageValue>(value))
         return colorImageValue->createStyleImage(*this);
     if (auto* lightDarkImageValue = dynamicDowncast<CSSLightDarkImageValue>(value))
@@ -176,8 +179,7 @@ void BuilderState::adjustStyleForInterCharacterRuby()
 
 void BuilderState::updateFont()
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST Ref fontSelector = const_cast<Document&>(document()).fontSelector();
+    Ref fontSelector = const_cast<Document&>(document()).fontSelector();
 
     auto needsUpdate = [&] {
         return m_fontDirty || !m_style->fontCascade().fonts();
@@ -341,7 +343,7 @@ double BuilderState::lookupCSSRandomBaseValue(const CSSCalc::RandomCachingKey& k
 
 // MARK: - Tree Counting Functions
 
-static void LEGACY_NODELETE markTreeCountingFunctionUsed(const Element& element, ComputedStyle& style)
+NODELETE static void markTreeCountingFunctionUsed(const Element& element, ComputedStyle& style)
 {
     style.setUsesTreeCountingFunctions();
 
@@ -356,7 +358,7 @@ static void LEGACY_NODELETE markTreeCountingFunctionUsed(const Element& element,
 
 // "Loosely-matched tree-scoped references" count as 0 for cross-tree styling.
 // https://drafts.csswg.org/css-shadow-1/#tree-scoped-name-loosely-matched
-static bool LEGACY_NODELETE isLooselyMatchedTreeScopedReference(const PropertyCascade::Property* property)
+NODELETE static bool isLooselyMatchedTreeScopedReference(const PropertyCascade::Property* property)
 {
     return property && property->styleScopeOrdinal <= ScopeOrdinal::ContainingHost;
 }
@@ -397,11 +399,9 @@ unsigned BuilderState::siblingIndex()
     return count;
 }
 
-void BuilderState::disableNativeAppearanceIfNeeded(CSSPropertyID propertyID, PropertyCascade::Origin origin)
+void BuilderState::didApplyAuthorProperty(CSSPropertyID propertyID)
 {
-    auto shouldDisable = [&] {
-        if (origin != PropertyCascade::Origin::Author)
-            return false;
+    auto shouldDisableNativeAppearance = [&] {
         if (!CSSProperty::disablesNativeAppearance(propertyID))
             return false;
         if (!applyPropertyToRegularStyle())
@@ -409,8 +409,12 @@ void BuilderState::disableNativeAppearanceIfNeeded(CSSPropertyID propertyID, Pro
         SUPPRESS_UNCOUNTED_ARG return element()->isDevolvableWidget() || RenderTheme::hasAppearanceForElementTypeFromUAStyle(*element());
     };
 
-    if (shouldDisable())
+    if (shouldDisableNativeAppearance())
         style().setNativeAppearanceDisabled(true);
+
+    // https://drafts.csswg.org/css-pseudo-4/#paired-defaults
+    if (isBuildingHighlightStyle() && (propertyID == CSSPropertyID::Color || propertyID == CSSPropertyID::BackgroundColor))
+        style().setHasAuthorHighlightColors();
 }
 
 

@@ -27,9 +27,8 @@ constexpr unsigned numberOfStubFamilies = 0
 #undef v
     ;
 
-enum class CallerFrame : uint8_t { HasFrame, Frameless, StubFrame };
+enum class CallerFrame : uint8_t { HasFrame, Frameless, StubFrame, KeepsNoFPRs };
 
-// A stub of such a family takes the frame pointer register at its entry for the frame of the function that calls it, so that function has a frame record.
 constexpr bool readsFrameRecordOfCaller(StubFamily family)
 {
     switch (family) {
@@ -44,9 +43,11 @@ constexpr bool readsFrameRecordOfCaller(StubFamily family)
     }
 }
 
+enum class CallPosition : uint8_t { Ordinary, Tail };
+
 class StubKey {
 public:
-    static constexpr unsigned maxNumberOfForms = 64;
+    static constexpr unsigned maxNumberOfForms = 128;
     static constexpr unsigned maxCount = 63;
 
     constexpr StubKey() = default;
@@ -91,7 +92,6 @@ public:
     constexpr StubKey withCallerFrame(CallerFrame callerFrame) const { return withField(callerFrameShift, callerFrameWidth, static_cast<uint64_t>(callerFrame)); }
     constexpr StubKey withCount(unsigned count) const { return withField(countShift, countWidth, count); }
     constexpr StubKey withOperandRegister(GPRReg reg) const { return withField(operandRegisterShift, operandRegisterWidth, static_cast<uint64_t>(Reg(reg).index()) + 1); }
-    constexpr StubKey withoutOperandRegister() const { return withField(operandRegisterShift, operandRegisterWidth, 0); }
     constexpr StubKey withImmediate(uint32_t immediate) const { return withField(hasImmediateShift, hasImmediateWidth, 1).withField(immediateShift, immediateWidth, immediate); }
     constexpr StubKey withoutImmediate() const { return withField(hasImmediateShift, hasImmediateWidth, 0).withField(immediateShift, immediateWidth, 0); }
     constexpr StubKey withFamily(StubFamily family) const { return withField(familyShift, familyWidth, static_cast<uint64_t>(family) + 1); }
@@ -115,13 +115,13 @@ private:
     static constexpr unsigned operandRegisterShift = hasImmediateShift + hasImmediateWidth;
     static constexpr unsigned operandRegisterWidth = 6;
     static constexpr unsigned callerFrameShift = operandRegisterShift + operandRegisterWidth;
-    static constexpr unsigned callerFrameWidth = 2;
+    static constexpr unsigned callerFrameWidth = 3;
     static constexpr unsigned countShift = callerFrameShift + callerFrameWidth;
     static constexpr unsigned countWidth = 6;
     static constexpr unsigned formShift = countShift + countWidth;
-    static constexpr unsigned formWidth = 6;
+    static constexpr unsigned formWidth = 7;
     static constexpr unsigned familyShift = formShift + formWidth;
-    static constexpr unsigned familyWidth = 11;
+    static constexpr unsigned familyWidth = 9;
 
     static_assert(familyShift + familyWidth == 64);
     static_assert(numberOfStubFamilies < (1u << familyWidth) - 1);

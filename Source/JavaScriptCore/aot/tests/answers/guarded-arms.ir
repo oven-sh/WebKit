@@ -1,0 +1,80 @@
+# class Square { area() { return 4 } }  class Disk { area() { return 3 } }
+# function areaOf(shape: Square | Disk) { return shape.area() }  function areaOfAny(shape) { return shape.area() }  register(areaOf, new Square(), new Disk(), areaOfAny)
+# RUN(REPLACED): run-in-shell globalThis.register = (areaOf, square, disk) => { print(areaOf(square), areaOf(disk)); Object.getPrototypeOf(disk).area = () => 7; print(areaOf(square), areaOf(disk)); };
+# REPLACED: 4 3
+# REPLACED-NEXT: 4 7
+# REPLACED-NEXT: exited with 0
+# RUN(HIDDEN): run-in-shell globalThis.register = (areaOf, square, disk) => { disk.area = () => 7; print(areaOf(square), areaOf(disk)); };
+# HIDDEN: 4 7
+# HIDDEN-NEXT: exited with 0
+# RUN(MOVED): run-in-shell globalThis.register = (areaOf, square, disk) => { Object.setPrototypeOf(disk, { area() { return 7; } }); print(areaOf(square), areaOf(disk)); };
+# MOVED: 4 7
+# MOVED-NEXT: exited with 0
+# RUN(TABLE): run-in-shell globalThis.register = (areaOf, square, disk, areaOfAny) => { print(areaOfAny(square), areaOfAny(disk)); Object.getPrototypeOf(disk).area = () => 7; print(areaOfAny(square), areaOfAny(disk)); };
+# TABLE: 4 3
+# TABLE-NEXT: 4 7
+# TABLE-NEXT: exited with 0
+
+layout L0 kind=Instance name="Square" module=m0 constructor=f1
+layout L1 kind=Instance name="Disk" module=m0 constructor=f3
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=80 kind=Parameter
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="area"
+    v4 = FinishClass v1 layout=L0
+    v5 = NewClosure function=f3
+    v6 = NewClass v5 layout=L1
+    v7 = NewClosure function=f4
+    DefineMethod v6, v7 layout=L1 key="area"
+    v9 = FinishClass v6 layout=L1
+    v10 = Construct v4
+    v11 = Construct v9
+    v12 = NewClosure function=f5
+    v13 = NewClosure function=f6
+    v14 = Builtin builtin=Function
+    v15 = String string="return globalThis.register"
+    v16 = Construct v14, -, v15
+    v17 = Call v16
+    v18 = Call v17, -, v12, v10, v11, v13
+    v19 = Undefined
+    Return v19
+}
+function f1 name="Square" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="area" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=4
+    Return v1
+}
+function f3 name="Disk" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f4 name="area" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    Return v1
+}
+function f5 name="areaOf" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1 site=w0}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="area"
+    v2 = Call v1, v0 calleeKey="area"
+    Return v2
+}
+function f6 name="areaOfAny" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="area"
+    v2 = Call v1, v0 calleeKey="area"
+    Return v2
+}

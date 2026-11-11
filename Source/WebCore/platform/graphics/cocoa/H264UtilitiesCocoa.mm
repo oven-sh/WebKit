@@ -69,8 +69,7 @@ RefPtr<VideoInfo> createVideoInfoFromAVCC(std::span<const uint8_t> avcc)
     constexpr uint8_t kNAL_REF_IDC_SEQ_PARAM_SET = 0x80;
     constexpr uint8_t kNAL_REF_IDC_PIC_PARAM_SET = 0x60;
 
-    Vector<Vector<uint8_t>> paramSets;
-    paramSets.reserveInitialCapacity(numOfSequenceParameterSets + 1); // typical number of picture parameter set is 1.
+    Vector<Vector<uint8_t>> paramSets(ReserveCapacityTag { }, numOfSequenceParameterSets + 1); // typical number of picture parameter set is 1.
 
     for (size_t index = 0; index < numOfSequenceParameterSets; index++) {
         auto size = reader.read<uint16_t>();
@@ -121,7 +120,7 @@ Vector<uint8_t> convertAVCCMSampleBufferToAnnexB(CMSampleBufferRef avccSampleBuf
     return convertParameterSetsCMSampleBufferToAnnexB(avccSampleBuffer, isKeyframe, PAL::CMVideoFormatDescriptionGetH264ParameterSetAtIndex);
 }
 
-static bool LEGACY_NODELETE h264AnnexBSpsIsFollowedByPps(std::span<const uint8_t> data, const Vector<NaluIndex>& naluIndices, size_t spsIndex)
+NODELETE static bool h264AnnexBSpsIsFollowedByPps(std::span<const uint8_t> data, const Vector<NaluIndex>& naluIndices, size_t spsIndex)
 {
     if (spsIndex + 1 >= naluIndices.size())
         return false;

@@ -159,7 +159,7 @@ std::optional<Texture::CompressFormat> Texture::compressedFormatType(WebGPU::Tex
     }
 }
 
-static std::optional<WebGPU::TextureFormat> LEGACY_NODELETE depthSpecificFormat(WebGPU::TextureFormat textureFormat)
+NODELETE static std::optional<WebGPU::TextureFormat> depthSpecificFormat(WebGPU::TextureFormat textureFormat)
 {
     // https://gpuweb.github.io/gpuweb/#aspect-specific-format
 
@@ -275,7 +275,7 @@ static std::optional<WebGPU::TextureFormat> LEGACY_NODELETE depthSpecificFormat(
     }
 }
 
-static std::optional<WebGPU::TextureFormat> LEGACY_NODELETE stencilSpecificFormat(WebGPU::TextureFormat textureFormat)
+NODELETE static std::optional<WebGPU::TextureFormat> stencilSpecificFormat(WebGPU::TextureFormat textureFormat)
 {
     // https://gpuweb.github.io/gpuweb/#aspect-specific-format
 
@@ -1828,7 +1828,7 @@ WebGPU::TextureFormat Texture::removeSRGBSuffix(WebGPU::TextureFormat format)
     }
 }
 
-static bool LEGACY_NODELETE textureViewFormatCompatible(WebGPU::TextureFormat format1, WebGPU::TextureFormat format2)
+NODELETE static bool textureViewFormatCompatible(WebGPU::TextureFormat format1, WebGPU::TextureFormat format2)
 {
     // https://gpuweb.github.io/gpuweb/#texture-view-format-compatible
 
@@ -2812,7 +2812,7 @@ std::optional<MTLPixelFormat> Texture::stencilOnlyAspectMetalFormat(WebGPU::Text
     }
 }
 
-static MTLStorageMode LEGACY_NODELETE storageMode(bool deviceHasUnifiedMemory, bool supportsNonPrivateDepthStencilTextures, bool supportsMemorylessTextures, OptionSet<WebGPU::TextureUsage> usage)
+NODELETE static MTLStorageMode storageMode(bool deviceHasUnifiedMemory, bool supportsNonPrivateDepthStencilTextures, bool supportsMemorylessTextures, OptionSet<WebGPU::TextureUsage> usage)
 {
     if (usage.contains(WebGPU::TextureUsage::Transient))
         return supportsMemorylessTextures ? MTLStorageModeMemoryless : MTLStorageModePrivate;
@@ -3024,6 +3024,7 @@ std::optional<ResolvedTextureViewDescriptor> Texture::resolveTextureViewDescript
         .aspect = descriptor.aspect,
         // An empty usage means the view inherits every usage of the texture it is a view of.
         .usage = descriptor.usage.isEmpty() ? m_usage : descriptor.usage,
+        .swizzle = descriptor.swizzle,
     };
 }
 
@@ -3088,6 +3089,9 @@ NSString* Texture::errorValidatingTextureViewCreation(const ResolvedTextureViewD
     // texture's usages. A zero usage has already been resolved to the texture's usage above.
     if (m_usage.contains(WebGPU::TextureUsage::Transient) && descriptor.usage != m_usage)
         return ERROR_STRING([NSString stringWithFormat:@"view usage(%llu) must be either zero or exactly the transient texture's usage(%llu)", toAPI(descriptor.usage), toAPI(m_usage)]);
+
+    if (!descriptor.swizzle.isIdentity() && !m_device->hasFeature(WebGPU::FeatureName::TextureComponentSwizzle))
+        return ERROR_STRING(@"swizzle is not \"rgba\" and the texture-component-swizzle feature is not enabled");
 
     auto format = descriptor.format;
 
@@ -3182,7 +3186,7 @@ static WebGPU::Extent3D computeRenderExtent(const WebGPU::Extent3D& baseSize, ui
     return extent;
 }
 
-static MTLPixelFormat LEGACY_NODELETE resolvedPixelFormat(MTLPixelFormat viewPixelFormat, MTLPixelFormat sourcePixelFormat)
+NODELETE static MTLPixelFormat resolvedPixelFormat(MTLPixelFormat viewPixelFormat, MTLPixelFormat sourcePixelFormat)
 {
     switch (viewPixelFormat) {
     case MTLPixelFormatStencil8:
@@ -3194,18 +3198,57 @@ static MTLPixelFormat LEGACY_NODELETE resolvedPixelFormat(MTLPixelFormat viewPix
     }
 }
 
+// Resolves one WebGPU component against the base swizzle the format itself imposes, which is the
+// mapping from a logical channel name to what the hardware actually reads for it.
+static MTLTextureSwizzle composeComponentSwizzle(WebGPU::ComponentSwizzle component, const MTLTextureSwizzleChannels& base)
+{
+    switch (component) {
+    case WebGPU::ComponentSwizzle::R:
+        return base.red;
+    case WebGPU::ComponentSwizzle::G:
+        return base.green;
+    case WebGPU::ComponentSwizzle::B:
+        return base.blue;
+    case WebGPU::ComponentSwizzle::A:
+        return base.alpha;
+    case WebGPU::ComponentSwizzle::Zero:
+        return MTLTextureSwizzleZero;
+    case WebGPU::ComponentSwizzle::One:
+        return MTLTextureSwizzleOne;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// Returns the swizzle a shader has to read this view through, or std::nullopt when that is the one
+// Metal applies anyway and no second MTLTexture is needed.
+static std::optional<MTLTextureSwizzleChannels> composedSwizzleChannels(const ResolvedTextureViewDescriptor& descriptor, const Device& device)
+{
+    auto base = MTLTextureSwizzleChannelsDefault;
+
+    // https://gpuweb.github.io/gpuweb/#reading-depth-stencil
+    // A depth or stencil aspect has to read as (V, 0, 0, 1) once the feature is enabled. Metal
+    // reads it as (V, V, V, 1) on its own, so the zeroes have to be asked for.
+    if (Texture::isDepthOrStencilFormat(descriptor.format) && device.hasFeature(WebGPU::FeatureName::TextureComponentSwizzle))
+        base = MTLTextureSwizzleChannelsMake(MTLTextureSwizzleRed, MTLTextureSwizzleZero, MTLTextureSwizzleZero, MTLTextureSwizzleOne);
+
+    auto channels = MTLTextureSwizzleChannelsMake(
+        composeComponentSwizzle(descriptor.swizzle.r, base),
+        composeComponentSwizzle(descriptor.swizzle.g, base),
+        composeComponentSwizzle(descriptor.swizzle.b, base),
+        composeComponentSwizzle(descriptor.swizzle.a, base));
+
+    if (channels.red == MTLTextureSwizzleRed && channels.green == MTLTextureSwizzleGreen && channels.blue == MTLTextureSwizzleBlue && channels.alpha == MTLTextureSwizzleAlpha)
+        return std::nullopt;
+
+    return channels;
+}
+
 RefPtr<WebGPU::TextureView> Texture::createView(const std::optional<WebGPU::TextureViewDescriptor>& optionalDescriptor)
 {
     auto device = m_device;
 
     if (m_destroyed)
         return TextureView::createInvalid(*this, device.get());
-
-    // The texture-component-swizzle feature is not supported, so it can never be enabled.
-    if (optionalDescriptor && optionalDescriptor->swizzle != WebGPU::TextureComponentSwizzle { }) {
-        device->generateAValidationError("GPUTexture.createView: swizzle is not \"rgba\" and the texture-component-swizzle feature is not enabled"_s);
-        return TextureView::createInvalid(*this, device.get());
-    }
 
     // https://gpuweb.github.io/gpuweb/#dom-gputexture-createview
 
@@ -3286,12 +3329,27 @@ RefPtr<WebGPU::TextureView> Texture::createView(const std::optional<WebGPU::Text
     if (!texture.label.length)
         texture.label = m_texture.label;
 
+    // A swizzled MTLTexture loses the render target and shader write usages of the texture it is a
+    // view of, so it cannot stand in for the one above: it is a second view, used only where a
+    // shader reads the texture. A memoryless texture is a render attachment and nothing else, so it
+    // never needs one.
+    id<MTLTexture> sampledTexture = nil;
+    if (descriptor->usage.contains(WebGPU::TextureUsage::TextureBinding) && m_texture.storageMode != MTLStorageModeMemoryless) {
+        if (auto swizzle = composedSwizzleChannels(*descriptor, device.get())) {
+            sampledTexture = [m_texture newTextureViewWithPixelFormat:resolvedPixelFormat(pixelFormat, m_texture.pixelFormat) textureType:textureType levels:levels slices:slices swizzle:*swizzle];
+            if (!sampledTexture)
+                return TextureView::createInvalid(*this, device.get());
+
+            sampledTexture.label = texture.label;
+        }
+    }
+
     std::optional<WebGPU::Extent3D> renderExtent;
     if (m_usage.contains(WebGPU::TextureUsage::RenderAttachment))
         renderExtent = computeRenderExtent({ m_width, m_height, m_depthOrArrayLayers }, descriptor->baseMipLevel);
 
-    auto result = TextureView::create(texture, *descriptor, renderExtent, *this, device.get());
-    m_textureViews.append(result);
+    auto result = TextureView::create(texture, sampledTexture, *descriptor, renderExtent, *this, device.get());
+    m_textureViews.add(result.get());
     return result;
 }
 
@@ -3576,10 +3634,8 @@ void Texture::destroy()
         m_texture = protect(m_device)->placeholderTexture(format());
     m_destroyed = true;
     if (!m_canvasBacking) {
-        for (auto& weakView : m_textureViews) {
-            if (RefPtr view = weakView.get())
-                view->destroy();
-        }
+        for (Ref view : m_textureViews.values())
+            view->destroy();
         for (Ref bindGroup : m_bindGroups.values())
             bindGroup->releaseDestroyedResources();
         m_bindGroups.clear();
@@ -4080,6 +4136,11 @@ NSString* Texture::errorValidatingLinearTextureData(const WebGPU::TexelCopyBuffe
     return nil;
 }
 
+static uint64_t provisionalClearKey(uint32_t mipLevel, uint32_t slice)
+{
+    return (static_cast<uint64_t>(mipLevel) << 32) | slice;
+}
+
 bool Texture::previouslyCleared() const
 {
     for (uint32_t m = 0; m < mipLevelCount(); ++m) {
@@ -4100,15 +4161,21 @@ void Texture::setPreviouslyCleared()
     }
 }
 
+bool Texture::durablyCleared(uint32_t mipLevel, uint32_t slice) const
+{
+    auto it = m_clearedToZero.find(mipLevel);
+    return it != m_clearedToZero.end() && it->value.contains(slice);
+}
+
 bool Texture::previouslyCleared(uint32_t mipLevel, uint32_t slice) const
 {
     if (isDestroyed())
         return true;
 
-    if (auto it = m_clearedToZero.find(mipLevel); it != m_clearedToZero.end())
-        return it->value.contains(slice);
+    if (durablyCleared(mipLevel, slice))
+        return true;
 
-    return false;
+    return m_provisionalClears.contains(provisionalClearKey(mipLevel, slice));
 }
 
 void Texture::setPreviouslyCleared(uint32_t mipLevel, uint32_t slice, bool setCleared)
@@ -4116,6 +4183,8 @@ void Texture::setPreviouslyCleared(uint32_t mipLevel, uint32_t slice, bool setCl
     if (!setCleared) {
         if (auto it = m_clearedToZero.find(mipLevel); it != m_clearedToZero.end())
             it->value.remove(slice);
+        m_provisionalClears.removeAll(provisionalClearKey(mipLevel, slice));
+        m_device->getQueue()->removeProvisionalTextureClears(*this, mipLevel, slice);
         return;
     }
 
@@ -4127,6 +4196,43 @@ void Texture::setPreviouslyCleared(uint32_t mipLevel, uint32_t slice, bool setCl
     ClearedToZeroInnerContainer set;
     set.add(slice);
     m_clearedToZero.add(mipLevel, set);
+}
+
+void Texture::setProvisionallyCleared(uint32_t mipLevel, uint32_t slice, const CommandEncoder& commandEncoder)
+{
+    if (isDestroyed() || durablyCleared(mipLevel, slice))
+        return;
+
+    m_provisionalClears.add(provisionalClearKey(mipLevel, slice));
+    m_device->getQueue()->addProvisionalTextureClear(*this, mipLevel, slice, commandEncoder.uniqueId());
+}
+
+void Texture::setProvisionallyCleared(const CommandEncoder& commandEncoder)
+{
+    for (uint32_t m = 0; m < mipLevelCount(); ++m) {
+        for (uint32_t s = 0; s < arrayLayerCount(); ++s)
+            setProvisionallyCleared(m, s, commandEncoder);
+    }
+}
+
+void Texture::promoteProvisionalClear(uint32_t mipLevel, uint32_t slice)
+{
+    m_provisionalClears.remove(provisionalClearKey(mipLevel, slice));
+    setPreviouslyCleared(mipLevel, slice);
+}
+
+void Texture::dropProvisionalClear(uint32_t mipLevel, uint32_t slice)
+{
+    m_provisionalClears.remove(provisionalClearKey(mipLevel, slice));
+}
+
+void Texture::discardProvisionalClear(uint32_t mipLevel, uint32_t slice)
+{
+    if (!m_provisionalClears.contains(provisionalClearKey(mipLevel, slice)))
+        return;
+
+    m_provisionalClears.removeAll(provisionalClearKey(mipLevel, slice));
+    m_device->getQueue()->removeProvisionalTextureClears(*this, mipLevel, slice);
 }
 
 id<MTLSharedEvent> Texture::sharedEvent() const
@@ -4149,81 +4255,105 @@ void Texture::updateCompletionEvent(const std::pair<id<MTLSharedEvent>, uint64_t
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuTextureAddRef(WGPUTexture texture)
+NODELETE void wgpuTextureAddRef(WGPUTexture texture)
 {
     WebGPU::Metal::fromAPI(texture).ref();
 }
 
 void wgpuTextureRelease(WGPUTexture texture)
 {
-    WebGPU::Metal::fromAPI(texture).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(texture).deref();
+    }
 }
 
 WGPUTextureView wgpuTextureCreateView(WGPUTexture texture, const WGPUTextureViewDescriptor* descriptor)
 {
-    Ref protectedTexture = WebGPU::Metal::fromAPI(texture);
-    // A null descriptor is a descriptor with all members at their defaults.
-    std::optional<WebGPU::TextureViewDescriptor> apiDescriptor;
-    if (descriptor) {
-        apiDescriptor = WebGPU::Metal::fromAPI(*descriptor);
-        if (!apiDescriptor) {
-            Ref device = protectedTexture->device();
-            device->generateAValidationError("GPUTextureViewDescriptor has an invalid enum value or usage bit"_s);
-            return WebGPU::Metal::releaseToAPI(WebGPU::Metal::TextureView::createInvalid(protectedTexture, device));
+    @autoreleasepool {
+        Ref protectedTexture = WebGPU::Metal::fromAPI(texture);
+        // A null descriptor is a descriptor with all members at their defaults.
+        std::optional<WebGPU::TextureViewDescriptor> apiDescriptor;
+        if (descriptor) {
+            apiDescriptor = WebGPU::Metal::fromAPI(*descriptor);
+            if (!apiDescriptor) {
+                Ref device = protectedTexture->device();
+                device->generateAValidationError("GPUTextureViewDescriptor has an invalid enum value or usage bit"_s);
+                return WebGPU::Metal::releaseToAPI(WebGPU::Metal::TextureView::createInvalid(protectedTexture, device));
+            }
         }
+        // Every WebGPU::TextureView that a WebGPU::Metal::Texture creates is a WebGPU::Metal::TextureView.
+        Ref view = downcast<WebGPU::Metal::TextureView>(*protectedTexture->createView(apiDescriptor));
+        return WebGPU::Metal::releaseToAPI(WTF::move(view));
     }
-    // Every WebGPU::TextureView that a WebGPU::Metal::Texture creates is a WebGPU::Metal::TextureView.
-    Ref view = downcast<WebGPU::Metal::TextureView>(*protectedTexture->createView(apiDescriptor));
-    return WebGPU::Metal::releaseToAPI(WTF::move(view));
 }
 
 void wgpuTextureDestroy(WGPUTexture texture)
 {
-    protect(WebGPU::Metal::fromAPI(texture))->destroy();
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(texture))->destroy();
+    }
 }
 
 void wgpuTextureSetLabel(WGPUTexture texture, WGPUStringView label)
 {
-    protect(WebGPU::Metal::fromAPI(texture))->setLabel(WebGPU::Metal::fromAPI(label));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(texture))->setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }
 
 uint32_t wgpuTextureGetDepthOrArrayLayers(WGPUTexture texture)
 {
-    return protect(WebGPU::Metal::fromAPI(texture))->depthOrArrayLayers();
+    @autoreleasepool {
+        return protect(WebGPU::Metal::fromAPI(texture))->depthOrArrayLayers();
+    }
 }
 
 WGPUTextureDimension wgpuTextureGetDimension(WGPUTexture texture)
 {
-    return WebGPU::Metal::toAPI(protect(WebGPU::Metal::fromAPI(texture))->dimension());
+    @autoreleasepool {
+        return WebGPU::Metal::toAPI(protect(WebGPU::Metal::fromAPI(texture))->dimension());
+    }
 }
 
 WGPUTextureFormat wgpuTextureGetFormat(WGPUTexture texture)
 {
-    auto format = protect(WebGPU::Metal::fromAPI(texture))->optionalFormat();
-    return format ? WebGPU::Metal::toAPI(*format) : WGPUTextureFormat_Undefined;
+    @autoreleasepool {
+        auto format = protect(WebGPU::Metal::fromAPI(texture))->optionalFormat();
+        return format ? WebGPU::Metal::toAPI(*format) : WGPUTextureFormat_Undefined;
+    }
 }
 
 uint32_t wgpuTextureGetHeight(WGPUTexture texture)
 {
-    return protect(WebGPU::Metal::fromAPI(texture))->height();
+    @autoreleasepool {
+        return protect(WebGPU::Metal::fromAPI(texture))->height();
+    }
 }
 
 uint32_t wgpuTextureGetWidth(WGPUTexture texture)
 {
-    return protect(WebGPU::Metal::fromAPI(texture))->width();
+    @autoreleasepool {
+        return protect(WebGPU::Metal::fromAPI(texture))->width();
+    }
 }
 
 uint32_t wgpuTextureGetMipLevelCount(WGPUTexture texture)
 {
-    return protect(WebGPU::Metal::fromAPI(texture))->mipLevelCount();
+    @autoreleasepool {
+        return protect(WebGPU::Metal::fromAPI(texture))->mipLevelCount();
+    }
 }
 
 uint32_t wgpuTextureGetSampleCount(WGPUTexture texture)
 {
-    return protect(WebGPU::Metal::fromAPI(texture))->sampleCount();
+    @autoreleasepool {
+        return protect(WebGPU::Metal::fromAPI(texture))->sampleCount();
+    }
 }
 
 WGPUTextureUsage wgpuTextureGetUsage(WGPUTexture texture)
 {
-    return WebGPU::Metal::toAPI(protect(WebGPU::Metal::fromAPI(texture))->usage());
+    @autoreleasepool {
+        return WebGPU::Metal::toAPI(protect(WebGPU::Metal::fromAPI(texture))->usage());
+    }
 }

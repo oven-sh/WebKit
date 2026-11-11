@@ -7,34 +7,27 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
-#include "AOTChildProcess.h"
-#include "AOTCompile.h"
-#include "AOTCompileOptionWords.h"
-#include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
-#include "AOTOperationCallScope.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
-#include "AOTProgramFile.h"
+#include "AOTOperationCallScope.h"
+#include "AOTOperationScope.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTSchemaRuntimeOperations.h"
-#include "AOTTemporaryFile.h"
-#include "AOTThreads.h"
 #include "AOTVector.h"
 #include "HeapCellInlines.h"
 #include "JSCInlines.h"
+#include "MarkedBlockCage.h"
 #include "ObjectConstructor.h"
-#include "Options.h"
 #include "PropertyNameArray.h"
 #include "StrongInlines.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
+#include <array>
 #include <bit>
-#include <wtf/DataLog.h>
-#include <wtf/text/MakeString.h>
+#include <cstddef>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -42,7 +35,7 @@ namespace JSC { namespace AOT {
 
 std::span<const NativeTest> extensionTests();
 
-static constexpr ASCIILiteral programText = R"IR(layout L0 name="Wide" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="late0" declared={type=undefined|L0}}, {key="late1" declared={type=undefined|L0}}, {key="late2" declared={type=undefined|L0}}, {key="late3" declared={type=undefined|L0}}, {key="late4" declared={type=undefined|L0}}, {key="late5" declared={type=undefined|L0}}, {key="late6" declared={type=undefined|L0}}, {key="late7" declared={type=undefined|L0}}, {key="late8" declared={type=undefined|L0}}, {key="late9" declared={type=undefined|L0}}, {key="late10" declared={type=undefined|L0}}, {key="late11" declared={type=undefined|L0}}, {key="late12" declared={type=undefined|L0}}, {key="late13" declared={type=undefined|L0}}, {key="late14" declared={type=undefined|L0}}, {key="late15" declared={type=undefined|L0}}, {key="late16" declared={type=undefined|L0}}, {key="late17" declared={type=undefined|L0}}, {key="late18" declared={type=undefined|L0}}, {key="late19" declared={type=undefined|L0}}, {key="late20" declared={type=undefined|L0}}, {key="late21" declared={type=undefined|L0}}, {key="late22" declared={type=undefined|L0}}, {key="late23" declared={type=undefined|L0}}, {key="wide0" declared={type=anything}}, {key="wide1" declared={type=anything}}, {key="wide2" declared={type=anything}}, {key="wide3" declared={type=anything}}]
+static constexpr ASCIILiteral programText = R"IR(layout L0 name="Wide" fields=[{key="flags" declared={type=number} flags=[IsRequired]}]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -51,7 +44,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v2 = NewClosure function=f1
     v3 = NewClosure function=f2
     v4 = NewClosure function=f3
-    v5 = Call v1, -, v2, v3, v4
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
     Return
 }
 function f1 name="make" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
@@ -91,38 +86,86 @@ function f2 name="fill" parameters=[{type=L0}] results=[{type=anything}] {
     PropSet v0, v0 key="late21"
     PropSet v0, v0 key="late22"
     PropSet v0, v0 key="late23"
+    PropSet v0, v0 key="late24"
+    PropSet v0, v0 key="late25"
+    PropSet v0, v0 key="late26"
+    PropSet v0, v0 key="late27"
+    PropSet v0, v0 key="late28"
+    PropSet v0, v0 key="late29"
+    PropSet v0, v0 key="late30"
+    PropSet v0, v0 key="late31"
+    PropSet v0, v0 key="late32"
+    PropSet v0, v0 key="late33"
+    PropSet v0, v0 key="late34"
+    PropSet v0, v0 key="late35"
+    PropSet v0, v0 key="late36"
+    PropSet v0, v0 key="late37"
+    PropSet v0, v0 key="late38"
+    PropSet v0, v0 key="late39"
+    PropSet v0, v0 key="late40"
+    PropSet v0, v0 key="late41"
+    PropSet v0, v0 key="late42"
+    PropSet v0, v0 key="late43"
+    PropSet v0, v0 key="late44"
+    PropSet v0, v0 key="late45"
+    PropSet v0, v0 key="late46"
+    PropSet v0, v0 key="late47"
     PropSet v0, v0 key="wide0"
     PropSet v0, v0 key="wide1"
     PropSet v0, v0 key="wide2"
     PropSet v0, v0 key="wide3"
-    v29 = PropGet v0 key="late0"
-    v30 = PropGet v0 key="late1"
-    v31 = PropGet v0 key="late2"
-    v32 = PropGet v0 key="late3"
-    v33 = PropGet v0 key="late4"
-    v34 = PropGet v0 key="late5"
-    v35 = PropGet v0 key="late6"
-    v36 = PropGet v0 key="late7"
-    v37 = PropGet v0 key="late8"
-    v38 = PropGet v0 key="late9"
-    v39 = PropGet v0 key="late10"
-    v40 = PropGet v0 key="late11"
-    v41 = PropGet v0 key="late12"
-    v42 = PropGet v0 key="late13"
-    v43 = PropGet v0 key="late14"
-    v44 = PropGet v0 key="late15"
-    v45 = PropGet v0 key="late16"
-    v46 = PropGet v0 key="late17"
-    v47 = PropGet v0 key="late18"
-    v48 = PropGet v0 key="late19"
-    v49 = PropGet v0 key="late20"
-    v50 = PropGet v0 key="late21"
-    v51 = PropGet v0 key="late22"
-    v52 = PropGet v0 key="late23"
-    v53 = PropGet v0 key="wide0"
-    v54 = PropGet v0 key="wide1"
-    v55 = PropGet v0 key="wide2"
-    v56 = PropGet v0 key="wide3"
+    v53 = PropGet v0 key="late0"
+    v54 = PropGet v0 key="late1"
+    v55 = PropGet v0 key="late2"
+    v56 = PropGet v0 key="late3"
+    v57 = PropGet v0 key="late4"
+    v58 = PropGet v0 key="late5"
+    v59 = PropGet v0 key="late6"
+    v60 = PropGet v0 key="late7"
+    v61 = PropGet v0 key="late8"
+    v62 = PropGet v0 key="late9"
+    v63 = PropGet v0 key="late10"
+    v64 = PropGet v0 key="late11"
+    v65 = PropGet v0 key="late12"
+    v66 = PropGet v0 key="late13"
+    v67 = PropGet v0 key="late14"
+    v68 = PropGet v0 key="late15"
+    v69 = PropGet v0 key="late16"
+    v70 = PropGet v0 key="late17"
+    v71 = PropGet v0 key="late18"
+    v72 = PropGet v0 key="late19"
+    v73 = PropGet v0 key="late20"
+    v74 = PropGet v0 key="late21"
+    v75 = PropGet v0 key="late22"
+    v76 = PropGet v0 key="late23"
+    v77 = PropGet v0 key="late24"
+    v78 = PropGet v0 key="late25"
+    v79 = PropGet v0 key="late26"
+    v80 = PropGet v0 key="late27"
+    v81 = PropGet v0 key="late28"
+    v82 = PropGet v0 key="late29"
+    v83 = PropGet v0 key="late30"
+    v84 = PropGet v0 key="late31"
+    v85 = PropGet v0 key="late32"
+    v86 = PropGet v0 key="late33"
+    v87 = PropGet v0 key="late34"
+    v88 = PropGet v0 key="late35"
+    v89 = PropGet v0 key="late36"
+    v90 = PropGet v0 key="late37"
+    v91 = PropGet v0 key="late38"
+    v92 = PropGet v0 key="late39"
+    v93 = PropGet v0 key="late40"
+    v94 = PropGet v0 key="late41"
+    v95 = PropGet v0 key="late42"
+    v96 = PropGet v0 key="late43"
+    v97 = PropGet v0 key="late44"
+    v98 = PropGet v0 key="late45"
+    v99 = PropGet v0 key="late46"
+    v100 = PropGet v0 key="late47"
+    v101 = PropGet v0 key="wide0"
+    v102 = PropGet v0 key="wide1"
+    v103 = PropGet v0 key="wide2"
+    v104 = PropGet v0 key="wide3"
     PropSet v0, v0 key="late0"
     PropSet v0, v0 key="late1"
     PropSet v0, v0 key="late2"
@@ -135,55 +178,179 @@ function f2 name="fill" parameters=[{type=L0}] results=[{type=anything}] {
 }
 function f3 name="clear" parameters=[{type=L0}] results=[{type=anything}] {
     v1 = Undefined
+    PropSet v0, v1 key="late0"
+    PropSet v0, v1 key="late1"
+    PropSet v0, v1 key="late2"
+    PropSet v0, v1 key="late3"
+    PropSet v0, v1 key="late4"
     PropSet v0, v1 key="late5"
     PropSet v0, v1 key="late6"
+    PropSet v0, v1 key="late7"
+    PropSet v0, v1 key="late8"
+    PropSet v0, v1 key="late9"
+    PropSet v0, v1 key="late10"
+    PropSet v0, v1 key="late11"
+    PropSet v0, v1 key="late12"
+    PropSet v0, v1 key="late13"
+    PropSet v0, v1 key="late14"
+    PropSet v0, v1 key="late15"
+    PropSet v0, v1 key="late16"
+    PropSet v0, v1 key="late17"
+    PropSet v0, v1 key="late18"
+    PropSet v0, v1 key="late19"
+    PropSet v0, v1 key="late20"
+    PropSet v0, v1 key="late21"
+    PropSet v0, v1 key="late22"
+    PropSet v0, v1 key="late23"
+    PropSet v0, v1 key="late24"
+    PropSet v0, v1 key="late25"
+    PropSet v0, v1 key="late26"
+    PropSet v0, v1 key="late27"
+    PropSet v0, v1 key="late28"
+    PropSet v0, v1 key="late29"
+    PropSet v0, v1 key="late30"
+    PropSet v0, v1 key="late31"
+    PropSet v0, v1 key="late32"
+    PropSet v0, v1 key="late33"
+    PropSet v0, v1 key="late34"
+    PropSet v0, v1 key="late35"
+    PropSet v0, v1 key="late36"
+    PropSet v0, v1 key="late37"
+    PropSet v0, v1 key="late38"
+    PropSet v0, v1 key="late39"
+    PropSet v0, v1 key="late40"
+    PropSet v0, v1 key="late41"
+    PropSet v0, v1 key="late42"
+    PropSet v0, v1 key="late43"
+    PropSet v0, v1 key="late44"
+    PropSet v0, v1 key="late45"
+    PropSet v0, v1 key="late46"
+    PropSet v0, v1 key="late47"
     Return
 }
+function f4 name="seed" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PropSet v2, v2 key="late0"
+    PropSet v2, v2 key="late1"
+    PropSet v2, v2 key="late2"
+    PropSet v2, v2 key="late3"
+    PropSet v2, v2 key="late4"
+    PropSet v2, v2 key="late5"
+    PropSet v2, v2 key="late6"
+    PropSet v2, v2 key="late7"
+    PropSet v2, v2 key="late8"
+    PropSet v2, v2 key="late9"
+    PropSet v2, v2 key="late10"
+    PropSet v2, v2 key="late11"
+    PropSet v2, v2 key="late12"
+    PropSet v2, v2 key="late13"
+    PropSet v2, v2 key="late14"
+    PropSet v2, v2 key="late15"
+    PropSet v2, v2 key="late16"
+    PropSet v2, v2 key="late17"
+    PropSet v2, v2 key="late18"
+    PropSet v2, v2 key="late19"
+    PropSet v2, v2 key="late20"
+    PropSet v2, v2 key="late21"
+    PropSet v2, v2 key="late22"
+    PropSet v2, v2 key="late23"
+    PropSet v2, v2 key="late24"
+    PropSet v2, v2 key="late25"
+    PropSet v2, v2 key="late26"
+    PropSet v2, v2 key="late27"
+    PropSet v2, v2 key="late28"
+    PropSet v2, v2 key="late29"
+    PropSet v2, v2 key="late30"
+    PropSet v2, v2 key="late31"
+    PropSet v2, v2 key="late32"
+    PropSet v2, v2 key="late33"
+    PropSet v2, v2 key="late34"
+    PropSet v2, v2 key="late35"
+    PropSet v2, v2 key="late36"
+    PropSet v2, v2 key="late37"
+    PropSet v2, v2 key="late38"
+    PropSet v2, v2 key="late39"
+    PropSet v2, v2 key="late40"
+    PropSet v2, v2 key="late41"
+    PropSet v2, v2 key="late42"
+    PropSet v2, v2 key="late43"
+    PropSet v2, v2 key="late44"
+    PropSet v2, v2 key="late45"
+    PropSet v2, v2 key="late46"
+    PropSet v2, v2 key="late47"
+    PropSet v2, v2 key="wide0"
+    PropSet v2, v2 key="wide1"
+    PropSet v2, v2 key="wide2"
+    PropSet v2, v2 key="wide3"
+    Return v2
+}
+function f5 name="empty" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Undefined
+    PropSet v2, v3 key="late0"
+    PropSet v2, v3 key="late1"
+    PropSet v2, v3 key="late2"
+    PropSet v2, v3 key="late3"
+    PropSet v2, v3 key="late4"
+    PropSet v2, v3 key="late5"
+    PropSet v2, v3 key="late6"
+    PropSet v2, v3 key="late7"
+    PropSet v2, v3 key="late8"
+    PropSet v2, v3 key="late9"
+    PropSet v2, v3 key="late10"
+    PropSet v2, v3 key="late11"
+    PropSet v2, v3 key="late12"
+    PropSet v2, v3 key="late13"
+    PropSet v2, v3 key="late14"
+    PropSet v2, v3 key="late15"
+    PropSet v2, v3 key="late16"
+    PropSet v2, v3 key="late17"
+    PropSet v2, v3 key="late18"
+    PropSet v2, v3 key="late19"
+    PropSet v2, v3 key="late20"
+    PropSet v2, v3 key="late21"
+    PropSet v2, v3 key="late22"
+    PropSet v2, v3 key="late23"
+    PropSet v2, v3 key="late24"
+    PropSet v2, v3 key="late25"
+    PropSet v2, v3 key="late26"
+    PropSet v2, v3 key="late27"
+    PropSet v2, v3 key="late28"
+    PropSet v2, v3 key="late29"
+    PropSet v2, v3 key="late30"
+    PropSet v2, v3 key="late31"
+    PropSet v2, v3 key="late32"
+    PropSet v2, v3 key="late33"
+    PropSet v2, v3 key="late34"
+    PropSet v2, v3 key="late35"
+    PropSet v2, v3 key="late36"
+    PropSet v2, v3 key="late37"
+    PropSet v2, v3 key="late38"
+    PropSet v2, v3 key="late39"
+    PropSet v2, v3 key="late40"
+    PropSet v2, v3 key="late41"
+    PropSet v2, v3 key="late42"
+    PropSet v2, v3 key="late43"
+    PropSet v2, v3 key="late44"
+    PropSet v2, v3 key="late45"
+    PropSet v2, v3 key="late46"
+    PropSet v2, v3 key="late47"
+    PropSet v2, v3 key="wide0"
+    PropSet v2, v3 key="wide1"
+    PropSet v2, v3 key="wide2"
+    PropSet v2, v3 key="wide3"
+    Return v2
+}
 )IR"_s;
-
-// A layout that is made seldom has no Extension.
-static Vector<uint8_t> compileWithFieldsOutOfLine(std::optional<Wire::ReferenceWidth> referenceWidth)
-{
-    Vector<uint8_t> image;
-    runOnBuildThread([&] {
-        Wire::CompileOptions options = makeDefaultCompileOptions();
-        options.executableIdentity = { };
-        options.testing = Wire::TestingSwitch::NoLayoutIsMadeSeldom;
-        if (referenceWidth)
-            options.target.referenceWidth = *referenceWidth;
-        BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
-        AOT_TEST_CHECK(program);
-        std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty());
-        image = WTF::move(output->image);
-    });
-    return image;
-}
-
-static void runWithFieldsOutOfLine(ASCIILiteral testName, std::optional<Wire::ReferenceWidth> referenceWidth, LoadedProgramTest body)
-{
-    if (Options::aotImagePath()) {
-        runWithLoadedProgram(testName, programText, body);
-        return;
-    }
-    TemporaryFile file(".image"_s, compileWithFieldsOutOfLine(referenceWidth).span());
-    ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), makeString("--aotImagePath="_s, file.path()) };
-    ChildProcessResult result = launcher.run(arguments.span());
-    if (!result.exitedWith(0))
-        dataLogLn(result.output);
-    AOT_TEST_CHECK(result.exitedWith(0));
-}
 
 template<LoadedProgramTest body>
 static void runNativeTestWithNarrowReferences()
 {
     for (const NativeTest& test : extensionTests()) {
         if (test.run == &runNativeTestWithNarrowReferences<body>) {
-            runWithFieldsOutOfLine(test.name, Wire::ReferenceWidth::Narrow, body);
+            runWithLoadedProgram(test.name, programText, body, { "references=narrow"_s });
             return;
         }
     }
@@ -191,11 +358,11 @@ static void runNativeTestWithNarrowReferences()
 }
 
 template<LoadedProgramTest body>
-static void runNativeTestWithDefaultReferences()
+static void runNativeTestWithWideReferences()
 {
     for (const NativeTest& test : extensionTests()) {
-        if (test.run == &runNativeTestWithDefaultReferences<body>) {
-            runWithFieldsOutOfLine(test.name, std::nullopt, body);
+        if (test.run == &runNativeTestWithWideReferences<body>) {
+            runWithLoadedProgram(test.name, programText, body, { "references=wide"_s });
             return;
         }
     }
@@ -211,9 +378,11 @@ public:
 
     VM& vm() { return m_program.vm(); }
     const LayoutData& layout() const { return *m_layout; }
-    // In ascending order of their offsets.
     std::span<const FieldData* const> fieldsOutOfLine() const { return m_fieldsOutOfLine.span(); }
     Object* create() { return uncheckedDowncast<Object>(m_program.state().objects->structures.allocate(vm(), m_allocation)); }
+    void letFieldsExistWithoutStorage();
+    bool admitsUndefined(const FieldData& field) const { return m_program.state().objects->layouts.slotAdmits(field, jsUndefined()); }
+    void letFirstExtensionHold(uint64_t granuleBits);
 
 private:
     LoadedProgram& m_program;
@@ -245,6 +414,27 @@ Fixture::Fixture(LoadedProgram& program)
         return field->slot.offset;
     });
     AOT_TEST_CHECK(m_fieldsOutOfLine.size() >= 12);
+}
+
+void Fixture::letFieldsExistWithoutStorage()
+{
+    constexpr size_t wordOfFlags = offsetof(FieldData, flags) / sizeof(uint32_t);
+    const RuntimeLayoutTable& layouts = m_program.state().objects->layouts;
+    for (const FieldData* field : m_fieldsOutOfLine) {
+        if (!layouts.slotAdmits(*field, jsUndefined()))
+            continue;
+        FieldData marked = *field;
+        marked.flags |= fieldMayExistWithoutStorage;
+        overwriteWordInImage(reinterpret_cast<const uint32_t*>(field)[wordOfFlags], std::bit_cast<std::array<uint32_t, sizeof(FieldData) / sizeof(uint32_t)>>(marked)[wordOfFlags]);
+    }
+}
+
+void Fixture::letFirstExtensionHold(uint64_t granuleBits)
+{
+    const ExtensionLayoutData& data = m_layout->extensionData();
+    overwriteWordInImage(data.granulesOfFirstExtensionLow, static_cast<uint32_t>(granuleBits));
+    overwriteWordInImage(data.granulesOfFirstExtensionHigh, static_cast<uint32_t>(granuleBits >> 32));
+    AOT_TEST_CHECK(m_layout->granulesOfFirstExtension() == granuleBits);
 }
 
 static uint64_t granuleBitsOf(std::span<const FieldData* const> fields)
@@ -353,7 +543,6 @@ static void checkAGranuleGoesInPlaceOnlyBehindTheOthers(LoadedProgram& program)
     for (unsigned index = 0; index < 7; ++index)
         last->granules()[index] = 0;
 
-    // The room follows from the number of granules. A size class may be wider than the size asked for, and whoever allocates an Extension clears that size and no more.
     constexpr unsigned count = 10;
     constexpr unsigned capacity = extensionCapacityFor(count);
     static_assert(capacity > count && extensionCapacityFor(capacity) == capacity && extensionCapacityFor(capacity + 1) > capacity);
@@ -394,14 +583,12 @@ static void checkAGranuleGoesBetweenTheOthersWhileTheCollectorVisitsNothing(Load
     AOT_TEST_CHECK(object->extension() == extension && extension->granuleBits() == (bit(5) | bit(6) | bit(7) | bit(9) | bit(11)));
     AOT_TEST_CHECK(extension->granules()[0] == 55 && !extension->granules()[1] && extension->granules()[2] == 77 && extension->granules()[3] == 99 && extension->granules()[4] == 111);
 
-    // It is full now, so the next granule goes into a copy wherever it belongs.
     object->ensureExtensionGranules(vm, bit(0), collectorMayVisit);
     Extension* larger = object->extension();
     AOT_TEST_CHECK(larger != extension && larger->granuleBits() == (bit(0) | bit(5) | bit(6) | bit(7) | bit(9) | bit(11)));
     AOT_TEST_CHECK(!larger->granules()[0] && larger->granules()[1] == 55 && !larger->granules()[2] && larger->granules()[3] == 77 && larger->granules()[4] == 99 && larger->granules()[5] == 111);
     AOT_TEST_CHECK(extension->granuleBits() == (bit(5) | bit(6) | bit(7) | bit(9) | bit(11)) && extension->granules()[4] == 111);
 
-    // Several at once: in front of all, between two, and behind all.
     static_assert(extensionCapacityFor(6) == 9);
     object->ensureExtensionGranules(vm, bit(3) | bit(8) | bit(63), collectorMayVisit);
     AOT_TEST_CHECK(object->extension() == larger && larger->granuleBits() == (bit(0) | bit(3) | bit(5) | bit(6) | bit(7) | bit(8) | bit(9) | bit(11) | bit(63)));
@@ -413,7 +600,6 @@ static void checkAGranuleGoesBetweenTheOthersWhileTheCollectorVisitsNothing(Load
     for (unsigned index = 0; index < 5; ++index)
         extension->granules()[index] = 0;
 
-    // Fields keep their values through every order of creation, whichever way their granules came.
     std::span<const FieldData* const> fields = fixture.fieldsOutOfLine();
     Object* filled = fixture.create();
     for (size_t index = fields.size(); index--;) {
@@ -476,11 +662,13 @@ static void checkAClearedFieldKeepsItsGranule(LoadedProgram& program)
 
 static const FieldData& fieldThatMayExistWithoutStorage(Fixture& fixture)
 {
+    fixture.letFieldsExistWithoutStorage();
+    bool referencesAreNarrow = !Image::current()->header().options.useWideReferences();
     for (const FieldData* field : fixture.fieldsOutOfLine()) {
-        if (field->flags & fieldMayExistWithoutStorage)
+        if (field->flags & fieldMayExistWithoutStorage && fixture.admitsUndefined(*field) && traitsOf(field->slot.representation()).isNarrowReference == referencesAreNarrow)
             return *field;
     }
-    failNativeTest(__FILE__, __LINE__, "a field that a store of undefined creates may exist without storage");
+    failNativeTest(__FILE__, __LINE__, "a field out of line admits undefined in a slot as wide as the references of the program");
 }
 
 static bool isAmongKeys(LoadedProgram& program, Object* object, PropertyName name)
@@ -541,7 +729,6 @@ static void checkAStoreOfUndefinedNeedsNoStorage(LoadedProgram& program)
     AOT_TEST_CHECK(holdsUndefined() && object->isInSlot(field));
     AOT_TEST_CHECK(object->extension() == extension && extension->granuleBits() == granuleBit);
 
-    // What compiled code does where it stores undefined and finds no granule: it has the run time list the field, and that is all.
     Object* listed = fixture.create();
     callOperationFromTest(vm, operationAOTDidCreateFieldAt, &program.instance(), listed, slotKeyFor(field.slot.offset, true));
     AOT_TEST_CHECK(!listed->extension() && listed->isInKeyOrder(state, field) && listed->read(field).isUndefined());
@@ -556,7 +743,6 @@ static PropertyAnswer classifyReadOf(LoadedProgram& program, Object* object, Pro
     return classifyRead({ program.realm(), object, structureBefore, name.uid(), slot });
 }
 
-// Listed or not, the field reads as undefined while the objects above answer undefined, so such a read is cached and asks no key order. Whether the property exists, the slot for reads does not say.
 static void checkAReadOfAnEmptySlotIsCached(LoadedProgram& program)
 {
     Fixture fixture(program);
@@ -570,7 +756,6 @@ static void checkAReadOfAnEmptySlotIsCached(LoadedProgram& program)
     for (Object* object : { unlisted, listed })
         AOT_TEST_CHECK(object->methodTable()->setPrototype(object, program.realm(), prototype, false));
     AOT_TEST_CHECK(tryCreateField(vm, state, *listed, field, jsUndefined()) && !listed->isInSlot(field) && !unlisted->isInKeyOrder(state, field));
-    // What answers where no slot does: a read that is not cached asks it first.
     auto readByLeafLookup = [&](Object* object) {
         return JSValue::decode(operationAOTGetGeneric(&program.instance(), object, name.uid()));
     };
@@ -597,56 +782,12 @@ static void checkAReadOfAnEmptySlotIsCached(LoadedProgram& program)
     AOT_TEST_CHECK(listed->tryStore(vm, field, listed) && readByLeafLookup(listed) == JSValue(listed));
 }
 
-static void checkWhetherTheOrderListsAFieldIsRememberedBesideExtraProperties(LoadedProgram& program)
-{
-    Fixture fixture(program);
-    VM& vm = fixture.vm();
-    State& state = program.state();
-    const FieldData& field = fieldThatMayExistWithoutStorage(fixture);
-    PropertyName name = state.objects->layouts.nameOf(vm, field);
-    auto readsAsValue = [&](Object* object) {
-        return !!callOperationFromTest(vm, operationAOTHasExtraProperty, &program.instance(), object, field.name);
-    };
-    auto remembered = [&](Object* object) {
-        return state.objects->keyOrders.rememberedWhetherOrderLists(object->shape(), object->orderWord() & orderAndCountMask, field.name);
-    };
-
-    Object* unlisted = fixture.create();
-    Object* listed = fixture.create();
-    AOT_TEST_CHECK(tryCreateField(vm, state, *listed, field, jsUndefined()) && !listed->isInSlot(field));
-    for (Object* object : { unlisted, listed }) {
-        PutPropertySlot slot(object, true);
-        AOT_TEST_CHECK(object->methodTable()->put(object, program.realm(), Identifier::fromString(vm, "no field of the layout"_s), jsNumber(1), slot));
-        AOT_TEST_CHECK(object->hasExtraProperties() && !remembered(object));
-    }
-    for (unsigned round = 0; round < 2; ++round) {
-        AOT_TEST_CHECK(readsAsValue(listed) && !readsAsValue(unlisted));
-        AOT_TEST_CHECK(remembered(listed) == std::optional<bool>(true) && remembered(unlisted) == std::optional<bool>(false));
-    }
-
-    PropertyDescriptor hidden(jsNumber(2), static_cast<unsigned>(PropertyAttribute::DontEnum));
-    AOT_TEST_CHECK(listed->methodTable()->defineOwnProperty(listed, program.realm(), name, hidden, false));
-    AOT_TEST_CHECK(livesInExtraProperties(vm, *listed, field) && !readsAsValue(listed) && getByName(program, listed, name) == jsNumber(2));
-}
-
-// Whichever other question is asked in between, the answer is still there: two questions that fall on one place of the memory do not throw each other out.
-static void checkTwoAnswersAboutTheOrderStayRememberedSideBySide(LoadedProgram& program)
-{
-    KeyOrderTable& orders = program.state().objects->keyOrders;
-    for (uint32_t other = 1; other < 4096; ++other) {
-        orders.rememberWhetherOrderLists(7, 3, 11, true);
-        orders.rememberWhetherOrderLists(7 + other, 3, 11, false);
-        AOT_TEST_CHECK(orders.rememberedWhetherOrderLists(7, 3, 11) == std::optional<bool>(true));
-        AOT_TEST_CHECK(orders.rememberedWhetherOrderLists(7 + other, 3, 11) == std::optional<bool>(false));
-    }
-}
-
-// Two narrow references share a granule. The one that holds undefined without storage has storage once the other gets a value, and nothing was ever written to it.
 static void checkTheGranuleOfANeighborTakesNoFieldAway(LoadedProgram& program)
 {
     Fixture fixture(program);
     VM& vm = fixture.vm();
     State& state = program.state();
+    fixture.letFieldsExistWithoutStorage();
     unsigned numberOfPairs = 0;
     for (const FieldData* field : fixture.fieldsOutOfLine()) {
         if (!(field->flags & fieldMayExistWithoutStorage))
@@ -666,20 +807,98 @@ static void checkTheGranuleOfANeighborTakesNoFieldAway(LoadedProgram& program)
     AOT_TEST_CHECK(numberOfPairs);
 }
 
-static void checkTheFirstGrowthReservesWhatTheConstructorFills(LoadedProgram& program)
+namespace {
+
+struct FieldsOfMakersAndStranger {
+    explicit FieldsOfMakersAndStranger(Fixture&);
+
+    Vector<const FieldData*> ofMakers;
+    const FieldData* ofStranger { nullptr };
+    uint64_t granulesOfMakers { 0 };
+    uint64_t granuleOfStranger { 0 };
+};
+
+} // anonymous namespace
+
+FieldsOfMakersAndStranger::FieldsOfMakersAndStranger(Fixture& fixture)
 {
-    Fixture fixture(program);
-    uint64_t reserved = fixture.layout().granulesFilledByConstructor();
+    AOT_TEST_CHECK(!fixture.layout().granulesOfFirstExtension());
     for (const FieldData* field : fixture.fieldsOutOfLine()) {
         uint64_t granuleBit = granuleBitOf(field->slot.offset);
-        Object* object = fixture.create();
-        callOperationFromTest(program.vm(), operationAOTEnsureExtensionGranules, &program.instance(), object, granuleBit);
-        AOT_TEST_CHECK(object->extension() && object->extension()->granuleBits() == (granuleBit | reserved));
+        if ((granulesOfMakers | granuleOfStranger) & granuleBit || ofMakers.size() == 5)
+            continue;
+        if (ofMakers.size() == 2 && !ofStranger) {
+            ofStranger = field;
+            granuleOfStranger = granuleBit;
+            continue;
+        }
+        ofMakers.append(field);
+        granulesOfMakers |= granuleBit;
     }
+    AOT_TEST_CHECK(ofMakers.size() == 5 && ofStranger);
+    fixture.letFirstExtensionHold(granulesOfMakers);
+}
+
+static void checkTheFirstExtensionHoldsWhatTheMakersFill(LoadedProgram& program)
+{
+    Fixture fixture(program);
+    VM& vm = fixture.vm();
+    FieldsOfMakersAndStranger fields(fixture);
+    static_assert(extensionCapacityFor(1) == 1 && extensionCapacityFor(5) == 5);
+
+    Strong<JSObject> owner(vm, fixture.create());
+    Object* object = uncheckedDowncast<Object>(owner.get());
+    AOT_TEST_CHECK(!object->extension() && object->tryStore(vm, *fields.ofMakers[3], object));
+    Extension* first = object->extension();
+    AOT_TEST_CHECK(first && first->granuleBits() == fields.granulesOfMakers);
+    AOT_TEST_CHECK(first->sizeInBytes() == extensionCellSizeFor(5) && reinterpret_cast<HeapCell*>(first)->cellSize() >= extensionCellSizeFor(5));
+    for (const FieldData* field : fields.ofMakers) {
+        bool isStored = field == fields.ofMakers[3];
+        AOT_TEST_CHECK(object->slotOf(*field) && object->isInSlot(*field) == isStored);
+        AOT_TEST_CHECK(isStored ? object->read(*field) == JSValue(object) : !object->read(*field));
+    }
+    AOT_TEST_CHECK(!object->slotOf(*fields.ofStranger) && !object->read(*fields.ofStranger));
+    vm.heap.collectSync(CollectionScope::Full);
+    AOT_TEST_CHECK(object->extension() == first && vm.heap.isMarked(reinterpret_cast<HeapCell*>(first)));
+
+    for (unsigned index : { 1u, 4u, 0u, 2u }) {
+        AOT_TEST_CHECK(object->tryStore(vm, *fields.ofMakers[index], object));
+        AOT_TEST_CHECK(object->extension() == first && first->granuleBits() == fields.granulesOfMakers);
+    }
+    for (const FieldData* field : fields.ofMakers)
+        AOT_TEST_CHECK(object->read(*field) == JSValue(object));
+
+    AOT_TEST_CHECK(object->tryStore(vm, *fields.ofStranger, object));
+    Extension* grown = object->extension();
+    AOT_TEST_CHECK(grown != first && grown->granuleBits() == (fields.granulesOfMakers | fields.granuleOfStranger));
+    AOT_TEST_CHECK(object->read(*fields.ofStranger) == JSValue(object));
+    for (const FieldData* field : fields.ofMakers)
+        AOT_TEST_CHECK(object->read(*field) == JSValue(object));
+}
+
+static void checkWhoeverAsksFirstMakesTheSameExtension(LoadedProgram& program)
+{
+    Fixture fixture(program);
+    VM& vm = fixture.vm();
+    FieldsOfMakersAndStranger fields(fixture);
+    for (const FieldData* field : fixture.fieldsOutOfLine()) {
+        uint64_t granuleBit = granuleBitOf(field->slot.offset);
+        Object* filledByOperation = fixture.create();
+        callOperationFromTest(vm, operationAOTEnsureExtensionGranules, &program.instance(), filledByOperation, granuleBit);
+        Object* filledByStore = fixture.create();
+        AOT_TEST_CHECK(filledByStore->tryStore(vm, *field, filledByStore));
+        Object* filledByCreation = fixture.create();
+        AOT_TEST_CHECK(tryCreateField(vm, program.state(), *filledByCreation, *field, filledByCreation));
+        for (Object* object : { filledByOperation, filledByStore, filledByCreation })
+            AOT_TEST_CHECK(object->extension() && object->extension()->granuleBits() == (granuleBit | fields.granulesOfMakers));
+    }
+    AOT_TEST_CHECK(!fixture.create()->extension());
 }
 
 template<LoadedProgramTest body>
-static constexpr void (*withProgram)() = runNativeTestWithDefaultReferences<body>;
+static constexpr void (*withProgram)() = runNativeTestWithWideReferences<body>;
+
+static constexpr ASCIILiteral noNarrowReferences = "plan/AOTSlotPlan.cpp: narrow references in slots: no field lies in a Cell32 or an OptionalCell32"_s;
 
 std::span<const NativeTest> extensionTests()
 {
@@ -692,18 +911,19 @@ std::span<const NativeTest> extensionTests()
         { "extension/a-cleared-field-keeps-its-granule"_s, withProgram<checkAClearedFieldKeepsItsGranule> },
         { "extension/a-store-of-undefined-needs-no-storage"_s, withProgram<checkAStoreOfUndefinedNeedsNoStorage> },
         { "extension/a-read-of-an-empty-slot-is-cached"_s, withProgram<checkAReadOfAnEmptySlotIsCached> },
-        { "extension/whether-the-order-lists-a-field-is-remembered-beside-extra-properties"_s, withProgram<checkWhetherTheOrderListsAFieldIsRememberedBesideExtraProperties> },
-        { "extension/two-answers-about-the-order-stay-remembered-side-by-side"_s, withProgram<checkTwoAnswersAboutTheOrderStayRememberedSideBySide> },
-        { "extension/the-first-growth-reserves-what-the-constructor-fills"_s, withProgram<checkTheFirstGrowthReservesWhatTheConstructorFills> },
+        { "extension/the-first-extension-holds-what-the-makers-fill"_s, withProgram<checkTheFirstExtensionHoldsWhatTheMakersFill> },
+        { "extension/whoever-asks-first-makes-the-same-extension"_s, withProgram<checkWhoeverAsksFirstMakesTheSameExtension> },
         { "extension/narrow-references/an-object-pays-for-the-fields-it-has"_s, runNativeTestWithNarrowReferences<checkAnObjectPaysForTheFieldsItHas> },
         { "extension/narrow-references/fields-are-added-in-every-order"_s, runNativeTestWithNarrowReferences<checkFieldsAreAddedInEveryOrder> },
         { "extension/narrow-references/a-granule-goes-in-place-only-behind-the-others"_s, runNativeTestWithNarrowReferences<checkAGranuleGoesInPlaceOnlyBehindTheOthers> },
         { "extension/narrow-references/a-granule-goes-between-the-others-while-the-collector-visits-nothing"_s, runNativeTestWithNarrowReferences<checkAGranuleGoesBetweenTheOthersWhileTheCollectorVisitsNothing> },
         { "extension/narrow-references/the-collector-finds-references-by-the-bits"_s, runNativeTestWithNarrowReferences<checkTheCollectorFindsReferencesByTheBits> },
         { "extension/narrow-references/a-cleared-field-keeps-its-granule"_s, runNativeTestWithNarrowReferences<checkAClearedFieldKeepsItsGranule> },
-        { "extension/narrow-references/a-store-of-undefined-needs-no-storage"_s, runNativeTestWithNarrowReferences<checkAStoreOfUndefinedNeedsNoStorage> },
-        { "extension/narrow-references/the-granule-of-a-neighbor-takes-no-field-away"_s, runNativeTestWithNarrowReferences<checkTheGranuleOfANeighborTakesNoFieldAway> },
-        { "extension/narrow-references/the-first-growth-reserves-what-the-constructor-fills"_s, runNativeTestWithNarrowReferences<checkTheFirstGrowthReservesWhatTheConstructorFills> },
+        { "extension/narrow-references/a-store-of-undefined-needs-no-storage"_s, runNativeTestWithNarrowReferences<checkAStoreOfUndefinedNeedsNoStorage>, noNarrowReferences },
+        { "extension/narrow-references/a-read-of-an-empty-slot-is-cached"_s, runNativeTestWithNarrowReferences<checkAReadOfAnEmptySlotIsCached>, noNarrowReferences },
+        { "extension/narrow-references/the-granule-of-a-neighbor-takes-no-field-away"_s, runNativeTestWithNarrowReferences<checkTheGranuleOfANeighborTakesNoFieldAway>, noNarrowReferences },
+        { "extension/narrow-references/the-first-extension-holds-what-the-makers-fill"_s, runNativeTestWithNarrowReferences<checkTheFirstExtensionHoldsWhatTheMakersFill> },
+        { "extension/narrow-references/whoever-asks-first-makes-the-same-extension"_s, runNativeTestWithNarrowReferences<checkWhoeverAsksFirstMakesTheSameExtension> },
     };
     return tests;
 }

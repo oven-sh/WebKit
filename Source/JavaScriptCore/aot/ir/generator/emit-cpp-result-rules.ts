@@ -50,15 +50,20 @@ const lookupDeclarations = [
   "JS_EXPORT_PRIVATE std::optional<uint32_t> numberOfDeclaredResultsOf(Opcode);",
 ];
 
+const operationTemplateHead = "template<typename Rules, HoldsOpcode Operation>";
+const terminatorTemplateHead = "template<typename Rules, HoldsTerminatorKind Terminator>";
+
+const dispatchIncludes = ['"AOTBuiltinIDTypes.h"', '"AOTOpcode.h"'];
+
 const dispatchDeclarations = [
-  "template<typename Rules> typename Rules::Result applyResultRule(Rules&, const Value&, uint32_t resultIndex, ResultSide);",
-  "template<typename Rules> typename Rules::Result applyEdgeResultRule(Rules&, const Terminator&, uint32_t targetIndex, uint32_t resultIndex, ResultSide);",
+  `${operationTemplateHead} typename Rules::Result applyResultRule(Rules&, const Operation&, uint32_t resultIndex, ResultSide);`,
+  `${terminatorTemplateHead} typename Rules::Result applyEdgeResultRule(Rules&, const Terminator&, uint32_t targetIndex, uint32_t resultIndex, ResultSide);`,
 ];
 
 function resultRulesHeader(): string[] {
   const declarations = blocks(typeDeclarations, lookupDeclarations, dispatchDeclarations);
   const body = [...inNamespace("Typed", declarations), "", '#include "AOTSchemaResultRulesInlines.h"'];
-  return cppHeader(['"AOTBlock.h"', "<optional>", "<span>"], body);
+  return cppHeader([...dispatchIncludes, "<optional>", "<span>"], body);
 }
 
 function integerLiteral(value: bigint): string {
@@ -175,10 +180,10 @@ function indexedResults(schema: Schema, results: readonly Result[], isOpen: bool
   ];
 }
 
-function valueBody(schema: Schema, entry: Entry): string[] {
+function operationBody(schema: Schema, entry: Entry): string[] {
   const rule = entry.result.unproven;
-  if (rule.rule === "Results") return indexedResults(schema, rule.results, rule.isOpen, "value");
-  return [`return ${resultExpression(schema, entry.result, "value")};`];
+  if (rule.rule === "Results") return indexedResults(schema, rule.results, rule.isOpen, "operation");
+  return [`return ${resultExpression(schema, entry.result, "operation")};`];
 }
 
 function terminatorBody(schema: Schema, entry: Entry): string[] {
@@ -193,32 +198,32 @@ function terminatorBody(schema: Schema, entry: Entry): string[] {
 }
 
 function resultRulesInlines(schema: Schema): string[] {
-  const valueCases = schema.operations.map(entry => ({ label: entry.name, body: valueBody(schema, entry) }));
+  const operationCases = schema.operations.map(entry => ({ label: entry.name, body: operationBody(schema, entry) }));
   const terminatorCases = schema.terminators.map(entry => ({ label: entry.name, body: terminatorBody(schema, entry) }));
   const definitions = [
-    "template<typename Rules>",
-    "typename Rules::Result applyResultRule(Rules& rules, const Value& value, uint32_t resultIndex, ResultSide side)",
+    operationTemplateHead,
+    "ALWAYS_INLINE typename Rules::Result applyResultRule(Rules& rules, const Operation& operation, uint32_t resultIndex, ResultSide side)",
     "{",
     "    UNUSED_PARAM(resultIndex);",
     "    bool isProven = side == ResultSide::Proven;",
-    "    switch (value.opcode) {",
-    ...groupedCases("Opcode", valueCases),
+    "    switch (opcodeOf(operation)) {",
+    ...groupedCases("Opcode", operationCases),
     "    }",
     "    RELEASE_ASSERT_NOT_REACHED();",
     "}",
     "",
-    "template<typename Rules>",
+    terminatorTemplateHead,
     "typename Rules::Result applyEdgeResultRule(Rules& rules, const Terminator& terminator, uint32_t targetIndex, uint32_t resultIndex, ResultSide side)",
     "{",
     "    bool isProven = side == ResultSide::Proven;",
     "    UNUSED_VARIABLE(isProven);",
-    "    switch (terminator.kind) {",
+    "    switch (terminatorKindOf(terminator)) {",
     ...groupedCases("TerminatorKind", terminatorCases),
     "    }",
     "    RELEASE_ASSERT_NOT_REACHED();",
     "}",
   ];
-  return cppHeader(['"AOTBuiltinIDTypes.h"'], inNamespace("Typed", definitions));
+  return cppHeader(dispatchIncludes, inNamespace("Typed", definitions));
 }
 
 function tableBody(schema: Schema, table: NaturalTable): string[] {

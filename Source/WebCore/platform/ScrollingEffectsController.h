@@ -148,16 +148,18 @@ public:
     explicit ScrollingEffectsController(ScrollingEffectsControllerClient&);
     virtual ~ScrollingEffectsController();
 
-    bool LEGACY_NODELETE usesScrollSnap() const;
+    NODELETE bool usesScrollSnap() const;
     void stopAllTimers();
     void scrollPositionChanged();
 
-    bool startAnimatedScrollToDestination(FloatPoint startOffset, FloatPoint destinationOffset);
-    bool retargetAnimatedScroll(FloatPoint newDestinationOffset);
+    bool startAnimatedScrollToDestination(FloatPoint startOffset, FloatPoint destinationOffset, ScrollAnimationCurve = ScrollAnimationCurve::Default);
+    bool retargetAnimatedScroll(FloatPoint newDestinationOffset, ScrollAnimationCurve);
     bool retargetAnimatedScrollBy(FloatSize);
+    std::optional<FloatPoint> animatedScrollDestinationOffset() const;
 
     void stopAnimatedScroll();
     void stopAnimatedNonRubberbandingScroll();
+    void stopSpringAnimation();
 
     void stopKeyboardScrolling();
 
@@ -178,12 +180,12 @@ public:
     void contentsSizeChanged();
 
     void setSnapOffsetsInfo(const LayoutScrollSnapOffsetsInfo&);
-    const LayoutScrollSnapOffsetsInfo* LEGACY_NODELETE snapOffsetsInfo() const;
+    NODELETE const LayoutScrollSnapOffsetsInfo* snapOffsetsInfo() const;
     void setActiveScrollSnapIndexForAxis(ScrollEventAxis, std::optional<unsigned>);
     void updateActiveScrollSnapIndexForClientOffset();
     void resnapAfterLayout();
 
-    std::optional<unsigned> LEGACY_NODELETE activeScrollSnapIndexForAxis(ScrollEventAxis) const;
+    NODELETE std::optional<unsigned> activeScrollSnapIndexForAxis(ScrollEventAxis) const;
     float adjustedScrollDestination(ScrollEventAxis, FloatPoint destinationOffset, float velocity, std::optional<float> originalOffset, ScrollSnapPointSelectionMethod = ScrollSnapPointSelectionMethod::Closest) const;
 
     bool activeScrollSnapIndexDidChange() const { return m_activeScrollSnapIndexDidChange; }
@@ -194,11 +196,15 @@ public:
     bool handleWheelEvent(const PlatformWheelEvent&);
 
     bool isScrollSnapInProgress() const;
-    bool LEGACY_NODELETE isUserScrollInProgress() const;
+    NODELETE bool isUserScrollInProgress() const;
 
 #if PLATFORM(MAC)
-    static FloatSize LEGACY_NODELETE wheelDeltaBiasingTowardsVertical(const FloatSize&);
-    static bool LEGACY_NODELETE isScrollDeltaOpposingStretch(IntSize stretch, ScrollEventAxis, float delta);
+    // Stops a running spring animation, or ignores the rest of a momentum scroll while one runs. Called before the wheel event
+    // scrolls anything, including for events with PlatformWheelEventPhase::MayBegin.
+    void handleWheelEventDuringSpringAnimation(const PlatformWheelEvent&);
+
+    NODELETE static FloatSize wheelDeltaBiasingTowardsVertical(const FloatSize&);
+    NODELETE static bool isScrollDeltaOpposingStretch(IntSize stretch, ScrollEventAxis, float delta);
 
     // Returns true if handled.
     bool processWheelEventForScrollSnap(const PlatformWheelEvent&);
@@ -206,23 +212,25 @@ public:
     void stopRubberBanding();
     void startRubberBandSnapBack();
     void rubberBandTargetOffsetDidChange();
-    bool LEGACY_NODELETE isRubberBandInProgress() const;
+    NODELETE bool isRubberBandInProgress() const;
     RectEdges<bool> rubberBandingEdges() const { return m_rubberBandingEdges; }
 
     std::optional<RubberbandingState> captureRubberbandingState() const;
     bool restoreRubberbandingState(const RubberbandingState&);
-    bool LEGACY_NODELETE shouldAttemptRubberbandingRestoration(const RubberbandingState&);
+    NODELETE bool shouldAttemptRubberbandingRestoration(const RubberbandingState&);
 #if HAVE(APPKIT_GESTURES_SUPPORT)
-    FloatSize LEGACY_NODELETE computeDampedStretchDelta(FloatSize delta, bool horizontalDeltaOpposesStretch, bool verticalDeltaOpposesStretch);
-    float LEGACY_NODELETE deltaAdjustedForRefreshController(float generalDampedHeight, float verticalDelta, float verticalStretch, bool verticalDeltaOpposesStretch);
+    NODELETE FloatSize computeDampedStretchDelta(FloatSize delta, bool horizontalDeltaOpposesStretch, bool verticalDeltaOpposesStretch);
+    NODELETE float deltaAdjustedForRefreshController(float generalDampedHeight, float verticalDelta, float verticalStretch, bool verticalDeltaOpposesStretch);
 
     float rubberbandHyperbolicCoefficientForTesting() const { return m_rubberbandHyperbolicCoefficient; }
 #else
-    FloatSize LEGACY_NODELETE deltaAdjustedForRefreshController(const FloatSize& adjustedDelta, bool);
+    NODELETE FloatSize deltaAdjustedForRefreshController(const FloatSize& adjustedDelta, bool);
 #endif
 #endif
 
 private:
+    bool isSpringAnimationRunning() const;
+
     void updateRubberBandAnimatingState();
 
     void setIsAnimatingRubberBand(bool);
@@ -233,7 +241,7 @@ private:
     void stopScrollSnapAnimation();
 
 #if PLATFORM(MAC)
-    bool LEGACY_NODELETE shouldOverrideMomentumScrolling() const;
+    NODELETE bool shouldOverrideMomentumScrolling() const;
     void discreteSnapTransitionTimerFired();
     void scheduleDiscreteScrollSnap(const FloatSize& delta);
     void scrollendTimerFired();
@@ -256,7 +264,7 @@ private:
     bool shouldRubberBandOnSide(BoxSide, FloatSize) const;
     bool isRubberBandInProgressInternal() const;
     void updateRubberBandingState();
-    void LEGACY_NODELETE updateRubberBandingEdges(IntSize clientStretch);
+    NODELETE void updateRubberBandingEdges(IntSize clientStretch);
 #endif
 
     void startOrStopAnimationCallbacks();

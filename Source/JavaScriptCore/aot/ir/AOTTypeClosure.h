@@ -7,11 +7,18 @@
 
 #if ENABLE(AOT)
 
-#include "AOTIR.h"
+#include "AOTSchemaRecords.h"
+#include "AOTType.h"
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
 
-bool includesData(const Program&, const Type&, const DataNode&);
+class BuildContext;
+
+namespace Typed {
+
+class Program;
+
+bool includesData(TypeReader, const Type&, const DataNode&);
 void expectFieldsFilledWithOtherData(Program&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

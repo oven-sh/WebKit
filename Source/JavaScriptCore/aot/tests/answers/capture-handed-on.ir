@@ -1,0 +1,62 @@
+# const made = Math.random() < 2 ? 7 : undefined; const f = () => () => made;
+# const view = { get who() { return f; } }; console.log(JSON.stringify({ toJSON: view.who() }));
+# RUN(ANSWER): run-in-shell
+# ANSWER: 7
+# ANSWER-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="who" declared={type=undefined|null|function|f2 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="toJSON" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="f" module=m0 declared={type=undefined|null|function|absent|f2 flags=[IsExpected]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = Builtin builtin=MathRandom
+    v2 = Call v1, v0 calleeName="Math.random"
+    v3 = Integer integer=2
+    v4 = Less v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=7
+    Jump -> next b3(v5)
+  b2():
+    v6 = Undefined
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = NewClosure v7 function=f2
+    PutModuleVariable v8 variable=g0
+    v10 = NewObject layout=L0
+    v11 = NewClosure function=f1
+    DefineGetter v10, v11 key="who"
+    v13 = FinishObject v10
+    v14 = PropGet v13 key="who"
+    v15 = Call v14, v13 calleeKey="who" calleeName="view.who"
+    v16 = NewObject layout=L1
+    PropDefine v16, v15 key="toJSON"
+    v18 = FinishObject v16
+    v19 = Builtin builtin=JSON
+    v20 = Builtin builtin=JSONStringify
+    v21 = Call v20, v19, v18 calleeName="JSON.stringify"
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="console" [isFreeName]
+    v24 = PropGet v23 key="log"
+    v25 = Call v24, v23, v21 calleeKey="log" calleeName="console.log"
+    v26 = Undefined
+    Return v26
+}
+function f1 name="who" module=m0 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|function|f2 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="f"
+    Return v1
+}
+function f2 module=m0 kind=Arrow captures=[{type=undefined|number flags=[IsExpected] variableName="made"}] thisType={type=anything} results=[{type=undefined|null|function|f3 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|number):
+    v1 = NewClosure v0 function=f3
+    Return v1
+}
+function f3 module=m0 kind=Arrow captures=[{type=undefined|number flags=[IsExpected] variableName="made"}] thisType={type=anything} results=[{type=undefined|number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|number):
+    Return v0
+}

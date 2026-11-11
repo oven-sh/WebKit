@@ -32,8 +32,10 @@
 #include "TransactionID.h"
 #include <WebCore/Color.h>
 #include <WebCore/FixedContainerEdges.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/LayoutMilestone.h>
 #include <WebCore/LayoutUnit.h>
+#include <WebCore/PageIdentifier.h>
 #include <WebCore/ViewportArguments.h>
 #include <optional>
 #include <wtf/Vector.h>
@@ -67,6 +69,7 @@ struct MainFrameData {
     WebCore::Color pageExtendedBackgroundColor;
     WebCore::Color sampledPageTopColor;
     std::optional<WebCore::FixedContainerEdges> fixedContainerEdges;
+    bool topFixedContainerEdgeIsLocked { false };
 
 #if PLATFORM(MAC)
     Markable<WebCore::PlatformLayerIdentifier> pageScalingLayerID; // Only used for non-delegated scaling.
@@ -109,7 +112,10 @@ struct RemoteLayerTreeCommitBundle {
     std::optional<EditorState> editorState;
 
     TransactionID transactionID;
+    WebCore::PageIdentifier webPageID;
     MonotonicTime startTime;
+
+    Vector<std::pair<WebCore::FrameIdentifier, WebCore::FixedContainerEdges>> fixedContainerEdges;
 
 #if !defined(NDEBUG) || !LOG_DISABLED
     String description() const;

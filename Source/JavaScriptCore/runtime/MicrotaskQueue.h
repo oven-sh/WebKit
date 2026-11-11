@@ -38,10 +38,8 @@
 #include <wtf/VectorTraits.h>
 
 namespace JSC {
-class JSCell;
 class JSMicrotaskDispatcher;
 }
-WTF_ALLOW_COMPACT_POINTERS_TO_INCOMPLETE_TYPE(JSC::JSCell);
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -196,8 +194,8 @@ public:
         return true;
     }
 
-    // In their order, to the end of the other queue.
-    void moveTasksBehind(size_t count, MarkedMicrotaskDeque& other)
+    // Keeps their order and appends them to the other queue.
+    void moveTasksAfter(size_t count, MarkedMicrotaskDeque& other)
     {
         Vector<QueuedTask, 8> moved;
         while (m_queue.size() > count)
@@ -267,9 +265,9 @@ public:
 #if ENABLE(AOT)
     bool allOf(NOESCAPE const Invocable<bool(const QueuedTask&)> auto& functor) const { return m_queue.allOf(functor); }
 
-    void moveTasksBehind(size_t count, MicrotaskQueue& other)
+    void moveTasksAfter(size_t count, MicrotaskQueue& other)
     {
-        m_queue.moveTasksBehind(count, other.m_queue);
+        m_queue.moveTasksAfter(count, other.m_queue);
         if (!other.m_isScheduledToRun && !other.isEmpty())
             other.scheduleToRunIfNeeded();
     }

@@ -1417,6 +1417,8 @@ extern "C" void SYSV_ABI wasm_log_crash(CallFrame*, JSWebAssemblyInstance* insta
 
 extern "C" UGPRPair SYSV_ABI slow_path_wasm_throw_exception(CallFrame* callFrame, JSWebAssemblyInstance* instance, Wasm::ExceptionType exceptionType)
 {
+    if (instance->faultPC())
+        instance->calleeGroup()->didFault(callFrame, instance->faultPC());
     // FaultPC is the exact PC causing the fault. When using it as a returnPC, we should point one next instruction instead.
     WasmOperationPrologueCallFrameTracer tracer(instance->vm(), callFrame, std::bit_cast<void*>(std::bit_cast<uintptr_t>(instance->faultPC()) + 1));
     instance->setFaultPC(Wasm::ExceptionType::Termination, nullptr);

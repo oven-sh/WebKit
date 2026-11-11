@@ -1,0 +1,101 @@
+# If a function counted as reached because a closure of it is made or because its name is called somewhere, as in the first version, most of a library would be compiled for nobody. If one that is entered counted as unreached, the process would end where it is called, because it was left out of the executable
+# function called() { }  const box = { held: function made() { } };  function unused() { }
+# class A { size() { }  never() { } }  class B { size() { } }  called(); new B(); new A().size();
+# A function is reached when a call is found to enter it. `made` only lies in a field that nothing calls. `never` is a member that no call finds. `size` of B has the name that is called, and no object of B arrives at that call.
+# RUN: link functions mechanisms=all
+# CHECK: mechanisms all
+# CHECK: function f1 callers-known
+# CHECK: function f2 unreached
+# CHECK: function f3 unreached
+# CHECK: function f4 callers-known
+# CHECK: function f5 callers-known
+# CHECK: function f6 unreached
+# CHECK: function f7 callers-known
+# CHECK: function f8 unreached
+# RUN(REACHED): link functions mechanisms=all
+# REACHED-COUNT-4: unreached
+# REACHED-NOT: unreached
+# With every mechanism withheld Link leaves reach and claims nothing else.
+# RUN(NONE): link functions mechanisms=none
+# NONE: mechanisms none
+# NONE-COUNT-4: unreached
+# NONE-NOT: unreached
+# RUN(BARE): link functions calls mechanisms=none
+# BARE-NOT: callers-known
+# BARE-NOT: proven=
+# BARE-NOT: call f
+
+layout L0 module=m0 fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="A" module=m0 constructor=f4
+layout L2 kind=Instance name="B" module=m0 constructor=f7
+variable g0 name="unused" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0 calleeName="called"
+    v2 = NewClosure function=f2
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewClosure function=f4
+    v6 = NewClass v5 layout=L1
+    v7 = NewClosure function=f5
+    DefineMethod v6, v7 layout=L1 key="size"
+    v9 = NewClosure function=f6
+    DefineMethod v6, v9 layout=L1 index=1 key="never"
+    v11 = FinishClass v6 layout=L1
+    v12 = NewClosure function=f7
+    v13 = NewClass v12 layout=L2
+    v14 = NewClosure function=f8
+    DefineMethod v13, v14 layout=L2 key="size"
+    v16 = FinishClass v13 layout=L2
+    v17 = Construct v16
+    v18 = Construct v11
+    v19 = PropGet v18 key="size"
+    v20 = Call v19, v18 calleeKey="size"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="called" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="made" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="unused" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f5 name="size" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f6 name="never" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f7 name="B" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f8 name="size" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

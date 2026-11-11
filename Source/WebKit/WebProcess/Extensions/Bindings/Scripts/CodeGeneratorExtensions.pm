@@ -564,8 +564,9 @@ EOF
                 foreach my $parameter (@specifiedParameters) {
                     push(@contents, "    " . $self->_platformTypeVariableDeclaration($interface, $parameter, $parameter->name) . "\n");
                     push(@parameters, $parameter->name . ".releaseNonNull()") if $parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"};
+                    push(@parameters, "*" . $parameter->name) if $parameter->extendedAttributes->{"Serialization"} && $parameter->extendedAttributes->{"Serialization"} eq "Message";
                     push(@parameters, $parameter->name . ".createNSString().get()") if $parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"};
-                    push(@parameters, $parameter->name) unless ($parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"}) || ($parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"});
+                    push(@parameters, $parameter->name) unless ($parameter->extendedAttributes->{"Serialization"} && $parameter->extendedAttributes->{"Serialization"} eq "Message") || ($parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"}) || ($parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"});
                 }
 
                 push(@contents, "\n");
@@ -676,8 +677,9 @@ EOF
                     }
 
                     push(@parameters, $parameter->name . ".releaseNonNull()") if $parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"};
+                    push(@parameters, "*" . $parameter->name) if $parameter->extendedAttributes->{"Serialization"} && $parameter->extendedAttributes->{"Serialization"} eq "Message";
                     push(@parameters, $parameter->name . ".createNSString().get()") if $parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"};
-                    push(@parameters, $parameter->name) unless ($parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"}) || ($parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"});
+                    push(@parameters, $parameter->name) unless ($parameter->extendedAttributes->{"Serialization"} && $parameter->extendedAttributes->{"Serialization"} eq "Message") || ($parameter->extendedAttributes->{"CallbackHandler"} && $parameter->extendedAttributes->{"Optional"}) || ($parameter->type->name eq "DOMString" && !$parameter->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"});
                 }
             }
 
@@ -1077,9 +1079,9 @@ sub _hasAutomaticExceptions
 {
     my ($self, $signature) = @_;
 
-    return $signature->extendedAttributes->{"CannotBeEmpty"} || $signature->extendedAttributes->{"Serialization"} eq "JSON" || $signature->extendedAttributes->{"NSArray"}
+    return $signature->extendedAttributes->{"CannotBeEmpty"} || $signature->extendedAttributes->{"Serialization"} eq "JSON" || $signature->extendedAttributes->{"Serialization"} eq "Message" || $signature->extendedAttributes->{"NSArray"}
         || $signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"URL"} || $signature->extendedAttributes->{"JSONValue"}
-        || $signature->type->name eq "function" || $$self{codeGenerator}->IsPrimitiveType($signature->type) || $$self{codeGenerator}->IsStringType($signature->type);
+        || $signature->extendedAttributes->{"JSONObject"} || $signature->type->name eq "function" || $$self{codeGenerator}->IsPrimitiveType($signature->type) || $$self{codeGenerator}->IsStringType($signature->type);
 }
 
 sub _includeHeaders
@@ -1204,7 +1206,7 @@ ${indentString}}
 EOF
     }
 
-    if ($signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"NSObject"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
+    if ($signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"NSObject"} && !$signature->extendedAttributes->{"JSONObject"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
@@ -1266,6 +1268,21 @@ sub _installAutomaticExceptions
 EOF
     }
 
+    if ($signature->type->name eq "any" && $signature->extendedAttributes->{"Serialization"} && $signature->extendedAttributes->{"Serialization"} eq "Message") {
+        $hasExceptions = 1;
+
+        push(@$contents, <<EOF);
+
+    if (*exception) [[unlikely]]
+        return ${result};
+
+    if (!$variable) [[unlikely]] {
+        *exception = toJSError(context, "${call}"_s, "${variableLabel}"_s, impl->usesStructuredCloneMessageSerialization() ? "a serializable value is expected"_s : "a JSON serializable value is expected"_s);
+        return ${result};
+    }
+EOF
+    }
+
     if ($$self{codeGenerator}->IsStringType($signature->type) && !$signature->extendedAttributes->{"Optional"} && ($signature->extendedAttributes->{"URL"} && !$interface->extendedAttributes->{"UseCPPAPI"})) {
         $hasExceptions = 1;
 
@@ -1290,7 +1307,7 @@ EOF
 EOF
     }
 
-    if ($signature->type->name eq "any" && ($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"NSObject"}) && !$signature->extendedAttributes->{"Optional"}) {
+    if ($signature->type->name eq "any" && ($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"JSONObject"} || $signature->extendedAttributes->{"NSObject"}) && !$signature->extendedAttributes->{"Optional"}) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
@@ -1302,7 +1319,7 @@ EOF
 EOF
     }
 
-    if (!$interface->extendedAttributes->{"UseCPPAPI"} && $signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"Optional"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
+    if (!$interface->extendedAttributes->{"UseCPPAPI"} && $signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"JSONObject"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"Optional"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
@@ -1314,7 +1331,7 @@ EOF
 EOF
     }
 
-    if ($interface->extendedAttributes->{"UseCPPAPI"} && $signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"Optional"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
+    if ($interface->extendedAttributes->{"UseCPPAPI"} && $signature->type->name eq "any" && !($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"JSONObject"} || $signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"Serialization"}) && !$signature->extendedAttributes->{"Optional"} && !$signature->extendedAttributes->{"ValuesAllowed"}) {
         $hasExceptions = 1;
 
         push(@$contents, <<EOF);
@@ -1446,10 +1463,10 @@ sub _javaScriptTypeCondition
     my $nullOrUndefined = "";
     $nullOrUndefined = " || JSValueIsNull(context, ${argument}) || JSValueIsUndefined(context, ${argument})" if $signature->extendedAttributes->{"Optional"};
 
-    return "isDictionary(context, ${argument}) || JSValueIsString(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"NSObject"} && $signature->extendedAttributes->{"DOMString"};
+    return "isDictionary(context, ${argument}) || JSValueIsString(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && ($signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"JSONObject"}) && $signature->extendedAttributes->{"DOMString"};
     return "(!JSValueIsNull(context, ${argument}) && !JSValueIsUndefined(context, ${argument}) && !JSObjectIsFunction(context, JSValueToObject(context, ${argument}, nullptr)))${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"Serialization"};
     return "isDictionary(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && ($signature->extendedAttributes->{"NSDictionary"} || $signature->extendedAttributes->{"JSONValue"});
-    return "JSValueIsObject(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && $signature->extendedAttributes->{"NSObject"};
+    return "JSValueIsObject(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && ($signature->extendedAttributes->{"NSObject"} || $signature->extendedAttributes->{"JSONObject"});
     return "JSValueIsObject(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "any" && !$signature->extendedAttributes->{"ValuesAllowed"};
     return "(JSValueIsObject(context, ${argument}) && JSObjectIsFunction(context, JSValueToObject(context, ${argument}, nullptr)))${nullOrUndefined}" if $idlTypeName eq "function";
     return "JSValueIsBoolean(context, ${argument})${nullOrUndefined}" if $idlTypeName eq "boolean";
@@ -1474,8 +1491,9 @@ sub _platformType
     return "NSArray" if !$interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array";
     return "Vector<$arrayType>" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType ne "JSValueRef";
     return "Vector<Protected<$arrayType>>" if $interface->extendedAttributes->{"UseCPPAPI"} && $idlTypeName eq "array" && $arrayType eq "JSValueRef";
+    return "std::optional<WebExtensionMessage>" if $idlTypeName eq "any" && $signature->extendedAttributes->{"Serialization"} && $signature->extendedAttributes->{"Serialization"} eq "Message";
     return "String" if $idlTypeName eq "any" && $signature->extendedAttributes->{"Serialization"};
-    return "RefPtr<JSON::Value>" if $idlTypeName eq "any" && $signature && $signature->extendedAttributes->{"JSONValue"};
+    return "RefPtr<JSON::Value>" if $idlTypeName eq "any" && $signature && ($signature->extendedAttributes->{"JSONValue"} || $signature->extendedAttributes->{"JSONObject"});
     return "NSDictionary" if $idlTypeName eq "any" && $signature && $signature->extendedAttributes->{"NSDictionary"};
     return "NSObject" if $idlTypeName eq "any" && $signature && $signature->extendedAttributes->{"NSObject"};
     return "JSValue" if !$interface->extendedAttributes->{"UseCPPAPI"} && ($idlTypeName eq "DOMWindow" || $idlTypeName eq "function" || $idlTypeName eq "any");
@@ -1506,12 +1524,16 @@ sub _platformTypeConstructor
 
     if ($idlTypeName eq "any") {
         return "serializeJSObject(context, $argumentName, exception)" if $signature->extendedAttributes->{"Serialization"} && $signature->extendedAttributes->{"Serialization"} eq "JSON";
+        return "serializeMessage(context, $argumentName, impl->usesStructuredCloneMessageSerialization(), exception)" if $signature->extendedAttributes->{"Serialization"} && $signature->extendedAttributes->{"Serialization"} eq "Message";
         return "toNSDictionary(context, $argumentName, NullValuePolicy::Allowed, ValuePolicy::StopAtTopLevel)" if $signature->extendedAttributes->{"NSDictionary"} && $signature->extendedAttributes->{"NSDictionary"} eq "StopAtTopLevel";
         return "toNSDictionary(context, $argumentName, NullValuePolicy::Allowed)" if $signature->extendedAttributes->{"NSDictionary"} && $signature->extendedAttributes->{"NSDictionary"} eq "NullAllowed";
         return "toNSDictionary(context, $argumentName, NullValuePolicy::NotAllowed)" if $signature->extendedAttributes->{"NSDictionary"};
         return "toJSONValue(context, $argumentName, NullValuePolicy::Allowed, ValuePolicy::StopAtTopLevel)" if $signature->extendedAttributes->{"JSONValue"} && $signature->extendedAttributes->{"JSONValue"} eq "StopAtTopLevel";
         return "toJSONValue(context, $argumentName, NullValuePolicy::Allowed)" if $signature->extendedAttributes->{"JSONValue"} && $signature->extendedAttributes->{"JSONValue"} eq "NullAllowed";
         return "toJSONValue(context, $argumentName, NullValuePolicy::NotAllowed)" if $signature->extendedAttributes->{"JSONValue"};
+        return "fromJSValue(context, $argumentName, NullValuePolicy::Allowed, ValuePolicy::StopAtTopLevel)" if $signature->extendedAttributes->{"JSONObject"} && $signature->extendedAttributes->{"JSONObject"} eq "StopAtTopLevel";
+        return "fromJSValue(context, $argumentName, NullValuePolicy::Allowed)" if $signature->extendedAttributes->{"JSONObject"} && $signature->extendedAttributes->{"JSONObject"} eq "NullAllowed";
+        return "fromJSValue(context, $argumentName, NullValuePolicy::NotAllowed)" if $signature->extendedAttributes->{"JSONObject"};
         return "toNSObject(context, $argumentName, Nil, NullValuePolicy::Allowed, ValuePolicy::StopAtTopLevel)" if $signature->extendedAttributes->{"NSObject"} && $signature->extendedAttributes->{"NSObject"} eq "StopAtTopLevel";
         return "toNSObject(context, $argumentName, Nil, NullValuePolicy::Allowed)" if $signature->extendedAttributes->{"NSObject"} && $signature->extendedAttributes->{"NSObject"} eq "NullAllowed";
         return "toNSObject(context, $argumentName)" if $signature->extendedAttributes->{"NSObject"};
@@ -1561,6 +1583,7 @@ sub _platformTypeVariableDeclaration
     $nullValue = "std::numeric_limits<double>::quiet_NaN()" if $platformType eq "double";
     $nullValue = "nil" if $isObjCType;
     $nullValue = "nullString()" if $platformType eq "String";
+    $nullValue = "std::nullopt" if $platformType eq "std::optional<WebExtensionMessage>";
     $nullValue = "JSValueMakeUndefined(context)" if $platformType eq "JSValueRef";
     $nullValue = "{  }" if $signature->extendedAttributes->{"URL"} && $interface->extendedAttributes->{"UseCPPAPI"};
 
@@ -1571,7 +1594,7 @@ sub _platformTypeVariableDeclaration
         die "DefaultValue extended attribute is currently only supported for numeric types";
     }
 
-    if ($platformType eq "JSValueRef" or $platformType eq "JSObjectRef" or $platformType eq "RefPtr<WebExtensionCallbackHandler>" or $platformType eq "RefPtr<JSON::Value>" or $platformType eq "double" or $platformType eq "bool" or $platformType eq "String" or $signature->extendedAttributes->{"Vector"} or ($interface->extendedAttributes->{"UseCPPAPI"} && $signature->extendedAttributes->{"URL"})) {
+    if ($platformType eq "JSValueRef" or $platformType eq "JSObjectRef" or $platformType eq "RefPtr<WebExtensionCallbackHandler>" or $platformType eq "RefPtr<JSON::Value>" or $platformType eq "double" or $platformType eq "bool" or $platformType eq "String" or $platformType eq "std::optional<WebExtensionMessage>" or $signature->extendedAttributes->{"Vector"} or ($interface->extendedAttributes->{"UseCPPAPI"} && $signature->extendedAttributes->{"URL"})) {
         $platformType .= " ";
     } else {
         $platformType .= $isObjCType ? " *" : "* ";
@@ -1611,6 +1634,7 @@ sub _returnExpression
     my $returnIDLTypeName = $returnIDLType->name;
 
     return "deserializeJSONString(context, $expression)" if $returnIDLTypeName eq "any" && $signature->extendedAttributes->{"Serialization"} && $signature->extendedAttributes->{"Serialization"} eq "JSON";
+    return "($expression).toJSValue(context)" if $returnIDLTypeName eq "any" && $signature->extendedAttributes->{"Serialization"} && $signature->extendedAttributes->{"Serialization"} eq "Message";
     return "toJSValueRefOrJSNull(context, $expression)" if $returnIDLTypeName eq "any" || $returnIDLTypeName eq "DOMWindow";
     return "toJSValueRef(context, ${expression}, $nullOrEmptyString)" if $$self{codeGenerator}->IsStringType($returnIDLType);
     return "JSValueMakeUndefined(context)" if $returnIDLTypeName eq "void";

@@ -1,0 +1,53 @@
+# function* steps(limit) { let text = ""; for (let i = 0; i < limit; i++) { text += "x"; yield i; } return text; }   globalThis.made = steps;
+# What lives across a yield has a word in a frame in the heap: it is stored where it is defined and read once in each block that names it. A yield stores where the body goes on and returns; the body goes on at an entrypoint of its own.
+# No machine frame is copied out or back.
+# RUN: emit f1:CoroutineBody mechanisms=all
+# CHECK-LABEL: unit f1:CoroutineBody
+# CHECK: entrypoint 0
+# CHECK: entrypoint 1
+# CHECK: Store({{*}}frameSlots
+# CHECK: entrypoint 2
+# CHECK: Store({{*}}frameSlots
+# CHECK-NOT: entrypoint 3
+# RUN(WITHHELD): emit f1:CoroutineBody mechanisms=all-TypedOperations
+# WITHHELD-LABEL: unit f1:CoroutineBody
+# WITHHELD: entrypoint 0
+# WITHHELD-NOT: entrypoint 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="made"
+    v3 = Undefined
+    Return v3
+}
+function f1 name="steps" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
+  b0(v0: anything, v1: function, v2: anything):
+    InitialYield v2, v0
+    v4 = String string=""
+    v5 = Integer
+    Jump -> next b1(v4, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v2
+    Branch v9 -> taken b2(), notTaken b6()
+  b2():
+    v10 = String string="x"
+    v11 = Add v6, v10
+    v12 = Yield v7, v2, v0
+    v13 = ResultAt v12
+    v14 = ResultAt v12 index=1
+    Switch v14 cases=[1, 2] -> case b3(), case b4(), otherwise b5()
+  b3():
+    Throw v13
+  b4():
+    Return v13
+  b5():
+    v15 = Increment v7
+    Jump -> next b1(v11, v15)
+  b6():
+    Return v6
+}

@@ -42,6 +42,7 @@ BoxGeometry::BoxGeometry(const BoxGeometry& other)
     , m_padding(other.m_padding)
     , m_verticalSpaceForScrollbar(other.m_verticalSpaceForScrollbar)
     , m_horizontalSpaceForScrollbar(other.m_horizontalSpaceForScrollbar)
+    , m_baseline(other.m_baseline)
 #if ASSERT_ENABLED
     , m_hasValidTop(other.m_hasValidTop)
     , m_hasValidLeft(other.m_hasValidLeft)
@@ -55,6 +56,8 @@ BoxGeometry::BoxGeometry(const BoxGeometry& other)
 #endif
 {
 }
+
+BoxGeometry& BoxGeometry::operator=(const BoxGeometry&) = default;
 
 BoxGeometry::~BoxGeometry() = default;
 
@@ -113,6 +116,8 @@ void BoxGeometry::reset()
 
     setVerticalSpaceForScrollbar({ });
     setHorizontalSpaceForScrollbar({ });
+
+    setBaseline({ });
 }
 
 }

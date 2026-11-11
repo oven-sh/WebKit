@@ -6,7 +6,6 @@ import { compareBytes, memberPathOf, registeredSymbolPrefix, symbolPrefix } from
 export interface OwnProperty {
   name: string;
   attributes: { isAccessor: boolean; isWritable: boolean; isConfigurable: boolean } | null;
-  /** Written "~": the host creates the property in some runs only, so nobody states its attributes. */
   isCreatedInSomeRuns: boolean;
 }
 
@@ -117,7 +116,6 @@ function declareOwnProperties({ holder, isOpen, properties }: OwnPropertyLine): 
   ];
 }
 
-/** `file` is relative to `root`, which is the tree of the host. */
 export function collectOwnProperties(root: string, file: string, problems: Problems): SourcedDeclaration[] {
   let lines: OwnPropertyLine[];
   try {

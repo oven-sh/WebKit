@@ -1451,12 +1451,12 @@ ExceptionOr<void> HTMLInputElement::showPicker()
     return { };
 }
 
-static inline bool LEGACY_NODELETE isRFC2616TokenCharacter(char16_t ch)
+NODELETE static inline bool isRFC2616TokenCharacter(char16_t ch)
 {
     return isASCII(ch) && ch > ' ' && ch != '"' && ch != '(' && ch != ')' && ch != ',' && ch != '/' && (ch < ':' || ch > '@') && (ch < '[' || ch > ']') && ch != '{' && ch != '}' && ch != 0x7f;
 }
 
-static bool LEGACY_NODELETE isValidMIMEType(StringView type)
+NODELETE static bool isValidMIMEType(StringView type)
 {
     size_t slashPosition = type.find('/');
     if (slashPosition == notFound || !slashPosition || slashPosition == type.length() - 1)
@@ -1468,7 +1468,7 @@ static bool LEGACY_NODELETE isValidMIMEType(StringView type)
     return true;
 }
 
-static bool LEGACY_NODELETE isValidFileExtension(StringView type)
+NODELETE static bool isValidFileExtension(StringView type)
 {
     if (type.length() < 2)
         return false;
@@ -1860,6 +1860,8 @@ void HTMLInputElement::didMoveToNewDocument(Document& oldDocument, Document& new
     }
 #endif
 
+    m_dataListMayHaveChangedTaskCancellationGroup.cancel();
+
     HTMLTextFormControlElement::didMoveToNewDocument(oldDocument, newDocument);
 }
 
@@ -1940,6 +1942,17 @@ void HTMLInputElement::dataListMayHaveChanged()
     protectedInputType->dataListMayHaveChanged();
 }
 
+void HTMLInputElement::scheduleDataListMayHaveChanged()
+{
+    if (m_dataListMayHaveChangedTaskCancellationGroup.hasPendingTask())
+        return;
+
+    protect(protect(document())->eventLoop())->queueTask(TaskSource::DOMManipulation, CancellableTask(m_dataListMayHaveChangedTaskCancellationGroup, [weakThis = WeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->dataListMayHaveChanged();
+    }));
+}
+
 bool HTMLInputElement::isFocusingWithDataListDropdown() const
 {
     return protect(m_inputType)->isFocusingWithDataListDropdown();
@@ -1955,7 +1968,7 @@ RefPtr<InputType> HTMLInputElement::inputType() const
     return m_inputType;
 }
 
-bool LEGACY_NODELETE HTMLInputElement::isSteppable() const
+NODELETE bool HTMLInputElement::isSteppable() const
 {
     return m_inputType->isSteppable();
 }
@@ -2200,8 +2213,7 @@ RefPtr<HTMLInputElement> HTMLInputElement::checkedRadioButtonForGroup() const
     ASSERT(isRadioButton());
 
     if (checked()) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<HTMLInputElement*>(this);
+        return const_cast<HTMLInputElement*>(this);
     }
 
     auto& name = this->name();
@@ -2267,10 +2279,8 @@ ListAttributeTargetObserver::ListAttributeTargetObserver(const AtomString& id, H
 
 void ListAttributeTargetObserver::idTargetChanged(Element&)
 {
-    protect(protect(m_element->document())->eventLoop())->queueTask(TaskSource::DOMManipulation, [element = m_element] {
-        if (RefPtr protectedElement = element.get())
-            protectedElement->dataListMayHaveChanged();
-    });
+    if (RefPtr element = m_element)
+        element->scheduleDataListMayHaveChanged();
 }
 
 ExceptionOr<void> HTMLInputElement::setRangeText(StringView replacement, unsigned start, unsigned end, const String& selectionMode)

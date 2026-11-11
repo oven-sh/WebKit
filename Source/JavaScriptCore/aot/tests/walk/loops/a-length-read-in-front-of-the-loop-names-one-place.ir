@@ -1,0 +1,33 @@
+# a store under the list's length fills one place more a turn only where the length is read in the turn: read in front of the loop it names one place for ever, and no room is asked
+# function keepLast(list, n) { const at = list.length; for (let i = 0; i < n; i++) list[at] = i; return list; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: ReserveArrayCapacity
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="keepLast" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewArray contents=number
+    v2 = PropGet v1 key="length"
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    ElemSet v1, v2, v4
+    v8 = Increment v4
+    Jump -> next b1(v8)
+  b3():
+    Return v1
+}

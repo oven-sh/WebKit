@@ -1,0 +1,77 @@
+# main.cjs    var pick; let total = 0; let turn = 0; pick = turn => turn + 1; if (Number("1")) pick = turn => turn + 2; do { total += pick(turn); turn++; } while (turn < Number("3")); sink(total); function peek() { return pick; } sink(typeof peek());
+# THE GUARD of a-read-in-front-of-a-loop-that-nothing-vouches-for-is-refused-where-code-is-verified.ir: the same lying word, and the build goes through.
+# The read in front of the loop stands for no value of the text here too, and it is typed by the proof. But a store into the variable stands in front of it on every way from the entry:
+# the read says that it follows its store, and where code is verified the word is held against the code. A first refusal knew the read of the text as the only voucher and stopped this right program.
+# RUN(LIE): walk f0 mechanisms=all testing=AssumeVariablesInitialized
+# LIE-LABEL: code f0:
+# LIE-NOT: isLoopHead=true
+# LIE: = GetModuleVariable variable=g0 [isKnownInitialized]
+# LIE: isLoopHead=true
+# RUN(WALK): walk f0 mechanisms=all
+# WALK-LABEL: code f0:
+# WALK-NOT: isLoopHead=true
+# WALK: = GetModuleVariable variable=g0 [isKnownInitialized]
+# WALK: isLoopHead=true
+# RUN(SHELL): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.sink = value => print("said " + value);
+# SHELL: said 9
+# SHELL-NEXT: said function
+
+variable g0 name="pick" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0
+entry module=m0
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Integer
+    v2 = Integer
+    v3 = NewClosure function=f1
+    PutModuleVariable v3 variable=g0
+    v5 = Builtin builtin=Number
+    v6 = String string="1"
+    v7 = Call v5, -, v6 calleeName="Number"
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    v9 = NewClosure function=f3
+    PutModuleVariable v9 variable=g0
+    Jump -> next b2()
+  b2():
+    Jump -> next b3(v1, v2)
+  b3(v11: anything, v12: anything):
+    LoopHint
+    v14 = GetModuleVariable variable=g0
+    v15 = Call v14, -, v12 calleeName="pick"
+    v16 = Add v11, v15
+    v17 = Increment v12
+    v18 = Builtin builtin=Number
+    v19 = String string="3"
+    v20 = Call v18, -, v19 calleeName="Number"
+    v21 = Less v17, v20
+    Branch v21 -> taken b3(v16, v17), notTaken b4()
+  b4():
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="sink" [isFreeName]
+    v24 = Call v23, -, v16 calleeName="sink"
+    v25 = Call v0 calleeName="peek"
+    v26 = TypeOf v25
+    v27 = Call v23, -, v26 calleeName="sink"
+    v28 = Undefined
+    Return v28
+}
+function f1 name="pick" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="peek" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f3 name="pick" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Add v0, v1
+    Return v2
+}

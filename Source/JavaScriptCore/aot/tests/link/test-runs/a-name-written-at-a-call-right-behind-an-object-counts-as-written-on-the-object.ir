@@ -1,0 +1,28 @@
+# put(hidden().constructor.prototype, "values", 0); sink(hidden().values);
+# A file of the tests hands an object that nobody knows to a function and, right behind it, a name that is written at the call: a helper put(object, key, value), or Object.defineProperty that came from another file.
+# Whatever stands at the callee, the name counts as written on what stands at the object once the flow has settled, as it does at a spy that is out of sight.
+# Before, the member stayed locked wherever its holder was, and the store was refused: "Cannot assign to %TypedArray%.prototype.values ..: the build didn't see a test replace this one".
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: locks open mechanisms=all
+# CHECK: open TypedArrayPrototypeValues spelled-through-unseen
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @0
+    v1 = PropGet v0 key="put" [isFreeName] @0
+    v2 = PropGet v0 key="hidden" [isFreeName] @4
+    v3 = Call v2 calleeName="hidden" @4
+    v4 = PropGet v3 key="constructor" @13
+    v5 = PropGet v4 key="prototype" @25
+    v6 = String string="values" @36
+    v7 = Integer @46
+    v8 = Call v1, -, v5, v6, v7 calleeName="put" @0
+    v9 = PropGet v0 key="sink" [isFreeName] @50
+    v10 = Call v2 calleeName="hidden" @55
+    v11 = PropGet v10 key="values" @64
+    v12 = Call v9, -, v11 calleeName="sink" @50
+    v13 = Undefined @50
+    Return v13 @50
+}

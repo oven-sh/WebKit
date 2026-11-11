@@ -8,13 +8,15 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTNativeTest.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <stdlib.h>
@@ -24,7 +26,10 @@
 namespace JSC { namespace AOT {
 
 static constexpr ASCIILiteral stepsOfCollections = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
+runtimefunction id=MapIteratorPrototypeNext function=f1
+runtimefunction id=SetIteratorPrototypeNext function=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
@@ -142,6 +147,22 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v83 = PropGet v77 key="done"
     v84 = Call v1, -, v82, v83
     Return
+}
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=MapIteratorPrototypeNext results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = StepMapIterator v1
+    v3 = ResultAt v2 index=1
+    v4 = ResultAt v2
+    v5 = CreateIteratorResult v3, v4
+    Return v5
+}
+function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=SetIteratorPrototypeNext results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = StepSetIterator v1
+    v3 = ResultAt v2 index=1
+    v4 = ResultAt v2
+    v5 = CreateIteratorResult v3, v4
+    Return v5
 }
 )IR"_s;
 
@@ -401,7 +422,7 @@ function f1 name="settled" parameters=[{type=anything}] results=[{type=anything}
 static constexpr ASCIILiteral stepsOfArrayIterator = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
-runtimefunction id=69 function=f1
+runtimefunction id=ArrayIteratorPrototypeNext function=f1
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
@@ -433,7 +454,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v20 = CallDirect function=f2
     Return
 }
-function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=69 results=[{type=anything}] {
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayIteratorPrototypeNext results=[{type=anything}] {
     v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     v2 = GetInternalField v1
     v3 = Check v2 expectedType=i32
@@ -482,7 +503,7 @@ function f2 name="readKept" results=[{type=anything}] {
 static constexpr ASCIILiteral stepsOfGenerator = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
-runtimefunction id=70 function=f2
+runtimefunction id=GeneratorPrototypeNext function=f2
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
@@ -520,7 +541,7 @@ function f1 name="g" flags=[IsGenerator, TakesCallee] results=[{type=anything}] 
     v6 = String string="returned"
     Return v6
 }
-function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=70 parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=GeneratorPrototypeNext parameters=[{type=anything}] results=[{type=anything}] {
     v2 = StepGenerator v0, v1 check=IsGenerator
     v3 = ResultAt v2
     v4 = ResultAt v2 index=1
@@ -550,36 +571,35 @@ function f3 name="readKept" results=[{type=anything}] {
 }
 )IR"_s;
 
-static std::unique_ptr<CompileOutput> compile(ASCIILiteral programText, ASCIILiteral optionWords)
+static std::unique_ptr<CompileOutput> compile(ASCIILiteral programText, ASCIILiteral way, ASCIILiteral referenceWidth)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
         Wire::CompileOptions options = makeDefaultCompileOptions();
-        for (StringView word : StringView(optionWords).split(' '))
-            AOT_TEST_CHECK(!applyOptionWord(options, word));
+        AOT_TEST_CHECK(!applyOptionWord(options, referenceWidth));
         BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
+        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), build);
         if (!program) {
             build.diagnostics().finish(nullptr);
             Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
         }
         AOT_TEST_CHECK(program);
-        output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
+        output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfWay(way));
+        if (!output->hasImage())
+            Typed::printDiagnosticsOf(*output, WTF::dataFile());
+        AOT_TEST_CHECK(output->hasImage() && output->records<uint32_t>(Wire::ResultSection::EntryModuleIds).size() == 1);
     });
     return output;
 }
 
-static String runInShell(ASCIILiteral programText, ASCIILiteral optionWords)
+static String runInShell(ASCIILiteral programText, ASCIILiteral way, ASCIILiteral referenceWidth)
 {
-    std::unique_ptr<CompileOutput> output = compile(programText, optionWords);
-    TemporaryFile image(".image"_s, output->image.span());
+    std::unique_ptr<CompileOutput> output = compile(programText, way, referenceWidth);
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString("runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").catch(error => print(\"the program threw \" + error)); drainMicrotasks();"_s),
+        makeString("runCompiledEntryPoint("_s, output->records<uint32_t>(Wire::ResultSection::EntryModuleIds)[0], ").catch(error => print(\"the program threw \" + error)); drainMicrotasks();"_s),
     };
     String shell = shellPath();
     ChildProcessResult result = ChildProcessLauncher(String(shell), { }).run(arguments.span());
@@ -589,22 +609,19 @@ static String runInShell(ASCIILiteral programText, ASCIILiteral optionWords)
     return makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
 }
 
-// An optional pass may not change an answer, and validation stops the program at a value that is not of the type flow proved.
 static void checkShellOutput(ASCIILiteral programText, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral builds[] {
+    static constexpr ASCIILiteral referenceWidths[] {
         "references=wide"_s,
         "references=narrow"_s,
-        "references=wide validate"_s,
-        "references=narrow validate"_s,
-        "references=narrow validate disable=pass:SimplifyBuiltinCalls"_s,
-        "references=narrow validate disable=pass:SinkAllocations"_s,
     };
-    for (ASCIILiteral optionWords : builds) {
-        String output = runInShell(programText, optionWords);
-        if (output != expectedOutput)
-            dataLog("with ", optionWords, " the shell printed\n", output, "expected\n", expectedOutput);
-        AOT_TEST_CHECK(output == expectedOutput);
+    for (ASCIILiteral way : waysToCompilePrograms) {
+        for (ASCIILiteral referenceWidth : referenceWidths) {
+            String output = runInShell(programText, way, referenceWidth);
+            if (output != expectedOutput)
+                dataLog("with ", way, " ", referenceWidth, " the shell printed\n", output, "expected\n", expectedOutput);
+            AOT_TEST_CHECK(output == expectedOutput);
+        }
     }
 }
 

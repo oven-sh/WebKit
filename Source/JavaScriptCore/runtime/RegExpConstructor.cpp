@@ -23,7 +23,6 @@
 #include "RegExpConstructor.h"
 
 #include "AOTRemovableFeature.h"
-#include "AOTRuntimeValidation.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "NumberPrototype.h"
@@ -179,7 +178,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpConstructorEscape, (JSGlobalObject* globalObject,
         throwOutOfMemoryError(globalObject, scope);
         return { };
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, builder.toString())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::move(builder).toString())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(regExpConstructorDollar, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName propertyName))
@@ -199,9 +198,7 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorInput, (JSGlobalObject* globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue::decode(thisValue) != globalObject->regExpConstructor())
         return throwVMTypeError(globalObject, scope, "RegExp.input getter requires RegExp constructor as |this|"_s);
-#if ENABLE(AOT)
-    AOT::willReadLegacyRegExpStatics(vm);
-#endif
+    RegExpGlobalData::willReadLegacyStatics(vm);
     return JSValue::encode(globalObject->regExpGlobalData().input());
 }
 
@@ -280,7 +277,7 @@ JSC_DEFINE_CUSTOM_SETTER(setRegExpConstructorMultiline, (JSGlobalObject* globalO
     return true;
 }
 
-static inline bool LEGACY_NODELETE areLegacyFeaturesEnabled(JSGlobalObject* globalObject, JSValue newTarget)
+NODELETE static inline bool areLegacyFeaturesEnabled(JSGlobalObject* globalObject, JSValue newTarget)
 {
     if (!newTarget)
         return true;

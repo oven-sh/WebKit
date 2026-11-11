@@ -1,0 +1,42 @@
+# the join stands under a handler, which is entered with what holds at the head of the block and with the values as they are named there. So the block has one head: the ways meet, and the test asks what they bring together
+# function kind(c) { let v; if (c) v = 1; else v = "a"; try { if (typeof v === "number") return 1; return 2; } catch (e) { return 3; } }
+# RUN: walk f1 mechanisms=none+Folding+Handlers
+# CHECK: mechanisms Folding,Handlers
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-1: = TypeTest
+# CHECK-NOT: = TypeTest
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="kind" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Jump -> next b3(v2)
+  b2():
+    v3 = String string="a"
+    Jump -> next b3(v3)
+  b3(v4) handler=b6():
+    v5 = TypeTest v4 testedType=number
+    Branch v5 -> taken b4(), notTaken b5()
+  b4():
+    v6 = Integer integer=1
+    Return v6
+  b5():
+    v7 = Integer integer=2
+    Return v7
+  b6() role=CatchHandler:
+    v8 = CatchValue
+    v9 = Integer integer=3
+    Return v9
+}

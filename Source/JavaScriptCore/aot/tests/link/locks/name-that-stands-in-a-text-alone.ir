@@ -1,0 +1,22 @@
+# the program lets a constructor go and never reads `prototype`: whoever comes to the prototype object comes there under keys that nobody knows, which nobody follows. Its members keep their locks, and the write is refused when it runs
+# keep(TextEncoder); new TextEncoder().encode("");
+# RUN: locks
+# CHECK: locked TextEncoderPrototypeEncode constant
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="TextEncoder" [isFreeName]
+    v2 = Construct v1, -
+    v3 = PropGet v2 key="encode"
+    v4 = Call v3, v2
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v1
+    Return v6
+}
+function f1 name="keep" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

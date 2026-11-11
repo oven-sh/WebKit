@@ -1,0 +1,61 @@
+# an assignment asks the objects above, and a name there that has become read only refuses it: `Object.freeze(Object.prototype)`, which anybody may do at any time. Outside strict code nothing is thrown.
+# So `made.valueOf = 1` fills no field, and a read of it may find the function above. A definition asks nobody: a literal that lists the name has it. What is assigned behind a literal fills no field of a record, under whatever name: the literal is the store of "filled"
+# function assigned() { const made = {}; made.valueOf = 1; made.size = 2; return made; }   function listed() { return { valueOf: 1, size: 2 }; }
+# RUN: summary f1
+# CHECK: leaves-empty L0.0 "valueOf"
+# CHECK-NEXT: leaves-empty L0.1 "size"
+# RUN(LISTED): summary f2
+# LISTED-NOT: leaves-empty
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L1.0 "valueOf" {{*}}filled
+# RUN(EMPTY): link fields mechanisms=all
+# EMPTY-NOT: field L0.0 "valueOf" {{*}}filled
+# The constructor of a class below Object.prototype: function Point() { this.toString = 0; this.x = 1; }
+# RUN(CLASS): link fields mechanisms=all
+# CLASS: field L2.1 "x" {{*}}filled
+# RUN(ABOVE): link fields mechanisms=all
+# ABOVE-NOT: field L2.0 "toString" {{*}}filled
+
+layout L0 module=m0 fields=[{key="valueOf" declared={type=anything}}, {key="size" declared={type=anything}}]
+layout L1 module=m0 fields=[{key="valueOf" declared={type=anything}}, {key="size" declared={type=anything}}]
+layout L2 kind=Instance name="Point" module=m0 constructor=f3 fields=[{key="toString" declared={type=anything}}, {key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v2 calleeName="assigned"
+    v4 = NewClosure function=f2
+    v5 = Call v4 calleeName="listed"
+    v6 = NewClosure function=f3
+    v7 = Construct v6
+    v8 = Undefined
+    Return v8
+}
+function f1 name="assigned" module=m0 flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = Integer integer=1
+    PropSet v0, v1 key="valueOf" mode=Sloppy
+    v3 = Integer integer=2
+    PropSet v0, v3 key="size" mode=Sloppy
+    Return v0
+}
+function f2 name="listed" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    Return v2
+}
+function f3 name="Point" module=m0 flags=[IsSloppy, HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Integer
+    PropSet v0, v1 key="toString" mode=Sloppy
+    v3 = Integer integer=1
+    PropSet v0, v3 key="x" mode=Sloppy
+    v5 = Undefined
+    Return v5
+}

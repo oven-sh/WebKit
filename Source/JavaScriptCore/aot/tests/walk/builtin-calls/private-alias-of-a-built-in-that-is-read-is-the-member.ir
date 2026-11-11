@@ -1,0 +1,35 @@
+# only the host stores under a private name of the engine, so a read of the alias off the holder is the member itself, called or not
+# under the public name of a holder that nobody knows the read stays by name
+# const indexOf = Array.prototype.$indexOf; sink(indexOf);
+# the member is one that the table lists with a private alias (b.privateAlias in builtins/array.builtins.ts). Array.prototype.push has none, so `$push` finds nothing there
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = Builtin builtin=ArrayPrototypeIndexOf
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# NEVER-NOT: = PropGet
+# RUN(OTHER): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# OTHER-LABEL: code f2:Body
+# OTHER: = PropGet
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="alias" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype
+    v1 = PropGet v0 key=@"indexOf"
+    Return v1
+}
+function f2 name="aliasOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key=@"indexOf"
+    Return v1
+}

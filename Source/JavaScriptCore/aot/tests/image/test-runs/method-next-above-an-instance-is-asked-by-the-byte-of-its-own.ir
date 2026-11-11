@@ -1,0 +1,115 @@
+# hidden().get = 0; hidden()[Symbol.iterator] = 0; hidden().laid = 0; climb(hidden()); say(); lay(); say(); replace(); say(); restore(); say()   with   say = () => { print(twice(map, 2)); print(total(set)); }
+# function twice(things: Map<number, number>, turns: number) { let sum = 0; for (let at = 0; at < turns; at++) sum += things.get(1); return sum; }   function total(things: Set<number>) { let sum = 0; for (const thing of things) sum += thing; return sum; }
+# `get` above Maps and the method under Symbol.iterator above Sets are open in this test run. Each is found NEXT ABOVE the instance: nothing can stand between but what the instance itself says.
+# So the typed form asks the cell alone and ONE BYTE OF THAT MEMBER, not the byte of the class, which any write on any prototype above sets for the rest of the process:
+# lay() lays a name that has nothing to do with either; replace() replaces both, and the closed arm finds what was laid; put back, the bytes stay set and the built-ins answer through the closed arm.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell mechanisms=all const aboveSets = Set.prototype, aboveMaps = Map.prototype, opens = aboveSets[Symbol.iterator], get = aboveMaps.get; const once = value => function () { let given = false; return { next() { const done = given; given = true; return { done, value: done ? undefined : value }; }, [Symbol.iterator]() { return this; } }; }; globalThis.hidden = () => [1]; globalThis.set = new Set([1, 2, 3]); globalThis.map = new Map([[1, 4]]); globalThis.lay = () => { aboveSets.laid = 1; aboveMaps.laid = 1; }; globalThis.replace = () => { aboveSets[Symbol.iterator] = once(40); aboveMaps.get = () => 70; }; globalThis.restore = () => { aboveSets[Symbol.iterator] = opens; aboveMaps.get = get; };
+# CHECK: 8
+# CHECK-NEXT: 6
+# CHECK-NEXT: 8
+# CHECK-NEXT: 6
+# CHECK-NEXT: 140
+# CHECK-NEXT: 40
+# CHECK-NEXT: 8
+# CHECK-NEXT: 6
+# CHECK-NEXT: exited with 0
+# RUN(LOCKS): locks open
+# LOCKS: open MapPrototypeGet spelled-through-unseen
+# LOCKS: open SetPrototypeSymbolIterator spelled-through-unseen
+# RUN(METHOD): walk f1 mechanisms=all
+# METHOD-LABEL: code f1:Body
+# METHOD: = IsPristine {{*}}builtinClass=Map aspects=[Storage, Names, CellAlone]
+# METHOD: = IsMemberAsBuilt builtin=MapPrototypeGet
+# RUN(LOOP): walk f2 mechanisms=all
+# LOOP-LABEL: code f2:Body
+# LOOP: = IsPristine {{*}}builtinClass=Set aspects=[Names, CellAlone]
+# LOOP: = IsMemberAsBuilt builtin=SetPrototypeSymbolIterator
+# LOOP: = SetNext
+
+module m0 path="/a.test.ts" displayPath="a.test.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = PropGet v0 key="hidden" [isFreeName]
+    v4 = Call v3, -
+    v5 = Integer integer=0
+    PropSet v4, v5 key="get"
+    v7 = Call v3, -
+    PropSet v7, v5 key=@@iterator
+    v9 = Call v3, -
+    PropSet v9, v5 key="laid"
+    v11 = Call v3, -
+    v12 = PropGet v0 key="Object" [isFreeName]
+    v13 = PropGet v12 key="getPrototypeOf"
+    v14 = Call v13, v12, v11 calleeKey="getPrototypeOf"
+    v15 = PropGet v0 key="map" [isFreeName]
+    v16 = PropGet v0 key="set" [isFreeName]
+    v17 = PropGet v0 key="print" [isFreeName]
+    v18 = Integer integer=2
+    v19 = Call v1, -, v15, v18
+    v20 = Call v17, -, v19
+    v21 = Call v2, -, v16
+    v22 = Call v17, -, v21
+    v23 = PropGet v0 key="lay" [isFreeName]
+    v24 = Call v23, -
+    v25 = Call v1, -, v15, v18
+    v26 = Call v17, -, v25
+    v27 = Call v2, -, v16
+    v28 = Call v17, -, v27
+    v29 = PropGet v0 key="replace" [isFreeName]
+    v30 = Call v29, -
+    v31 = Call v1, -, v15, v18
+    v32 = Call v17, -, v31
+    v33 = Call v2, -, v16
+    v34 = Call v17, -, v33
+    v35 = PropGet v0 key="restore" [isFreeName]
+    v36 = Call v35, -
+    v37 = Call v1, -, v15, v18
+    v38 = Call v17, -, v37
+    v39 = Call v2, -, v16
+    v40 = Call v17, -, v39
+    Return v40
+}
+function f1 name="twice" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Map<number, number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map<number, number>, v1: number):
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3: anything, v4: anything):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v0 key="get"
+    v8 = Integer integer=1
+    v9 = Call v7, v0, v8 calleeKey="get"
+    v10 = Add v3, v9
+    v11 = Increment v4
+    Jump -> next b1(v10, v11)
+  b3():
+    Return v3
+}
+function f2 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Set<number>):
+    v1 = Integer integer=0
+    v2 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v3: anything):
+    LoopHint
+    v5 = IteratorResume v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v3
+  b3() handler=b4():
+    v8 = Add v3, v7
+    Jump -> next b1(v8)
+  b4() role=IterationCleanup subject=v2:
+    v9 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v9
+}

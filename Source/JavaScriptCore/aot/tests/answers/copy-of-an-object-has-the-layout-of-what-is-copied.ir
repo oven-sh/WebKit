@@ -1,0 +1,56 @@
+# function copy(o) { return { ...o }; }  const one = { x: 1, y: "a" };  const other = copy(one);  delete other.x;  other.y = 5;  report(Object.keys(other).join());  report(typeof other.y);  report(one.x);  report(typeof one.y);
+# The run time copies a compiled object with its layout. So whatever is done to the copy is done to an object of that layout:
+# if the copy counted as an object that nobody knows, the layout would be proven never to lose a property, and its field to hold a text alone
+# RUN(LINK): link fields layouts mechanisms=all
+# LINK-NOT: field L0.1 "y" proven=string
+# LINK: layout L0 changes=[{{*}}LosesProperty
+# RUN: run-in-shell globalThis.report = value => print(String(value));
+# CHECK: y
+# CHECK-NEXT: number
+# CHECK-NEXT: 1
+# CHECK-NEXT: string
+# CHECK-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none globalThis.report = value => print(String(value));
+# NONE: y
+# NONE-NEXT: number
+# NONE-NEXT: 1
+# NONE-NEXT: string
+# NONE-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Integer integer=1
+    v4 = String string="a"
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = Call v2, -, v6 calleeName="copy"
+    v8 = PropDelete v7 key="x"
+    v9 = Integer integer=5
+    PropSet v7, v9 key="y"
+    v11 = Builtin builtin=Object
+    v12 = PropGet v11 key="keys"
+    v13 = Call v12, v11, v7 calleeKey="keys" calleeName="Object.keys"
+    v14 = PropGet v13 key="join"
+    v15 = Call v14, v13 calleeKey="join" calleeName="join"
+    v16 = Call v1, -, v15 calleeName="report"
+    v17 = PropGet v7 key="y"
+    v18 = TypeOf v17
+    v19 = Call v1, -, v18 calleeName="report"
+    v20 = PropGet v6 key="x"
+    v21 = Call v1, -, v20 calleeName="report"
+    v22 = PropGet v6 key="y"
+    v23 = TypeOf v22
+    v24 = Call v1, -, v23 calleeName="report"
+    Return v24
+}
+function f1 name="copy" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CopyObject v0
+    Return v1
+}

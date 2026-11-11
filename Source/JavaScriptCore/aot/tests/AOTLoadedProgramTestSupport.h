@@ -37,11 +37,11 @@ private:
 
 using LoadedProgramTest = void (*)(LoadedProgram&);
 
-// The words are those of an `# OPTIONS:` line of an .ir test, such as "heat=EverythingIsHot".
 Vector<uint8_t> compileProgramText(ASCIILiteral programText, std::initializer_list<ASCIILiteral> optionWords = { });
 void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body, std::initializer_list<ASCIILiteral> optionWords = { });
-// No page of a loaded image is writable. A test that wants a table the compiler does not write changes it through this.
+void runWithLoadedProgramThatStops(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body, ASCIILiteral lastWords, std::initializer_list<ASCIILiteral> optionWords = { });
 void overwriteWordInImage(const uint32_t& word, uint32_t value);
+bool isNamedInTextOfLoadedProgram(const LayoutData&, ASCIILiteral name);
 
 template<std::span<const NativeTest> (*provider)(), const ASCIILiteral& programText, LoadedProgramTest body>
 void runNativeTestWithLoadedProgram()

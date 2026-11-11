@@ -58,7 +58,7 @@ public:
     using AddResult = typename HashTableType::AddResult;
 
     static constexpr ptrdiff_t offsetOfTable() { return OBJECT_OFFSETOF(HashSet, m_impl) + HashTableType::offsetOfTable(); }
-    static constexpr ptrdiff_t offsetOfTableSizeMask() { return HashTableType::offsetOfTableSizeMask(); }
+    static constexpr ptrdiff_t offsetOfTableSize() { return HashTableType::offsetOfTableSize(); }
 
     HashSet() = default;
 
@@ -97,6 +97,7 @@ public:
 
     void reserveInitialCapacity(unsigned keyCount) { m_impl.reserveInitialCapacity(keyCount); }
     void reserveCapacity(unsigned keyCount) { m_impl.reserveCapacity(keyCount); }
+    bool tryReserveCapacityForAdd(unsigned numberOfKeys = 1) { return m_impl.tryReserveCapacityForAdd(numberOfKeys); }
 
     iterator begin() const LIFETIME_BOUND;
     iterator end() const LIFETIME_BOUND;
@@ -131,7 +132,7 @@ public:
     // in the table. HashTranslator must have the following function members:
     //   static unsigned hash(const T&);
     //   static bool equal(const ValueType&, const T&);
-    //   static translate(ValueType&, const T&, unsigned hashCode);
+    //   static void translate(ValueType* uninitializedLocation, const T&, unsigned hashCode);
     template<typename HashTranslator, typename T> AddResult add(const T&) LIFETIME_BOUND;
     
     // An alternate version of translated add(), ensure() will still do translation
@@ -241,9 +242,9 @@ template<typename ValueTraits, typename HashFunctions>
 struct HashSetTranslator {
     static unsigned hash(const auto& key) { return HashFunctions::hash(key); }
     static bool equal(const auto& a, const auto& b) { return HashFunctions::equal(a, b); }
-    static void translate(auto& location, auto&&, NOESCAPE const Invocable<typename ValueTraits::TraitType()> auto& functor)
-    { 
-        ValueTraits::assignToEmpty(location, functor());
+    static void translate(typename ValueTraits::TraitType* location, auto&&, NOESCAPE const Invocable<typename ValueTraits::TraitType()> auto& functor)
+    {
+        std::construct_at(location, functor());
     }
 };
 
@@ -251,7 +252,7 @@ template<typename Translator>
 struct HashSetTranslatorAdapter {
     static unsigned hash(const auto& key) { return Translator::hash(key); }
     static bool equal(const auto& a, const auto& b) { return Translator::equal(a, b); }
-    static void translate(auto& location, const auto& key, const auto&, unsigned hashCode)
+    static void translate(auto* location, const auto& key, const auto&, unsigned hashCode)
     {
         Translator::translate(location, key, hashCode);
     }
@@ -261,9 +262,9 @@ template<typename ValueTraits, typename Translator>
 struct HashSetEnsureTranslatorAdaptor {
     static unsigned hash(const auto& key) { return Translator::hash(key); }
     static bool equal(const auto& a, const auto& b) { return Translator::equal(a, b); }
-    static void translate(auto& location, auto&&, NOESCAPE const Invocable<typename ValueTraits::TraitType()> auto& functor)
+    static void translate(typename ValueTraits::TraitType* location, auto&&, NOESCAPE const Invocable<typename ValueTraits::TraitType()> auto& functor)
     {
-        ValueTraits::assignToEmpty(location, functor());
+        std::construct_at(location, functor());
     }
 };
 
@@ -445,8 +446,9 @@ inline auto HashSet<T, U, V, W, shouldValidateKey>::take(iterator it) -> TakeTyp
     if (it == end())
         return ValueTraits::take(ValueTraits::emptyValue());
 
+    m_impl.internalCheckTableConsistency();
     auto result = ValueTraits::take(WTF::move(const_cast<ValueType&>(*it)));
-    remove(it);
+    m_impl.removeWithoutEntryConsistencyCheck(it.m_impl);
     return result;
 }
 

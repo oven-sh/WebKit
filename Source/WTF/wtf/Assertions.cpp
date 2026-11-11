@@ -51,6 +51,7 @@
 #endif // USE(CF)
 
 #if OS(WINDOWS)
+#include <atomic>
 #include <crtdbg.h>
 #include <windows.h>
 #endif
@@ -383,6 +384,22 @@ void WTFPrintBacktrace(std::span<void* const> stack)
     WTFPrintBacktraceWithPrefixAndPrintStream(out, stack, "");
 }
 
+#if OS(WINDOWS) && USE(BUN_JSC_ADDITIONS)
+static std::atomic<void (*)(void)> s_abortReporter;
+
+void WTFSetAbortReporter(void (*reporter)(void))
+{
+    s_abortReporter.store(reporter);
+}
+
+void WTFAbort()
+{
+    if (auto* reporter = s_abortReporter.load()) [[unlikely]]
+        reporter();
+    std::abort();
+}
+#endif
+
 #if !defined(NDEBUG) || !(OS(DARWIN) || PLATFORM(PLAYSTATION))
 void WTFCrash()
 {
@@ -620,7 +637,7 @@ void WTFLogAlwaysAndCrash(const char* format, ...)
     CRASH();
 }
 
-static void LEGACY_NODELETE setStateOfAllChannels(WTFLogChannel* channels[], size_t channelCount, WTFLogChannelState state)
+NODELETE static void setStateOfAllChannels(WTFLogChannel* channels[], size_t channelCount, WTFLogChannelState state)
 {
     for (size_t i = 0; i < channelCount; ++i)
         channels[i]->state = state;

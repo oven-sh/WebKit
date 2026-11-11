@@ -1,0 +1,54 @@
+# If two lists that arrive at one place kept their elements apart, a store through that place would reach neither list for sure, and a read of the one list would miss what was stored: a string would be proven where a boolean lies
+# function put(l, v) { l[0] = v; }  function first(l) { return l[0]; }  const a = ["a"], b = [1];  put(a, "b");  put(b, true);  first(a);
+# The two sites meet at the parameter of `put`, so they are united with each other, and with no other list. The store goes into the elements of both. A site that is united with another has not escaped, and the third list and the object in it keep all that is known.
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: function f1 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=Array
+# CHECK: function f2 callers-known one-callee {{*}}result=undefined|true|int[0, 2147483647]|string
+# CHECK: function f3 callers-known one-callee {{*}}result=undefined|L0
+# CHECK: field L0.0 "x" proven=string writers-known written-at-construction-alone
+# CHECK: layout L0 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewArray v0 contents=anything
+    v2 = Integer integer=1
+    v3 = NewArray v2 contents=anything
+    v4 = NewClosure function=f1
+    v5 = String string="b"
+    v6 = Call v4, -, v1, v5 calleeName="put"
+    v7 = Boolean boolean=true
+    v8 = Call v4, -, v3, v7 calleeName="put"
+    v9 = NewClosure function=f2
+    v10 = Call v9, -, v1 calleeName="first"
+    v11 = NewObject -, v0 layout=L0 fields=[0]
+    v12 = FinishObject v11
+    v13 = NewArray v12 contents=anything
+    v14 = NewClosure function=f3
+    v15 = Call v14, -, v13 calleeName="other"
+    v16 = Undefined
+    Return v16
+}
+function f1 name="put" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    ElemSet v0, v2, v1
+    v4 = Undefined
+    Return v4
+}
+function f2 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="other" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}

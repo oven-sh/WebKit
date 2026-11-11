@@ -47,7 +47,6 @@ function findPackedKind(scope: Scope, syntax: KindSyntax): PackedKind | null {
   return element === undefined ? null : { tag: "Record", element };
 }
 
-/** How many bits of its word the field takes. Null: all that the fields in front of it leave. */
 function widthOf(kind: PackedKind, { arrayLength }: KindSyntax): number | null {
   if (typeof arrayLength === "bigint") return Number(arrayLength);
   if (kind.tag === "Bool") return 1;
@@ -89,7 +88,6 @@ export function fieldsOfWord({ fields, arms }: PackedWord): PackedField[] {
   return arms === null ? [...fields] : [...fields, ...arms.whenTrue, ...arms.whenFalse];
 }
 
-/** The fields from the bit `start` up. Null: a field in front takes all the bits. */
 function resolveFields(
   scope: Scope,
   syntaxes: readonly PackedFieldSyntax[],
@@ -153,7 +151,6 @@ function columnsAsText(type: Extract<PackedKind, { tag: "Enum" }>["type"], posit
   return type.members[position].values.map(value => (value.tag === "Bool" ? String(value.value) : "")).join(", ");
 }
 
-/** An enumerator is found by its columns, so no two may have the same. */
 function checkEnumeratorsDiffer(scope: Scope, record: PackedRecord): void {
   for (const { kind } of record.words.flatMap(fieldsOfWord)) {
     if (kind.tag !== "Enum" || !isFoundByColumns(kind.type)) continue;

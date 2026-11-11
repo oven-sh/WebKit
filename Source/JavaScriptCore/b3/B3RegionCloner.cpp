@@ -33,6 +33,7 @@ void RegionCloner::demoteEscapingValues(PhiTreatment treatment, ValueOwners owne
     RELEASE_ASSERT(m_step == Step::Declaring);
     m_step = Step::Copying;
     m_phiTreatment = treatment;
+    m_originalsKeepTheirMeaning.emplace(m_proc.movedLoadLog());
     if (m_declaredBlocks.isEmpty())
         return;
 
@@ -60,11 +61,16 @@ void RegionCloner::demoteEscapingValues(PhiTreatment treatment, ValueOwners owne
             }
         }
     }
-    if (valuesToDemote.isEmpty())
-        return;
-
-    demoteValues(m_proc, valuesToDemote);
-    m_didChange = true;
+    // The place of a comparison that was decided is a user of what it compared.
+    m_proc.movedLoadLog().forEachOperandOfDecidedComparison([&](Value* value) {
+        if (m_declaredBlocks.contains(value->owner))
+            valuesToDemote.add(value);
+    });
+    if (!valuesToDemote.isEmpty()) {
+        demoteValues(m_proc, valuesToDemote);
+        m_didChange = true;
+    }
+    m_proc.movedLoadLog().willCopy(m_proc, m_declaredBlocks);
 }
 
 Value* RegionCloner::appendClone(Value* original, BasicBlock* destination, ValueMap& map)
@@ -75,11 +81,20 @@ Value* RegionCloner::appendClone(Value* original, BasicBlock* destination, Value
     ASSERT(!original->kind().isCloningForbidden());
 
     Value* clone = m_proc.clone(original);
+    bool holdsOnOnePath = false;
     for (Value*& child : clone->children()) {
-        if (Value* replacement = map.get(child))
+        if (Value* replacement = map.get(child)) {
             child = replacement;
-        else
+            holdsOnOnePath |= m_valuesOfOnePath.contains(replacement);
+        } else
             RELEASE_ASSERT(child->opcode() != Phi || child->owner != original->owner);
+    }
+    if (holdsOnOnePath) {
+        Effects effects = m_proc.effectsOf(clone);
+        if (!effects.mustExecute() && !effects.controlDependent) {
+            m_proc.knownProperties().remove(clone);
+            m_valuesOfOnePath.add(clone);
+        }
     }
     if (original->type() != Void)
         map.add(original, clone);
@@ -95,6 +110,12 @@ void RegionCloner::substitute(ValueMap& map, Value* original, Value* replacement
     map.set(original, replacement);
 }
 
+void RegionCloner::substituteOnOnePath(ValueMap& map, Value* original, Value* replacement)
+{
+    substitute(map, original, replacement);
+    m_valuesOfOnePath.add(replacement);
+}
+
 void RegionCloner::substitutePhisFedBy(BasicBlock* predecessor, BasicBlock* block, ValueMap& map)
 {
     RELEASE_ASSERT(m_step == Step::Copying);
@@ -103,6 +124,7 @@ void RegionCloner::substitutePhisFedBy(BasicBlock* predecessor, BasicBlock* bloc
         if (!upsilon || upsilon->phi()->owner != block)
             continue;
         map.set(upsilon->phi(), upsilon->child(0));
+        m_valuesOfOnePath.add(upsilon->child(0));
         upsilon->replaceWithNop();
         m_didChange = true;
     }
@@ -113,10 +135,12 @@ RegionCloner::BlockMap RegionCloner::cloneBlocks(std::span<BasicBlock* const> bl
     RELEASE_ASSERT(m_step == Step::Copying);
     RELEASE_ASSERT(m_phiTreatment == PhiTreatment::Demote);
 
+    MovedLoadLog::RegionCopy regionCopy(m_proc.movedLoadLog());
     BlockMap copies;
     for (BasicBlock* block : blocks) {
         auto result = copies.add(block, m_proc.addBlock());
         RELEASE_ASSERT(result.isNewEntry);
+        m_proc.movedLoadLog().didCopy(block, result.iterator->value);
     }
     for (BasicBlock* block : blocks) {
         BasicBlock* copy = copies.get(block);
@@ -132,13 +156,28 @@ RegionCloner::BlockMap RegionCloner::cloneBlocks(std::span<BasicBlock* const> bl
     return copies;
 }
 
+bool RegionCloner::valuesStayInDeclaredBlocks() const
+{
+    for (BasicBlock* block : m_proc) {
+        for (Value* value : *block) {
+            for (Value* child : value->children()) {
+                if (child->owner != block && m_declaredBlocks.contains(child->owner))
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool RegionCloner::finish()
 {
     RELEASE_ASSERT(m_step != Step::Finished);
     m_step = Step::Finished;
+    m_originalsKeepTheirMeaning.reset();
     if (!m_didChange)
         return false;
 
+    RELEASE_ASSERT(valuesStayInDeclaredBlocks());
     m_proc.resetReachability();
     m_proc.invalidateCFG();
     return true;

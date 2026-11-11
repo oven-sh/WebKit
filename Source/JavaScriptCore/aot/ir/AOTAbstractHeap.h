@@ -36,12 +36,11 @@ constexpr AbstractHeapSet heapsMatching(bool (*matches)(AbstractHeap))
 inline constexpr AbstractHeapSet allHeaps = heapsMatching([](AbstractHeap) { return true; });
 inline constexpr AbstractHeapSet observableHeaps = heapsMatching([](AbstractHeap heap) { return isObservable(heap); });
 inline constexpr AbstractHeapSet orderedHeaps = heapsMatching([](AbstractHeap heap) { return isOrdered(heap); });
-inline constexpr AbstractHeapSet heapsHoldingValues = heapsMatching([](AbstractHeap heap) { return holdsValues(heap); });
 inline constexpr AbstractHeapSet perObjectHeaps = heapsMatching([](AbstractHeap heap) { return isPerObject(heap); });
 inline constexpr AbstractHeapSet indexedHeaps = heapsMatching([](AbstractHeap heap) { return numberOfIndexesOf(heap) > 0; });
 
 inline constexpr AbstractHeapSet bookkeepingHeaps { AbstractHeap::AllocatorState, AbstractHeap::RuntimeState };
-inline constexpr AbstractHeapSet heapsWhoseWritesNobodySees = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage, AbstractHeap::CollectionStorage };
+inline constexpr AbstractHeapSet unobservableWriteHeaps = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage, AbstractHeap::CollectionStorage, AbstractHeap::MemberGuards };
 inline constexpr AbstractHeapSet compiledCodeHeaps { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
 
 inline constexpr unsigned numberOfIndexedHeaps = static_cast<unsigned>(indexedHeaps.size());

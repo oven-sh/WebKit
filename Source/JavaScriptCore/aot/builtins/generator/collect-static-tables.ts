@@ -3,7 +3,14 @@ import { join } from "node:path";
 import { leftOutOf, Problems, type MemberDeclaration, type Source, type SourcedDeclaration } from "./declarations.ts";
 import { memberPathOf } from "./paths.ts";
 import { cap } from "./support.ts";
-import { targetPlatforms, type BuiltinPath, type EntryColumns, type TargetPlatform } from "./vocabulary.ts";
+import {
+  targetPlatforms,
+  type BuiltinPath,
+  type EntryColumns,
+  type FunctionRef,
+  type Origin,
+  type TargetPlatform,
+} from "./vocabulary.ts";
 
 export interface StaticTableEntry {
   key: string;
@@ -22,6 +29,7 @@ interface WordMeaning {
   kind?: "Function" | "Accessor" | "DataProperty";
   valueColumn?: ValueColumn;
   isLazilyCreated?: boolean;
+  isAddedAtFirstRead?: boolean;
   requiresFunction?: boolean;
 }
 
@@ -33,12 +41,15 @@ interface Condition {
 const constructableWord = "Constructable";
 
 const attributeWords = new Map<string, WordMeaning>([
-  ["Function", { kind: "Function", valueColumn: "Function" }],
+  ["Function", { kind: "Function", valueColumn: "Function", isAddedAtFirstRead: true }],
   [constructableWord, { requiresFunction: true }],
   ["Builtin", { requiresFunction: true }],
-  ["PropertyCallback", { kind: "DataProperty", valueColumn: "CreationCallback", isLazilyCreated: true }],
-  ["ClassStructure", { kind: "DataProperty", valueColumn: "Data", isLazilyCreated: true }],
-  ["CellProperty", { kind: "DataProperty", valueColumn: "Data" }],
+  [
+    "PropertyCallback",
+    { kind: "DataProperty", valueColumn: "CreationCallback", isLazilyCreated: true, isAddedAtFirstRead: true },
+  ],
+  ["ClassStructure", { kind: "DataProperty", valueColumn: "Data", isLazilyCreated: true, isAddedAtFirstRead: true }],
+  ["CellProperty", { kind: "DataProperty", valueColumn: "Data", isAddedAtFirstRead: true }],
   ["ConstantInteger", { kind: "DataProperty", valueColumn: "Data" }],
   ["CustomAccessor", { kind: "Accessor", valueColumn: "Getter" }],
   ["Accessor", { kind: "Accessor", valueColumn: "Getter" }],
@@ -53,9 +64,7 @@ const builtinCodeGenerator = "JSBuiltin";
 
 const beginPattern = /^@begin\s+([:\w]+)\s*\d*$/;
 const conditionPattern = /^#if\s+(!?)OS\((WINDOWS|DARWIN|LINUX)\)$/;
-// A row that only some builds of the host have. b.leftOut() lists the names that are defined.
 const definedPattern = /^#if\s+(!?)defined\((\w+)\)$/;
-// A row that an engine built without the feature leaves out. The table has it: MayBeAbsent says that a realm may lack it.
 const enabledPattern = /^#if\s+ENABLE\(\w+\)$/;
 
 const platformsByOS: Readonly<Record<string, readonly TargetPlatform[]>> = {
@@ -274,6 +283,10 @@ function memberOf(
       platforms: entry.platforms,
       ...symbolColumnsOf(entry),
       ...(entry.attributes.includes(constructableWord) ? { constructable: true } : {}),
+      canBeListed: !entry.attributes.includes("DontEnum"),
+      ...(meanings.some(meaning => meaning.isAddedAtFirstRead === true)
+        ? { addedAtFirstRead: true, ...(entry.attributes.includes("DontEnum") ? {} : { addedAsEnumerable: true }) }
+        : {}),
     },
   };
 }
@@ -295,6 +308,33 @@ function readTableFile(path: string, texts: Map<string, string | null>): string 
   return text;
 }
 
+const keyOf = ({ file, name }: FunctionRef): string => `${file}\t${name}`;
+
+function findNamedFunctions(declared: readonly SourcedDeclaration[]): Set<string> {
+  const named = new Set<string>();
+  for (const { declaration } of declared) {
+    if (declaration.declares === "ExcludedFunction") named.add(keyOf(declaration.function));
+    if (declaration.declares === "Member") {
+      for (const { implementation } of declaration.signatures) {
+        const fallback = implementation && "otherwise" in implementation ? implementation.otherwise : null;
+        for (const each of [implementation, fallback]) {
+          if (each?.how === "Compiled") named.add(keyOf(each.function));
+        }
+      }
+    }
+    if (declaration.declares !== "Member" && declaration.declares !== "Extension") continue;
+    for (const called of declaration.columns.callsFunctions ?? []) {
+      named.add(keyOf("function" in called ? called.function : called));
+    }
+  }
+  return named;
+}
+
+function codeOfRow(table: string, key: string, origin: Origin): FunctionRef {
+  const file = cap(table.replace(/Table$/, "")).replace(/^Js(?=[A-Z])/, "JS");
+  return { file: origin === "Host" ? `builtins/${file}` : file, name: key };
+}
+
 export function collectStaticTables(
   declared: readonly SourcedDeclaration[],
   roots: { Engine: string; Host: string },
@@ -302,6 +342,7 @@ export function collectStaticTables(
 ): SourcedDeclaration[] {
   const prototypePaths = findPrototypePaths(declared);
   const definedNames = new Set(leftOutOf(declared).flatMap(leftOut => leftOut.definedNames));
+  const namedFunctions = findNamedFunctions(declared);
   const texts = new Map<string, string | null>();
   const members: SourcedDeclaration[] = [];
   for (const { declaration, source } of declared) {
@@ -316,7 +357,10 @@ export function collectStaticTables(
     const report: Report = (line, message) => problems.add(sourceAt(line), message);
     for (const entry of parseTable(text, table.table, definedNames, report)) {
       const member = memberOf(holder, prototypePaths.has(holder), entry, report);
-      if (member !== null) members.push({ declaration: member, source: sourceAt(entry.line) });
+      if (member === null) continue;
+      const code = codeOfRow(table.table, entry.key, source.origin);
+      if (entry.value === builtinCodeGenerator && !namedFunctions.has(keyOf(code))) member.columns.callsFunctions = [code];
+      members.push({ declaration: member, source: sourceAt(entry.line) });
     }
   }
   return members;

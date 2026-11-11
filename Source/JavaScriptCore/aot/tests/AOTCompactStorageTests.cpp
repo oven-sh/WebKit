@@ -7,29 +7,18 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
 #include "AOTChildProcess.h"
-#include "AOTCompactTable.h"
-#include "AOTCompile.h"
-#include "AOTCompileOptionWords.h"
-#include "AOTIRParser.h"
-#include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
-#include "AOTProgramFile.h"
-#include "AOTRuntimeFunctions.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
-#include "AOTThreads.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
 #include "JSSetInlines.h"
-#include "Options.h"
 #include "TopExceptionScope.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
-#include <wtf/text/StringBuilder.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -37,81 +26,15 @@ namespace JSC::AOT {
 
 std::span<const NativeTest> compactStorageTests();
 
-static constexpr unsigned numberOfConstantKeys = 10000;
+static constexpr ASCIILiteral compactStorageProgramText =
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
+    "entry module=m0\n"
+    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    Return\n"
+    "}\n"_s;
 
-static String makeProgramText()
-{
-    StringBuilder text;
-    text.append(
-        "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
-        "entry module=m0\n"
-        "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
-        "  b0():\n"
-        "    v0 = Builtin builtin=GlobalThis\n"
-        "    v1 = PropGet v0 key=\"publish\" [isFreeName]\n"
-        "    v2 = NewClosure function=f1\n"
-        "    v3 = Call v1, -, v2\n"
-        "    Return\n"
-        "}\n"
-        "function f1 name=\"make\" parameters=[{type=anything}] results=[{type=anything}] {\n"
-        "  b0(v0: anything):\n"
-        "    v1 = Builtin builtin=GlobalThis\n"
-        "    v2 = PropGet v1 key=\"Set\"\n"
-        "    v3 = Data data=d0 @10\n"
-        "    v4 = Construct v2, -, v3 @15\n"
-        "    v5 = Call v0, -, v4\n"
-        "    v6 = PropGet v1 key=\"Map\"\n"
-        "    v7 = Data data=d1 @20\n"
-        "    v8 = Construct v6, -, v7 @25\n"
-        "    v9 = Call v0, -, v8\n"
-        "    Return\n"
-        "}\n"
-        "data d0 root=Array{contents=string elements=["_s);
-    for (unsigned number = 0; number < numberOfConstantKeys; ++number)
-        text.append(number ? ", "_s : ""_s, "String{value=\"key"_s, number, "\"}"_s);
-    text.append("]} module=m0\ndata d1 root=Array{contents=Array<anything> elements=["_s);
-    for (unsigned number = 0; number < numberOfConstantKeys; ++number)
-        text.append(number ? ", "_s : ""_s, "Array{contents=anything elements=[String{value=\"key"_s, number, "\"}, String{value=\"value"_s, number, "\"}]}"_s);
-    text.append("]} module=m0\n"_s);
-    return text.toString();
-}
-
-static std::unique_ptr<CompileOutput> compileProgram()
-{
-    std::unique_ptr<CompileOutput> output;
-    runOnBuildThread([&] {
-        Wire::CompileOptions options = makeDefaultCompileOptions();
-        AOT_TEST_CHECK(!applyOptionWord(options, "references=narrow"_s));
-        BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(makeProgramText()), Typed::IRForm::AsRead, build);
-        AOT_TEST_CHECK(program);
-        output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
-    });
-    return output;
-}
-
-static void runWithCollections(ASCIILiteral testName, LoadedProgramTest body, std::initializer_list<ASCIILiteral> engineOptions)
-{
-    if (Options::aotImagePath()) {
-        runWithLoadedProgram(testName, ""_s, body);
-        return;
-    }
-
-    TemporaryFile image(".image"_s, compileProgram()->image.span());
-    ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), makeString("--aotImagePath="_s, image.path()) };
-    for (ASCIILiteral option : engineOptions)
-        arguments.append(String(option));
-    ChildProcessResult result = launcher.run(arguments.span());
-    if (!result.exitedWith(0)) {
-        dataLogLn(result.output);
-        dataLogLn("The process that uses the image ", result.description());
-        failNativeTest(__FILE__, __LINE__, testName.characters());
-    }
-}
+static constexpr ASCIILiteral narrowReferencesWord = "references=narrow"_s;
 
 static bool hasCompactStorage(JSValue collection)
 {
@@ -122,15 +45,13 @@ static bool hasCompactStorage(JSValue collection)
     failNativeTest(__FILE__, __LINE__, "the value is a Set or a Map");
 }
 
-static JSValue callInPlainRealm(LoadedProgram& program, ASCIILiteral functionSource, std::initializer_list<JSValue> values)
+static JSValue callInPlainRealm(LoadedProgram& program, ASCIILiteral functionSource)
 {
     VM& vm = program.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSGlobalObject* realm = program.realms().plain();
     JSValue function = program.realms().evaluate(realm, functionSource);
     MarkedArgumentBuffer arguments;
-    for (JSValue value : values)
-        arguments.append(value);
     JSValue result = call(realm, function, arguments, "the source is a function"_s);
     if (scope.exception())
         dataLogLn("threw ", scope.exception()->value().toWTFString(realm));
@@ -138,12 +59,12 @@ static JSValue callInPlainRealm(LoadedProgram& program, ASCIILiteral functionSou
     return result;
 }
 
-static void checkReaders(LoadedProgram& program, ASCIILiteral functionSource, ASCIILiteral expectedText, std::initializer_list<JSValue> values = { })
+static void checkReaders(LoadedProgram& program, ASCIILiteral functionSource, ASCIILiteral expectedText)
 {
     VM& vm = program.vm();
     JSGlobalObject* realm = program.realms().plain();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSObject* result = asObject(callInPlainRealm(program, functionSource, values));
+    JSObject* result = asObject(callInPlainRealm(program, functionSource));
     String text = result->get(realm, Identifier::fromString(vm, "text"_s)).toWTFString(realm);
     if (text != expectedText)
         dataLogLn("the readers gave\n", text, "\nexpected\n", expectedText);
@@ -382,95 +303,9 @@ static void testChangesDuringForEach(LoadedProgram& program)
     }))js"_s, "a,c,k0,k1,k2,k3,k4,k5,after,last after,last"_s);
 }
 
-static const CollectionDataRequest& requestFor(LoadedProgram& program, unsigned number)
-{
-    std::span<const uint32_t> requests = program.state().tables.requests();
-    AOT_TEST_CHECK(requests.size() == 1 + 2 * sizeof(CollectionDataRequest) / sizeof(uint32_t));
-    const CollectionDataRequest& request = reinterpret_cast<const CollectionDataRequest*>(requests.data() + 1)[number];
-    AOT_TEST_CHECK(request.tableInImage);
-    return request;
-}
-
-static JSSet* buildSet(LoadedProgram& program)
-{
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
-    JSSet* set = tryBuildSet(program.realm(), program.state(), requestFor(program, 0));
-    AOT_TEST_CHECK(set && !scope.exception() && CompactTable::tableOf(set)->isInImage());
-    return set;
-}
-
-static JSMap* buildMap(LoadedProgram& program)
-{
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
-    JSMap* map = tryBuildMap(program.realm(), program.state(), requestFor(program, 1));
-    AOT_TEST_CHECK(map && !scope.exception() && CompactTable::tableOf(map)->isInImage());
-    return map;
-}
-
-static constexpr ASCIILiteral readersOfConstantCollections = R"js((function (set, map) {
-    let ends = array => array.length + ":" + array[0] + ".." + array[array.length - 1];
-    let isRight = (array, prefix) => array.every((text, index) => text === prefix + index);
-    let lists = [[Array.from(set), "key"], [[...set], "key"], [Array.from(map.keys()), "key"], [Array.from(map.values()), "value"], [Array.from(set.values()), "key"], [[...map.keys()], "key"], [[...map.values()], "value"]];
-    let text = lists.map(([array, prefix]) => ends(array) + (isRight(array, prefix) ? "" : " wrong")).join(" ");
-    return { text, collections: [set, map] };
-}))js"_s;
-
-static constexpr ASCIILiteral listsOfConstantCollections = "10000:key0..key9999 10000:key0..key9999 10000:key0..key9999 10000:value0..value9999 10000:key0..key9999 10000:key0..key9999 10000:value0..value9999"_s;
-
-static void testReadersOfTablesInTheImage(LoadedProgram& program)
-{
-    JSSet* set = buildSet(program);
-    JSMap* map = buildMap(program);
-    checkReaders(program, readersOfConstantCollections, listsOfConstantCollections, { set, map });
-    AOT_TEST_CHECK(CompactTable::tableOf(set)->isInImage() && CompactTable::tableOf(map)->isInImage());
-
-    checkReaders(program, R"js((function (set, map) {
-        let count = 0;
-        Set.prototype.forEach.call(set, value => { count += value.length; });
-        Map.prototype.forEach.call(map, (value, key) => { count += value.length - key.length; });
-        let parts = [set.size, map.size, set.has("key0"), set.has("key9999"), set.has("key10000"), set.has(5), map.get("key1234"), String(map.get("value1")), map.has("key" + 77), count];
-        parts.push(set.keys().next().value, map.entries().next().value.join("="), set.union(new Set(["other"])).size, set.isSupersetOf(new Set(["key5"])), new Set(set).size, new Map(map).get("key9"));
-        return { text: parts.join(" "), collections: [set, map] };
-    }))js"_s, "10000 10000 true true false false value1234 undefined true 88890 key0 key0=value0 10001 true 10000 value9"_s, { set, map });
-    AOT_TEST_CHECK(CompactTable::tableOf(set)->isInImage() && CompactTable::tableOf(map)->isInImage());
-}
-
-static void testChangeMovesTableInTheImageToTheHeap(LoadedProgram& program)
-{
-    JSSet* set = buildSet(program);
-    JSMap* map = buildMap(program);
-    checkReaders(program, R"js((function (set, map) {
-        let setIterator = set.values();
-        let mapIterator = map.keys();
-        let seen = [setIterator.next().value, mapIterator.next().value];
-        set.add("key5");
-        seen.push(set.size);
-        set.add("added");
-        map.set("key1", "changed");
-        map.delete("key2");
-        seen.push(set.size, map.size, set.has("added"), set.has("key9999"), map.get("key1"), map.has("key2"), map.get("key3"));
-        seen.push(setIterator.next().value, mapIterator.next().value, mapIterator.next().value);
-        let rest = [...setIterator];
-        seen.push(rest.length, rest[rest.length - 1]);
-        return { text: seen.join(" "), collections: [set, map] };
-    }))js"_s, "key0 key0 10000 10001 9999 true true changed false value3 key1 key1 key3 9999 added"_s, { set, map });
-    AOT_TEST_CHECK(CompactTable::tableOf(set)->isHeapTable() && CompactTable::tableOf(map)->isHeapTable());
-
-    JSSet* untouched = buildSet(program);
-    AOT_TEST_CHECK(untouched != set && untouched->size() == numberOfConstantKeys && !untouched->has(program.realm(), jsString(program.vm(), String("added"_s))));
-}
-
-static void checkReadersWhileCollecting(LoadedProgram& program)
-{
-    AOT_TEST_CHECK(Options::collectContinuously());
-    for (unsigned round = 0; round < 20; ++round)
-        checkReaders(program, readersOfConstantCollections, listsOfConstantCollections, { buildSet(program), buildMap(program) });
-}
-
 static void testStructuredCloneInShell()
 {
-    std::unique_ptr<CompileOutput> output = compileProgram();
-    TemporaryFile image(".image"_s, output->image.span());
+    TemporaryFile image(".image"_s, compileProgramText(compactStorageProgramText, { narrowReferencesWord }).span());
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
@@ -501,42 +336,32 @@ print([setClone.size, set.has("own")].join(" "));
 }
 
 template<LoadedProgramTest body>
-static void runNativeTestWithCollections()
+static void runNativeTestWithNarrowReferences()
 {
     for (const NativeTest& test : compactStorageTests()) {
-        if (test.run == &runNativeTestWithCollections<body>) {
-            runWithCollections(test.name, body, { });
+        if (test.run == &runNativeTestWithNarrowReferences<body>) {
+            runWithLoadedProgram(test.name, compactStorageProgramText, body, { narrowReferencesWord });
             return;
         }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static constexpr ASCIILiteral readersWhileCollectingTest = "compact-storage/readers-of-tables-in-the-image-while-collecting"_s;
-
-static void testReadersOfTablesInTheImageWhileCollecting()
-{
-    runWithCollections(readersWhileCollectingTest, checkReadersWhileCollecting, { "--collectContinuously=1"_s });
-}
-
 std::span<const NativeTest> compactStorageTests()
 {
     static constexpr NativeTest tests[] = {
-        { "compact-storage/every-collection-of-the-vm-is-compact"_s, runNativeTestWithCollections<testEveryCollectionOfTheVMIsCompact> },
-        { "compact-storage/for-each"_s, runNativeTestWithCollections<testForEach> },
-        { "compact-storage/iterators"_s, runNativeTestWithCollections<testIterators> },
-        { "compact-storage/spread-and-loops"_s, runNativeTestWithCollections<testSpreadAndLoops> },
-        { "compact-storage/array-from"_s, runNativeTestWithCollections<testArrayFrom> },
-        { "compact-storage/set-methods"_s, runNativeTestWithCollections<testSetMethods> },
-        { "compact-storage/get-or-insert"_s, runNativeTestWithCollections<testGetOrInsert> },
-        { "compact-storage/copies"_s, runNativeTestWithCollections<testCopies> },
-        { "compact-storage/iterator-alive-across-growth"_s, runNativeTestWithCollections<testIteratorAliveAcrossGrowth> },
-        { "compact-storage/iterator-alive-across-deletion"_s, runNativeTestWithCollections<testIteratorAliveAcrossDeletion> },
-        { "compact-storage/iterator-alive-across-clear"_s, runNativeTestWithCollections<testIteratorAliveAcrossClear> },
-        { "compact-storage/changes-during-for-each"_s, runNativeTestWithCollections<testChangesDuringForEach> },
-        { "compact-storage/tables-in-the-image/readers"_s, runNativeTestWithCollections<testReadersOfTablesInTheImage> },
-        { "compact-storage/tables-in-the-image/change-moves-the-table-to-the-heap"_s, runNativeTestWithCollections<testChangeMovesTableInTheImageToTheHeap> },
-        { readersWhileCollectingTest, testReadersOfTablesInTheImageWhileCollecting },
+        { "compact-storage/every-collection-of-the-vm-is-compact"_s, runNativeTestWithNarrowReferences<testEveryCollectionOfTheVMIsCompact> },
+        { "compact-storage/for-each"_s, runNativeTestWithNarrowReferences<testForEach> },
+        { "compact-storage/iterators"_s, runNativeTestWithNarrowReferences<testIterators> },
+        { "compact-storage/spread-and-loops"_s, runNativeTestWithNarrowReferences<testSpreadAndLoops> },
+        { "compact-storage/array-from"_s, runNativeTestWithNarrowReferences<testArrayFrom> },
+        { "compact-storage/set-methods"_s, runNativeTestWithNarrowReferences<testSetMethods> },
+        { "compact-storage/get-or-insert"_s, runNativeTestWithNarrowReferences<testGetOrInsert> },
+        { "compact-storage/copies"_s, runNativeTestWithNarrowReferences<testCopies> },
+        { "compact-storage/iterator-alive-across-growth"_s, runNativeTestWithNarrowReferences<testIteratorAliveAcrossGrowth> },
+        { "compact-storage/iterator-alive-across-deletion"_s, runNativeTestWithNarrowReferences<testIteratorAliveAcrossDeletion> },
+        { "compact-storage/iterator-alive-across-clear"_s, runNativeTestWithNarrowReferences<testIteratorAliveAcrossClear> },
+        { "compact-storage/changes-during-for-each"_s, runNativeTestWithNarrowReferences<testChangesDuringForEach> },
         { "compact-storage/structured-clone-in-shell"_s, testStructuredCloneInShell },
     };
     return tests;

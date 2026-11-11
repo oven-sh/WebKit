@@ -26,7 +26,6 @@
 #pragma once
 
 #import "BindableResource.h"
-#import <WebGPU/WGPUTextureViewImpl.h>
 #import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
@@ -53,15 +52,16 @@ struct ResolvedTextureViewDescriptor {
     uint32_t arrayLayerCount { 0 };
     WebGPU::TextureAspect aspect { WebGPU::TextureAspect::All };
     OptionSet<WebGPU::TextureUsage> usage;
+    WebGPU::TextureComponentSwizzle swizzle;
 };
 
 // https://gpuweb.github.io/gpuweb/#gputextureview
-class TextureView final : public WebGPU::TextureView, public WGPUTextureViewImpl, public TrackedResource {
+class TextureView final : public WebGPU::TextureView, public TrackedResource {
     WTF_MAKE_TZONE_ALLOCATED(TextureView);
 public:
-    static Ref<TextureView> create(id<MTLTexture> texture, const ResolvedTextureViewDescriptor& descriptor, const std::optional<WebGPU::Extent3D>& renderExtent, Texture& parentTexture, Device& device)
+    static Ref<TextureView> create(id<MTLTexture> texture, id<MTLTexture> sampledTexture, const ResolvedTextureViewDescriptor& descriptor, const std::optional<WebGPU::Extent3D>& renderExtent, Texture& parentTexture, Device& device)
     {
-        return adoptRef(*new TextureView(texture, descriptor, renderExtent, parentTexture, device));
+        return adoptRef(*new TextureView(texture, sampledTexture, descriptor, renderExtent, parentTexture, device));
     }
     static Ref<TextureView> createInvalid(Texture& texture, Device& device)
     {
@@ -72,34 +72,41 @@ public:
 
     void setLabel(String&&) final;
 
-    bool LEGACY_NODELETE isValid() const final;
+    NODELETE bool isValid() const final;
 
-    id<MTLTexture> LEGACY_NODELETE texture() const;
-    id<MTLTexture> LEGACY_NODELETE parentTexture() const;
+    NODELETE id<MTLTexture> texture() const;
+    // The view as a shader reads it: the same texels seen through the swizzle the descriptor asked
+    // for, which is the plain texture whenever that swizzle is the identity.
+    NODELETE id<MTLTexture> sampledTexture() const;
+    NODELETE id<MTLTexture> parentTexture() const;
+    // True when the descriptor asked for a swizzle other than "rgba"; the base swizzle the format
+    // imposes on top of that one does not count.
+    bool hasSwizzle() const { return m_hasSwizzle; }
     const std::optional<WebGPU::Extent3D>& renderExtent() const LIFETIME_BOUND { return m_renderExtent; }
 
     Device& device() const { return m_device; }
     bool previouslyCleared() const;
     void setPreviouslyCleared(uint32_t mipLevel = 0, uint32_t slice = 0);
+    void setProvisionallyCleared(const CommandEncoder&, uint32_t mipLevel = 0, uint32_t slice = 0);
     uint32_t width() const;
     uint32_t height() const;
     uint32_t depthOrArrayLayers() const;
-    OptionSet<WebGPU::TextureUsage> LEGACY_NODELETE usage() const;
-    uint32_t LEGACY_NODELETE sampleCount() const;
-    WebGPU::TextureFormat LEGACY_NODELETE parentFormat() const;
+    NODELETE OptionSet<WebGPU::TextureUsage> usage() const;
+    NODELETE uint32_t sampleCount() const;
+    NODELETE WebGPU::TextureFormat parentFormat() const;
     // Invalid views may have no format or dimension. format() and dimension() then report arbitrary
     // ones, which only the validation that rejects the view sees.
-    WebGPU::TextureFormat LEGACY_NODELETE format() const;
+    NODELETE WebGPU::TextureFormat format() const;
     const std::optional<WebGPU::TextureFormat>& optionalFormat() const { return m_format; }
-    uint32_t LEGACY_NODELETE parentMipLevelCount() const;
-    uint32_t LEGACY_NODELETE mipLevelCount() const;
-    uint32_t LEGACY_NODELETE baseMipLevel() const;
-    WebGPU::TextureAspect LEGACY_NODELETE aspect() const;
-    uint32_t LEGACY_NODELETE arrayLayerCount() const;
-    uint32_t LEGACY_NODELETE baseArrayLayer() const;
-    WebGPU::TextureViewDimension LEGACY_NODELETE dimension() const;
+    NODELETE uint32_t parentMipLevelCount() const;
+    NODELETE uint32_t mipLevelCount() const;
+    NODELETE uint32_t baseMipLevel() const;
+    NODELETE WebGPU::TextureAspect aspect() const;
+    NODELETE uint32_t arrayLayerCount() const;
+    NODELETE uint32_t baseArrayLayer() const;
+    NODELETE WebGPU::TextureViewDimension dimension() const;
     const std::optional<WebGPU::TextureViewDimension>& optionalDimension() const { return m_dimension; }
-    bool LEGACY_NODELETE isDestroyed() const;
+    NODELETE bool isDestroyed() const;
     void destroy();
     void setCommandEncoder(CommandEncoder&) const;
     const Texture& apiParentTexture() const { return m_parentTexture; }
@@ -109,13 +116,14 @@ public:
     bool is2DTexture() const { return m_dimension == WebGPU::TextureViewDimension::_2d; }
     bool is2DArrayTexture() const { return m_dimension == WebGPU::TextureViewDimension::_2dArray; }
     bool is3DTexture() const { return m_dimension == WebGPU::TextureViewDimension::_3d; }
-    id<MTLRasterizationRateMap> LEGACY_NODELETE rasterizationMapForSlice(uint32_t slice) const;
+    NODELETE id<MTLRasterizationRateMap> rasterizationMapForSlice(uint32_t slice) const;
 
 private:
-    TextureView(id<MTLTexture>, const ResolvedTextureViewDescriptor&, const std::optional<WebGPU::Extent3D>&, Texture&, Device&);
+    TextureView(id<MTLTexture>, id<MTLTexture>, const ResolvedTextureViewDescriptor&, const std::optional<WebGPU::Extent3D>&, Texture&, Device&);
     TextureView(Texture&, Device&);
 
     id<MTLTexture> m_texture { nil };
+    id<MTLTexture> m_sampledTexture { nil };
 
     // std::nullopt only for invalid views.
     const std::optional<WebGPU::TextureFormat> m_format;
@@ -126,6 +134,7 @@ private:
     const uint32_t m_arrayLayerCount { 0 };
     const WebGPU::TextureAspect m_aspect { WebGPU::TextureAspect::All };
     const OptionSet<WebGPU::TextureUsage> m_usage;
+    const bool m_hasSwizzle { false };
     const std::optional<WebGPU::Extent3D> m_renderExtent;
 
     const Ref<Device> m_device;

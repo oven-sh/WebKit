@@ -1,0 +1,68 @@
+# function looks(table: Map<unknown, unknown>, count: number) { let last; for (let i = 0; i < count; i++) last = table.get(i); return last; }      sink(looks);
+# Whether a map or a set is as its class makes it: the walk asks for its names and its elements. The bit of the cell answers for both, as it does for a list: Structure::setPristineBits() gives it to the cells
+# of a table only beside pristine elements. The test once loaded the Structure for the second bit: nine instructions in front of every `table.get(key)` in line, three since. (Outside loops such a call goes by the stubs, which have always asked the one bit.)
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}} builtinClass=Map aspects=[Storage, Names]
+# CHECK: = CallInline {{*}}inlineBuiltin=MapGet
+# RUN(MACHINE): emit f1:Body mechanisms=all
+# MACHINE-LABEL: unit f1:Body
+# MACHINE: = Load8Z({{*}}JSCell_typeInfoFlags
+# MACHINE-NOT: Structure_bitField
+# RUN(SHELL): run-in-shell const says = f => { try { print(String(f())); } catch (e) { print(e.name); } }; globalThis.sink = looks => { for (let turn = 0; turn < 2; turn++) { const made = () => new Map([[1, "one"]]); says(() => looks(made(), 2)); says(() => looks(new (class extends Map { })([[1, "heir"]]), 2)); says(() => looks(new (class extends Map { get(key) { return "over " + super.get(key); } })([[1, "heir"]]), 2)); says(() => looks(Object.setPrototypeOf(made(), { get: () => "moved" }), 2)); says(() => looks(Object.assign(made(), { get: () => "own" }), 2)); says(() => looks(Object.freeze(made()), 2)); says(() => looks(Object.assign(made(), { "1.5": "name" }), 2)); says(() => looks(Object.assign(made(), { 0: "element" }), 2)); says(() => looks(Object.defineProperty(made(), 0, { get() { return "getter"; } }), 2)); const later = made(); says(() => looks(later, 2)); later.tag = 1; says(() => looks(later, 2)); later.get = () => "later"; says(() => looks(later, 2)); says(() => looks(new Set([1]), 2)); says(() => looks(null, 2)); } };
+# SHELL: one
+# SHELL: heir
+# SHELL: over heir
+# SHELL: moved
+# SHELL: own
+# SHELL: one
+# SHELL: one
+# SHELL: one
+# SHELL: one
+# SHELL: one
+# SHELL: one
+# SHELL: later
+# SHELL: TypeError
+# SHELL: TypeError
+# SHELL: one
+# SHELL: heir
+# SHELL: over heir
+# SHELL: moved
+# SHELL: own
+# SHELL: one
+# SHELL: one
+# SHELL: one
+# SHELL: one
+# SHELL: one
+# SHELL: one
+# SHELL: later
+# SHELL: TypeError
+# SHELL: TypeError
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="looks" module=m0 length=2 thisType={type=anything} parameters=[{type=undefined|null|Map flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map, v1: anything):
+    v2 = Integer
+    v3 = Undefined
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v0 key="get" @100
+    v9 = Call v8, v0, v4 calleeKey="get" calleeName="table.get" @110
+    v10 = Increment v4
+    Jump -> next b1(v10, v9)
+  b3():
+    Return v5
+}

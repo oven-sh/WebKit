@@ -1,0 +1,97 @@
+# The bounds of a piece are the operands as written where sums over the tests that their names have passed show 0 <= start <= end <= length: i < length - width + 1 says i + width <= length.
+# function pieces(s, w) { if (typeof s === "string" && (w | 0) === w && w > 0) { const n = s.length - w + 1; for (let i = 0; i < n; i++) sink(s.substring(i, i + w)); } }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = StringRange
+# CHECK: = Substring
+# the head lets the counter reach the bound itself: the last piece ends behind the text: for (let i = 0; i <= n; i++)
+# RUN(REACHES): walk f2 mechanisms=all
+# REACHES-LABEL: code f2:Body
+# REACHES: = StringRange
+# REACHES: = Substring
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="pieces" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b7()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b7()
+  b2(v5):
+    v6 = Integer
+    v7 = Greater v5, v6
+    Branch v7 -> taken b3(| 0), notTaken b7()
+  b3(v8):
+    v9 = PropGet v3 key="length"
+    v10 = Sub v9, v8
+    v11 = Integer integer=1
+    v12 = Add v10, v11
+    Jump -> next b4(v6)
+  b4(v13):
+    LoopHint
+    v15 = Less v13, v12
+    Branch v15 -> taken b5(), notTaken b6()
+  b5():
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="sink" [isFreeName]
+    v18 = PropGet v3 key="substring"
+    v19 = Add v13, v8
+    v20 = Call v18, v3, v13, v19 calleeKey="substring"
+    v21 = Call v17, -, v20
+    v22 = Increment v13
+    Jump -> next b4(v22)
+  b6():
+    v23 = Undefined
+    Return v23
+  b7():
+    v24 = Undefined
+    Return v24
+}
+function f2 name="reaches" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b7()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b7()
+  b2(v5):
+    v6 = Integer
+    v7 = Greater v5, v6
+    Branch v7 -> taken b3(| 0), notTaken b7()
+  b3(v8):
+    v9 = PropGet v3 key="length"
+    v10 = Sub v9, v8
+    v11 = Integer integer=1
+    v12 = Add v10, v11
+    Jump -> next b4(v6)
+  b4(v13):
+    LoopHint
+    v15 = LessEq v13, v12
+    Branch v15 -> taken b5(), notTaken b6()
+  b5():
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="sink" [isFreeName]
+    v18 = PropGet v3 key="substring"
+    v19 = Add v13, v8
+    v20 = Call v18, v3, v13, v19 calleeKey="substring"
+    v21 = Call v17, -, v20
+    v22 = Increment v13
+    Jump -> next b4(v22)
+  b6():
+    v23 = Undefined
+    Return v23
+  b7():
+    v24 = Undefined
+    Return v24
+}

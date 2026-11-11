@@ -1,0 +1,38 @@
+# const holder = { get text() { count++; return "a+"; } };   new RegExp(holder.text + "b");      What a read of the name gives is what the function answers then, and what it does besides is done then: it is not run.
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /c+0/
+# CHECK-NOT: text /
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=1 fields=[]
+variable g0 name="count" module=m0 declared={type=anything|absent}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Integer
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject layout=L0
+    v4 = NewClosure function=f1
+    DefineGetter v3, v4 key="text"
+    v6 = FinishObject v3
+    v7 = PropGet v6 key="text"
+    v8 = String string="b"
+    v9 = Add v7, v8
+    v10 = Construct v0, -, v9
+    v11 = GetModuleVariable variable=g0
+    v12 = String string="c+"
+    v13 = Add v12, v11
+    v14 = Construct v0, -, v13
+    v15 = NewArray v10, v14 contents=anything
+    Return v15
+}
+function f1 name="text" module=m0 position=10 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Increment v0
+    PutModuleVariable v1 variable=g0
+    v3 = String string="a+"
+    Return v3
+}

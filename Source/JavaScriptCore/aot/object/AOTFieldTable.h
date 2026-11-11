@@ -13,19 +13,12 @@
 
 namespace JSC { namespace AOT {
 
-// Where a compiled object has the property of a name, found from the object's shape in read-only data: entries[rows[shape] + name].
 struct FieldTableEntry {
-    // In the order in which a lookup tests them.
     enum class Form : uint8_t {
-        // A field in the cell whose eight bytes are the JSValue, zero for an empty slot. The operand is the index of the 64-bit word in the cell.
         InlineValue,
-        // A field in the cell that holds a 32-bit integer. A word below minInlineInt32 says something else, which the field's record explains. The operand is the index of the 32-bit word in the cell.
         InlineInt32,
-        // A field in the cell that holds a 32-bit reference.
         InlineNarrowCell,
-        // A field in the Extension whose eight bytes are the JSValue, zero for an empty slot. The operand is the index of the 64-bit word in the Extension, whose reference is the first field of the cell.
         OutOfLineValue,
-        // Any other field.
         Field,
     };
 
@@ -34,21 +27,17 @@ struct FieldTableEntry {
     static constexpr unsigned formShift = operandBits;
     static constexpr unsigned nameShift = operandBits + formBits;
     static constexpr uint32_t maxOperand = (1u << operandBits) - 1;
-    // Operands of the form Field. Zero: by the record. Up to maxSlotNumber: kept free.
-    static constexpr uint32_t maxSlotNumber = 6015;
-    // A field in the Extension that holds a 32-bit reference, in the first or in the second half of its granule. Less this: the number of the granule and one more.
-    static constexpr uint32_t firstNarrowCellInExtension = maxSlotNumber + 1;
+    static constexpr uint32_t maxSlotNumber = 4991;
+    static constexpr uint32_t firstInt64 = maxSlotNumber + 1;
+    static constexpr uint32_t firstNarrowCellInExtension = firstInt64 + 1024;
     static constexpr uint32_t firstNarrowCellInSecondHalfOfGranule = firstNarrowCellInExtension + 64;
-    // A field in the cell whose byte is the low byte of the JSValue: false, true, undefined or null, zero for an empty slot. Less this: the index of the byte in the cell.
     static constexpr uint32_t firstEncodedByte = firstNarrowCellInSecondHalfOfGranule + 64;
-    // A field in the cell whose byte is 0 for false and 1 for true. Less this: the index of the byte in the cell.
     static constexpr uint32_t firstBoolean = firstEncodedByte + 512;
-    // A field in the cell that holds a double. A NaN may be a marker, which the field's record explains. Less this: the index of the 64-bit word in the cell.
     static constexpr uint32_t firstDouble = firstBoolean + 512;
     static constexpr uint32_t endOfDoubles = firstDouble + 1024;
     static constexpr uint32_t maxFormAndOperand = (1u << nameShift) - 1;
     static constexpr uint32_t noName = 0;
-    static constexpr uint32_t maxName = (1u << 15) - 1;
+    static constexpr uint32_t maxName = UINT16_MAX;
     static constexpr uint32_t minNarrowValue = nullCell32;
 
     static constexpr bool hasColumn(uint32_t identifierNumber) { return identifierNumber != noName && identifierNumber <= maxName; }
@@ -63,7 +52,6 @@ struct FieldTableEntry {
     {
         const uint32_t offset = field.slot.offset;
         const FieldTableEntry otherField = create(field.name, Form::Field, 0);
-        // What the slot of an accessor holds is not the value of the property.
         if (field.isAccessor())
             return otherField;
         switch (field.slot.representation()) {
@@ -107,16 +95,17 @@ struct FieldTableEntry {
             if (field.isOutOfLine() || offset >= firstBoolean - firstEncodedByte)
                 return otherField;
             return create(field.name, Form::Field, (field.slot.representation() == SlotRepresentation::Boolean ? firstBoolean : firstEncodedByte) + offset);
-        case SlotRepresentation::Uint32:
         case SlotRepresentation::Int64:
         case SlotRepresentation::OptionalInt64:
+            if (field.isOutOfLine() || offset % sizeof(int64_t) || offset / sizeof(int64_t) >= firstNarrowCellInExtension - firstInt64)
+                return otherField;
+            return create(field.name, Form::Field, firstInt64 + offset / sizeof(int64_t));
+        case SlotRepresentation::Uint32:
         case SlotRepresentation::Float:
         case SlotRepresentation::Uint8:
         case SlotRepresentation::Int8:
         case SlotRepresentation::Uint16:
         case SlotRepresentation::Int16:
-        case SlotRepresentation::LiteralString:
-        case SlotRepresentation::LiteralString32:
             return otherField;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -132,17 +121,14 @@ struct FieldTableEntry {
     uint32_t bits;
 };
 
-// Beside each entry, under the same index: which field of the layout's record it is.
 struct FieldRecordIndex {
-    // The field is a writable data property, and its type accepts every value that a store through the entry writes: any value, any 32-bit integer from minInlineInt32 up, either boolean, or any number.
     static constexpr uint16_t isStoredWithoutTypeTest = 1u << 15;
     static constexpr uint16_t indexMask = isStoredWithoutTypeTest - 1;
 
-    // type is the record at field.type. typeOfAnyValue is the offset of the run-time type that every value has.
     static FieldRecordIndex create(const FieldData& field, uint16_t indexInLayoutRecord, const RuntimeType& type, uint32_t typeOfAnyValue)
     {
         RELEASE_ASSERT(indexInLayoutRecord <= indexMask);
-        constexpr uint16_t flagsBarringStore = fieldIsStoredOnce | fieldAttributeFlags;
+        constexpr uint16_t flagsBarringStore = fieldAttributeFlags;
         return { static_cast<uint16_t>(indexInLayoutRecord | (typeAcceptsWhatSlotHolds(field, type, typeOfAnyValue) && !(field.flags & flagsBarringStore) ? isStoredWithoutTypeTest : 0)) };
     }
 
@@ -182,18 +168,15 @@ private:
         case SlotRepresentation::Int8:
         case SlotRepresentation::Uint16:
         case SlotRepresentation::Int16:
-        case SlotRepresentation::LiteralString:
-        case SlotRepresentation::LiteralString32:
         case SlotRepresentation::DeferredClosure:
             return false;
         }
     }
 };
 
-// The index of the field in the record of the shape's layout. The shape is an object's and the name has a column.
 inline std::optional<uint16_t> findFieldInTable(const ProgramTables& tables, uint32_t shape, uint32_t name)
 {
-    ASSERT(shape && shape <= tables.numberOfFieldTableRows && FieldTableEntry::hasColumn(name));
+    ASSERT(shape && shape <= tables.numberOfFieldTableRows && tables.hasFieldTableColumn(name));
     uint32_t index = tables.fieldTableRowOf(shape) + name;
     if (index >= tables.fieldRecordIndices().size() || FieldTableEntry { tables.fieldTableEntries()[index] }.name() != name)
         return std::nullopt;
@@ -210,6 +193,7 @@ static_assert(traitsOf(SlotRepresentation::Cell).absentBits == JSValue::ValueEmp
 static_assert(absentCell32 < FieldTableEntry::minNarrowValue && uncreatedDeferredClosure < FieldTableEntry::minNarrowValue && absentDeferredClosure < FieldTableEntry::minNarrowValue);
 static_assert(FieldTableEntry::minNarrowValue <= nullCell32 && FieldTableEntry::minNarrowValue <= undefinedCell32);
 static_assert(absentInt32 < minInlineInt32 && undefinedInt32 < minInlineInt32 && nullInt32 < minInlineInt32);
+static_assert(absentInteger > INT32_MAX && undefinedInteger > INT32_MAX && nullInteger > INT32_MAX);
 static_assert(shapeWordOf(1) & compiledObjectShapeBit && !(pointerUpperHalfBits & compiledObjectShapeBit) && !(bigIntHashMask & compiledObjectShapeBit));
 
 } } // namespace JSC::AOT

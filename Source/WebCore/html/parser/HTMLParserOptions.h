@@ -31,13 +31,12 @@ class Document;
 
 class HTMLParserOptions {
 public:
-    explicit HTMLParserOptions();
+    NODELETE explicit HTMLParserOptions();
     explicit HTMLParserOptions(Document&);
 
     // See https://html.spec.whatwg.org/#scripting-flag for more information.
     bool scriptingFlag;
     bool usePreHTML5ParserQuirks;
-    bool enhancedSelect;
     bool enhancedSelectQuirk;
     bool processingInstruction;
     unsigned maximumDOMTreeDepth;

@@ -139,11 +139,9 @@ WorkerThreadableLoader::MainThreadBridge::MainThreadBridge(ThreadableLoaderClien
     ASSERT(contentSecurityPolicy);
 
     Ref securityOriginCopy = securityOrigin->isolatedCopy();
-    ReportingClient* reportingClient = nullptr;
-    if (auto* client = m_loaderProxy ? protect(m_loaderProxy)->reportingClient() : nullptr)
-        reportingClient = client;
-    else if (auto* workerScope = dynamicDowncast<WorkerGlobalScope>(globalScope))
-        reportingClient = workerScope;
+    auto* reportingClient = m_loaderProxy ? protect(m_loaderProxy)->reportingClient() : nullptr;
+    if (!reportingClient)
+        reportingClient = globalScope.reportingClient();
     auto contentSecurityPolicyIsolatedCopy = makeUnique<ContentSecurityPolicy>(globalScope.url().isolatedCopy(), nullptr, reportingClient);
     contentSecurityPolicyIsolatedCopy->copyStateFrom(contentSecurityPolicy.get(), ContentSecurityPolicy::ShouldMakeIsolatedCopy::Yes);
     contentSecurityPolicyIsolatedCopy->copyUpgradeInsecureRequestStateFrom(*contentSecurityPolicy, ContentSecurityPolicy::ShouldMakeIsolatedCopy::Yes);
@@ -168,6 +166,8 @@ WorkerThreadableLoader::MainThreadBridge::MainThreadBridge(ThreadableLoaderClien
     }
     if (!optionsCopy->options.clientIdentifier)
         optionsCopy->options.clientIdentifier = globalScope.identifier().object();
+    if (is<DedicatedWorkerGlobalScope>(globalScope))
+        optionsCopy->options.workerURL = globalScope.url().isolatedCopy();
 
     if (RefPtr serviceWorkerGlobalScope = dynamicDowncast<ServiceWorkerGlobalScope>(globalScope)) {
         InspectorInstrumentation::willSendRequest(*serviceWorkerGlobalScope, m_workerRequestIdentifier, request);

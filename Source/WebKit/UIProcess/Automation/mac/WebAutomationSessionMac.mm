@@ -177,7 +177,7 @@ static WebCore::IntPoint viewportLocationToWindowLocation(WebCore::IntPoint loca
 
 #if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
 
-static unsigned LEGACY_NODELETE nsEventButtonNumberFromAutomationMouseButton(MouseButton button)
+NODELETE static unsigned nsEventButtonNumberFromAutomationMouseButton(MouseButton button)
 {
     switch (button) {
     case MouseButton::Right:
@@ -193,12 +193,14 @@ static unsigned LEGACY_NODELETE nsEventButtonNumberFromAutomationMouseButton(Mou
     }
 }
 
-static WebMouseEventButton LEGACY_NODELETE automationMouseButtonToPlatformMouseButton(MouseButton button)
+NODELETE static WebMouseEventButton automationMouseButtonToPlatformMouseButton(MouseButton button)
 {
     switch (button) {
     case MouseButton::Left:   return WebMouseEventButton::Left;
     case MouseButton::Middle: return WebMouseEventButton::Middle;
     case MouseButton::Right:  return WebMouseEventButton::Right;
+    case MouseButton::Back:   return WebMouseEventButton::Back;
+    case MouseButton::Forward: return WebMouseEventButton::Forward;
     case MouseButton::None:   return WebMouseEventButton::None;
     default: RELEASE_ASSERT_NOT_REACHED();
     }
@@ -325,7 +327,7 @@ OptionSet<WebEventModifier> WebAutomationSession::platformWebModifiersFromRaw(We
 #endif // ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
 
 #if ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
-static bool LEGACY_NODELETE virtualKeyHasStickyModifier(VirtualKey key)
+NODELETE static bool virtualKeyHasStickyModifier(VirtualKey key)
 {
     // Returns whether the key's modifier flags should affect other events while pressed down.
     switch (key) {
@@ -674,7 +676,7 @@ static unsigned short keyCodeForVirtualKey(VirtualKey key)
     }
 }
 
-static NSEventModifierFlags LEGACY_NODELETE eventModifierFlagsForVirtualKey(VirtualKey key)
+NODELETE static NSEventModifierFlags eventModifierFlagsForVirtualKey(VirtualKey key)
 {
     // Computes the modifiers changed by the virtual key when it is pressed or released.
     // The mapping from keys to modifiers is specified in the documentation for NSEvent.

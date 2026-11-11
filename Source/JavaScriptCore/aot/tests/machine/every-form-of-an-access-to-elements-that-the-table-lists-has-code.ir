@@ -1,0 +1,69 @@
+# The walk writes a test for the storage of a list, a test for an element and a read of an element with a kind of storage and two flags; the emitters have code for some of the combinations. Twice in two hours a
+# hand of the walk wrote one that has none, and a right, everyday program did not build ("OpcodeWithoutCode"): only a user's program could tell.
+# One table says which forms have code: accessToElementsHasCode() (walk/AOTArrayStorageForms.h). The emitters go by it; a note on a list is shown to reads only where it says yes; and where the walk builds an
+# operation in a form that has none, a test answers no and a read is widened to the form that takes nothing for granted: the program builds and is right, and UnsupportedElementAccessesDemoted counts it.
+# This test takes EVERY row of the table through the emitters: the row is laid into the Code below and emitted. A row that the table lists and that has no code says so here, or stops at the emitter's own assertion.
+# A row more or less is a line more or less.
+# RUN: emit-forms-of-accesses-to-elements
+# CHECK: HasArrayStorage: no code
+# CHECK-NEXT: HasArrayStorage [admitsInt32Storage]: no code
+# CHECK-NEXT: HasArrayStorage [isWritable]: code
+# CHECK-NEXT: HasArrayStorage [isWritable, admitsInt32Storage]: code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Int32: code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Int32 [admitsInt32Storage]: no code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Int32 [isWritable]: code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Int32 [isWritable, admitsInt32Storage]: no code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Double: code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Double [admitsInt32Storage]: code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Double [isWritable]: code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Double [isWritable, admitsInt32Storage]: code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous: code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous [admitsInt32Storage]: code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous [isWritable]: code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous [isWritable, admitsInt32Storage]: code
+# CHECK-NEXT: IsElementPresent: code
+# CHECK-NEXT: IsElementPresent [admitsInt32Storage]: no code
+# CHECK-NEXT: IsElementPresent arrayStorage=Int32: code
+# CHECK-NEXT: IsElementPresent arrayStorage=Int32 [admitsInt32Storage]: no code
+# CHECK-NEXT: IsElementPresent arrayStorage=Double: code
+# CHECK-NEXT: IsElementPresent arrayStorage=Double [admitsInt32Storage]: code
+# CHECK-NEXT: IsElementPresent arrayStorage=Contiguous: code
+# CHECK-NEXT: IsElementPresent arrayStorage=Contiguous [admitsInt32Storage]: code
+# CHECK-NEXT: GetArrayElement: code
+# CHECK-NEXT: GetArrayElement [admitsInt32Storage]: no code
+# CHECK-NEXT: GetArrayElement arrayStorage=Int32: code
+# CHECK-NEXT: GetArrayElement arrayStorage=Int32 [admitsInt32Storage]: no code
+# CHECK-NEXT: GetArrayElement arrayStorage=Double: code
+# CHECK-NEXT: GetArrayElement arrayStorage=Double [admitsInt32Storage]: code
+# CHECK-NEXT: GetArrayElement arrayStorage=Contiguous: code
+# CHECK-NEXT: GetArrayElement arrayStorage=Contiguous [admitsInt32Storage]: code
+# -- code
+# code f1:Body {
+#   b0(v0: Array @JSValue, v1: int[0, 100] @JSValue) entry=0:
+#     v2: Array @Cell = Unbox v0
+#     v3: int[0, 100] @Int32 = Unbox v1
+#     v4: boolean @Boolean = HasArrayStorage v2$storageOfHasArrayStorage$flagsOfHasArrayStorage
+#     Branch v4 -> taken b1(), notTaken b3()
+#   b1():
+#     v5: boolean @Boolean = IsElementPresent v2, v3$storageOfIsElementPresent$flagsOfIsElementPresent
+#     Branch v5 -> taken b2(), notTaken b3()
+#   b2():
+#     v6: anything @JSValue = GetArrayElement v2, v3$storageOfGetArrayElement level=Proven$flagsOfGetArrayElement
+#     Return v6
+#   b3():
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="asks" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v0
+}

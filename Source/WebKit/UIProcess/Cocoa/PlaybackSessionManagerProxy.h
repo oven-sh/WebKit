@@ -29,6 +29,7 @@
 
 #include "MessageReceiver.h"
 #include "PlaybackSessionContextIdentifier.h"
+#include <WebCore/CallToActionLabel.h>
 #include <WebCore/ImmersiveVideoMetadata.h>
 #include <WebCore/MediaSelectionOption.h>
 #include <WebCore/PlatformPlaybackSessionInterface.h>
@@ -110,7 +111,7 @@ public:
     bool wirelessVideoPlaybackDisabled() const final { return m_wirelessVideoPlaybackDisabled; }
     const WebCore::VideoReceiverEndpoint& videoReceiverEndpoint() LIFETIME_BOUND { return m_videoReceiverEndpoint; }
 
-    void LEGACY_NODELETE invalidate();
+    NODELETE void invalidate();
 
 private:
     friend class PlaybackSessionManagerProxy;
@@ -127,6 +128,9 @@ private:
 #if HAVE(PIP_SKIP_PREROLL)
     void skipAd() final;
     void canSkipAdChanged(bool);
+#endif
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    void triggerCallToAction() final;
 #endif
     void seekToTime(double, double, double) final;
     void fastSeek(double time) final;
@@ -148,7 +152,7 @@ private:
     void setVolume(double) final;
     void setPlayingOnSecondScreen(bool) final;
     void sendRemoteCommand(WebCore::PlatformMediaSession::RemoteControlCommandType, const WebCore::PlatformMediaSession::RemoteCommandArgument&) final;
-    void LEGACY_NODELETE setVideoReceiverEndpoint(const WebCore::VideoReceiverEndpoint&) final;
+    NODELETE void setVideoReceiverEndpoint(const WebCore::VideoReceiverEndpoint&) final;
     const WebCore::VideoReceiverEndpoint& videoReceiverEndpoint() const LIFETIME_BOUND { return m_videoReceiverEndpoint; }
     const std::optional<WebCore::VideoReceiverEndpointIdentifier>& videoReceiverEndpointIdentifier() const LIFETIME_BOUND { return m_videoReceiverEndpointIdentifier; }
 
@@ -195,7 +199,7 @@ private:
     bool prefersAutoDimming() const final { return persistedPrefersAutoDimming(); }
     void setPrefersAutoDimming(bool) final;
 
-    void LEGACY_NODELETE swapVideoReceiverEndpointsWith(PlaybackSessionModelContext&);
+    NODELETE void swapVideoReceiverEndpointsWith(PlaybackSessionModelContext&);
 
 #if !RELEASE_LOG_DISABLED
     void setLogIdentifier(uint64_t identifier) { m_logIdentifier = identifier; }
@@ -203,7 +207,7 @@ private:
     const Logger* loggerPtr() const;
 
     ASCIILiteral logClassName() const { return "PlaybackSessionModelContext"_s; };
-    WTFLogChannel& LEGACY_NODELETE logChannel() const;
+    NODELETE WTFLogChannel& logChannel() const;
 #endif
 
     WeakPtr<PlaybackSessionManagerProxy> m_manager;
@@ -324,6 +328,9 @@ private:
 #if HAVE(PIP_SKIP_PREROLL)
     void canSkipAdChanged(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, bool value);
 #endif
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    void callToActionChanged(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, std::optional<WebCore::CallToActionLabel>);
+#endif
 #if ENABLE(LINEAR_MEDIA_PLAYER)
     void supportsLinearMediaPlayerChanged(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, bool);
 #endif
@@ -332,6 +339,9 @@ private:
     // Messages to PlaybackSessionManager
 #if HAVE(PIP_SKIP_PREROLL)
     void skipAd(PlaybackSessionContextIdentifier);
+#endif
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    void triggerCallToAction(PlaybackSessionContextIdentifier);
 #endif
     void play(PlaybackSessionContextIdentifier);
     void pause(PlaybackSessionContextIdentifier);
@@ -358,8 +368,8 @@ private:
     void setVolume(PlaybackSessionContextIdentifier, double);
     void setPlayingOnSecondScreen(PlaybackSessionContextIdentifier, bool);
     void sendRemoteCommand(PlaybackSessionContextIdentifier, WebCore::PlatformMediaSession::RemoteControlCommandType, const WebCore::PlatformMediaSession::RemoteCommandArgument&);
-    void LEGACY_NODELETE setVideoReceiverEndpoint(PlaybackSessionContextIdentifier, const WebCore::VideoReceiverEndpoint&, WebCore::VideoReceiverEndpointIdentifier);
-    void LEGACY_NODELETE swapVideoReceiverEndpoints(PlaybackSessionContextIdentifier, PlaybackSessionContextIdentifier);
+    NODELETE void setVideoReceiverEndpoint(PlaybackSessionContextIdentifier, const WebCore::VideoReceiverEndpoint&, WebCore::VideoReceiverEndpointIdentifier);
+    NODELETE void swapVideoReceiverEndpoints(PlaybackSessionContextIdentifier, PlaybackSessionContextIdentifier);
 #if HAVE(SPATIAL_TRACKING_LABEL)
     void setSpatialTrackingLabel(PlaybackSessionContextIdentifier, const String&);
 #endif
@@ -375,7 +385,7 @@ private:
     const Logger& logger() const { return m_logger; }
     uint64_t logIdentifier() const { return m_logIdentifier; }
     ASCIILiteral logClassName() const { return "PlaybackSessionManagerProxy"_s; }
-    WTFLogChannel& LEGACY_NODELETE logChannel() const;
+    NODELETE WTFLogChannel& logChannel() const;
 #endif
 
     WeakPtr<WebPageProxy> m_page;

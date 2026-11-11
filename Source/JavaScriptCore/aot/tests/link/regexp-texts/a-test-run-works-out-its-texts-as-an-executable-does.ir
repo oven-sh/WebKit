@@ -1,0 +1,55 @@
+# In a test run a test may replace RegExp, and whether one does is settled by Link, which runs beside the rehearsal. So the scan calls no callee of such a call a built-in, and no function was seen to call RegExp:
+# every pattern that a file puts together ran in the interpreter. The list claims nothing: a text that never arrives at RegExp is a record that nobody asks for.
+# classes.js: export const hollow = /[#%]/gu;
+# main.js: const gap = `(?:\\s|${hollow.source})`; export const edges = new RegExp(`(?! )${gap}|(?<=^|${gap}) `, "gu"), first = RegExp("^" + gap);
+# The front end of a test run writes the free name as a read off the global object.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: regexp-texts mechanisms=all
+# CHECK-COUNT-2: text /
+# CHECK-NOT: text /
+# RUN(EDGES): regexp-texts mechanisms=all
+# EDGES: text /(?! )(?:\s|[#%])|(?<=^|(?:\s|[#%])) /u
+# RUN(FIRST): regexp-texts mechanisms=all
+# FIRST: text /^(?:\s|[#%])/
+# RUN(WITHHELD): regexp-texts mechanisms=all-BuiltinCalls
+# WITHHELD-NOT: text /
+
+module m0 path="/classes.js" displayPath="classes.js" body=f0 exports=[{name="hollow" variable=g0}]
+module m1 path="/main.js" displayPath="main.js" body=f1 requests=[{target=m0 completes=true}]
+entry module=m1
+variable g0 name="hollow" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="edges" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="first" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewRegExp pattern="[#%]" regExpFlags=[Global, Unicode]
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="source"
+    v2 = ToString v1
+    v3 = String string="(?:\\s|"
+    v4 = String string=")"
+    v5 = Strcat v3, v2, v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="RegExp" [isFreeName]
+    v8 = Convert v7 declared={type=builtin(RegExp) flags=[IsExpected]}
+    v9 = String string="(?! )"
+    v10 = String string="|(?<=^|"
+    v11 = String string=") "
+    v12 = Strcat v9, v5, v10, v5, v11
+    v13 = String string="gu"
+    v14 = Construct v8, -, v12, v13
+    PutModuleVariable v14 variable=g1
+    v16 = Builtin builtin=RegExp
+    v17 = String string="^"
+    v18 = Add v17, v5
+    v19 = Call v16, -, v18
+    PutModuleVariable v19 variable=g2
+    v21 = Undefined
+    Return v21
+}

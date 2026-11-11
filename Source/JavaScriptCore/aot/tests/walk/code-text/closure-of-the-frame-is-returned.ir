@@ -1,0 +1,11 @@
+# a closure of the frame ends with the frame: no Return hands it to the caller
+# RUN: verify-code
+# CHECK: OpcodeNotInForm: f4 Body b0 (ends in Return): a cell of the frame is returned: v2 (NewClosure)
+# PROGRAM-OF: ../closures-lent/loan-of-a-closure-is-written-into-its-record.ir
+# -- code
+# code f4:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: f6 @Cell = NewClosure v1 function=f6 storage=Frame closureForm=Slim loan=LeftToStubOfCall
+#     Return v2
+# }
+# -- end of code

@@ -1,0 +1,66 @@
+# lib.cjs     exports.add = function add(a, b) { return a + b; };
+# main.cjs    const lib = require("./lib.cjs"); function sums(n) { let s = 0; for (let i = 0; i < n; i++) s = lib.add(s, i); return s; } sink(sums(5));
+# Link proves that the variable is filled wherever it is read, and a read in another file holds the run to that proof: the whole type, at every turn.
+# In front of the loop nothing is proven: the file may not have run yet. So a TEST stands there, no check: where the function is there already, the turns of the typed copy ask no more,
+# for a store that has run has run for good; where it is not, the loop runs as written, with the check at its read.
+# RUN(LINK): link variables mechanisms=all
+# LINK: variable g0 proven=f3 {{*}}filled
+# RUN(WALK): walk f2 mechanisms=-Inlining
+# WALK-LABEL: code f2:
+# WALK: = GetModuleVariable variable=g0 [returnsRawSlot]
+# WALK-NEXT: TypeTest {{*}}testedType=f3
+# WALK: CheckProof {{*}}source=Variable
+# WALK: frequency=Rare isLoopHead=true
+# WALK: CheckProof {{*}}source=Variable
+# WALK: isInLoop=true isLoopHead=true
+# WALK-NOT: CheckProof {{*}}source=Variable
+# WALK: CallDirect {{*}}function=f3
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = value => print("said " + value);
+# SHELL: said 10
+
+variable g0 name="add" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1
+entry module=m0
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0 [isBare, isCallOfRequire]
+    v1 = NewClosure function=f2
+    v2 = Integer integer=5
+    v3 = Call v1, -, v2 calleeName="sums"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, -, v3 calleeName="sink"
+    v7 = Undefined
+    Return v7
+}
+function f1 module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f2 name="sums" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: anything, v4: anything):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g0
+    v8 = Call v7, -, v3, v4 calleeName="add"
+    v9 = Integer integer=1
+    v10 = Add v4, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    Return v3
+}
+function f3 name="add" module=m1 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    Return v2
+}

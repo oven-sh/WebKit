@@ -73,7 +73,7 @@ class AutomaticThread;
 
 class AutomaticThreadCondition : public ThreadSafeRefCounted<AutomaticThreadCondition> {
 public:
-    static WTF_EXPORT_PRIVATE Ref<AutomaticThreadCondition> LEGACY_NODELETE create();
+    NODELETE static WTF_EXPORT_PRIVATE Ref<AutomaticThreadCondition> create();
 
     WTF_EXPORT_PRIVATE ~AutomaticThreadCondition();
     
@@ -124,13 +124,18 @@ public:
     // running. Returns true if the thread has been stopped. A good idiom for stopping your automatic
     // thread is to first try this, and if that doesn't work, to tell the thread using your own
     // mechanism (set some flag and then notify the condition).
-    bool LEGACY_NODELETE tryStop(const AbstractLocker&);
+    NODELETE bool tryStop(const AbstractLocker&);
 
-    bool LEGACY_NODELETE isWaiting(const AbstractLocker&);
+    NODELETE bool isWaiting(const AbstractLocker&);
 
     bool notify(const AbstractLocker&);
 
     void join();
+
+#if ENABLE(AOT)
+    // Starts the underlying thread if there is none. False where Thread::survivesFailedCreation() and the system refuses a thread.
+    WTF_EXPORT_PRIVATE bool tryEnsureUnderlyingThread(const AbstractLocker&);
+#endif
 
     virtual ASCIILiteral name() const { return "WTF::AutomaticThread"_s; }
 
@@ -199,7 +204,12 @@ protected:
 private:
     friend class AutomaticThreadCondition;
 
+#if ENABLE(AOT)
+    enum class FailedCreation : bool { Crashes, IsReported };
+    void start(const AbstractLocker&, FailedCreation = FailedCreation::Crashes);
+#else
     void start(const AbstractLocker&);
+#endif
 
 protected:
     Box<Lock> m_lock;

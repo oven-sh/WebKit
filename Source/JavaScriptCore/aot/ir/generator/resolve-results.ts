@@ -299,6 +299,7 @@ function resolveDeclaredPayload(
   if (idKindName === "PropertyKey") {
     const receiver = entry.columns.get("receiver");
     if (receiver?.tag === "Operand") return { tag: "Key", key: field, receiver: receiver.operand };
+    if (operandsOf(entry).length === 0) return { tag: "Key", key: field, receiver: null };
     scope.errors.add(argument.location, `${subject} needs receiver`);
     return null;
   }

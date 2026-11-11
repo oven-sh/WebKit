@@ -40,10 +40,12 @@
 #include "TransientZoomState.h"
 #include "WKLayoutMode.h"
 #include "WebMouseEvent.h"
+#include <WebCore/BitmapImage.h>
 #include <WebCore/DOMPasteAccess.h>
 #include <WebCore/DigitalCredentialsRequestData.h>
 #include <WebCore/FocusDirection.h>
 #include <WebCore/HTMLMediaElementIdentifier.h>
+#include <WebCore/Image.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/IntRectHash.h>
 #include <WebCore/KeypressCommand.h>
@@ -141,6 +143,7 @@ enum class HysteresisState : bool;
 }
 
 namespace WebCore {
+class BitmapImage;
 class ColorSpace;
 class IntPoint;
 struct DataDetectorElementInfo;
@@ -165,63 +168,12 @@ using FrameIdentifier = ObjectIdentifier<FrameIdentifierType>;
 
 } // namespace WebCore
 
-@protocol WebViewImplDelegate
-
-- (NSTextInputContext *)_web_superInputContext;
-- (void)_web_superQuickLookWithEvent:(NSEvent *)event;
-- (void)_web_superRemoveTrackingRect:(NSTrackingRectTag)tag;
-- (void)_web_superSwipeWithEvent:(NSEvent *)event;
-- (void)_web_superMagnifyWithEvent:(NSEvent *)event;
-- (void)_web_superSmartMagnifyWithEvent:(NSEvent *)event;
-- (id)_web_superAccessibilityAttributeValue:(NSString *)attribute;
-- (void)_web_superDoCommandBySelector:(SEL)selector;
-- (BOOL)_web_superPerformKeyEquivalent:(NSEvent *)event;
-- (void)_web_superKeyDown:(NSEvent *)event;
-- (NSView *)_web_superHitTest:(NSPoint)point;
-
-- (id)_web_immediateActionAnimationControllerForHitTestResultInternal:(API::HitTestResult*)hitTestResult withType:(uint32_t)type userData:(API::Object*)userData;
-- (void)_web_prepareForImmediateActionAnimation;
-- (void)_web_cancelImmediateActionAnimation;
-- (void)_web_completeImmediateActionAnimation;
-
-- (void)_web_dismissContentRelativeChildWindows;
-- (void)_web_dismissContentRelativeChildWindowsWithAnimation:(BOOL)animate;
-- (void)_web_editorStateDidChange;
-
-- (void)_web_gestureEventWasNotHandledByWebCore:(NSEvent *)event;
-- (void)_web_magnificationGestureEventWasNotHandledByWebCoreWithPhase:(NSEventPhase)phase magnification:(CGFloat)magnification locationInWindow:(NSPoint)locationInWindow;
-
-- (void)_web_didChangeContentSize:(NSSize)newSize;
-
-#if ENABLE(DRAG_SUPPORT)
-- (WKDragDestinationAction)_web_dragDestinationActionForDraggingInfo:(id <NSDraggingInfo>)draggingInfo;
-- (void)_web_didPerformDragOperation:(BOOL)handled;
-#if ENABLE(DRAG_SOURCE_CUSTOMIZATION)
-- (void)_web_draggingItemsForDraggingItem:(NSDraggingItem *)draggingItem atLocation:(NSPoint)viewLocation completionHandler:(void (^)(NSArray<NSDraggingItem *> *draggingItems))completionHandler;
-- (NSDragOperation)_web_dragSourceOperationMaskForDraggingContext:(NSDraggingContext)context defaultMask:(NSDragOperation)defaultMask;
-- (void)_web_draggingSession:(NSDraggingSession *)session willBeginAtPoint:(NSPoint)point;
-- (void)_web_draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)point operation:(NSDragOperation)operation;
-#endif
-#endif
-
-@optional
-- (void)_web_didAddMediaControlsManager:(id)controlsManager;
-- (void)_web_didRemoveMediaControlsManager;
-- (void)_didHandleAcceptedCandidate;
-- (void)_didUpdateCandidateListVisibility:(BOOL)visible;
-
-- (BOOL)_web_hasActiveIntelligenceTextEffects;
-- (void)_web_suppressContentRelativeChildViews;
-- (void)_web_restoreContentRelativeChildViews;
-
-@end
-
 namespace WebCore {
 struct DragItem;
 struct ResolvedCaptionDisplaySettingsOptions;
 
 #if ENABLE(WEB_AUTHN)
-struct DigitalCredentialsMobileDocumentRequestData;
+struct DigitalCredentialsRequestData;
 struct DigitalCredentialsResponseData;
 #endif
 
@@ -285,17 +237,17 @@ public:
     void processDidExit();
     void pageClosed();
     void didRelaunchProcess();
-    void LEGACY_NODELETE scrollingCoordinatorWasCreated();
+    NODELETE void scrollingCoordinatorWasCreated();
 
     void setDrawsBackground(bool);
-    bool LEGACY_NODELETE drawsBackground() const;
+    NODELETE bool drawsBackground() const;
     void setBackgroundColor(NSColor *);
     NSColor *backgroundColor() const;
-    bool LEGACY_NODELETE isOpaque() const;
+    NODELETE bool isOpaque() const;
 
     void setShouldSuppressFirstResponderChanges(bool);
     bool acceptsFirstMouse(NSEvent *);
-    bool LEGACY_NODELETE acceptsFirstResponder();
+    NODELETE bool acceptsFirstResponder();
     bool becomeFirstResponder();
     bool resignFirstResponder();
     bool isFocused() const;
@@ -328,7 +280,7 @@ public:
     CGSize fixedLayoutSize() const;
 
     Ref<DrawingAreaProxy> createDrawingAreaProxy(WebProcessProxy&);
-    bool LEGACY_NODELETE isUsingUISideCompositing() const;
+    NODELETE bool isUsingUISideCompositing() const;
     void setDrawingAreaSize(CGSize);
     void updateLayer();
     static bool wantsUpdateLayer() { return true; }
@@ -338,10 +290,10 @@ public:
     RetainPtr<NSPrintOperation> printOperationWithPrintInfo(NSPrintInfo *, WebFrameProxy&);
 
     void setAutomaticallyAdjustsContentInsets(bool);
-    bool LEGACY_NODELETE automaticallyAdjustsContentInsets() const;
+    NODELETE bool automaticallyAdjustsContentInsets() const;
     void updateContentInsetsIfAutomatic();
     void setObscuredContentInsets(const WebCore::FloatBoxExtent&);
-    WebCore::FloatBoxExtent LEGACY_NODELETE obscuredContentInsets() const;
+    NODELETE WebCore::FloatBoxExtent obscuredContentInsets() const;
     void flushPendingObscuredContentInsetChanges();
 
     void prepareContentInRect(CGRect);
@@ -354,12 +306,12 @@ public:
     void setSizeToContentAutoSizeMaximumSize(CGSize);
     CGSize sizeToContentAutoSizeMaximumSize() const;
     void setShouldExpandToViewHeightForAutoLayout(bool);
-    bool LEGACY_NODELETE shouldExpandToViewHeightForAutoLayout() const;
+    NODELETE bool shouldExpandToViewHeightForAutoLayout() const;
     void setIntrinsicContentSize(CGSize);
-    CGSize LEGACY_NODELETE intrinsicContentSize() const;
+    NODELETE CGSize intrinsicContentSize() const;
 
     void setViewScale(CGFloat);
-    CGFloat LEGACY_NODELETE viewScale() const;
+    NODELETE CGFloat viewScale() const;
 
     void showWarningView(const BrowsingWarning&, CompletionHandler<void(Variant<ContinueUnsafeLoad, URL>&&)>&&);
     void clearWarningView();
@@ -382,7 +334,7 @@ public:
     void windowDidChangeScreen();
     void windowDidChangeOcclusionState();
     void windowWillClose();
-    void LEGACY_NODELETE windowWillEnterOrExitFullScreen();
+    NODELETE void windowWillEnterOrExitFullScreen();
     void windowDidEnterOrExitFullScreen(bool windowIsInFullScreen);
     void screenDidChangeColorSpace();
     bool shouldDelayWindowOrderingForEvent(NSEvent *);
@@ -403,15 +355,15 @@ public:
     void activeSpaceDidChange();
 
     void pageDidScroll(const WebCore::IntPoint&);
-    void didEndSyntheticMomentumScrolling();
 
     NSRect scrollViewFrame();
-    bool LEGACY_NODELETE hasScrolledContentsUnderTitlebar();
+    NODELETE bool hasScrolledContentsUnderTitlebar();
     void updateTitlebarAdjacencyState();
 
 #if ENABLE(SCROLL_POCKET_IN_FULLSCREEN)
     void setFullScreenTitlebarOverlayHeight(CGFloat);
-    CGFloat LEGACY_NODELETE fullScreenTitlebarOverlayHeight() const { return m_fullScreenTitlebarOverlayHeight; }
+    NODELETE CGFloat fullScreenTitlebarOverlayHeight() const { return m_fullScreenTitlebarOverlayHeight; }
+    bool isInElementFullScreenWindow() const;
 #endif
 
     RetainPtr<NSView> hitTest(CGPoint);
@@ -422,17 +374,17 @@ public:
     RetainPtr<NSColor> underlayColor() const;
     RetainPtr<NSColor> pageExtendedBackgroundColor() const;
     
-    _WKRectEdge LEGACY_NODELETE pinnedState();
-    _WKRectEdge LEGACY_NODELETE rubberBandingEnabled();
-    void LEGACY_NODELETE setRubberBandingEnabled(_WKRectEdge);
+    NODELETE _WKRectEdge pinnedState();
+    NODELETE _WKRectEdge rubberBandingEnabled();
+    NODELETE void setRubberBandingEnabled(_WKRectEdge);
 
-    bool LEGACY_NODELETE alwaysBounceVertical();
-    void LEGACY_NODELETE setAlwaysBounceVertical(bool);
-    bool LEGACY_NODELETE alwaysBounceHorizontal();
-    void LEGACY_NODELETE setAlwaysBounceHorizontal(bool);
+    NODELETE bool alwaysBounceVertical();
+    NODELETE void setAlwaysBounceVertical(bool);
+    NODELETE bool alwaysBounceHorizontal();
+    NODELETE void setAlwaysBounceHorizontal(bool);
 
     void setOverlayScrollbarStyle(std::optional<WebCore::ScrollbarOverlayStyle> scrollbarStyle);
-    std::optional<WebCore::ScrollbarOverlayStyle> LEGACY_NODELETE overlayScrollbarStyle() const;
+    NODELETE std::optional<WebCore::ScrollbarOverlayStyle> overlayScrollbarStyle() const;
 
     void beginDeferringViewInWindowChanges();
     // FIXME: Merge these two?
@@ -460,14 +412,14 @@ public:
     NSEvent *lastPressureEvent() { return m_lastPressureEvent.get(); }
 
 #if ENABLE(FULLSCREEN_API)
-    bool LEGACY_NODELETE hasFullScreenWindowController() const;
+    NODELETE bool hasFullScreenWindowController() const;
     WKFullScreenWindowController *fullScreenWindowController();
     void closeFullScreenWindowController();
 #endif
     NSView *fullScreenPlaceholderView();
     NSWindow *fullScreenWindow();
 
-    bool LEGACY_NODELETE isEditable() const;
+    NODELETE bool isEditable() const;
     bool executeSavedCommandBySelector(SEL);
     void executeEditCommandForSelector(SEL, const String& argument = String());
     void registerEditCommand(Ref<WebEditCommandProxy>&&, UndoOrRedo);
@@ -566,7 +518,7 @@ public:
     bool ignoresMouseMoveEvents() const { return m_ignoresMouseMoveEvents; }
     void setIgnoresAllEvents(bool);
     bool ignoresAllEvents() const { return m_ignoresAllEvents; }
-    void LEGACY_NODELETE setIgnoresMouseDraggedEvents(bool);
+    NODELETE void setIgnoresMouseDraggedEvents(bool);
     bool ignoresMouseDraggedEvents() const { return m_ignoresMouseDraggedEvents; }
 
     void setAccessibilityWebProcessToken(NSData *, pid_t);
@@ -583,7 +535,7 @@ public:
     NSUInteger accessibilityRemoteChildTokenHash();
     NSUInteger accessibilityUIProcessLocalTokenHash();
     NSArray<NSNumber *> *registeredRemoteAccessibilityPids();
-    NSData *LEGACY_NODELETE remoteAccessibilityChildToken();
+    NODELETE NSData *remoteAccessibilityChildToken();
     bool hasRemoteAccessibilityChild();
 
     void updatePrimaryTrackingAreaOptions(NSTrackingAreaOptions);
@@ -596,7 +548,6 @@ public:
     NSString *stringForToolTip(NSToolTipTag tag);
     void toolTipChanged(const String& oldToolTip, const String& newToolTip);
 
-    void enterAcceleratedCompositingWithRootLayer(CALayer *);
     void setAcceleratedCompositingRootLayer(CALayer *);
     CALayer *acceleratedCompositingRootLayer() const LIFETIME_BOUND { return m_rootLayer.get(); }
 
@@ -645,7 +596,7 @@ public:
     void startWindowDrag();
 
     void startDrag(const WebCore::DragItem&, WebCore::ShareableBitmap::Handle&& image, const std::optional<WebCore::FrameIdentifier>& = std::nullopt);
-    void setPromisedDataForImage(Ref<WebCore::Image>&&, const String& filename, const String& extension, const String& title, const String& url, const String& visibleURL, RefPtr<WebCore::FragmentedSharedBuffer>&& archiveBuffer, const String& pasteboardName, const String& pasteboardOrigin);
+    void setPromisedDataForImage(Ref<WebCore::BitmapImage>&&, const String& filename, const String& extension, const String& title, const String& url, const String& visibleURL, RefPtr<WebCore::FragmentedSharedBuffer>&& archiveBuffer, const String& pasteboardName, const String& pasteboardOrigin);
     void writePromisedImageDragDataToPasteboard(NSPasteboard *);
     void pasteboardChangedOwner(NSPasteboard *);
     void provideDataForPasteboard(NSPasteboard *, NSString *type);
@@ -668,10 +619,11 @@ public:
     void setTextSelectionDragGesture(NSGestureRecognizer *, void (^completionHandler)(NSDraggingSession *));
     void invalidateCachedPositionInformation();
     void positionInformationDidChange(const InteractionInformationAtPosition&);
+    void installClickHighlightView(NSView *);
 #endif
-    void LEGACY_NODELETE setAllowsBackForwardNavigationGestures(bool);
+    NODELETE void setAllowsBackForwardNavigationGestures(bool);
     bool allowsBackForwardNavigationGestures() const { return m_allowsBackForwardNavigationGestures; }
-    void LEGACY_NODELETE setAllowsMagnification(bool);
+    NODELETE void setAllowsMagnification(bool);
     bool allowsMagnification() const { return m_allowsMagnification; }
 
     void setMagnification(double, CGPoint centerPoint);
@@ -679,7 +631,7 @@ public:
     double magnification() const;
     void setCustomSwipeViews(NSArray *);
     WebCore::FloatRect windowRelativeBoundsForCustomSwipeViews() const;
-    WebCore::FloatBoxExtent LEGACY_NODELETE customSwipeViewsObscuredContentInsets() const;
+    NODELETE WebCore::FloatBoxExtent customSwipeViewsObscuredContentInsets() const;
     void setCustomSwipeViewsObscuredContentInsets(WebCore::FloatBoxExtent&&);
     bool tryToSwipeWithEvent(NSEvent *, bool ignoringPinnedState);
     void setDidMoveSwipeSnapshotCallback(BlockPtr<void (CGRect)>&&);
@@ -714,12 +666,12 @@ public:
     NSTextInputContext *inputContextForSelectionUpdates();
     void unmarkText();
     void setMarkedText(id string, NSRange selectedRange, NSRange replacementRange);
-    NSRange LEGACY_NODELETE selectedRange();
+    NODELETE NSRange selectedRange();
     bool hasMarkedText();
-    NSRange LEGACY_NODELETE markedRange();
-    NSAttributedString *LEGACY_NODELETE attributedSubstringForProposedRange(NSRange, NSRangePointer actualRange);
-    NSUInteger LEGACY_NODELETE characterIndexForPoint(NSPoint);
-    NSRect LEGACY_NODELETE firstRectForCharacterRange(NSRange, NSRangePointer actualRange);
+    NODELETE NSRange markedRange();
+    NODELETE NSAttributedString *attributedSubstringForProposedRange(NSRange, NSRangePointer actualRange);
+    NODELETE NSUInteger characterIndexForPoint(NSPoint);
+    NODELETE NSRect firstRectForCharacterRange(NSRange, NSRangePointer actualRange);
     bool performKeyEquivalent(NSEvent *);
     void keyUp(NSEvent *);
     void keyDown(NSEvent *);
@@ -749,9 +701,9 @@ public:
 
     void createFlagsChangedEventMonitor();
     void removeFlagsChangedEventMonitor();
-    bool LEGACY_NODELETE hasFlagsChangedEventMonitor();
+    NODELETE bool hasFlagsChangedEventMonitor();
 
-    void mouseMoved(NSEvent *);
+    void mouseMoved(NSEvent *, WebEventInputSource = WebEventInputSource::UserDriven);
     void mouseDown(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
     void mouseUp(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
     void mouseDragged(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
@@ -784,7 +736,7 @@ public:
 
     bool windowIsFrontWindowUnderMouse(NSEvent *);
 
-    bool LEGACY_NODELETE requiresUserActionForEditingControlsManager() const;
+    NODELETE bool requiresUserActionForEditingControlsManager() const;
 
     WebCore::UserInterfaceLayoutDirection userInterfaceLayoutDirection();
     void setUserInterfaceLayoutDirection(NSUserInterfaceLayoutDirection);
@@ -830,7 +782,7 @@ public:
 
     void effectiveAppearanceDidChange();
     bool effectiveAppearanceIsDark();
-    bool LEGACY_NODELETE effectiveUserInterfaceLevelIsElevated();
+    NODELETE bool effectiveUserInterfaceLevelIsElevated();
 
     void takeFocus(WebCore::FocusDirection);
     void clearPromisedImageDragData() { m_promisedImageDragData.reset(); }
@@ -1011,10 +963,15 @@ private:
 
     void nativeMouseEventHandler(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
     void nativeMouseEventHandlerInternal(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
+    enum class MouseEventState : uint8_t { Pending, Handled, Unhandled };
+    void resolvePendingMouseEvent(uint64_t identifier, MouseEventState);
+    void dispatchReadyMouseEvents();
+    void flushPendingMouseEvents();
+    void clearPendingMouseEvents();
 
     void scheduleMouseDidMoveOverElementForModifierFlagsChange(NSEvent *);
 
-    void mouseMovedInternal(NSEvent *);
+    void mouseMovedInternal(NSEvent *, WebEventInputSource);
     void mouseDownInternal(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
     void mouseUpInternal(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
     void mouseDraggedInternal(NSEvent *, WebEventInputSource, WebCore::PlatformMouseEvent::CanInitiateDrag = WebCore::PlatformMouseEvent::CanInitiateDrag::Yes);
@@ -1057,10 +1014,6 @@ private:
     WeakObjCPtr<WKWebView> m_view;
     const UniqueRef<PageClient> m_pageClient;
     const Ref<WebPageProxy> m_page;
-
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    DrawingAreaType m_drawingAreaType { DrawingAreaType::TiledCoreAnimation };
-#endif
 
     bool m_willBecomeFirstResponderAgain { false };
     bool m_inBecomeFirstResponder { false };
@@ -1162,7 +1115,7 @@ private:
     HashSet<pid_t> m_registeredRemoteAccessibilityPids;
 
     struct PromisedImageDragData {
-        Ref<WebCore::Image> image;
+        Ref<WebCore::BitmapImage> image;
         String filename;
         String extension;
         String title;
@@ -1186,6 +1139,16 @@ private:
     std::optional<NSRange> m_stagedMarkedRange;
     Deque<Vector<WebCore::KeypressCommand>> m_collectedKeypressCommands;
     Deque<Function<void()>> m_interpretKeyEventHoldingTank;
+
+    struct PendingMouseEvent {
+        uint64_t identifier { 0 };
+        RetainPtr<NSEvent> event;
+        WebEventInputSource inputSource { WebEventInputSource::UserDriven };
+        WebCore::PlatformMouseEvent::CanInitiateDrag canInitiateDrag { WebCore::PlatformMouseEvent::CanInitiateDrag::Yes };
+        MouseEventState state { MouseEventState::Pending };
+    };
+    Deque<PendingMouseEvent> m_pendingMouseEvents;
+    uint64_t m_lastPendingMouseEventIdentifier { 0 };
 
     String m_lastStringForCandidateRequest;
     NSInteger m_lastCandidateRequestSequenceNumber;

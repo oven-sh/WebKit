@@ -15,9 +15,13 @@
 #include "AOTVMState.h"
 #include "AOTVector.h"
 #include "ArrayPrototype.h"
+#include "HeapIterationScope.h"
 #include "JSCInlines.h"
 #include "JSSentinel.h"
+#include "MarkedSpaceInlines.h"
 #include "ObjectPrototype.h"
+#include "RegExpPrototype.h"
+#include "StringPrototype.h"
 #include "VMInlines.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
@@ -70,10 +74,6 @@ struct LateMarkCase {
 
 constexpr ASCIILiteral alwaysLockedObjects[] = {
     "Object.prototype"_s,
-    "RegExp.prototype"_s,
-    "Promise.prototype"_s,
-    "Object.getPrototypeOf(function* () { }).prototype"_s,
-    "Object.getPrototypeOf(async function* () { }).prototype"_s,
 };
 
 constexpr ASCIILiteral constructorsWithLockedMembers[] = {
@@ -227,6 +227,7 @@ constexpr ASCIILiteral scriptsReturningTrue[] = {
 };
 
 constexpr ASCIILiteral pristineArrays[] = {
+    "(a => (a[Symbol('x')] = 1, a))([1, 2])"_s,
     "[]"_s, "[1]"_s, "[1.5]"_s, "['a']"_s, "[, 1]"_s, "[1, 2, 3]"_s, "new Array(5)"_s, "Array.of(1)"_s,
     "(a => (a.push(1), a))([])"_s,
     "(a => (a.push(1, 1.5), a))([])"_s,
@@ -291,6 +292,7 @@ constexpr ASCIILiteral pristineArraysInArrayStorage[] = {
 constexpr ASCIILiteral pristinePromises[] = {
     "Promise.resolve(1)"_s, "new Promise(() => { })"_s, "(async () => { })()"_s,
     "(p => (p.foo = 1, p))(Promise.resolve(1))"_s,
+    "(p => (p[Symbol('x')] = 1, p))(Promise.resolve(1))"_s,
 };
 
 constexpr ASCIILiteral pristineCollectionsAndRegExps[] = {
@@ -300,12 +302,14 @@ constexpr ASCIILiteral pristineCollectionsAndRegExps[] = {
 constexpr ASCIILiteral pristineTypedArrays[] = {
     "new Uint8Array(2)"_s, "new Float64Array(2)"_s, "new Uint8Array(new ArrayBuffer(8), 2)"_s,
     "(u => (u.foo = 1, u))(new Uint8Array(2))"_s,
+    "(u => (u[Symbol('x')] = 1, u))(new Uint8Array(2))"_s,
 };
 
 constexpr ASCIILiteral pristineIterators[] = {
     "[1].values()"_s, "[1][Symbol.iterator]()"_s, "new Map().entries()"_s, "new Set().values()"_s, "'a'[Symbol.iterator]()"_s, "'a'.matchAll(/a/g)"_s,
     "[1].values().map(x => x)"_s, "Iterator.from({ next() { } })"_s,
     "(i => (i.foo = 1, i))([1].values())"_s,
+    "(i => (i[Symbol('x')] = 1, i))([1].values())"_s,
 };
 
 constexpr ASCIILiteral instancesOfOtherClasses[] = {
@@ -318,6 +322,21 @@ constexpr ASCIILiteral nonPristineValues[] = {
     "(a => (a.hasOwnProperty = 1, a))([1, 2])"_s,
     "(a => (a[Symbol.iterator] = function () { }, a))([1, 2])"_s,
     "(a => (a[Symbol.for('x')] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.isConcatSpreadable] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.toPrimitive] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.asyncIterator] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.hasInstance] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.match] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.matchAll] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.replace] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.search] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.species] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.split] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.toStringTag] = 1, a))([1, 2])"_s,
+    "Object.defineProperty([1, 2], Symbol.unscopables, { value: 1 })"_s,
+    "(a => (a[Symbol.dispose ?? Symbol.iterator] = 1, a))([1, 2])"_s,
+    "(a => (a[Symbol.asyncDispose ?? Symbol.iterator] = 1, a))([1, 2])"_s,
+    "(() => { class Base { constructor(a) { return a; } } class Stamp extends Base { #name = 1; } return new Stamp([1, 2]); })()"_s,
     "(a => (a.toJSON = function () { }, a))([1, 2])"_s,
     "(a => (a.then = function () { }, a))([1, 2])"_s,
     "Object.setPrototypeOf([1, 2], null)"_s,
@@ -345,6 +364,8 @@ constexpr ASCIILiteral nonPristineValues[] = {
 
 constexpr CachedStoreCase cachedStoreCases[] = {
     { "storeTwice(new Function('a', 'a.tag = 1; a.other = 2; return a;'))"_s, true },
+    { "storeTwice((() => { const s = Symbol('x'); return a => { a.tag = 1; a[s] = 2; return a; }; })())"_s, true },
+    { "storeTwice((() => { const s = Symbol.iterator; return a => { a.tag = 1; a[s] = 2; return a; }; })())"_s, false },
     { "storeTwice(new Function('a', 'a.tag = 1; a.map = function () { }; return a;'))"_s, false },
     { "storeTwice(new Function('a', 'a.tag = 1; a.push = function () { }; return a;'))"_s, false },
     { "storeTwice(new Function('a', 'a.tag = 1; a.then = function () { }; return a;'))"_s, false },
@@ -356,7 +377,7 @@ bool isPristine(VM& vm, JSValue value)
 {
     JSCell* cell = value.asCell();
     auto* array = dynamicDowncast<JSArray>(cell);
-    AOT_TEST_CHECK(cell->isPristine() == (cell->structure()->isPristine() && (!array || cell->structure()->hasPristineElements())));
+    AOT_TEST_CHECK(cell->isPristine() == (cell->structure()->isPristine() && (!pristineFlagOfCellCoversElements(cell->type()) || cell->structure()->hasPristineElements())));
     if (array)
         array->validatePristine(vm);
     return cell->structure()->isPristine();
@@ -570,10 +591,10 @@ static void testVMStateWithoutImage()
     VM& vm = realms.vm();
     VMState& state = vm.aotState();
     AOT_TEST_CHECK(!vm.hasCompiledCode() && !state.hasCompiledCode);
-    AOT_TEST_CHECK(!state.image && !state.validatesRuntime && !state.structureIDBase);
-    AOT_TEST_CHECK(!state.runtimeTable && !state.identifiers && !state.caches && !state.propertyCaches && !state.counters && !state.reporter);
+    AOT_TEST_CHECK(!state.image && !state.structureIDBase);
+    AOT_TEST_CHECK(!state.pages && !state.runtimeTable && !state.identifiers && !state.caches && !state.propertyCaches);
     AOT_TEST_CHECK(!state.callSiteCache && !state.functionTables && !state.regExpLiterals && !state.regExpMatchOutput);
-    AOT_TEST_CHECK(!state.moduleRecordStructure && !state.stringBuilderStorageStructure);
+    AOT_TEST_CHECK(!state.moduleRecordStructure);
     AOT_TEST_CHECK(state.instances.isEmpty() && state.instancesToDestroy.isEmpty());
     AOT_TEST_CHECK(!Instance::of(realms.locked()) && !Instance::of(realms.plain()));
 }
@@ -594,6 +615,13 @@ static void testPristineArrays()
 {
     Realms realms;
     checkPristineOnlyInLockedRealm(realms, pristineArrays);
+}
+
+static void testPrototypeGainsNameOfPristineArray()
+{
+    Realms realms;
+    AOT_TEST_CHECK(isPristine(realms.vm(), realms.evaluate(realms.locked(), "(a => (a.late = 1, Array.prototype.late = 2, a))([1, 2])"_s)));
+    AOT_TEST_CHECK(!isPristine(realms.vm(), realms.evaluate(realms.locked(), "(s => { try { Array.prototype[s] = 1; } catch { return { }; } const a = [1, 2]; a[s] = 1; return a; })(Symbol('x'))"_s)));
 }
 
 static void testOriginalArrayStructuresArePristine()
@@ -632,6 +660,44 @@ static void testNumericNamesEndPristineElements()
     Structure* marked = addName(vm, createUnmarkedArrayStructure(realms), "-1"_s);
     AOT_TEST_CHECK(marked->tryMarkPristine(vm));
     AOT_TEST_CHECK(marked->isPristine() && !marked->hasPristineElements());
+}
+
+static void testNumericNamesEndFlagOfTables()
+{
+    Realms realms;
+    VM& vm = realms.vm();
+    for (ASCIILiteral source : { "new Map"_s, "new Set"_s, "new WeakMap"_s, "new WeakSet"_s, "(t => (t.tag = 1, t))(new Map)"_s, "(t => (t[0] = 1, t))(new Set)"_s }) {
+        JSObject* table = realms.object(realms.locked(), source);
+        AOT_TEST_CHECK_FOR_SOURCE(isPristine(vm, table) && table->structure()->hasPristineElements() && table->isPristine(), source);
+    }
+    for (ASCIILiteral source : { "(t => (t['1.5'] = 1, t))(new Map)"_s, "(t => (t['-1'] = 1, t))(new Set)"_s, "(t => (t['NaN'] = 1, t))(new WeakMap)"_s, "(t => (t['Infinity'] = 1, t))(new WeakSet)"_s }) {
+        JSObject* table = realms.object(realms.locked(), source);
+        AOT_TEST_CHECK_FOR_SOURCE(isPristine(vm, table) && !table->structure()->hasPristineElements() && !table->isPristine(), source);
+    }
+}
+
+static void testCachedTransitionsOfTablesEndFlag()
+{
+    Realms realms;
+    VM& vm = realms.vm();
+    realms.evaluate(realms.locked(), "function storeOften(make, store) { return [store(make()), store(make()), store(make()), store(make()), store(make()), store(make()), store(make()), store(make())]; }"_s);
+    for (ASCIILiteral source : { "storeOften(() => new Map, new Function('t', 't.tag = 1; t.other = 2; return t;'))"_s, "storeOften(() => new WeakSet, new Function('t', 't.tag = 1; t[0] = 2; return t;'))"_s }) {
+        JSArray* stored = realms.array(realms.locked(), source);
+        for (unsigned i = 0; i < 8; ++i)
+            AOT_TEST_CHECK_FOR_SOURCE(isPristine(vm, stored->getIndexQuickly(i)) && stored->getIndexQuickly(i).asCell()->isPristine(), source);
+    }
+    for (ASCIILiteral source : {
+        "storeOften(() => new Map, new Function('t', 't.tag = 1; t[\\'1.5\\'] = 2; return t;'))"_s,
+        "storeOften(() => new Set, new Function('t', 't.tag = 1; t[\\'-1\\'] = 2; return t;'))"_s,
+        "storeOften(() => new WeakMap, new Function('t', 't.tag = 1; t.NaN = 2; return t;'))"_s,
+        "storeOften(() => new WeakSet, new Function('t', 't.Infinity = 2; return t;'))"_s,
+    }) {
+        JSArray* stored = realms.array(realms.locked(), source);
+        for (unsigned i = 0; i < 8; ++i) {
+            JSCell* table = stored->getIndexQuickly(i).asCell();
+            AOT_TEST_CHECK_FOR_SOURCE(isPristine(vm, table) && !table->structure()->hasPristineElements() && !table->isPristine(), source);
+        }
+    }
 }
 
 static void testMarkReachesExistingTransitions()
@@ -755,7 +821,6 @@ static void testPristineIterators()
     checkPristineOnlyInLockedRealm(realms, pristineIterators);
 }
 
-// The compiler takes a new instance for pristine and relies on a change of the instance to clear the mark.
 static void testClassesWithPristineTestHaveMarkedStructures()
 {
     Realms realms;
@@ -771,7 +836,6 @@ static void testClassesWithPristineTestHaveMarkedStructures()
         BuiltinClassID builtinClass(index);
         if (table.at(builtinClass).origin != BuiltinOrigin::Engine || !table.mayHavePristineInstances(builtinClass) || markedClasses.get(index))
             continue;
-        // An option of the engine can leave a class out of the realm.
         if (!findInRealm(realms.locked(), BuiltinCellKey::object(table.at(builtinClass).prototype)))
             continue;
         dataLogLn("No Structure is marked for the instances that inherit from ", table.textOf(table.at(builtinClass).prototype));
@@ -846,9 +910,10 @@ static void testTypedArraysInterceptIndexedStoresAfterIndexAccessorOnPrototype()
 
     JSObject* createdBefore = realms.object(locked, "var createdBefore = Object.create(new Uint8Array(4)); createdBefore[0] = 1; createdBefore"_s);
     JSArray* ordinary = realms.array(locked, "[1, 2].slice()"_s);
-    AOT_TEST_CHECK(realms.evaluate(locked, "var early = Object.create(new Uint8Array(4)); early[9] = 9; early[9] === 9"_s) == jsBoolean(true));
+    // Upstream's typed arrays say from the start that they intercept indexed stores (WebKit/WebKit@890b90dce3). The realm's own word for it comes later.
+    AOT_TEST_CHECK(realms.evaluate(locked, "var early = Object.create(new Uint8Array(4)); early[9] = 9; !(9 in early)"_s) == jsBoolean(true));
     AOT_TEST_CHECK(!locked->typedArraysInterceptIndexedStores());
-    AOT_TEST_CHECK(!hasSlowPutArrayStorage(createdBefore->indexingType()));
+    AOT_TEST_CHECK(hasSlowPutArrayStorage(createdBefore->indexingType()));
 
     realms.evaluate(locked, "var watched = { }; var heir = Object.create(watched); Object.defineProperty(watched, 3, { set(value) { }, configurable: true })"_s);
     AOT_TEST_CHECK(!locked->isHavingABadTime());
@@ -861,7 +926,7 @@ static void testTypedArraysInterceptIndexedStoresAfterIndexAccessorOnPrototype()
     AOT_TEST_CHECK(realms.evaluate(locked, "var moved = [1]; Object.setPrototypeOf(moved, new Uint8Array(4)); moved[9] = 9; !(9 in moved) && Reflect.set(moved, 9, 9) && !(9 in moved)"_s) == jsBoolean(true));
     AOT_TEST_CHECK(realms.evaluate(locked, "var middle = { }; var below = Object.create(middle); below[0] = 1; Object.setPrototypeOf(middle, new Uint8Array(4)); below[9] = 9; !(9 in below)"_s) == jsBoolean(true));
     AOT_TEST_CHECK(!realms.plain()->typedArraysInterceptIndexedStores());
-    AOT_TEST_CHECK(realms.evaluate(realms.plain(), "var elsewhere = Object.create(new Uint8Array(4)); elsewhere[9] = 9; elsewhere[9] === 9"_s) == jsBoolean(true));
+    AOT_TEST_CHECK(realms.evaluate(realms.plain(), "var elsewhere = Object.create(new Uint8Array(4)); elsewhere[9] = 9; !(9 in elsewhere)"_s) == jsBoolean(true));
 }
 
 static void testOneWalkCoversEveryPrototypeThatCanChange()
@@ -914,13 +979,42 @@ static void testStartUpCreatesNoClass(LoadedProgram& program)
     JSGlobalObject* realm = program.realm();
     AOT_TEST_CHECK(!realm->dateStructureConcurrently() && !realm->weakMapStructureConcurrently() && !realm->weakSetStructureConcurrently());
     AOT_TEST_CHECK(!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Default));
-    // Where the option is on, as in Bun and here, JSGlobalObject::init() puts SharedArrayBuffer on the global object of every realm.
-    AOT_TEST_CHECK(!!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared) == Options::useSharedArrayBuffer());
+    AOT_TEST_CHECK(!!realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared) == Options::alwaysUseSharedArrayBuffer());
     AOT_TEST_CHECK(!realm->typedArrayStructureConcurrently(TypeUint8, false) && !realm->typedArrayStructureConcurrently(TypeFloat64, false) && !realm->typedArrayStructureConcurrently(TypeDataView, false));
     AOT_TEST_CHECK(!findExistingObject(realm, Identifier::fromString(program.realms().vm(), "Math"_s).impl()));
 }
 
-// Native code makes the first instance of many a class, and no name of the global object has been read by then.
+static void testStartUpWatchesNoObjectBeforeItIsLocked(LoadedProgram& program)
+{
+    VM& vm = program.realms().vm();
+    JSGlobalObject* realm = program.realm();
+    for (JSObject* watched : { static_cast<JSObject*>(realm->arrayPrototype()), static_cast<JSObject*>(realm->stringPrototype()) })
+        AOT_TEST_CHECK(watched->structure()->hasListedImmutableProperties() && watched->structure()->transitionWatchpointSet().isBeingWatched());
+    AOT_TEST_CHECK(realm->regExpPrototype()->structure()->hasListedImmutableProperties());
+    AOT_TEST_CHECK(realm->objectPrototype()->structure()->hasImmutableProperties() && !realm->objectPrototype()->structure()->transitionWatchpointSet().isBeingWatched());
+    AOT_TEST_CHECK(realm->objectPrototypeChainIsSaneWatchpointSet().isStillValid() && realm->regExpPrimordialPropertiesWatchpointSet().isStillValid() && realm->promiseThenWatchpointSet().isStillValid());
+    Structure* structureOfArrayPrototype = realm->arrayPrototype()->structure();
+    for (const Identifier& watched : { vm.propertyNames->join, vm.propertyNames->iteratorSymbol, vm.propertyNames->constructor }) {
+        WatchpointSet* replacements = structureOfArrayPrototype->propertyReplacementWatchpointSet(structureOfArrayPrototype->get(vm, watched));
+        AOT_TEST_CHECK(replacements && replacements->isBeingWatched());
+    }
+    AOT_TEST_CHECK(realm->arrayJoinWatchpointSet().isStillValid() && realm->arrayIteratorProtocolWatchpointSet().isStillValid() && realm->arraySpeciesWatchpointSet().state() == IsWatched);
+
+    unsigned numberOfStructures = 0;
+    HeapIterationScope iterationScope(vm.heap);
+    vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) {
+        if (!isJSCellKind(kind) || static_cast<JSCell*>(cell)->type() != StructureType)
+            return IterationStatus::Continue;
+        auto* structure = static_cast<Structure*>(cell);
+        if (structure->realm() != realm || structure->typeInfo().type() == GlobalObjectType)
+            return IterationStatus::Continue;
+        ++numberOfStructures;
+        AOT_TEST_CHECK(!structure->transitionWatchpointIsLikelyToBeFired());
+        return IterationStatus::Continue;
+    });
+    AOT_TEST_CHECK(numberOfStructures > 100);
+}
+
 static void testClassCreatedForAnInstanceIsLocked(LoadedProgram& program)
 {
     Realms& realms = program.realms();
@@ -960,7 +1054,6 @@ static void testObjectCreatedAtFirstReadIsLocked(LoadedProgram& program)
     AOT_TEST_CHECK(realms.throwsTypeError(realm, "(function () { 'use strict'; Object.getPrototypeOf(true).valueOf = 1; })()"_s));
 }
 
-// The program may put something else under the name of a class that nobody has used yet. The class that the realm then creates is the one that is locked and found.
 static void testClassBehindReplacedNameIsLocked(LoadedProgram& program)
 {
     Realms& realms = program.realms();
@@ -1050,11 +1143,14 @@ std::span<const NativeTest> lockedRealmTests()
         { "locked-realm/vm-state-without-image"_s, testVMStateWithoutImage },
         { "locked-realm/validators-pass-fresh-realm"_s, testValidatorsPassFreshRealm },
         { "locked-realm/pristine-arrays"_s, testPristineArrays },
+        { "locked-realm/prototype-gains-name-of-pristine-array"_s, testPrototypeGainsNameOfPristineArray },
         { "locked-realm/original-array-structures-are-pristine"_s, testOriginalArrayStructuresArePristine },
         { "locked-realm/pristine-contiguous-arrays"_s, testPristineContiguousArrays },
         { "locked-realm/pristine-regexp-match-arrays"_s, testPristineRegExpMatchArrays },
         { "locked-realm/names-of-match-arrays-keep-arrays-pristine"_s, testNamesOfMatchArraysKeepArraysPristine },
         { "locked-realm/numeric-names-end-pristine-elements"_s, testNumericNamesEndPristineElements },
+        { "locked-realm/numeric-names-end-the-flag-of-tables"_s, testNumericNamesEndFlagOfTables },
+        { "locked-realm/cached-transitions-of-tables-end-the-flag"_s, testCachedTransitionsOfTablesEndFlag },
         { "locked-realm/mark-reaches-existing-transitions"_s, testMarkReachesExistingTransitions },
         { "locked-realm/mark-leaves-out-bits-lost-by-existing-transitions"_s, testMarkLeavesOutBitsLostByExistingTransitions },
         { "locked-realm/mark-follows-structures-marked-earlier"_s, testMarkFollowsStructuresMarkedEarlier },
@@ -1075,6 +1171,7 @@ std::span<const NativeTest> lockedRealmTests()
         { "locked-realm/cached-transitions-of-pristine-arrays"_s, testPristineArrayCachedTransitions },
         { "locked-realm/start-up-locks-objects"_s, withoutBuiltins<testStartUpLocksObjects> },
         { "locked-realm/start-up-creates-no-class"_s, withoutBuiltins<testStartUpCreatesNoClass> },
+        { "locked-realm/start-up-watches-no-object-before-it-is-locked"_s, withoutBuiltins<testStartUpWatchesNoObjectBeforeItIsLocked> },
         { "locked-realm/class-created-for-an-instance-is-locked"_s, withoutBuiltins<testClassCreatedForAnInstanceIsLocked> },
         { "locked-realm/object-created-at-first-read-is-locked"_s, withoutBuiltins<testObjectCreatedAtFirstReadIsLocked> },
         { "locked-realm/class-behind-replaced-name-is-locked"_s, withoutBuiltins<testClassBehindReplacedNameIsLocked> },

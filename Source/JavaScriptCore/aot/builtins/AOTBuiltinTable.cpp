@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinNameSlots.h"
+#include "AOTCheckedSpan.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTRemovableFeature.h"
 #include "AOTVector.h"
 #include "CommonIdentifiers.h"
@@ -69,8 +71,6 @@ const BuiltinTable& BuiltinTable::singleton()
     letArrayLeaveWithCompiler<&builtinTableCalledFunctions>();
     letArrayLeaveWithCompiler<&builtinTableStartupCalledFunctions>();
     letArrayLeaveWithCompiler<&builtinTableHostObjects>();
-    letArrayLeaveWithCompiler<&builtinTableNamedMemberCalls>();
-    letArrayLeaveWithCompiler<&builtinTableHostMethodCalls>();
     letArrayLeaveWithCompiler<&builtinTableForms>();
     letArrayLeaveWithCompiler<&builtinTableClassTokens>();
     letArrayLeaveWithCompiler<&builtinTableClassesByMemberName>();
@@ -78,27 +78,35 @@ const BuiltinTable& BuiltinTable::singleton()
     return table;
 }
 
-template<typename T>
-static const T& checkedAt(std::span<const T> list, size_t index)
+template<typename Record, typename Key>
+static ALWAYS_INLINE auto findPlace(std::span<const Record> records, Key Record::* member, Key key)
 {
-    RELEASE_ASSERT(index < list.size());
-    return list[index];
+    size_t length = records.size();
+    if (!length)
+        return records.end();
+    auto place = records.begin();
+    while (length > 1) {
+        size_t half = length / 2;
+        place += place[half - 1].*member < key ? half : 0;
+        length -= half;
+    }
+    return (*place).*member != key ? records.end() : place;
 }
 
 template<typename Record, typename Key>
 static std::optional<size_t> findPosition(std::span<const Record> records, Key Record::* member, Key key)
 {
-    auto found = std::ranges::lower_bound(records, key, { }, member);
-    if (found == records.end() || (*found).*member != key)
+    auto place = findPlace(records, member, key);
+    if (place == records.end())
         return std::nullopt;
-    return static_cast<size_t>(found - records.begin());
+    return static_cast<size_t>(place - records.begin());
 }
 
 template<typename Record, typename Key>
 static const Record* findRecord(std::span<const Record> records, Key Record::* member, Key key)
 {
-    std::optional<size_t> position = findPosition(records, member, key);
-    return position ? &records[*position] : nullptr;
+    auto place = findPlace(records, member, key);
+    return place != records.end() ? &*place : nullptr;
 }
 
 template<typename Record>
@@ -108,14 +116,48 @@ static std::span<const Record> findRecords(std::span<const Record> records, Buil
     return records.subspan(found.begin() - records.begin(), found.size());
 }
 
+template<typename Record>
+class RecordsByBuiltin {
+public:
+    std::span<const Record> find(std::span<const Record> records, size_t builtinCount, BuiltinID builtin)
+    {
+        const Starts* starts = m_starts.load(std::memory_order_acquire);
+        if (!starts) [[unlikely]]
+            starts = &create(records, builtinCount);
+        if (starts->records != records.data() || starts->recordCount != records.size() || starts->list.size() != builtinCount + 1 || builtin.index() >= builtinCount) [[unlikely]]
+            return findRecords(records, builtin);
+        uint32_t start = starts->list[builtin.index()];
+        return records.subspan(start, starts->list[builtin.index() + 1] - start);
+    }
+
+private:
+    struct Starts {
+        const Record* records;
+        size_t recordCount;
+        Vector<uint32_t> list;
+    };
+
+    NEVER_INLINE const Starts& create(std::span<const Record> records, size_t builtinCount)
+    {
+        Locker locker { m_lock };
+        if (const Starts* starts = m_starts.load(std::memory_order_relaxed))
+            return *starts;
+        auto* starts = new Starts { records.data(), records.size(), Vector<uint32_t>(FillWith { }, builtinCount + 1, 0) };
+        for (const Record& record : records)
+            ++starts->list[record.builtin.index() + 1];
+        for (size_t index = 1; index <= builtinCount; ++index)
+            starts->list[index] += starts->list[index - 1];
+        m_starts.store(starts, std::memory_order_release);
+        return *starts;
+    }
+
+    std::atomic<const Starts*> m_starts { nullptr };
+    Lock m_lock;
+};
+
 bool BuiltinTable::contains(RuntimeFunctionID id) const
 {
     return !!findRecord(m_data.runtime.functions, &RuntimeFunctionData::id, id);
-}
-
-const Builtin& BuiltinTable::at(BuiltinID id) const
-{
-    return checkedAt(m_data.builtins, id.index());
 }
 
 static std::atomic<const BuiltinOverload*> unpackedOverloads;
@@ -157,11 +199,6 @@ static ALWAYS_INLINE std::span<const BuiltinOverload> unpacked(std::span<const B
 const BuiltinOverload& BuiltinTable::at(BuiltinOverloadID id) const
 {
     return checkedAt(unpacked(keptByThisReader(m_data.overloads, builtinTableOverloads)), id.index());
-}
-
-const BuiltinClass& BuiltinTable::at(BuiltinClassID id) const
-{
-    return checkedAt(m_data.classes, id.index());
 }
 
 const BuiltinSlot& BuiltinTable::at(BuiltinSlotID id) const
@@ -232,13 +269,10 @@ const BuiltinOverloadSummary& BuiltinTable::summaryOf(BuiltinOverloadID id) cons
 
 std::optional<BuiltinDispatchTarget> BuiltinTable::dispatchOf(BuiltinID id, BuiltinCallMode mode) const
 {
-    auto keyOf = [](const BuiltinDispatch& dispatch) {
-        return std::pair { dispatch.builtin, dispatch.mode };
-    };
-    std::pair key { id, mode };
-    std::span<const BuiltinDispatch> dispatches = keptByThisReader(m_data.dispatches, builtinTableDispatches);
-    auto found = std::ranges::lower_bound(dispatches, key, { }, keyOf);
-    if (found == dispatches.end() || keyOf(*found) != key)
+    static constinit RecordsByBuiltin<BuiltinDispatch> dispatchesByBuiltin;
+    std::span<const BuiltinDispatch> dispatches = dispatchesByBuiltin.find(keptByThisReader(m_data.dispatches, builtinTableDispatches), m_data.builtins.size(), id);
+    auto found = std::ranges::find(dispatches, mode, &BuiltinDispatch::mode);
+    if (found == dispatches.end())
         return std::nullopt;
     return found->root;
 }
@@ -258,6 +292,14 @@ BuiltinTableIDRange<BuiltinID> BuiltinTable::membersOf(BuiltinID holder) const
 {
     const Builtin& object = at(holder);
     return { object.firstMember, object.memberCount };
+}
+
+std::span<const Builtin> BuiltinTable::memberEntriesOf(BuiltinID holder) const
+{
+    const Builtin& object = at(holder);
+    if (!object.memberCount)
+        return { };
+    return m_data.builtins.subspan(object.firstMember.index(), object.memberCount);
 }
 
 BuiltinID BuiltinTable::findOwnMember(BuiltinID holder, BuiltinName name) const
@@ -300,6 +342,13 @@ BuiltinMemberLookup BuiltinTable::findMember(BuiltinID holder, BuiltinName name)
 
 bool BuiltinTable::hasLockedPrototypeChain(BuiltinClassID builtinClass) const
 {
+    if (std::optional<bool> kept = answerKeptAbout(builtinClass, AnswerAboutBuiltinClass::HasLockedPrototypeChain))
+        return *kept;
+    return everyLinkOfPrototypeChainIsLocked(builtinClass);
+}
+
+bool BuiltinTable::everyLinkOfPrototypeChainIsLocked(BuiltinClassID builtinClass) const
+{
     if (!at(builtinClass).prototype)
         return false;
     BuiltinID holder = canonicalID(at(builtinClass).prototype);
@@ -327,6 +376,8 @@ bool BuiltinTable::mayHavePristineInstances(BuiltinClassID builtinClass) const
 
 bool BuiltinTable::isRedefinedBelow(BuiltinClassID builtinClass, BuiltinName name) const
 {
+    if (!answerKeptAbout(builtinClass, AnswerAboutBuiltinClass::HasClassBelowThatMayHavePristineInstances).value_or(true))
+        return false;
     return std::ranges::any_of(classesWithInstanceMember(name), [&](BuiltinClassID other) {
         return other != builtinClass && isSameOrSubclassOf(other, builtinClass) && mayHavePristineInstances(other);
     });
@@ -351,6 +402,31 @@ BuiltinID BuiltinTable::findOwnPropertyOfInstances(BuiltinClassID builtinClass, 
     return canonicalID(member);
 }
 
+bool BuiltinTable::ignoresReceiver(BuiltinID builtin) const
+{
+    std::span<const BuiltinOverload> rows = overloadsOf(canonicalID(builtin));
+    bool noRowSpeaksOfIt = !rows.empty() && std::ranges::all_of(rows, [](const BuiltinOverload& row) {
+        return !row.isUndeclared() && !row.receiver;
+    });
+    return noRowSpeaksOfIt && std::ranges::all_of(overloadSummariesOf(canonicalID(builtin)), [](const BuiltinOverloadSummary& overload) {
+        return overload.callee == BuiltinCallee::HostFunction || overload.callee == BuiltinCallee::InternalFunction;
+    });
+}
+
+bool BuiltinTable::ignoresArgument(BuiltinID builtin, unsigned argument) const
+{
+    BuiltinID canonical = canonicalID(builtin);
+    if (at(canonical).origin != BuiltinOrigin::Engine || argument > BuiltinOperand::maxArgumentIndex)
+        return false;
+    std::span<const BuiltinOverload> rows = overloadsOf(canonical);
+    bool noRowSpeaksOfIt = !rows.empty() && std::ranges::all_of(rows, [&](const BuiltinOverload& row) {
+        return !row.isUndeclared() && !parameterFor(row, BuiltinOperand::argument(argument));
+    });
+    return noRowSpeaksOfIt && std::ranges::all_of(overloadSummariesOf(canonical), [](const BuiltinOverloadSummary& overload) {
+        return overload.callee == BuiltinCallee::HostFunction || overload.callee == BuiltinCallee::InternalFunction;
+    });
+}
+
 bool BuiltinTable::mayDefineOnNewInstances(BuiltinClassID builtinClass, BuiltinName name) const
 {
     if (listsOwnPropertiesOfNewInstances(builtinClass))
@@ -363,12 +439,6 @@ bool BuiltinTable::mayDefineOnNewInstances(BuiltinClassID builtinClass, BuiltinN
             return true;
     }
     return false;
-}
-
-BuiltinTypeID BuiltinTable::typeOfNameDefinedOnNewInstances(BuiltinClassID declaringClass, BuiltinName name) const
-{
-    const BuiltinResultProperty* found = findRecord(at(declaringClass).typesOfNamesDefinedOnNewInstances, &BuiltinResultProperty::name, name);
-    return found ? found->type : BuiltinTypeID();
 }
 
 bool BuiltinTable::definesCharactersOnNewInstances(BuiltinClassID builtinClass) const
@@ -413,6 +483,14 @@ BuiltinClassID BuiltinTable::receiverClassOf(BuiltinID id) const
     return at(holder).instanceClass;
 }
 
+bool BuiltinTable::isObjectOfClass(BuiltinID canonical) const
+{
+    const Builtin& entry = at(canonical);
+    if (entry.kind == BuiltinKind::Function || entry.kind == BuiltinKind::Method)
+        return true;
+    return entry.instanceClass && (entry.kind == BuiltinKind::Constructor || entry.kind == BuiltinKind::Prototype);
+}
+
 bool BuiltinTable::isSameOrSubclassOf(BuiltinClassID builtinClass, BuiltinClassID ancestor) const
 {
     for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {
@@ -422,7 +500,15 @@ bool BuiltinTable::isSameOrSubclassOf(BuiltinClassID builtinClass, BuiltinClassI
     return false;
 }
 
-// The test for an instance of the class compares the type of the cell, and the type of the cell says how wide an element is.
+bool BuiltinTable::hasClassBelow(BuiltinClassID builtinClass) const
+{
+    if (std::optional<bool> kept = answerKeptAbout(builtinClass, AnswerAboutBuiltinClass::HasClassBelow))
+        return *kept;
+    return std::ranges::any_of(m_data.classes, [&](const BuiltinClass& other) {
+        return other.parent && isSameOrSubclassOf(other.parent, builtinClass);
+    });
+}
+
 TypedArrayType BuiltinTable::typedArrayTypeOf(BuiltinClassID builtinClass) const
 {
     if (!builtinClass || !isTypedArrayType(at(builtinClass).type))
@@ -462,13 +548,6 @@ BuiltinSlotID BuiltinTable::findSlot(BuiltinClassID builtinClass, ContentsSlot c
 {
     return findSlotIf(*this, builtinClass, [&](const BuiltinSlot& slot) {
         return slot.contentsSlot == contentsSlot;
-    });
-}
-
-BuiltinSlotID BuiltinTable::slotInType(BuiltinClassID builtinClass, unsigned indexInType) const
-{
-    return findSlotIf(*this, builtinClass, [&](const BuiltinSlot& slot) {
-        return slot.indexInType == indexInType;
     });
 }
 
@@ -531,19 +610,6 @@ bool BuiltinTable::isHostFunctionOfEngine(BuiltinID id) const
     });
 }
 
-bool BuiltinTable::isNativeFunction(BuiltinID id) const
-{
-    if (isHostFunctionOfEngine(id))
-        return true;
-    const Builtin& entry = at(id);
-    if (entry.kind != BuiltinKind::Function && entry.kind != BuiltinKind::Method)
-        return false;
-    std::span<const BuiltinOverloadSummary> overloads = overloadSummariesOf(id);
-    return !overloads.empty() && std::ranges::all_of(overloads, [](const BuiltinOverloadSummary& overload) {
-        return overload.mode == BuiltinCallMode::Call && overload.callee == BuiltinCallee::HostFunction;
-    });
-}
-
 bool BuiltinTable::isFunctionOfEngine(BuiltinID id) const
 {
     const Builtin& entry = at(id);
@@ -552,6 +618,17 @@ bool BuiltinTable::isFunctionOfEngine(BuiltinID id) const
     std::span<const BuiltinOverloadSummary> overloads = overloadSummariesOf(id);
     return !overloads.empty() && std::ranges::all_of(overloads, [](const BuiltinOverloadSummary& overload) {
         return overload.mode == BuiltinCallMode::Call && overload.callee != BuiltinCallee::InternalFunction && overload.callee != BuiltinCallee::CustomGetter;
+    });
+}
+
+bool BuiltinTable::isNativeFunctionOfHost(BuiltinID id) const
+{
+    const Builtin& entry = at(id);
+    if (entry.origin != BuiltinOrigin::Host || (entry.kind != BuiltinKind::Function && entry.kind != BuiltinKind::Method))
+        return false;
+    std::span<const BuiltinOverloadSummary> overloads = overloadSummariesOf(id);
+    return !overloads.empty() && std::ranges::all_of(overloads, [](const BuiltinOverloadSummary& overload) {
+        return overload.mode == BuiltinCallMode::Call && overload.callee == BuiltinCallee::HostFunction;
     });
 }
 
@@ -564,31 +641,44 @@ bool BuiltinTable::isClosedKey(BuiltinID holder, BuiltinName name) const
 {
     if (std::ranges::binary_search(closedKeysOf(holder), name))
         return true;
-    if (isClosedOnHostFunctions(name) && isFunctionOfEngine(holder))
+    if (isClosedOnHostFunctions(name) && (isFunctionOfEngine(holder) || isNativeFunctionOfHost(holder)))
         return true;
     if (!at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames) || isSymbolName(name))
         return false;
     return !findOwnMember(holder, name) && !std::ranges::binary_search(openNamesOf(holder), name);
 }
 
-const BuiltinNamesReadByNativeCode* BuiltinTable::namesReadByNativeCode(BuiltinID holder) const
-{
-    return findRecord(m_data.runtime.namesReadByNativeCode, &BuiltinNamesReadByNativeCode::holder, holder);
-}
-
 std::span<const BuiltinFeatureUse> BuiltinTable::featureUsesOf(BuiltinID id) const
 {
-    return findRecords(keptByThisReader(m_data.attachments.featureUses, builtinTableFeatureUses), id);
+    static constinit RecordsByBuiltin<BuiltinFeatureUse> featureUsesByBuiltin;
+    return featureUsesByBuiltin.find(keptByThisReader(m_data.attachments.featureUses, builtinTableFeatureUses), m_data.builtins.size(), id);
 }
 
 std::span<const BuiltinModuleLoad> BuiltinTable::moduleLoadsOf(BuiltinID id) const
 {
-    return findRecords(keptByThisReader(m_data.attachments.moduleLoads, builtinTableModuleLoads), id);
+    static constinit RecordsByBuiltin<BuiltinModuleLoad> moduleLoadsByBuiltin;
+    return moduleLoadsByBuiltin.find(keptByThisReader(m_data.attachments.moduleLoads, builtinTableModuleLoads), m_data.builtins.size(), id);
 }
 
 std::span<const BuiltinCalledFunction> BuiltinTable::calledFunctionsOf(BuiltinID id) const
 {
-    return findRecords(keptByThisReader(m_data.attachments.calledFunctions, builtinTableCalledFunctions), id);
+    static constinit RecordsByBuiltin<BuiltinCalledFunction> calledFunctionsByBuiltin;
+    return calledFunctionsByBuiltin.find(keptByThisReader(m_data.attachments.calledFunctions, builtinTableCalledFunctions), m_data.builtins.size(), id);
+}
+
+Vector<const BuiltinCondition*, 8> BuiltinTable::conditionsOnLightForms() const
+{
+    Vector<const BuiltinCondition*, 8> found;
+    for (const BuiltinCalledFunction& called : keptByThisReader(m_data.attachments.calledFunctions, builtinTableCalledFunctions)) {
+        if (!called.condition || !called.condition->isAskedForOtherNames)
+            continue;
+        bool isKnown = std::ranges::any_of(found, [&](const BuiltinCondition* known) {
+            return known->isAskedForOtherNames == called.condition->isAskedForOtherNames;
+        });
+        if (!isKnown)
+            found.append(called.condition);
+    }
+    return found;
 }
 
 std::span<const BuiltinCalledFunction> BuiltinTable::startupCalledFunctions() const
@@ -601,21 +691,52 @@ std::span<const BuiltinHostObject> BuiltinTable::hostObjects() const
     return keptByThisReader(m_data.attachments.hostObjects, builtinTableHostObjects);
 }
 
-const BuiltinNamedMemberCall* BuiltinTable::callOfMemberNamed(BuiltinName name) const
+std::span<const BuiltinName> BuiltinTable::nativeCellsFilledByCalledFunctions() const
 {
-    std::span<const BuiltinNamedMemberCall> calls = keptByThisReader(m_data.attachments.namedMemberCalls, builtinTableNamedMemberCalls);
-    auto found = std::ranges::find(calls, name, &BuiltinNamedMemberCall::name);
-    return found == calls.end() ? nullptr : &*found;
-}
-
-std::span<const BuiltinHostMethodCall> BuiltinTable::hostMethodCalls() const
-{
-    return keptByThisReader(m_data.attachments.hostMethodCalls, builtinTableHostMethodCalls);
+    return m_data.attachments.nativeCellsFilledByCalledFunctions;
 }
 
 const BuiltinUnseenCode* BuiltinTable::unseenCodeOf(BuiltinID id) const
 {
     return findRecord(m_data.attachments.unseenCode, &BuiltinUnseenCode::builtin, id);
+}
+
+const BuiltinCondition* BuiltinTable::conditionOnInstancesThatAnswerEveryName(BuiltinID constructor) const
+{
+    const BuiltinUnseenCode* row = constructor ? findRecord(m_data.attachments.instancesThatAnswerEveryName, &BuiltinUnseenCode::builtin, constructor) : nullptr;
+    return row ? row->condition : nullptr;
+}
+
+bool BuiltinTable::formatterWalksInstancesOf(BuiltinClassID builtinClass) const
+{
+    for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {
+        BuiltinID constructor = at(current).constructor;
+        if (!constructor)
+            continue;
+        if (has(BuiltinMark::InstancesArePrintedByCodeOfTheirOwn, canonicalID(constructor)) || has(BuiltinMark::InstancesHaveMethodCalledWithStartupLoads, canonicalID(constructor)))
+            return false;
+    }
+    return true;
+}
+
+bool BuiltinTable::hostTakesInstancesAsAnswers(BuiltinClassID builtinClass) const
+{
+    for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {
+        if (BuiltinID constructor = at(current).constructor; constructor && has(BuiltinMark::InstancesAreAnswersThatHostTakes, canonicalID(constructor)))
+            return true;
+    }
+    return false;
+}
+
+ALWAYS_INLINE_INTO_OTHER_FILES bool BuiltinTable::isPrintedByFormatter(BuiltinID id, const BuiltinParameter& parameter) const
+{
+    if (!parameter.protocols.contains(Protocol::OwnValues) || !parameter.protocols.contains(Protocol::PrototypeChain) || !parameter.protocols.contains(Protocol::CallsNamed))
+        return false;
+    if (parameter.calledMembers.empty())
+        return at(id).origin == BuiltinOrigin::Host || has(BuiltinMark::ResultShowsOperandsToFormatters, canonicalID(id));
+    return std::ranges::any_of(namesOfHostMethodsCallingStartupLoads(), [&](BuiltinName name) {
+        return std::ranges::contains(parameter.calledMembers, name);
+    });
 }
 
 bool BuiltinTable::letsInUnseenCodeWhenCalled(BuiltinID id) const
@@ -631,7 +752,6 @@ bool BuiltinTable::letsInUnseenCode(BuiltinID id) const
 {
     if (letsInUnseenCodeWhenCalled(id))
         return true;
-    // createRequire() returns a require function.
     return std::ranges::any_of(overloadsOf(id), [&](const BuiltinOverload& overload) {
         return std::ranges::any_of(at(overload.result.type).parts, [&](const BuiltinTypePart& part) {
             return part.kind == BuiltinTypePartKind::Builtin && letsInUnseenCodeWhenCalled(canonicalID(part.builtin));
@@ -651,17 +771,36 @@ std::span<const BuiltinMarkedEntry> BuiltinTable::marked(BuiltinMark mark) const
     return marks.subspan(found.begin() - marks.begin(), found.size());
 }
 
-bool BuiltinTable::has(BuiltinMark mark, BuiltinID id) const
-{
-    return std::ranges::binary_search(marked(mark), id, { }, &BuiltinMarkedEntry::builtin);
-}
-
 std::optional<BuiltinBoxedStub> BuiltinTable::boxedCallStubOf(BuiltinID id) const
 {
     const BuiltinBoxedCall* found = findRecord(m_data.attachments.boxedCalls, &BuiltinBoxedCall::builtin, id);
     if (!found)
         return std::nullopt;
     return found->stub;
+}
+
+BuiltinID BuiltinTable::methodCalledBy(BuiltinBoxedStub stub) const
+{
+    for (const BuiltinBoxedCall& call : m_data.attachments.boxedCalls) {
+        if (call.stub == stub && canonicalID(call.builtin) == call.builtin)
+            return call.builtin;
+    }
+    return { };
+}
+
+Vector<BuiltinID, 4> BuiltinTable::membersThatHoldMethodOf(BuiltinBoxedStub stub) const
+{
+    Vector<BuiltinID, 4> members;
+    for (const BuiltinBoxedCall& call : m_data.attachments.boxedCalls) {
+        if (call.stub != stub)
+            continue;
+        BuiltinID method = canonicalID(call.builtin);
+        for (BuiltinID member : membersOf(at(method).holder)) {
+            if (canonicalID(member) == method && !members.contains(member))
+                members.append(member);
+        }
+    }
+    return members;
 }
 
 std::span<const BuiltinName> BuiltinTable::keysReadBy(Protocol protocol) const
@@ -1015,7 +1154,12 @@ static ID findToken(BuiltinTexts tokens, StringView token)
 
 BuiltinID BuiltinTable::builtinFromToken(StringView token) const
 {
+    if (token.isEmpty())
+        return { };
     if (this != &singleton()) {
+        BuiltinID found = singleton().builtinFromToken(token);
+        if (contains(found) && token == tokenOf(found))
+            return found;
         for (unsigned i = 0; i < m_data.builtins.size(); ++i) {
             if (token == tokenOf(BuiltinID(i)))
                 return BuiltinID(i);

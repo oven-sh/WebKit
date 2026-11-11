@@ -1,0 +1,28 @@
+# an executable locks Object.prototype whole: it takes no name, so a store on it throws whatever the key is, and the build says so without reading the key
+# Function.prototype is locked by its names, and takes those that a file of the program spells: `once` here. Of a key that nobody can read the build says that, and no more
+# function lay(name) { Object.prototype[name] = 1; Function.prototype[name] = 1; Function.prototype.once = 1; }
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# DIAGNOSTIC: LockedBuiltinWriteWithUnknownKey 1
+# RUN: locks
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @1
+    v1 = Builtin builtin=GlobalThis @2
+    v2 = PropGet v1 key="sink" [isFreeName] @2
+    v3 = Call v2, -, v0 @3
+    Return v3 @4
+}
+function f1 name="lay" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=ObjectPrototype @5
+    v2 = Integer integer=1 @5
+    ElemSet v1, v0, v2 @6
+    v4 = Builtin builtin=FunctionPrototype @7
+    ElemSet v4, v0, v2 @8
+    PropSet v4, v2 key="once" @9
+    Return v2 @10
+}
+openedname holder=FunctionPrototype name="once"

@@ -1,0 +1,236 @@
+# declare function id(value: any): any;
+# declare function print(value: any): void;
+# declare const which: number;
+# class Other { a = "text"; b = 2.5; c = [1]; }
+# class Holder { held: string | undefined; constructor(first?: string) { this.held = first; } }
+# function read(holder: Holder): string { return holder.held === undefined ? "none" : String(holder.held.length) + holder.held; }
+# function get(value: any, fits: boolean): any { if (fits) return "fits"; return id(value); }
+# function behindATest(holder: Holder, value: any, fits: boolean): void { const got = get(value, fits); if (typeof got === "string") holder.held = got; }
+# const holders = [new Holder("first"), new Holder(undefined)];
+# const holder = holders[which > 0 ? 0 : 1]!;
+# behindATest(holder, undefined, true);
+# print(read(holder));
+# if (which === 1) behindATest(holder, new Other(), false);
+# print(read(holder));
+# print("went on");
+# The code of a TypeTest depends on the type that its operand had before the test.
+# Where a typed store relies on such a test, the test becomes a full test: it is planned from `anything`, and its failing side is the branch that already exists.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# So the result of get() is a string or undefined, and `typeof got === "string"` reduces to "is it not undefined". An Other passes that.
+# Without the full test the Other reaches a slot that is restricted to `string | undefined`, and the check before the store crashes the program with a named error.
+# With the full test the test fails, nothing is stored, and the program prints what the shell prints.
+# In a user's build the run prints 4fits twice and continues. Where a run adds testing=CheckProofsAtRunTime, the check of the result crashes it before the test.
+# In neither case does the check at the store fail, and in neither case is there an uncontrolled crash.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(TRUE): run-in-shell mechanisms=-Inlining globalThis.which = 0;
+# TRUE: 4fits
+# TRUE: 4fits
+# TRUE: went on
+# RUN(OTHER): run-in-shell mechanisms=-Inlining globalThis.which = 1;
+# OTHER: 4fits
+# OTHER-NOT: what a field holds
+# OTHER-NOT: SIGSEGV
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Other" module=m0 position=115 constructor=f4 fields=[{key="a" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=3
+layout L1 kind=Instance name="Holder" module=m0 position=161 constructor=f5 fields=[{key="held" declared={type=undefined|null|string flags=[OmitsNull]} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=anything elements=[Number{value=1}]} module=m0
+variable g0 name="get" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @109
+    v5 = NewClass v4 layout=L0 @109
+    PutModuleVariable v5 variable=g1 @109
+    v7 = FinishClass v5 layout=L0 @109
+    v8 = Convert v7 declared={type=f4 flags=[IsFromCompiler]} @109
+    v9 = Convert v7 declared={type=f4 flags=[IsFromCompiler]} @109
+    v10 = NewClosure function=f5 @155
+    v11 = NewClass v10 layout=L1 @155
+    PutModuleVariable v11 variable=g2 @155
+    v13 = FinishClass v11 layout=L1 @155
+    v14 = Convert v13 declared={type=f5 flags=[IsFromCompiler]} @155
+    v15 = Convert v13 declared={type=f5 flags=[IsFromCompiler]} @155
+    v16 = String string="first" @649
+    v17 = Construct v15, -, v16 calleeName="Holder" @642
+    v18 = Undefined @670
+    v19 = Construct v15, -, v18 calleeName="Holder" @663
+    v20 = NewArray v17, v19 contents=anything @637
+    v21 = Builtin builtin=GlobalThis @706
+    v22 = PropGet v21 key="which" [isFreeName] @706
+    v23 = Integer @714
+    v24 = Greater v22, v23 @714
+    Branch v24 -> taken b1(), notTaken b2() @714
+  b1():
+    v25 = Integer @718
+    Jump -> next b3(v25) @718
+  b2():
+    v26 = Integer integer=1 @722
+    Jump -> next b3(v26) @722
+  b3(v27):
+    v28 = ElemGet v20, v27 @698
+    v29 = Undefined @747
+    v30 = Boolean boolean=true @758
+    v31 = Call v3, -, v28, v29, v30 calleeName="behindATest" @727
+    v32 = Builtin builtin=GlobalThis @765
+    v33 = PropGet v32 key="print" [isFreeName] @765
+    v34 = Call v1, -, v28 calleeName="read" @771
+    v35 = Call v33, -, v34 calleeName="print" @765
+    v36 = Builtin builtin=GlobalThis @790
+    v37 = PropGet v36 key="which" [isFreeName] @790
+    v38 = Integer integer=1 @800
+    v39 = StrictEq v37, v38 @800
+    Branch v39 -> taken b4(), notTaken b5() @800
+  b4():
+    v40 = Construct v9 calleeName="Other" @827
+    v41 = Convert v40 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @823
+    v42 = Boolean @836
+    v43 = Call v3, -, v28, v41, v42 calleeName="behindATest" @803
+    Jump -> next b5() @803
+  b5():
+    v44 = Builtin builtin=GlobalThis @844
+    v45 = PropGet v44 key="print" [isFreeName] @844
+    v46 = Call v1, -, v28 calleeName="read" @850
+    v47 = Call v45, -, v46 calleeName="print" @844
+    v48 = Builtin builtin=GlobalThis @865
+    v49 = PropGet v48 key="print" [isFreeName] @865
+    v50 = String string="went on" @871
+    v51 = Call v49, -, v50 calleeName="print" @865
+    v52 = Undefined @865
+    Return v52 @865
+}
+function f1 name="get" module=m0 position=377 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: boolean):
+    v2 = ToBoolean v1 @428
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @428
+  b1(v3):
+    v4 = String string="fits" @441
+    Return v4 @441
+  b2(v5):
+    v6 = Builtin builtin=GlobalThis @456
+    v7 = PropGet v6 key="id" [isFreeName] @456
+    v8 = Call v7, -, v0 calleeName="id" @456
+    ReturnCall v8 @456
+}
+function f2 name="read" module=m0 position=249 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = PropGet v0 key="held" @296
+    v2 = TypeTest v1 testedType=undefined @296
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @296
+  b1(v3):
+    v4 = String string="none" @324
+    Jump -> next b3(v4) @324
+  b2(v5):
+    v6 = Builtin builtin=String @333
+    v7 = PropGet v0 key="held" @340
+    v8 = PropGet v7 key="length" @347
+    v9 = Call v6, -, v8 calleeName="String" @333
+    v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @333
+    v11 = PropGet v0 key="held" @362
+    v12 = Add v10, v11 @362
+    Jump -> next b3(v12) @362
+  b3(v13):
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @362
+    Return v14 @362
+}
+function f3 name="behindATest" module=m0 position=469 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=boolean}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: anything, v2: boolean):
+    v3 = GetModuleVariable variable=g0 @553
+    v4 = Call v3, -, v1, v2 calleeName="get" @553
+    v5 = TypeTest v4 testedType=string @575
+    Branch v5 -> taken b1(| 0), notTaken b2() @575
+  b1(v6):
+    v7 = NarrowByTest v4, v6 @575
+    PropSet v0, v7 key="held" @600
+    Jump -> next b2() @600
+  b2():
+    v9 = Undefined @600
+    Return v9 @600
+}
+function f4 name="Other" module=m0 position=115 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @115
+    v2 = NewObject v1 layout=L0 @115
+    v3 = Convert v2 declared={type=L0} @115
+    v4 = CallDirect v3 function=f6 @115
+    Return v3 @115
+}
+function f5 name="Holder" module=m0 position=207 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: undefined|null|string):
+    v2 = GetConstructPrototype v0 layout=L1 @207
+    v3 = NewObject v2 layout=L1 @207
+    v4 = Convert v3 declared={type=L1} @207
+    v5 = CallDirect v4 function=f7 @207
+    PropSet v4, v1 key="held" @226
+    v7 = Undefined @226
+    v8 = TypeTest v7 testedType=object @226
+    Branch v8 -> taken b1(| 0), notTaken b2(v4) @226
+  b1(v9):
+    Jump -> next b2(v9) @226
+  b2(v10):
+    Return v10 @226
+}
+function f6 module=m0 position=115 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @115
+    v2 = String string="text" @127
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @127
+    PropDefine v1, v3 key="a" @123
+    v5 = Double number=2.5 @139
+    v6 = Convert v5 declared={type=number} @139
+    PropDefine v1, v6 key="b" @135
+    v8 = Data data=d0 @148
+    v9 = Convert v8 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} @148
+    PropDefine v1, v9 key="c" @144
+    v11 = Undefined @115
+    Return v11 @115
+}
+function f7 module=m0 position=161 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @161
+    v2 = Undefined @161
+    PropDefine v1, v2 key="held" @170
+    v4 = Undefined @161
+    Return v4 @161
+}
+function f8 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f9 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f9
+runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private

@@ -63,14 +63,14 @@ protected:
 
 private:
     void initialize(uint16_t width, uint16_t height, unsigned startBitrate, unsigned maxBitrate, unsigned minBitrate, uint32_t maxFramerate) final;
-    void encodeFrame(CVPixelBufferRef, int64_t timeStampNs, int64_t timeStamp, std::optional<uint64_t> duration, VideoFrame::Rotation, bool isKeyframeRequired) final;
+    void encodeFrame(CVPixelBufferRef, int64_t timeStampNs, int64_t timeStamp, std::optional<uint64_t> duration, VideoFrame::Rotation, bool isMirrored, bool isKeyframeRequired) final;
     void setRates(uint32_t bitRate, uint32_t frameRate) final;
     void flush() final;
 
     bool resetCompressionSession();
     void configureCompressionSession();
     void setEncoderBitrateBps(uint32_t);
-    CMVideoCodecType LEGACY_NODELETE codecType() const;
+    NODELETE CMVideoCodecType codecType() const;
     void notifyDescription(std::span<const uint8_t>, const PlatformVideoColorSpace&);
 
     const CreationInfo m_creationInfo;

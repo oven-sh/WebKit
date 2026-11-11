@@ -29,6 +29,7 @@
 #import "CoreIPCCFDictionary.h"
 #import "CoreIPCError.h"
 #import "CoreIPCNSURLCredential.h"
+#import "CoreIPCNSURLProtectionSpace.h"
 #import "CoreIPCNSURLRequest.h"
 #import "CoreIPCPKPayment.h"
 #import "CoreIPCPKPaymentMethod.h"
@@ -53,6 +54,10 @@
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/spi/cocoa/SecuritySPI.h>
 #import <wtf/text/Base64.h>
+
+#if PLATFORM(IOS_FAMILY)
+#import <WebCore/WAKAppKitStubs.h>
+#endif
 
 #import <pal/cocoa/AVFoundationSoftLink.h>
 #import <pal/cocoa/ContactsSoftLink.h>
@@ -610,7 +615,9 @@ static bool wkNSURLProtectionSpace_isEqual(NSURLProtectionSpace *a, SEL, NSURLPr
         return false;
     if (!([a.distinguishedNames isEqual:b.distinguishedNames] || (!a.distinguishedNames && a.distinguishedNames == b.distinguishedNames)))
         return false;
-    if (!((!a.serverTrust && a.serverTrust == b.serverTrust) || secTrustRefsEqual(a.serverTrust, a.serverTrust)))
+    if (!a.serverTrust != !b.serverTrust)
+        return false;
+    if (a.serverTrust && !secTrustRefsEqual(a.serverTrust, b.serverTrust))
         return false;
 
     return true;
@@ -713,8 +720,9 @@ public:
     using Arguments = std::tuple<ObjCHolderForTesting>;
     using ReplyArguments = std::tuple<ObjCHolderForTesting>;
 
-    // We can use any MessageName here
-    static IPC::MessageName name() { return IPC::MessageName::IPCTester_AsyncPing; }
+    // We can use any MessageName here that is not classified as async-with-reply (the
+    // WithoutUsingIPCConnection path does not encode an async reply ID header field).
+    static constexpr IPC::MessageName name() { return IPC::MessageName::IPCTester_EmptyMessage; }
     static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::IPCTester_AsyncPingReply; }
 
     static constexpr bool isSync = false;
@@ -738,8 +746,9 @@ public:
     using Arguments = std::tuple<CFHolderForTesting>;
     using ReplyArguments = std::tuple<CFHolderForTesting>;
 
-    // We can use any MessageName here
-    static IPC::MessageName name() { return IPC::MessageName::IPCTester_AsyncPing; }
+    // We can use any MessageName here that is not classified as async-with-reply (the
+    // WithoutUsingIPCConnection path does not encode an async reply ID header field).
+    static constexpr IPC::MessageName name() { return IPC::MessageName::IPCTester_EmptyMessage; }
     static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::IPCTester_AsyncPingReply; }
 
     static constexpr bool isSync = false;
@@ -1723,6 +1732,52 @@ TEST(IPCSerialization, SecTrustRef)
 
     runTestCF({ trust.get() });
 }
+
+// rdar://191576139: newer Security frameworks put an NSArray inside the SSL policy's KeySize option dictionary.
+TEST(IPCSerialization, SecTrustRefKeySizeWithArrayValue)
+{
+    RetainPtr certificate = adoptCF(SecCertificateCreateWithData(nullptr, (__bridge CFDataRef)adoptNS([[NSData alloc] initWithBase64EncodedString:cert1.createNSString().get() options:0]).get()));
+    ASSERT_NOT_NULL(certificate.get());
+    RetainPtr policy = adoptCF(SecPolicyCreateSSL(true, CFSTR("example.local")));
+    SecTrustRef trustRef = nullptr;
+    EXPECT_EQ(SecTrustCreateWithCertificates(certificate.get(), policy.get(), &trustRef), errSecSuccess);
+    RetainPtr originalTrust = adoptCF(trustRef);
+
+    RetainPtr originalPlist = adoptCF(SecTrustCopyPropertyListRepresentation(originalTrust.get(), nullptr));
+    RetainPtr plist = adoptNS([(NSDictionary *)originalPlist.get() mutableCopy]);
+    RetainPtr policies = adoptNS([plist.get()[@"policies"] mutableCopy]);
+    RetainPtr sslPolicy = adoptNS([policies.get()[0] mutableCopy]);
+    RetainPtr policyOptions = adoptNS([sslPolicy.get()[@"policyOptions"] mutableCopy]);
+    RetainPtr keySize = adoptNS([policyOptions.get()[@"KeySize"] mutableCopy]);
+    ASSERT_NOT_NULL(keySize.get());
+    keySize.get()[@"111"] = @[ @11, @12, @13, @14, @15, @16, @17, @18, @19 ];
+    policyOptions.get()[@"KeySize"] = keySize.get();
+    sslPolicy.get()[@"policyOptions"] = policyOptions.get();
+    policies.get()[0] = sslPolicy.get();
+    plist.get()[@"policies"] = policies.get();
+
+    CFErrorRef rawError = nullptr;
+    RetainPtr trust = adoptCF(SecTrustCreateFromPropertyListRepresentation((__bridge CFTypeRef)plist.get(), &rawError));
+    RetainPtr error = adoptCF(rawError);
+    EXPECT_NULL(error.get());
+    ASSERT_NOT_NULL(trust.get());
+
+    RetainPtr roundTrippedTrust = WebKit::CoreIPCSecTrust(trust.get()).createSecTrust();
+    ASSERT_NOT_NULL(roundTrippedTrust.get());
+    RetainPtr roundTrippedPlist = adoptCF(SecTrustCopyPropertyListRepresentation(roundTrippedTrust.get(), nullptr));
+    NSDictionary *roundTrippedKeySize = ((NSDictionary *)roundTrippedPlist.get())[@"policies"][0][@"policyOptions"][@"KeySize"];
+    EXPECT_TRUE([roundTrippedKeySize isEqualToDictionary:keySize.get()]);
+
+    runTestCF({ trust.get() });
+
+    RetainPtr protectionSpace = adoptNS([[NSURLProtectionSpace alloc] initWithHost:@"example.local" port:443 protocol:NSURLProtectionSpaceHTTPS realm:nil authenticationMethod:NSURLAuthenticationMethodServerTrust]);
+    [protectionSpace _setServerTrust:trust.get()];
+    RetainPtr decoded = dynamic_objc_cast<NSURLProtectionSpace>(WebKit::CoreIPCNSURLProtectionSpace(protectionSpace.get()).toID().get());
+    ASSERT_NOT_NULL(decoded.get());
+    EXPECT_NOT_NULL(decoded.get().serverTrust);
+
+    runTestNS({ protectionSpace.get() });
+}
 #endif
 
 TEST(IPCSerialization, NSShadow)
@@ -2159,7 +2214,7 @@ TEST(IPCSerialization, NSURLCredentialKerberosFlags)
         @"flags": @{ @"name": @"value" },
     }]);
 
-    IPC::Encoder encoder(IPC::MessageName::IPCTester_AsyncPing, 0);
+    IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
     encoder << WebKit::CoreIPCNSURLCredential { credential.get() };
     auto decoder = IPC::Decoder::create(encoder.span(), encoder.releaseAttachments());
     auto decoded = decoder->decode<WebKit::CoreIPCNSURLCredentialData>();
@@ -2174,7 +2229,7 @@ TEST(IPCSerialization, NSURLCredentialAttributes)
         @"attributes": @{ @"name": @"value" },
     }]);
 
-    IPC::Encoder encoder(IPC::MessageName::IPCTester_AsyncPing, 0);
+    IPC::Encoder encoder(IPC::MessageName::IPCTester_EmptyMessage, 0);
     encoder << WebKit::CoreIPCNSURLCredential { credential.get() };
     auto decoder = IPC::Decoder::create(encoder.span(), encoder.releaseAttachments());
     auto decoded = decoder->decode<WebKit::CoreIPCNSURLCredentialData>();

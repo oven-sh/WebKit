@@ -1,0 +1,50 @@
+# What a call stores is there for the next: the body of a module is gone through from its start, in the order in which it runs.
+# const src = [], names = {}; let next = 0;
+# const token = (name, text) => { const index = next++; names[name] = index; src[index] = text; return new RegExp(text); };
+# token("NUMBER", "0|[1-9]\\d*"); token("PAIR", `(${src[names.NUMBER]})-(${src[names.NUMBER]})`);
+# RUN: regexp-texts mechanisms=all
+# CHECK-COUNT-2: text /
+# CHECK-NOT: text /
+# RUN(NUMBER): regexp-texts mechanisms=all
+# NUMBER: text /0|[1-9]\d*/
+# RUN(PAIR): regexp-texts mechanisms=all
+# PAIR: text /(0|[1-9]\d*)-(0|[1-9]\d*)/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment module=m0 position=1 fields=[{declared={type=anything} variableName="next"}]
+layout L1 module=m0 position=2 fields=[]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewArray contents=anything
+    v2 = NewObject layout=L1
+    v3 = Integer
+    PutEnvironmentField v0, v3 layout=L0
+    v5 = NewClosure v0, v1, v2 function=f1
+    v6 = String string="NUMBER"
+    v7 = String string="0|[1-9]\\d*"
+    v8 = Call v5, -, v6, v7
+    v9 = String string="PAIR"
+    v10 = String string="("
+    v11 = PropGet v2 key="NUMBER"
+    v12 = ElemGet v1, v11
+    v13 = ToString v12
+    v14 = String string=")-("
+    v15 = String string=")"
+    v16 = Strcat v10, v13, v14, v13, v15
+    v17 = Call v5, -, v9, v16
+    Return v17
+}
+function f1 name="token" module=m0 position=10 kind=Arrow length=2 captures=[{type=env L0}, {type=anything variableName="src"}, {type=anything variableName="names"}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything, v2: anything, v3: anything, v4: anything):
+    v5 = GetEnvironmentField v0 layout=L0
+    v6 = ToNumeric v5
+    v7 = Increment v6
+    PutEnvironmentField v0, v7 layout=L0
+    ElemSet v2, v3, v6 mode=Sloppy
+    ElemSet v1, v6, v4 mode=Sloppy
+    v11 = Builtin builtin=RegExp
+    v12 = Construct v11, -, v4
+    Return v12
+}

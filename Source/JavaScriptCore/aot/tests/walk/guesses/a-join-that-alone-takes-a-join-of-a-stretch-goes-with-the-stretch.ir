@@ -1,0 +1,43 @@
+# const named = (i: number) => table["k" + (i & 63) + "_" + (i & 7)];
+# The test of `i` opens a stretch that ends behind the last `&`, the last operation that is better off for the test. The last `+` alone takes the join that stands in the stretch, and only a written number stands between: it goes with the stretch. Each way makes the whole name; no join takes a text that two ways hand over.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=number
+# CHECK-COUNT-2: [isLikelyKey, isLikelyName]
+# CHECK-NOT: [isLikelyKey, isLikelyName]
+layout L0 module=m0 position=38
+# layout L905 kind=Closure
+variable g0 name="table" module=m0 declared={type=undefined|null|object|absent flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+module m0 path="/$bunfs/root/meeting.ts" displayPath="meeting.ts" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 42, 110, 143] quotedSources=[{position=71 start=29 end=66}, {position=111 end=15}, {position=130 end=22}] quotedSourceText="globalThis.sink(named)(i) => table[\x22k\x22 + (i & 63) + \x22_\x22 + (i & 7)]"} functionSource="const table = {};\x0aconst named = (i) => table[\x22k\x22 + (i & 63) + \x22_\x22 + (i & 7)];\x0a(globalThis).sink(named);\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d0 @38
+    v1 = Convert v0 declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]} @38
+    PutModuleVariable v1 variable=g0 @6
+    v3 = NewClosure function=f1 @56
+    v4 = Builtin builtin=GlobalThis @111
+    v5 = PropGet v4 key="globalThis" [isFreeName] @111
+    v6 = Convert v5 declared={type=builtin(GlobalThis) flags=[IsExpected]} @111
+    v7 = PropGet v6 key="sink" @111
+    v8 = Call v7, v6, v3 calleeKey="sink" calleeName="globalThis.sink" @130
+    v9 = Undefined @110
+    Return v9 @110
+}
+function f1 name="named" module=m0 position=56 sourceRange={start=32 end=76} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g0 @71
+    v2 = CheckInitialized v1 name="table" @71
+    v3 = String string="k" @77
+    v4 = Integer integer=63 @88
+    v5 = BitAnd v0, v4 @88
+    v6 = Add v3, v5 @88
+    v7 = String string="_" @94
+    v8 = Add v6, v7 @94
+    v9 = Integer integer=7 @105
+    v10 = BitAnd v0, v9 @105
+    v11 = Add v8, v10 @105
+    v12 = ElemGet v2, v11 @71
+    Return v12 @71
+}
+data d0 root=Object{layout=L0} module=m0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app"]}, {exportName="then"}]

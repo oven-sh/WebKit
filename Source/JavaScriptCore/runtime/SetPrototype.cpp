@@ -42,7 +42,7 @@ namespace JSC {
 const ClassInfo SetPrototype::s_info = { "Set"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SetPrototype) };
 
 JSC_DECLARE_HOST_FUNCTION(setProtoFuncAdd);
-static JSC_DECLARE_HOST_FUNCTION(setProtoFuncClear);
+JSC_DECLARE_HOST_FUNCTION(setProtoFuncClear);
 JSC_DECLARE_HOST_FUNCTION(setProtoFuncDelete);
 JSC_DECLARE_HOST_FUNCTION(setProtoFuncHas);
 JSC_DECLARE_HOST_FUNCTION(setProtoFuncValues);

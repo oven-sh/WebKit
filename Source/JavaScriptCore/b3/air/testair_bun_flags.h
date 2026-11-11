@@ -846,7 +846,7 @@ void testReuseFlagsIsIdempotent()
 }
 
 enum class ResultOperation : uint8_t { ShiftLeft, ShiftLeftByNothing, AndWithMask, AndWithNegativeMask, AndWithMaskOfByte, AndWithMaskOfHalfWord, AndWithAllBits, AndWithRegister, AndIntoOtherRegister, AndOfRegisterWithItself };
-enum class ResultTestNeighbor : uint8_t { None, MoveBetween, OtherRegisterTested, OtherWidthTested };
+enum class ResultTestNeighbor : uint8_t { None, MoveBetween, ConstantMoveBetween, ResultMoveBetween, OtherRegisterTested, OtherWidthTested };
 enum class ResultTestForm : uint8_t { TestAgainstItself, TestAgainstAllBits, CompareWithZero };
 
 static int64_t maskOf(ResultOperation operation)
@@ -916,6 +916,10 @@ static bool appendTestOfResult(Code& code, bool is64Bit, ResultOperation operati
     }
     if (neighbor == ResultTestNeighbor::MoveBetween)
         appendChecked(root, Move, a3, a4);
+    if (neighbor == ResultTestNeighbor::ConstantMoveBetween)
+        appendChecked(root, Move, Arg::imm(0), a4);
+    if (neighbor == ResultTestNeighbor::ResultMoveBetween)
+        appendChecked(root, Move, a3, result);
     Tmp tested = neighbor == ResultTestNeighbor::OtherRegisterTested ? a3 : result;
     switch (form) {
     case ResultTestForm::TestAgainstItself:
@@ -943,7 +947,7 @@ static void checkBranchOnFlagsOfResult(bool is64Bit, ResultOperation operation, 
         B3::Procedure proc;
         proc.setOptLevel(2);
         bool leavesFlags = appendTestOfResult(proc.code(), is64Bit, operation, test, form, neighbor);
-        bool isExpected = leavesFlags && test.conditionAgainstZero && neighbor == ResultTestNeighbor::None;
+        bool isExpected = leavesFlags && test.conditionAgainstZero && (neighbor == ResultTestNeighbor::None || neighbor == ResultTestNeighbor::MoveBetween);
         checkFlagReuse(proc.code(), isExpected);
         if (isExpected)
             CHECK(isInst(proc.code()[0]->last(), BranchOnFlags, { Arg::resCond(test.condition) }));
@@ -999,7 +1003,7 @@ void testBranchOnFlagsOfResult()
                     checkBranchOnFlagsOfResult(is64Bit, operation, test, form);
             }
         }
-        for (ResultTestNeighbor neighbor : { ResultTestNeighbor::MoveBetween, ResultTestNeighbor::OtherRegisterTested, ResultTestNeighbor::OtherWidthTested })
+        for (ResultTestNeighbor neighbor : { ResultTestNeighbor::MoveBetween, ResultTestNeighbor::ConstantMoveBetween, ResultTestNeighbor::ResultMoveBetween, ResultTestNeighbor::OtherRegisterTested, ResultTestNeighbor::OtherWidthTested })
             checkBranchOnFlagsOfResult(is64Bit, ResultOperation::ShiftLeft, testConditions[0], ResultTestForm::TestAgainstItself, neighbor);
     }
 }

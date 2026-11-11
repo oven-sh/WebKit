@@ -30,6 +30,7 @@
 #include "FloatQuad.h"
 #include "GraphicsContext.h"
 #include "HitTestResult.h"
+#include "ImageDrawDescriptor.h"
 #include "LayoutRepainter.h"
 #include "LegacyRenderSVGResource.h"
 #include "PointerEventsHitRules.h"
@@ -44,13 +45,9 @@
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
 #include "SVGVisitedRendererTracking.h"
-#include "StyleImageDrawingExtras.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
-
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-#include <WebKitAdditions/AXCustomColorModeController.h>
-#endif
 
 namespace WebCore {
 
@@ -135,7 +132,7 @@ void LegacyRenderSVGImage::layout()
 
     // If our bounds changed, notify the parents.
     if (transformOrBoundariesUpdate) {
-        if (CheckedPtr parent = this->parent())
+        if (auto* parent = this->parent())
             parent->invalidateCachedBoundaries();
     }
 
@@ -190,33 +187,9 @@ void LegacyRenderSVGImage::paintForeground(PaintInfo& paintInfo)
     auto destRect = placement.destination;
     auto srcRect = placement.source;
 
-    auto concreteObjectSize = ConcreteObjectSize::fixed(placement.imageRenderingRectangle.size());
-
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-    auto invertContent = [&] {
-        if (styleImage->drawsSVGImage())
-            return AXCustomColorModeController::shouldInvertSVGImage(*this, *styleImage);
-
-        return AXCustomColorModeController::shouldInvertContentImage(*this, destRect.size());
-    };
-#endif
-
-    ImageDrawingOptions options = {
-        imageOrientation(),
-        styleImage->interpolationQualityForImageDraw(paintInfo.context(), *this, concreteObjectSize, styleImage.get(), LayoutSize(destRect.size())),
-        settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-        invertContent() ? InvertContent::Yes : InvertContent::No,
-#endif
-        settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No,
-        IgnoreRootPreserveAspectRatio::Yes,
-        settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No,
-        paintInfo.paintBehavior.contains(PaintBehavior::DrawsHDRContent) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
-        style().dynamicRangeLimit().toPlatformDynamicRangeLimit()
-    };
-
     auto& context = paintInfo.context();
-    styleImage->draw(context, *this, concreteObjectSize, destRect, srcRect, options);
+    auto descriptor = calculateSVGImageDrawDescriptor(*styleImage, *this, context, placement.imageRenderingRectangle.size(), destRect.size(), paintInfo.paintBehavior);
+    styleImage->draw(context, *this, descriptor, destRect, srcRect);
 
     if (RefPtr cachedImage = imageResource().cachedImage(); cachedImage && !context.paintingDisabled())
         protect(document())->didPaintImage(imageElement(), cachedImage, destRect);
@@ -257,6 +230,13 @@ bool LegacyRenderSVGImage::nodeAtFloatPoint(const HitTestRequest& request, HitTe
     }
 
     return false;
+}
+
+void LegacyRenderSVGImage::forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>& function)
+{
+    LegacyRenderSVGModelObject::forEachStyleImage(function);
+    if (RefPtr image = imageResource().styleImage())
+        function(*image);
 }
 
 void LegacyRenderSVGImage::imageChanged(WrappedImagePtr, const IntRect*)

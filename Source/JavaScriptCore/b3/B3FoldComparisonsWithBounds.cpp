@@ -204,6 +204,7 @@ private:
                     if (isUnsignedRelation(value->opcode()))
                         m_proc.count(Counter::RangeChecksRemoved);
                 }
+                m_proc.movedLoadLog().addDecidedComparison(m_proc, value, block, index, value->child(0), value->child(1), outcome == TriState::True);
                 value->replaceWithIdentity(m_insertionSet.insertIntConstant(index, value, outcome == TriState::True));
                 changed = true;
             }

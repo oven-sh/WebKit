@@ -1,0 +1,58 @@
+# library.js, which a test may mock: export function one(v) { return v.x; }   main.js: import { one } from "./library.js"; sink(function caller(v) { return one(v); })
+# Each use of the import asks whether a mock stands; what is called is what the mock has under the name, or what the variable holds. The two meet in front of the call.
+# The one arm that reads a variable is looked through to: the call is tested for the function that the program laid there.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: MockSeenBy module=m1 referrer=m0
+# CHECK: [[test]]: boolean @Boolean = TypeTest [[met]] testedType=f1
+# CHECK-NEXT: Branch [[test]] -> taken [[laid]](), notTaken [[other]]()
+# CHECK: PropGet v0 key="x"
+# CHECK: [[other]]() frequency=Rare
+# CHECK-NEXT: Call [[met]], -, v0 calleeName="one"
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/library.js" displayPath="library.js" flags=[MayBeMocked] body=f3 exports=[{name="one" variable=g0}]
+entry module=m0
+variable g0 name="one" module=m1 declared={type=anything} initialization=Function function=f1 flags=[IsReplaceable]
+variable g1 module=m1 declared={type=anything|absent} flags=[IsReplaceable, HoldsMock]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="one" module=m1 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="caller" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = TypeTest v1 testedType=absent
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b4()
+  b2():
+    v3 = SeesMockOf module=m1 referrer=m0 reader=m0
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v4 = MockSeenBy module=m1 referrer=m0 reader=m0
+    v5 = PropGet v4 key="one"
+    Jump -> next b5(v5)
+  b4():
+    v6 = GetModuleVariable variable=g0
+    v7 = CheckInitialized v6 name="one"
+    Jump -> next b5(v7)
+  b5(v8: anything):
+    v9 = Call v8, -, v0 calleeName="one"
+    Return v9
+}
+function f3 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

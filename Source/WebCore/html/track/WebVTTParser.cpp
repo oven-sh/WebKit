@@ -35,7 +35,6 @@
 
 #if ENABLE(VIDEO)
 
-#include "CSSSerializationContext.h"
 #include "CommonAtomStrings.h"
 #include "Document.h"
 #include "ISOVTTCue.h"
@@ -98,10 +97,12 @@ bool WebVTTParser::parseFloatPercentageValuePair(VTTScanner& valueScanner, char 
 
 WebVTTParser::WebVTTParser(WebVTTParserClient& client, Document& document)
     : m_document(document)
-    , m_decoder(TextResourceDecoder::create(textPlainContentTypeAtom(), PAL::UTF8Encoding()))
+    , m_decoder(TextResourceDecoder::create(TextResourceDecoder::ContentType::PlainText, PAL::UTF8Encoding()))
     , m_client(client)
 {
 }
+
+WebVTTParser::~WebVTTParser() = default;
 
 Vector<Ref<WebVTTCueData>> WebVTTParser::takeCues()
 {
@@ -113,7 +114,7 @@ Vector<Ref<VTTRegion>> WebVTTParser::takeRegions()
     return WTF::move(m_regionList);
 }
 
-Vector<String> WebVTTParser::takeStyleSheets()
+Vector<Ref<StyleSheetContents>> WebVTTParser::takeStyleSheets()
 {
     return WTF::move(m_styleSheets);
 }
@@ -397,8 +398,7 @@ bool WebVTTParser::checkAndStoreStyleSheet(StringView line)
     if (!childRules.size())
         return true;
 
-    StringBuilder sanitizedStyleSheetBuilder;
-
+    bool hasProperties = false;
     for (const auto& rule : childRules) {
         RefPtr styleRule = dynamicDowncast<StyleRule>(rule);
         if (!styleRule)
@@ -414,15 +414,12 @@ bool WebVTTParser::checkAndStoreStyleSheet(StringView line)
         if (!isCue)
             return true;
 
-        if (styleRule->properties().isEmpty())
-            continue;
-
-        sanitizedStyleSheetBuilder.append(selectorText, " { "_s, protect(styleRule->properties())->asText(CSS::defaultSerializationContext()), "  }\n"_s);
+        if (!styleRule->properties().isEmpty())
+            hasProperties = true;
     }
 
-    // It would be more stylish to parse the stylesheet only once instead of serializing a sanitized version.
-    if (!sanitizedStyleSheetBuilder.isEmpty())
-        m_styleSheets.append(sanitizedStyleSheetBuilder.toString());
+    if (hasProperties)
+        m_styleSheets.append(WTF::move(contents));
 
     return true;
 }
@@ -520,7 +517,7 @@ public:
 private:
     void constructTreeFromToken(Document&);
 
-    WebVTTNodeType LEGACY_NODELETE currentType() const { return m_typeStack.isEmpty() ? WebVTTNodeType::None : m_typeStack.last(); }
+    NODELETE WebVTTNodeType currentType() const { return m_typeStack.isEmpty() ? WebVTTNodeType::None : m_typeStack.last(); }
 
     WebVTTToken m_token;
     Vector<WebVTTNodeType> m_typeStack;
@@ -633,7 +630,7 @@ bool WebVTTParser::collectTimeStamp(VTTScanner& input, MediaTime& timeStamp)
     return true;
 }
 
-static WebVTTNodeType LEGACY_NODELETE tokenToNodeType(WebVTTToken& token)
+NODELETE static WebVTTNodeType tokenToNodeType(WebVTTToken& token)
 {
     switch (token.name().length()) {
     case 1:

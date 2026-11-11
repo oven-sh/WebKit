@@ -9,10 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTSort.h"
-#include "AOTStronglyConnectedComponents.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
-#include <algorithm>
+#include <ranges>
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
 
@@ -27,7 +25,6 @@ enum class ModuleProperty : uint8_t {
     HasEvaluationWork = 1 << 3,
 };
 
-// A link follows every request. An evaluation follows the imports: what a module requires runs inside its body.
 enum class FollowedRequests : uint8_t { All, Imports };
 
 struct FollowedTargets {
@@ -36,7 +33,6 @@ struct FollowedTargets {
     FollowedRequests followed;
 
     size_t size() const { return requests.size(); }
-    // A request that is not followed leads nowhere.
     uint32_t operator[](size_t index) const { return followed == FollowedRequests::Imports && requests[index].isRequire ? importer : requests[index].target(); }
 };
 
@@ -46,7 +42,6 @@ struct ModuleGraph {
 
     unsigned size() const { return static_cast<unsigned>(modulesAndEndRecord.size() - 1); }
     ModuleData& operator[](unsigned module) const { return modulesAndEndRecord[module]; }
-    ModuleData& endRecord() const { return modulesAndEndRecord.back(); }
 
     std::span<const ModuleRequestData> requestsOf(unsigned module) const
     {
@@ -54,7 +49,6 @@ struct ModuleGraph {
         return requests.subspan(first, modulesAndEndRecord[module + 1].firstRequest - first);
     }
 
-    // The synthetic exports of a module that captures exports are the names it captures.
     bool resolvesNames(unsigned module) const
     {
         const ModuleData& record = modulesAndEndRecord[module];
@@ -64,26 +58,12 @@ struct ModuleGraph {
         return record.firstSyntheticExport != nextRecord.firstSyntheticExport || record.firstRequiredName != nextRecord.firstRequiredName;
     }
 
-    // A component has a higher number than every component it requests.
     Typed::StronglyConnectedComponents computeComponents(FollowedRequests followed) const
     {
         return Typed::computeStronglyConnectedComponents(size(), [&](unsigned module) {
             return FollowedTargets { requestsOf(module), module, followed };
         });
     }
-};
-
-enum class RoleInWalk : uint8_t {
-    NeverVisited,
-    VisitedWithoutList,
-    Visited,
-    OnlyPassesWalkOn,
-    Contracted,
-};
-
-struct ListRange {
-    uint32_t start { 0 };
-    uint32_t size { 0 };
 };
 
 } // anonymous namespace
@@ -98,7 +78,6 @@ static OptionSet<ModuleProperty> ownPropertiesOf(const ModuleGraph& graph, unsig
         properties.add(ModuleProperty::HasLinkWork);
     if (module.isUncompiledCode())
         properties.add(ModuleProperty::IsUncompiledCode);
-    // A module of the library runs when its importer is linked.
     bool isFileOfProgram = module.hasExportTable() || module.kind == ModuleKind::CommonJs;
     if (module.isUncompiledCode() || (isFileOfProgram && (module.bodyFunction() || module.hasTopLevelAwait())))
         properties.add(ModuleProperty::HasEvaluationWork);
@@ -128,15 +107,15 @@ static Vector<OptionSet<ModuleProperty>> propertiesReachedFromComponents(const M
     return reached;
 }
 
-void computeModuleFlags(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests)
+Typed::StronglyConnectedComponents computeModuleFlags(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests)
 {
     RELEASE_ASSERT(!modulesAndEndRecord.empty());
     ModuleGraph graph { modulesAndEndRecord, requests };
     for (unsigned module = 0; module < graph.size(); ++module) {
         for (const ModuleRequestData& request : graph.requestsOf(module)) {
-            if (request.isDynamicStarExport)
+            if (request.isDynamicStarExport && graph[module].kind != ModuleKind::CommonJs)
                 graph[module].add(ModuleData::Flag::HasDynamicStarExport);
-            if (request.isDeferred)
+            if (request.isDeferred && graph[module].kind != ModuleKind::CommonJs)
                 graph[module].add(ModuleData::Flag::HasDeferredRequest);
             if (!request.isRequire && !request.isHoisted)
                 graph[request.target()].importedByModule = true;
@@ -161,128 +140,93 @@ void computeModuleFlags(std::span<ModuleData> modulesAndEndRecord, std::span<con
         if (reachedByRequests[components.componentOf[index]].contains(ModuleProperty::HasLinkWork))
             module.add(ModuleData::Flag::NeedsLink);
     }
+    return components;
 }
 
-// An uncompiled module can import back a module that the table shows no cycle for, and its link asks which modules are on the path.
-static RoleInWalk roleInLink(const ModuleGraph& graph, const Typed::StronglyConnectedComponents& components, unsigned index)
+LinkRequestsOfModules contractLinkRequests(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, const Typed::StronglyConnectedComponents& components)
 {
-    const ModuleData& module = graph[index];
-    if (!module.needsLink())
-        return RoleInWalk::NeverVisited;
-    // A file of the program that captures exports requests other files.
-    if (module.capturesExportsBehindEvaluation())
-        return RoleInWalk::Visited;
-    if (module.capturesExports() || module.isUncompiledCode())
-        return RoleInWalk::VisitedWithoutList;
-    bool isAloneInComponent = components.membersOf(components.componentOf[index]).size() == 1;
-    if (isAloneInComponent && !module.hasTopLevelAwait() && !graph.resolvesNames(index) && !module.reachesUncompiledCode())
-        return RoleInWalk::OnlyPassesWalkOn;
-    return RoleInWalk::Visited;
-}
-
-// What a module with a deferred request evaluates depends on what has been evaluated by then.
-static RoleInWalk roleInEvaluation(const ModuleGraph& graph, const BitVector& modulesNamedByRequire, unsigned index)
-{
-    const ModuleData& module = graph[index];
-    if (!module.needsEvaluation())
-        return RoleInWalk::NeverVisited;
-    // What a CommonJS module requests runs inside its body.
-    if (module.isUncompiledCode() || module.kind == ModuleKind::CommonJs)
-        return RoleInWalk::VisitedWithoutList;
-    if (!module.hasExportTable())
-        return RoleInWalk::NeverVisited;
-    if (module.hasDeferredRequest())
-        return RoleInWalk::VisitedWithoutList;
-    if (module.isSimple() && module.isSynchronous() && !module.bodyFunction() && !modulesNamedByRequire.get(index))
-        return RoleInWalk::OnlyPassesWalkOn;
-    return RoleInWalk::Visited;
-}
-
-// A module that only passes the walk on is alone in its component, so nothing it reaches requests it.
-template<typename RoleFunctor>
-static Vector<uint32_t> contractRequests(const ModuleGraph& graph, std::span<const uint32_t> modulesBehindTheirRequests, FollowedRequests followed, uint32_t maxContractedRequests, Number24 ModuleData::* firstRequest, Vector<uint32_t>& modulesOverLimit, const RoleFunctor& roleOf)
-{
-    unsigned numberOfModules = graph.size();
-    Vector<RoleInWalk> roles(numberOfModules, [&](size_t module) {
-        return roleOf(static_cast<unsigned>(module));
-    });
-    Vector<ListRange> ranges(numberOfModules);
-    Vector<uint32_t> lastImporter(FillWith { }, numberOfModules, UINT32_MAX);
-    Vector<uint32_t> lists;
-
-    for (uint32_t module : modulesBehindTheirRequests) {
-        if (roles[module] != RoleInWalk::Visited && roles[module] != RoleInWalk::OnlyPassesWalkOn)
-            continue;
-
-        uint32_t start = lists.size();
-        auto appendOnce = [&](uint32_t target) {
-            if (lastImporter[target] == module)
-                return;
-            lastImporter[target] = module;
-            lists.append(target);
-        };
-        for (const ModuleRequestData& request : graph.requestsOf(module)) {
-            uint32_t target = request.target();
-            if (target == module || !isFollowed(request, followed))
-                continue;
-            switch (roles[target]) {
-            case RoleInWalk::NeverVisited:
-                continue;
-            case RoleInWalk::VisitedWithoutList:
-            case RoleInWalk::Visited:
-                appendOnce(target);
-                continue;
-            case RoleInWalk::Contracted:
-                for (uint32_t offset = 0; offset < ranges[target].size; ++offset)
-                    appendOnce(lists[ranges[target].start + offset]);
-                continue;
-            case RoleInWalk::OnlyPassesWalkOn:
-                break;
-            }
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        ranges[module] = { start, static_cast<uint32_t>(lists.size()) - start };
-
-        if (roles[module] != RoleInWalk::OnlyPassesWalkOn)
-            continue;
-        if (ranges[module].size <= maxContractedRequests) {
-            roles[module] = RoleInWalk::Contracted;
-            continue;
-        }
-        roles[module] = RoleInWalk::Visited;
-        modulesOverLimit.append(module);
-    }
-
-    Vector<uint32_t> listsByModule;
-    listsByModule.reserveInitialCapacity(lists.size());
-    for (unsigned module = 0; module < numberOfModules; ++module) {
-        graph[module].*firstRequest = Number24(listsByModule.size());
-        listsByModule.append(lists.subspan(ranges[module].start, ranges[module].size));
-    }
-    graph.endRecord().*firstRequest = Number24(listsByModule.size());
-    return listsByModule;
-}
-
-ContractedModuleRequests contractModuleRequests(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, const BitVector& modulesNamedByRequire, uint32_t maxContractedRequests)
-{
+    constexpr uint32_t none = UINT32_MAX;
+    constexpr uint32_t several = UINT32_MAX - 1;
     RELEASE_ASSERT(!modulesAndEndRecord.empty());
     ModuleGraph graph { modulesAndEndRecord, requests };
-    Typed::StronglyConnectedComponents components = graph.computeComponents(FollowedRequests::All);
-    Typed::StronglyConnectedComponents componentsOfImports = graph.computeComponents(FollowedRequests::Imports);
+    uint32_t numberOfModules = graph.size();
 
-    ContractedModuleRequests result;
-    result.linkRequests = contractRequests(graph, components.members.span(), FollowedRequests::All, maxContractedRequests, &ModuleData::firstLinkRequest, result.modulesOverLimit, [&](unsigned module) {
-        return roleInLink(graph, components, module);
-    });
-    result.evaluationRequests = contractRequests(graph, componentsOfImports.members.span(), FollowedRequests::Imports, maxContractedRequests, &ModuleData::firstEvaluationRequest, result.modulesOverLimit, [&](unsigned module) {
-        return roleInEvaluation(graph, modulesNamedByRequire, module);
-    });
+    auto mayOnlyPassLinkOn = [&](uint32_t index) {
+        const ModuleData& module = graph[index];
+        return module.isESModuleOfProgram() && !module.isFacade() && !module.capturesExports() && !graph.resolvesNames(index)
+            && module.isSynchronous() && !module.reachesUncompiledCode() && components.membersOf(components.componentOf[index]).size() == 1;
+    };
+
+    Vector<uint32_t> leaderOfImporters(FillWith { }, numberOfModules, none);
+    Vector<uint32_t> leaderOf(FillWith { }, numberOfModules, none);
+    for (uint32_t component = components.numberOfComponents; component--;) {
+        for (uint32_t module : components.membersOf(component)) {
+            uint32_t above = leaderOfImporters[module];
+            if (graph[module].needsLink())
+                leaderOf[module] = above != none && above != several && mayOnlyPassLinkOn(module) ? above : module;
+        }
+        for (uint32_t module : components.membersOf(component)) {
+            if (!graph[module].needsLink() || !graph[module].linkFollowsRequests())
+                continue;
+            for (const ModuleRequestData& request : graph.requestsOf(module)) {
+                uint32_t& above = leaderOfImporters[request.target()];
+                above = above == none || above == leaderOf[module] ? leaderOf[module] : several;
+            }
+        }
+    }
+
+    struct Frame {
+        uint32_t nextRequest;
+        uint32_t endOfRequests;
+    };
+    LinkRequestsOfModules result;
+    result.firstRequestOf.fill(0, numberOfModules + 1);
+    Vector<Frame, 64> path;
+    Vector<uint32_t> lastLeaderThatCameTo(FillWith { }, numberOfModules, none);
+    for (uint32_t module = 0; module < numberOfModules; ++module) {
+        result.firstRequestOf[module] = static_cast<uint32_t>(result.requests.size());
+        if (!graph[module].needsLink())
+            continue;
+        if (leaderOf[module] != module) {
+            result.requests.append(leaderOf[module]);
+            result.modulesThatOnlyPassLinkOn.append(module);
+            continue;
+        }
+        if (!graph[module].linkFollowsRequests())
+            continue;
+        lastLeaderThatCameTo[module] = module;
+        path.append(Frame { graph[module].firstRequest, graph[module + 1].firstRequest });
+        while (!path.isEmpty()) {
+            Frame& frame = path.last();
+            if (frame.nextRequest == frame.endOfRequests) {
+                path.removeLast();
+                continue;
+            }
+            uint32_t target = requests[frame.nextRequest++].target();
+            if (!graph[target].needsLink() || std::exchange(lastLeaderThatCameTo[target], module) == module)
+                continue;
+            if (leaderOf[target] == target) {
+                result.requests.append(target);
+                continue;
+            }
+            RELEASE_ASSERT(leaderOf[target] == module);
+            path.append(Frame { graph[target].firstRequest, graph[target + 1].firstRequest });
+        }
+    }
+    result.firstRequestOf[numberOfModules] = static_cast<uint32_t>(result.requests.size());
     return result;
 }
 
-enum class PlannedRoot : uint8_t { EntryPoint, OtherModule };
+void layLinkRequests(std::span<ModuleData> modulesAndEndRecord, const LinkRequestsOfModules& linkRequests)
+{
+    RELEASE_ASSERT(modulesAndEndRecord.size() == linkRequests.firstRequestOf.size());
+    for (size_t module = 0; module < modulesAndEndRecord.size(); ++module)
+        modulesAndEndRecord[module].firstLinkRequest = Number24(linkRequests.firstRequestOf[module]);
+    for (uint32_t module : linkRequests.modulesThatOnlyPassLinkOn)
+        modulesAndEndRecord[module].add(ModuleData::Flag::OnlyPassesLinkOn);
+}
 
-static Vector<LinkPlanStepData> planLink(const ModuleGraph& graph, ModuleID entryPoint, PlannedRoot plannedRoot)
+static Vector<LinkPlanStepData> planLink(const ModuleGraph& graph, ModuleID entryPoint)
 {
     struct Frame {
         uint32_t module;
@@ -307,7 +251,7 @@ static Vector<LinkPlanStepData> planLink(const ModuleGraph& graph, ModuleID entr
             if (!module.capturesExportsBehindEvaluation())
                 return;
         }
-        if (plannedRoot == PlannedRoot::EntryPoint && (index == entryPoint.index() || !module.isEntryPoint()))
+        if (index == entryPoint.index() || !module.isEntryPoint())
             module.add(ModuleData::Flag::IsLinkedWithEntryPoint);
         path.append(Frame { index, module.firstRequest, graph[index + 1].firstRequest });
     };
@@ -330,93 +274,173 @@ static Vector<LinkPlanStepData> planLink(const ModuleGraph& graph, ModuleID entr
     return plan;
 }
 
-static void markModulesLoadedWithFirstEntryPoint(const ModuleGraph& graph, ModuleID entryPoint)
-{
-    RELEASE_ASSERT(entryPoint.index() < graph.size());
-    graph[entryPoint.index()].firstEntryPoint = true;
-    graph[entryPoint.index()].loadedWithFirstEntryPoint = true;
-    Vector<uint32_t, 64> importers { entryPoint.index() };
-    while (!importers.isEmpty()) {
-        for (const ModuleRequestData& request : graph.requestsOf(importers.takeLast())) {
-            if (request.isRequire || request.isHoisted || graph[request.target()].loadedWithFirstEntryPoint)
-                continue;
-            graph[request.target()].loadedWithFirstEntryPoint = true;
-            importers.append(request.target());
-        }
-    }
-}
-
 Vector<LinkPlanStepData> planLinkOfEntryPoint(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, ModuleID entryPoint)
 {
     RELEASE_ASSERT(!modulesAndEndRecord.empty());
     ModuleGraph graph { modulesAndEndRecord, requests };
-    markModulesLoadedWithFirstEntryPoint(graph, entryPoint);
-    return planLink(graph, entryPoint, PlannedRoot::EntryPoint);
+    return planLink(graph, entryPoint);
 }
 
-LinkPlansOfRoots planLinksOfRoots(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, std::span<const ModuleImportSite> unsortedImportSites, std::optional<ModuleID> plannedEntryPoint)
+BitVector findESModulesOfProgram(std::span<const ModuleData> modulesAndEndRecord)
 {
-    struct Cycle {
-        uint32_t numberOfModules { 0 };
-        uint32_t component { 0 };
-    };
-    // Below this a walk costs about what the steps of a plan cost.
-    AOT_THRESHOLD(uint32_t, minModulesInCycle, 64);
+    BitVector result(modulesAndEndRecord.size());
+    for (size_t module = 0; module + 1 < modulesAndEndRecord.size(); ++module) {
+        if (modulesAndEndRecord[module].isESModuleOfProgram())
+            result.quickSet(module);
+    }
+    return result;
+}
 
+Vector<uint32_t> groupModulesLoadedTogether(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, const BitVector& isGrouped, uint32_t endOfNumbers)
+{
+    using Place = ModuleData::PlaceInLoadGroup;
+    constexpr uint32_t none = UINT32_MAX;
+    constexpr uint32_t several = UINT32_MAX - 1;
     RELEASE_ASSERT(!modulesAndEndRecord.empty());
     ModuleGraph graph { modulesAndEndRecord, requests };
-    Typed::StronglyConnectedComponents components = graph.computeComponents(FollowedRequests::All);
-    const Vector<uint32_t>& componentOf = components.componentOf;
+    uint32_t numberOfModules = graph.size();
+    if (numberOfModules > endOfNumbers) {
+        for (size_t module : isGrouped)
+            graph[static_cast<unsigned>(module)].referrerRuntimeModuleOrLoadGroup = ModuleData::encodeLoadGroup(Place::BelowHead, 0);
+        return { };
+    }
 
-    Vector<Cycle> largestCycleReachedFrom(components.numberOfComponents);
-    for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
+    BitVector beginsLoads(numberOfModules);
+    BitVector requestsUncompiledCode(numberOfModules);
+    Vector<uint32_t> firstImportOf(FillWith { }, numberOfModules + 1, 0);
+    Vector<uint32_t> imports;
+    imports.reserveInitialCapacity(requests.size());
+    for (uint32_t module = 0; module < numberOfModules; ++module) {
+        firstImportOf[module] = static_cast<uint32_t>(imports.size());
+        for (const ModuleRequestData& request : graph.requestsOf(module)) {
+            uint32_t target = request.target();
+            bool isImport = !request.isRequire && !request.isHoisted && isGrouped.quickGet(module);
+            if (isImport && isGrouped.quickGet(target))
+                imports.append(target);
+            else if (isGrouped.quickGet(target))
+                beginsLoads.quickSet(target);
+            else if (isImport && graph[target].isUncompiledCode())
+                requestsUncompiledCode.quickSet(module);
+        }
+    }
+    firstImportOf[numberOfModules] = static_cast<uint32_t>(imports.size());
+    auto importsOf = [&](uint32_t module) {
+        return imports.span().subspan(firstImportOf[module], firstImportOf[module + 1] - firstImportOf[module]);
+    };
+
+    Typed::StronglyConnectedComponents components = Typed::computeStronglyConnectedComponents(numberOfModules, importsOf);
+    Vector<uint32_t> headOfImporters(FillWith { }, components.numberOfComponents, none);
+    Vector<uint32_t> headOf(FillWith { }, numberOfModules, none);
+    Vector<uint32_t> numberOfMembersUpTo(FillWith { }, numberOfModules + 1, 0);
+    for (uint32_t component = components.numberOfComponents; component--;) {
         std::span<const uint32_t> members = components.membersOf(component);
-        Cycle largest;
-        if (graph[members.front()].needsLink())
-            largest = { static_cast<uint32_t>(members.size()), component };
+        if (!isGrouped.quickGet(members.front()))
+            continue;
+        bool everyMemberIsHead = std::ranges::any_of(members, [&](uint32_t member) { return requestsUncompiledCode.quickGet(member); });
+        auto root = std::ranges::find_if(members, [&](uint32_t member) { return beginsLoads.quickGet(member); });
+        uint32_t head = headOfImporters[component];
+        if (root != members.end())
+            head = *root;
+        else if (head == none || head == several)
+            head = members.front();
         for (uint32_t member : members) {
-            for (const ModuleRequestData& request : graph.requestsOf(member)) {
-                const Cycle& reached = largestCycleReachedFrom[componentOf[request.target()]];
-                if (reached.numberOfModules > largest.numberOfModules)
-                    largest = reached;
+            headOf[member] = everyMemberIsHead ? member : head;
+            ++numberOfMembersUpTo[headOf[member] + 1];
+        }
+        for (uint32_t member : members) {
+            for (uint32_t imported : importsOf(member)) {
+                uint32_t below = components.componentOf[imported];
+                if (below == component)
+                    continue;
+                uint32_t& above = headOfImporters[below];
+                above = above == none || above == headOf[member] ? headOf[member] : several;
             }
         }
-        largestCycleReachedFrom[component] = largest;
     }
 
-    Vector<ModuleImportSite> importSites(unsortedImportSites);
-    AOT::sort(importSites, { }, [](const ModuleImportSite& site) {
-        return std::pair { site.target, site.importer };
-    });
-    BitVector isRequested(graph.size());
-    for (const ModuleRequestData& request : requests)
-        isRequested.quickSet(request.target());
-
-    LinkPlansOfRoots plans;
-    // The plans of roots that reach the same cycle repeat each other. All of them together get four steps for each module.
-    size_t maxNumberOfSteps = 4 * static_cast<size_t>(graph.size());
-    for (unsigned index = 0; index < graph.size(); ++index) {
-        const Cycle& cycle = largestCycleReachedFrom[componentOf[index]];
-        if (cycle.numberOfModules < minModulesInCycle || !graph[index].hasExportTable() || (plannedEntryPoint && plannedEntryPoint->index() == index))
-            continue;
-        auto sites = std::ranges::equal_range(importSites, index, { }, &ModuleImportSite::target);
-        if (sites.empty() && isRequested.quickGet(index))
-            continue;
-        // The code of a module of the cycle runs when the cycle is linked.
-        bool isNamedOnlyInsideCycle = !sites.empty() && std::ranges::all_of(sites, [&](const ModuleImportSite& site) {
-            return componentOf[site.importer] == cycle.component;
-        });
-        if (isNamedOnlyInsideCycle)
-            continue;
-        Vector<LinkPlanStepData> plan = planLink(graph, ModuleID(index), PlannedRoot::OtherModule);
-        if (plan.isEmpty() || plans.steps.size() + plan.size() > maxNumberOfSteps)
-            continue;
-        plans.roots.append(LinkPlanRootData { index, static_cast<uint32_t>(plans.steps.size()), std::ranges::min(components.membersOf(cycle.component)) });
-        plans.steps.appendVector(plan);
+    for (uint32_t module = 0; module < numberOfModules; ++module)
+        numberOfMembersUpTo[module + 1] += numberOfMembersUpTo[module];
+    Vector<uint32_t> membersByHead(FillWith { }, numberOfMembersUpTo[numberOfModules], 0);
+    Vector<uint32_t> nextPlaceOf = numberOfMembersUpTo;
+    for (uint32_t module = 0; module < numberOfModules; ++module) {
+        if (headOf[module] != none)
+            membersByHead[nextPlaceOf[headOf[module]]++] = module;
     }
-    if (!plans.roots.isEmpty())
-        plans.roots.append(LinkPlanRootData { graph.size(), static_cast<uint32_t>(plans.steps.size()), 0 });
-    return plans;
+
+    Vector<uint32_t> headsImported;
+    Vector<uint32_t> firstHeadImportedBy(FillWith { }, numberOfModules + 1, 0);
+    Vector<uint32_t> lastHeadThatImports(FillWith { }, numberOfModules, none);
+    for (uint32_t head = 0; head < numberOfModules; ++head) {
+        firstHeadImportedBy[head] = static_cast<uint32_t>(headsImported.size());
+        if (headOf[head] != head)
+            continue;
+        for (uint32_t member : membersByHead.span().subspan(numberOfMembersUpTo[head], numberOfMembersUpTo[head + 1] - numberOfMembersUpTo[head])) {
+            if (member != head)
+                graph[member].referrerRuntimeModuleOrLoadGroup = ModuleData::encodeLoadGroup(components.componentOf[head] == components.componentOf[member] ? Place::InCycleWithHead : Place::BelowHead, head);
+            for (uint32_t imported : importsOf(member)) {
+                uint32_t other = headOf[imported];
+                if (other != head && std::exchange(lastHeadThatImports[other], head) != head)
+                    headsImported.append(other);
+            }
+        }
+    }
+    firstHeadImportedBy[numberOfModules] = static_cast<uint32_t>(headsImported.size());
+    auto headsImportedBy = [&](uint32_t head) {
+        return headsImported.span().subspan(firstHeadImportedBy[head], firstHeadImportedBy[head + 1] - firstHeadImportedBy[head]);
+    };
+
+    Vector<uint32_t> headAbove(FillWith { }, numberOfModules, none);
+    for (uint32_t head = 0; head < numberOfModules; ++head) {
+        for (uint32_t other : headsImportedBy(head)) {
+            if (components.componentOf[other] != components.componentOf[head] && (headAbove[other] == none || components.componentOf[head] < components.componentOf[headAbove[other]]))
+                headAbove[other] = head;
+        }
+    }
+    Vector<uint32_t> numberOfHeadsFromItDown(FillWith { }, numberOfModules, 1);
+    for (uint32_t module : components.members) {
+        if (headOf[module] == module && headAbove[module] != none)
+            numberOfHeadsFromItDown[headAbove[module]] += numberOfHeadsFromItDown[module];
+    }
+    Vector<uint32_t> placeInForest(FillWith { }, numberOfModules, 0);
+    Vector<uint32_t> nextPlaceBelow(FillWith { }, numberOfModules, 0);
+    uint32_t placeOfNextTree = 0;
+    for (uint32_t module : components.members | std::views::reverse) {
+        if (headOf[module] != module)
+            continue;
+        uint32_t& next = headAbove[module] == none ? placeOfNextTree : nextPlaceBelow[headAbove[module]];
+        placeInForest[module] = next;
+        nextPlaceBelow[module] = next + 1;
+        next += numberOfHeadsFromItDown[module];
+    }
+
+    Vector<uint32_t> lists;
+    for (uint32_t head = 0; head < numberOfModules; ++head) {
+        if (headOf[head] != head)
+            continue;
+        std::span<uint32_t> imported = headsImported.mutableSpan().subspan(firstHeadImportedBy[head], firstHeadImportedBy[head + 1] - firstHeadImportedBy[head]);
+        AOT::sort(imported, { }, [&](uint32_t other) { return placeInForest[other]; });
+        size_t placeOfLength = lists.size();
+        lists.append(0);
+        uint32_t endOfWhatLastListedLeadsTo = 0;
+        for (uint32_t other : imported) {
+            if (placeInForest[other] < endOfWhatLastListedLeadsTo)
+                continue;
+            lists.append(other);
+            endOfWhatLastListedLeadsTo = placeInForest[other] + numberOfHeadsFromItDown[other];
+        }
+        lists[placeOfLength] = static_cast<uint32_t>(lists.size() - placeOfLength - 1);
+        if (!lists[placeOfLength])
+            lists.removeLast();
+        bool hasList = lists.size() > placeOfLength;
+        if (!hasList || placeOfLength + 1 < endOfNumbers) {
+            graph[head].referrerRuntimeModuleOrLoadGroup = ModuleData::encodeLoadGroup(requestsUncompiledCode.quickGet(head) ? Place::HeadThatRequestsUncompiledCode : Place::Head, hasList ? static_cast<uint32_t>(placeOfLength + 1) : 0);
+            continue;
+        }
+        lists.shrink(placeOfLength);
+        for (uint32_t member : membersByHead.span().subspan(numberOfMembersUpTo[head], numberOfMembersUpTo[head + 1] - numberOfMembersUpTo[head]))
+            graph[member].referrerRuntimeModuleOrLoadGroup = ModuleData::encodeLoadGroup(Place::BelowHead, head);
+    }
+    return lists;
 }
 
 } } // namespace JSC::AOT

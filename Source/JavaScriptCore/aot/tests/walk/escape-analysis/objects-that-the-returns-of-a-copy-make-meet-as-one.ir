@@ -1,0 +1,52 @@
+# each return of the copy hands back an object that the copy has made. Behind the call they are one object that only this code has: the call of unseen code ends nothing of it, and neither allocation is needed
+# function make(c) { if (c) return { x: 1 }; return { x: 2 }; }  function use(n, c, f) { let s = 7; while (n()) { const p = make(c); f(); s = p.x; } return s; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls+Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: callee=f2
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls+Inlining
+# NEVER-NOT: = NewObject
+# NEVER-NOT: GetSlot
+# NEVER-NOT: = CallDirect
+
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="use" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer integer=7
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Call v0, -
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v1
+    v9 = Call v2, -
+    v10 = PropGet v8 key="x"
+    Jump -> next b1(v10)
+  b3():
+    Return v4
+}
+function f2 name="make" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    Return v6
+}

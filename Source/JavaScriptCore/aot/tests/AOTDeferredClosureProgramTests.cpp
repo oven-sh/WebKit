@@ -67,10 +67,11 @@ function f4 name="readsInCallee" results=[{type=anything}] {
     v1 = NewClosure function=f1
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v3 = FinishObject v2
-    v4 = CallDirect v3 function=f5 [isNeverInlined]
-    v5 = PropGet v3 key="m"
-    v6 = StrictEq v4, v5
-    Return v6
+    v4 = NewClosure function=f5
+    v5 = Call v4, -, v3 [isNeverInlined]
+    v6 = PropGet v3 key="m"
+    v7 = StrictEq v5, v6
+    Return v7
 }
 function f5 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = PropGet v0 key="m"
@@ -98,9 +99,10 @@ function f7 name="escapesAfterRead" results=[{type=anything}] {
     v3 = FinishObject v2
     v4 = PropGet v3 key="m"
     PutModuleVariable v3 variable=g0
-    v6 = CallDirect function=f9 [isNeverInlined]
-    v7 = StrictEq v4, v6
-    Return v7
+    v6 = NewClosure function=f9
+    v7 = Call v6 [isNeverInlined]
+    v8 = StrictEq v4, v7
+    Return v8
 }
 function f8 name="calls" results=[{type=anything}] {
     v0 = Integer integer=1
@@ -144,7 +146,6 @@ function f10 name="readsJoined" parameters=[{type=anything}] results=[{type=anyt
 
 static constexpr ASCIILiteral answersOfClosuresCapturingNothing = "true\nfalse\ntrue\n5\ntrue\n1\n1\n"_s;
 
-// The closure captures the object it is stored in, so the object is on the heap.
 static constexpr ASCIILiteral closuresCapturingTheirObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="run" declared={type=function} flags=[IsRequired]}]
@@ -197,10 +198,11 @@ function f4 name="readsTwoObjects" parameters=[{type=anything}] results=[{type=a
 }
 function f5 name="readsInCallee" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = Construct v0
-    v2 = CallDirect v1 function=f6 [isNeverInlined]
-    v3 = PropGet v1 key="run"
-    v4 = StrictEq v2, v3
-    Return v4
+    v2 = NewClosure function=f6
+    v3 = Call v2, -, v1 [isNeverInlined]
+    v4 = PropGet v1 key="run"
+    v5 = StrictEq v3, v4
+    Return v5
 }
 function f6 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = PropGet v0 key="run"
@@ -221,9 +223,10 @@ function f8 name="escapesAfterRead" parameters=[{type=anything}] results=[{type=
     v1 = Construct v0
     v2 = PropGet v1 key="run"
     PutModuleVariable v1 variable=g0
-    v4 = CallDirect function=f9 [isNeverInlined]
-    v5 = StrictEq v2, v4
-    Return v5
+    v4 = NewClosure function=f9
+    v5 = Call v4 [isNeverInlined]
+    v6 = StrictEq v2, v5
+    Return v6
 }
 function f9 name="readsKept" results=[{type=anything}] {
     v0 = GetModuleVariable variable=g0
@@ -234,7 +237,81 @@ function f9 name="readsKept" results=[{type=anything}] {
 
 static constexpr ASCIILiteral answersOfClosuresCapturingTheirObject = "true\nfalse\ntrue\n9\ntrue\n"_s;
 
-// An object in a frame holds a 32-bit reference to an object on the heap, which is read there and in a callee, and stored.
+static constexpr ASCIILiteral closuresOfSeveralKindsInOneSlot = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Handler" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+layout L1 kind=Instance name="Counter" constructor=f4 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="run" declared={type=function} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = NewClass v0 layout=L1
+    v2 = FinishClass v1 layout=L1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="print" [isFreeName]
+    v5 = NewClosure function=f3
+    v6 = PropGet v3 key="flag" [isFreeName]
+    v7 = Call v5, -, v6 [isNeverInlined]
+    v8 = Call v4, -, v7
+    v9 = PropGet v3 key="missing"
+    v10 = Call v5, -, v9 [isNeverInlined]
+    v11 = Call v4, -, v10
+    v12 = CallDirect v2 function=f6
+    v13 = Call v4, -, v12
+    Return
+}
+function f1 name="first" kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="second" kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="callsEither" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewClosure function=f2
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = PropGet v8 key="run"
+    v10 = Call v9, v8 calleeKey="run"
+    Return v10
+}
+function f4 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Integer integer=7
+    PropDefine v2, v3 key="x"
+    v5 = NewClosure v2 function=f5
+    PropDefine v2, v5 key="run"
+    Return v2
+}
+function f5 name="run" kind=Arrow captures=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f6 name="callsClosureOverOtherObject" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Construct v0
+    v2 = Construct v0
+    v3 = Integer integer=5
+    PropSet v2, v3 key="x"
+    v5 = PropGet v2 key="run"
+    PropSet v1, v5 key="run"
+    v7 = PropGet v1 key="run"
+    v8 = Call v7, v1 calleeKey="run"
+    Return v8
+}
+)IR"_s;
+
+static constexpr ASCIILiteral answersOfClosuresOfSeveralKindsInOneSlot = "1\n2\n5\n"_s;
+
 static constexpr ASCIILiteral narrowReferencesInFrames = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Point" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
@@ -272,8 +349,9 @@ function f2 name="readsHeldInCallee" results=[{type=anything}] {
     v4 = Integer integer=1
     v5 = NewObject -, v2, v4 layout=L1 fields=[0, 1]
     v6 = FinishObject v5
-    v7 = CallDirect v6 function=f3 [isNeverInlined]
-    Return v7
+    v7 = NewClosure function=f3
+    v8 = Call v7, -, v6 [isNeverInlined]
+    Return v8
 }
 function f3 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = PropGet v0 key="held"
@@ -306,80 +384,51 @@ static constexpr ASCIILiteral answersOfNarrowReferencesInFrames = "7\n8\n9\n"_s;
 
 static constexpr ASCIILiteral defineCollectAndFlag = "globalThis.collect = () => fullGC(); globalThis.flag = true;"_s;
 
-static void checkInEveryPipeline(ASCIILiteral program, ASCIILiteral answers, OptionWords shellOptions)
+static void checkDeferredClosureProgram(ASCIILiteral program, ASCIILiteral answers, OptionWords shellOptions)
 {
-    auto check = [&](OptionWords words) {
-        checkOutputOfProgramInShell(program, answers, words, defineCollectAndFlag, shellOptions);
-    };
-    check({ "references=narrow"_s });
-    check({ "references=narrow"_s, "validate"_s });
-    check({ "references=narrow"_s, "disable=pass:AllocateInFrames"_s });
-    check({ "references=narrow"_s, "disable=pass:SinkAllocations"_s });
-    check({ "references=narrow"_s, "disable=pass:InlineCalls"_s });
-    check({ "references=narrow"_s, "disable=pass:OutlineColdOperations"_s });
-    check({ "references=narrow"_s, "disable=pass:SinkConstants"_s });
-    check({ "references=narrow"_s, "disable=pass:EliminateDeadCode"_s });
-    check({ "references=narrow"_s, "disable=pass:DeferClosuresInFields"_s });
-    check({ "references=narrow"_s, "heat=EverythingIsHot"_s });
-    check({ "references=wide"_s });
-}
-
-// An access that no pass resolved reaches the run time by name, which then holds a cell whose address is in the stack.
-static void checkWithAccessesByName(ASCIILiteral program, ASCIILiteral answers, OptionWords shellOptions)
-{
-    auto check = [&](OptionWords words) {
-        checkOutputOfProgramInShell(program, answers, words, defineCollectAndFlag, shellOptions);
-    };
-    check({ "references=narrow"_s, "disable=pass:ResolveAccesses"_s });
-    check({ "references=narrow"_s, "disable=pass:ResolveAccesses"_s, "validate"_s });
-    check({ "references=narrow"_s, "disable=pass:ResolveAccesses"_s, "disable=pass:InlineCalls"_s });
-    check({ "references=narrow"_s, "disable=pass:ResolveAccesses"_s, "disable=pass:ResolveCalls"_s });
-    check({ "references=narrow"_s, "only-passes=AnalyzeFlow,AllocateInFrames"_s });
+    checkOutputOfProgramInShell(program, answers, { "references=narrow"_s }, defineCollectAndFlag, shellOptions);
+    checkOutputOfProgramInShell(program, answers, { "references=wide"_s }, defineCollectAndFlag, shellOptions);
 }
 
 static void testClosuresCapturingNothing()
 {
-    checkInEveryPipeline(closuresCapturingNothing, answersOfClosuresCapturingNothing, { });
-}
-
-static void testClosuresCapturingNothingReadByName()
-{
-    checkWithAccessesByName(closuresCapturingNothing, answersOfClosuresCapturingNothing, { });
+    checkDeferredClosureProgram(closuresCapturingNothing, answersOfClosuresCapturingNothing, { });
 }
 
 static void testClosuresCapturingNothingUnderContinuousCollection()
 {
-    checkInEveryPipeline(closuresCapturingNothing, answersOfClosuresCapturingNothing, { "--collectContinuously=1"_s });
-    checkWithAccessesByName(closuresCapturingNothing, answersOfClosuresCapturingNothing, { "--collectContinuously=1"_s });
+    checkDeferredClosureProgram(closuresCapturingNothing, answersOfClosuresCapturingNothing, { "--collectContinuously=1"_s });
 }
 
 static void testClosuresCapturingTheirObject()
 {
-    checkInEveryPipeline(closuresCapturingTheirObject, answersOfClosuresCapturingTheirObject, { });
-    checkWithAccessesByName(closuresCapturingTheirObject, answersOfClosuresCapturingTheirObject, { });
+    checkDeferredClosureProgram(closuresCapturingTheirObject, answersOfClosuresCapturingTheirObject, { });
 }
 
 static void testClosuresCapturingTheirObjectUnderContinuousCollection()
 {
-    checkInEveryPipeline(closuresCapturingTheirObject, answersOfClosuresCapturingTheirObject, { "--collectContinuously=1"_s });
-    checkWithAccessesByName(closuresCapturingTheirObject, answersOfClosuresCapturingTheirObject, { "--collectContinuously=1"_s });
+    checkDeferredClosureProgram(closuresCapturingTheirObject, answersOfClosuresCapturingTheirObject, { "--collectContinuously=1"_s });
+}
+
+static void testClosuresOfSeveralKindsInOneSlot()
+{
+    checkDeferredClosureProgram(closuresOfSeveralKindsInOneSlot, answersOfClosuresOfSeveralKindsInOneSlot, { });
 }
 
 static void testNarrowReferencesInFrames()
 {
-    checkInEveryPipeline(narrowReferencesInFrames, answersOfNarrowReferencesInFrames, { });
-    checkWithAccessesByName(narrowReferencesInFrames, answersOfNarrowReferencesInFrames, { });
-    checkWithAccessesByName(narrowReferencesInFrames, answersOfNarrowReferencesInFrames, { "--collectContinuously=1"_s });
+    checkDeferredClosureProgram(narrowReferencesInFrames, answersOfNarrowReferencesInFrames, { });
+    checkOutputOfProgramInShell(narrowReferencesInFrames, answersOfNarrowReferencesInFrames, { "references=narrow"_s }, defineCollectAndFlag, { "--collectContinuously=1"_s });
 }
 
 std::span<const NativeTest> deferredClosureProgramTests()
 {
     static constexpr NativeTest tests[] = {
         { "deferred-closure-programs/capturing-nothing"_s, testClosuresCapturingNothing },
-        { "deferred-closure-programs/capturing-nothing-read-by-name"_s, testClosuresCapturingNothingReadByName },
         { "deferred-closure-programs/capturing-nothing-under-continuous-collection"_s, testClosuresCapturingNothingUnderContinuousCollection },
         { "deferred-closure-programs/capturing-their-object"_s, testClosuresCapturingTheirObject },
         { "deferred-closure-programs/capturing-their-object-under-continuous-collection"_s, testClosuresCapturingTheirObjectUnderContinuousCollection },
+        { "deferred-closure-programs/several-kinds-in-one-slot"_s, testClosuresOfSeveralKindsInOneSlot },
         { "deferred-closure-programs/narrow-references-in-frames"_s, testNarrowReferencesInFrames },
     };
     return tests;

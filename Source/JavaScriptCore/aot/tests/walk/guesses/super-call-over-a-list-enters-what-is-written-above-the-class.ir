@@ -1,0 +1,123 @@
+# The language gives `class Meter extends Above { }` the constructor `constructor(...args) { super(...args); }`: a SuperConstructList. Where unseen code has the class objects the parent is proven of nothing.
+# What is written behind `extends` is the guess, as for `super(a)`: super-call-enters-what-is-written-above-the-class.ir. Without it the call was the closed construction, its list written out or not.
+# class Above { constructor(a) { note(a); } }  class Meter extends Above { }  sink(Above, Meter)  function many(n) { let x; while (n()) x = new Meter(7); return x; }
+# In a copy the state knows what the list holds: the constructor above is copied behind the test and takes the element.
+# OPTIONS: check=Validate
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: [[seven]]: 7 {{*}} = Integer integer=7
+# CHECK: [[parent]]: {{*}} = GetSuperBase
+# CHECK-NEXT: [[test]]: {{*}} = TypeTest [[parent]] testedType=f1
+# CHECK-NEXT: Branch [[test]] -> taken {{*}}, notTaken [[closed]]()
+# CHECK: : L1 {{*}} = NewObject layout=L1
+# CHECK: = Call {{*}}, -, [[seven]]
+# CHECK: [[closed]]() frequency=Rare isInLoop=true:
+# CHECK-NEXT: = SuperConstruct [[parent]]
+# RUN(ONE): walk f3 mechanisms=all
+# ONE-COUNT-1: = SuperConstruct
+# ONE-NOT: = SuperConstruct
+# RUN(LIST): walk f3 mechanisms=all
+# LIST-NOT: NewArray
+# LIST-NOT: SuperConstructList
+# RUN(WITHHELD): walk f3 mechanisms=-Guesses
+# WITHHELD-NOT: TypeTest {{*}}testedType=f1
+# WITHHELD: = SuperConstruct
+# Entered by whoever has the class object, the list has a length that is known only when the call runs. A parameter is the element at its position, or undefined behind the end; a long list goes by the call as written.
+# RUN(BODY): walk f2 mechanisms=all
+# BODY-LABEL: code f2:Body
+# BODY: [[parent]]: {{*}} = GetSuperBase
+# BODY-NEXT: [[test]]: {{*}} = TypeTest [[parent]] testedType=f1
+# BODY: [[element]]: {{*}} = GetArrayElement {{*}} level=Proven
+# BODY: = GetArrayLength
+# BODY: = CallDirect {{*}}, [[element]] function=f1 [isConstruction]
+# RUN(CLOSED): walk f2 mechanisms=none
+# CLOSED-NOT: TypeTest
+# CLOSED: = SuperConstructList
+# A constructor above that counts its arguments takes the list as it is: no test stands in front of two closed calls.
+# RUN(COUNTS): walk f5 mechanisms=all
+# COUNTS-LABEL: code f5:Body
+# COUNTS-NOT: TypeTest
+# COUNTS-NOT: GetArrayElement
+# COUNTS-NOT: CallDirect
+# COUNTS-COUNT-1: = SuperConstructList
+# COUNTS-NOT: = SuperConstructList
+
+layout L0 kind=Instance name="Above" module=m0 constructor=f1
+layout L1 kind=Instance name="Meter" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Counts" module=m0 constructor=f4
+layout L3 kind=Instance name="Below" module=m0 base=L2 constructor=f5 supertypes=[L2] flags=[HasHeritage]
+variable g0 name="Meter" module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = FinishClass v5 layout=L1
+    PutModuleVariable v6 variable=g0
+    v8 = NewClosure function=f4
+    v9 = NewClass v8 layout=L2
+    v10 = FinishClass v9 layout=L2
+    v11 = ResolveHeritage v10
+    v12 = NewClosure function=f5
+    v13 = NewClass v12, v10, v11 layout=L3
+    v14 = FinishClass v13 layout=L3
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="sink" [isFreeName]
+    v17 = NewClosure function=f3
+    v18 = Call v16, -, v2, v6, v10, v14, v17
+    Return v18
+}
+function f1 name="Above" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="note" [isFreeName]
+    v6 = Call v5, -, v1
+    Return v3
+}
+function f2 name="Meter" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    v5 = Convert v4 declared={type=L1}
+    Return v5
+}
+function f3 name="many" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Jump -> next b1(v1)
+  b1(v2: anything):
+    LoopHint
+    v4 = Call v0
+    v5 = ToBoolean v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = GetModuleVariable variable=g0
+    v7 = Integer integer=7
+    v8 = Construct v6, -, v7
+    Jump -> next b1(v8)
+  b3():
+    Return v2
+}
+function f4 name="Counts" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasArgumentCount, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="note" [isFreeName]
+    v6 = Call v5, -, v1
+    Return v3
+}
+function f5 name="Below" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L3 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L3
+    v5 = Convert v4 declared={type=L3}
+    Return v5
+}

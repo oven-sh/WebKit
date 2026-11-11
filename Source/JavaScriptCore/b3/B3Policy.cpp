@@ -69,6 +69,12 @@ void Policy::disable(PolicySwitch policySwitch)
     CLEAR_FIELD_CASE(FoldComparisonsWithBounds, loops.foldsComparisonsWithBounds);
     CLEAR_FIELD_CASE(VersionLoops, loops.versions);
     CLEAR_FIELD_CASE(ClampLoopBounds, loops.clampsLoopBounds);
+    CLEAR_FIELD_CASE(VectorizeLoops, loops.vectorizes);
+    case PolicySwitch::UnrollLoops:
+        loops.unrolls = false;
+        loops.pollsBetweenStretches = false;
+        break;
+    CLEAR_FIELD_CASE(PromoteLoopMemory, loops.promotesMemory);
     CLEAR_FIELD_CASE(BitTests, switchLowering.usesBitTests);
     CLEAR_FIELD_CASE(KnownRanges, knownProperties.trustsKnownRanges);
     CLEAR_FIELD_CASE(KnownDereferenceableBytes, knownProperties.trustsKnownDereferenceableBytes);
@@ -82,8 +88,11 @@ void Policy::disable(PolicySwitch policySwitch)
         break;
     case PolicySwitch::SplitLiveRanges:
         air.splitting.splitsAroundClobbersEarly = false;
+        air.splitting.splitsAroundClobbersThatRead = false;
+        air.splitting.keepsUnusedTmpsOnStackThroughLoops = false;
+        air.splitting.spillsTmpsReadInPlaceFirst = false;
         air.splitting.spansStretchesOfClobbers = false;
-        air.splitting.limitsClobberSitesPerSplit = false;
+        air.splitting.leastCostOfSplitAroundClobber = 0;
         air.splitting.splitsIntoClustersOverBlocks = false;
         break;
     CLEAR_FIELD_CASE(SplitLiveRangesAroundFrame, air.splitting.splitsAroundFrame);
@@ -237,10 +246,16 @@ static void dumpSelection(PrintStream& out, CommaPrinter& comma, const Selection
 
 static void dumpLoops(PrintStream& out, CommaPrinter& comma, const LoopPolicy& loops)
 {
+    const LoopPolicy defaults { };
     PRINT_IF_SET(loops, rotates);
     PRINT_IF_SET(loops, foldsComparisonsWithBounds);
     PRINT_IF_SET(loops, versions);
     PRINT_IF_SET(loops, clampsLoopBounds);
+    PRINT_IF_SET(loops, pollsBetweenStretches);
+    PRINT_IF_SET(loops, vectorizes);
+    PRINT_IF_SET(loops, promotesMemory);
+    PRINT_IF_SET(loops, unrolls);
+    PRINT_IF_DIFFERENT(loops, minFrequencyOfUnrolledLoop);
     PRINT_IF_SET(loops, hoistsOnlyFromLikelyPaths);
     PRINT_IF_SET(loops, hoistsImmutableLoadsPastWrites);
 }
@@ -249,6 +264,7 @@ static void dumpSwitchLowering(PrintStream& out, CommaPrinter& comma, const Swit
 {
     const SwitchLoweringPolicy defaults { };
     PRINT_IF_SET(switchLowering, usesBitTests);
+    PRINT_IF_SET(switchLowering, usesValueTables);
     PRINT_IF_DIFFERENT(switchLowering, minCasesForJumpTable);
 }
 
@@ -265,7 +281,8 @@ static void dumpValidation(PrintStream& out, CommaPrinter& comma, const Validati
         out.print(comma, "validation = "_s, validation.level);
     PRINT_IF_SET(validation, checksKnownPropertiesAtRunTime);
     PRINT_IF_SET(validation, logsMovedLoads);
-    PRINT_IF_SET(validation, keepsOriginsOfAccessesThatTakeTraps);
+    PRINT_IF_SET(validation, logsDecidedComparisons);
+    PRINT_IF_SET(validation, keepsOriginsOfTrappingAccesses);
 }
 
 #undef PRINT_IF_DIFFERENT

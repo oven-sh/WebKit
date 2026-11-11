@@ -370,6 +370,7 @@ macro makeHostFunctionCall(entry, protoCallFrame, temp1, temp2)
         storep lr, ReturnPC[sp]
         cloopCallNative temp1
     else
+        # Clear the ReturnPC slot because it's not initialized or used by the host call path.
         # A stack walk reads the return address of this frame to tell it from a frame record of ahead-of-time compiled code.
         storep 0, ReturnPC[sp]
         call temp1, HostFunctionPtrTag
@@ -789,6 +790,11 @@ macro functionArityCheck(opcodeName, doneLabel)
         _%opcodeName%UntagGateAfter:
     else
         _js_trampoline_%opcodeName%_untag:
+        if RETURN_ADDRESS_SIGNING
+            loadp 8[cfr], lr
+            addp 16, cfr, t3
+            untagReturnAddress t3
+        end
     end
 
     // Move frame up t1 slots
@@ -825,6 +831,11 @@ macro functionArityCheck(opcodeName, doneLabel)
         _%opcodeName%TagGateAfter:
     else
         _js_trampoline_%opcodeName%_tag:
+        if RETURN_ADDRESS_SIGNING
+            addp 16, cfr, t1
+            tagReturnAddress t1
+            storep lr, 8[cfr]
+        end
     end
 
 .continue:
@@ -3433,7 +3444,7 @@ end
 llintOpWithMetadata(op_iterator_open, OpIteratorOpen, macro (size, get, dispatch, metadata, return)
     macro updateArrayProfile(get, metadata)
         metadata(t5, t0)
-        get(m_iterable, t0)
+        loadVariable(get, m_iterable, t0)
         btqnz t0, notCellMask, .iteratorOpenArrayProfileDone
         loadi JSCell::m_structureID[t0], t3
         storei t3, OpIteratorOpen::Metadata::m_arrayProfile.m_lastSeenStructureID[t5]

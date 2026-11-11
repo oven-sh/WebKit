@@ -1,0 +1,115 @@
+# hidden()[Symbol.iterator] = 0; hidden().values = 0; climb(hidden()); print(total(set)); print(ofValues(map)); replace(); print(..); print(..); restore(); print(..); print(..)
+# with   function total(things: Set<number>) { let sum = 0; for (const thing of things) sum += thing; return sum; }   function ofValues(things: Map<number, number>) { .. for (const value of things.values()) .. }
+# The method under Symbol.iterator and `values` are written through a value that nobody knows, and prototypes are climbed to from such values: so what opens an iteration over a Set, and what makes the iterator
+# of a Map's values, are open in this test run, behind the watch. `next` above the iterators, and the absence of `return` there, no test run can change. So the loops walk the tables in line, as in an executable,
+# behind the test that asks the instance and, in a test run, the byte of the method that opens. The shell's code really replaces both methods between two calls: the bytes are set, the tests fail from then on,
+# and the protocol on the failing side finds what the test run has laid.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell const aboveSets = Set.prototype, aboveMaps = Map.prototype, opens = aboveSets[Symbol.iterator], values = aboveMaps.values; globalThis.hidden = () => [1]; globalThis.set = new Set([1, 2, 3]); globalThis.map = new Map([[1, 4], [2, 5]]); const once = value => function () { let given = false; return { next() { const done = given; given = true; return { done, value: done ? undefined : value }; }, [Symbol.iterator]() { return this; } }; }; globalThis.replace = () => { aboveSets[Symbol.iterator] = once(40); aboveMaps.values = once(50); }; globalThis.restore = () => { aboveSets[Symbol.iterator] = opens; aboveMaps.values = values; };
+# CHECK: 6
+# CHECK-NEXT: 9
+# CHECK-NEXT: 40
+# CHECK-NEXT: 50
+# CHECK-NEXT: 6
+# CHECK-NEXT: 9
+# CHECK-NEXT: exited with 0
+# RUN(LOCKS): locks open
+# LOCKS: open MapPrototypeValues spelled-through-unseen
+# LOCKS: open SetPrototypeSymbolIterator spelled-through-unseen
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: = IsPristine {{*}}builtinClass=Set aspects=[Names, CellAlone]
+# WALK: = IsMemberAsBuilt builtin=SetPrototypeSymbolIterator
+# WALK: = SetNext
+# RUN(PROTOCOL): walk f1 mechanisms=all
+# PROTOCOL: key="next"
+# RUN(VALUES): walk f2 mechanisms=all
+# VALUES-LABEL: code f2:Body
+# VALUES: = IsPristine {{*}}builtinClass=Map aspects=[Names, CellAlone]
+# VALUES: = IsMemberAsBuilt builtin=MapPrototypeValues
+# VALUES: = MapNext
+# RUN(CALLED): walk f2 mechanisms=all
+# CALLED: = PropGet {{*}}key="values"
+
+module m0 path="/a.test.ts" displayPath="a.test.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = PropGet v0 key="hidden" [isFreeName]
+    v4 = Call v3, -
+    v5 = Integer integer=0
+    PropSet v4, v5 key=@@iterator
+    v7 = Call v3, -
+    PropSet v7, v5 key="values"
+    v9 = Call v3, -
+    v10 = PropGet v0 key="Object" [isFreeName]
+    v11 = PropGet v10 key="getPrototypeOf"
+    v12 = Call v11, v10, v9 calleeKey="getPrototypeOf"
+    v13 = PropGet v0 key="set" [isFreeName]
+    v14 = PropGet v0 key="map" [isFreeName]
+    v15 = PropGet v0 key="print" [isFreeName]
+    v16 = Call v1, -, v13
+    v17 = Call v15, -, v16
+    v18 = Call v2, -, v14
+    v19 = Call v15, -, v18
+    v20 = PropGet v0 key="replace" [isFreeName]
+    v21 = Call v20, -
+    v22 = Call v1, -, v13
+    v23 = Call v15, -, v22
+    v24 = Call v2, -, v14
+    v25 = Call v15, -, v24
+    v26 = PropGet v0 key="restore" [isFreeName]
+    v27 = Call v26, -
+    v28 = Call v1, -, v13
+    v29 = Call v15, -, v28
+    v30 = Call v2, -, v14
+    v31 = Call v15, -, v30
+    Return v31
+}
+function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Set<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Set<number>):
+    v1 = Integer integer=0
+    v2 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v3: anything):
+    LoopHint
+    v5 = IteratorResume v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v3
+  b3() handler=b4():
+    v8 = Add v3, v7
+    Jump -> next b1(v8)
+  b4() role=IterationCleanup subject=v2:
+    v9 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v9
+}
+function f2 name="ofValues" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Map<number, number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map<number, number>):
+    v1 = Integer integer=0
+    v2 = PropGet v0 key="values"
+    v3 = Call v2, v0 calleeKey="values"
+    v4 = IteratorOpen v3
+    Jump -> next b1(v1)
+  b1(v5: anything):
+    LoopHint
+    v7 = IteratorResume v4
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    Return v5
+  b3() handler=b4():
+    v10 = Add v5, v9
+    Jump -> next b1(v10)
+  b4() role=IterationCleanup subject=v4:
+    v11 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v11
+}

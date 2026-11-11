@@ -115,6 +115,9 @@ NeedsBoxAnnotationQuirk:
   available: mac
   conditions: [ElementSelector]
 
+# bbc.co.uk, bbc.com: rdar://162447105
+NeedsDarkAppearanceWithoutColorSchemeQuirk:
+
 # hulu.com rdar://55041979
 NeedsCanPlayAfterSeekedQuirk:
 
@@ -131,6 +134,9 @@ NeedsCNNCaptionQuirk:
   available: cocoa
   export: true
 
+# chatgpt.com rdar://189766320, grok.com rdar://191470125
+NeedsMarginTrimInlineSupportsQuirk:
+
 NeedsLimitedMatroskaSupportQuirk:
   available: "mediaRecorder && cocoaWebMPlayer"
   accessor: needsLimitedMatroskaSupport
@@ -146,6 +152,11 @@ NeedsAmazonDesignMenuViewportUnitQuirk:
   implementation: custom
 
 NeedsClaudeSidebarViewportUnitQuirk:
+  available: iOSFamily
+  conditions: [ElementSelector]
+  implementation: custom
+
+NeedsOpenRiceAdPopupHeightQuirk:
   available: iOSFamily
   conditions: [ElementSelector]
   implementation: custom
@@ -182,7 +193,9 @@ NeedsAnchorToBeMouseFocusableQuirk:
   conditions: [ElementSelector]
   accessor: needsAnchorToBeMouseFocusable
 
+# affirm.com rdar://190768633
 # ceac.state.gov https://bugs.webkit.org/show_bug.cgi?id=193478
+# cnn.com rdar://190735753
 # weather.com rdar://139689157
 # thetimes.com rdar://190263358
 # madisoncity.k12.al.us https://bugs.webkit.org/show_bug.cgi?id=296989
@@ -226,10 +239,6 @@ NeedsGoogleTranslateScrollingQuirk:
 # netflix.com rdar://178545839
 NeedsNetflixVolumeSliderQuirk:
   available: "iOS || vision"
-
-# play.geforcenow.com https://webkit.org/b/303622
-# FIXME: Remove as soon as nvidia adjusts the site for Safari. https://webkit.org/b/303718
-NeedsGeforcenowWarningDisplayNoneQuirk:
 
 # Expedia Group sites (hotels.com, expedia.*, orbitz.com, …) rdar://126631968
 NeedsExpediaGroupAnimationQuirk:
@@ -293,6 +302,10 @@ NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk:
   conditions: [SecondaryURL]
   implementation: custom
 
+NeedsStyleSheetInjectedQuirk:
+  parameters: [StyleSheet]
+  implementation: custom
+
 # youtube.com rdar://135886305
 # NOTE: Also remove `BuilderConverter::convertScrollbarWidth` and related code when removing this quirk.
 NeedsScrollbarWidthThinDisabledQuirk:
@@ -304,6 +317,12 @@ NeedsScrollbarWidthThinDisabledQuirk:
 # - iOS PiP
 NeedsSeekingSupportDisabledQuirk:
   accessor: needsSeekingSupportDisabled
+
+# youtube.com, google.com: rdar://191425637
+NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk:
+  conditions: [SecondaryURL]
+  conditionsRequired: true
+  implementation: custom
 
 NeedsSupportsProgressMonitoringQuirk:
   available: mediaSource
@@ -587,7 +606,7 @@ ShouldExposeShowModalDialog:
 
 # rdar://133423460
 ShouldFlipScreenDimensionsQuirk:
-  available: flipScreenDimensionsQuirks
+  available: iOSFamily
   accessor: shouldFlipScreenDimensions
 
 # disneyplus: rdar://137613110
@@ -629,6 +648,11 @@ ShouldIgnoreViewportArgumentsToAvoidEnlargedViewQuirk:
   available: metaViewport
   accessor: shouldIgnoreViewportArgumentsToAvoidEnlargedView
   export: true
+
+# gemini.google.com rdar://190477522
+ShouldIgnoreViewportInteractiveWidgetQuirk:
+  available: metaViewport
+  accessor: shouldIgnoreViewportInteractiveWidget
 
 # slack.com rdar://171190689
 ShouldUseDynamicViewportUnitsAsDefaultQuirk:
@@ -716,11 +740,11 @@ ShouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreasQuirk:
 
 # webex.com rdar://143715630
 NeedsWebExScrollabilityQuirk:
-  available: "iOSFamily && desktopContentModeQuirks"
+  available: appleTV
 
 # rdar://138806698
 ShouldSupportHoverMediaQueriesQuirk:
-  available: desktopContentModeQuirks
+  available: appleTV
   accessor: shouldSupportHoverMediaQueries
 
 # cbssports.com <rdar://139478801>.

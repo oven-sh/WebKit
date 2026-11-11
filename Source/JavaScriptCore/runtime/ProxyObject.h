@@ -55,9 +55,16 @@ public:
         OwnKeys,
         Set,
         Apply,
+        DefineProperty,
+        DeleteProperty,
+        PreventExtensions,
+        IsExtensible,
+        SetPrototypeOf,
+        GetPrototypeOf,
+        Construct,
     };
 
-    static constexpr unsigned numberOfCachedHandlerTrapsOffsets = 6;
+    static constexpr unsigned numberOfCachedHandlerTrapsOffsets = static_cast<unsigned>(HandlerTrap::Construct) + 1;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -85,6 +92,7 @@ public:
 
     static void validateNegativeHasTrapResult(JSGlobalObject*, JSObject*, PropertyName);
     static void validatePositiveSetTrapResult(JSGlobalObject*, JSObject*, PropertyName, JSValue putValue);
+    static void validatePositiveDeleteTrapResult(JSGlobalObject*, JSObject*, PropertyName);
     static void validateGetTrapResult(JSGlobalObject*, JSValue trapResult, JSObject*, PropertyName);
 #if ENABLE(AOT)
     // For a caller that has read the trap off the handler itself. The target and the handler are those that the proxy had before that read.
@@ -92,9 +100,13 @@ public:
     JS_EXPORT_PRIVATE static void validateGetTrapResultWhereBound(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key);
     JS_EXPORT_PRIVATE static bool hasWithTrap(JSGlobalObject*, JSObject* target, JSObject* handler, JSValue trap, JSValue key);
     JS_EXPORT_PRIVATE static void setWithTrap(JSGlobalObject*, JSObject* target, JSObject* handler, JSValue trap, JSValue key, JSValue putValue, JSValue receiver, bool shouldThrow);
-    // What follows the call of the trap.
+    // The steps after the trap call.
     JS_EXPORT_PRIVATE static bool finishHas(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key);
     JS_EXPORT_PRIVATE static void finishSet(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key, JSValue putValue, bool shouldThrow);
+    // The trap returned true.
+    JS_EXPORT_PRIVATE static void finishDelete(JSGlobalObject*, JSObject* target, JSValue key);
+    // Validates the getOwnPropertyDescriptor trap's result against the target. Returns whether it describes a property.
+    JS_EXPORT_PRIVATE static bool hasOwnByAnswerOfTrap(JSGlobalObject*, JSObject* target, JSValue key, JSValue trapResult);
 #endif
 
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
@@ -102,16 +114,93 @@ public:
     bool putByIndexCommon(JSGlobalObject*, JSValue thisValue, unsigned propertyName, JSValue putValue, bool shouldThrow);
     JSValue performGetPrototype(JSGlobalObject*);
     void revoke(VM&);
-    bool LEGACY_NODELETE isRevoked() const;
+    NODELETE bool isRevoked() const;
 
     const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
 
+    static constexpr ptrdiff_t offsetOfHandlerStructureID() { return OBJECT_OFFSETOF(ProxyObject, m_handlerStructureID); }
+    static constexpr ptrdiff_t offsetOfHandlerPrototypeStructureID() { return OBJECT_OFFSETOF(ProxyObject, m_handlerPrototypeStructureID); }
+    static constexpr ptrdiff_t offsetOfHandlerTrapsOffsetsCache() { return OBJECT_OFFSETOF(ProxyObject, m_handlerTrapsOffsetsCache); }
+    static constexpr uint64_t emptyHandlerTrapsOffsetsCacheWord() { return std::bit_cast<uint64_t>(std::array<ProxyHandlerOffset, sizeof(uint64_t)> { }); }
+
     JSObject* getHandlerTrap(JSGlobalObject*, JSObject*, CallData&, const Identifier&, HandlerTrap);
     inline JSObject* callTargetIfKnownToHaveNoApplyTrap();
-    bool LEGACY_NODELETE forwardsGetOwnPropertyNamesToTarget(DontEnumPropertiesMode);
+    NODELETE bool forwardsGetOwnPropertyNamesToTarget(DontEnumPropertiesMode);
+    inline bool forwardsOwnPropertyDefinitionToTarget();
 
 private:
+    // A trap offset in one byte, so that a cache entry for every trap fits in ProxyObject's size class.
+    class ProxyHandlerOffset {
+    public:
+        enum class State : uint8_t {
+            HasCachedOffset,
+            HasNoTrap,
+            NeedsFullLookup,
+        };
+
+        constexpr ProxyHandlerOffset() = default;
+
+        explicit constexpr ProxyHandlerOffset(PropertyOffset offset)
+            : m_value(encode(offset))
+        {
+        }
+
+        State state() const
+        {
+            if (m_value == hasNoTrapValue)
+                return State::HasNoTrap;
+            if (m_value == needsFullLookupValue)
+                return State::NeedsFullLookup;
+            return State::HasCachedOffset;
+        }
+
+        PropertyOffset offset() const
+        {
+            ASSERT(state() == State::HasCachedOffset);
+            return m_value;
+        }
+
+#if ENABLE(AOT)
+        // For a handler that is a compiled object the byte names a field of it: twice the number of the field, plus one where nothing
+        // was found while the slot of the field was empty. A field whose number does not fit is not cached.
+        static constexpr ProxyHandlerOffset forFieldOfCompiledHandler(unsigned field, bool foundNothingWhileEmpty)
+        {
+            ProxyHandlerOffset result;
+            if (field < hasNoTrapValue / 2)
+                result.m_value = static_cast<uint8_t>(field * 2 + foundNothingWhileEmpty);
+            return result;
+        }
+
+        unsigned fieldOfCompiledHandler() const
+        {
+            ASSERT(state() == State::HasCachedOffset);
+            return m_value >> 1;
+        }
+
+        bool foundNothingWhileFieldOfCompiledHandlerWasEmpty() const
+        {
+            ASSERT(state() == State::HasCachedOffset);
+            return m_value & 1;
+        }
+#endif
+
+    private:
+        static constexpr uint8_t needsFullLookupValue = std::numeric_limits<uint8_t>::max();
+        static constexpr uint8_t hasNoTrapValue = needsFullLookupValue - 1;
+
+        static constexpr uint8_t encode(PropertyOffset offset)
+        {
+            if (!isValidOffset(offset))
+                return hasNoTrapValue;
+            if (static_cast<uint32_t>(offset) >= static_cast<uint32_t>(hasNoTrapValue))
+                return needsFullLookupValue;
+            return static_cast<uint8_t>(offset);
+        }
+
+        uint8_t m_value { needsFullLookupValue };
+    };
+
     JS_EXPORT_PRIVATE ProxyObject(VM&, Structure*);
     JS_EXPORT_PRIVATE void finishCreation(VM&, JSGlobalObject*, JSValue target, JSValue handler);
     JS_EXPORT_PRIVATE static Structure* structureForTarget(JSGlobalObject*, JSValue target);
@@ -120,15 +209,16 @@ private:
     bool isConstructibleProxy() const { return TypeInfo::perCellBit(inlineTypeFlags()); }
 
     bool isHandlerTrapsCacheValid(JSObject* handler);
+    template<typename... Traps> bool isKnownToHaveNoHandlerTraps(Traps...);
 #if ENABLE(AOT)
-    JS_EXPORT_PRIVATE bool isCachedTrapFieldEmpty(JSObject* handler, PropertyOffset cached);
+    JS_EXPORT_PRIVATE bool isCachedTrapFieldEmpty(JSObject* handler, HandlerTrap);
 #endif
-    void LEGACY_NODELETE clearHandlerTrapsOffsetsCache();
+    NODELETE void clearHandlerTrapsOffsetsCache();
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
-    static CallData LEGACY_NODELETE getCallData(JSCell*);
-    static CallData LEGACY_NODELETE getConstructData(JSCell*);
+    NODELETE static CallData getCallData(JSCell*);
+    NODELETE static CallData getConstructData(JSCell*);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
     static bool preventExtensions(JSObject*, JSGlobalObject*);
@@ -140,6 +230,7 @@ private:
 
     bool getOwnPropertySlotCommon(JSGlobalObject*, PropertyName, PropertySlot&);
     bool performInternalMethodGetOwnProperty(JSGlobalObject*, PropertyName, PropertySlot&);
+    static bool finishGetOwnProperty(JSGlobalObject*, JSObject* slotBase, JSObject* target, PropertyName, JSValue trapResult, PropertySlot&);
     bool performGet(JSGlobalObject*, PropertyName, PropertySlot&);
     bool performHasProperty(JSGlobalObject*, PropertyName, PropertySlot&);
     template <typename DefaultDeleteFunction>
@@ -153,10 +244,13 @@ private:
     void performGetOwnEnumerablePropertyNames(JSGlobalObject*, PropertyNameArrayBuilder&);
     bool performSetPrototype(JSGlobalObject*, JSValue prototype, bool shouldThrowIfCantSet);
 
-    PropertyOffset m_handlerTrapsOffsetsCache[numberOfCachedHandlerTrapsOffsets];
     WriteBarrierStructureID m_handlerStructureID;
     WriteBarrierStructureID m_handlerPrototypeStructureID;
+    std::array<ProxyHandlerOffset, numberOfCachedHandlerTrapsOffsets> m_handlerTrapsOffsetsCache { };
 };
+
+static_assert(ProxyObject::offsetOfHandlerTrapsOffsetsCache() == sizeof(ProxyObject::Base) + 2 * sizeof(WriteBarrierStructureID));
+static_assert(roundUpToMultipleOf<sizeof(uint64_t)>(ProxyObject::offsetOfHandlerTrapsOffsetsCache() + ProxyObject::numberOfCachedHandlerTrapsOffsets) == sizeof(ProxyObject));
 
 ALWAYS_INLINE bool ProxyObject::isHandlerTrapsCacheValid(JSObject* handler)
 {
@@ -166,24 +260,41 @@ ALWAYS_INLINE bool ProxyObject::isHandlerTrapsCacheValid(JSObject* handler)
     return asObject(handler->getPrototypeDirect())->structureID() == m_handlerPrototypeStructureID.value();
 }
 
+template<typename... Traps>
+ALWAYS_INLINE bool ProxyObject::isKnownToHaveNoHandlerTraps(Traps... traps)
+{
+    JSValue handlerValue = handler();
+    if (handlerValue.isNull())
+        return false;
+    if (!isHandlerTrapsCacheValid(asObject(handlerValue)))
+        return false;
+    return ((m_handlerTrapsOffsetsCache[static_cast<uint8_t>(traps)].state() == ProxyHandlerOffset::State::HasNoTrap) && ...);
+}
+
 // Returns the target when calling this proxy is exactly calling its target; decided without running user code.
 inline JSObject* ProxyObject::callTargetIfKnownToHaveNoApplyTrap()
 {
     if (!isCallableProxy())
         return nullptr;
-    JSValue handlerValue = handler();
-    if (handlerValue.isNull())
-        return nullptr;
-    if (!isHandlerTrapsCacheValid(asObject(handlerValue)))
-        return nullptr;
-    PropertyOffset offset = m_handlerTrapsOffsetsCache[static_cast<uint8_t>(HandlerTrap::Apply)];
-    if (offset == invalidOffset)
+    if (isKnownToHaveNoHandlerTraps(HandlerTrap::Apply))
         return target();
 #if ENABLE(AOT)
-    if (offset < invalidOffset && isCachedTrapFieldEmpty(asObject(handlerValue), offset))
+    if (JSValue handlerValue = handler(); handlerValue.isObject() && asObject(handlerValue)->type() == CompiledObjectType && isCachedTrapFieldEmpty(asObject(handlerValue), HandlerTrap::Apply))
         return target();
 #endif
     return nullptr;
+}
+
+// When true, this proxy's [[GetOwnProperty]] and [[DefineOwnProperty]] are exactly those of its target.
+inline bool ProxyObject::forwardsOwnPropertyDefinitionToTarget()
+{
+#if ENABLE(AOT)
+    // A compiled object keeps what it has outside its fields in the object, not in its Structure, so the cache cannot say that such a
+    // handler still has neither trap. AOT::RuntimeHooks::proxyDefinePropertyTarget() answers for it.
+    if (JSValue handlerValue = handler(); handlerValue.isObject() && asObject(handlerValue)->type() == CompiledObjectType)
+        return false;
+#endif
+    return isKnownToHaveNoHandlerTraps(HandlerTrap::GetOwnPropertyDescriptor, HandlerTrap::DefineProperty);
 }
 
 } // namespace JSC

@@ -394,6 +394,14 @@ void TestRunner::setVirtualWalletBehavior(JSStringRef action, JSStringRef protoc
     }));
 }
 
+double TestRunner::textScaleFactorForContentSizeCategory(JSStringRef contentSizeCategory)
+{
+    auto result = postSynchronousMessageWithReturnValue("TextScaleFactorForContentSizeCategory", toWK(contentSizeCategory));
+    if (!result || WKGetTypeID(result.get()) != WKDoubleGetTypeID())
+        return 1;
+    return WKDoubleGetValue(static_cast<WKDoubleRef>(result.get()));
+}
+
 RefPtr<OpaqueJSString> TestRunner::lastAddedBackgroundFetchIdentifier() const
 {
     auto identifier = InjectedBundle::singleton().lastAddedBackgroundFetchIdentifier();
@@ -1065,6 +1073,11 @@ void TestRunner::setStatisticsCrossSiteLoadWithLinkDecoration(JSStringRef fromHo
     }));
 }
 
+void TestRunner::setStatisticsLinkDecorationFilteringData(JSStringRef queryParameter)
+{
+    postSynchronousMessage("SetStatisticsLinkDecorationFilteringData", toWK(queryParameter));
+}
+
 void TestRunner::setStatisticsTimeToLiveUserInteraction(double seconds)
 {
     postSynchronousMessage("SetStatisticsTimeToLiveUserInteraction", seconds);
@@ -1615,6 +1628,11 @@ bool TestRunner::shouldDumpAllFrameScrollPositions() const
 void TestRunner::setHasMouseDeviceForTesting(bool hasMouseDevice)
 {
     postSynchronousPageMessage("SetHasMouseDeviceForTesting", hasMouseDevice);
+}
+
+void TestRunner::setHasFakePaymentUIForTesting(bool hasFakePaymentUI)
+{
+    postSynchronousPageMessage("SetHasFakePaymentUIForTesting", hasFakePaymentUI);
 }
 
 void TestRunner::exitImmersive()

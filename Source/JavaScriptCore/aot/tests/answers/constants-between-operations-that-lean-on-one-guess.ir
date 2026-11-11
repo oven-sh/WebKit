@@ -1,0 +1,31 @@
+# constants stand between two operations that lean on one guess and are read behind both. undefined and null have no word, and both arms bring them all the same
+# sink(function row(n: number) { return [n * n, undefined, null, 4, "q", true, n * n * n]; });
+# RUN(SHELL): run-in-shell globalThis.sink = row => { const show = n => { const all = row(n); let line = ""; for (let i = 0; i < all.length; i++) line += " " + String(all[i]); print(all.length + line); }; show(3); show("5"); show(2n); };
+# SHELL: 7 9 undefined null 4 q true 27
+# SHELL-NEXT: 7 25 undefined null 4 q true 125
+# SHELL-NEXT: 7 4 undefined null 4 q true 8
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="row" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Convert v0 declared={type=number}
+    v2 = Mul v1, v1
+    v3 = Undefined
+    v4 = Null
+    v5 = Integer integer=4
+    v6 = String string="q"
+    v7 = Boolean boolean=true
+    v8 = Mul v2, v1
+    v9 = NewArray v2, v3, v4, v5, v6, v7, v8 contents=anything
+    Return v9
+}

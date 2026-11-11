@@ -378,6 +378,10 @@ unsigned BunV8HeapSnapshotBuilder::getNodeTypeIndex(JSCell* cell)
         }
     }
     case JSType::CellType:
+#if ENABLE(AOT)
+        if (AOT::HeapHooks::representsModuleInHeapSnapshot(cell))
+            return static_cast<unsigned>(V8NodeType::Object);
+#endif
         return static_cast<unsigned>(V8NodeType::Hidden);
     }
 
@@ -450,10 +454,14 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
     case JSType::CompiledEnvironmentType:
         return makeString("system / "_s, cell->className());
 #if ENABLE(AOT)
+    case JSType::CellType:
+        if (AOT::HeapHooks::representsModuleInHeapSnapshot(cell))
+            return makeString("system / "_s, cell->className());
+        break;
     case JSType::CompiledClosureType:
     case JSType::SlimClosureType:
     case JSType::SlimClosureWithPropertiesType: {
-        String displayName = AOT::HeapHooks::nameOfCompiledCallee(cell);
+        String displayName = AOT::HeapHooks::compiledCalleeName(cell);
         if (!displayName.isEmpty())
             return displayName;
         break;
@@ -475,7 +483,7 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
         JSObject* object = asObject(cell);
         if (JSGlobalObject* globalObject = object->realmMayBeNull()) {
             PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &m_profiler.vm());
-            if (!object->getOwnPropertySlot(object, globalObject, m_profiler.vm().propertyNames->constructor, slot)) {
+            if (!object->ordinaryGetOwnPropertySlot(globalObject, m_profiler.vm().propertyNames->constructor, slot)) {
                 name = JSObject::calculatedClassName(object);
             }
         }

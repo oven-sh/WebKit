@@ -1,0 +1,62 @@
+# Nothing of this program goes anywhere: no function of it reaches native code, no row passes one what nobody follows, no code runs that the build has not seen. So nobody can be handed a promise of it,
+# and a promise that is kept over a wait is as its class makes it: the wait gives what the async function returns.
+# If every promise counted as one that a listener may have changed, a `then` read off it could be anybody's function: `(async () => 1)().then(console.log)` would call what nobody knows, and --trim could remove nothing.
+# The twin with a listener: promise-that-was-kept-over-a-wait-may-have-been-in-a-listeners-hands.ir.
+# async function fresh(o) { return o; }  async function kept(o) { return o; }  async function use(a, b) { atOnce(await fresh(a)); const held = kept(b); await 0; later(await held); }
+# function atOnce(v) { return v.x; }  function later(v) { return v.y; }  use({ x: "a" }, { y: "b" });
+# RUN: link functions mechanisms=all
+# CHECK: function f4 callers-known one-callee {{*}}result=string
+# CHECK-NEXT: parameter 0 {{*}}proven=L0
+# CHECK: function f5 callers-known one-callee {{*}}result=string
+# CHECK-NEXT: parameter 0 {{*}}proven=L1
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = String string="b"
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f3
+    v7 = Call v6, -, v2, v5 calleeName="use"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="fresh" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="kept" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="use" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v0 calleeName="fresh"
+    v4 = Await v3
+    v5 = NewClosure function=f4
+    v6 = Call v5, -, v4 calleeName="atOnce"
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v1 calleeName="kept"
+    v9 = Integer integer=0
+    v10 = Await v9
+    v11 = Await v8
+    v12 = NewClosure function=f5
+    v13 = Call v12, -, v11 calleeName="later"
+    Return v13
+}
+function f4 name="atOnce" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f5 name="later" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="y"
+    Return v1
+}

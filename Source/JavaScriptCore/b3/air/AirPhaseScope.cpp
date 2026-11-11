@@ -28,7 +28,6 @@
 
 #if ENABLE(B3_JIT)
 
-#include "AOTCurrentWork.h"
 #include "AirCode.h"
 #include "AirValidate.h"
 #include "B3Common.h"
@@ -42,9 +41,6 @@ PhaseScope::PhaseScope(Code& code, ASCIILiteral name)
     , m_name(name)
     , m_timingScope("Air"_s, name)
 {
-#if ENABLE(AOT)
-    AOT::currentWork().enterBackEndPhase(code.proc().subjectOfClient(), name);
-#endif
     if (shouldDumpIRAtEachPhase(AirMode)) {
         dataLog("Air after ", code.lastPhaseName(), ", before ", name, ":\n");
         dataLog(code);

@@ -33,6 +33,7 @@
 #include "RenderBlockFlowInlines.h"
 #include "RenderBoxInlines.h"
 #include "RenderChildIterator.h"
+#include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
 #include "StyleDisplay.h"
@@ -58,7 +59,7 @@ LineClampUpdater::LineClampUpdater(const RenderBlock& blockContainer)
     auto maximumLinesForBlockContainer = m_blockContainer->style().maxLines().tryValue();
     // "If the box is a multicol container, the behavior is the same as continue: auto."
     // https://drafts.csswg.org/css-overflow-4/#continue
-    if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(blockContainer); blockFlow && blockFlow->multiColumnFlow())
+    if (auto* blockFlow = dynamicDowncast<RenderBlockFlow>(blockContainer); blockFlow && blockFlow->multiColumnFlow())
         maximumLinesForBlockContainer = { };
     if (blockContainer.isFieldset() || (layoutState->legacyLineClamp() && blockContainer.isNonReplacedAtomicInlineLevelBox()) || blockContainer.isFloatingOrOutOfFlowPositioned()) {
         // Legacy line clamp does not cross into the interior of an atomic inline-level box.
@@ -90,9 +91,17 @@ LineClampUpdater::LineClampUpdater(const RenderBlock& blockContainer)
 
     if (m_previousLineClamp) {
         // Propagated line clamp.
-        if (blockContainer.establishesIndependentFormattingContext() || blockContainer.style().display() == Style::DisplayType::RubyText) {
-            // Contents of descendants that establish independent formatting contexts are skipped over while counting line boxes,
-            // and a ruby annotation belongs to the line of its base: it is clamped with that line, not line by line on its own.
+        auto shouldIgnoreLineClamp = [&] {
+            // Contents of descendants that establish independent formatting contexts are skipped over while counting line boxes.
+            if (blockContainer.establishesIndependentFormattingContext())
+                return true;
+            // A ruby annotation belongs to the line of its base: it is clamped with that line, not line by line on its own.
+            if (blockContainer.style().display() == Style::DisplayType::RubyText)
+                return true;
+            // An outside list marker's content is laid out like an inline-block (see RenderListOutsideMarker::layoutContentContainer).
+            return is<RenderListOutsideMarker>(blockContainer.parent());
+        };
+        if (shouldIgnoreLineClamp()) {
             layoutState->setLineClamp({ });
             return;
         }
@@ -126,7 +135,7 @@ LineClampUpdater::~LineClampUpdater()
     }
 
     size_t lineCount = m_isLineClampRoot ? 0 : m_previousLineClamp->maximumLines - std::min(m_previousLineClamp->maximumLines, lineClamp->maximumLines);
-    if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(m_blockContainer.get()); blockFlow && blockFlow->childrenInline())
+    if (auto* blockFlow = dynamicDowncast<RenderBlockFlow>(m_blockContainer); blockFlow && blockFlow->childrenInline())
         lineCount = blockFlow->lineCount();
     auto hasConstrainedTextWrapContent = m_previousLineClamp->hasConstrainedTextWrapContent || lineClamp->hasConstrainedTextWrapContent;
     layoutState->setLineClamp(RenderLayoutState::LineClamp { m_previousLineClamp->maximumLines - std::min(m_previousLineClamp->maximumLines, lineCount), m_previousLineClamp->shouldDiscardOverflow, m_previousLineClamp->clampAfterBox, m_previousLineClamp->isStableTextWrap, hasConstrainedTextWrapContent });
@@ -135,11 +144,11 @@ LineClampUpdater::~LineClampUpdater()
 bool LineClampUpdater::isAutoLineClampRoot() const
 {
     // line-clamp: auto (or just a block-ellipsis value) leaves max-lines at auto on a line-clamp container.
-    CheckedRef style = m_blockContainer->style();
-    if (!style->maxLines().isAuto() || !shouldDiscardOverflow(m_blockContainer))
+    auto& style = m_blockContainer->style();
+    if (!style.maxLines().isAuto() || !shouldDiscardOverflow(m_blockContainer))
         return false;
     // "If the box is a multicol container, the behavior is the same as continue: auto."
-    CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(m_blockContainer.get());
+    auto* blockFlow = dynamicDowncast<RenderBlockFlow>(m_blockContainer);
     return !blockFlow || !blockFlow->multiColumnFlow();
 }
 
@@ -307,7 +316,7 @@ static void setIsForceHiddenByLineClamp(RenderElement& renderer, const RenderEle
     renderer.setIsForceHiddenByLineClamp(isHidden);
     // Invisible boxes are not laid out (see skipLayoutForForcedHidden), so a box that becomes visible again needs layout.
     if (!isHidden)
-        renderer.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        renderer.setNeedsLayout(MarkingBehavior::OnlyThis);
     for (CheckedRef child : childrenOfType<RenderElement>(renderer)) {
         if (isInsideInvisibleBox(child, invisibleBox))
             setIsForceHiddenByLineClamp(child, invisibleBox, isHidden);

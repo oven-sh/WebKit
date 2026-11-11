@@ -548,6 +548,21 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case VarargsLengthWithSpread: {
+        clobberWorld();
+        setTypeForNode(node, SpecInt32Only);
+        break;
+    }
+
+    case LoadVarargsWithSpread: {
+        clobberWorld();
+        LoadVarargsData* data = node->loadVarargsData();
+        m_state.operand(data->count).setNonCellType(SpecInt32Only);
+        for (unsigned i = data->limit - 1; i--;)
+            m_state.operand(data->start + i).makeHeapTop();
+        break;
+    }
+
     case LoadVarargs:
     case ForwardVarargs: {
         // FIXME: ForwardVarargs should check if the count becomes known, and if it does, it should turn
@@ -3724,39 +3739,33 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         case PhantomNewArrayBuffer:
         case PhantomCreateRest:
             break;
-        default:
-            if (!m_graph.canDoFastSpread(node, forNode(node->child1()))) {
-                if (node->child1().useKind() == SetObjectUse) {
-                    // The lowering routes Sets that don't carry the original Set structure to operationSpreadSet,
-                    // which falls back to the JS iterator protocol. We can retain structure proofs across this
-                    // node only when the operand is proven to carry the original Set structure (the same condition
-                    // under which the lowering elides its runtime structure check). Such instances have no own
-                    // Symbol.iterator, and any mutation to Set.prototype[Symbol.iterator] invalidates this code
-                    // via the prototype-change watchpoints installed during compilation, so the slow path can
-                    // never reach a user-defined iterator from here.
-                    //
-                    // FixupPhase arms the Set iterator protocol watchpoint on node->child1(), so child1's global
-                    // object must be used.
-                    bool canFold = false;
-                    JSGlobalObject* globalObject = m_graph.globalObjectFor(node->child1()->origin.semantic);
-                    if (Structure* originalSetStructure = globalObject->setStructureConcurrently()) {
-                        if (forNode(node->child1()).m_structure.isSubsetOf(RegisteredStructureSet(m_graph.registerStructure(originalSetStructure))))
-                            canFold = true;
-                    }
-                    if (canFold)
-                        didFoldClobberWorld();
-                    else
-                        clobberWorld();
-                } else
-                    clobberWorld();
-            } else
+        default: {
+            Graph::ProtocolWatchResult watch = Graph::ProtocolWatchResult::Unwatchable;
+            if (node->child1().useKind() == ArrayUse)
+                watch = m_graph.tryWatchArrayIteratorProtocol(node->child1().node(), forNode(node->child1())).first;
+            else if (node->child1().useKind() == SetObjectUse)
+                watch = m_graph.tryWatchSetIteratorProtocol(node->child1().node(), forNode(node->child1())).first;
+
+            switch (watch) {
+            case Graph::ProtocolWatchResult::Proven:
                 didFoldClobberWorld();
+                break;
+            case Graph::ProtocolWatchResult::Unwatchable:
+                clobberWorld();
+                break;
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
             break;
         }
+        }
+
 
         {
             RegisteredStructureSet structureSet;
             structureSet.add(m_graph.registerStructure(m_vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous)));
+            // FIXME: SetObjectUse and PhantomCreateRest always allocate a fresh CopyOnWriteArrayWithContiguous so they can't have an
+            // cellButterflyOnlyAtomStringsStructure.
             structureSet.add(m_graph.registerStructure(m_vm.cellButterflyOnlyAtomStringsStructure.get()));
             setForNode(node, structureSet);
         }
@@ -3907,6 +3916,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
     case NewWeakSet:
         setForNode(node, node->structure());
+        break;
+
+    case NewProxyObject:
+        setTypeForNode(node, SpecProxyObject);
         break;
 
     case ToThis: {
@@ -4461,7 +4474,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                     auto& variant = status[0];
                     if (!variant.conditionSet().isEmpty()) {
                         ASSERT(variant.structureSet().size() == 1);
-                        auto attempToFold = [&] {
+                        auto attemptToFold = [&] {
                             for (auto& condition : variant.conditionSet()) {
                                 switch (condition.kind()) {
                                 case PropertyCondition::Presence: {
@@ -4485,7 +4498,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                             return false;
                         };
 
-                        if (attempToFold())
+                        if (attemptToFold())
                             break;
 
                         clobberWorld();
@@ -5593,6 +5606,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case Call:
     case TailCallInlinedCaller:
     case CallVarargs:
+    case CallVarargsWithSpread:
     case CallForwardVarargs:
     case TailCallVarargsInlinedCaller:
     case ConstructVarargs:

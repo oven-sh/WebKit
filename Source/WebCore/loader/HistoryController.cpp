@@ -74,7 +74,7 @@ static inline void addVisitedLink(Page& page, const URL& url)
     protect(page.visitedLinkStore())->addVisitedLink(page, computeSharedStringHash(url.string()));
 }
 
-static inline bool LEGACY_NODELETE canRecordHistoryForFrame(const LocalFrame& frame)
+NODELETE static inline bool canRecordHistoryForFrame(const LocalFrame& frame)
 {
     auto* page = frame.page();
     if (!page)
@@ -125,7 +125,7 @@ void HistoryController::saveScrollPositionAndViewStateToItem(HistoryItem* item)
         item->setScrollPosition(frameView->scrollPosition());
 #if PLATFORM(IOS_FAMILY)
         item->setUnobscuredContentRect(frameView->unobscuredContentRect());
-        item->setExposedContentRect(frameView->exposedContentRect());
+        item->setExposedContentRect(frameView->exposedContentRect().raw());
 #endif
     }
 
@@ -577,7 +577,9 @@ void HistoryController::updateForStandardLoad(HistoryUpdateType updateType)
                 && m_frame->isMainFrame()
                 && !documentLoader->triggeringAction().processingUserGesture()
                 && !documentLoader->isRequestFromClientOrUserInput()) {
-                if (RefPtr document = m_frame->document(); document && !document->hasRecentUserInteractionForNavigationFromJS())
+                RefPtr document = m_frame->document();
+                RefPtr window = document ? document->window() : nullptr;
+                if (document && !document->hasRecentUserInteractionForNavigationFromJS() && !(window && window->hasStickyActivation()))
                     wasCreatedByJSWithoutUserInteraction = WasCreatedByJSWithoutUserInteraction::Yes;
             }
 #endif
@@ -837,6 +839,9 @@ bool HistoryController::currentItemShouldBeReplaced() const
     //  "If the browsing context's session history contains only one Document,
     //   and that was the about:blank Document created when the browsing context
     //   was created, then the navigation must be done with replacement enabled."
+    if (auto* documentLoader = m_frame->loader().documentLoader(); !documentLoader || documentLoader->isInitialAboutBlank() != IsInitialAboutBlank::Yes)
+        return false;
+
     RefPtr currentItem = m_currentItem;
     return currentItem && !m_previousItem && equalIgnoringASCIICase(currentItem->urlString(), aboutBlankURL().string());
 }

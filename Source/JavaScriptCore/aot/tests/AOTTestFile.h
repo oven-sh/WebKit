@@ -10,9 +10,9 @@
 #include "AOTCheckLines.h"
 #include "AOTDiagnostics.h"
 #include "AOTID.h"
-#include "AOTLimits.h"
 #include "AOTSchemaEnums.h"
 #include "AOTVector.h"
+#include "CPUFeatureSet.h"
 #include <optional>
 #include <span>
 #include <wtf/Variant.h>
@@ -22,11 +22,18 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+#if CPU(ARM64)
+static constexpr bool targetHasJSCVT = CPUFeatureSet::buildTarget().contains(CPUFeature::JSCVT);
+#else
+static constexpr bool targetHasJSCVT = false;
+#endif
+
 struct RunDirective {
     String prefix;
     String command;
     Vector<String> arguments;
     unsigned line;
+    bool isLeftOutUnderFurtherOptionWords { false };
 };
 
 struct OptionWord {
@@ -41,6 +48,7 @@ ASCIILiteral nameOf(const DiagnosticName&);
 
 struct ExpectedDiagnostic {
     DiagnosticName kind;
+    std::optional<FunctionID> function;
     std::optional<unsigned> count;
     unsigned line;
 };
@@ -51,15 +59,6 @@ struct ExpectedStatistic {
     StatisticID statistic;
     StatisticComparison comparison;
     uint64_t value;
-    unsigned line;
-};
-
-struct ExpectedLoss {
-    LimitID limit;
-    std::optional<uint32_t> count;
-    std::optional<FunctionID> function;
-    std::optional<ValueID> value;
-    std::optional<LayoutID> layout;
     unsigned line;
 };
 
@@ -78,18 +77,25 @@ struct TestTodo {
     unsigned line;
 };
 
+struct TestSection {
+    String name;
+    unsigned firstLine { 0 };
+    String text;
+};
+
 struct TestFile {
     String text;
     Vector<RunDirective> runs;
-    std::optional<IRForm> form;
-    bool isOptimizing { false };
-    unsigned formLine { 0 };
     Vector<OptionWord> optionWords;
+    Vector<OptionWord> jscOptions;
     Vector<CheckGroup> checkGroups;
     Vector<ExpectedDiagnostic> diagnostics;
     Vector<ExpectedStatistic> statistics;
-    Vector<ExpectedLoss> losses;
+    Vector<TestSection> sections;
+    std::optional<FunctionID> functionOfTypesLine;
     std::optional<TestTodo> todo;
+    std::optional<TestTodo> hangsOnOrder;
+    std::optional<TestTodo> asUsersBuild;
     Vector<TestFileError> errors;
 
     std::span<const CheckLine> checkLinesFor(StringView prefix) const;

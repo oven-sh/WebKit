@@ -1,0 +1,89 @@
+# function joined(list) { let text = ""; for (let i = 0; i < list.length; i++) { const o = list[i]; text += o.label + o.mark; } return text; }
+# function labels(list) { let text = ""; for (let i = 0; i < list.length; i++) text += list[i].label; return text; }   function once(o) { return o.label + o.mark; }
+# sink(joined, labels, once, { width: 3, label: "a", mark: "b" });
+# Nothing is written of what the list holds. Whatever comes out of it is asked for `label` and for `mark`, and of the layouts of which the program makes objects one alone has both: that of a literal.
+# Outside of loops the names of a record say nothing (names-used-off-a-value-pick-the-one-layout-that-has-them-all.ir): the test and its closed arm are bytes for a guess that is often wrong.
+# In a loop the guess is worth its bytes: what a parse makes out of a text is a record of the program where the names fit, a test that fails costs four instructions a turn and one that passes saves two reads by name.
+# One name alone picks no record.
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = GetSlot {{*}}key="label" receivers=[L0]
+# CHECK: = GetSlot {{*}}key="mark" receivers=[L0]
+# RUN(NOTHING): walk f2 f3 mechanisms=none+TypedOperations+Guesses
+# NOTHING-NOT: ShapeTest
+# NOTHING-NOT: GetSlot
+# RUN(ANSWER): run-in-shell globalThis.sink = (joined, labels, once, record) => { print(joined([record, record])); print(joined([record, { label: "c", mark: "d" }, { mark: "f", label: "e", more: 1 }, Object.create(record), { get label() { return "g"; }, mark: "h" }])); print(joined([{ label: 1 }, 5, "text"])); print(labels([record, { label: "z" }])); print(once(record)); try { joined([record, null]); } catch (error) { print(error instanceof TypeError); } };
+# ANSWER: abab
+# ANSWER-NEXT: abcdefabgh
+# ANSWER-NEXT: NaNNaNNaN
+# ANSWER-NEXT: az
+# ANSWER-NEXT: ab
+# ANSWER-NEXT: true
+# ANSWER-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="width" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}, {key="mark" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Integer integer=3
+    v6 = String string="a"
+    v7 = String string="b"
+    v8 = NewObject -, v5, v6, v7 layout=L0 fields=[0, 1, 2]
+    v9 = FinishObject v8
+    v10 = Call v1, -, v2, v3, v4, v9 calleeName="sink"
+    Return v10
+}
+function f1 name="joined" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: anything, v4: anything):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = PropGet v8 key="label"
+    v10 = PropGet v8 key="mark"
+    v11 = Add v9, v10
+    v12 = Add v3, v11
+    v13 = Increment v4
+    Jump -> next b1(v12, v13)
+  b3():
+    Return v3
+}
+function f2 name="labels" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: anything, v4: anything):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = PropGet v8 key="label"
+    v10 = Add v3, v9
+    v11 = Increment v4
+    Jump -> next b1(v10, v11)
+  b3():
+    Return v3
+}
+function f3 name="once" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="label"
+    v2 = PropGet v0 key="mark"
+    v3 = Add v1, v2
+    Return v3
+}

@@ -28,6 +28,7 @@
 #include <WebCore/PlatformVideoColorSpace.h>
 #include <WebCore/ProcessIdentity.h>
 #include <WebCore/VideoEncodedData.h>
+#include <WebCore/VideoFrame.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/NativePromise.h>
 
@@ -41,7 +42,6 @@ public:
 
     enum class HardwareAcceleration : bool { No, Yes };
     enum class HardwareBuffer : bool { No, Yes };
-    enum class TreatNoOutputAsError : bool { No, Yes };
     struct Config {
         Vector<uint8_t> description;
         uint64_t width { 0 };
@@ -49,8 +49,9 @@ public:
         std::optional<PlatformVideoColorSpace> colorSpace;
         HardwareAcceleration decoding { HardwareAcceleration::No };
         HardwareBuffer pixelBuffer { HardwareBuffer::No };
-        TreatNoOutputAsError noOutputAsError { TreatNoOutputAsError::Yes };
         ProcessIdentity resourceOwner { };
+        VideoFrameRotation rotation { VideoFrameRotation::None };
+        bool isMirrored { false };
     };
 
     struct DecodedFrame {
@@ -59,7 +60,7 @@ public:
         std::optional<uint64_t> duration;
     };
 
-    static bool LEGACY_NODELETE isVPXSupported();
+    NODELETE static bool isVPXSupported();
 
     using OutputCallback = Function<void(std::expected<DecodedFrame, String>&&)>;
     using CreateResult = std::expected<Ref<VideoDecoder>, String>;
@@ -67,7 +68,7 @@ public:
     using CreateCallback = Function<void(CreateResult&&)>;
 
     using CreatorFunction = void(*)(const String&, const Config&, CreateCallback&&, OutputCallback&&);
-    WEBCORE_EXPORT static void LEGACY_NODELETE setCreatorCallback(CreatorFunction&&);
+    NODELETE WEBCORE_EXPORT static void setCreatorCallback(CreatorFunction&&);
 
     static Ref<CreatePromise> create(const String&, const Config&, OutputCallback&&);
     WEBCORE_EXPORT static void createLocalDecoder(const String&, const Config&, CreateCallback&&, OutputCallback&&);

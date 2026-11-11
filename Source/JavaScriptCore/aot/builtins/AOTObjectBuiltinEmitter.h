@@ -17,7 +17,7 @@ public:
 
     FOR_EACH_AOT_INLINE_BUILTIN_IN_OBJECT_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
-    CellPointer allocateEmptyObject(InlineAllocation, std::optional<Integer> header, LBasicBlock slowPath);
+    CellPointer allocateEmptyObject(InlineAllocation, std::optional<Integer> header, LBasicBlock slowPath, unsigned inlineCapacity);
 
 private:
     CellPointer createObjectWithPrototype(const InlineCall&, CellPointer prototype);

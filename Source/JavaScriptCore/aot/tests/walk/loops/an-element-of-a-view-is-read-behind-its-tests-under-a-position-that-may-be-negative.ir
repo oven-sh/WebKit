@@ -1,0 +1,20 @@
+# function pick(words: Int32Array, keys: Int32Array) { let s = 0; for (let at = 0; at < keys.length; at += 2) s = (s + words[keys[at]] + words[keys[at + 1]]) | 0; return s; }
+# function lay(words: Int32Array, keys: Int32Array) { for (let at = 0; at < keys.length; at += 2) words[keys[at + 1]] = at; return words; }
+# The read of an element of a view behind a test of the length was refused where the position may be negative, as an int32 out of another view may be,
+# and where the view stands in the row in front of the loop. Such a position is asked first whether it is negative: there a view finds nothing, as past its end.
+# Behind the tests the read lies inside the view and gives an int32; the position has a narrowed name.
+# PROGRAM-OF: a-key-that-comes-out-of-a-view-is-asked-for-a-number.ir
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: [[key]]: i32 @Int32 = GetTypedArrayElement {{*}}isInsideView
+# CHECK: = GreaterEq [[key]], {{*}}form=Integers
+# CHECK: [[below]]: boolean @Boolean = Less {{*}}form=Integers
+# CHECK: [[inside]]: int[-2147483648, 1073741823] @Int32 = Narrowed [[key]], [[below]] [isOnTakenEdge]
+# CHECK: : i32 @Int32 = GetTypedArrayElement {{*}}, [[inside]], {{*}}isInsideView
+# CHECK-LABEL: code f2:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: [[next]]: boolean @Boolean = Less {{*}}form=Integers
+# CHECK: [[next2]]: boolean @Boolean = Less {{*}}form=Integers
+# CHECK: = Narrowed {{*}}, [[next2]] [isOnTakenEdge]
+# CHECK: : i32 @Int32 = GetTypedArrayElement {{*}}isInsideView

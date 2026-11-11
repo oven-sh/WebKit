@@ -584,6 +584,11 @@ public:
         return webkit_input_method_context_get_input_hints(WEBKIT_INPUT_METHOD_CONTEXT(m_context.get()));
     }
 
+    WebKitInputEnterKeyHint enterKeyHint() const
+    {
+        return webkit_input_method_context_get_enter_key_hint(WEBKIT_INPUT_METHOD_CONTEXT(m_context.get()));
+    }
+
     const char* surroundingText() const
     {
         return m_context->surroundingText;
@@ -1201,6 +1206,157 @@ static void testWebKitInputMethodContextSurrounding(InputMethodTest* test, gcons
     test->m_events.clear();
 }
 
+static void testWebKitInputMethodContextSurroundingLongText(InputMethodTest* test, gconstpointer)
+{
+    test->loadHtml(testHTML, nullptr);
+    test->waitUntilLoadFinished();
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+
+    auto repeated = [](const char* string, unsigned count) {
+        GString* result = g_string_new(nullptr);
+        for (unsigned i = 0; i < count; ++i)
+            g_string_append(result, string);
+        return GUniquePtr<char>(g_string_free(result, FALSE));
+    };
+    // A selection change made by a script is sent to the input method with the next rendering update, which
+    // the test doesn't wait for, so the selection is set next to its final position and completed with a key press.
+    // The surrounding text of that intermediate selection differs from the expected one.
+    auto setValueAndSelection = [&](const char* value, unsigned start, unsigned end, const char* expectedSurroundingText) {
+        unsigned scriptStart = start;
+        unsigned scriptEnd = end;
+        unsigned key = KEY(Right);
+        OptionSet<WebViewTest::Modifiers> modifiers;
+        if (start < end) {
+            scriptEnd--;
+            modifiers.add(WebViewTest::Modifiers::Shift);
+        } else if (start)
+            scriptStart = scriptEnd = start - 1;
+        else {
+            scriptStart = scriptEnd = 1;
+            key = KEY(Left);
+        }
+        GUniquePtr<char> script(g_strdup_printf("input.value = %s; input.setSelectionRange(%u, %u)", value, scriptStart, scriptEnd));
+        test->runJavaScriptAndWaitUntilFinished(script.get(), nullptr);
+        test->keyStrokeAndWaitForEvents(key, 2, modifiers);
+        test->m_events.clear();
+        test->waitForSurroundingText(expectedSurroundingText);
+    };
+
+    // Only the 1000 characters before and after the selection are sent.
+    {
+        GUniquePtr<char> expected(g_strconcat(repeated("a", 1000).get(), repeated("b", 1000).get(), nullptr));
+        setValueAndSelection("'a'.repeat(1500) + 'b'.repeat(1500)", 1500, 1500, expected.get());
+        g_assert_cmpuint(test->surroundingCursorIndex(), ==, 1000);
+        g_assert_cmpuint(test->surroundingSelectionIndex(), ==, 1000);
+    }
+
+    // Near the start of the field, all the text before the caret is sent.
+    setValueAndSelection("'a'.repeat(3000)", 10, 10, repeated("a", 1010).get());
+    g_assert_cmpuint(test->surroundingCursorIndex(), ==, 10);
+    g_assert_cmpuint(test->surroundingSelectionIndex(), ==, 10);
+
+    // The selected text is always sent whole.
+    setValueAndSelection("'a'.repeat(5000)", 1500, 3000, repeated("a", 3500).get());
+    g_assert_cmpuint(test->surroundingCursorIndex(), ==, 1000);
+    g_assert_cmpuint(test->surroundingSelectionIndex(), ==, 2500);
+
+    // The offset of delete-surrounding is still relative to the caret.
+    {
+        GUniquePtr<char> expected(g_strconcat(repeated("a", 1000).get(), repeated("b", 1000).get(), nullptr));
+        setValueAndSelection("'a'.repeat(1500) + 'b'.repeat(1500)", 1500, 1500, expected.get());
+    }
+    test->deleteSurrounding(-1, 2);
+    test->assertJavaScriptBecomesTrue("input.value === 'a'.repeat(1499) + 'b'.repeat(1499)");
+
+    // The preedit string is not sent and the limits apply on both sides of it. The cursor area is sent
+    // right before the surrounding text, so once it changes, the surrounding text is up to date too.
+    {
+        GUniquePtr<char> expected(g_strconcat(repeated("a", 1000).get(), repeated("c", 1000).get(), nullptr));
+        setValueAndSelection("'a'.repeat(1500) + 'c'.repeat(1500)", 1500, 1500, expected.get());
+        test->clearInputMethodCounters();
+        test->keyStrokeAndWaitForEvents(KEY(w), 4, { WebViewTest::Modifiers::Control, WebViewTest::Modifiers::Shift });
+        test->keyStrokeAndWaitForEvents(KEY(w), 7);
+        test->waitForCursorAreaCount(2, 1000);
+        g_assert_cmpstr(test->surroundingText(), ==, expected.get());
+        g_assert_cmpuint(test->surroundingCursorIndex(), ==, 1000);
+        test->keyStrokeAndWaitForEvents(KEY(Escape), 10);
+        test->m_events.clear();
+    }
+
+    // A surrogate pair split by the limits is left out. The emoji is 2 UTF-16 code units and 4 UTF-8 bytes.
+    {
+        GUniquePtr<char> expected(g_strconcat(repeated("😀", 499).get(), "b", nullptr));
+        setValueAndSelection("'😀'.repeat(600) + 'b'", 1201, 1201, expected.get());
+        g_assert_cmpuint(test->surroundingCursorIndex(), ==, 499 * 4 + 1);
+    }
+    {
+        GUniquePtr<char> expected(g_strconcat("b", repeated("😀", 499).get(), nullptr));
+        setValueAndSelection("'b' + '😀'.repeat(600)", 0, 0, expected.get());
+        g_assert_cmpuint(test->surroundingCursorIndex(), ==, 0);
+    }
+
+    // An unpaired surrogate at the ends of the field is not split by the limits, so it is kept. It is sent as U+FFFD.
+    setValueAndSelection("'\\uDC00a'", 0, 0, "\xEF\xBF\xBD" "a");
+    g_assert_cmpuint(test->surroundingCursorIndex(), ==, 0);
+    g_assert_cmpuint(test->surroundingSelectionIndex(), ==, 0);
+    setValueAndSelection("'a\\uD800'", 2, 2, "a" "\xEF\xBF\xBD");
+    g_assert_cmpuint(test->surroundingCursorIndex(), ==, 4);
+    g_assert_cmpuint(test->surroundingSelectionIndex(), ==, 4);
+}
+
+static void testWebKitInputMethodContextSurroundingLongTextEditableStart(InputMethodTest* test, gconstpointer)
+{
+    // The editable content starts with an element, not with text, and the page has more than
+    // 1000 characters before it. None of the page text is sent.
+    test->loadHtml("<html><body><p id='page'></p><div id='editable' contenteditable><p><br></p><p>xyz</p></div>"
+        "<script>page.textContent = 'a'.repeat(1500)</script></body></html>", nullptr);
+    test->waitUntilLoadFinished();
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+    test->waitForSurroundingCount(1, 5000);
+    g_assert_cmpstr(test->surroundingText(), ==, "\nxyz");
+    g_assert_cmpuint(test->surroundingCursorIndex(), ==, 0);
+    g_assert_cmpuint(test->surroundingSelectionIndex(), ==, 0);
+}
+
+static void testWebKitInputMethodContextSurroundingLongTextUncountedContent(InputMethodTest* test, gconstpointer)
+{
+    // Images count as one character each when the limit is applied before the selection, but they are not
+    // part of the surrounding text. An unpaired surrogate after the caret is kept, and the caret stays at 0.
+    test->loadHtml("<html><body><div id='editable' contenteditable><p id='paragraph'>x<span id='tail'></span></p></div><script>"
+        "tail.textContent = '\\uDC00b';"
+        "for (let i = 0; i < 1100; ++i) paragraph.insertBefore(document.createElement('img'), tail);"
+        "</script></body></html>", nullptr);
+    test->waitUntilLoadFinished();
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+    test->waitForSurroundingCount(1, 5000);
+    test->clearInputMethodCounters();
+
+    test->runJavaScriptAndWaitUntilFinished("getSelection().collapse(tail.firstChild, 0)", nullptr);
+    test->waitForSurroundingCount(1, 5000);
+    g_assert_cmpstr(test->surroundingText(), ==, "\xEF\xBF\xBD" "b");
+    g_assert_cmpuint(test->surroundingCursorIndex(), ==, 0);
+    g_assert_cmpuint(test->surroundingSelectionIndex(), ==, 0);
+
+    // An unpaired surrogate right after the start of the surrounding text is kept too.
+    test->clearInputMethodCounters();
+    test->runJavaScriptAndWaitUntilFinished("getSelection().collapse(tail.firstChild, 2)", nullptr);
+    test->waitForSurroundingCount(1, 5000);
+    g_assert_cmpstr(test->surroundingText(), ==, "\xEF\xBF\xBD" "b");
+    g_assert_cmpuint(test->surroundingCursorIndex(), ==, 4);
+    g_assert_cmpuint(test->surroundingSelectionIndex(), ==, 4);
+
+    // An unpaired surrogate is kept when the limit falls right after it, before content that is not counted.
+    test->clearInputMethodCounters();
+    test->runJavaScriptAndWaitUntilFinished("editable.replaceChildren('a'.repeat(999) + '\\uD800', document.createElement('img'));"
+        "getSelection().collapse(editable.firstChild, 0)", nullptr);
+    test->waitForSurroundingCount(1, 5000);
+    GUniquePtr<char> text(g_strnfill(999, 'a'));
+    GUniquePtr<char> expected(g_strconcat(text.get(), "\xEF\xBF\xBD", nullptr));
+    g_assert_cmpstr(test->surroundingText(), ==, expected.get());
+    g_assert_cmpuint(test->surroundingCursorIndex(), ==, 0);
+    g_assert_cmpuint(test->surroundingSelectionIndex(), ==, 0);
+}
+
 static void testWebKitInputMethodContextDeleteSurroundingContentEditable(InputMethodTest* test, gconstpointer)
 {
     test->loadHtml("<html><body><h1>Title</h1><div id='editable' contenteditable></div></body></html>", nullptr);
@@ -1275,6 +1431,106 @@ static void testWebKitInputMethodContextDeleteSurroundingMoveCursor(InputMethodT
     auto textContent = test->editableTextContent();
     g_assert_cmpstr(textContent.get(), ==, "a😀b");
     auto* jsResult = test->runJavaScriptAndWaitUntilFinished("getSelection().isCollapsed && getSelection().focusNode === editable.firstChild && getSelection().focusOffset === 1", nullptr);
+    g_assert_true(WebViewTest::javascriptResultToBoolean(jsResult));
+}
+
+static void testWebKitInputMethodContextDeleteSurroundingSurrogatePair(InputMethodTest* test, gconstpointer)
+{
+    test->loadHtml("<html><body><div id='editable' contenteditable></div></body></html>", nullptr);
+    test->waitUntilLoadFinished();
+
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+
+    // A range that splits a surrogate pair is extended to the whole pair.
+    test->runJavaScriptAndWaitUntilFinished("editable.textContent = 'a😀b'; getSelection().collapse(editable.firstChild, 4)", nullptr);
+    test->deleteSurrounding(-2, 2);
+    auto textContent = test->editableTextContent();
+    g_assert_cmpstr(textContent.get(), ==, "a");
+    auto* jsResult = test->runJavaScriptAndWaitUntilFinished("getSelection().isCollapsed && getSelection().focusOffset === 1", nullptr);
+    g_assert_true(WebViewTest::javascriptResultToBoolean(jsResult));
+
+    // A caret move never ends between the two halves of a surrogate pair.
+    test->runJavaScriptAndWaitUntilFinished("editable.textContent = 'a😀b'; getSelection().collapse(editable.firstChild, 4)", nullptr);
+    test->deleteSurrounding(-2, 0);
+    textContent = test->editableTextContent();
+    g_assert_cmpstr(textContent.get(), ==, "a😀b");
+    jsResult = test->runJavaScriptAndWaitUntilFinished("getSelection().isCollapsed && getSelection().focusOffset === 3", nullptr);
+    g_assert_true(WebViewTest::javascriptResultToBoolean(jsResult));
+}
+
+static void testWebKitInputMethodContextDeleteSurroundingSurrogatePairPassword(InputMethodTest* test, gconstpointer)
+{
+    // Password fields allow a caret between the two halves of a surrogate pair, so a split range is not adjusted by the editing code.
+    test->loadHtml("<html><body><input id='editable' type='password'></body></html>", nullptr);
+    test->waitUntilLoadFinished();
+
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+
+    test->runJavaScriptAndWaitUntilFinished("editable.value = 'a😀'; editable.setSelectionRange(3, 3)", nullptr);
+    test->deleteSurrounding(-1, 1);
+    // Compare in JavaScript, since an unpaired surrogate would be lost in the conversion to UTF-8.
+    auto* jsResult = test->runJavaScriptAndWaitUntilFinished("editable.value === 'a'", nullptr);
+    g_assert_true(WebViewTest::javascriptResultToBoolean(jsResult));
+
+    test->runJavaScriptAndWaitUntilFinished("editable.value = 'a😀b'; editable.setSelectionRange(4, 4)", nullptr);
+    test->deleteSurrounding(-2, 0);
+    jsResult = test->runJavaScriptAndWaitUntilFinished("editable.selectionStart === 3 && editable.selectionEnd === 3", nullptr);
+    g_assert_true(WebViewTest::javascriptResultToBoolean(jsResult));
+}
+
+static void testWebKitInputMethodContextDeleteSurroundingGraphemeCluster(InputMethodTest* test, gconstpointer)
+{
+    test->loadHtml("<html><body><div id='editable' contenteditable></div></body></html>", nullptr);
+    test->waitUntilLoadFinished();
+
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+
+    // An input method can delete a part of a grapheme cluster, like a combining mark.
+    test->runJavaScriptAndWaitUntilFinished("editable.textContent = 'e\\u0301'; getSelection().collapse(editable.firstChild, 2)", nullptr);
+    test->deleteSurrounding(-1, 1);
+    auto textContent = test->editableTextContent();
+    g_assert_cmpstr(textContent.get(), ==, "e");
+    auto* jsResult = test->runJavaScriptAndWaitUntilFinished("getSelection().isCollapsed && getSelection().focusOffset === 1", nullptr);
+    g_assert_true(WebViewTest::javascriptResultToBoolean(jsResult));
+
+    // A Thai tone mark.
+    test->runJavaScriptAndWaitUntilFinished("editable.textContent = '\\u0E01\\u0E48'; getSelection().collapse(editable.firstChild, 2)", nullptr);
+    test->deleteSurrounding(-1, 1);
+    textContent = test->editableTextContent();
+    g_assert_cmpstr(textContent.get(), ==, "\u0E01");
+    jsResult = test->runJavaScriptAndWaitUntilFinished("getSelection().isCollapsed && getSelection().focusOffset === 1", nullptr);
+    g_assert_true(WebViewTest::javascriptResultToBoolean(jsResult));
+
+    // A range that starts inside a grapheme cluster.
+    test->runJavaScriptAndWaitUntilFinished("editable.textContent = 'e\\u0301x'; getSelection().collapse(editable.firstChild, 3)", nullptr);
+    test->deleteSurrounding(-2, 2);
+    textContent = test->editableTextContent();
+    g_assert_cmpstr(textContent.get(), ==, "e");
+    jsResult = test->runJavaScriptAndWaitUntilFinished("getSelection().isCollapsed && getSelection().focusOffset === 1", nullptr);
+    g_assert_true(WebViewTest::javascriptResultToBoolean(jsResult));
+
+    // The last emoji of a ZWJ sequence.
+    test->runJavaScriptAndWaitUntilFinished("editable.textContent = '👨\\u200D👦'; getSelection().collapse(editable.firstChild, 5)", nullptr);
+    test->deleteSurrounding(-2, 2);
+    textContent = test->editableTextContent();
+    g_assert_cmpstr(textContent.get(), ==, "👨\u200D");
+    jsResult = test->runJavaScriptAndWaitUntilFinished("getSelection().isCollapsed && getSelection().focusOffset === 3", nullptr);
+    g_assert_true(WebViewTest::javascriptResultToBoolean(jsResult));
+}
+
+static void testWebKitInputMethodContextDeleteSurroundingPrevented(InputMethodTest* test, gconstpointer)
+{
+    test->loadHtml("<html><body><div id='editable' contenteditable></div></body></html>", nullptr);
+    test->waitUntilLoadFinished();
+
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+
+    // When nothing is deleted, the range is not left selected and the caret moves to its start.
+    test->runJavaScriptAndWaitUntilFinished("editable.addEventListener('beforeinput', event => event.preventDefault()); editable.textContent = 'abc'; getSelection().collapse(editable.firstChild, 3)", nullptr);
+    test->deleteSurrounding(-2, 1);
+    auto textContent = test->editableTextContent();
+    g_assert_cmpstr(textContent.get(), ==, "abc");
+    auto* jsResult = test->runJavaScriptAndWaitUntilFinished("getSelection().isCollapsed && getSelection().focusOffset === 1", nullptr);
     g_assert_true(WebViewTest::javascriptResultToBoolean(jsResult));
 }
 
@@ -1356,6 +1612,36 @@ static void testWebKitInputMethodContextCursorArea(InputMethodTest* test, gconst
     test->waitForCursorAreaCount(1, 1000);
     test->waitForSurroundingCount(1, 1000);
 }
+
+#if PLATFORM(WPE) && ENABLE(WPE_PLATFORM)
+static void testWebKitInputMethodContextTapEndsComposition(InputMethodTest* test, gconstpointer)
+{
+    if (!test->m_display) {
+        g_test_skip("Needs the WPE platform API");
+        return;
+    }
+
+    test->loadHtml(testHTML, nullptr);
+    test->waitUntilLoadFinished();
+    test->runJavaScriptAndWaitUntilFinished("window.compositionEnded = false; editable.addEventListener('compositionend', () => { window.compositionEnded = true; })", nullptr);
+
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+    test->keyStrokeAndWaitForEvents(KEY(w), 4, { WebViewTest::Modifiers::Control, WebViewTest::Modifiers::Shift });
+    test->m_events.clear();
+    test->keyStrokeAndWaitForEvents(KEY(g), 3);
+    test->m_events.clear();
+    test->keyStrokeAndWaitForEvents(KEY(t), 3);
+    test->m_events.clear();
+    g_assert_false(WebViewTest::javascriptResultToBoolean(test->runJavaScriptAndWaitUntilFinished("window.compositionEnded", nullptr)));
+
+    // A tap at the start of the field ends the composition, keeping its text, and then moves the caret,
+    // as a click does. Otherwise the input method keeps editing the composition the caret has left.
+    test->tapTouchscreen(10, 12);
+    test->assertJavaScriptBecomesTrue("window.compositionEnded && editable.selectionStart === 0");
+    auto editableValue = test->editableValue();
+    g_assert_cmpstr(editableValue.get(), ==, "wgt");
+}
+#endif
 
 static void testWebKitInputMethodContextPreeditCursor(InputMethodTest* test, gconstpointer)
 {
@@ -1613,6 +1899,271 @@ static void testWebKitInputMethodContextBlurRefocusInteraction(InputMethodTest* 
     g_assert_cmpuint(test->focusInCount(), ==, 0);
     g_assert_true(test->isInputMethodEnabled());
 }
+
+#if ENABLE(WPE_PLATFORM)
+// Hiding the view, as when switching to another tab, takes the focus away from the page. The focused field gets a
+// blur event but stays the focused element of its document, and gets a focus event again when the view is shown.
+// The second script in each helper makes sure that a state update held back until the next run loop iteration, if
+// any, has reached the UI process before the caller checks it.
+static void hideViewAndWaitUntilPageUnfocused(InputMethodTest* test)
+{
+    test->hideView();
+    test->assertJavaScriptBecomesTrue("!document.hasFocus()");
+    test->runJavaScriptAndWaitUntilFinished("void 0", nullptr);
+}
+
+static void showViewAndWaitUntilPageFocused(InputMethodTest* test)
+{
+    test->showInWindow();
+    test->assertJavaScriptBecomesTrue("document.hasFocus()");
+    test->runJavaScriptAndWaitUntilFinished("void 0", nullptr);
+}
+
+// The view can also lose the focus and stay visible, as when the focus moves to another window or widget.
+static void unfocusViewAndWaitUntilPageUnfocused(InputMethodTest* test)
+{
+    wpe_view_focus_out(webkit_web_view_get_wpe_view(test->webView()));
+    test->assertJavaScriptBecomesTrue("!document.hasFocus()");
+    test->runJavaScriptAndWaitUntilFinished("void 0", nullptr);
+}
+
+static void focusViewAndWaitUntilPageFocused(InputMethodTest* test)
+{
+    wpe_view_focus_in(webkit_web_view_get_wpe_view(test->webView()));
+    test->assertJavaScriptBecomesTrue("document.hasFocus()");
+    test->runJavaScriptAndWaitUntilFinished("void 0", nullptr);
+}
+
+static bool loadFieldForViewFocusTest(InputMethodTest* test, const char* html = "<input id='editable' style='top:0' spellcheck='false'>"
+    "<input id='second' style='top:50px' spellcheck='false'>")
+{
+    if (!test->m_display) {
+        g_test_skip("Needs the WPE platform API");
+        return false;
+    }
+
+    GUniquePtr<char> page(g_strconcat("<style>*{position:absolute;left:0;width:200px;height:30px;margin:0;padding:0;border:0}</style>", html, nullptr));
+    test->loadHtml(page.get(), nullptr);
+    test->waitUntilLoadFinished();
+    return true;
+}
+
+static void clickFieldAndWaitUntilInputMethodEnabled(InputMethodTest* test)
+{
+    test->clickMouseButton(20, 15);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'editable'");
+    test->waitUntilInputMethodEnabled();
+    g_assert_cmpuint(test->hints(), ==, WEBKIT_INPUT_HINT_NONE);
+}
+
+// The input method forgets the cursor area and the surrounding text when the view loses the focus, and must get both
+// again when the view gets the focus back, even though the selection did not change.
+static void waitForCursorAreaAndSurroundingText(InputMethodTest* test)
+{
+    test->waitForCursorAreaCount(1, 1000);
+    test->waitForSurroundingCount(1, 1000);
+    g_assert_cmpstr(test->surroundingText(), ==, "abc");
+    g_assert_cmpuint(test->surroundingCursorIndex(), ==, 3);
+}
+
+static void testWebKitInputMethodContextViewFocusOutAndIn(InputMethodTest* test, gconstpointer)
+{
+    if (!loadFieldForViewFocusTest(test))
+        return;
+
+    // A field focused by a user interaction gets the input method back, with the cursor area and the surrounding text.
+    // The page getting the focus back is not a user interaction, so the on-screen keyboard is inhibited until the user
+    // taps the field again.
+    clickFieldAndWaitUntilInputMethodEnabled(test);
+    test->runJavaScriptAndWaitUntilFinished("editable.value = 'abc'; editable.setSelectionRange(3, 3)", nullptr);
+    hideViewAndWaitUntilPageUnfocused(test);
+    g_assert_false(test->isInputMethodEnabled());
+
+    test->clearInputMethodCounters();
+    showViewAndWaitUntilPageFocused(test);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'editable'");
+    g_assert_true(test->isInputMethodEnabled());
+    g_assert_cmpuint(test->focusInCount(), ==, 1);
+    g_assert_cmpuint(test->purpose(), ==, WEBKIT_INPUT_PURPOSE_FREE_FORM);
+    g_assert_cmpuint(test->hints(), ==, WEBKIT_INPUT_HINT_INHIBIT_OSK);
+    waitForCursorAreaAndSurroundingText(test);
+
+    test->clickMouseButton(20, 15);
+    test->waitForContentType(WEBKIT_INPUT_PURPOSE_FREE_FORM, WEBKIT_INPUT_HINT_NONE);
+}
+
+static void testWebKitInputMethodContextViewFocusOutAndInScriptFocus(InputMethodTest* test, gconstpointer)
+{
+    if (!loadFieldForViewFocusTest(test))
+        return;
+
+    // A field focused by script gets the input method back, with the cursor area and the surrounding text, and the
+    // on-screen keyboard inhibited.
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+    test->runJavaScriptAndWaitUntilFinished("editable.value = 'abc'; editable.setSelectionRange(3, 3)", nullptr);
+    g_assert_cmpuint(test->hints(), ==, WEBKIT_INPUT_HINT_INHIBIT_OSK);
+    hideViewAndWaitUntilPageUnfocused(test);
+    g_assert_false(test->isInputMethodEnabled());
+
+    test->clearInputMethodCounters();
+    showViewAndWaitUntilPageFocused(test);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'editable'");
+    g_assert_true(test->isInputMethodEnabled());
+    g_assert_cmpuint(test->focusInCount(), ==, 1);
+    g_assert_cmpuint(test->hints(), ==, WEBKIT_INPUT_HINT_INHIBIT_OSK);
+    waitForCursorAreaAndSurroundingText(test);
+}
+
+static void testWebKitInputMethodContextViewFocusOutAndInVisible(InputMethodTest* test, gconstpointer)
+{
+    if (!loadFieldForViewFocusTest(test))
+        return;
+
+    // A view that stays visible gets no editor state when it gets the focus back, but the input method must still get
+    // the cursor area and the surrounding text.
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+    test->runJavaScriptAndWaitUntilFinished("editable.value = 'abc'; editable.setSelectionRange(3, 3)", nullptr);
+    unfocusViewAndWaitUntilPageUnfocused(test);
+    g_assert_false(test->isInputMethodEnabled());
+
+    test->clearInputMethodCounters();
+    focusViewAndWaitUntilPageFocused(test);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'editable'");
+    g_assert_true(test->isInputMethodEnabled());
+    g_assert_cmpuint(test->focusInCount(), ==, 1);
+    g_assert_cmpuint(test->hints(), ==, WEBKIT_INPUT_HINT_INHIBIT_OSK);
+    waitForCursorAreaAndSurroundingText(test);
+}
+
+static void testWebKitInputMethodContextViewFocusOutAndInVisibleContentEditable(InputMethodTest* test, gconstpointer)
+{
+    if (!loadFieldForViewFocusTest(test, "<div id='editable' contenteditable>abc</div>"))
+        return;
+
+    // The same for a contenteditable.
+    test->focusEditableAndWaitUntilInputMethodEnabled();
+    test->runJavaScriptAndWaitUntilFinished("getSelection().collapse(editable.firstChild, 3)", nullptr);
+    unfocusViewAndWaitUntilPageUnfocused(test);
+    g_assert_false(test->isInputMethodEnabled());
+
+    test->clearInputMethodCounters();
+    focusViewAndWaitUntilPageFocused(test);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'editable'");
+    g_assert_true(test->isInputMethodEnabled());
+    g_assert_cmpuint(test->focusInCount(), ==, 1);
+    waitForCursorAreaAndSurroundingText(test);
+}
+
+static void testWebKitInputMethodContextViewFocusOutRefocus(InputMethodTest* test, gconstpointer)
+{
+    if (!loadFieldForViewFocusTest(test))
+        return;
+
+    // A script focusing the focused field again while the page has no focus does not change anything: the field gets
+    // the input method back.
+    clickFieldAndWaitUntilInputMethodEnabled(test);
+    hideViewAndWaitUntilPageUnfocused(test);
+    test->runJavaScriptAndWaitUntilFinished("editable.focus()", nullptr);
+
+    test->clearInputMethodCounters();
+    showViewAndWaitUntilPageFocused(test);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'editable'");
+    g_assert_true(test->isInputMethodEnabled());
+    g_assert_cmpuint(test->focusInCount(), ==, 1);
+    g_assert_cmpuint(test->hints(), ==, WEBKIT_INPUT_HINT_INHIBIT_OSK);
+}
+
+static void testWebKitInputMethodContextViewFocusOutFocusChange(InputMethodTest* test, gconstpointer)
+{
+    if (!loadFieldForViewFocusTest(test))
+        return;
+
+    // A script moving the focus while the page has no focus is a focus change by script, even if the focus ends up
+    // back on the field the user tapped: the field gets the input method back, with the on-screen keyboard inhibited.
+    clickFieldAndWaitUntilInputMethodEnabled(test);
+    hideViewAndWaitUntilPageUnfocused(test);
+    test->runJavaScriptAndWaitUntilFinished("second.focus(); editable.focus()", nullptr);
+
+    test->clearInputMethodCounters();
+    showViewAndWaitUntilPageFocused(test);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'editable'");
+    g_assert_true(test->isInputMethodEnabled());
+    g_assert_cmpuint(test->focusInCount(), ==, 1);
+    g_assert_cmpuint(test->hints(), ==, WEBKIT_INPUT_HINT_INHIBIT_OSK);
+}
+
+static void testWebKitInputMethodContextViewFocusOutWindowFocusHandler(InputMethodTest* test, gconstpointer)
+{
+    if (!loadFieldForViewFocusTest(test))
+        return;
+
+    // A window focus event handler moving the focus when the page gets the focus back is a focus change by script:
+    // the new field gets the input method with the on-screen keyboard inhibited, and the embedder sees one focus in.
+    clickFieldAndWaitUntilInputMethodEnabled(test);
+    test->runJavaScriptAndWaitUntilFinished("addEventListener('focus', () => second.focus())", nullptr);
+    hideViewAndWaitUntilPageUnfocused(test);
+
+    test->clearInputMethodCounters();
+    showViewAndWaitUntilPageFocused(test);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'second'");
+    g_assert_true(test->isInputMethodEnabled());
+    g_assert_cmpuint(test->focusInCount(), ==, 1);
+    g_assert_cmpuint(test->hints(), ==, WEBKIT_INPUT_HINT_INHIBIT_OSK);
+}
+
+static void testWebKitInputMethodContextViewFocusOutBlur(InputMethodTest* test, gconstpointer)
+{
+    if (!loadFieldForViewFocusTest(test))
+        return;
+
+    // A field blurred while the page has no focus does not get the input method back.
+    clickFieldAndWaitUntilInputMethodEnabled(test);
+    hideViewAndWaitUntilPageUnfocused(test);
+    test->runJavaScriptAndWaitUntilFinished("editable.blur()", nullptr);
+
+    test->clearInputMethodCounters();
+    showViewAndWaitUntilPageFocused(test);
+    test->assertJavaScriptBecomesTrue("document.activeElement === document.body");
+    g_assert_cmpuint(test->focusInCount(), ==, 0);
+    g_assert_false(test->isInputMethodEnabled());
+}
+
+static void testWebKitInputMethodContextViewFocusOutRemove(InputMethodTest* test, gconstpointer)
+{
+    if (!loadFieldForViewFocusTest(test))
+        return;
+
+    // A field removed while the page has no focus does not get the input method back.
+    clickFieldAndWaitUntilInputMethodEnabled(test);
+    hideViewAndWaitUntilPageUnfocused(test);
+    test->runJavaScriptAndWaitUntilFinished("editable.remove()", nullptr);
+
+    test->clearInputMethodCounters();
+    showViewAndWaitUntilPageFocused(test);
+    test->assertJavaScriptBecomesTrue("document.activeElement === document.body");
+    g_assert_cmpuint(test->focusInCount(), ==, 0);
+    g_assert_false(test->isInputMethodEnabled());
+}
+
+static void testWebKitInputMethodContextViewFocusOutTypeChange(InputMethodTest* test, gconstpointer)
+{
+    if (!loadFieldForViewFocusTest(test))
+        return;
+
+    // A field whose type changes while the page has no focus gets the input method back with its new content type.
+    clickFieldAndWaitUntilInputMethodEnabled(test);
+    hideViewAndWaitUntilPageUnfocused(test);
+    test->runJavaScriptAndWaitUntilFinished("editable.type = 'email'", nullptr);
+
+    test->clearInputMethodCounters();
+    showViewAndWaitUntilPageFocused(test);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'editable'");
+    g_assert_true(test->isInputMethodEnabled());
+    g_assert_cmpuint(test->focusInCount(), ==, 1);
+    g_assert_cmpuint(test->purpose(), ==, WEBKIT_INPUT_PURPOSE_EMAIL);
+    g_assert_cmpuint(test->hints(), ==, WEBKIT_INPUT_HINT_INHIBIT_OSK);
+}
+#endif
 
 static const char* navigationPageHTML = "<html><body>"
     "<input id='editable' type='text' spellcheck='false'>"
@@ -1987,6 +2538,57 @@ static void testWebKitInputMethodContextReadOnlyChange(InputMethodTest* test, gc
     }
 }
 
+static void testWebKitInputMethodContextEnterKeyHint(InputMethodTest* test, gconstpointer)
+{
+    auto checkElement = [&](const char* element, WebKitInputEnterKeyHint enterKeyHint) {
+        test->loadHtml(element, nullptr);
+        test->waitUntilLoadFinished();
+        test->focusEditableAndWaitUntilInputMethodEnabled();
+        g_assert_cmpuint(test->enterKeyHint(), ==, enterKeyHint);
+        test->unfocusEditableAndWaitUntilInputMethodDisabled();
+    };
+
+    checkElement("<input id='editable' spellcheck='false'>", WEBKIT_INPUT_ENTER_KEY_HINT_UNSPECIFIED);
+    checkElement("<input id='editable' spellcheck='false' enterkeyhint='enter'>", WEBKIT_INPUT_ENTER_KEY_HINT_ENTER);
+    checkElement("<input id='editable' spellcheck='false' enterkeyhint='done'>", WEBKIT_INPUT_ENTER_KEY_HINT_DONE);
+    checkElement("<input id='editable' spellcheck='false' enterkeyhint='go'>", WEBKIT_INPUT_ENTER_KEY_HINT_GO);
+    checkElement("<input id='editable' spellcheck='false' enterkeyhint='next'>", WEBKIT_INPUT_ENTER_KEY_HINT_NEXT);
+    checkElement("<input id='editable' spellcheck='false' enterkeyhint='previous'>", WEBKIT_INPUT_ENTER_KEY_HINT_PREVIOUS);
+    checkElement("<input id='editable' spellcheck='false' enterkeyhint='search'>", WEBKIT_INPUT_ENTER_KEY_HINT_SEARCH);
+    checkElement("<input id='editable' spellcheck='false' enterkeyhint='send'>", WEBKIT_INPUT_ENTER_KEY_HINT_SEND);
+
+    // The attribute value is case-insensitive, and an invalid value is the same as a missing attribute.
+    checkElement("<input id='editable' spellcheck='false' enterkeyhint='SEARCH'>", WEBKIT_INPUT_ENTER_KEY_HINT_SEARCH);
+    checkElement("<input id='editable' spellcheck='false' enterkeyhint='invalid'>", WEBKIT_INPUT_ENTER_KEY_HINT_UNSPECIFIED);
+
+    // The hint is independent of the purpose.
+    checkElement("<input id='editable' type='search' spellcheck='false'>", WEBKIT_INPUT_ENTER_KEY_HINT_UNSPECIFIED);
+    checkElement("<input id='editable' type='email' spellcheck='false' enterkeyhint='send'>", WEBKIT_INPUT_ENTER_KEY_HINT_SEND);
+
+    checkElement("<textarea id='editable' spellcheck='false' enterkeyhint='send'></textarea>", WEBKIT_INPUT_ENTER_KEY_HINT_SEND);
+    checkElement("<div id='editable' contenteditable spellcheck='false' enterkeyhint='next'></div>", WEBKIT_INPUT_ENTER_KEY_HINT_NEXT);
+}
+
+static void testWebKitInputMethodContextEnterKeyHintFocusChange(InputMethodTest* test, gconstpointer)
+{
+    // The fields differ only in their enterkeyhint, so the embedder gets no focus out when the focus
+    // moves between them, but it should still get the hint of the new field.
+    test->loadHtml("<style>*{position:absolute;left:0;width:200px;height:30px;margin:0;padding:0;border:0}</style>"
+        "<input id='first' style='top:0' spellcheck='false' enterkeyhint='next'>"
+        "<input id='second' style='top:50px' spellcheck='false' enterkeyhint='search'>", nullptr);
+    test->waitUntilLoadFinished();
+
+    test->clickMouseButton(20, 15);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'first'");
+    test->waitUntilInputMethodEnabled();
+    g_assert_cmpuint(test->enterKeyHint(), ==, WEBKIT_INPUT_ENTER_KEY_HINT_NEXT);
+
+    test->clickMouseButton(20, 65);
+    test->assertJavaScriptBecomesTrue("document.activeElement.id === 'second'");
+    test->waitUntilInputMethodEnabled();
+    g_assert_cmpuint(test->enterKeyHint(), ==, WEBKIT_INPUT_ENTER_KEY_HINT_SEARCH);
+}
+
 static void testWebKitInputMethodContextInputModeChange(InputMethodTest* test, gconstpointer)
 {
     // The button changes the inputmode of the field from its click handler. It does not take the focus.
@@ -2166,16 +2768,26 @@ void beforeAll()
     InputMethodTest::add("WebKitInputMethodContext", "invalid-sequence", testWebKitInputMethodContextInvalidSequence);
     InputMethodTest::add("WebKitInputMethodContext", "cancel-sequence", testWebKitInputMethodContextCancelSequence);
     InputMethodTest::add("WebKitInputMethodContext", "surrounding", testWebKitInputMethodContextSurrounding);
+    InputMethodTest::add("WebKitInputMethodContext", "surrounding-long-text", testWebKitInputMethodContextSurroundingLongText);
+    InputMethodTest::add("WebKitInputMethodContext", "surrounding-long-text-editable-start", testWebKitInputMethodContextSurroundingLongTextEditableStart);
+    InputMethodTest::add("WebKitInputMethodContext", "surrounding-long-text-uncounted-content", testWebKitInputMethodContextSurroundingLongTextUncountedContent);
     InputMethodTest::add("WebKitInputMethodContext", "delete-surrounding-contenteditable", testWebKitInputMethodContextDeleteSurroundingContentEditable);
     InputMethodTest::add("WebKitInputMethodContext", "delete-surrounding-before-start", testWebKitInputMethodContextDeleteSurroundingBeforeStart);
     InputMethodTest::add("WebKitInputMethodContext", "delete-surrounding-utf16", testWebKitInputMethodContextDeleteSurroundingUTF16);
     InputMethodTest::add("WebKitInputMethodContext", "delete-surrounding-selection", testWebKitInputMethodContextDeleteSurroundingSelection);
     InputMethodTest::add("WebKitInputMethodContext", "delete-surrounding-move-cursor", testWebKitInputMethodContextDeleteSurroundingMoveCursor);
+    InputMethodTest::add("WebKitInputMethodContext", "delete-surrounding-surrogate-pair", testWebKitInputMethodContextDeleteSurroundingSurrogatePair);
+    InputMethodTest::add("WebKitInputMethodContext", "delete-surrounding-surrogate-pair-password", testWebKitInputMethodContextDeleteSurroundingSurrogatePairPassword);
+    InputMethodTest::add("WebKitInputMethodContext", "delete-surrounding-grapheme-cluster", testWebKitInputMethodContextDeleteSurroundingGraphemeCluster);
+    InputMethodTest::add("WebKitInputMethodContext", "delete-surrounding-prevented", testWebKitInputMethodContextDeleteSurroundingPrevented);
     InputMethodTest::add("WebKitInputMethodContext", "reset", testWebKitInputMethodContextReset);
     InputMethodTest::add("WebKitInputMethodContext", "cursor-area", testWebKitInputMethodContextCursorArea);
     InputMethodTest::add("WebKitInputMethodContext", "preedit-cursor", testWebKitInputMethodContextPreeditCursor);
     InputMethodTest::add("WebKitInputMethodContext", "preedit-over-selection", testWebKitInputMethodContextPreeditOverSelection);
     InputMethodTest::add("WebKitInputMethodContext", "commit-without-preedit", testWebKitInputMethodContextCommitWithoutPreedit);
+#if ENABLE(WPE_PLATFORM)
+    InputMethodTest::add("WebKitInputMethodContext", "tap-ends-composition", testWebKitInputMethodContextTapEndsComposition);
+#endif
 #if PLATFORM(GTK) || ENABLE(2022_GLIB_API)
     InputMethodTest::add("WebKitInputMethodContext", "preedit-underlines", testWebKitInputMethodContextPreeditUnderlines);
 #endif
@@ -2183,6 +2795,18 @@ void beforeAll()
     InputMethodTest::add("WebKitInputMethodContext", "focus-blur-refocus", testWebKitInputMethodContextFocusBlurRefocus);
     InputMethodTest::add("WebKitInputMethodContext", "remove-focused-element", testWebKitInputMethodContextRemoveFocusedElement);
     InputMethodTest::add("WebKitInputMethodContext", "blur-refocus-interaction", testWebKitInputMethodContextBlurRefocusInteraction);
+#if ENABLE(WPE_PLATFORM)
+    InputMethodTest::add("WebKitInputMethodContext", "view-focus-out-and-in", testWebKitInputMethodContextViewFocusOutAndIn);
+    InputMethodTest::add("WebKitInputMethodContext", "view-focus-out-and-in-script-focus", testWebKitInputMethodContextViewFocusOutAndInScriptFocus);
+    InputMethodTest::add("WebKitInputMethodContext", "view-focus-out-and-in-visible", testWebKitInputMethodContextViewFocusOutAndInVisible);
+    InputMethodTest::add("WebKitInputMethodContext", "view-focus-out-and-in-visible-contenteditable", testWebKitInputMethodContextViewFocusOutAndInVisibleContentEditable);
+    InputMethodTest::add("WebKitInputMethodContext", "view-focus-out-refocus", testWebKitInputMethodContextViewFocusOutRefocus);
+    InputMethodTest::add("WebKitInputMethodContext", "view-focus-out-focus-change", testWebKitInputMethodContextViewFocusOutFocusChange);
+    InputMethodTest::add("WebKitInputMethodContext", "view-focus-out-window-focus-handler", testWebKitInputMethodContextViewFocusOutWindowFocusHandler);
+    InputMethodTest::add("WebKitInputMethodContext", "view-focus-out-blur", testWebKitInputMethodContextViewFocusOutBlur);
+    InputMethodTest::add("WebKitInputMethodContext", "view-focus-out-remove", testWebKitInputMethodContextViewFocusOutRemove);
+    InputMethodTest::add("WebKitInputMethodContext", "view-focus-out-type-change", testWebKitInputMethodContextViewFocusOutTypeChange);
+#endif
     InputMethodTest::add("WebKitInputMethodContext", "focus-back-forward-cache", testWebKitInputMethodContextFocusBackForwardCache);
     InputMethodTest::add("WebKitInputMethodContext", "back-forward-cache-without-focus", testWebKitInputMethodContextBackForwardCacheWithoutFocus);
     InputMethodTest::add("WebKitInputMethodContext", "click-after-script-focus", testWebKitInputMethodContextClickAfterScriptFocus);
@@ -2192,6 +2816,8 @@ void beforeAll()
     InputMethodTest::add("WebKitInputMethodContext", "read-only-change", testWebKitInputMethodContextReadOnlyChange);
     InputMethodTest::add("WebKitInputMethodContext", "input-mode", testWebKitInputMethodContextInputMode);
     InputMethodTest::add("WebKitInputMethodContext", "input-mode-change", testWebKitInputMethodContextInputModeChange);
+    InputMethodTest::add("WebKitInputMethodContext", "enter-key-hint", testWebKitInputMethodContextEnterKeyHint);
+    InputMethodTest::add("WebKitInputMethodContext", "enter-key-hint-focus-change", testWebKitInputMethodContextEnterKeyHintFocusChange);
     InputMethodTest::add("WebKitInputMethodContext", "type-change", testWebKitInputMethodContextTypeChange);
 }
 

@@ -1,0 +1,22 @@
+#define BEGIN_HERE(instance, entry) \
+    AOT_OPERATION_BEGIN(instance, entry)
+
+#define JUMP_FROM_HERE [[clang::musttail]]
+
+#define DEFINE_READ_OFF_BASE_OF_HOME(operation) \
+    JSC_DEFINE_JIT_OPERATION(operation, EncodedJSValue, (Instance* instance, EncodedJSValue home, EncodedJSValue receiver, uint32_t name)) \
+    { \
+        EncodedJSValue base; \
+        { \
+            AOT_OPERATION_BEGIN(instance, Entry::operation); \
+            base = baseOf(instance, vm, home); \
+        } \
+        AOT_MUST_TAIL_CALL return operationReadOffBase(instance, base, receiver, name); \
+    }
+
+DEFINE_READ_OFF_BASE_OF_HOME(operationReadOffBaseOfHome)
+
+JSC_DEFINE_JIT_OPERATION(operationBehindTheMacros, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue receiver, uint32_t name))
+{
+    AOT_MUST_TAIL_CALL return operationReadOffBase(instance, base, receiver, name);
+}

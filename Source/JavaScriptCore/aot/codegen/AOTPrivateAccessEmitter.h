@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
+#include "AOTSlotPlan.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -21,8 +22,21 @@ public:
     void generatePrivateHas(const ValueContext&);
 
 private:
+    struct SlotsOfProvenReceiver {
+        FieldAccess name;
+        FieldAccess brand;
+    };
+
+    std::optional<FieldAccess> findBoxedSlotInCellOfEveryReceiver(const Type& receiver, PropertyKeyID, bool isStore);
+    TypedPointer addressOfSlot(CellPointer object, const FieldAccess&);
+    std::optional<SlotsOfProvenReceiver> findSlotsOfProvenReceiver(const ValueContext&, bool isStore);
+    TypedPointer slotOfNameIfEvaluationMadeObject(const SlotsOfProvenReceiver&, CellPointer object, CellPointer token, LBasicBlock asksRunTime);
     uint16_t indexInLayoutRecord(const ValueContext&);
-    void storePrivateField(const ValueContext&, RuntimeOperation);
+    bool isEvaluatedOnce(const ValueContext&);
+    bool findsLocationInLine(const ValueContext&);
+    TypedPointer locationInKnownStructure(const ValueContext&, Boxed object, CellPointer token, LBasicBlock isUnknown);
+    Boxed callPrivateGet(const ValueContext&, Boxed object, CellPointer token);
+    void storePrivateField(const ValueContext&, RuntimeOperation, bool isOnRarePath = false);
 };
 
 } } } // namespace JSC::AOT::Typed

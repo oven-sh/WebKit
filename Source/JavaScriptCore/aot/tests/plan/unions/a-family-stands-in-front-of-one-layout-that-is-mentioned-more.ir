@@ -1,0 +1,89 @@
+# what begins the order of shapes is tested by one compare with its last number. So the first place goes to a family and not to one layout, however often that is mentioned: one layout is tested by one compare wherever it stands
+# L0 is written of five parameters and read through five times, the union of L1 and L2 of three
+# RUN: plan shapes mechanisms=all
+# CHECK: shape 1 L1
+# CHECK-NEXT: shape 2 L2
+# CHECK-NEXT: shape 3 L0
+# RUN(WITHHELD): plan shapes mechanisms=none
+# WITHHELD: shape 1 L0
+# WITHHELD-NEXT: shape 2 L1
+# WITHHELD-NEXT: shape 3 L2
+
+layout L0 name="Alone" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 name="C" module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 name="D" module=m0 fields=[{key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v2
+    v9 = NewClosure function=f2
+    v10 = Call v9, -, v2
+    v11 = NewClosure function=f3
+    v12 = Call v11, -, v2
+    v13 = NewClosure function=f4
+    v14 = Call v13, -, v2
+    v15 = NewClosure function=f5
+    v16 = Call v15, -, v2
+    v17 = NewClosure function=f6
+    v18 = Call v17, -, v4
+    v19 = Call v17, -, v6
+    v20 = NewClosure function=f7
+    v21 = Call v20, -, v4
+    v22 = Call v20, -, v6
+    v23 = NewClosure function=f8
+    v24 = Call v23, -, v4
+    v25 = Call v23, -, v6
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="sink" [isFreeName]
+    v28 = Call v27, -, v8, v10, v12, v14, v16, v18, v19, v21, v22, v24, v25
+    Return v28
+}
+function f1 name="reader1" module=m0 length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="reader2" module=m0 length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f3 name="reader3" module=m0 length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f4 name="reader4" module=m0 length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f5 name="reader5" module=m0 length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f6 name="reader6" module=m0 length=1 thisType={type=anything} parameters=[{type=L1|L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L1|L2):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+function f7 name="reader7" module=m0 length=1 thisType={type=anything} parameters=[{type=L1|L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L1|L2):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+function f8 name="reader8" module=m0 length=1 thisType={type=anything} parameters=[{type=L1|L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L1|L2):
+    v1 = PropGet v0 key="y"
+    Return v1
+}

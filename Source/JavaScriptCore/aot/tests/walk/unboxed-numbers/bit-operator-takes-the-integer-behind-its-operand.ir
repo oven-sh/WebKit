@@ -1,0 +1,142 @@
+# a bit operator looks only at the low 32 bits of the integer part of a number, so a quotient or a remainder of integers under it is divided as integers, and with its identity element it is the conversion alone
+# function quotient(v) { if (!isInt32(v)) return v; return (v / (v & 7)) | 0; } a zero divisor gives an infinity or NaN, which converts to 0, as the division of integers says
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = DivideIntegers {{*}}rounding=ToInt32
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = DivideIntegers {{*}}rounding=ToInt32
+# function remainder(v) { if (!isInt32(v)) return v; return (v % (v & 7)) >> 1; }
+# RUN(REST): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# REST-LABEL: code f2:Body
+# REST: = RemainderOfIntegers
+# REST: = RShift {{*}}form=Integers
+# function bits(x) { if (typeof x !== "number") return x; return [x | 0, x >>> 0]; }
+# RUN(BITS): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
+# BITS-LABEL: code f3:Body
+# BITS: = ToInt32
+# BITS: = ToUint32
+# RUN(GONE): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
+# GONE-NOT: = BitOr
+# GONE-NOT: = URShift
+# function product(v) { if (!isInt32(v)) return v; return (v * v) | 0; } beyond 2 ** 53 a product is rounded, so its low bits are not those of an integer register
+# RUN(PRODUCT): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers
+# PRODUCT-LABEL: code f4:Body
+# PRODUCT: = Mul
+# PRODUCT-NOT: form=Integers
+# function ofNumber(x) { if (typeof x !== "number") return x; return (x / 3) | 0; } the dividend is no proven integer
+# RUN(NUMBER): walk f5 mechanisms=none+TypedOperations+UnboxedNumbers
+# NUMBER-NOT: DivideIntegers
+# function masked(x) { if (typeof x !== "number") return x; const h = x * 0.5; let s = 0; for (let i = 0; i < 9; i++) s = s + (h & 255); return s; } in a loop the conversion is an operation of its own
+# RUN(MASK): walk f6 mechanisms=none+TypedOperations+UnboxedNumbers
+# MASK-LABEL: code f6:Body
+# MASK: = ToInt32
+# MASK: = BitAnd {{*}}form=Integers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
+}
+function f1 name="quotient" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=7
+    v4 = BitAnd v2, v3
+    v5 = Div v2, v4
+    v6 = Integer
+    v7 = BitOr v5, v6
+    Return v7
+  b2(v8):
+    Return v8
+}
+function f2 name="remainder" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=7
+    v4 = BitAnd v2, v3
+    v5 = Mod v2, v4
+    v6 = Integer integer=1
+    v7 = RShift v5, v6
+    Return v7
+  b2(v8):
+    Return v8
+}
+function f3 name="bits" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer
+    v4 = BitOr v2, v3
+    v5 = URShift v2, v3
+    v6 = NewArray v4, v5 contents=anything
+    Return v6
+  b2(v7):
+    Return v7
+}
+function f4 name="product" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Mul v2, v2
+    v4 = Integer
+    v5 = BitOr v3, v4
+    Return v5
+  b2(v6):
+    Return v6
+}
+function f5 name="ofNumber" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=3
+    v4 = Div v2, v3
+    v5 = Integer
+    v6 = BitOr v4, v5
+    Return v6
+  b2(v7):
+    Return v7
+}
+function f6 name="masked" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b5(| 0)
+  b1(v2):
+    v3 = Double number=0.5
+    v4 = Mul v2, v3
+    v5 = Integer
+    v6 = Integer
+    Jump -> next b2(v5, v6)
+  b2(v7, v8):
+    LoopHint
+    v10 = Integer integer=9
+    v11 = Less v8, v10
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    v12 = Integer integer=255
+    v13 = BitAnd v4, v12
+    v14 = Add v7, v13
+    v15 = Increment v8
+    Jump -> next b2(v14, v15)
+  b4():
+    Return v7
+  b5(v16):
+    Return v16
+}

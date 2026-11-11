@@ -454,6 +454,7 @@ class LayoutTestFinder(object):
                     or LOCAL_WPT_PATH + "/" in trimmed_path
                 ),
                 is_wpt_crash_test=self.is_wpt_crash_test(trimmed_path),
+                is_wpt_print_reftest=self.is_wpt_print_reftest(trimmed_path),
             )
 
     def _find_variants(self, f):
@@ -462,22 +463,25 @@ class LayoutTestFinder(object):
         if "web-platform-tests" not in f:
             return [""]
 
-        opened_file = self.fs.open_text_file_for_reading(f)
+        contents = self.fs.read_binary_file(f)
+        if b"variant" not in contents:
+            return [""]
+
         try:
-            first_line = opened_file.readline()
-            if not first_line:
+            lines = contents.decode("utf-8").splitlines(True)
+            if not lines:
                 return [""]
 
             variants = []
 
-            if first_line.strip() == TEMPLATED_TEST_HEADER:
-                for line in iter(opened_file.readline, ""):
+            if lines[0].strip() == TEMPLATED_TEST_HEADER:
+                for line in lines[1:]:
                     results = re.match(r"<!--\s*META:\s*variant=(\S*)\s*-->", line)
                     if not results:
                         continue
                     variants.append(results.group(1))
             else:
-                for line in iter(opened_file.readline, ""):
+                for line in lines[1:]:
                     try:
                         line = line.lstrip()
                         if not line.startswith("<meta"):
@@ -614,17 +618,24 @@ class LayoutTestFinder(object):
             reference_files,
         )
 
-    def is_wpt_crash_test(self, name):
+    def _wpt_source_file(self, name):
         # This shouldn't exist, we should be reading the WPT manifest instead.
         if IMPORTED_WPT_DIR + "/" in name:
-            base_dir = self.fs.join(self.layout_tests_base_dir, *IMPORTED_WPT_DIR.split('/'))
+            wpt_dir = IMPORTED_WPT_DIR
             url_base = "/"
         elif LOCAL_WPT_PATH + "/" in name:
-            base_dir = self.fs.join(self.layout_tests_base_dir, *LOCAL_WPT_PATH.split('/'))
+            wpt_dir = LOCAL_WPT_PATH
             url_base = "/WebKit/"
         else:
-            return False
+            return None
 
-        sourcefile = SourceFile(base_dir, self.fs.relpath(name, base_dir), url_base)
+        base_dir = self.fs.join(self.layout_tests_base_dir, *wpt_dir.split('/'))
+        return SourceFile(base_dir, name.split(wpt_dir + "/", 1)[1], url_base)
 
-        return sourcefile.name_is_crashtest
+    def is_wpt_crash_test(self, name):
+        sourcefile = self._wpt_source_file(name)
+        return sourcefile is not None and sourcefile.name_is_crashtest
+
+    def is_wpt_print_reftest(self, name):
+        sourcefile = self._wpt_source_file(name)
+        return sourcefile is not None and sourcefile.name_is_print_reftest and not sourcefile.name_is_crashtest

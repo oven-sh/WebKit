@@ -1,0 +1,45 @@
+# A variable of a module that the run time is not told of, whose every writer is known and which is proven to hold numbers alone lies in the form of its numbers.
+# `count++` is a load, an add and a store: no tag is asked and no box is made. Link says int|whole of a counter, so it is a double, as `ratio` is.
+# let count = 0;  let ratio = 0.5;  function bump() { count++; }  function read() { return count + ratio; }  bump();  read();
+# RUN: plan variables mechanisms=all
+# CHECK: variable g2 {{*}}OptionalDouble
+# CHECK-NEXT: variable g3 {{*}}OptionalDouble
+# RUN(WITHHELD): plan variables mechanisms=-TypedSlots
+# WITHHELD: variable g2 {{*}}JSValue
+
+variable g0 name="bump" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="read" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="count" module=m0 declared={type=anything}
+variable g3 name="ratio" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g2
+    v2 = Double number=0.5
+    PutModuleVariable v2 variable=g3
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4 calleeName="bump"
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v6 calleeName="read"
+    Return v7
+}
+function f1 name="bump" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="count"
+    v2 = Increment v1
+    PutModuleVariable v2 variable=g2
+    v4 = Undefined
+    Return v4
+}
+function f2 name="read" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="count"
+    v2 = GetModuleVariable variable=g3
+    v3 = CheckInitialized v2 name="ratio"
+    v4 = Add v1, v3
+    Return v4
+}

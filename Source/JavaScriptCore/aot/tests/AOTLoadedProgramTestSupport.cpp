@@ -10,13 +10,16 @@
 
 #include "AOTBuildContext.h"
 #include "AOTChildProcess.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTImageLoading.h"
+#include "AOTNativeTestReasons.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -61,24 +64,19 @@ LoadedProgram::~LoadedProgram()
 
 static Vector<uint8_t> compileOnThisThread(ASCIILiteral programText, std::initializer_list<ASCIILiteral> optionWords)
 {
-    Wire::CompileOptions options = makeDefaultCompileOptions();
+    Wire::CompileOptions options = makeOptionsOfTestedProgram();
     options.executableIdentity = executableIdentityOfTests;
     for (ASCIILiteral word : optionWords)
         AOT_TEST_CHECK(!applyOptionWord(options, word));
     BuildContext build(options);
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
-    if (!program) {
-        build.diagnostics().finish(nullptr);
-        Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
-        failNativeTest(__FILE__, __LINE__, "the IR text is a valid program");
-    }
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), build);
+    if (!program)
+        failBecauseTextIsNoProgram(__FILE__, __LINE__, build, optionWordsOfReason(optionWords));
 
-    std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
-    if (output->image.isEmpty()) {
-        Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        failNativeTest(__FILE__, __LINE__, "the program compiles");
-    }
-    return WTF::move(output->image);
+    std::unique_ptr<CompileOutput> output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfProcess());
+    if (!output->hasImage())
+        failBecauseThereIsNoImage(__FILE__, __LINE__, *output, optionWordsOfReason(optionWords));
+    return Vector<uint8_t>(output->section(Wire::ResultSection::Image));
 }
 
 Vector<uint8_t> compileProgramText(ASCIILiteral programText, std::initializer_list<ASCIILiteral> optionWords)
@@ -90,7 +88,6 @@ Vector<uint8_t> compileProgramText(ASCIILiteral programText, std::initializer_li
     return image;
 }
 
-// The pages after the copy stand for what follows the image in the segment of an executable.
 static std::span<const uint8_t> leakAlignedCopy(std::span<const uint8_t> bytes)
 {
     std::span copy = unsafeMakeSpan(static_cast<uint8_t*>(fastAlignedMalloc(imageAlignment(), bytes.size() + imageAlignment())), bytes.size());
@@ -98,13 +95,16 @@ static std::span<const uint8_t> leakAlignedCopy(std::span<const uint8_t> bytes)
     return copy;
 }
 
-// On Linux and on macOS nothing makes the copy executable: the code is mapped from the file, as it is for an executable. The descriptor stays open for as long as the process lives.
 static std::optional<ImageFile> fileToMapCodeFrom(const String& path)
 {
 #if OS(DARWIN) || OS(LINUX)
     int descriptor = open(byteCast<char>(FileSystem::fileSystemRepresentation(path).data()), O_RDONLY | O_CLOEXEC);
     AOT_TEST_CHECK(descriptor >= 0);
     return ImageFile { descriptor, 0 };
+#elif OS(WINDOWS)
+    HANDLE file = CreateFileA(byteCast<char>(path.utf8().data()), GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    AOT_TEST_CHECK(file != INVALID_HANDLE_VALUE);
+    return ImageFile { reinterpret_cast<intptr_t>(file), 0 };
 #else
     UNUSED_PARAM(path);
     return std::nullopt;
@@ -143,6 +143,22 @@ void overwriteWordInImage(const uint32_t& word, uint32_t value)
 #endif
 }
 
+static ASCIILiteral s_textOfLoadedProgram;
+
+bool isNamedInTextOfLoadedProgram(const LayoutData& layout, ASCIILiteral name)
+{
+    StringView text(s_textOfLoadedProgram);
+    String head = makeString("layout L"_s, layout.index, ' ');
+    for (size_t start = text.find(head); start != notFound; start = text.find(head, start + 1)) {
+        if (start && text[start - 1] != '\n')
+            continue;
+        size_t end = text.find('\n', start);
+        StringView line = text.substring(start, end == notFound ? text.length() - start : end - start);
+        return line.contains(makeString(" name=\""_s, name, '"'));
+    }
+    return false;
+}
+
 static void runInChildProcess(ASCIILiteral testName, const String& imagePath)
 {
     ChildProcessLauncher launcher(String(programPath()), { });
@@ -160,6 +176,7 @@ void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, Loade
     if (const char* imagePath = byteCast<char>(Options::aotImagePath())) {
         if (!Image::isRegistered())
             useImageAt(String::fromUTF8(imagePath));
+        s_textOfLoadedProgram = programText;
         LoadedProgram program;
         body(program);
         return;
@@ -167,6 +184,24 @@ void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, Loade
 
     TemporaryFile file(".image"_s, compileProgramText(programText, optionWords).span());
     runInChildProcess(testName, file.path());
+}
+
+void runWithLoadedProgramThatStops(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body, ASCIILiteral lastWords, std::initializer_list<ASCIILiteral> optionWords)
+{
+    if (Options::aotImagePath()) {
+        runWithLoadedProgram(testName, programText, body);
+        return;
+    }
+
+    TemporaryFile file(".image"_s, compileProgramText(programText, optionWords).span());
+    ChildProcessLauncher launcher(String(programPath()), { });
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), makeString("--aotImagePath="_s, file.path()) };
+    ChildProcessResult result = launcher.run(arguments.span());
+    if (result.outcome != ChildProcessOutcome::Crashed || !result.output.contains(lastWords)) {
+        dataLogLn(result.output);
+        dataLogLn("The process that uses the image ", result.description());
+        failNativeTest(__FILE__, __LINE__, testName.characters());
+    }
 }
 
 } // namespace JSC::AOT

@@ -1,0 +1,83 @@
+# Link proves the result a number, so the body returns a double, the direct call takes a double, and the entry by value comes back for it and boxes it
+# function same(n) { return n }  same(1.5) + same(2)  sink(same)
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[n]]: {{*}} @Double
+# CHECK-NOT: Box
+# CHECK: Return [[n]]
+# RUN(CALLER): walk f0 mechanisms=all
+# CALLER-LABEL: code f0:Body
+# CALLER: [[first]]: {{*}} @Double = CallDirect {{*}}function=f1
+# CALLER: [[second]]: {{*}} @Double = CallDirect {{*}}function=f1
+# CALLER: = Add [[first]], [[second]] form=Numbers
+# RUN(ENTRY): walk f1:GenericCallEntry mechanisms=all
+# ENTRY-LABEL: code f1:GenericCallEntry
+# ENTRY: [[raw]]: {{*}} @Double = CallDirect {{*}}function=f1
+# ENTRY-NEXT: [[boxed]]: {{*}} @JSValue = Box [[raw]]
+# ENTRY-NEXT: Return [[boxed]]
+# function apply(f, n) { return f(n) }  function bits(n) { return n | 0 }  function half(n) { return n / 2 }  apply(half, 2)  apply(bits, 1.5)
+# Link has seen every function that arrives at f, and all return numbers. The walk knows of a call by value only that it gives anything, and the result is still returned raw: Link's proof stands whatever the walk sees of it.
+# Code has no way to state a type, so the value is tested, and the failing side traps. Only a false claim of Link takes it
+# RUN(TESTED): walk f2 mechanisms=all
+# TESTED-LABEL: code f2:Body
+# TESTED: [[given]]: anything{{*}} @JSValue = Call
+# TESTED-NEXT: [[isNumber]]: boolean @Boolean = TypeTest [[given]] testedType=number
+# TESTED-NEXT: Branch [[isNumber]] -> taken [[passing]](), notTaken [[failing]]()
+# TESTED: [[passing]]():
+# TESTED-NEXT: [[narrowed]]: number @JSValue = Narrowed [[given]], [[isNumber]] [isOnTakenEdge]
+# TESTED-NEXT: [[raw]]: number @Double = Unbox [[narrowed]]
+# TESTED-NEXT: Return [[raw]]
+# TESTED: [[failing]]() frequency=Rare:
+# TESTED-NEXT: CheckProof [[given]] checkedType=never {{*}}source=ResultOfCall
+# TESTED-NEXT: Unreachable
+# With unboxed numbers withheld everything is boxed, and the entry leaves by a jump
+# RUN(BOXED): walk f1:GenericCallEntry mechanisms=-UnboxedNumbers
+# BOXED-LABEL: code f1:GenericCallEntry
+# BOXED: [[call]]: {{*}} @JSValue = CallDirect {{*}}function=f1
+# BOXED-NEXT: ReturnCall [[call]]
+
+variable g0 name="same" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="apply" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="bits" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="half" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Double number=1.5
+    v2 = Call v0, -, v1 calleeName="same" [isNeverInlined]
+    v3 = Integer integer=2
+    v4 = Call v0, -, v3 calleeName="same" [isNeverInlined]
+    v5 = Add v2, v4
+    v6 = GetModuleVariable variable=g1
+    v7 = GetModuleVariable variable=g3
+    v8 = Call v6, -, v7, v3 calleeName="apply" [isNeverInlined]
+    v9 = GetModuleVariable variable=g2
+    v10 = Call v6, -, v9, v1 calleeName="apply" [isNeverInlined]
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="sink" [isFreeName]
+    v13 = Call v12, -, v5, v8, v10
+    Return v13
+}
+function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="apply" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 calleeName="f"
+    ReturnCall v2
+}
+function f3 name="bits" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    Return v2
+}
+function f4 name="half" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    Return v2
+}

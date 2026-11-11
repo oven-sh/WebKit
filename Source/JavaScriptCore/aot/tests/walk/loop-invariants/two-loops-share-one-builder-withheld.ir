@@ -1,0 +1,8 @@
+# the same functions with loop invariants withheld: the text goes from loop to loop as a string
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: StringBuilder
+# PROGRAM-OF: two-loops-share-one-builder.ir

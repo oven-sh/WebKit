@@ -81,31 +81,20 @@ void ServicesOverlayController::deref() const
     m_page->deref();
 }
 
-void ServicesOverlayController::willMoveToPage(PageOverlay& overlay, Page* page)
-{
-    if (page)
-        return;
-
-    m_servicesOverlays.removeFirstMatching([&](auto& servicesOverlay) {
-        return servicesOverlay.get() == &overlay;
-    });
-}
-
 void ServicesOverlayController::didMoveToPage(PageOverlay&, Page*)
 {
 }
 
 static RefPtr<LocalFrame> rootFrameForHighlight(const DataDetectorHighlight& highlight)
 {
-    RefPtr frame { highlight.range().start.document().frame() };
-    return frame ? &frame->rootFrame() : nullptr;
+    return highlight.range().start.document().rootFrame();
 }
 
 static const uint8_t AlignmentNone = 0;
 static const uint8_t AlignmentLeft = 1 << 0;
 static const uint8_t AlignmentRight = 1 << 1;
 
-static void LEGACY_NODELETE expandForGap(Vector<LayoutRect>& rects, std::span<uint8_t> alignments, const GapRects& gap)
+NODELETE static void expandForGap(Vector<LayoutRect>& rects, std::span<uint8_t> alignments, const GapRects& gap)
 {
     if (!gap.left().isEmpty()) {
         LayoutUnit leftEdge = gap.left().x();
@@ -504,28 +493,26 @@ void ServicesOverlayController::updateServicesOverlays()
         }
     }
 
-    // Uninstalling re-enters willMoveToPage(), so take the overlays out first.
+    // Uninstalling removes the overlay from pageOverlays(), so collect first.
     Vector<Ref<PageOverlay>> overlaysToUninstall;
-    m_servicesOverlays.removeAllMatching([&](auto& weakOverlay) {
-        RefPtr overlay { weakOverlay };
-        if (!overlay)
-            return true;
+    for (auto& overlay : page->pageOverlayController().pageOverlays()) {
+        if (&overlay->client() != this)
+            continue;
 
         RefPtr rootFrame { overlay->associatedFrame() };
         if (rootFrame && rootFramesWithPotentialHighlights.containsIf([&](auto& frame) { return frame.ptr() == rootFrame; }))
-            return false;
+            continue;
 
-        overlaysToUninstall.append(overlay.releaseNonNull());
-        return true;
-    });
+        overlaysToUninstall.append(overlay);
+    }
+
+    for (auto& overlay : overlaysToUninstall)
+        page->pageOverlayController().uninstallPageOverlay(overlay, PageOverlay::FadeMode::DoNotFade);
 
     if (RefPtr activeHighlight { m_activeHighlight }; activeHighlight && !servicesOverlayForRootFrame(rootFrameForHighlight(*activeHighlight).get())) {
         clearActiveHighlight();
         activeHighlight->dismissImmediately();
     }
-
-    for (auto& overlay : overlaysToUninstall)
-        page->pageOverlayController().uninstallPageOverlay(overlay, PageOverlay::FadeMode::DoNotFade);
 
     for (auto& rootFrame : rootFramesNeedingOverlay) {
         if (servicesOverlayForRootFrame(rootFrame.ptr()))
@@ -533,7 +520,6 @@ void ServicesOverlayController::updateServicesOverlays()
 
         Ref overlay { PageOverlay::create(*this, PageOverlay::OverlayType::Document) };
         overlay->setAssociatedFrame(rootFrame.ptr());
-        m_servicesOverlays.append(overlay.get());
         page->pageOverlayController().installPageOverlay(overlay, PageOverlay::FadeMode::DoNotFade);
     }
 }
@@ -543,11 +529,7 @@ RefPtr<PageOverlay> ServicesOverlayController::servicesOverlayForRootFrame(const
     if (!rootFrame)
         return nullptr;
 
-    for (auto& weakOverlay : m_servicesOverlays) {
-        if (RefPtr overlay { weakOverlay }; overlay && overlay->associatedFrame() == rootFrame)
-            return overlay;
-    }
-    return nullptr;
+    return m_page->pageOverlayController().documentOverlayForRootFrame(*this, *rootFrame);
 }
 
 DataDetectorHighlight* ServicesOverlayController::findTelephoneNumberHighlightContainingSelectionHighlight(DataDetectorHighlight& selectionHighlight)
@@ -667,8 +649,9 @@ bool ServicesOverlayController::mouseEvent(PageOverlay& overlay, const PlatformM
     bool mouseIsOverActiveHighlightButton = false;
     determineActiveHighlight(mouseIsOverActiveHighlightButton);
 
-    // Cancel the potential click if any button other than the left button changes state, and ignore the event.
-    if (event.button() != MouseButton::Left) {
+    // Cancel the potential click if any button other than the left button changes state, or if this is a
+    // context click, and ignore the event so that the context menu is shown.
+    if (event.button() != MouseButton::Left || event.isContextMenuEvent()) {
         m_currentMouseDownOnButtonHighlight = nullptr;
         return false;
     }

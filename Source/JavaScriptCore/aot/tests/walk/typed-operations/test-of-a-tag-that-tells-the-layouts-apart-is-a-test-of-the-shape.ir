@@ -1,0 +1,83 @@
+# type Expr = { kind: "num"; value: number } | { kind: "add"; left: Expr; right: Expr } | { kind: "neg"; inner: Expr }   function total(e: Expr) { if (e.kind === "num") return e.value; if (e.kind === "add") return total(e.left) + total(e.right); return -total(e.inner); }
+# Each layout is proven to hold one text under `kind`, so which layout the holder has answers the comparison: nothing is read and no text compared. Behind the test the holder has the layouts that the answer leaves:
+# each read is a read of a slot, without a test of its own and without an arm for the other layouts.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[isNum]]: boolean {{*}} = ShapeTest {{*}}layouts=[L0]
+# CHECK: Branch [[isNum]] -> taken [[num]](), notTaken [[other]]()
+# CHECK: [[num]]()
+# CHECK: : L0 {{*}} = Narrowed {{*}}, [[isNum]] [isOnTakenEdge]
+# CHECK: = GetSlot {{*}}key="value" receivers=[L0] level=Proven
+# CHECK: [[other]]()
+# CHECK: : L1|L2 {{*}} = Narrowed {{*}}, [[isNum]]
+# CHECK: [[isAdd]]: boolean {{*}} = ShapeTest {{*}}layouts=[L1]
+# CHECK: = GetSlot {{*}}key="left" receivers=[L1] level=Proven
+# CHECK: = GetSlot {{*}}key="inner" receivers=[L2] level=Proven
+# RUN(NOTHING): walk f1 mechanisms=all
+# NOTHING-NOT: StrictEq
+# NOTHING-NOT: key="kind"
+# NOTHING-NOT: frequency=Rare
+# RUN(SHELL): run-in-shell globalThis.sink = (...told) => { print(told.join()); };
+# SHELL: 6
+# SHELL-NEXT: exited with 0
+
+layout L0 name="Num" module=m0 fields=[{key="kind" declared={type=undefined|null|"num" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Add" module=m0 fields=[{key="kind" declared={type=undefined|null|"add" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="left" declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="right" declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}]
+layout L2 name="Neg" module=m0 fields=[{key="kind" declared={type=undefined|null|"neg" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="inner" declared={type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="num"
+    v2 = String string="add"
+    v3 = String string="neg"
+    v4 = Integer integer=3
+    v5 = NewObject -, v1, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = NewObject -, v3, v6 layout=L2 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = Integer integer=9
+    v10 = NewObject -, v1, v9 layout=L0 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = NewObject -, v2, v8, v11 layout=L1 fields=[0, 1, 2]
+    v13 = FinishObject v12
+    v14 = Call v0, -, v13
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="sink" [isFreeName]
+    v17 = Call v16, -, v14
+    Return v17
+}
+function f1 name="total" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|L1|L2):
+    v1 = PropGet v0 key="kind"
+    v2 = String string="num"
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    v6 = PropGet v5 key="value"
+    Return v6
+  b2(v7):
+    v8 = NarrowByField v0, v7 key="kind"
+    v9 = PropGet v8 key="kind"
+    v10 = String string="add"
+    v11 = StrictEq v9, v10
+    Branch v11 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v12):
+    v13 = NarrowByField v8, v12 key="kind"
+    v14 = NewClosure function=f1
+    v15 = PropGet v13 key="left"
+    v16 = Call v14, -, v15
+    v17 = PropGet v13 key="right"
+    v18 = Call v14, -, v17
+    v19 = Add v16, v18
+    Return v19
+  b4(v20):
+    v21 = NarrowByField v8, v20 key="kind"
+    v22 = NewClosure function=f1
+    v23 = PropGet v21 key="inner"
+    v24 = Call v22, -, v23
+    v25 = Negate v24
+    Return v25
+}

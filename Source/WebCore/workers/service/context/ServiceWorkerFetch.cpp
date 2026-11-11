@@ -48,8 +48,8 @@ namespace WebCore {
 
 namespace ServiceWorkerFetch {
 
-// https://fetch.spec.whatwg.org/#http-fetch step 5.5
-static inline ResourceError validateResponse(const ResourceResponse& response, FetchOptions::Mode mode, FetchOptions::Redirect redirect)
+// https://fetch.spec.whatwg.org/commit-snapshots/586cd2a44c2a865b37c166dc0740f3fb8bb220d6/#concept-http-fetch step 5.7
+ResourceError validateResponse(const ResourceResponse& response, FetchOptionsMode mode, FetchOptionsRedirect redirect)
 {
     if (response.type() == ResourceResponse::Type::Error)
         return ResourceError { errorDomainWebKitInternal, 0, response.url(), "Response served by service worker is an error"_s, ResourceError::Type::General, ResourceError::IsSanitized::Yes };
@@ -110,6 +110,8 @@ static void processResponse(Ref<Client>&& client, std::expected<Ref<FetchRespons
     // As per https://fetch.spec.whatwg.org/#main-fetch step 9, copy request's url list in response's url list if empty.
     if (resourceResponse.url().isNull())
         resourceResponse.setURL(URL { requestURL });
+    // FIXME: The Cache API only stores the last URL of a response's URL list, so a redirected response from it gets the request's URL.
+    auto& firstResponseURL = response->firstURL().isNull() ? requestURL : response->firstURL();
 
     if (resourceResponse.isRedirection() && resourceResponse.httpHeaderFields().contains(HTTPHeaderName::Location)) {
         client->didReceiveRedirection(resourceResponse);
@@ -128,7 +130,7 @@ static void processResponse(Ref<Client>&& client, std::expected<Ref<FetchRespons
             resourceResponse.setCertificateInfo(WTF::move(certificateInfo));
     }
 
-    client->didReceiveResponse(WTF::move(resourceResponse));
+    client->didReceiveResponse(WTF::move(resourceResponse), firstResponseURL);
 
     if (response->isBodyReceivedByChunk()) {
         client->setCancelledCallback([response = WeakPtr { response.get() }] {

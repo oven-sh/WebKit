@@ -108,10 +108,7 @@ const objectHeaps: readonly Heap[] = [
   "ShapeWords",
   "OrderWords",
 ];
-// Some properties lie in the state of a class: the elements of a typed array under their indexes, the lastIndex of a regular expression. A store or a definition by key writes there.
 const heapsBehindProperties: readonly Heap[] = ["TypedArrayElements", "RegExpState"];
-// Where the classes keep what their instances hold. An operand that may be any object may be an instance of any of them. What a protocol
-// reads of it the compiler knows by the type of the operand; what native code reads without one only the entry says.
 const heapsOfContentsOfClasses: readonly Heap[] = [
   "TypedArrayStorage",
   "TypedArrayElements",
@@ -166,13 +163,13 @@ function isSamePlace(left: ModelPlace, right: ModelPlace): boolean {
       if (right.place !== "ResultField" || left.holdsOnlyWhatIsStored !== right.holdsOnlyWhatIsStored) return false;
       return left.index === right.index;
     case "NewValue":
-      return right.place === "NewValue" && left.type === right.type;
+      return right.place === "NewValue" && left.type === right.type && left.holdsWhatIsThrown === right.holdsWhatIsThrown;
     case "Member":
       return (
         right.place === "Member" && left.firstStep === right.firstStep && isSameOperand(left.operand, right.operand)
       );
     case "NativeCell":
-      return right.place === "NativeCell" && left.cell === right.cell;
+      return right.place === "NativeCell" && left.cell === right.cell && left.holdsOnlyWhatIsStored === right.holdsOnlyWhatIsStored;
   }
 }
 
@@ -265,15 +262,9 @@ function createOperandState(parameter: ModelParameter): OperandState {
   };
 }
 
-// One word says on which objects all protocols of an operand run.
 function finishParameter(state: OperandState): ModelParameter {
   const uses = new Set(state.uses);
-  if (state.readsOwnValuesByKey) {
-    // The records of the overload say under which keys. Nothing else of the operand is read.
-    const walksOwnValues = state.protocols.has("OwnValues") || state.protocolsOfContents.has("OwnValues");
-    if (!walksOwnValues) state.roles.add("OwnValuesAreReadByKeyOnly");
-    state.protocols.add("OwnValues");
-  }
+  if (state.readsOwnValuesByKey) state.protocols.add("OwnValues");
   if (state.protocolsOfContents.size > 0) {
     const runsOnOperand = state.protocols.size > 0 || uses.has("AppliesTransitively");
     uses.add(runsOnOperand ? "AppliesTransitively" : "AppliesToContents");
@@ -474,13 +465,21 @@ function resolvePlace(context: OverloadContext, spec: PlaceSpec): ModelPlace | n
       return { place: "ResultField", index, holdsOnlyWhatIsStored: spec.holdsOnlyWhatIsStored ?? false };
     }
     case "NewValue":
-      return { place: "NewValue", type: context.types.intern(spec.value, context, context.source) };
+      return {
+        place: "NewValue",
+        type: context.types.intern(spec.value, context, context.source),
+        holdsWhatIsThrown: spec.holdsWhatIsThrown ?? false,
+      };
     case "Member": {
       const operand = context.operandOf(spec.operand, context.source);
       return operand === null ? null : memberPlaceOf(context, operand, spec.path);
     }
     case "NativeCell":
-      return { place: "NativeCell", cell: context.builder.internName(spec.cell, "Text") };
+      return {
+        place: "NativeCell",
+        cell: context.builder.internName(spec.cell, "Text"),
+        holdsOnlyWhatIsStored: spec.holdsOnlyWhatIsStored ?? false,
+      };
   }
 }
 
@@ -936,7 +935,10 @@ function applyUse(context: OverloadContext, state: OperandState, use: UseSpec): 
       return;
     case "RetainsContents":
       addStore(context, { place: "OwnValues", operand }, use.in);
-      if (use.transitively) state.uses.add("AppliesTransitively");
+      if (use.transitively) {
+        state.uses.add("AppliesTransitively");
+        state.roles.add("KeepsWhatCanBeReached");
+      }
       return;
     case "RetainsSettledValues":
       addStore(context, { place: "IteratedValues", operand, isSettled: true }, use.in);
@@ -964,8 +966,13 @@ function applyUse(context: OverloadContext, state: OperandState, use: UseSpec): 
       return;
     }
     case "ReturnsKept": {
-      const from = resolvePlace(context, { place: "NativeCell", cell: use.cell });
+      const from = resolvePlace(context, { place: "NativeCell", cell: use.cell, holdsOnlyWhatIsStored: use.holdsOnlyWhatIsStored });
       if (from !== null) addTransfer(context, from, resultPlace, "Returns");
+      return;
+    }
+    case "ExposesKept": {
+      const from = resolvePlace(context, { place: "NativeCell", cell: use.cell });
+      if (from !== null) addStore(context, from, { place: "NativeMemory" });
       return;
     }
     case "ReadsByKey":
@@ -1027,18 +1034,16 @@ const constructionWithAnyArguments: UseOf<"Calls"> = {
 };
 
 export function applyWrittenUses(context: OverloadContext): void {
-  const { uses = {}, isUndeclared, mode, constructs } = context.signature;
+  const { uses = {}, isUndeclared, mode, constructs, refusalsPrintNoValue = false } = context.signature;
   if (constructs !== undefined) {
     const constructed = constructs === "this" ? receiverOperand : ({ operand: "Argument", index: constructs } as const);
     applyCallback(context, constructed, constructionWithAnyArguments);
   }
-  // A getter or a setter names its class and its attribute, and nothing of the receiver.
   const namesNoReceiver = mode !== "Call";
   for (const name of Object.keys(uses)) context.operandOf(name, context.source);
   for (const state of context.states) {
     const { name, operand, accepted, converted } = state.parameter;
-    // The host describes an argument or a receiver that it refuses in the message of the error.
-    const isDescribed = !accepted.isAnything && !(namesNoReceiver && operand.operand === "Receiver");
+    const isDescribed = !refusalsPrintNoValue && !accepted.isAnything && !(namesNoReceiver && operand.operand === "Receiver");
     if (context.source.origin === "Host" && !isUndeclared && isDescribed) state.roles.add("DescribedWhenRefused");
     const isWritten = !isUndeclared && Object.hasOwn(uses, name);
     if (isWritten) {

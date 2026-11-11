@@ -1,0 +1,56 @@
+# `Object.defineProperty(made, "taker", { set(v) { v.n = "text" } })`: the descriptor is in sight, so the object is handed to nobody and its layout is not opened. From then on the engine hands the setter whatever is stored under the key, at no call that is written.
+#   function make() { const made = { b: "y" }; Object.defineProperty(made, "taker", { set(v) { v.n = "text"; } }); return made; }
+#   const rec = { n: 1 };  make().taker = rec;  sink(rec.n);
+# When nothing led what is stored there to the setter, `n` was proven an int32 that is written at construction alone, and the store in the setter stopped the program: "the compiler has proven that it never happens".
+# RUN: summary f1
+# CHECK: change {{*}}DefinesByDescriptor {{*}}descriptor-in-sight setter-in-sight=Closure f2
+# RUN(STORED): link fields mechanisms=all
+# STORED-NOT: field L2.0 "n" proven=
+# STORED-NOT: field L2.0 "n" {{*}}writers-known
+# The object itself stays with compiled code.
+# RUN(SHUT): link functions layouts mechanisms=all
+# SHUT: function f1 {{*}}result=L1
+# SHUT: layout L1 changes=[IsFrozen, GainsProperty, GetsAccessor] stays-with-compiled-code
+
+layout L0 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L1 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L2 fields=[0]
+    v4 = FinishObject v3
+    PropSet v1, v4 key="taker"
+    v6 = PropGet v4 key="n"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName]
+    v9 = Call v8, -, v6
+    Return v9
+}
+function f1 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="y"
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = String string="taker"
+    v6 = NewClosure function=f2
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
+    v8 = NewObject layout=L0
+    PropDefine v8, v7 key="set"
+    v10 = FinishObject v8
+    v11 = Call v4, v3, v2, v5, v10 calleeName="Object.defineProperty"
+    Return v2
+}
+function f2 name="set" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="text"
+    PropSet v0, v1 key="n"
+    v3 = Undefined
+    Return v3
+}

@@ -130,6 +130,8 @@ void ServiceWorkerSoftUpdateLoader::loadFromNetwork(NetworkSession& session, Res
     parameters.contentEncodingSniffingPolicy = ContentEncodingSniffingPolicy::Default;
     parameters.needsCertificateInfo = true;
     parameters.request = WTF::move(request);
+    // We do not want to retry this load if it fails through private relay.
+    parameters.hadMainFrameMainResourcePrivateRelayed = true;
     Ref networkLoad = NetworkLoad::create(*this, WTF::move(parameters), session);
     m_networkLoad = networkLoad.copyRef();
     networkLoad->start();
@@ -187,9 +189,9 @@ void ServiceWorkerSoftUpdateLoader::didReceiveBuffer(const WebCore::FragmentedSh
 {
     if (!m_decoder) {
         if (!m_responseEncoding.isEmpty())
-            lazyInitialize(m_decoder, TextResourceDecoder::create("text/javascript"_s, m_responseEncoding));
+            lazyInitialize(m_decoder, TextResourceDecoder::create(TextResourceDecoder::ContentType::PlainText, m_responseEncoding));
         else
-            lazyInitialize(m_decoder, TextResourceDecoder::create("text/javascript"_s, "UTF-8"_s));
+            lazyInitialize(m_decoder, TextResourceDecoder::create(TextResourceDecoder::ContentType::PlainText, PAL::UTF8Encoding()));
     }
 
     buffer.forEachSegment([&](auto segment) {

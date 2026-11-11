@@ -29,7 +29,7 @@ namespace JSC { namespace AOT {
 static JSArray* createArrayFromValues(JSGlobalObject* globalObject, ThrowScope& scope, uint32_t count, IndexingType indexingType, const Invocable<JSValue(uint32_t)> auto& valueAt)
 {
     VM& vm = globalObject->vm();
-    for (uint32_t i = 0; i < count; ++i)
+    for (uint32_t i = 0; i < count && !hasContiguous(indexingType); ++i)
         indexingType = leastUpperBoundOfIndexingTypeAndValue(indexingType, valueAt(i));
     ObjectInitializationScope initializationScope(vm);
     JSArray* array = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), count);
@@ -38,6 +38,13 @@ static JSArray* createArrayFromValues(JSGlobalObject* globalObject, ThrowScope& 
         return nullptr;
     }
     IndexingType arrayIndexingType = array->indexingType();
+    if (hasContiguous(arrayIndexingType)) {
+        auto elements = array->butterfly()->contiguous();
+        for (uint32_t i = 0; i < count; ++i)
+            elements.atUnsafe(i).setWithoutWriteBarrier(valueAt(i));
+        vm.writeBarrier(array);
+        return array;
+    }
     for (uint32_t i = 0; i < count; ++i)
         array->initializeIndex(initializationScope, i, valueAt(i), arrayIndexingType);
     return array;
@@ -64,7 +71,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithIndexingType, JSCell*, (Instanc
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayFromDoubles, JSCell*, (Instance* instance, uint32_t countAndNumberMask, double first, double second, double third, double fourth))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayFromDoubles);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     double elements[] = { first, second, third, fourth };
     unsigned count = countAndNumberMask & ((1u << arrayLiteralWithDoubleIsNumberMaskShift) - 1);
     RELEASE_ASSERT(count <= std::size(elements));
@@ -80,6 +86,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayFromDoubles, JSCell*, (Instance* in
         }
         for (unsigned i = 0; i < count; ++i)
             array->butterfly()->contiguousDouble().atUnsafe(i) = elements[i];
+        instance->findMissingShortArrayAllocator(capacity);
         OPERATION_RETURN(scope, array);
     }
     auto valueAt = [&](uint32_t i) {
@@ -90,12 +97,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayFromDoubles, JSCell*, (Instance* in
     OPERATION_RETURN(scope, createArrayFromValues(globalObject, scope, count, ArrayWithDouble, valueAt));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithHoles, JSCell*, (Instance* instance, JSCell* source, uint64_t length, uint32_t indexingType, uint32_t flags))
+template<typename Scope>
+static JSArray* bearArrayWithHoles(JSGlobalObject* globalObject, VM& vm, Scope& scope, JSCell* source, uint64_t length, uint32_t indexingType, uint32_t flags)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayWithHoles);
     if (length > UINT32_MAX) {
         throwException(globalObject, scope, createRangeError(globalObject, ArrayInvalidLengthError));
-        OPERATION_RETURN(scope, nullptr);
+        return nullptr;
     }
     bool mustHaveIndexingType = flags & NewArrayWithHolesFlag::mustHaveIndexingType;
     IndexingType sourceIndexingType = source ? source->indexingType() : NonArray;
@@ -104,23 +111,63 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithHoles, JSCell*, (Instance* inst
         Structure* structure = globalObject->originalArrayStructureForIndexingType(indexingType);
         bool holdsPlainVector = hasInt32(structure->indexingType()) || hasDouble(structure->indexingType()) || hasContiguous(structure->indexingType());
         if (JSArray* array = holdsPlainVector ? tryCreateArrayWithStorage(vm, structure, length, static_cast<unsigned>(length) | 1) : nullptr)
-            OPERATION_RETURN(scope, array);
+            return array;
         if (JSArray* array = JSArray::tryCreate(vm, structure, length))
-            OPERATION_RETURN(scope, array);
+            return array;
         if (mustUseIndexingType) {
             throwOutOfMemoryError(globalObject, scope);
-            OPERATION_RETURN(scope, nullptr);
+            return nullptr;
         }
     }
-    OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr, flags & NewArrayWithHolesFlag::lengthIsCapacity ? 0 : static_cast<uint32_t>(length)));
+    return constructEmptyArray(globalObject, nullptr, static_cast<uint32_t>(length));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGrowNewArray, void, (Instance* instance, JSCell* array, uint64_t length))
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithHoles, JSCell*, (Instance* instance, JSCell* source, uint64_t length, uint32_t indexingType, uint32_t flags))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTGrowNewArray);
-    if (length <= MAX_STORAGE_VECTOR_LENGTH / 2)
-        cellArgument<JSArray>(array, Entry::operationAOTGrowNewArray)->setLength(globalObject, std::max<uint32_t>(length * 2, 8), true);
-    OPERATION_RETURN(scope);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayWithHoles);
+    OPERATION_RETURN(scope, bearArrayWithHoles(globalObject, vm, scope, source, length, indexingType, flags));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithHolesAtSite, JSCell*, (Instance* instance, void* profileAddress, JSCell* source, uint64_t length, uint32_t seedIndexingType))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayWithHolesAtSite);
+    uint8_t* statics = instance->statics();
+    uint8_t* address = static_cast<uint8_t*>(profileAddress);
+    uint64_t distanceToLastArray = instance->arrays.distanceFromProfileToLastArray;
+    RELEASE_ASSERT(address >= statics && distanceToLastArray >= sizeof(ArrayAllocationProfile));
+    RELEASE_ASSERT(address + distanceToLastArray + ArrayAllocationProfile::sizeOfLastArrayWord <= statics + instance->tables().instanceSizes.sizeOfStatics);
+    RELEASE_ASSERT(seedIndexingType == ArrayWithUndecided || seedIndexingType == ArrayWithInt32 || seedIndexingType == ArrayWithDouble);
+    auto& profile = *reinterpret_cast<ArrayAllocationProfile*>(address);
+    auto& lastArray = *reinterpret_cast<JSArray**>(address + distanceToLastArray);
+
+    bool isReviewed = !(profile.word & ArrayAllocationProfile::countMask);
+    profile.word -= ArrayAllocationProfile::oneAllocation;
+    if (isReviewed) {
+        reviewArrayAllocationProfile(profile, lastArray, seedIndexingType == ArrayWithUndecided);
+        profile.startInterval();
+        lastArray = nullptr;
+    }
+    IndexingType shape = std::max<IndexingType>(profile.shape(), seedIndexingType & IndexingShapeMask);
+    if (shape == UndecidedShape)
+        shape = ContiguousShape;
+    JSArray* array = bearArrayWithHoles(globalObject, vm, scope, source, length, IsArray | shape, 0);
+    if (isReviewed && array)
+        lastArray = array;
+    OPERATION_RETURN(scope, array);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfGiven, JSCell*, (Instance* instance, EncodedJSValue encodedGiven))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfGiven);
+    JSValue given = JSValue::decode(encodedGiven);
+    if (std::optional<uint32_t> length = given.tryGetAsUint32Index(); length && *length < MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH && !globalObject->isHavingABadTime()) {
+        Structure* structure = globalObject->originalArrayStructureForIndexingType(ArrayWithInt32);
+        if (JSArray* array = tryCreateArrayWithStorage(vm, structure, *length, *length | 1))
+            OPERATION_RETURN(scope, array);
+        if (JSArray* array = JSArray::tryCreate(vm, structure, *length))
+            OPERATION_RETURN(scope, array);
+    }
+    OPERATION_RETURN(scope, constructArrayWithSizeQuirk(globalObject, nullptr, given));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTruncateNewArray, JSCell*, (Instance* instance, JSCell* cell, uint32_t length))

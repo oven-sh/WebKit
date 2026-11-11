@@ -1,0 +1,53 @@
+# A typed array that is as it was made is read by index. The method under @@iterator throws for a view that has lost its memory, and so does each step, which reads the length anew: memory may be detached or resized in the loop.
+# Such a view has the length 0: a turn that finds an element asks nothing more, and the step that finds none asks for the memory.
+# function each(view: Uint8Array) { for (const value of view) keep(value); }
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}} builtinClass=Uint8Array aspects=[Names
+# CHECK: RequireAttachedTypedArray
+# CHECK: ([[position]]: int[0, 34359738368] {{*}}isLoopHead=true
+# CHECK-NOT: RequireAttachedTypedArray
+# CHECK: [[length]]: {{*}} = GetTypedArrayLength
+# CHECK: [[inside]]: boolean {{*}} = Less [[position]], [[length]] form=Integers
+# CHECK: Branch [[inside]] -> taken [[reading]](), notTaken [[ending]]()
+# CHECK: [[reading]]()
+# CHECK-NOT: RequireAttachedTypedArray
+# CHECK: = GetTypedArrayElement {{*}}level=Proven
+# CHECK: [[ending]]()
+# CHECK: RequireAttachedTypedArray
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
+# NEVER-NOT: NewHeapWords
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="each" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b4():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v1:
+    v10 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v10
+}

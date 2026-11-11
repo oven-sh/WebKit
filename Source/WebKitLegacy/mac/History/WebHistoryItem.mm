@@ -101,12 +101,12 @@ NSString * const WebHistoryItemChangedNotification = @"WebHistoryItemChangedNoti
 
 using HistoryItemMap = HashMap<WeakRef<WebCore::HistoryItem>, WebHistoryItem*>;
 
-SUPPRESS_NODELETE static inline WebCoreHistoryItem* LEGACY_NODELETE core(WebHistoryItemPrivate* itemPrivate)
+NODELETE SUPPRESS_NODELETE static inline WebCoreHistoryItem* core(WebHistoryItemPrivate* itemPrivate)
 {
     return itemPrivate->_historyItem.get();
 }
 
-static HistoryItemMap& LEGACY_NODELETE historyItemWrappers()
+NODELETE static HistoryItemMap& historyItemWrappers()
 {
     static NeverDestroyed<HistoryItemMap> historyItemWrappers;
     return historyItemWrappers;
@@ -348,7 +348,7 @@ WebHistoryItem *kit(WebCore::HistoryItem* item)
         core(_private)->setScale([scaleValue floatValue], [scaleIsInitialValue boolValue]);
 
     if (id viewportArguments = [dict objectForKey:@"WebViewportArguments"])
-        [self _setViewportArguments:viewportArguments];
+        [self _setViewportArguments:dynamic_objc_cast<NSDictionary>(viewportArguments)];
 
     NSNumber *scrollPointXValue = [dict objectForKey:scrollPointXKey];
     NSNumber *scrollPointYValue = [dict objectForKey:scrollPointYKey];

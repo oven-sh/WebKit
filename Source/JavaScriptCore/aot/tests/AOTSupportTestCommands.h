@@ -7,7 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTTestCommand.h"
+#include "AOTTestHarness.h"
 #include "AOTVector.h"
 #include <optional>
 #include <span>
@@ -51,10 +51,9 @@ void shuffle(Vector<T>& list, unsigned seed)
     });
 }
 
+extern const HostThreadPool poolOfNewThreads;
 void runDiagnosticsTestCommand(TestCommandContext&);
-void runLossesTestCommand(TestCommandContext&);
 void runParallelLoopsTestCommand(TestCommandContext&);
-void runArenaMergeTestCommand(TestCommandContext&);
 void runHashedIndexTestCommand(TestCommandContext&);
 
 } } } // namespace JSC::AOT::Typed

@@ -9,30 +9,21 @@
 #if ENABLE(AOT)
 
 #include "AOTConvention.h"
-#include "AOTElideStackChecks.h"
 #include "AOTInstance.h"
+#include "AOTMachineFrame.h"
 #include "AOTSort.h"
-#include "AOTStubBodyConvention.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsCallFrames.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPolls.h"
-#include "AOTVector.h"
-#include "AirGenerationContext.h"
 #include "AllowMacroScratchRegisterUsage.h"
-#include "B3Procedure.h"
 #include "LinkBuffer.h"
+#include "MinimumReservedZoneSize.h"
 #include "StackManager.h"
-#include <algorithm>
-#include <wtf/SharedTask.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static void emitSmallFrameCheck(CCallHelpers& jit, PendingStackCheck& check)
-{
-    check.limit = StackLimit::TrapAwareSoft;
-    check.doesNotFit.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit())));
-}
+static_assert(Machine::maxBytesAllocatedBeforeStackCheck + maxStackUsedWithoutCheck < minimumReservedZoneSize, "the stack pointer of a frame that is allocated and then found not to fit still lies in the reserved zone");
 
 static constexpr bool isMacroScratchGPR(GPRReg reg)
 {
@@ -48,99 +39,121 @@ static_assert([] {
         if (isMacroScratchGPR(directArgumentGPR(index)))
             return false;
     }
-    for (unsigned index = 0; index < StubBodyConvention::maxNumberOfOperandGPRs; ++index) {
-        if (isMacroScratchGPR(StubBodyConvention::operandGPR(index)))
-            return false;
-    }
     for (GPRReg reg : { thisGPR, countGPR, calleeGPR, valueEntryGPR, instanceGPR, cellCageBaseGPR }) {
         if (isMacroScratchGPR(reg))
             return false;
     }
     return true;
-}(), "a frame that is checked before it is allocated is set up at the entry of the function, and its check writes the macro scratch registers");
+}(), "a frame may be set up at the entry of the function, where the arguments are in their registers, and its check writes the macro scratch registers");
 
-static void emitLargeFrameCheck(CCallHelpers& jit, PendingStackCheck& check, const B3::Air::StackCheckSite& site)
+static CCallHelpers::Address wordOfStackLimit(StackLimit limit)
 {
-    // The assembler hands out its scratch register only where the EnterFrame names it as a scratch operand.
-    GPRReg newStackPointer = jit.scratchRegister();
-    GPRReg base = check.bytesAllocatedBelowReturnAddress ? CCallHelpers::stackPointerRegister : GPRInfo::callFrameRegister;
-    jit.subPtr(base, CCallHelpers::TrustedImm32(check.bytesAllocatedBelowReturnAddress ? site.bytesLeftToAllocate : check.bytesBelowFrameRecord), newStackPointer);
-    check.limit = StackLimit::Soft;
-    // The stack pointer is the left operand: ARM64 compares it only there, and copies it into the scratch register otherwise.
-    check.doesNotFit.append(jit.branchPtr(CCallHelpers::Below, base, newStackPointer));
-    check.doesNotFit.append(jit.branchPtr(CCallHelpers::Below, newStackPointer, CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit())));
+    switch (limit) {
+    case StackLimit::TrapAwareSoft:
+        return CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
+    case StackLimit::Soft:
+        return CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-void setStackCheckGenerator(B3::Procedure& proc, StackCheck stackCheck, const FrameRequirements& frame, StackCheckState& state)
+static void emitSmallFrameCheck(CCallHelpers& jit, PendingStackCheck& check)
 {
-    proc.code().setStackCheckGenerator(createSharedTask<B3::Air::StackCheckGeneratorFunction>([stackCheck, &frame, &state](CCallHelpers& jit, B3::Air::GenerationContext& context, const B3::Air::StackCheckSite& site) {
-        const B3::Air::Code& code = *context.code;
-        unsigned frameSize = code.frameSize();
-        bool fitsByProof = stackCheck == StackCheck::CoveredByCallers && frameSize <= maxFrameSizeWithoutStackCheck;
-        state.isProvenToFitOnStack |= fitsByProof;
-        bool checksStack = (stackCheck != StackCheck::DeferredToCallee && !fitsByProof) || frame.needsStackCheckForTailCalls || frameSize > maxUncheckedFrameSize;
-        if (!checksStack)
-            return;
+    check.limit = StackLimit::TrapAwareSoft;
+    check.doesNotFit.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, wordOfStackLimit(check.limit)));
+}
 
-        state.isEnteredWithoutStackCheck = false;
-        PendingStackCheck check { .bytesBelowFrameRecord = site.bytesBelowFrameRecord };
-        if (!code.frameLayout().hasFrameRecord)
-            check.bytesAllocatedBelowReturnAddress = site.bytesAllocatedBelowReturnAddress;
-        if (site.bytesBelowFrameRecord <= code.policy().frame.maxBytesAllocatedBeforeStackCheck)
-            emitSmallFrameCheck(jit, check);
-        else
-            emitLargeFrameCheck(jit, check, site);
-        check.resume = jit.label();
-        state.pending.append(WTF::move(check));
-    }));
+static void emitLargeFrameCheck(CCallHelpers& jit, PendingStackCheck& check, unsigned bytesBelowFrameRecord)
+{
+    GPRReg endOfFrame = jit.scratchRegister();
+    jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(bytesBelowFrameRecord)), GPRInfo::callFrameRegister, endOfFrame);
+    check.limit = StackLimit::Soft;
+    check.doesNotFit.append(jit.branchPtr(CCallHelpers::Below, GPRInfo::callFrameRegister, endOfFrame));
+    check.doesNotFit.append(jit.branchPtr(CCallHelpers::Below, endOfFrame, wordOfStackLimit(check.limit)));
+}
+
+static void generateStackCheckAtFrameSetup(void* context, CCallHelpers& jit, const Machine::Frame& frame, const Machine::StackCheckSite& site)
+{
+    StackCheckState& state = *static_cast<StackCheckState*>(context);
+    unsigned frameSize = frame.frameSize();
+    bool fitsByProof = (state.stackCheck == StackCheck::CoveredByCallers || site.nothingCountsOnCheck) && frameSize <= maxFrameSizeWithoutStackCheck;
+    state.isProvenToFitOnStack |= fitsByProof;
+    if (fitsByProof && !state.frame->needsStackCheckForTailCalls)
+        return;
+
+    RELEASE_ASSERT(site.isAllocated == (site.bytesBelowFrameRecord <= Machine::maxBytesAllocatedBeforeStackCheck));
+    state.isEnteredWithoutStackCheck = false;
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+    PendingStackCheck check { .isAtEntry = frame.coverage() == Machine::FrameCoverage::WholeFunction };
+    if (site.isAllocated)
+        emitSmallFrameCheck(jit, check);
+    else
+        emitLargeFrameCheck(jit, check, site.bytesBelowFrameRecord);
+    check.resume = jit.label();
+    state.pending.append(WTF::move(check));
+}
+
+void setStackCheckGenerator(Machine::Procedure& proc, StackCheck stackCheck, const FrameRequirements& frame, StackCheckState& state)
+{
+    state.stackCheck = stackCheck;
+    state.frame = &frame;
+    proc.setStackCheckGenerator(generateStackCheckAtFrameSetup, &state);
+}
+
+void emitStackTestAheadOfFramedPart(CCallHelpers& jit, const Machine::PatchParameters& params)
+{
+    RELEASE_ASSERT(!params.frameIsSetUp() && params.frame().hasFrame());
+    CCallHelpers::Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, wordOfStackLimit(StackLimit::TrapAwareSoft));
+    params.addLatePath([doesNotFit, fits = jit.label(), proc = &params.proc()](CCallHelpers& jit) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        doesNotFit.link(&jit);
+        Machine::emitFrameSetup(jit, *proc);
+        Machine::emitFrameTeardown(jit, proc->frame());
+        jit.jump().linkTo(fits, &jit);
+    });
 }
 
 void emitStackOverflowPaths(CCallHelpers& jit, CodeRecords& records, StackCheckState& state)
 {
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+    CCallHelpers::JumpList doesNotFit;
     for (const PendingStackCheck& check : state.pending) {
         RELEASE_ASSERT(!check.doesNotFit.empty() && check.resume.isSet());
-        check.doesNotFit.link(&jit);
         switch (check.limit) {
-        case StackLimit::Soft: {
-            // A caller without a frame record is found by the stack pointer alone, so the stub has to find the stack as that caller left it.
-            bool dropsSpilledArgumentRegisters = isX86_64() && records.frame.spillsArgumentRegisters;
-            if (!check.bytesAllocatedBelowReturnAddress && !dropsSpilledArgumentRegisters) {
-                records.stubCalls.tailCall(jit, throwStackOverflow(true));
-                break;
-            }
-            CCallHelpers::Label begin = jit.label();
-            if (!check.bytesAllocatedBelowReturnAddress)
-                jit.emitFunctionEpilogue();
-            else if (*check.bytesAllocatedBelowReturnAddress)
-                jit.addPtr(CCallHelpers::TrustedImm32(*check.bytesAllocatedBelowReturnAddress), CCallHelpers::stackPointerRegister);
-            if (dropsSpilledArgumentRegisters) {
-                AllowMacroScratchRegisterUsage allowScratch(jit);
-                emitDropSpilledArgumentRegisters(jit);
-            }
-            records.units.pin(begin, jit.label());
-            records.stubCalls.tailCall(jit, throwStackOverflow(false));
+        case StackLimit::Soft:
+            doesNotFit.append(check.doesNotFit);
             break;
-        }
         case StackLimit::TrapAwareSoft: {
-            // The stub returns to the resume offset of the PrologueCheck, never to the address after the call.
+            check.doesNotFit.link(&jit);
+            bool mayCollect = state.functionMayCollect && check.isAtEntry;
             CCallHelpers::Label call = jit.label();
-            records.stubCalls.call(jit, pollAtPrologue(), OptionalIndex { });
-            records.units.pin(call, jit.label());
+            records.stubCalls.call(jit, pollAtPrologue(mayCollect), OptionalIndex { });
             records.traps.stackChecks.append({ call, check.resume });
             break;
         }
         }
     }
+    if (doesNotFit.empty())
+        return;
+
+    doesNotFit.link(&jit);
+    if (isX86_64() && records.frame.spillsArgumentRegisters) {
+        jit.emitFunctionEpilogue();
+        emitDropSpilledArgumentRegisters(jit);
+        records.stubCalls.tailCall(jit, throwStackOverflow(false));
+        return;
+    }
+    records.stubCalls.tailCall(jit, throwStackOverflow(true));
 }
 
-Vector<PrologueCheck, 1> linkStackChecks(LinkBuffer& linkBuffer, FunctionID id, const CodeRecords& records)
+Vector<PrologueCheck, 1> linkStackChecks(LinkBuffer& linkBuffer, const CodeRecords& records)
 {
     Vector<PrologueCheck, 1> checks;
     for (const StackCheckLabels& labels : records.traps.stackChecks) {
         RELEASE_ASSERT(labels.call.isSet() && labels.resume.isSet());
-        checks.append({ id.index(), linkBuffer.offsetOf(labels.call), linkBuffer.offsetOf(labels.resume) });
+        checks.append(PrologueCheck { .callOffset = linkBuffer.offsetOf(labels.call), .resumeOffset = linkBuffer.offsetOf(labels.resume) });
     }
-    AOT::sort(checks, { }, &PrologueCheck::callOffset);
+    AOT::sortInLine(checks, { }, &PrologueCheck::callOffset);
     return checks;
 }
 

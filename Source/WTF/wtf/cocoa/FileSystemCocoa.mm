@@ -79,9 +79,7 @@ SOFT_LINK(Bom, BOMCopierCopyWithOptions, int, (BOMCopier copier, const char* fro
 
 @end
 
-namespace WTF {
-
-namespace FileSystemImpl {
+namespace WTF::FileSystemImpl {
 
 String createTemporaryZipArchive(const String& path)
 {
@@ -215,7 +213,7 @@ std::pair<FileHandle, String> createTemporaryFileInDirectory(const String& direc
 }
 
 #ifdef IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES
-static int LEGACY_NODELETE toIOPolicyScope(PolicyScope scope)
+NODELETE static int toIOPolicyScope(PolicyScope scope)
 {
     switch (scope) {
     case PolicyScope::Process:
@@ -385,5 +383,4 @@ UTF8CString currentExecutableName()
     return UTF8CString::unsafeFromUTF8(getprogname());
 }
 
-} // namespace FileSystemImpl
-} // namespace WTF
+} // namespace WTF::FileSystemImpl

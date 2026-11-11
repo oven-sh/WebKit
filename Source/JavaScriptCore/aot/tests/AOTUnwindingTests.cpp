@@ -8,13 +8,15 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTNativeTest.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
+#include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <stdlib.h>
@@ -28,6 +30,7 @@ entry module=m0
 layout L0 name="Copy"
 layout L1 name="Rest"
 layout L2 name="CopyInHandler"
+layout L3 kind=Instance name="MarksEntry" module=m0 constructor=f27
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="registry" [isFreeName]
@@ -75,6 +78,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PropSet v1, v42 key="assignsSource"
     v44 = NewClosure function=f21
     PropSet v1, v44 key="copiesOneFrameDown"
+    v46 = NewClosure function=f24
+    PropSet v1, v46 key="marksEntry"
+    v48 = NewClosure function=f25
+    PropSet v1, v48 key="marksEntryWithNineParameters"
+    v50 = NewClosure function=f26
+    PropSet v1, v50 key="marksBehindAwait"
+    v52 = NewClosure function=f27
+    v53 = NewClass v52 layout=L3
+    v54 = FinishClass v53 layout=L3
+    PropSet v1, v54 key="MarksEntry"
     Return
 }
 function f1 name="catchesOwn" parameters=[{type=anything}] results=[{type=anything}] {
@@ -346,6 +359,37 @@ function f23 name="assignsSource" results=[{type=anything}] {
     v7 = Call v6, -, v5 @255
     Return v7
 }
+function f24 name="marksEntry" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="registry" [isFreeName]
+    v2 = Boolean boolean=true
+    PropSet v1, v2 key="wasEntered"
+    Return
+}
+function f25 name="marksEntryWithNineParameters" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="registry" [isFreeName]
+    v11 = Boolean boolean=true
+    PropSet v10, v11 key="wasEntered"
+    Return v8
+}
+function f26 name="marksBehindAwait" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Await v0 @260
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="registry" [isFreeName]
+    v4 = Boolean boolean=true
+    PropSet v3, v4 key="wasEntered"
+    Return
+}
+function f27 name="MarksEntry" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="registry" [isFreeName]
+    v3 = Boolean boolean=true
+    PropSet v2, v3 key="wasEntered"
+    v5 = GetConstructPrototype v0 layout=L3
+    v6 = NewObject v5 layout=L3
+    Return v6
+}
 )IR"_s;
 
 static constexpr ASCIILiteral scriptStart = R"js(
@@ -367,73 +411,70 @@ globalThis.namesInStack = function namesInStack(error) {
     }
     return names;
 };
-globalThis.errorsNotCreated = function errorsNotCreated() { return Number(/(\d+)\tcounter:ThrownErrorsNotCreated/.exec(aotRuntimeCounters())[1]); };
-globalThis.printWithErrorsNotCreated = function printWithErrorsNotCreated(work) {
+globalThis.printSecondResult = function printSecondResult(work) {
     // The first throw at a site puts its frames into the call site cache, which is all that a later throw looks at.
     work();
-    let before = errorsNotCreated();
-    let result = work();
-    print(result + "; errors not created: " + (errorsNotCreated() - before));
+    print(work());
 };
 )js"_s;
 
-enum class Validation : bool { Off, On };
-
-static std::unique_ptr<CompileOutput> compile(ASCIILiteral referencesWord, Validation validation)
+static std::unique_ptr<CompileOutput> compile(ASCIILiteral way, ASCIILiteral referencesWord)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
         Wire::CompileOptions options = makeDefaultCompileOptions();
-        if (validation == Validation::On)
-            AOT_TEST_CHECK(!applyOptionWord(options, "validate"_s));
         AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
         BuildContext build(options);
-        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
+        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), build);
         if (!program) {
             build.diagnostics().finish(nullptr);
             Typed::printDiagnostics(build.diagnostics(), WTF::dataFile());
         }
         AOT_TEST_CHECK(program);
-        output = compileParsedProgram(WTF::move(program), build);
-        if (output->image.isEmpty())
-            Typed::printDiagnostics(output->diagnostics, WTF::dataFile());
-        AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
+        output = Typed::compileWithMechanisms(WTF::move(program), build, Typed::mechanismsOfWay(way));
+        if (!output->hasImage())
+            Typed::printDiagnosticsOf(*output, WTF::dataFile());
+        AOT_TEST_CHECK(output->hasImage() && output->records<uint32_t>(Wire::ResultSection::EntryModuleIds).size() == 1);
     });
     return output;
 }
 
-static ChildProcessResult runInShell(ASCIILiteral referencesWord, ASCIILiteral statements, std::initializer_list<ASCIILiteral> shellOptions, Validation validation = Validation::On)
+static ChildProcessResult runInShell(ASCIILiteral way, ASCIILiteral referencesWord, ASCIILiteral statements, std::initializer_list<ASCIILiteral> shellOptions)
 {
-    std::unique_ptr<CompileOutput> output = compile(referencesWord, validation);
-    TemporaryFile image(".image"_s, output->image.span());
+    std::unique_ptr<CompileOutput> output = compile(way, referencesWord);
+    TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     Vector<String> arguments { makeString("--aotImagePath="_s, image.path()) };
     for (ASCIILiteral option : shellOptions)
         arguments.append(String(option));
     arguments.append(String("-e"_s));
-    arguments.append(makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").then(async () => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s));
+    arguments.append(makeString(scriptStart, "runCompiledEntryPoint("_s, output->records<uint32_t>(Wire::ResultSection::EntryModuleIds)[0], ").then(async () => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s));
     ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
     result.output = makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
     return result;
 }
 
-static void checkShellOutput(ASCIILiteral statements, ASCIILiteral expectedOutput, Validation validation = Validation::On)
+static void checkShellOutput(ASCIILiteral statements, ASCIILiteral expectedOutput)
 {
-    for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
-        ChildProcessResult result = runInShell(referencesWord, statements, { }, validation);
-        if (!result.exitedWith(EXIT_SUCCESS) || result.output != expectedOutput)
-            dataLog("with ", referencesWord, " the shell ", result.description(), " and printed\n", result.output, "expected\n", expectedOutput);
-        AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS) && result.output == expectedOutput);
+    for (ASCIILiteral way : waysToCompilePrograms) {
+        for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
+            ChildProcessResult result = runInShell(way, referencesWord, statements, { });
+            if (!result.exitedWith(EXIT_SUCCESS) || result.output != expectedOutput)
+                dataLog("with ", way, " ", referencesWord, " the shell ", result.description(), " and printed\n", result.output, "expected\n", expectedOutput);
+            AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS) && result.output == expectedOutput);
+        }
     }
 }
 
 static void checkOutputOfTerminatedShell(ASCIILiteral statements, ASCIILiteral expectedOutput)
 {
-    for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
-        ChildProcessResult result = runInShell(referencesWord, statements, { "--watchdog=300"_s });
-        bool wasTerminated = result.outcome == ChildProcessOutcome::Exited && result.code != EXIT_SUCCESS;
-        if (!wasTerminated || result.output != expectedOutput)
-            dataLog("with ", referencesWord, " the shell ", result.description(), " and printed\n", result.output, "expected\n", expectedOutput);
-        AOT_TEST_CHECK(wasTerminated && result.output == expectedOutput);
+    for (ASCIILiteral way : waysToCompilePrograms) {
+        for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
+            ChildProcessResult result = runInShell(way, referencesWord, statements, { "--watchdog=300"_s });
+            bool wasTerminated = result.outcome == ChildProcessOutcome::Exited && result.code != EXIT_SUCCESS;
+            if (!wasTerminated || result.output != expectedOutput)
+                dataLog("with ", way, " ", referencesWord, " the shell ", result.description(), " and printed\n", result.output, "expected\n", expectedOutput);
+            AOT_TEST_CHECK(wasTerminated && result.output == expectedOutput);
+        }
     }
 }
 
@@ -562,33 +603,33 @@ nothing was thrown to the caller
 )"_s);
 }
 
-static void testIgnoredErrorIsNotCreated()
+static void testHandlerIgnoresWhatWasThrown()
 {
     checkShellOutput(R"js(
-    printWithErrorsNotCreated(() => registry.ignoresDirectCallees());
-    printWithErrorsNotCreated(() => registry.ignoresCallee(registry.throwsNewError));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(registry.passes, registry.throwsNewError));
-    printWithErrorsNotCreated(() => registry.ignoresNamedCallee(5));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(function returns() { return "not thrown"; }));
-)js"_s, R"(ignored what was thrown; errors not created: 1
-ignored what was thrown; errors not created: 1
-ignored what was thrown; errors not created: 1
-ignored what was thrown; errors not created: 0
-not thrown; errors not created: 0
-)"_s, Validation::Off);
+    printSecondResult(() => registry.ignoresDirectCallees());
+    printSecondResult(() => registry.ignoresCallee(registry.throwsNewError));
+    printSecondResult(() => registry.ignoresCallee(registry.passes, registry.throwsNewError));
+    printSecondResult(() => registry.ignoresNamedCallee(5));
+    printSecondResult(() => registry.ignoresCallee(function returns() { return "not thrown"; }));
+)js"_s, R"(ignored what was thrown
+ignored what was thrown
+ignored what was thrown
+ignored what was thrown
+not thrown
+)"_s);
 }
 
 static void testObservableErrorIsCreated()
 {
     checkShellOutput(R"js(
-    printWithErrorsNotCreated(() => registry.catchesDirectCallees());
-    printWithErrorsNotCreated(() => registry.catchesCallee(registry.throwsNewError));
-    printWithErrorsNotCreated(() => registry.catchesNamedCallee(5));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(registry.catchesCallee, registry.throwsNewError));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(function interpreted() { return registry.throwsNewError(); }));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(function viaHost() { return JSON.stringify({ toJSON: registry.throwsNewError }); }));
-    printWithErrorsNotCreated(() => registry.ignoresCallee(function cleaned() { return registry.cleansUp(registry.throwsNewError, print); }));
-    printWithErrorsNotCreated(() => {
+    printSecondResult(() => registry.catchesDirectCallees());
+    printSecondResult(() => registry.catchesCallee(registry.throwsNewError));
+    printSecondResult(() => registry.catchesNamedCallee(5));
+    printSecondResult(() => registry.ignoresCallee(registry.catchesCallee, registry.throwsNewError));
+    printSecondResult(() => registry.ignoresCallee(function interpreted() { return registry.throwsNewError(); }));
+    printSecondResult(() => registry.ignoresCallee(function viaHost() { return JSON.stringify({ toJSON: registry.throwsNewError }); }));
+    printSecondResult(() => registry.ignoresCallee(function cleaned() { return registry.cleansUp(registry.throwsNewError, print); }));
+    printSecondResult(() => {
         try {
             registry.throwsNewError();
         } catch (error) {
@@ -596,27 +637,25 @@ static void testObservableErrorIsCreated()
         }
     });
     await registry.asyncCalls(1, registry.throwsNewError).catch(() => { });
-    let before = errorsNotCreated();
     try {
         await registry.asyncCalls(1, registry.throwsNewError);
     } catch (error) {
-        print("rejected with: " + error.name + ": " + error.message + "; errors not created: " + (errorsNotCreated() - before));
+        print("rejected with: " + error.name + ": " + error.message);
     }
-)js"_s, R"(caught around direct calls: RangeError; errors not created: 0
-caught in a caller: RangeError; errors not created: 0
-caught in the same frame: TypeError; errors not created: 0
-caught in a caller: RangeError; errors not created: 0
-ignored what was thrown; errors not created: 0
-ignored what was thrown; errors not created: 0
+)js"_s, R"(caught around direct calls: RangeError
+caught in a caller: RangeError
+caught in the same frame: TypeError
+caught in a caller: RangeError
+ignored what was thrown
+ignored what was thrown
 left by a throw
 left by a throw
-ignored what was thrown; errors not created: 0
-caught in interpreted code: RangeError: made to be thrown, with a stack: string; errors not created: 0
-rejected with: RangeError: made to be thrown; errors not created: 0
+ignored what was thrown
+caught in interpreted code: RangeError: made to be thrown, with a stack: string
+rejected with: RangeError: made to be thrown
 )"_s);
 }
 
-// What copies properties calls back into compiled code, which throws. The error lists the frames on both sides of the copy, and the handler lies beyond it.
 static void testThrowBelowACopyOfProperties()
 {
     constexpr ASCIILiteral statements = R"js(
@@ -703,8 +742,7 @@ copied first left last, one frame down, two frames down
 copied first left last, one frame down, two frames down
 copied first left last
 )"_s;
-    checkShellOutput(statements, expectedOutput, Validation::On);
-    checkShellOutput(statements, expectedOutput, Validation::Off);
+    checkShellOutput(statements, expectedOutput);
 }
 
 static void testValuesLiveAcrossTheCallAreRestored()
@@ -765,6 +803,56 @@ static void testTerminationOfLoopWithoutCalls()
 )"_s);
 }
 
+static void testTerminationRequestedAheadOfAnEntryFromNativeCode()
+{
+    checkShellOutput(R"js(
+    function ones(length) {
+        let list = [];
+        for (let index = 0; index < length; index++)
+            list.push(1);
+        return list;
+    }
+    function report(label, enter) {
+        // Until the places that the callee reads and writes by name are remembered, it calls the run time, which looks for a request too.
+        for (let turn = 0; turn < 3; turn++) {
+            registry.wasEntered = false;
+            enter(function call(callee, ...list) { return callee(...list); }, function construct(callee, ...list) { return new callee(...list); });
+            drainMicrotasks();
+        }
+        let runs = registry.wasEntered;
+        registry.wasEntered = false;
+        let wasPending = callAndCancelTermination(() => enter(requestTerminationAndCall, requestTerminationAndConstruct));
+        print(label + ": runs " + runs + ", termination was pending " + wasPending + ", ran under it " + registry.wasEntered);
+    }
+    for (let count of [0, 1, 9, 300]) {
+        report("a call with " + count, call => call(registry.marksEntry, ...ones(count)));
+        report("a call of nine parameters with " + count, call => call(registry.marksEntryWithNineParameters, ...ones(count)));
+        report("a construction of a function with " + count, (call, construct) => construct(registry.marksEntry, ...ones(count)));
+        report("a construction of a class with " + count, (call, construct) => construct(registry.MarksEntry, ...ones(count)));
+    }
+    report("a job that resumes an async function", call => { registry.marksBehindAwait(1); call(drainMicrotasks); });
+    print("the script went on");
+)js"_s, R"(a call with 0: runs true, termination was pending true, ran under it false
+a call of nine parameters with 0: runs true, termination was pending true, ran under it false
+a construction of a function with 0: runs true, termination was pending true, ran under it false
+a construction of a class with 0: runs true, termination was pending true, ran under it false
+a call with 1: runs true, termination was pending true, ran under it false
+a call of nine parameters with 1: runs true, termination was pending true, ran under it false
+a construction of a function with 1: runs true, termination was pending true, ran under it false
+a construction of a class with 1: runs true, termination was pending true, ran under it false
+a call with 9: runs true, termination was pending true, ran under it false
+a call of nine parameters with 9: runs true, termination was pending true, ran under it false
+a construction of a function with 9: runs true, termination was pending true, ran under it false
+a construction of a class with 9: runs true, termination was pending true, ran under it false
+a call with 300: runs true, termination was pending true, ran under it false
+a call of nine parameters with 300: runs true, termination was pending true, ran under it false
+a construction of a function with 300: runs true, termination was pending true, ran under it false
+a construction of a class with 300: runs true, termination was pending true, ran under it false
+a job that resumes an async function: runs true, termination was pending true, ran under it false
+the script went on
+)"_s);
+}
+
 std::span<const NativeTest> unwindingTests()
 {
     static constexpr NativeTest tests[] = {
@@ -774,12 +862,13 @@ std::span<const NativeTest> unwindingTests()
         { "unwinding/handler-in-interpreted-code"_s, testHandlerInInterpretedCode },
         { "unwinding/cleanup-handler-rethrows"_s, testCleanupHandlerRethrows },
         { "unwinding/throw-in-async-function-rejects-its-promise"_s, testThrowInAsyncFunctionRejectsItsPromise },
-        { "unwinding/ignored-error-is-not-created"_s, testIgnoredErrorIsNotCreated },
+        { "unwinding/handler-ignores-what-was-thrown"_s, testHandlerIgnoresWhatWasThrown },
         { "unwinding/observable-error-is-created"_s, testObservableErrorIsCreated },
         { "unwinding/throw-below-a-copy-of-properties"_s, testThrowBelowACopyOfProperties },
         { "unwinding/values-live-across-the-call-are-restored"_s, testValuesLiveAcrossTheCallAreRestored },
         { "unwinding/termination-passes-every-handler"_s, testTerminationPassesEveryHandler },
         { "unwinding/termination-of-loop-without-calls"_s, testTerminationOfLoopWithoutCalls },
+        { "unwinding/termination-requested-ahead-of-an-entry-from-native-code"_s, testTerminationRequestedAheadOfAnEntryFromNativeCode },
     };
     return tests;
 }

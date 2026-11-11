@@ -1,0 +1,79 @@
+# function range(start, end, step) { if (arguments.length === 1) { end = start; start = 0; } if (arguments.length < 3) step = 1; var n = 0; for (var v = start; v < end; v += step) n += v; return n; }
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) total += range(0, 6, 2) + range(1, 4); return total; }   run(globalThis.count)
+# RUN(ANSWER): run-in-shell globalThis.count = 10;
+# ANSWER: 120
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="range" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="run" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="count" [isFreeName]
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v2, -, v1 calleeName="run"
+    v4 = PropGet v0 key="print" [isFreeName]
+    v5 = Call v4, -, v3
+    v6 = Undefined
+    Return v6
+}
+function f1 name="range" module=m0 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: anything, v3: anything, v4: Array):
+    v5 = CreateUnmappedArguments v0, v4, v1, v2, v3
+    v6 = PropGet v5 key="length"
+    v7 = Integer integer=1
+    v8 = StrictEq v6, v7
+    Branch v8 -> taken b1(), notTaken b2(v1, v2)
+  b1():
+    v9 = Integer
+    Jump -> next b2(v9, v1)
+  b2(v10, v11):
+    v12 = PropGet v5 key="length"
+    v13 = Integer integer=3
+    v14 = Less v12, v13
+    Branch v14 -> taken b3(), notTaken b4(v3)
+  b3():
+    v15 = Integer integer=1
+    Jump -> next b4(v15)
+  b4(v16):
+    v17 = Integer
+    Jump -> next b5(v17, v10)
+  b5(v18, v19):
+    LoopHint
+    v21 = Less v19, v11
+    Branch v21 -> taken b6(), notTaken b7()
+  b6():
+    v22 = Add v18, v19
+    v23 = Add v19, v16
+    Jump -> next b5(v22, v23)
+  b7():
+    Return v18
+}
+function f2 name="run" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g0
+    v8 = Integer
+    v9 = Integer integer=6
+    v10 = Integer integer=2
+    v11 = Call v7, -, v8, v9, v10 calleeName="range"
+    v12 = GetModuleVariable variable=g0
+    v13 = Integer integer=1
+    v14 = Integer integer=4
+    v15 = Call v12, -, v13, v14 calleeName="range"
+    v16 = Add v11, v15
+    v17 = Add v3, v16
+    v18 = Increment v4
+    Jump -> next b1(v17, v18)
+  b3():
+    Return v3
+}

@@ -36,6 +36,7 @@
 namespace WebCore {
 
 class LocalFrame;
+struct MockPhoneNumberPossessionConfiguration;
 struct PhoneNumberPossessionRequest;
 
 class PhoneNumberPossessionCoordinatorClient {
@@ -48,8 +49,10 @@ public:
     virtual ~PhoneNumberPossessionCoordinatorClient() = default;
 
     virtual void requestPhoneNumberPossession(const LocalFrame&, const PhoneNumberPossessionRequest&, RequestCompletionHandler&&) = 0;
-    virtual void isAvailable(CompletionHandler<void(bool)>&&) = 0;
+    virtual void isAvailable(const LocalFrame&, CompletionHandler<void(bool)>&&) = 0;
     virtual void cancel(CompletionHandler<void()>&&) = 0;
+
+    virtual void setMockConfigurationForTesting(const MockPhoneNumberPossessionConfiguration&) = 0;
 };
 
 } // namespace WebCore

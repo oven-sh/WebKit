@@ -67,6 +67,12 @@ public:
 
     virtual void clearTexturesIfNeeded(const IntRect& viewport, std::optional<uint32_t> slice) { UNUSED_PARAM(viewport); UNUSED_PARAM(slice); }
 
+    virtual void invalidateTextures() { }
+
+    // Releases the graphics resources behind the layer once it is destroyed. The backing must stay
+    // safe to query afterwards, but it is never asked to start or end another frame.
+    virtual void releaseResources() { }
+
     virtual bool isWebGLBacking() const { return false; }
 
 private:

@@ -1,0 +1,68 @@
+# function pushes(list: number[], operand: () => number) { return list.push(operand()); }      function adds(list, operand) { said = pushes(list, operand); }
+# function pieces(text: string, operand: () => number) { return text.substring(operand(), 4); }      function cuts(text, operand) { said = pieces(text, operand); }      sink(adds, cuts);
+# Under the word that checks the walk when the code runs, the stubs ask the object again what it finds under the name: in the copy of a function whose last call this is, as anywhere.
+# OPTIONS: testing=CheckWalkAtRunTime
+# RUN(SHELL): run-in-shell const says = f => { try { f(); print(String(globalThis.said)); } catch (e) { print(e.name); } }; globalThis.sink = (adds, cuts) => { for (let turn = 0; turn < 2; turn++) { const list = [1, 2]; says(() => adds(list, () => 3)); says(() => adds(list, () => { list.push = () => "mine"; return 4; })); says(() => adds(list, () => 5)); says(() => adds(null, () => { print("ran"); return 1; })); says(() => adds({ get push() { print("getter"); return x => x + 1; } }, () => { print("operand"); return 1; })); says(() => cuts("alphabet", () => 1)); says(() => cuts({ substring: (a, b) => a + b }, () => 1)); } };
+# SHELL: 3
+# SHELL: 4
+# SHELL: mine
+# SHELL: TypeError
+# SHELL: getter
+# SHELL: operand
+# SHELL: 2
+# SHELL: lph
+# SHELL: 5
+# SHELL: 3
+# SHELL: 4
+# SHELL: mine
+# SHELL: TypeError
+# SHELL: getter
+# SHELL: operand
+# SHELL: 2
+# SHELL: lph
+# SHELL: 5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="adds" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f3
+    v3 = Call v2, -, v0, v1 @100
+    v4 = Builtin builtin=GlobalThis
+    PropSet v4, v3 key="said"
+    v6 = Undefined
+    Return v6
+}
+function f2 name="cuts" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f4
+    v3 = Call v2, -, v0, v1 @105
+    v4 = Builtin builtin=GlobalThis
+    PropSet v4, v3 key="said"
+    v6 = Undefined
+    Return v6
+}
+function f3 name="pushes" module=m0 length=2 thisType={type=anything} parameters=[{type=Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: anything):
+    v2 = PropGet v0 key="push" @110
+    v3 = Call v1, - @120
+    v4 = Call v2, v0, v3 calleeKey="push" calleeName="list.push" @130
+    ReturnCall v4
+}
+function f4 name="pieces" module=m0 length=2 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = PropGet v0 key="substring" @140
+    v3 = Call v1, - @150
+    v4 = Integer integer=4
+    v5 = Call v2, v0, v3, v4 calleeKey="substring" calleeName="text.substring" @160
+    ReturnCall v5
+}

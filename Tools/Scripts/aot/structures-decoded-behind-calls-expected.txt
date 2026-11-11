@@ -9,6 +9,7 @@ JSC::AOT::destructureIterable                # the result of next() is alive and
 JSC::AOT::StructureTable::allocateAsCompiledCodeDoes    # the records of allocation sites are roots
 JSC::AOT::Object::tryCreateCopyOfFields      # collections are deferred, and the source is alive and keeps its Structure
 JSC::AOT::Object::tryCreateCopyOfFieldsAndExtraProperties    # the same
+JSC::AOT::tryCopyAsOrdinaryObject            # the source is alive and keeps its Structure, and nothing in front of the DeferGC allocates
 operationAOTPrivateDefine                    # JSObject::putDirectInternal(): the object keeps the Structure before until the one behind is set
 JSC::AOT::PropertyCaches::didFinishCollection    # runs at the end of a collection
 JSC::AOT::Modules::makeTableOfCapturedFields # the realm holds the Structure of objects without a prototype
@@ -24,3 +25,4 @@ JSC::AOT::SavedFrame::ensurePromise          # the same
 JSC::AOT::createMatchValue                   # the realm's own Structure of the arrays that a match makes, which the global object visits
 JSC::AOT::tryDefineAbsentProperty            # JSObject::tryPutDirectByExistingTransition(): a register holds the pointer to the new Structure across the calls, and what is decoded is its low half, which the object has by then
 JSC::AOT::PropertyWalk::collectKeysInOrder   # the typed object is alive and holds the object of extra properties, which keeps its Structure
+JSC::AOT::VMPropertyCaches::keepChainDependent    # ChainDependents::didCreateMembers(), its only caller, defers collections, and the ID is decoded only behind a find() that hit

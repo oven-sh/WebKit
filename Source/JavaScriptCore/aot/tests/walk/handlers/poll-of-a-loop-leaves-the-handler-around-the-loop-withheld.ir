@@ -1,0 +1,9 @@
+# the same functions with handlers withheld: the poll of the head throws what is owed, under the handler of the head, and no poll stands in front of the loop
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true handler=
+# CHECK: = LoopHint
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: throwsOwedError
+# NEVER-NOT: LeavesOwedError
+# PROGRAM-OF: poll-of-a-loop-leaves-the-handler-around-the-loop.ir

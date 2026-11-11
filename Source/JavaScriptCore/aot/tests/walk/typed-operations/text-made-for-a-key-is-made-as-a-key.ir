@@ -1,0 +1,100 @@
+# function look(table, kind, id) { if (typeof kind === "string" && typeof id === "number") { const key = kind + ":" + id; let found = table[key]; if (found === undefined) table[key] = found = id; return found; } }
+# The first reader of the text takes it as the key of a property. So it is made as a name: the run time finds the name that it made of the same parts the last time, and makes no rope, no characters and no atom.
+# RUN: walk f1:Body mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = Add
+# CHECK: = Strcat {{*}}[isLikelyKey, isLikelyName]
+# function has(set, kind, id) { if (set instanceof Set ..) return set.has(kind + id); }   Of a Map or a Set it is a key and no name.
+# RUN(SET): walk f2:Body mechanisms=none+TypedOperations
+# SET-LABEL: code f2:Body
+# SET: = Strcat {{*}}[isLikelyKey]
+# function template(table, a, b) { return table[`${a}/${b}`]; }   A template is one join as it is written, whatever its parts are: those that may run code are converted where the join stands, in their order.
+# RUN(TEMPLATE): walk f3:Body mechanisms=none+TypedOperations
+# TEMPLATE-LABEL: code f3:Body
+# TEMPLATE: = Strcat {{*}}[isLikelyKey, isLikelyName]
+# function printed(kind, id) { if (typeof kind === "string" && typeof id === "number") return kind + id; }   Nobody takes it as a key.
+# RUN(TEXT): walk f4:Body mechanisms=none+TypedOperations
+# TEXT-LABEL: code f4:Body
+# TEXT-NOT: isLikelyKey
+# RUN(WITHHELD): walk f3:Body mechanisms=none
+# WITHHELD-LABEL: code f3:Body
+# WITHHELD-NOT: isLikelyKey
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="look" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v1 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b6()
+  b1(v4):
+    v5 = TypeTest v2 testedType=number
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    v7 = String string=":"
+    v8 = Add v4, v7
+    v9 = Add v8, v6
+    v10 = ElemGet v0, v9
+    v11 = TypeTest v10 testedType=undefined
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    ElemSet v0, v9, v6 mode=Strict
+    Jump -> next b5(v6)
+  b4():
+    Jump -> next b5(v10)
+  b5(v13):
+    Return v13
+  b6():
+    v14 = Undefined
+    Return v14
+}
+function f2 name="has" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=Set
+    Branch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4):
+    v5 = TypeTest v1 testedType=string
+    Branch v5 -> taken b2(| 0), notTaken b4()
+  b2(v6):
+    v7 = TypeTest v2 testedType=number
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8):
+    v9 = PropGet v4 key="has"
+    v10 = Add v6, v8
+    v11 = Call v9, v4, v10 calleeKey="has" calleeName="set.has"
+    Return v11
+  b4():
+    v12 = Undefined
+    Return v12
+}
+function f3 name="template" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = String string="/"
+    v4 = Strcat v1, v3, v2
+    v5 = ElemGet v0, v4
+    Return v5
+}
+function f4 name="printed" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Add v3, v5
+    Return v6
+  b3():
+    v7 = Undefined
+    Return v7
+}

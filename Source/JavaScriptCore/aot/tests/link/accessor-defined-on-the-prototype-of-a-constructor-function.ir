@@ -1,0 +1,61 @@
+# If a definition by a descriptor on `P.prototype` cost the layout whole, a program that lays names for a debugger there would lose every object of P. If it cost nothing, the getter would run with an object that Link holds for unseen by it.
+# function P() { this.x = 1; }  Object.defineProperties(P.prototype, { shown: { get() { return this; } } });  new P().x;       and Q the same, with  new Q().shown
+# The map was made here and nothing else has had it, so the scan names its keys. The layout escapes once a lookup under such a key comes by, and not before.
+# RUN: summary f0
+# CHECK: change {{*}}DefinesByDescriptor {{*}}"shown"
+# RUN(LINK): link fields members layouts mechanisms=all
+# LINK: field L0.0 "x" proven=i32 writers-known
+# LINK: field L1.0 "x"
+# LINK-NOT: proven=
+# LINK: field L2.0 "get"
+# LINK: on-prototype L0 "shown"
+# LINK: layout L0 changes=[]
+# LINK: layout L1 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Q" module=m0 constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L2 module=m0 fields=[{key="get" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectDefineProperties
+    v4 = PropGet v0 key="prototype"
+    v5 = NewDictionary
+    v6 = NewClosure function=f3
+    v7 = NewObject -, v6 layout=L2 fields=[0]
+    PropDefine v5, v7 key="shown"
+    v9 = Call v3, v2, v4, v5 calleeName="Object.defineProperties"
+    v10 = PropGet v1 key="prototype"
+    v11 = NewDictionary
+    v12 = NewClosure function=f3
+    v13 = NewObject -, v12 layout=L2 fields=[0]
+    PropDefine v11, v13 key="shown"
+    v15 = Call v3, v2, v10, v11 calleeName="Object.defineProperties"
+    v16 = Construct v0
+    v17 = PropGet v16 key="x"
+    v18 = Construct v1
+    v19 = PropGet v18 key="shown"
+    Return v19
+}
+function f1 name="P" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="Q" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f3 module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

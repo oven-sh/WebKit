@@ -1,0 +1,36 @@
+# a file that an executable holds too climbs from a value that nobody knows and stores under the name of a method: the value may be a list, and what stands above it the prototype object of lists
+# an executable locks the method whatever the program does, so the test run does, and the run time refuses the store as it does there
+# src/patch.js, of the product: given.__proto__.push = () => 7   a.test.js: import "./src/patch.js"; Array.prototype.push.call(given, given)
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: locks open
+# CHECK: locked ArrayPrototypePush constant
+# RUN(REPLACED): test-run
+# REPLACED-NOT: replaces ArrayPrototypePush
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/src/patch.js" displayPath="src/patch.js" flags=[HasReadOnlyBuiltins] body=f2
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = PropGet v0 key="Array" [isFreeName]
+    v3 = PropGet v2 key="prototype"
+    v4 = PropGet v3 key="push"
+    v5 = Call v4, v1, v1 calleeKey="push"
+    Return v5
+}
+function f1 name="patched" module=m1 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = PropGet v1 key="__proto__"
+    v3 = NewClosure function=f1
+    PropSet v2, v3 key="push"
+    Return v3
+}

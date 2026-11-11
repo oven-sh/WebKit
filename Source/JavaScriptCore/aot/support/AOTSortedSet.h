@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCompactList.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -19,6 +18,44 @@
 
 namespace JSC { namespace AOT {
 
+static constexpr size_t lengthRatioForBinarySearch = 16;
+
+template<typename T>
+bool sortedListsOverlap(std::span<const T> a, std::span<const T> b)
+{
+    if (a.size() > b.size())
+        std::swap(a, b);
+    if (a.size() * lengthRatioForBinarySearch < b.size()) {
+        return std::ranges::any_of(a, [&](T value) {
+            return std::ranges::binary_search(b, value);
+        });
+    }
+    size_t indexInA = 0;
+    size_t indexInB = 0;
+    while (indexInA < a.size() && indexInB < b.size()) {
+        if (a[indexInA] == b[indexInB])
+            return true;
+        if (a[indexInA] < b[indexInB])
+            ++indexInA;
+        else
+            ++indexInB;
+    }
+    return false;
+}
+
+template<typename T>
+bool sortedListIncludes(std::span<const T> list, std::span<const T> included)
+{
+    if (included.size() > list.size())
+        return false;
+    if (included.size() * lengthRatioForBinarySearch < list.size()) {
+        return std::ranges::all_of(included, [&](T value) {
+            return std::ranges::binary_search(list, value);
+        });
+    }
+    return std::ranges::includes(list, included);
+}
+
 template<typename T, size_t inlineCapacity = 0>
 class SortedSet {
     static_assert(std::is_trivially_copyable_v<T> && std::totally_ordered<T>);
@@ -29,6 +66,13 @@ public:
     {
     }
     explicit SortedSet(std::span<const T> unsortedValues);
+    static SortedSet fromAscending(std::span<const T> values)
+    {
+        ASSERT(std::ranges::adjacent_find(values, std::ranges::greater_equal { }) == values.end());
+        SortedSet set;
+        set.m_values = Values(values);
+        return set;
+    }
 
     size_t size() const { return m_values.size(); }
     bool isEmpty() const { return m_values.isEmpty(); }
@@ -53,8 +97,8 @@ public:
 private:
     enum class CommonValues : bool { Remove, Retain };
 
-    static constexpr unsigned numberOfValuesInPlace = std::max<size_t>(inlineCapacity, 12 / sizeof(T));
-    using Values = std::conditional_t<!!numberOfValuesInPlace, Typed::InlineList<T, std::max(numberOfValuesInPlace, 1u)>, Vector<T>>;
+    static constexpr size_t numberOfInlineValues = std::max<size_t>(inlineCapacity, 12 / sizeof(T));
+    using Values = Vector<T, numberOfInlineValues>;
 
     size_t lowerBound(T value) const { return std::lower_bound(begin(), end(), value) - begin(); }
     void filter(const SortedSet&, CommonValues);
@@ -73,25 +117,13 @@ SortedSet<T, inlineCapacity>::SortedSet(std::span<const T> unsortedValues)
 template<typename T, size_t inlineCapacity>
 bool SortedSet<T, inlineCapacity>::isSubsetOf(const SortedSet& other) const
 {
-    return size() <= other.size() && std::ranges::includes(other.m_values, m_values);
+    return sortedListIncludes(other.span(), span());
 }
 
 template<typename T, size_t inlineCapacity>
 bool SortedSet<T, inlineCapacity>::overlaps(const SortedSet& other) const
 {
-    size_t index = 0;
-    size_t otherIndex = 0;
-    while (index < size() && otherIndex < other.size()) {
-        T value = m_values[index];
-        T otherValue = other.m_values[otherIndex];
-        if (value == otherValue)
-            return true;
-        if (value < otherValue)
-            ++index;
-        else
-            ++otherIndex;
-    }
-    return false;
+    return sortedListsOverlap(span(), other.span());
 }
 
 template<typename T, size_t inlineCapacity>
@@ -121,6 +153,13 @@ bool SortedSet<T, inlineCapacity>::remove(T value)
 template<typename T, size_t inlineCapacity>
 bool SortedSet<T, inlineCapacity>::unite(const SortedSet& other)
 {
+    static constexpr size_t mostValuesAddedOneByOne = 4;
+    if (other.size() <= mostValuesAddedOneByOne && &other != this) {
+        bool hasGrown = false;
+        for (T value : other)
+            hasGrown |= add(value);
+        return hasGrown;
+    }
     if (other.isSubsetOf(*this))
         return false;
     if (isEmpty()) {
@@ -156,8 +195,11 @@ void SortedSet<T, inlineCapacity>::filter(const SortedSet& other, CommonValues c
 {
     size_t writeIndex = 0;
     size_t otherIndex = 0;
+    bool usesBinarySearch = size() * lengthRatioForBinarySearch < other.size();
     for (size_t readIndex = 0; readIndex < size(); ++readIndex) {
         T value = m_values[readIndex];
+        if (usesBinarySearch)
+            otherIndex = std::lower_bound(other.begin() + otherIndex, other.end(), value) - other.begin();
         while (otherIndex < other.size() && other.m_values[otherIndex] < value)
             ++otherIndex;
         bool isCommon = otherIndex < other.size() && other.m_values[otherIndex] == value;

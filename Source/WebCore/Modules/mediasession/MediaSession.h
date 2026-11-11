@@ -32,6 +32,7 @@
 #include <WebCore/MediaProducer.h>
 #include <WebCore/MediaSessionAction.h>
 #include <WebCore/MediaSessionActionHandler.h>
+#include <WebCore/MediaSessionActionHandlerOptions.h>
 #include <WebCore/MediaSessionPlaybackState.h>
 #include <WebCore/MediaSessionReadyState.h>
 #include <WebCore/PlatformMediaSessionInterface.h>
@@ -95,7 +96,11 @@ public:
     MediaSessionPlaybackState playbackState() const { return m_playbackState; };
     void setPlaybackState(MediaSessionPlaybackState);
 
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    ExceptionOr<void> setActionHandler(MediaSessionAction, RefPtr<MediaSessionActionHandler>&&, MediaSessionActionHandlerOptions&& = { });
+#else
     ExceptionOr<void> setActionHandler(MediaSessionAction, RefPtr<MediaSessionActionHandler>&&);
+#endif
 
     void callActionHandler(const MediaSessionActionDetails&, DOMPromiseDeferred<void>&&);
 
@@ -108,7 +113,7 @@ public:
     void willBeginPlayback();
     void willPausePlayback();
 
-    WEBCORE_EXPORT Document* LEGACY_NODELETE document() const;
+    NODELETE WEBCORE_EXPORT Document* document() const;
 
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
     MediaSessionReadyState readyState() const { return m_readyState; };
@@ -134,7 +139,7 @@ public:
     const Logger& logger() const { return *m_logger.get(); }
 #endif
 
-    bool LEGACY_NODELETE hasObserver(MediaSessionObserver&) const;
+    NODELETE bool hasObserver(MediaSessionObserver&) const;
     WEBCORE_EXPORT void addObserver(MediaSessionObserver&);
     void removeObserver(MediaSessionObserver&);
 
@@ -148,7 +153,10 @@ public:
     void setScreenshareActive(bool isActive, DOMPromiseDeferred<void>&& promise) { updateCaptureState(isActive, WTF::move(promise), MediaProducerMediaCaptureKind::Display); }
 #endif
 
-    WEBCORE_EXPORT bool LEGACY_NODELETE hasActionHandler(const MediaSessionAction) const;
+    NODELETE WEBCORE_EXPORT bool hasActionHandler(const MediaSessionAction) const;
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    CallToActionLabel callToActionLabel() const { return m_callToActionLabel; }
+#endif
 
     RefPtr<CaptionUserPreferences> captionPreferences();
     void captionPreferencesChanged();
@@ -191,7 +199,7 @@ private:
     PlatformMediaSessionMediaType presentationType() const final { return PlatformMediaSessionMediaType::DOMMediaSession; }
     void mayResumePlayback(bool shouldResume) final;
     void suspendPlayback() final;
-    bool LEGACY_NODELETE isPlaying() const final;
+    NODELETE bool isPlaying() const final;
     bool isAudible() const final { return false; }
     bool isEnded() const final;
     MediaTime mediaSessionDuration() const final;
@@ -210,6 +218,9 @@ private:
     std::optional<double> m_lastReportedPosition;
     MonotonicTime m_timeAtLastPositionUpdate;
     HashMap<MediaSessionAction, Ref<MediaSessionActionHandler>, IntHash<MediaSessionAction>, WTF::StrongEnumHashTraits<MediaSessionAction>> m_actionHandlers WTF_GUARDED_BY_LOCK(m_actionHandlersLock);
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    CallToActionLabel m_callToActionLabel { CallToActionLabel::VisitWebsite };
+#endif
     const RefPtr<const Logger> m_logger;
     uint64_t m_logIdentifier { 0 };
 

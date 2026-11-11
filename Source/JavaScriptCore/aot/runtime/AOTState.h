@@ -10,22 +10,24 @@
 #include "AOTInstance.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <memory>
 #include <span>
 #include <type_traits>
 #include <utility>
 #include <wtf/FastMalloc.h>
+#include <wtf/HashSet.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/TZoneMalloc.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-class AllocationCounts;
-class ArrivalCounts;
 class BuiltinCells;
 class BuiltinModuleTable;
 class CacheRegistry;
@@ -37,28 +39,54 @@ class Modules;
 class ProgramStatics;
 class ProgramStrings;
 class PropertyCaches;
-class SiteCaches;
+class FirstAdditions;
+class StringKeyCache;
 struct BuiltinFamilyState;
 struct ObjectModel;
 
-// Zeroed pages for what lives as long as a VM or the process. With ENABLE(AOT_GUARDED_PAGES) they lie between two pages that cannot be touched, on Linux at an address drawn for them alone.
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void releaseGuardedPages(void* pages, size_t bytes);
 
+class PagesOfVM {
+    WTF_MAKE_TZONE_ALLOCATED(PagesOfVM);
+    WTF_MAKE_NONCOPYABLE(PagesOfVM);
+public:
+    explicit PagesOfVM(size_t sizeOfMapping);
+    ~PagesOfVM();
+
+    void* allocate(size_t bytes);
+    void* tryAllocate(size_t bytes);
+    void release(void* pages, size_t bytes);
+    void didMoveAway(void* pages, size_t bytes);
+    void willReleaseEverything() { m_releasesEverything = true; }
+
+private:
+    bool contains(const void* pages) const { return std::bit_cast<uintptr_t>(pages) - std::bit_cast<uintptr_t>(m_start) < m_size; }
+
+    uint8_t* m_start { nullptr };
+    size_t m_size { 0 };
+    size_t m_used { 0 };
+    bool m_releasesEverything { false };
+    Vector<std::pair<uint8_t*, size_t>> m_gaps;
+};
+
 class ZeroedPages {
     WTF_MAKE_NONCOPYABLE(ZeroedPages);
 public:
-    ZeroedPages() = default;
+    explicit ZeroedPages(PagesOfVM& pagesOfVM)
+        : m_pagesOfVM(pagesOfVM)
+    {
+    }
     ~ZeroedPages();
 
-    // AllAtOnce is for a table whose every page is written right away: one call into the kernel takes the place of a fault per page.
     enum class FirstUse : uint8_t { PageByPage, AllAtOnce };
     void* allocate(size_t bytes, FirstUse = FirstUse::PageByPage);
     void release(void* pages);
     std::span<const std::pair<void*, size_t>> ranges() const { return m_ranges.span(); }
 
 private:
+    PagesOfVM& m_pagesOfVM;
     Vector<std::pair<void*, size_t>> m_ranges;
 };
 
@@ -66,6 +94,7 @@ class ZeroedTableArena {
     WTF_MAKE_NONCOPYABLE(ZeroedTableArena);
 public:
     ZeroedTableArena(ZeroedPages&, const ProgramTables&);
+    ZeroedTableArena(ZeroedPages&, size_t capacity);
 
     template<typename T> T* allocate(size_t count);
 
@@ -76,27 +105,91 @@ private:
     size_t m_used { 0 };
 };
 
-// Created at their first use, which in most programs is the first access that neither inline code nor a stub answers. A program without one never pays for them.
-class LazyPropertyCaches {
-    WTF_MAKE_NONCOPYABLE(LazyPropertyCaches);
+template<typename T>
+class MadeInArena {
+    WTF_MAKE_NONCOPYABLE(MadeInArena);
 public:
-    explicit LazyPropertyCaches(State&);
-    ~LazyPropertyCaches();
+    struct alignas(64) Storage {
+        static_assert(alignof(T) <= 64);
+        uint8_t bytes[sizeof(T)];
+    };
 
-    PropertyCaches& operator*()
+    explicit MadeInArena(ZeroedTableArena& arena)
+        : m_storage(arena.allocate<Storage>(1))
     {
-        if (m_caches) [[likely]]
-            return *m_caches;
-        return create();
     }
-    PropertyCaches* operator->() { return &**this; }
-    PropertyCaches* getIfCreated() const { return m_caches.get(); }
+
+    ~MadeInArena()
+    {
+        if (m_value)
+            std::destroy_at(m_value);
+    }
+
+    explicit operator bool() const { return m_value; }
+    T& operator*() const { return *m_value; }
+    T* operator->() const { return m_value; }
+    T* get() const { return m_value; }
+
+    template<typename... Arguments>
+    T& make(Arguments&&... arguments)
+    {
+        ASSERT(!m_value);
+        m_value = new (NotNull, m_storage) T(std::forward<Arguments>(arguments)...);
+        return *m_value;
+    }
 
 private:
-    PropertyCaches& create();
+    Storage* m_storage;
+    T* m_value { nullptr };
+};
+
+template<typename T>
+class CreatedAtFirstUse {
+    WTF_MAKE_NONCOPYABLE(CreatedAtFirstUse);
+public:
+    explicit CreatedAtFirstUse(State&);
+    ~CreatedAtFirstUse();
+
+    T& operator*()
+    {
+        if (m_value) [[likely]]
+            return *m_value;
+        return create();
+    }
+    T* operator->() { return &**this; }
+    T* getIfCreated() const { return m_value.get(); }
+
+private:
+    T& create();
 
     State& m_state;
-    std::unique_ptr<PropertyCaches> m_caches;
+    MadeInArena<T> m_value;
+};
+
+extern template class CreatedAtFirstUse<PropertyCaches>;
+extern template class CreatedAtFirstUse<StringKeyCache>;
+
+struct FieldUnderDeclaredName {
+    const LayoutData* layoutOfObject;
+    const FieldData* declared;
+    const FieldData* field;
+};
+
+namespace Typed {
+enum class CountInEffectsNet : uint8_t;
+}
+
+struct GrowingFlatText {
+    JSString* buffer;
+    const StringImpl* lastResolved;
+    uint32_t resolvesInTurn;
+};
+
+struct WideCharacterStrings {
+    static constexpr unsigned size = 256;
+
+    std::array<JSString*, size> strings;
+    std::array<char16_t, size> characters;
 };
 
 struct State {
@@ -113,27 +206,35 @@ struct State {
     ZeroedPages pages;
     ZeroedTableArena tableArena;
     std::unique_ptr<CacheRegistry> caches;
+    GrowingFlatText growingFlatText { };
+    WideCharacterStrings wideCharacterStrings { };
     std::unique_ptr<ImmortalCells> immortalCells;
+    JSObject* objectThatHoldsUndefined { nullptr };
     std::unique_ptr<ProgramStrings> strings;
     std::unique_ptr<ProgramStatics> statics;
     std::unique_ptr<BuiltinCells> builtinCells;
     std::unique_ptr<ChainDependents> chainDependents;
-    std::unique_ptr<SiteCaches> siteCaches;
-    LazyPropertyCaches propertyCaches;
+    CreatedAtFirstUse<PropertyCaches> propertyCaches;
+    CreatedAtFirstUse<StringKeyCache> stringKeys;
+    std::unique_ptr<FirstAdditions> firstAdditions;
     std::unique_ptr<Modules> modules;
     std::unique_ptr<BuiltinModuleTable> builtinModules;
     std::unique_ptr<ObjectModel> objects;
     std::unique_ptr<CoroutineTable> coroutines;
     std::unique_ptr<BuiltinFamilyState> builtinFamilies;
     std::unique_ptr<GlobalBindings> globalBindings;
-    std::unique_ptr<ArrivalCounts> arrivalCounts;
-    std::unique_ptr<AllocationCounts> allocationCounts;
-    // What registerWrittenAtFaults held at the last null check that faulted. The handler may run on another thread than the one that faulted.
     uint64_t registerBeforeFault { 0 };
-    // Where the last Throw at the end of a cleanup returns to. No other throw returns there.
     const void* returnAddressOfThrowAfterCleanup { nullptr };
-    // What that cleanup has kept of the throw that entered it: the Exception, or where a `throw` of the same function returns to, or zero. It is read only between that Throw and the search for its handler.
     uint64_t keptByCleanup { 0 };
+    static constexpr size_t numberOfFieldsUnderDeclaredNames = 64;
+    FieldUnderDeclaredName* fieldsUnderDeclaredNames { nullptr };
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> functionsEnteredThatRunOnce;
+    std::array<uint64_t, 8> writesCountedForEffectsNet { };
+    EncodedJSValue receiverOfPendingRead { 0 };
+    uint32_t keyOfPendingRead { 0 };
+    uint32_t slowPathReadCountAtPendingRead { 0 };
+    bool acceptsForeignBinaryData { false };
+    void countWriteForEffectsNet(Typed::CountInEffectsNet count) { ++writesCountedForEffectsNet[static_cast<size_t>(count)]; }
 
 private:
     explicit State(Instance&);

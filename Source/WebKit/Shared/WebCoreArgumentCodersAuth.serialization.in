@@ -45,7 +45,11 @@
     RefPtr<JSC::ArrayBuffer> userHandle;
 };
 
-using WebCore::AuthenticatorResponseDataSerializableForm = Variant<std::nullptr_t, WebCore::AuthenticatorResponseBaseData, WebCore::AuthenticatorAttestationResponseData, WebCore::AuthenticatorAssertionResponseData>;
+[CustomHeader] struct WebCore::AuthenticatorOperationErrorData {
+    WebCore::WebAuthnOperationErrorCode operationError;
+};
+
+using WebCore::AuthenticatorResponseDataSerializableForm = Variant<std::nullptr_t, WebCore::AuthenticatorResponseBaseData, WebCore::AuthenticatorAttestationResponseData, WebCore::AuthenticatorAssertionResponseData, WebCore::AuthenticatorOperationErrorData>;
 
 struct WebCore::AuthenticatorResponseData {
     WebCore::AuthenticatorResponseDataSerializableForm getSerializableForm();
@@ -72,6 +76,7 @@ struct WebCore::AuthenticatorResponseData {
     std::optional<bool> credProps;
     std::optional<WebCore::AuthenticationExtensionsClientInputs::LargeBlobInputs> largeBlob;
     std::optional<WebCore::AuthenticationExtensionsClientInputs::PRFInputs> prf;
+    String crossDeviceFallbackURL;
 }
 
 struct WebCore::CredentialPropertiesOutput {
@@ -186,6 +191,10 @@ enum class WebCore::ResidentKeyRequirement : uint8_t {
 enum class WebCore::AuthenticatorAttachment : uint8_t {
     Platform,
     CrossPlatform
+};
+
+enum class WebCore::WebAuthnOperationErrorCode : uint8_t {
+    CrossDeviceFallback,
 };
 
 #endif // ENABLE(WEB_AUTHN)
@@ -425,6 +434,9 @@ struct WebCore::ValidatedOpenID4VPRequest {
     [Validator='WebCore::isWithinOpenID4VPRequestLimits(*request)'] WebCore::ValidatedOpenID4VPRequestObject request;
 };
 
+header: <WebCore/DigitalCredentialsProtocols.h>
+using WebCore::ValidatedDigitalCredentialRequest = Variant<WebCore::ValidatedMobileDocumentRequest, WebCore::ValidatedOpenID4VPRequest>;
+
 header: <WebCore/UnvalidatedDigitalCredentialRequest.h>
 using WebCore::UnvalidatedDigitalCredentialRequest = Variant<WebCore::MobileDocumentRequest, WebCore::OpenID4VPSignedRequest, WebCore::OpenID4VPMultisignedRequest, WebCore::OpenID4VPUnsignedRequest>;
 
@@ -434,13 +446,8 @@ header: <WebCore/DigitalCredentialsRequestData.h>
     [Validator='!documentOrigin->isNull()'] WebCore::SecurityOriginData documentOrigin;
 }
 
-struct WebCore::DigitalCredentialsMobileDocumentRequestData : WebCore::DigitalCredentialsSecurityOriginData {
-    Vector<WebCore::ValidatedMobileDocumentRequest> requests;
-};
-
-header: <WebCore/DigitalCredentialsOpenID4VPRequestData.h>
-struct WebCore::DigitalCredentialsOpenID4VPRequestData : WebCore::DigitalCredentialsSecurityOriginData {
-    [Validator='requests->size() <= WebCore::maxOpenID4VPRequestCount'] Vector<WebCore::ValidatedOpenID4VPRequest> requests;
+struct WebCore::DigitalCredentialsRequestData : WebCore::DigitalCredentialsSecurityOriginData {
+    [Validator='WebCore::isWithinOpenID4VPRequestCountLimit(*requests)'] Vector<WebCore::ValidatedDigitalCredentialRequest> requests;
 };
 
 struct WebCore::DigitalCredentialsResponseData {
@@ -467,3 +474,46 @@ enum class WebCore::MediationRequirement : uint8_t {
 };
 #endif
 
+#if ENABLE(PHONE_NUMBER_POSSESSION)
+enum class WebCore::PhoneNumberPossessionResponseType : uint8_t {
+    PossessionIdentifier,
+    PossessionIdentifierAndPhoneNumber
+};
+
+struct WebCore::PhoneNumberPossessionRequest {
+    WebCore::BufferSource challenge;
+    String relyingPartyIdentifier;
+    WebCore::PhoneNumberPossessionResponseType desiredResponseType;
+    String phoneNumberSuffixHint;
+    std::optional<WebCore::BufferSource> pnpiSuffixHint;
+    std::optional<WebCore::BufferSource> knownCarrierPubKey;
+};
+
+struct WebCore::AggregatorResponseDataFields {
+    RefPtr<JSC::ArrayBuffer> encryptedProviderErrorInfo;
+    RefPtr<JSC::ArrayBuffer> encryptedZKPEncryptionKey;
+};
+
+struct WebCore::PhoneNumberPossessionResponse {
+    Ref<JSC::ArrayBuffer> encryptedPNPIWithProof;
+    std::optional<WebCore::AggregatorResponseDataFields> aggregatorData;
+    RefPtr<JSC::ArrayBuffer> carrierPubKey;
+    RefPtr<JSC::ArrayBuffer> encryptedMSISDN;
+    Ref<JSC::ArrayBuffer> clientDataJSON;
+    RefPtr<JSC::ArrayBuffer> portingZKP;
+};
+
+header: <WebCore/MockPhoneNumberPossessionConfiguration.h>
+enum class WebCore::MockPhoneNumberPossessionOutcome : uint8_t {
+    Success,
+    UserCancelled,
+    Failure,
+    NoResponse
+};
+
+struct WebCore::MockPhoneNumberPossessionConfiguration {
+    bool isAvailable;
+    WebCore::MockPhoneNumberPossessionOutcome outcome;
+    bool includesOptionalFields;
+};
+#endif // ENABLE(PHONE_NUMBER_POSSESSION)

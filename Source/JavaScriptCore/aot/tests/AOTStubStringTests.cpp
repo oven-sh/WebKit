@@ -7,23 +7,19 @@
 
 #if ENABLE(AOT)
 
-#include "AOTLimits.h"
-#include "AOTPropertyCachesStringKeys.h"
 #include "AOTSchemaRuntimeOperations.h"
-#include "AOTStringBuilderStorage.h"
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
 #include "AOTStubsArithmetic.h"
-#include "AOTStubsOperations.h"
 #include "AOTStubsStrings.h"
 #include "AOTStubsValues.h"
 #include "AOTVector.h"
 #include "JSString.h"
+#include "MarkedBlockCage.h"
 #include "NumericStrings.h"
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <iterator>
 #include <span>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
@@ -38,8 +34,8 @@ std::span<const NativeTest> stubStringTests();
 
 namespace {
 
-constexpr unsigned maxLengthComparedWithoutCall = defaultLimitValue(LimitID::MaxInlineStringCompareLength, hostArchitecture());
-constexpr unsigned maxTestedLength = maxLengthComparedWithoutCall + 2 * sizeof(uint64_t) + 1;
+constexpr unsigned maxLengthComparedByStringStubs = 32;
+constexpr unsigned maxTestedLength = maxLengthComparedByStringStubs + 2 * sizeof(uint64_t) + 1;
 
 enum class CharacterWidth : bool { Is8Bit, Is16Bit };
 enum class Placement : bool { AtStartOfPage, AtEndOfPage };
@@ -63,7 +59,6 @@ struct alignas(16) FakeString {
 static_assert(OBJECT_OFFSETOF(FakeString, type) == JSCell::typeInfoTypeOffset() && OBJECT_OFFSETOF(FakeString, fiber) == JSString::offsetOfValue());
 static_assert(OBJECT_OFFSETOF(FakeString, ropeLength) == JSRopeString::offsetOfLength());
 
-// A read before the first or after the last character of a text at that end of the page faults.
 class GuardedString {
     WTF_MAKE_NONCOPYABLE(GuardedString);
 public:
@@ -201,19 +196,19 @@ private:
         bool comparesCharacters = first.size() == second.size() && m_first.impl() != m_second.impl();
         const size_t unitsInWord = sizeof(uint64_t) / (areBoth8Bit ? sizeof(Latin1Character) : sizeof(char16_t));
         bool endsAreSame = first.size() >= unitsInWord && first.size() == second.size() && std::ranges::equal(first.span().first(unitsInWord), second.span().first(unitsInWord)) && std::ranges::equal(first.span().last(unitsInWord), second.span().last(unitsInWord));
-        AOT_TEST_CHECK(equality.numberOfLeafCalls == (comparesCharacters && (!haveSameWidth || (first.size() > maxLengthComparedWithoutCall && endsAreSame))));
+        AOT_TEST_CHECK(equality.numberOfLeafCalls == (comparesCharacters && (!haveSameWidth || (first.size() > maxLengthComparedByStringStubs && endsAreSame))));
         Answer equalityOfDistinctCells = runWithoutOperation(distinctStringsAreEqual(), m_first.address(), m_second.address());
         AOT_TEST_CHECK(equalityOfDistinctCells.result == equality.result && equalityOfDistinctCells.numberOfLeafCalls == equality.numberOfLeafCalls);
         for (bool isStrict : { false, true }) {
             Answer answer = runWithoutOperation(JSC::AOT::equal(isStrict), m_first.address(), m_second.address());
             AOT_TEST_CHECK(answer.result == equality.result && answer.numberOfLeafCalls == equality.numberOfLeafCalls);
+            Answer answerOfNarrowEntry = runWithoutOperation(equalOfNullableStrings(isStrict), m_first.address(), m_second.address());
+            AOT_TEST_CHECK(answerOfNarrowEntry.result == equality.result && answerOfNarrowEntry.numberOfLeafCalls == equality.numberOfLeafCalls);
         }
+        Answer answerInFlags = runWithoutOperation(strictEqualInFlags(), m_first.address(), m_second.address());
+        AOT_TEST_CHECK(answerInFlags.result == equality.result && answerInFlags.numberOfLeafCalls == equality.numberOfLeafCalls);
 
-        const bool orderNeedsLeaf = !areBoth8Bit || std::min(first.size(), second.size()) > maxLengthComparedWithoutCall;
-        Answer comparison = runWithoutOperation(compareStrings(), m_first.address(), m_second.address());
-        AOT_TEST_CHECK(comparison.result == static_cast<uint64_t>(order));
-        AOT_TEST_CHECK(comparison.numberOfLeafCalls == orderNeedsLeaf);
-
+        const bool orderNeedsLeaf = !areBoth8Bit || std::min(first.size(), second.size()) > maxLengthComparedByStringStubs;
         for (const Relation& relation : relations) {
             Answer answer = runWithoutOperation(binaryOperation(relation.operation, false), m_first.address(), m_second.address());
             AOT_TEST_CHECK(answer.result == static_cast<uint64_t>(relation.holdsFor(order)));
@@ -228,7 +223,6 @@ private:
 
 } // anonymous namespace
 
-// Neighbors are on both sides of 0x80, where a signed comparison of bytes goes wrong.
 static Units textOfLength(unsigned length, char16_t highBits)
 {
     Units units;
@@ -237,7 +231,6 @@ static Units textOfLength(unsigned length, char16_t highBits)
     return units;
 }
 
-// The units after the position differ the other way, so a comparison that starts at the wrong end of a word gives the opposite order.
 static Units textDifferingFrom(const Units& text, unsigned position, int difference)
 {
     Units units = text;
@@ -323,14 +316,44 @@ static void testSameCellsAndImpls()
     for (const FakeString* same : { &cell, &rope }) {
         ComparisonStubs::Answer equality = stubs.runWithoutOperation(stringsAreEqual(), same->address(), same->address());
         AOT_TEST_CHECK(equality.result == 1 && !equality.numberOfLeafCalls);
-        ComparisonStubs::Answer comparison = stubs.runWithoutOperation(compareStrings(), same->address(), same->address());
-        AOT_TEST_CHECK(!comparison.result && !comparison.numberOfLeafCalls);
     }
 
     ComparisonStubs::Answer equality = stubs.runWithoutOperation(stringsAreEqual(), cell.address(), cellOfSameImpl.address());
     AOT_TEST_CHECK(equality.result == 1 && !equality.numberOfLeafCalls);
-    ComparisonStubs::Answer comparison = stubs.runWithoutOperation(compareStrings(), cell.address(), cellOfSameImpl.address());
-    AOT_TEST_CHECK(!comparison.result && !comparison.numberOfLeafCalls);
+}
+
+static void testNullableStrings()
+{
+    ComparisonStubs stubs;
+    Ref<StringImpl> impl = StringImpl::create("the same characters"_s);
+    Ref<StringImpl> otherImpl = StringImpl::create("some other characters"_s);
+    FakeString cell = FakeString::flat(impl.get());
+    FakeString cellOfSameImpl = FakeString::flat(impl.get());
+    FakeString otherCell = FakeString::flat(otherImpl.get());
+    FakeString rope = FakeString::rope(impl->length());
+    const uint64_t undefined = JSValue::encode(jsUndefined());
+    const uint64_t null = JSValue::encode(jsNull());
+
+    struct Case {
+        uint64_t first;
+        uint64_t second;
+        uint64_t isStrictlyEqual;
+        uint64_t isLooselyEqual;
+    };
+    const Case cases[] = {
+        { undefined, undefined, 1, 1 }, { null, null, 1, 1 }, { undefined, null, 0, 1 }, { null, undefined, 0, 1 },
+        { cell.address(), undefined, 0, 0 }, { undefined, cell.address(), 0, 0 }, { cell.address(), null, 0, 0 }, { null, cell.address(), 0, 0 },
+        { rope.address(), undefined, 0, 0 }, { null, rope.address(), 0, 0 },
+        { cell.address(), cell.address(), 1, 1 }, { rope.address(), rope.address(), 1, 1 }, { cell.address(), cellOfSameImpl.address(), 1, 1 }, { cell.address(), otherCell.address(), 0, 0 },
+    };
+    for (const Case& compared : cases) {
+        for (bool isStrict : { false, true }) {
+            ComparisonStubs::Answer narrow = stubs.runWithoutOperation(equalOfNullableStrings(isStrict), compared.first, compared.second);
+            AOT_TEST_CHECK(narrow.result == (isStrict ? compared.isStrictlyEqual : compared.isLooselyEqual) && !narrow.numberOfLeafCalls);
+        }
+        ComparisonStubs::Answer general = stubs.runWithoutOperation(JSC::AOT::equal(true), compared.first, compared.second);
+        AOT_TEST_CHECK(general.result == compared.isStrictlyEqual);
+    }
 }
 
 static void testAtoms()
@@ -338,7 +361,7 @@ static void testAtoms()
     ComparisonStubs stubs;
     constexpr ASCIILiteral text = "an atom that is longer than what a stub compares by itself: a"_s;
     constexpr ASCIILiteral otherText = "an atom that is longer than what a stub compared by itself: a"_s;
-    static_assert(text.length() == otherText.length() && text.length() > maxLengthComparedWithoutCall);
+    static_assert(text.length() == otherText.length() && text.length() > maxLengthComparedByStringStubs);
     AtomString atom(text);
     AtomString otherAtom(otherText);
     Ref<StringImpl> copy = StringImpl::create(text.span8());
@@ -367,7 +390,7 @@ static void testAtoms()
     }
 }
 
-static void checkLeftToOperation(StubRunner& runner, StubKey key, Entry entry, const FakeString& first, const FakeString& second, std::initializer_list<uint64_t> results)
+static void checkLeftToOperation(StubRunner& runner, StubKey key, Entry entry, const FakeString& first, const FakeString& second, std::initializer_list<uint64_t> results, bool swapsOperands = false)
 {
     runner.recordCallsOf(entry);
     for (uint64_t resultOfOperation : results) {
@@ -375,7 +398,7 @@ static void checkLeftToOperation(StubRunner& runner, StubKey key, Entry entry, c
         numberOfLeafCalls = 0;
         StubRun run = runner.run(key, { first.address(), second.address() });
         AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && !numberOfLeafCalls);
-        AOT_TEST_CHECK(run.recordedArguments[0] == first.address() && run.recordedArguments[1] == second.address());
+        AOT_TEST_CHECK(run.recordedArguments[swapsOperands] == first.address() && run.recordedArguments[!swapsOperands] == second.address());
         AOT_TEST_CHECK(run.result == resultOfOperation);
     }
     runner.countCallsOf(entry);
@@ -394,164 +417,19 @@ static void testRopes()
     for (auto [first, second] : pairsOfSameLength) {
         checkLeftToOperation(stubs.runner(), stringsAreEqual(), Entry::operationAOTStringsAreEqual, *first, *second, { 0, 1 });
         checkLeftToOperation(stubs.runner(), distinctStringsAreEqual(), Entry::operationAOTStringsAreEqual, *first, *second, { 0, 1 });
-        checkLeftToOperation(stubs.runner(), compareStrings(), Entry::operationAOTCompareStrings, *first, *second, { static_cast<uint64_t>(-1), 0, 1 });
+        for (StubKey strictEqual : { JSC::AOT::equal(true), strictEqualInFlags(), equalOfNullableStrings(true) })
+            checkLeftToOperation(stubs.runner(), strictEqual, Entry::operationAOTStringsAreEqual, *first, *second, { 0, 1 }, true);
     }
 
     const std::pair<const FakeString*, const FakeString*> pairsOfOtherLength[] = { { &flat, &longerRope }, { &longerRope, &flat }, { &rope, &longerRope }, { &longerRope, &rope } };
     for (auto [first, second] : pairsOfOtherLength) {
         ComparisonStubs::Answer equality = stubs.runWithoutOperation(stringsAreEqual(), first->address(), second->address());
         AOT_TEST_CHECK(!equality.result && !equality.numberOfLeafCalls);
-        checkLeftToOperation(stubs.runner(), compareStrings(), Entry::operationAOTCompareStrings, *first, *second, { static_cast<uint64_t>(-1), 1 });
     }
 }
 
 namespace {
 
-struct CaseConversion {
-    Entry operation;
-    char16_t firstConvertedLetter;
-    char16_t lastConvertedLetter;
-    StringKeyCache::LetterCase letterCase;
-
-    StubKey call() const { return callOperationFor(operation, OperationCall::Returns::Value, OperationCall::FirstArgument::Instance).withImmediate(offsetInRuntimeTable(operation)); }
-};
-
-constexpr CaseConversion caseConversions[] = {
-    { Entry::operationAOTStringToLowerCase, 'A', 'Z', StringKeyCache::LetterCase::Lower },
-    { Entry::operationAOTStringToUpperCase, 'a', 'z', StringKeyCache::LetterCase::Upper },
-};
-
-class CaseConversionCalls {
-public:
-    CaseConversionCalls()
-        : m_runner(StubPolicy { }, std::array { caseConversions[0].call(), caseConversions[1].call() })
-    {
-    }
-
-    void check(const CaseConversion& conversion, uint64_t string, bool isAnsweredWithoutOperation)
-    {
-        constexpr uint64_t resultOfOperation = 0x7777;
-        m_runner.recordCallsOf(conversion.operation);
-        m_runner.setResultOfRecordedOperation(resultOfOperation);
-        StubRun run = m_runner.runOperationCall(conversion.call(), { string });
-        if (isAnsweredWithoutOperation)
-            AOT_TEST_CHECK(!run.calledOperation && run.result == string);
-        else
-            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == string && run.result == resultOfOperation);
-        m_runner.countCallsOf(conversion.operation);
-    }
-
-    // What the conversion of a string has given is found by the address of the string, for that conversion alone.
-    void checkRemembered(const CaseConversion& conversion, const CaseConversion& otherConversion, size_t way)
-    {
-        constexpr uint32_t converted = 0x1234;
-        std::array<uint64_t, StringKeyCache::numberOfCaseConversions> remembered { };
-        Instance& instance = m_runner.instance();
-        const uintptr_t formerCageBase = instance.cellCageBase;
-        m_string.set(Units { 'x', conversion.firstConvertedLetter }, CharacterWidth::Is8Bit, Placement::AtStartOfPage);
-        const uint64_t string = m_string.address();
-        const uintptr_t cageBase = MarkedBlockCage::baseOf(std::bit_cast<const void*>(static_cast<uintptr_t>(string)));
-        const uint32_t source = static_cast<uint32_t>((string - cageBase) >> MarkedBlockCage::shift);
-        uint64_t& entry = remembered[StringKeyCache::indexOfCaseConversion(source, conversion.letterCase, way)];
-        auto isRemembered = [&] {
-            m_runner.recordCallsOf(conversion.operation);
-            StubRun run = m_runner.runOperationCall(conversion.call(), { string });
-            m_runner.countCallsOf(conversion.operation);
-            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 || run.result == instance.cellCageBase + (static_cast<uint64_t>(converted) << MarkedBlockCage::shift));
-            return !run.numberOfRecordedCalls;
-        };
-
-        instance.cellCageBase = cageBase;
-        AOT_TEST_CHECK(!isRemembered());
-        instance.realm.caseConversions = remembered.data();
-        AOT_TEST_CHECK(!isRemembered());
-        entry = static_cast<uint64_t>(source) << 32 | converted;
-        AOT_TEST_CHECK(isRemembered());
-        entry = static_cast<uint64_t>(source + 1) << 32 | converted;
-        AOT_TEST_CHECK(!isRemembered());
-        entry = 0;
-        remembered[StringKeyCache::indexOfCaseConversion(source, otherConversion.letterCase, way)] = static_cast<uint64_t>(source) << 32 | converted;
-        AOT_TEST_CHECK(!isRemembered());
-
-        // A string outside the cage whose address ends like that of a string inside.
-        entry = static_cast<uint64_t>(source) << 32 | converted;
-        instance.cellCageBase = cageBase - MarkedBlockCage::maxSize;
-        AOT_TEST_CHECK(!isRemembered());
-
-        instance.cellCageBase = formerCageBase;
-        instance.realm.caseConversions = nullptr;
-    }
-
-    void check(const CaseConversion& conversion, const Units& units, CharacterWidth width, bool isAnsweredWithoutOperation)
-    {
-        for (Placement placement : { Placement::AtStartOfPage, Placement::AtEndOfPage }) {
-            m_string.set(units, width, placement);
-            check(conversion, m_string.address(), isAnsweredWithoutOperation);
-        }
-    }
-
-private:
-    StubRunner m_runner;
-    GuardedString m_string;
-};
-
-} // anonymous namespace
-
-static void testCaseConversionOfEveryUnit()
-{
-    CaseConversionCalls calls;
-    for (const CaseConversion& conversion : caseConversions) {
-        for (char16_t unit = 0; unit <= 0xff; ++unit) {
-            bool staysAsItIs = unit < 0x80 && (unit < conversion.firstConvertedLetter || unit > conversion.lastConvertedLetter);
-            calls.check(conversion, Units { unit }, CharacterWidth::Is8Bit, staysAsItIs);
-        }
-    }
-}
-
-static void testCaseConversionAtEveryPosition()
-{
-    CaseConversionCalls calls;
-    constexpr unsigned maxLength = 3 * sizeof(uint64_t) + 1;
-    for (const CaseConversion& conversion : caseConversions) {
-        // The neighbors of the converted letters on both sides.
-        const char16_t unchangedUnits[] = { static_cast<char16_t>(conversion.firstConvertedLetter - 1), static_cast<char16_t>(conversion.lastConvertedLetter + 1), 0, 0x7f };
-        for (unsigned length = 0; length <= maxLength; ++length) {
-            Units units;
-            for (unsigned i = 0; i < length; ++i)
-                units.append(unchangedUnits[i % std::size(unchangedUnits)]);
-            calls.check(conversion, units, CharacterWidth::Is8Bit, true);
-            calls.check(conversion, units, CharacterWidth::Is16Bit, !length);
-            for (unsigned position = 0; position < length; ++position) {
-                for (char16_t changing : { conversion.firstConvertedLetter, conversion.lastConvertedLetter, static_cast<char16_t>(0x80), static_cast<char16_t>(0xff) }) {
-                    Units changed = units;
-                    changed[position] = changing;
-                    calls.check(conversion, changed, CharacterWidth::Is8Bit, false);
-                }
-            }
-        }
-    }
-}
-
-static void testCaseConversionOfRopes()
-{
-    CaseConversionCalls calls;
-    FakeString rope = FakeString::rope(4);
-    for (const CaseConversion& conversion : caseConversions)
-        calls.check(conversion, rope.address(), false);
-}
-
-static void testCaseConversionsRemembered()
-{
-    CaseConversionCalls calls;
-    for (size_t way = 0; way < StringKeyCache::waysOfCaseConversions; ++way) {
-        calls.checkRemembered(caseConversions[0], caseConversions[1], way);
-        calls.checkRemembered(caseConversions[1], caseConversions[0], way);
-    }
-}
-
-namespace {
-
-// Every entry of the hashed cache has one key, so a probe hits whatever the hash is.
 class IntegerStrings {
 public:
     IntegerStrings()
@@ -567,6 +445,8 @@ public:
 
     static JSString* cellOfSmallInteger(size_t integer) { return std::bit_cast<JSString*>(0x10000 + 16 * integer); }
     static JSString* cachedCell() { return std::bit_cast<JSString*>(static_cast<uintptr_t>(0x7770)); }
+    static JSString* cellWithNumber(uint32_t number) { return std::bit_cast<JSString*>(MarkedBlockCage::decode(0, number)); }
+    static constexpr size_t numberOfIntegerKeys = 4;
 
     void cache(int32_t key, JSString* cell)
     {
@@ -576,15 +456,13 @@ public:
         }
     }
 
-    void cacheIntegerKey(uint32_t key, uint32_t cell)
+    void enterKey(uint32_t integer, uint32_t numberOfCell)
     {
+        m_integerKeys[integer % numberOfIntegerKeys] = static_cast<uint64_t>(integer) << 32 | numberOfCell;
         Instance& instance = m_runner.instance();
         instance.realm.integerKeys = m_integerKeys.data();
-        instance.realm.integerKeyMask = m_integerKeys.size() - 1;
-        m_integerKeys[key & instance.realm.integerKeyMask] = static_cast<uint64_t>(key) << 32 | cell;
+        instance.realm.integerKeyMask = numberOfIntegerKeys - 1;
     }
-
-    JSString* cellOfIntegerKey(uint32_t cell) { return std::bit_cast<JSString*>(MarkedBlockCage::decode(m_runner.instance().cellCageBase, cell)); }
 
     void checkIsFound(int64_t integer, JSString* cell)
     {
@@ -604,7 +482,7 @@ private:
     StubRunner m_runner;
     std::array<NumericStrings::StringWithJSString, NumericStrings::cacheSize> m_smallIntegers { };
     std::array<NumericStrings::CacheEntryWithJSString<int>, NumericStrings::cacheSize> m_integers { };
-    std::array<uint64_t, 8> m_integerKeys { };
+    std::array<uint64_t, numberOfIntegerKeys> m_integerKeys { };
 };
 
 } // anonymous namespace
@@ -631,36 +509,6 @@ static void testIntegersOutsideTheCaches()
     strings.checkIsLeftToOperation(firstIntegerInHashedCache);
 }
 
-static void testIntegerKeys()
-{
-    IntegerStrings strings;
-    constexpr uint32_t cell = 0x345678;
-    constexpr uint32_t otherCell = 0x345680;
-    uint32_t key = static_cast<uint32_t>(firstIntegerInHashedCache) + 3;
-    strings.checkIsLeftToOperation(key);
-    strings.cacheIntegerKey(key, cell);
-    strings.checkIsFound(key, strings.cellOfIntegerKey(cell));
-    strings.checkIsLeftToOperation(key + 8);
-    strings.checkIsLeftToOperation(key + 1);
-    strings.checkIsLeftToOperation(static_cast<int64_t>(key) | int64_t { 1 } << 32);
-    strings.checkIsLeftToOperation(-static_cast<int64_t>(key));
-    strings.checkIsFound(3, IntegerStrings::cellOfSmallInteger(3));
-
-    strings.cache(static_cast<int32_t>(key), IntegerStrings::cachedCell());
-    strings.checkIsFound(key, strings.cellOfIntegerKey(cell));
-    strings.cacheIntegerKey(key + 8, otherCell);
-    strings.checkIsFound(key + 8, strings.cellOfIntegerKey(otherCell));
-    strings.checkIsFound(key, IntegerStrings::cachedCell());
-    strings.cacheIntegerKey(key, 0);
-    strings.checkIsFound(key, IntegerStrings::cachedCell());
-    strings.cacheIntegerKey(INT32_MAX, cell);
-    strings.checkIsFound(INT32_MAX, strings.cellOfIntegerKey(cell));
-    strings.cache(0, nullptr);
-    strings.checkIsLeftToOperation(INT32_MIN);
-    strings.checkIsLeftToOperation(-1);
-}
-
-// The low half of each is a key that the caches hold.
 static void testIntegersBeyondInt32()
 {
     IntegerStrings strings;
@@ -678,60 +526,36 @@ static void testIntegersBeyondInt32()
     strings.checkIsLeftToOperation(int64_t { 0xffffffff });
 }
 
-// A builder without text goes into the empty pool by a store of the pool's word and of nothing else. Every other builder is the operation's.
-static void testStringBuilderDiscard()
+static void testIntegerKeys()
 {
-    using FakeBuilder = FakeObject<sizeof(StringBuilderStorage)>;
-    StubRunner runner;
-    StringBuilderStorage*& pool = runner.instance().stringBuilder.freeStorage;
-    auto storageOf = [](const FakeBuilder& builder) {
-        return std::bit_cast<StringBuilderStorage*>(builder.address());
-    };
-    FakeBuilder builder;
-    FakeBuilder pooled;
-    builder.bytes.fill(0xa5);
-    builder.at<uint32_t>(StringBuilderStorage::offsetOfPosition()) = 0;
-    builder.at<uint32_t>(StringBuilderStorage::offsetOfLengthOutsideBuffer()) = 0;
-    auto isLeftToOperation = [&] {
-        FakeBuilder before = builder;
-        StringBuilderStorage* poolBefore = pool;
-        bool calledOperation = runner.run(stringBuilderDiscard(), { builder.address() }).calledOperation;
-        AOT_TEST_CHECK(builder.bytes == before.bytes && pool == (calledOperation ? poolBefore : storageOf(builder)));
-        return calledOperation;
-    };
-
-    AOT_TEST_CHECK(!pool && !isLeftToOperation());
-    pool = storageOf(pooled);
-    AOT_TEST_CHECK(isLeftToOperation());
-    pool = nullptr;
-    for (ptrdiff_t offset : { StringBuilderStorage::offsetOfPosition(), StringBuilderStorage::offsetOfLengthOutsideBuffer() }) {
-        for (uint32_t length : { 1u, 1u << 31 }) {
-            builder.at<uint32_t>(offset) = length;
-            AOT_TEST_CHECK(isLeftToOperation());
-        }
-        builder.at<uint32_t>(offset) = 0;
-    }
-    AOT_TEST_CHECK(!isLeftToOperation());
+    constexpr uint32_t numberOfCell = 0x300000;
+    constexpr int64_t integerInSamePlace = firstIntegerInHashedCache + IntegerStrings::numberOfIntegerKeys;
+    IntegerStrings strings;
+    strings.cache(static_cast<int32_t>(firstIntegerInHashedCache), IntegerStrings::cachedCell());
+    strings.enterKey(static_cast<uint32_t>(firstIntegerInHashedCache), numberOfCell);
+    strings.checkIsFound(firstIntegerInHashedCache, IntegerStrings::cellWithNumber(numberOfCell));
+    strings.checkIsLeftToOperation(integerInSamePlace);
+    strings.enterKey(static_cast<uint32_t>(integerInSamePlace), numberOfCell);
+    strings.checkIsFound(firstIntegerInHashedCache, IntegerStrings::cachedCell());
+    strings.checkIsFound(7, IntegerStrings::cellOfSmallInteger(7));
+    strings.cache(-1, IntegerStrings::cachedCell());
+    strings.checkIsFound(-1, IntegerStrings::cachedCell());
 }
 
 std::span<const NativeTest> stubStringTests()
 {
     static constexpr NativeTest tests[] = {
-        { "stubs/string-builder-discard"_s, ImageTests::whenExecutable<testStringBuilderDiscard> },
         { "stubs/integer-to-string-cached-integers"_s, ImageTests::whenExecutable<testCachedIntegers> },
         { "stubs/integer-to-string-integers-outside-the-caches"_s, ImageTests::whenExecutable<testIntegersOutsideTheCaches> },
         { "stubs/integer-to-string-integers-beyond-int32"_s, ImageTests::whenExecutable<testIntegersBeyondInt32> },
         { "stubs/integer-to-string-integer-keys"_s, ImageTests::whenExecutable<testIntegerKeys> },
-        { "stubs/string-case-conversion-of-every-unit"_s, ImageTests::whenExecutable<testCaseConversionOfEveryUnit> },
-        { "stubs/string-case-conversion-at-every-position"_s, ImageTests::whenExecutable<testCaseConversionAtEveryPosition> },
-        { "stubs/string-case-conversion-of-ropes"_s, ImageTests::whenExecutable<testCaseConversionOfRopes> },
-        { "stubs/string-case-conversions-remembered"_s, ImageTests::whenExecutable<testCaseConversionsRemembered> },
         { "stubs/string-comparison-difference-at-every-position"_s, ImageTests::whenExecutable<testDifferenceAtEveryPosition> },
         { "stubs/string-comparison-difference-in-last-unit-only"_s, ImageTests::whenExecutable<testDifferenceInLastUnitOnly> },
         { "stubs/string-comparison-difference-in-one-unit-only"_s, ImageTests::whenExecutable<testDifferenceInOneUnitOnly> },
         { "stubs/string-comparison-common-prefixes"_s, ImageTests::whenExecutable<testCommonPrefixes> },
         { "stubs/string-comparison-order-of-wide-units"_s, ImageTests::whenExecutable<testOrderOfWideUnits> },
         { "stubs/string-comparison-same-cells-and-impls"_s, ImageTests::whenExecutable<testSameCellsAndImpls> },
+        { "stubs/string-comparison-nullable-strings"_s, ImageTests::whenExecutable<testNullableStrings> },
         { "stubs/string-comparison-atoms"_s, ImageTests::whenExecutable<testAtoms> },
         { "stubs/string-comparison-ropes"_s, ImageTests::whenExecutable<testRopes> },
     };

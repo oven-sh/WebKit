@@ -1,0 +1,65 @@
+# beside a string an operand that is written as a number or a string is tested once for having text by itself: the row of joins is one Strcat behind the test, the row as written stands in an unlikely block, and the two meet
+# closed, such a sum asks the run time what both operands are, converts the one and joins: it weighs two, so one sum opens the test outside a loop
+# function label(x: number | string) { return "id-" + x + "!"; }
+# function shown(x: object | string) { return "id-" + x + "!"; }   what is written need not have text by itself: an object is as likely as a string, and no test is put in
+# function plain(x) { return "id-" + x + "!"; }   nothing is written, and outside a loop nothing is guessed
+# each function is handed to code that nobody has seen
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK: mechanisms TypedOperations,Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-1: = TypeTest
+# CHECK-NOT: = TypeTest
+# RUN(TYPED): walk f1 mechanisms=none+TypedOperations+Guesses
+# TYPED: = Narrowed
+# TYPED: = Strcat
+# RUN(CLOSED): walk f1 mechanisms=none+TypedOperations+Guesses
+# CLOSED: frequency=Unlikely
+# CLOSED: = Add {{*}}form=Generic
+# RUN(REJOIN): walk f1 mechanisms=none+TypedOperations+Guesses
+# REJOIN-COUNT-2: Jump -> next [[join]](
+# RUN(SHOWN): walk f2 mechanisms=none+TypedOperations+Guesses
+# SHOWN-NOT: = TypeTest
+# RUN(PLAIN): walk f3 mechanisms=none+TypedOperations+Guesses
+# PLAIN-NOT: = TypeTest
+# RUN(ALL): walk f1 mechanisms=all-ParameterGuards
+# ALL-LABEL: code f1:Body
+# ALL: = TypeTest
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="label" module=m0 length=1 thisType={type=anything} parameters=[{type=number|string}] results=[{type=anything}] {
+  b0(v0: number|string):
+    v1 = Convert v0 declared={type=number|string}
+    v2 = String string="id-"
+    v3 = Add v2, v1
+    v4 = String string="!"
+    v5 = Add v3, v4
+    Return v5
+}
+function f2 name="shown" module=m0 length=1 thisType={type=anything} parameters=[{type=string|object}] results=[{type=anything}] {
+  b0(v0: string|object):
+    v1 = Convert v0 declared={type=string|object}
+    v2 = String string="id-"
+    v3 = Add v2, v1
+    v4 = String string="!"
+    v5 = Add v3, v4
+    Return v5
+}
+function f3 name="plain" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="id-"
+    v2 = Add v1, v0
+    v3 = String string="!"
+    v4 = Add v2, v3
+    Return v4
+}

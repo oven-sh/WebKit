@@ -7,76 +7,52 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDTypes.h"
 #include "AOTCompileOptions.h"
 #include "AOTEffects.h"
-#include "AOTExpected.h"
 #include "AOTStubDescriptor.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CPUFeatureSet.h"
 #include "RegisterSet.h"
-#include <array>
+#include <atomic>
+#include <memory>
 #include <optional>
-#include <wtf/BitVector.h>
+#include <span>
+#include <wtf/BitSet.h>
 #include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT {
 
-class BuildContext;
-class IdentifierNumbering;
-class RegExpRequests;
-struct KeyUses;
 struct RecordedOptions;
 struct StubRecording;
 
 namespace Typed {
-class FlowResults;
 class Program;
 }
 
-// Everything that may change the code of a stub. The image records every member.
 struct StubOptions {
-    static StubOptions from(const RecordedOptions&, const Typed::Program&, const Typed::FlowResults&);
+    static StubOptions from(const RecordedOptions&, const Typed::Program&, bool hasOneInstance, bool matchesRegExps, bool recordsLastMatch, bool checksProofs, bool checksWalk);
 
     bool useWideReferences { false };
-    bool forceGCSlowPaths { false };
     bool imageHasWebAssembly { false };
     bool hasOneInstance { false };
-    // Whether the stubs read and call the traps of a proxy themselves. It chooses between two roads to one answer and says nothing about the program: where it is false, the stubs leave an access through a proxy to the run time.
-    // So it may rest on a guess that the program meets no proxy.
-    Typed::Expected<bool> callsTrapsOfProxies { true };
-    bool validates { false };
-    bool countsAllocations { false };
+    bool matchesRegExps { true };
+    bool recordsLastMatch { true };
+    bool checksProofs { false };
+    bool checksWalk { false };
+    bool methodsOfBuiltinsMayBeReplaced { false };
+    bool callsNumberOrStringByValue { true };
+    WTF::BitSet<numberOfBuiltinBoxedStubs> boxedCallsOutOfReach { };
     bool isPositionIndependent { imageFormOfThisRuntime() == ImageForm::PositionIndependent };
-    uint32_t layoutSeed { 0 };
+    uint32_t maxNameInFieldTable { UINT16_MAX };
     CPUFeatureSet targetFeatures;
 };
 
-struct RegExpLiteralConstants {
-    uint32_t minimumSize { 0 };
-    uint32_t numberOfGroups { 0 };
-    bool usesLastIndex { true };
-    bool isGlobal { true };
-    bool matchesAtCodePointBoundaries { true };
-    bool recordsMatch { true };
-    bool hasNamedGroups { true };
-};
-
 struct StubPolicy {
-    AOT_CLASS_THRESHOLD(uint32_t, minUsesForOwnStub, 512);
-
-    const BitVector& namesWithOwnStub(Typed::Access access) const { return namesWithOwnStubByAccess[static_cast<size_t>(access)]; }
-    RegExpLiteralConstants regExpLiteral(std::optional<uint32_t> record, bool isGlobal) const;
-
-    // Bit i: the name that a stub takes as immediate i.
-    std::array<BitVector, numberOfEnumerators<Typed::Access>> namesWithOwnStubByAccess;
-    // [RegExpRecordID::index()], for the literal without the flag g.
-    Vector<RegExpLiteralConstants> regExpLiterals;
+    bool shapesFitHalfword { true };
 };
-
-StubPolicy chooseStubPolicy(const KeyUses&, const IdentifierNumbering&, BuildContext&);
-void addRegExpLiterals(StubPolicy&, const RegExpRequests&, bool legacyStaticsMayBeRead, BuildContext&);
 
 struct StubSummary {
     StubSignature signature;
@@ -87,21 +63,32 @@ struct StubSummary {
 class StubCatalog {
     WTF_MAKE_NONCOPYABLE(StubCatalog);
 public:
-    StubCatalog(const StubOptions&, StubPolicy&&);
+    explicit StubCatalog(const StubOptions&, StubPolicy&& = { });
     ~StubCatalog();
 
     const StubSummary& summaryOf(StubKey) const;
+    const RegisterSet& clobberedByRegisterVariantsOf(StubKey) const;
+    const RegisterSet& clobberedBesideResultByRegisterVariantsOf(StubKey) const;
     Typed::Effects effectsOf(StubKey) const;
+    const StubSummary& summaryAndEffectsOf(StubKey key, Typed::Effects& effects) const
+    {
+        const Answer& answer = answerFor(key);
+        if (isOperationCallHead(key))
+            effects = effectsOf(key);
+        else
+            effects = answer.effects;
+        return answer.summary;
+    }
     bool isLeaf(StubKey) const;
-    bool bindsImmediate(StubKey, uint32_t immediate) const;
+    bool bindsImmediate(StubKey) const;
     const StubOptions& options() const { return m_options; }
+    uint64_t identifier() const { return m_identifier; }
     const StubPolicy& policy() const { return m_policy; }
 
-    // For AOTStubBlob.cpp and the tests. Every body without an immediate has a recording. dryRun serves the bound ones without, and is not memoized.
     const StubRecording& recordingOf(StubKey body) const;
     bool hasRecordingOf(StubKey body) const;
     StubRecording dryRun(StubKey body) const;
-    RegisterSet closedClobbersOf(const StubRecording&) const;
+    bool answersCover(const StubRecording&) const;
 
 private:
     struct Node;
@@ -111,21 +98,35 @@ private:
         bool leavesStubs;
     };
     using IndexByKey = HashMap<uint64_t, unsigned>;
+    struct PlaceOfAnswer {
+        unsigned node { 0 };
+        unsigned answer { 0 };
+        unsigned numberOfKey { 0 };
+    };
 
-    void generateNodes();
-    void checkDeclarations() const;
-    void computeAnswers();
+    void listBodies();
+    const Node& closedNodeAt(unsigned index) const;
+    void generateAndClose(unsigned index) const;
+    static void checkDeclarations(std::span<Node* const>);
     const Node* tryFindNode(StubKey body) const;
     const Node& nodeOf(StubKey body) const;
+    const Answer* tryFindOwnAnswer(StubKey) const;
     const Answer& answerFor(StubKey) const;
-    Answer createAnswer(StubKey) const;
 
     const StubOptions m_options;
     const StubPolicy m_policy;
-    Vector<Node> m_nodes;
+    const uint64_t m_identifier;
+    Vector<StubKey> m_bodies;
     IndexByKey m_nodeOfBody;
-    Vector<Answer> m_answers;
-    IndexByKey m_answerOfKey;
+    HashMap<uint64_t, PlaceOfAnswer> m_answerOfKeyWithoutImmediate;
+    Vector<Vector<StubKey, 2>> m_keysWithoutImmediateOfNode;
+    mutable Lock m_lock;
+    mutable Vector<std::unique_ptr<Node>> m_nodes;
+    mutable Vector<std::atomic<bool>> m_isClosed;
+    mutable Vector<RegisterSet> m_clobberedByRegisterVariants;
+    mutable Vector<std::atomic<bool>> m_knowsRegisterVariants;
+    mutable Vector<RegisterSet> m_clobberedBesideResultByRegisterVariants;
+    mutable Vector<std::atomic<bool>> m_knowsWhatRegisterVariantsClobberBesideResult;
 };
 
 } } // namespace JSC::AOT

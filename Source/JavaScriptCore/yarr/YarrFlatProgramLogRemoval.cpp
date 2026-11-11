@@ -181,9 +181,64 @@ void removeLogging(std::span<FlatOp> ops)
     }
 }
 
+// Up to its first branch every attempt takes one path, and the only frames on the stack are those of runs on that path. A run that is resumed goes on along the path, and an attempt whose
+// last run fails is over. So a capture that is set on the path is set again before anything reads it, unless a back reference in front of it on the path does.
+static void removeLoggingBeforeFirstBranch(FlatProgram& program)
+{
+    Vector<bool, 32> isRead(FillWith { }, (program.numSubpatterns + 1) * 2, false);
+    for (FlatOp& op : program.ops) {
+        unsigned slotsWritten = 0;
+        switch (op.kind) {
+        case Kind::Character:
+        case Kind::Text:
+        case Kind::CasedText:
+        case Kind::WideText:
+        case Kind::Set:
+        case Kind::SetCount:
+        case Kind::NeedsInput:
+        case Kind::InputStart:
+        case Kind::LineStart:
+        case Kind::InputEnd:
+        case Kind::LineEnd:
+        case Kind::WordBoundary:
+        case Kind::NotWordBoundary:
+        case Kind::PossessiveRun:
+        case Kind::GreedyRun:
+        case Kind::LazyRun:
+        case Kind::GreedyRunBeforeKnownCharacters:
+        case Kind::LazyRunBeforeKnownCharacters:
+        case Kind::CaptureStart:
+        case Kind::CaptureEnd:
+        case Kind::CaptureEmpty:
+        case Kind::CapturedRun:
+            break;
+        case Kind::BackReference:
+        case Kind::BackReferenceIgnoringCase:
+            isRead[op.argument] = true;
+            isRead[op.argument + 1] = true;
+            break;
+        case Kind::LoggedCaptureStart:
+        case Kind::LoggedCaptureEnd:
+            slotsWritten = 1;
+            break;
+        case Kind::LoggedCaptureEmpty:
+        case Kind::LoggedCapturedRun:
+            slotsWritten = 2;
+            break;
+        default:
+            return;
+        }
+        if (slotsWritten && !isRead[op.argument] && !isRead[op.argument + slotsWritten - 1])
+            removeLogging({ &op, 1 });
+    }
+}
+
 // A logged op pushes its undo frame only on a stack that holds a frame, so on a stack proven empty the unlogged op does the same.
 void removeUnneededLogging(FlatProgram& program)
 {
+    if (!program.countsTurns)
+        removeLoggingBeforeFirstBranch(program);
+
     StackStates states = computeStackStates(program);
     auto ops = program.ops.mutableSpan();
     for (unsigned index = 0; index < ops.size(); ++index) {

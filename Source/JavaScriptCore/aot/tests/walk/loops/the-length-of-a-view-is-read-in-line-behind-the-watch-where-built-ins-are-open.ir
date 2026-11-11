@@ -1,0 +1,15 @@
+# The loop of the test beside this one, in a test run in which `length` is written somewhere through a value that nobody knows: the getter above all views is open, and a test may really replace it.
+# It is believed all the same behind a test at run time: the view is asked at the head of each turn of the typed copy whether it is as its class made it, as in an executable, and in a test run that test also reads
+# one byte of the class, which the run time sets before it lets a store to a member above the class's instances through. Whoever fails goes on in the closed copy, where the read is a lookup by name.
+# PROGRAM-OF: a-loop-over-tables-that-nobody-followed-has-a-typed-copy-where-built-ins-are-open.ir
+# OPTIONS: admit=ReplacedBuiltins
+# RUN(LOCKS): locks open
+# LOCKS: open TypedArrayPrototypeLength spelled-through-unseen
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}}builtinClass=Int32Array
+# CHECK: = GetTypedArrayLength
+# CHECK-COUNT-8: = GetTypedArrayElement
+# Link takes no such member for a constant: what Link proves has no failing side.
+# RUN(LINK): locks
+# LINK-NOT: TypedArrayPrototypeLength

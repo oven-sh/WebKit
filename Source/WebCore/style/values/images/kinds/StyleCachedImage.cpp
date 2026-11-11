@@ -29,6 +29,7 @@
 #include "CSSImageValue.h"
 #include "CachedImage.h"
 #include "ContainerNodeInlines.h"
+#include "DefaultSizing.h"
 #include "DeprecatedCSSOMPrimitiveValue.h"
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
@@ -55,51 +56,50 @@ namespace Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CachedImage);
 
-Ref<CachedImage> CachedImage::create(URL&& url, Ref<CSSImageValue>&& cssValue, float scaleFactor)
+Ref<CachedImage> CachedImage::create(URL&& url, Ref<CSSImageValue>&& cssValue, Resolution<> resolution)
 {
-    return adoptRef(*new CachedImage(WTF::move(url), WTF::move(cssValue), scaleFactor));
+    return adoptRef(*new CachedImage(WTF::move(url), WTF::move(cssValue), resolution));
 }
 
-Ref<CachedImage> CachedImage::create(const URL& url, const Ref<CSSImageValue>& cssValue, float scaleFactor)
+Ref<CachedImage> CachedImage::create(const URL& url, const Ref<CSSImageValue>& cssValue, Resolution<> resolution)
 {
-    return CachedImage::create(URL { url }, cssValue.copyRef(), scaleFactor);
+    return CachedImage::create(URL { url }, cssValue.copyRef(), resolution);
 }
 
-Ref<CachedImage> CachedImage::create(WebCore::CachedImage& cachedImage, WTF::URL&& authoredURL, OptionSet<SVGReferencingMode> referencingModes, float scaleFactor)
+Ref<CachedImage> CachedImage::create(WebCore::CachedImage& cachedImage, WTF::URL&& authoredURL, OptionSet<SVGReferencingMode> referencingModes, Resolution<> resolution)
 {
     auto url = authoredURL.isNull() ? cachedImage.url() : WTF::move(authoredURL);
-    return adoptRef(*new CachedImage(URL { .resolved = WTF::move(url), .modifiers = { } }, CSSImageValue::create(cachedImage), scaleFactor, referencingModes));
+    return adoptRef(*new CachedImage(URL { .resolved = WTF::move(url), .modifiers = { } }, CSSImageValue::create(cachedImage), resolution, referencingModes));
 }
 
-Ref<CachedImage> CachedImage::copyOverridingScaleFactor(CachedImage& other, float scaleFactor)
+Ref<CachedImage> CachedImage::copyOverridingResolution(CachedImage& other, Resolution<> resolution)
 {
-    if (other.m_scaleFactor == scaleFactor)
+    if (other.m_resolution == resolution)
         return other;
-    return adoptRef(*new CachedImage(URL { other.m_url }, other.m_cssValue.copyRef(), scaleFactor, other.m_referencingModes));
+    return adoptRef(*new CachedImage(URL { other.m_url }, other.m_cssValue.copyRef(), resolution, other.m_referencingModes));
 }
 
-CachedImage::CachedImage(URL&& url, Ref<CSSImageValue>&& cssValue, float scaleFactor)
-    : CachedImage { WTF::move(url), WTF::move(cssValue), scaleFactor, { SVGReferencingMode::AnimatedImageDocument, SVGReferencingMode::ResourceDocument } }
+CachedImage::CachedImage(URL&& url, Ref<CSSImageValue>&& cssValue, Resolution<> resolution)
+    : CachedImage { WTF::move(url), WTF::move(cssValue), resolution, { SVGReferencingMode::AnimatedImageDocument, SVGReferencingMode::ResourceDocument } }
 {
 }
 
-CachedImage::CachedImage(URL&& url, Ref<CSSImageValue>&& cssValue, float scaleFactor, OptionSet<SVGReferencingMode> referencingModes)
+CachedImage::CachedImage(URL&& url, Ref<CSSImageValue>&& cssValue, Resolution<> resolution, OptionSet<SVGReferencingMode> referencingModes)
     : Image { Type::CachedImage }
     , m_url { WTF::move(url) }
     , m_cssValue { WTF::move(cssValue) }
     , m_referencingModes { referencingModes }
-    , m_scaleFactor { scaleFactor }
+    , m_resolution { resolution }
 {
     m_cachedImage = m_cssValue->cachedImage();
     if (m_cachedImage)
         m_isPending = false;
 }
 
-Vector<CSS::ParamFunction> CachedImage::urlLinkParameters(const CSSParserContext& context, StringView fragment) const
+Vector<CSS::ParamFunction> CachedImage::urlLinkParameters(const CSSParserContext& context, StringView fragmentDirective) const
 {
-    auto parameters = CSSPropertyParserHelpers::parseLinkParametersFromFragment(fragment, context);
-    for (auto& parameter : m_url.modifiers.linkParameters)
-        parameters.append(parameter);
+    auto parameters = CSSPropertyParserHelpers::parseLinkParametersFromFragmentDirective(fragmentDirective, context);
+    parameters.appendRange(m_url.modifiers.linkParameters);
     return parameters;
 }
 
@@ -115,7 +115,7 @@ bool CachedImage::equals(const CachedImage& other) const
 {
     if (&other == this)
         return true;
-    if (m_scaleFactor != other.m_scaleFactor)
+    if (m_resolution != other.m_resolution)
         return false;
     if (m_cssValue.ptr() == other.m_cssValue.ptr() || m_cssValue->equals(other.m_cssValue.get()))
         return true;
@@ -128,6 +128,14 @@ bool CachedImage::equals(const CachedImage& other) const
 URL CachedImage::url() const
 {
     return m_url;
+}
+
+RefPtr<SVGSVGElement> CachedImage::svgImageRootElement(const RenderElement& renderer) const
+{
+    RefPtr image = dynamicDowncast<SVGImage>(protect(m_cachedImage)->image());
+    if (!image)
+        return nullptr;
+    return image->rootElement(descriptorForRenderer(renderer, ImageDrawDescriptor { DefaultSizing { }.resolve(image->naturalDimensions()) }));
 }
 
 LegacyRenderSVGResourceContainer* CachedImage::uncheckedRenderSVGResource(TreeScope& treeScope, const AtomString& fragment) const
@@ -152,11 +160,7 @@ LegacyRenderSVGResourceContainer* CachedImage::uncheckedRenderSVGResource(const 
         return uncheckedRenderSVGResource(protect(renderer->treeScopeForSVGReferences()), fragmentIdentifier);
     }
 
-    RefPtr image = dynamicDowncast<SVGImage>(protect(m_cachedImage)->image());
-    if (!image)
-        return nullptr;
-
-    auto rootElement = image->rootElement();
+    RefPtr rootElement = svgImageRootElement(*renderer);
     if (!rootElement)
         return nullptr;
 
@@ -189,11 +193,7 @@ RenderSVGResourceContainer* CachedImage::renderSVGResource(const RenderElement* 
         return nullptr;
     }
 
-    RefPtr image = dynamicDowncast<SVGImage>(protect(m_cachedImage)->image());
-    if (!image)
-        return nullptr;
-
-    auto rootElement = image->rootElement();
+    RefPtr rootElement = svgImageRootElement(*renderer);
     if (!rootElement)
         return nullptr;
 
@@ -271,12 +271,23 @@ NaturalDimensions CachedImage::naturalDimensions(const RenderElement& renderer, 
     if (!cachedImage)
         return NaturalDimensions::none();
 
-    return cachedImage->naturalDimensions(cachedImage->allowsOrientationOverride() ? renderer.imageOrientation() : WebCore::ImageOrientation { WebCore::ImageOrientation::Orientation::FromImage });
+    return cachedImage->naturalDimensions(usedOrientation(renderer.imageOrientation()));
 }
 
-ImageDrawingExtras CachedImage::drawingExtrasForRenderer(const RenderElement& renderer) const
+WebCore::ImageOrientation CachedImage::usedOrientation(WebCore::ImageOrientation orientation) const
 {
-    return { m_url.resolved, linkParametersForResource(renderer.style().linkParameters(), urlLinkParameters(protect(renderer.document())->cssParserContext(), m_url.resolved.fragmentIdentifier())) };
+    return (m_cachedImage && protect(m_cachedImage)->allowsOrientationOverride()) ? orientation : WebCore::ImageOrientation::Orientation::FromImage;
+}
+
+ImageRenditionOptions CachedImage::renditionOptionsForRenderer(const RenderElement& renderer, ImageRenditionOptions rendition) const
+{
+    rendition = ImageRenditionOptions::forDocument(protect(renderer.document()), WTF::move(rendition));
+
+    auto fragmentURL = m_url.resolved;
+    auto fragmentDirective = fragmentURL.consumeFragmentDirective();
+    rendition.fragmentURL = WTF::move(fragmentURL);
+    rendition.linkParameters = linkParametersForResource(renderer.style().linkParameters(), urlLinkParameters(protect(renderer.document())->cssParserContext(), fragmentDirective));
+    return rendition;
 }
 
 void CachedImage::addClient(RenderElement& renderer)
@@ -333,31 +344,31 @@ CachedImage::ReferencedSVGResource CachedImage::referencedSVGResource(const Rend
     return { nullptr, legacyRenderSVGResource(&renderer) };
 }
 
-ImageDrawResult CachedImage::drawSVGResource(GraphicsContext& context, const ReferencedSVGResource& referenced, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options) const
+ImageDrawResult CachedImage::drawSVGResource(GraphicsContext& context, const ReferencedSVGResource& referenced, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& source) const
 {
     if (CheckedPtr masker = dynamicDowncast<RenderSVGResourceMasker>(referenced.resource.get())) {
-        if (masker->drawContentIntoContext(context, destination, source, options))
+        if (masker->drawContentIntoContext(context, destination, source, descriptor))
             return ImageDrawResult::DidDraw;
     }
 
     if (CheckedPtr masker = dynamicDowncast<LegacyRenderSVGResourceMasker>(referenced.legacyResource.get())) {
-        if (masker->drawContentIntoContext(context, destination, source, options))
+        if (masker->drawContentIntoContext(context, destination, source, descriptor))
             return ImageDrawResult::DidDraw;
     }
 
     return ImageDrawResult::DidNothing;
 }
 
-ImageDrawResult CachedImage::drawSVGResourceAsPattern(GraphicsContext& context, const ReferencedSVGResource& referenced, const FloatSize& size, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options) const
+ImageDrawResult CachedImage::drawSVGResourceAsPattern(GraphicsContext& context, const ReferencedSVGResource& referenced, const ImageDrawDescriptor& descriptor, const FloatSize& size, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing) const
 {
     RefPtr imageBuffer = context.createImageBuffer(size);
     if (!imageBuffer)
         return ImageDrawResult::DidNothing;
 
     auto imageRect = FloatRect { { }, size };
-    auto result = drawSVGResource(imageBuffer->context(), referenced, imageRect, imageRect, options);
+    auto result = drawSVGResource(imageBuffer->context(), referenced, descriptor, imageRect, imageRect);
 
-    context.drawPattern(*imageBuffer, destination, tile, patternTransform, phase, spacing, options);
+    context.drawPattern(*imageBuffer, destination, tile, patternTransform, phase, spacing, descriptor.rasterDrawingOptions());
     return result;
 }
 
@@ -372,15 +383,15 @@ static std::optional<FloatSize> fixedContentSize(const WebCore::Image& image, We
     return FloatSize { *naturalDimensions.width, *naturalDimensions.height };
 }
 
-static ConcreteObjectSize LEGACY_NODELETE viewportSize(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize)
+NODELETE static ConcreteObjectSize viewportSize(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize)
 {
     auto zoom = renderer.style().usedZoom();
     return ConcreteObjectSize::fixed(concreteObjectSize.size() * concreteObjectSize.zoom() / zoom, zoom);
 }
 
-ConcreteObjectSize CachedImage::concreteSizeToDrawAt(const WebCore::Image& image, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize) const
+ConcreteObjectSize CachedImage::concreteSizeToDrawAt(const WebCore::Image& image, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, WebCore::ImageOrientation orientation) const
 {
-    if (auto size = fixedContentSize(image))
+    if (auto size = fixedContentSize(image, orientation))
         return ConcreteObjectSize::fixed(*size);
     return viewportSize(renderer, concreteObjectSize);
 }
@@ -392,68 +403,77 @@ NaturalDimensions CachedImage::tileNaturalDimensions(const WebCore::Image& image
     return image.naturalDimensions();
 }
 
-ImageDrawResult CachedImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options, bool) const
+ImageDrawResult CachedImage::draw(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& source, bool) const
 {
     if (isPending())
         return ImageDrawResult::DidNothing;
 
     if (auto referenced = referencedSVGResource(renderer))
-        return drawSVGResource(context, referenced, destination, source, options);
+        return drawSVGResource(context, referenced, descriptor, destination, source);
 
     RefPtr image = resolvedImage();
     if (!image || !image->hasSomethingToDraw())
         return ImageDrawResult::DidNothing;
 
-    if (auto size = fixedContentSize(*image, options.orientation()))
-        return drawResolved(context, renderer, *image, ConcreteObjectSize::fixed(*size), destination, mapSourceToSize(source, concreteObjectSize, *size), options);
-    return drawResolved(context, renderer, *image, viewportSize(renderer, concreteObjectSize), destination, source, options);
+    ImageDrawDescriptor imageDescriptor { descriptor, usedOrientation(descriptor.orientation) };
+    auto concreteObjectSize = descriptor.concreteObjectSize;
+    if (auto size = fixedContentSize(*image, imageDescriptor.orientation))
+        return drawResolved(context, renderer, *image, ImageDrawDescriptor { imageDescriptor, ConcreteObjectSize::fixed(*size) }, destination, mapSourceToSize(source, concreteObjectSize, *size));
+    return drawResolved(context, renderer, *image, ImageDrawDescriptor { imageDescriptor, viewportSize(renderer, concreteObjectSize) }, destination, source);
 }
 
-ImageDrawResult CachedImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options, bool) const
+ImageDrawResult CachedImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, bool) const
 {
     if (context.paintingDisabled())
         return ImageDrawResult::DidNothing;
 
+    auto concreteObjectSize = descriptor.concreteObjectSize;
     if (auto referenced = referencedSVGResource(renderer))
-        return drawSVGResourceAsPattern(context, referenced, concreteObjectSize.size() * concreteObjectSize.zoom(), destination, tile, patternTransform, phase, spacing, options);
+        return drawSVGResourceAsPattern(context, referenced, descriptor, concreteObjectSize.size() * concreteObjectSize.zoom(), destination, tile, patternTransform, phase, spacing);
 
     RefPtr image = resolvedImage();
     if (!image)
         return ImageDrawResult::DidNothing;
 
-    return drawResolvedAsPattern(context, renderer, *image, concreteSizeToDrawAt(*image, renderer, concreteObjectSize), destination, tile, patternTransform, phase, spacing, options);
+    ImageDrawDescriptor imageDescriptor { descriptor, usedOrientation(descriptor.orientation) };
+    imageDescriptor.concreteObjectSize = concreteSizeToDrawAt(*image, renderer, concreteObjectSize, imageDescriptor.orientation);
+    return drawResolvedAsPattern(context, renderer, *image, imageDescriptor, destination, tile, patternTransform, phase, spacing);
 }
 
-ImageDrawResult CachedImage::drawTiled(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImageDrawingOptions options, bool) const
+ImageDrawResult CachedImage::drawTiled(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, bool) const
 {
     if (context.paintingDisabled())
         return ImageDrawResult::DidNothing;
 
     if (auto referenced = referencedSVGResource(renderer)) {
         return drawTiledUsing(context, NaturalDimensions::none(), [&](GraphicsContext& context, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source) {
-            return drawSVGResource(context, referenced, destination, source, options);
+            return drawSVGResource(context, referenced, descriptor, destination, source);
         }, [&](GraphicsContext& context, ConcreteObjectSize tileConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing) {
-            return drawSVGResourceAsPattern(context, referenced, tileConcreteObjectSize.size(), destination, tile, patternTransform, phase, spacing, options);
-        }, ConcreteObjectSize::fixed(tileSize), destination, phase, tileSize, spacing, options);
+            return drawSVGResourceAsPattern(context, referenced, descriptor, tileConcreteObjectSize.size(), destination, tile, patternTransform, phase, spacing);
+        }, ImageDrawDescriptor { descriptor, ConcreteObjectSize::fixed(tileSize) }, destination, phase, tileSize, spacing);
     }
 
     RefPtr image = resolvedImage();
     if (!image)
         return ImageDrawResult::DidNothing;
 
-    return drawResolvedTiled(context, renderer, *image, tileNaturalDimensions(*image), concreteSizeToDrawAt(*image, renderer, concreteObjectSize), destination, phase, tileSize, spacing, options);
+    ImageDrawDescriptor imageDescriptor { descriptor, usedOrientation(descriptor.orientation) };
+    imageDescriptor.concreteObjectSize = concreteSizeToDrawAt(*image, renderer, descriptor.concreteObjectSize, imageDescriptor.orientation);
+    return drawResolvedTiled(context, renderer, *image, tileNaturalDimensions(*image), imageDescriptor, destination, phase, tileSize, spacing);
 }
 
-ImageDrawResult CachedImage::drawNinePiece(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const NinePieceGeometry& geometry, ImageDrawingOptions options) const
+ImageDrawResult CachedImage::drawNinePiece(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const NinePieceGeometry& geometry) const
 {
     if (context.paintingDisabled())
         return ImageDrawResult::DidNothing;
 
+    auto concreteObjectSize = descriptor.concreteObjectSize;
     if (auto referenced = referencedSVGResource(renderer)) {
+        ImageDrawDescriptor patternDescriptor { concreteObjectSize, descriptor.compositeOperator, descriptor.rendition.interpolationQuality };
         return drawNinePieceUsing(context, [&](GraphicsContext& context, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source) {
-            return drawSVGResource(context, referenced, destination, source, options);
+            return drawSVGResource(context, referenced, descriptor, destination, source);
         }, [&](GraphicsContext& context, ConcreteObjectSize pieceConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing) {
-            return drawSVGResourceAsPattern(context, referenced, pieceConcreteObjectSize.size(), destination, tile, patternTransform, phase, spacing, { options.compositeOperator(), options.interpolationQuality() });
+            return drawSVGResourceAsPattern(context, referenced, patternDescriptor, pieceConcreteObjectSize.size(), destination, tile, patternTransform, phase, spacing);
         }, ConcreteObjectSize::fixed(concreteObjectSize.size() * concreteObjectSize.zoom()), geometry);
     }
 
@@ -461,7 +481,9 @@ ImageDrawResult CachedImage::drawNinePiece(GraphicsContext& context, const Rende
     if (!image)
         return ImageDrawResult::DidNothing;
 
-    return drawResolvedNinePiece(context, renderer, *image, concreteSizeToDrawAt(*image, renderer, concreteObjectSize), geometry, options);
+    ImageDrawDescriptor imageDescriptor { descriptor, usedOrientation(descriptor.orientation) };
+    imageDescriptor.concreteObjectSize = concreteSizeToDrawAt(*image, renderer, concreteObjectSize, imageDescriptor.orientation);
+    return drawResolvedNinePiece(context, renderer, *image, imageDescriptor, geometry);
 }
 
 bool CachedImage::currentFrameIsComplete(const RenderElement*) const
@@ -469,9 +491,9 @@ bool CachedImage::currentFrameIsComplete(const RenderElement*) const
     return m_cachedImage && protect(m_cachedImage)->currentFrameIsComplete();
 }
 
-float CachedImage::imageScaleFactor() const
+Resolution<> CachedImage::imageResolution() const
 {
-    return m_scaleFactor;
+    return m_resolution;
 }
 
 bool CachedImage::knownToBeOpaque(const RenderElement&) const
@@ -494,13 +516,13 @@ bool CachedImage::canDrawAtSize(const RenderElement& renderer, const FloatSize& 
     return !size.isEmpty() && canDraw(renderer);
 }
 
-RefPtr<NativeImage> CachedImage::nativeImage(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, float resolutionScale, ImageDrawingOptions options) const
+RefPtr<NativeImage> CachedImage::nativeImage(const RenderElement& renderer, const ImageDrawDescriptor& descriptor, float resolutionScale) const
 {
     if (!referencedSVGResource(renderer)) {
         if (RefPtr bitmapImage = dynamicDowncast<BitmapImage>(resolvedImage()))
             return bitmapImage->nativeImage();
     }
-    return Image::nativeImage(renderer, concreteObjectSize, resolutionScale, options);
+    return Image::nativeImage(renderer, descriptor, resolutionScale);
 }
 
 std::optional<IntPoint> CachedImage::hotSpot() const
@@ -525,10 +547,22 @@ bool CachedImage::isAnimated() const
     return m_cachedImage ? protect(m_cachedImage)->isAnimated() : false;
 }
 
+void CachedImage::startAnimation()
+{
+    if (m_cachedImage)
+        protect(m_cachedImage)->startAnimation();
+}
+
 void CachedImage::stopAnimation()
 {
     if (m_cachedImage)
         protect(m_cachedImage)->stopAnimation();
+}
+
+void CachedImage::clearAnimationOverride()
+{
+    if (m_cachedImage)
+        protect(m_cachedImage)->clearAnimationOverride();
 }
 
 void CachedImage::resetAnimation()
@@ -563,7 +597,7 @@ FloatRect CachedImage::mapChangedRectToSource(const RenderElement& renderer, Con
     if (!image)
         return Image::mapChangedRectToSource(renderer, concreteObjectSize, changedRect);
 
-    if (auto size = fixedContentSize(*image, renderer.imageOrientation()))
+    if (auto size = fixedContentSize(*image, usedOrientation(renderer.imageOrientation())))
         return mapSizeToSource(changedRect, *size, concreteObjectSize);
     return mapSizeToSource(changedRect, viewportSize(renderer, concreteObjectSize).size(), concreteObjectSize);
 }

@@ -209,6 +209,13 @@ void TestController::cocoaPlatformInitialize(const Options& options)
 #endif // !ENABLE(DNS_SERVER_FOR_TESTING_IN_NETWORKING_PROCESS)
 }
 
+#if HAVE(TEXT_SCALE_FACTOR)
+double TestController::textScaleFactorForContentSizeCategory(WKStringRef contentSizeCategory)
+{
+    return WebCoreTestSupport::textScaleFactorForContentSizeCategory(toWTFString(contentSizeCategory));
+}
+#endif
+
 #if ENABLE(IMAGE_ANALYSIS)
 
 uint64_t TestController::currentImageAnalysisRequestID()
@@ -546,6 +553,15 @@ void TestController::platformSetStatisticsCrossSiteLoadWithLinkDecoration(WKStri
     }];
 }
 
+void TestController::setStatisticsLinkDecorationFilteringData(WKStringRef queryParameter)
+{
+    __block bool done = false;
+    [(__bridge WKWebsiteDataStore *)websiteDataStore() _setLinkDecorationFilteringDataForTesting:@[ toWTFString(queryParameter).createNSString().get() ] completionHandler:^{
+        done = true;
+    }];
+    runUntil(done, noTimeout);
+}
+
 void TestController::platformWillRunTest(const TestInvocation& testInvocation)
 {
     setCrashReportApplicationSpecificInformationToURL(testInvocation.url());
@@ -766,10 +782,12 @@ static WKContentMode contentMode(const TestOptions& options)
 void TestController::configureWebpagePreferences(WKWebViewConfiguration *configuration, const TestOptions& options)
 {
     auto webpagePreferences = adoptNS([[WKWebpagePreferences alloc] init]);
+    _WKWebsiteNetworkConnectionIntegrityPolicy networkConnectionIntegrityPolicy = _WKWebsiteNetworkConnectionIntegrityPolicyNone;
     if (options.advancedPrivacyProtectionsEnabled())
-        [webpagePreferences _setNetworkConnectionIntegrityPolicy:_WKWebsiteNetworkConnectionIntegrityPolicyEnabled];
-    else
-        [webpagePreferences _setNetworkConnectionIntegrityPolicy:_WKWebsiteNetworkConnectionIntegrityPolicyNone];
+        networkConnectionIntegrityPolicy |= _WKWebsiteNetworkConnectionIntegrityPolicyEnabled;
+    if (options.fingerprintingProtectionsEnabled())
+        networkConnectionIntegrityPolicy |= _WKWebsiteNetworkConnectionIntegrityPolicyEnhancedTelemetry;
+    [webpagePreferences _setNetworkConnectionIntegrityPolicy:networkConnectionIntegrityPolicy];
 
     if (options.enhancedSecurityEnabled())
         webpagePreferences.get().securityRestrictionMode = WKSecurityRestrictionModeMaximizeCompatibility;

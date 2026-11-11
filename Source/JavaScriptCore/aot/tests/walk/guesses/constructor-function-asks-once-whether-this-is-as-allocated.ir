@@ -1,0 +1,37 @@
+# function Node(kind, pos) { this.kind = kind; this.pos = pos; }
+# Whoever constructs makes the cell and hands it over at once, and `Node.call(other)` hands over whatever it likes. Nobody has proven anything of the layout or of the function.
+# In front of the stores stand the shape, the flags of the order word, its keys, the bit for the prototype and one word for the guards that stores ask of the class. Behind them each store is a store, and says which order word it leaves
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = IsNotFrozen {{*}}[hasNoExtraProperties, hasNoFieldOutsideSlot]
+# CHECK: = HasKeyOrder
+# CHECK: = HasLayoutPrototype
+# CHECK: = AreMembersUnchanged
+# CHECK: = PutSlotOrAdd {{*}}key="kind"{{*}}orderWordAfter=
+# CHECK: = PutSlotOrAdd {{*}}key="pos"{{*}}orderWordAfter=
+# RUN(ONCE): walk f1 mechanisms=none+TypedOperations+Guesses
+# ONCE-COUNT-1: = IsNotFrozen
+# ONCE-NOT: = IsNotFrozen
+# RUN(SLOTS): walk f1 mechanisms=none+TypedOperations+Guesses
+# SLOTS-NOT: IsSlotFilled
+
+layout L0 kind=Instance name="Node" module=m0 constructor=f1 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="pos" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Construct v2, -, v1, v1
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="Node" module=m0 flags=[HasThis] length=2 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything, v2: anything):
+    PropSet v0, v1 key="kind" mode=Strict
+    PropSet v0, v2 key="pos" mode=Strict
+    v5 = Undefined
+    Return v5
+}

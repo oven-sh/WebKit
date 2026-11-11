@@ -219,13 +219,13 @@ static_assert(sizeof(Element) == sizeof(SameSizeAsElement), "Element should stay
 using namespace HTMLNames;
 using namespace XMLNames;
 
-static HashMap<WeakRef<Element, WeakPtrImplWithEventTargetData>, Vector<Ref<Attr>>>& LEGACY_NODELETE attrNodeListMap()
+NODELETE static HashMap<WeakRef<Element, WeakPtrImplWithEventTargetData>, Vector<Ref<Attr>>>& attrNodeListMap()
 {
     static NeverDestroyed<HashMap<WeakRef<Element, WeakPtrImplWithEventTargetData>, Vector<Ref<Attr>>>> map;
     return map;
 }
 
-static Vector<Ref<Attr>>* LEGACY_NODELETE attrNodeListForElement(Element& element)
+NODELETE static Vector<Ref<Attr>>* attrNodeListForElement(Element& element)
 {
     if (!element.hasSyntheticAttrChildNodes())
         return nullptr;
@@ -252,7 +252,7 @@ static void removeAttrNodeListForElement(Element& element)
     element.setHasSyntheticAttrChildNodes(false);
 }
 
-static Attr* LEGACY_NODELETE findAttrNodeInList(Vector<Ref<Attr>>& attrNodeList, const QualifiedName& name)
+NODELETE static Attr* findAttrNodeInList(Vector<Ref<Attr>>& attrNodeList, const QualifiedName& name)
 {
     for (auto& node : attrNodeList) {
         if (node->qualifiedName().matches(name))
@@ -487,7 +487,7 @@ bool Element::shouldUseInputMethod()
     return computeEditability(UserSelectAllTreatment::NotEditable, ShouldUpdateStyle::Update) != Editability::ReadOnly;
 }
 
-static bool LEGACY_NODELETE isForceEvent(const PlatformMouseEvent& platformEvent)
+NODELETE static bool isForceEvent(const PlatformMouseEvent& platformEvent)
 {
     return platformEvent.type() == PlatformEvent::Type::MouseForceChanged || platformEvent.type() == PlatformEvent::Type::MouseForceDown || platformEvent.type() == PlatformEvent::Type::MouseForceUp;
 }
@@ -527,8 +527,26 @@ static ShouldIgnoreMouseEvent dispatchPointerEventIfNeeded(Element& element, con
         // dispatched upstream by other compat paths."
         // That state should live in PointerCaptureController, not be inferred from event tags.
         // Migrating there would make this short circuit unnecessary.
-        if (platformEvent.syntheticClickType() != SyntheticClickType::NoTap && !isAnyClick(mouseEvent) && mouseEvent.type() != eventNames().contextmenuEvent && platformEvent.inputSource() != MouseEventInputSource::Automation)
+        bool isSyntheticTouchEvent = [&] {
+            if (platformEvent.syntheticClickType() != SyntheticClickType::NoTap && platformEvent.inputSource() != MouseEventInputSource::Automation)
+                return true;
+#if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
+            if (element.document().settings().isTouchEventEmulationEnabled())
+                return true;
+#endif
+#if PLATFORM(GTK)
+            if (platformEvent.isTouchEvent())
+                return true;
+#endif
+            return false;
+        }();
+        if (isSyntheticTouchEvent && !isAnyClick(mouseEvent) && mouseEvent.type() != eventNames().contextmenuEvent) {
+#if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
+            if (isCompatibilityMouseEvent(mouseEvent) && pointerCaptureController.preventsCompatibilityMouseEventsForPrimaryTouch())
+                return ShouldIgnoreMouseEvent::Yes;
+#endif
             return ShouldIgnoreMouseEvent::No;
+        }
 
         if (RefPtr pointerEvent = pointerCaptureController.pointerEventForMouseEvent(mouseEvent, platformEvent.pointerId(), platformEvent.pointerType())) {
             pointerCaptureController.dispatchEvent(*pointerEvent, &element);
@@ -824,13 +842,11 @@ void Element::setBooleanAttribute(const QualifiedName& name, bool value)
 
 NamedNodeMap& Element::attributesMap() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST ElementRareData& rareData = const_cast<Element*>(this)->ensureElementRareData();
+    ElementRareData& rareData = const_cast<Element*>(this)->ensureElementRareData();
     if (NamedNodeMap* attributeMap = rareData.attributeMap())
         return *attributeMap;
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST rareData.setAttributeMap(makeUniqueWithoutRefCountedCheck<NamedNodeMap>(const_cast<Element&>(*this)));
+    rareData.setAttributeMap(makeUniqueWithoutRefCountedCheck<NamedNodeMap>(const_cast<Element&>(*this)));
     return *rareData.attributeMap();
 }
 
@@ -851,8 +867,7 @@ void Element::synchronizeAllAttributes() const
         uncheckedDowncast<StyledElement>(*this).synchronizeStyleAttributeInternal();
 
     if (auto* svgElement = dynamicDowncast<SVGElement>(*this)) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<SVGElement&>(*svgElement).synchronizeAllAttributes();
+        const_cast<SVGElement&>(*svgElement).synchronizeAllAttributes();
     }
 }
 
@@ -867,8 +882,7 @@ ALWAYS_INLINE void Element::synchronizeAttribute(const QualifiedName& name) cons
     }
 
     if (auto* svgElement = dynamicDowncast<SVGElement>(*this)) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<SVGElement&>(*svgElement).synchronizeAttribute(name);
+        const_cast<SVGElement&>(*svgElement).synchronizeAttribute(name);
     }
 }
 
@@ -892,8 +906,7 @@ ALWAYS_INLINE void Element::synchronizeAttribute(const AtomString& localName) co
     }
 
     if (auto* svgElement = dynamicDowncast<SVGElement>(*this)) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<SVGElement&>(*svgElement).synchronizeAttribute(QualifiedName(nullAtom(), localName, nullAtom()));
+        const_cast<SVGElement&>(*svgElement).synchronizeAttribute(QualifiedName(nullAtom(), localName, nullAtom()));
     }
 }
 
@@ -949,8 +962,7 @@ bool Element::hasFocusableStyle() const
         return isFocusableStyle(renderStyle());
 
     // Compute style in yet unstyled subtree without resolving full style.
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST CheckedPtr style = const_cast<Element&>(*this).resolveComputedStyle(ResolveComputedStyleMode::RenderedOnly);
+    CheckedPtr style = const_cast<Element&>(*this).resolveComputedStyle(ResolveComputedStyleMode::RenderedOnly);
     return isFocusableStyle(style.get());
 }
 
@@ -1159,7 +1171,7 @@ void Element::setBeingDragged(bool value)
     document().userActionElements().setBeingDragged(*this, value);
 }
 
-inline ScrollAlignment LEGACY_NODELETE toScrollAlignmentForInlineDirection(std::optional<ScrollLogicalPosition> position, WritingMode writingMode)
+NODELETE inline ScrollAlignment toScrollAlignmentForInlineDirection(std::optional<ScrollLogicalPosition> position, WritingMode writingMode)
 {
     switch (position.value_or(ScrollLogicalPosition::Nearest)) {
     case ScrollLogicalPosition::Start: {
@@ -1202,7 +1214,7 @@ inline ScrollAlignment LEGACY_NODELETE toScrollAlignmentForInlineDirection(std::
     }
 }
 
-inline ScrollAlignment LEGACY_NODELETE toScrollAlignmentForBlockDirection(std::optional<ScrollLogicalPosition> position, WritingMode writingMode)
+NODELETE inline ScrollAlignment toScrollAlignmentForBlockDirection(std::optional<ScrollLogicalPosition> position, WritingMode writingMode)
 {
     switch (position.value_or(ScrollLogicalPosition::Start)) {
     case ScrollLogicalPosition::Start: {
@@ -1245,7 +1257,7 @@ inline ScrollAlignment LEGACY_NODELETE toScrollAlignmentForBlockDirection(std::o
     }
 }
 
-static HTMLSelectElement* LEGACY_NODELETE owningSelectElement(const Element& element)
+NODELETE static HTMLSelectElement* owningSelectElement(const Element& element)
 {
     if (auto* optionElement = dynamicDowncast<HTMLOptionElement>(element))
         return optionElement->ownerSelectElement();
@@ -1256,7 +1268,7 @@ static HTMLSelectElement* LEGACY_NODELETE owningSelectElement(const Element& ele
     return nullptr;
 }
 
-static HTMLSelectElement* LEGACY_NODELETE listBoxSelectElement(const Element& element)
+NODELETE static HTMLSelectElement* listBoxSelectElement(const Element& element)
 {
     auto* selectElement = owningSelectElement(element);
     return selectElement && is<RenderListBox>(selectElement->renderer()) ? selectElement : nullptr;
@@ -1513,7 +1525,7 @@ void Element::scrollTo(double x, double y)
     scrollTo(ScrollToOptions { { ScrollBehavior::Auto }, x, y });
 }
 
-static double LEGACY_NODELETE localZoomForRenderer(const RenderElement& renderer)
+NODELETE static double localZoomForRenderer(const RenderElement& renderer)
 {
     // FIXME: This does the wrong thing if two opposing zooms are in effect and canceled each
     // other out, but the alternative is that we'd have to crawl up the whole render tree every
@@ -1944,7 +1956,7 @@ inline RefPtr<const SVGElement> elementWithSVGLayoutBox(const Element& element)
 // The walk stops at the SVG root: hidden containers only exist inside an SVG fragment, and
 // <foreignObject> gets no renderer at all under one (SVGForeignObjectElement::rendererIsNeeded),
 // so there is no hidden container to find above a root.
-inline bool LEGACY_NODELETE isInNonRenderedSVGSubtree(const Element& element)
+NODELETE inline bool isInNonRenderedSVGSubtree(const Element& element)
 {
     if (!element.isSVGElement())
         return false;
@@ -1963,7 +1975,7 @@ inline bool LEGACY_NODELETE isInNonRenderedSVGSubtree(const Element& element)
     return false;
 }
 
-inline bool LEGACY_NODELETE shouldObtainBoundsFromBoxModel(const Element* element)
+NODELETE inline bool shouldObtainBoundsFromBoxModel(const Element* element)
 {
     ASSERT(element);
     if (!element->renderer())
@@ -2609,8 +2621,7 @@ static RefPtr<Element> getElementByIdIncludingDisconnected(const Element& startE
     if (auto* root = startElement.rootElement()) {
         for (auto& element : descendantsOfType<Element>(*root)) {
             if (element.getIdAttribute() == id) {
-                // FIXME: Remove suppression once rdar://189998365 is fixed.
-                SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element*>(&element);
+                return const_cast<Element*>(&element);
             }
         }
     }
@@ -2750,8 +2761,12 @@ void Element::setElementsArrayAttribute(const QualifiedName& attributeName, std:
     auto newElements = copyToVectorOf<WeakPtr<Element, WeakPtrImplWithEventTargetData>>(*elements);
     explicitlySetAttrElementsMap().set(attributeName, WTF::move(newElements));
 
-    if (CheckedPtr cache = document().existingAXObjectCache())
-        cache->updateRelations(*this, attributeName);
+    if (CheckedPtr cache = document().existingAXObjectCache()) {
+        for (auto element : elements.value()) {
+            // FIXME: Should this pass `element` instead of `*this`?
+            cache->updateRelations(*this, attributeName);
+        }
+    }
 }
 
 void Element::classAttributeChanged(const AtomString& newClassString, AttributeModificationReason reason)
@@ -3420,6 +3435,15 @@ void Element::movingSteps(MovingType movingType, ContainerNode& oldParent)
 
     updateIsInSelectOrDataListSubtree();
 
+    if (movingType.isSubtreeRoot) {
+        if (RefPtr shadowRoot = oldParent.shadowRoot())
+            shadowRoot->hostChildElementDidChange(*this);
+        if (RefPtr newParent = parentNode(); newParent != &oldParent) {
+            if (RefPtr shadowRoot = newParent->shadowRoot())
+                shadowRoot->hostChildElementDidChange(*this);
+        }
+    }
+
     if (!movingType.isSubtreeRoot || !hasFocusWithin())
         return;
 
@@ -3467,12 +3491,6 @@ void Element::setInvokedPopover(RefPtr<Element>&& element)
     invalidateStyle();
 }
 
-inline void ShadowRoot::setHost(Element* host)
-{
-    m_host = host;
-    m_shadowIncludingRoot = host ? &host->shadowIncludingRoot() : this;
-}
-
 void Element::addShadowRoot(Ref<ShadowRoot>&& newShadowRoot)
 {
     ASSERT(!newShadowRoot->hasChildNodes());
@@ -3487,7 +3505,7 @@ void Element::addShadowRoot(Ref<ShadowRoot>&& newShadowRoot)
 
         m_shadowRoot = WTF::move(newShadowRoot);
 
-        shadowRoot->setHost(this);
+        shadowRoot->setHost(*this);
         shadowRoot->setParentTreeScope(protect(treeScope()));
 
         NodeVector postInsertionNotificationTargets;
@@ -3524,6 +3542,11 @@ void Element::removeShadowRootSlow(ShadowRoot& oldRoot)
 
     oldRoot.setHost(nullptr);
     oldRoot.setParentTreeScope(protect(document()));
+
+    if (oldRoot.refCount() > 1)
+        oldRoot.updateShadowIncludingRootForSubtree();
+    else
+        oldRoot.resetShadowIncludingRoot();
 }
 
 static bool canAttachAuthorShadowRoot(const Element& element)
@@ -3654,14 +3677,17 @@ RefPtr<ShadowRoot> Element::shadowRootForBindings(JSC::JSGlobalObject& lexicalGl
 
 RefPtr<ShadowRoot> Element::openOrClosedShadowRoot() const
 {
-    return shadowRoot();
+    RefPtr shadow = shadowRoot();
+    if (!shadow || shadow->mode() == ShadowRootMode::UserAgent)
+        return nullptr;
+
+    return shadow;
 }
 
 RefPtr<Element> Element::resolveReferenceTarget() const
 {
     if (!document().settings().shadowRootReferenceTargetEnabled()) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element*>(this);
+        return const_cast<Element*>(this);
     }
 
     RefPtr element = this;
@@ -3671,8 +3697,7 @@ RefPtr<Element> Element::resolveReferenceTarget() const
         element = shadow->referenceTargetElement();
         shadow = element ? element->shadowRoot() : nullptr;
     }
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element*>(element.get());
+    return const_cast<Element*>(element.get());
 }
 
 RefPtr<Element> Element::retargetReferenceTargetForBindings(RefPtr<Element> element) const
@@ -3833,8 +3858,7 @@ void Element::childrenChanged(const ChildChange& change)
         case ChildChange::Type::ElementRemoved:
         case ChildChange::Type::ElementMovedFrom:
         case ChildChange::Type::ElementMovedInto:
-            // For elements, we notify shadowRoot in Element::insertionSteps and Element::removingSteps.
-            // FIXME(321178): Need to notify shadowRoot when elements are moved.
+            // For elements, we notify shadowRoot in Element::insertionSteps, Element::removingSteps, and Element::movingSteps.
             break;
         case ChildChange::Type::AllChildrenRemoved:
         case ChildChange::Type::AllChildrenReplaced:
@@ -4556,7 +4580,7 @@ bool Element::dispatchMouseForceWillBegin()
     if (!frame)
         return false;
 
-    PlatformMouseEvent platformMouseEvent { frame->eventHandler().lastKnownMousePosition(), frame->eventHandler().lastKnownMouseGlobalPosition(), MouseButton::None, PlatformEvent::Type::NoType, 1, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::UserDriven };
+    PlatformMouseEvent platformMouseEvent { frame->eventHandler().lastKnownMousePosition(), frame->eventHandler().lastKnownMouseGlobalPosition(), std::unexpected { MouseButtonState::None }, PlatformEvent::Type::NoType, 1, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::UserDriven };
     auto mouseForceWillBeginEvent = MouseEvent::create(eventNames().webkitmouseforcewillbeginEvent, document().windowProxy(), platformMouseEvent, { }, { }, 0, nullptr);
     mouseForceWillBeginEvent->setTarget(Ref { *this });
     dispatchEvent(mouseForceWillBeginEvent);
@@ -4841,7 +4865,7 @@ void Element::removeFromTopLayer()
         renderer->establishesTopLayerDidChange();
 }
 
-static PseudoElement* LEGACY_NODELETE beforeOrAfterPseudoElement(const Element& host, PseudoElementType pseudoElementSpecifier)
+NODELETE static PseudoElement* beforeOrAfterPseudoElement(const Element& host, PseudoElementType pseudoElementSpecifier)
 {
     switch (pseudoElementSpecifier) {
     case PseudoElementType::Before:
@@ -5004,8 +5028,7 @@ const Style::ComputedStyle& Element::resolvePseudoElementStyle(const Style::Pseu
     }
 
     CheckedPtr computedStyle = style.get();
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<Style::ComputedStyle*>(parentStyle.get())->addPseudoElementStyle(WTF::move(style));
+    const_cast<Style::ComputedStyle*>(parentStyle.get())->addPseudoElementStyle(WTF::move(style));
     ASSERT(parentStyle->pseudoElementStyle(pseudoElementIdentifier));
     return *computedStyle.unsafeGet();
 }
@@ -5167,8 +5190,7 @@ RefPtr<PseudoElement> Element::pseudoElementIfExists(Style::PseudoElementIdentif
 
 RefPtr<const PseudoElement> Element::pseudoElementIfExists(Style::PseudoElementIdentifier pseudoElementIdentifier) const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element&>(*this).pseudoElementIfExists(pseudoElementIdentifier);
+    return const_cast<Element&>(*this).pseudoElementIfExists(pseudoElementIdentifier);
 }
 
 static void disconnectPseudoElement(PseudoElement* pseudoElement)
@@ -6697,8 +6719,7 @@ bool Element::hasCustomState(const AtomString& state) const
 
 CustomStateSet& Element::ensureCustomStateSet()
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto& rareData = const_cast<Element*>(this)->ensureElementRareData();
+    auto& rareData = const_cast<Element*>(this)->ensureElementRareData();
     if (!rareData.customStateSet())
         rareData.initializeCustomStateSet(CustomStateSet::create(*this));
     return *rareData.customStateSet();
@@ -6823,8 +6844,7 @@ RefPtr<HTMLElement> Element::topmostPopoverAncestor(TopLayerElementType topLayer
 
 double Element::lookupCSSRandomBaseValue(const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier, const CSSCalc::RandomCachingKey& key) const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element*>(this)->ensureElementRareData().ensureRandomCachingKeyMap(pseudoElementIdentifier)->lookupCSSRandomBaseValue(key);
+    return const_cast<Element*>(this)->ensureElementRareData().ensureRandomCachingKeyMap(pseudoElementIdentifier)->lookupCSSRandomBaseValue(key);
 }
 
 bool Element::hasRandomCachingKeyMap() const

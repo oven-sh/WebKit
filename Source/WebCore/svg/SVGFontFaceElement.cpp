@@ -44,6 +44,7 @@
 #include "StyleDocumentScope.h"
 #include "StyleResolver.h"
 #include "StyleRule.h"
+#include "TextFlags.h"
 #include <math.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -245,6 +246,23 @@ String SVGFontFaceElement::fontFamily() const
     return protect(protect(fontFaceRule())->properties())->getPropertyValue(CSSPropertyID::FontFamily);
 }
 
+bool SVGFontFaceElement::supportsVariantCaps(FontVariantCaps variantCaps) const
+{
+    bool listsNormal = false;
+    bool listsSmallCaps = false;
+    attributeWithoutSynchronization(font_variantAttr).string().splitAllowingEmptyEntries(',', [&](StringView entry) {
+        auto variant = entry.trim(isASCIIWhitespace<char16_t>);
+        if (equalLettersIgnoringASCIICase(variant, "normal"_s))
+            listsNormal = true;
+        else if (equalLettersIgnoringASCIICase(variant, "small-caps"_s))
+            listsSmallCaps = true;
+    });
+
+    if (variantCaps == FontVariantCaps::Small)
+        return listsSmallCaps;
+    return listsNormal || !listsSmallCaps;
+}
+
 SVGFontElement* SVGFontFaceElement::associatedFontElement() const
 {
     ASSERT(parentNode() == m_fontElement);
@@ -282,8 +300,7 @@ void SVGFontFaceElement::rebuildFontFace()
         // Traverse parsed CSS values and associate CSSFontFaceSrcLocalValue elements with ourselves.
         if (RefPtr srcList = downcast<CSSValueList>(protect(fontFaceRule->properties())->getPropertyCSSValue(CSSPropertyID::Src).get())) {
             for (Ref item : *srcList) {
-                // FIXME: Remove suppression once rdar://189998365 is fixed.
-                SUPPRESS_MEMORY_UNSAFE_CAST downcast<CSSFontFaceSrcLocalValue>(const_cast<CSSValue&>(item.get())).setSVGFontFaceElement(*this);
+                downcast<CSSFontFaceSrcLocalValue>(const_cast<CSSValue&>(item.get())).setSVGFontFaceElement(*this);
             }
         }
     }

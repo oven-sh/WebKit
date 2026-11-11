@@ -1,0 +1,132 @@
+# const FromAssign = { a() { return 1; } };   function A() { this.x = 1; }   Object.assign(A.prototype, FromAssign);
+# const FromKeys = { b() { return 2; } };   function B() { this.x = 1; }   const keys = Object.keys(FromKeys);   for (let i = 0; i < keys.length; i++) B.prototype[keys[i]] = FromKeys[keys[i]];
+# const FromMap = { c() { return 3; } };   function C() { this.x = 1; }   Object.defineProperties(C.prototype, Object.getOwnPropertyDescriptors(FromMap));
+# print(new A().a() + new B().b() + new C().c());
+# Three more ways to copy the members of a literal onto a prototype object. Which built-in copies, and which describes the properties of its operand, is what the rows of the built-ins say.
+# A store under a key that is worked out copies where what it stores was read under the same key: the same value, or the same place of the same list read twice.
+# The second and the third let the prototype object go or leave a row without a key, so linked() names no function. What the fields of the literals hold is expected under their names.
+# The first copies out of a literal of the call's own block that has gone nowhere: it spells the store A.prototype.a = a, and linked() names the function as for that store.
+# RUN(ASSIGNED): link held members mechanisms=all
+# ASSIGNED: on-prototype L0 "a" function=f4
+# RUN(STORED): link held members mechanisms=all
+# STORED: on-prototype L1 "b" function=f5
+# RUN(MAPPED): link held members mechanisms=all
+# MAPPED: on-prototype L2 "c" function=f6
+# RUN(PROOF): link members mechanisms=all
+# PROOF: on-prototype L0 "a" function=f4
+# RUN(NOPROOF): link members mechanisms=all
+# NOPROOF-NOT: function=f5
+# NOPROOF-NOT: function=f6
+# RUN(ANSWER): run-in-shell
+# ANSWER: 6
+# ANSWER-NEXT: exited with 0
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="B" module=m0 constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 kind=Instance name="C" module=m0 constructor=f3 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L3 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L4 module=m0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L5 module=m0 fields=[{key="c" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="A" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="B" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="C" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewObject layout=L3
+    PropDefine v1, v0 key="a"
+    v3 = FinishObject v1
+    v4 = GetModuleVariable variable=g0
+    v5 = PropGet v4 key="prototype"
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectAssign
+    v8 = Call v7, v6, v5, v3 calleeName="Object.assign"
+    v9 = NewClosure function=f5
+    v10 = NewObject layout=L4
+    PropDefine v10, v9 key="b"
+    v12 = FinishObject v10
+    v13 = Builtin builtin=ObjectKeys
+    v14 = Call v13, v6, v12 calleeName="Object.keys"
+    v15 = Integer
+    Jump -> next b1(v15)
+  b1(v16):
+    LoopHint
+    v18 = PropGet v14 key="length"
+    v19 = Less v16, v18
+    Branch v19 -> taken b2(), notTaken b3()
+  b2():
+    v20 = GetModuleVariable variable=g1
+    v21 = PropGet v20 key="prototype"
+    v22 = ElemGet v14, v16
+    v23 = ElemGet v14, v16
+    v24 = ElemGet v12, v23
+    ElemSet v21, v22, v24
+    v26 = Increment v16
+    Jump -> next b1(v26)
+  b3():
+    v27 = NewClosure function=f6
+    v28 = NewObject layout=L5
+    PropDefine v28, v27 key="c"
+    v30 = FinishObject v28
+    v31 = GetModuleVariable variable=g2
+    v32 = PropGet v31 key="prototype"
+    v33 = Builtin builtin=ObjectDefineProperties
+    v34 = Builtin builtin=ObjectGetOwnPropertyDescriptors
+    v35 = Call v34, v6, v30 calleeName="Object.getOwnPropertyDescriptors"
+    v36 = Call v33, v6, v32, v35 calleeName="Object.defineProperties"
+    v37 = Construct v4
+    v38 = PropGet v37 key="a"
+    v39 = Call v38, v37 calleeKey="a"
+    v40 = GetModuleVariable variable=g1
+    v41 = Construct v40
+    v42 = PropGet v41 key="b"
+    v43 = Call v42, v41 calleeKey="b"
+    v44 = Construct v31
+    v45 = PropGet v44 key="c"
+    v46 = Call v45, v44 calleeKey="c"
+    v47 = Add v39, v43
+    v48 = Add v47, v46
+    v49 = Builtin builtin=GlobalThis
+    v50 = PropGet v49 key="print" [isFreeName]
+    v51 = Call v50, -, v48
+    v52 = Undefined
+    Return v52
+}
+function f1 name="A" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="B" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="C" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {
+  b0(v0: L2):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f4 name="a" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f5 name="b" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}
+function f6 name="c" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    Return v1
+}

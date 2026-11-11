@@ -89,7 +89,7 @@ class WebExtensionController : public API::ObjectImpl<API::Object::Type::WebExte
 
 public:
     static Ref<WebExtensionController> create(Ref<WebExtensionControllerConfiguration> configuration) { return adoptRef(*new WebExtensionController(configuration)); }
-    static RefPtr<WebExtensionController> LEGACY_NODELETE get(WebExtensionControllerIdentifier);
+    NODELETE static RefPtr<WebExtensionController> get(WebExtensionControllerIdentifier);
 
     void ref() const final { API::ObjectImpl<API::Object::Type::WebExtensionController>::ref(); }
     void deref() const final { API::ObjectImpl<API::Object::Type::WebExtensionController>::deref(); }
@@ -129,7 +129,6 @@ public:
     void calculateStorageSize(WebExtensionStorageSQLiteStore&, WebExtensionDataType, CompletionHandler<void(std::expected<size_t, WebExtensionError>&&)>&&);
     void removeStorage(WebExtensionStorageSQLiteStore&, WebExtensionDataType, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
 
-    bool hasLoadedContexts() const { return !m_extensionContexts.isEmpty(); }
     bool isFreshlyCreated() const { return m_freshlyCreated; }
 
     std::expected<bool, RefPtr<API::Error>> load(WebExtensionContext&);
@@ -211,7 +210,6 @@ private:
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
-    bool hasLoadedContexts(IPC::Decoder&) const { return hasLoadedContexts(); }
     bool inTestingMode(IPC::Decoder&) const { return inTestingMode(); }
 
     void initializePlatform();
@@ -302,6 +300,10 @@ private:
 
     std::unique_ptr<RunLoop::Timer> m_purgeOldMatchedRulesTimer;
     RefPtr<HTTPCookieStoreObserver> m_cookieStoreObserver;
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionControllerAdditions.h>)
+#include <WebKitAdditions/WebExtensionControllerAdditions.h>
+#endif
 };
 
 template<typename T>

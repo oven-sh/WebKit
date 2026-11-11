@@ -1,0 +1,62 @@
+# the looks at the outer loop follow both sides of a branch, see 0 or "s" enter the inner loop, and what comes round there lies within that at once. The walk decides the branch and sees 0 enter.
+# Its own looks at the inner loop widen what grows, to any text, and lose what still grows in the third. Either would leave the inner loop and come round to the outer head, which was promised 0 or "s".
+# So the inner head takes what the outer looks settled on
+# function run(n) { let r = 0; for (let i = 0; i < n; i++) { let a = false ? "s" : 0, b = a, c = a; for (let j = 0; j < 3; j++) { c = b; b = a; a = "s"; } r = c; } return r; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[r]]: 0|"s" {{*}}isLoopHead=true
+# CHECK: ([[a]]: 0|"s" {{*}}, [[b]]: 0|"s" {{*}}, [[c]]: 0|"s" {{*}}isLoopHead=true
+# CHECK: Jump -> next {{*}}([[c]],
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding
+# NEVER-NOT: LostByWalk
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="run" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b11()
+  b1(v2):
+    v3 = Integer
+    Jump -> next b2(v3, v3)
+  b2(v4, v5):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b3(), notTaken b10()
+  b3():
+    v8 = Boolean
+    Branch v8 -> taken b4(), notTaken b5()
+  b4():
+    v9 = String string="s"
+    Jump -> next b6(v9)
+  b5():
+    v10 = Integer
+    Jump -> next b6(v10)
+  b6(v11):
+    v12 = Integer
+    v13 = Integer integer=3
+    Jump -> next b7(v11, v11, v11, v12)
+  b7(v14, v15, v16, v17):
+    LoopHint
+    v19 = Less v17, v13
+    Branch v19 -> taken b8(), notTaken b9()
+  b8():
+    v20 = String string="s"
+    v21 = Increment v17
+    Jump -> next b7(v20, v14, v15, v21)
+  b9():
+    v22 = Increment v5
+    Jump -> next b2(v16, v22)
+  b10():
+    Return v4
+  b11():
+    Return v0
+}

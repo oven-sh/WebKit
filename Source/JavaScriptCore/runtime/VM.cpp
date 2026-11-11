@@ -122,6 +122,7 @@
 #include "ProgramExecutableInlines.h"
 #include "PropertyInlineCache.h"
 #include "PropertyTableInlines.h"
+#include "ProxyConstructor.h"
 #include "RandomizingFuzzerAgent.h"
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
@@ -300,10 +301,11 @@ private:
         static constexpr bool safeToCompareToEmptyOrDeleted = true;
     };
 
-    void finalize(Handle<Unknown> handle, void* context) final
+    FinalizeResult finalize(Handle<Unknown> handle, void* context) final
     {
         auto& executable = *static_cast<NativeExecutable*>(handle.get().asCell());
         m_executables.remove(keyFor(executable.function(), executable.constructor(), executable.implementationVisibility(), static_cast<Intrinsic>(reinterpret_cast<uintptr_t>(context)), executable.length(), executable.name()));
+        return FinalizeResult::KeepImpl;
     }
 
     UncheckedKeyHashMap<Key, Weak<NativeExecutable>, KeyHash> m_executables;
@@ -414,8 +416,10 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     AtomStringTable* existingEntryAtomStringTable = Thread::currentSingleton().setCurrentAtomStringTable(m_atomStringTable);
     structureStructure.setWithoutWriteBarrier(Structure::createStructure(*this));
 #if ENABLE(AOT)
-    if (AOT::Image::isRegistered())
+    if (AOT::Image::current())
         m_aotState.attachImage(*this);
+    else if (AOT::Image::isDisabledOnThisThread() && Options::aotCountsPath()) [[unlikely]]
+        m_aotState.countWithoutImage(*this);
 #endif
     structureRareDataStructure.setWithoutWriteBarrier(StructureRareData::createStructure(*this, nullptr, jsNull()));
     stringStructure.setWithoutWriteBarrier(JSString::createStructure(*this, nullptr, jsNull()));
@@ -577,7 +581,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // won't use this.
     m_typedArrayController = adoptRef(new SimpleTypedArrayController());
 
-    createBytecodeIntrinsicRegistry();
+    if (!hasCompiledCode())
+        createBytecodeIntrinsicRegistry();
 
     if (Options::useTypeProfiler())
         enableTypeProfiler();
@@ -956,7 +961,7 @@ Exception* VM::ensureTerminationException()
 }
 
 #if ENABLE(JIT)
-static ThunkGenerator LEGACY_NODELETE thunkGeneratorForIntrinsic(Intrinsic intrinsic)
+NODELETE static ThunkGenerator thunkGeneratorForIntrinsic(Intrinsic intrinsic)
 {
     switch (intrinsic) {
     case CharCodeAtIntrinsic:
@@ -1061,7 +1066,7 @@ NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVis
 }
 
 #if ENABLE(AOT) && !ENABLE(C_LOOP)
-// What a call from bytecode enters in place of llint_native_call_trampoline in a process without a JIT: llint/LowLevelInterpreterAOT.asm.
+// The entry point that a call from bytecode uses instead of llint_native_call_trampoline in a process without a JIT. See llint/LowLevelInterpreterAOT.asm.
 static void (*thunkBesideCompiledCode(Intrinsic intrinsic))()
 {
     switch (intrinsic) {
@@ -1390,7 +1395,7 @@ void VM::pruneUnusedSourceProviderCaches()
     });
 }
 
-bool VM::hasExceptionsAfterHandlingTraps()
+NEVER_INLINE bool VM::hasExceptionsAfterHandlingTraps()
 {
     if (traps().needHandling(VMTraps::NonDebuggerAsyncEvents)) [[unlikely]]
         traps().handleTraps(VMTraps::NonDebuggerAsyncEvents);
@@ -1470,7 +1475,7 @@ void VM::throwTerminationExceptionIfNeeded()
         throwTerminationException();
 }
 
-Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exceptionToThrow)
+NEVER_INLINE Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exceptionToThrow)
 {
     // The TerminationException should never be overridden.
     if (hasPendingTerminationException())
@@ -1522,7 +1527,7 @@ NEVER_INLINE static Exception* createExceptionWithCompiledCode(VM& vm, JSGlobalO
     std::optional<HandlerType> nearest;
     if (globalObject->aotInstance() && vm.topCallFrame)
         nearest = AOT::findNearestHandler(vm, vm.topCallFrame);
-    // Nobody lists the frames of what a `catch` takes.
+    // Nothing lists the frames of an exception that a `catch` handles.
     if (nearest == HandlerType::SynthesizedCatch || nearest == HandlerType::Catch)
         return Exception::create(vm, thrownValue, Action::DoNotCaptureStack);
     if (Exception* exception = Exception::tryCreateWithStackOfErrorMadeHere(vm, thrownValue))
@@ -1531,7 +1536,7 @@ NEVER_INLINE static Exception* createExceptionWithCompiledCode(VM& vm, JSGlobalO
 }
 #endif
 
-Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
+NEVER_INLINE Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
 #if ENABLE(AOT)
@@ -1548,7 +1553,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
     return throwException(globalObject, exception);
 }
 
-Exception* VM::throwException(JSGlobalObject* globalObject, JSObject* error)
+NEVER_INLINE Exception* VM::throwException(JSGlobalObject* globalObject, JSObject* error)
 {
     return throwException(globalObject, JSValue(error));
 }
@@ -1907,6 +1912,13 @@ void VM::drainMicrotasks()
     if (m_drainMicrotaskDelayScopeCount) [[unlikely]]
         return;
 
+#if ENABLE(AOT)
+    if (m_aotState.hasObjectsBeingFilled) [[unlikely]]
+        AOT::RuntimeHooks::finishFillingObjects(*this);
+    if (m_aotState.modulesWithEagerLoads) [[unlikely]]
+        AOT::RuntimeHooks::transferEagerLoadsToLoader(*this);
+#endif
+
     if (executionForbidden()) [[unlikely]]
         m_defaultMicrotaskQueue->clear();
     else {
@@ -1956,18 +1968,6 @@ void sanitizeStackForVM(VM& vm)
     sanitizeStackForVMImpl(&vm);
 #endif
     RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa20, vm.lastStackTop(), stack.origin(), stack.end());
-}
-
-SUPPRESS_ASAN void sanitizeStackForVMFrom(VM& vm, void* lowestAddress)
-{
-    if (!vm.currentThreadIsHoldingAPILock())
-        return;
-    lowestAddress = std::max(lowestAddress, vm.softStackLimit());
-    // A stack grows a page at a time, from the top.
-    for (uintptr_t address = WTF::roundDownToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(currentStackPointer())); address > std::bit_cast<uintptr_t>(lowestAddress); address -= pageSize())
-        static_cast<void>(*std::bit_cast<volatile char*>(address - 1));
-    vm.lowerLastStackTop(lowestAddress);
-    sanitizeStackForVM(vm);
 }
 
 // For the slow paths of calls: they run in the middle of JS, on the thread that holds the API lock, so that thread's stack
@@ -2216,6 +2216,14 @@ NativeExecutable* VM::promiseAnySlowRejectFunctionExecutableSlow()
     ASSERT(!m_promiseAnySlowRejectFunctionExecutable);
     auto* executable = getHostFunction(promiseAnySlowRejectFunction, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, emptyString());
     m_promiseAnySlowRejectFunctionExecutable.setWithoutWriteBarrier(executable);
+    return executable;
+}
+
+NativeExecutable* VM::proxyRevokeExecutableSlow()
+{
+    ASSERT(!m_proxyRevokeExecutable);
+    auto* executable = getHostFunction(proxyRevoke, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, emptyString());
+    m_proxyRevokeExecutable.setWithoutWriteBarrier(executable);
     return executable;
 }
 
@@ -2502,6 +2510,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(m_promiseAllSettledSlowRejectFunctionExecutable);
     visitor.append(m_promiseAnyRejectFunctionExecutable);
     visitor.append(m_promiseAnySlowRejectFunctionExecutable);
+    visitor.append(m_proxyRevokeExecutable);
 #if ENABLE(AOT)
     m_aotState.visitAggregate(visitor);
 #endif

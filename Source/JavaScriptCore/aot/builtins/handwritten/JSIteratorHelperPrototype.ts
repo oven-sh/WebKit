@@ -1,3 +1,4 @@
+// As in GeneratorPrototype.ts, every path makes the result in one place.
 $visibility = "Private";
 export function next() {
     "use strict";
@@ -5,7 +6,17 @@ export function next() {
     if (!$isIteratorHelper(this))
         $throwTypeError("|this| should be an iterator helper");
 
-    return $resumeGenerator($getIteratorHelperInternalField(this, $iteratorHelperFieldGenerator), $resumeModeNext, undefined);
+    const generator = $getIteratorHelperInternalField(this, $iteratorHelperFieldGenerator);
+    const step = $stepGenerator(generator, $resumeModeNext, undefined, $generatorStepCheckIsGenerator);
+    let result = $resultAt(step, $stepGeneratorResultValue);
+    const status = $resultAt(step, $stepGeneratorResultStatus);
+    let done = status === $generatorStepStatusCompleted;
+    if (status === $generatorStepStatusNotStepped) {
+        const answer = $resumeGenerator(generator, $resumeModeNext, undefined);
+        result = answer.value;
+        done = answer.done === true;
+    }
+    return $makeIteratorResult(result, done);
 }
 
 $overriddenName = "return";
@@ -16,8 +27,18 @@ export function return_() {
         $throwTypeError("|this| should be an iterator helper");
 
     var generator = $getIteratorHelperInternalField(this, $iteratorHelperFieldGenerator);
-    if (!$isGeneratorSuspendedAtStart(generator))
-        return $resumeGenerator(generator, $resumeModeReturn, undefined);
+    if (!$isGeneratorSuspendedAtStart(generator)) {
+        const step = $stepGenerator(generator, $resumeModeReturn, undefined, $generatorStepCheckIsGenerator);
+        let result = $resultAt(step, $stepGeneratorResultValue);
+        const status = $resultAt(step, $stepGeneratorResultStatus);
+        let done = status === $generatorStepStatusCompleted;
+        if (status === $generatorStepStatusNotStepped) {
+            const answer = $resumeGenerator(generator, $resumeModeReturn, undefined);
+            result = answer.value;
+            done = answer.done === true;
+        }
+        return $makeIteratorResult(result, done);
+    }
 
     $resumeGenerator(generator, $resumeModeReturn, undefined);
     var underlyingIterator = $getIteratorHelperInternalField(this, $iteratorHelperFieldUnderlyingIterator);

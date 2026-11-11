@@ -1,0 +1,31 @@
+# export const none = new RegExp(), nothing = new RegExp(undefined, "i");      The text of both is empty.
+# export const copied = new RegExp(/a+b/i), changed = new RegExp(/c+d/i, "m");      The text of the pattern that is copied, with its flags unless the call has flags of its own.
+# RUN: regexp-texts mechanisms=all
+# CHECK-COUNT-4: text /
+# CHECK-NOT: text /
+# RUN(NONE): regexp-texts mechanisms=all
+# NONE: text //
+# RUN(NOTHING): regexp-texts mechanisms=all
+# NOTHING: text //i
+# RUN(COPIED): regexp-texts mechanisms=all
+# COPIED: text /a+b/i
+# RUN(CHANGED): regexp-texts mechanisms=all
+# CHANGED: text /c+d/m
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Construct v0
+    v2 = Undefined
+    v3 = String string="i"
+    v4 = Construct v0, -, v2, v3
+    v5 = NewRegExp pattern="a+b" regExpFlags=[IgnoreCase]
+    v6 = Construct v0, -, v5
+    v7 = NewRegExp pattern="c+d" regExpFlags=[IgnoreCase]
+    v8 = String string="m"
+    v9 = Construct v0, -, v7, v8
+    v10 = NewArray v1, v4, v6, v9 contents=anything
+    Return v10
+}

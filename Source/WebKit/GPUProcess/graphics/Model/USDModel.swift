@@ -26,10 +26,13 @@ import OSLog
 import WebKit
 import simd
 
+typealias NodeIdentifier = UInt64
+
 #if ENABLE_GPU_PROCESS_MODEL && canImport(RealityCoreDeformation, _version: 23.0.2) && canImport(ShaderGraph, _version: 159.0.3) && arch(arm64)
 import USDKit
 import DirectResource
 import RealityKit
+internal import Spatial
 import UniformTypeIdentifiers
 
 extension MTLCaptureDescriptor {
@@ -120,7 +123,7 @@ private func makeMTLTextureFromImageAsset(
     }
 
     var mipLevelsInData = 0
-    unsafe imageAssetData.bytes.withUnsafeBytes { textureBytes in
+    let uploadTexture = { (textureBytes: UnsafeRawBufferPointer) in
         guard let baseAddress = textureBytes.baseAddress else {
             logError("nil base address in imageAssetData")
             return
@@ -210,6 +213,11 @@ private func makeMTLTextureFromImageAsset(
             }
         }
     }
+    #if compiler(>=6.4)
+    imageAssetData.bytes.withUnsafeBytes(uploadTexture)
+    #else
+    unsafe imageAssetData.bytes.withUnsafeBytes(uploadTexture)
+    #endif
 
     guard mipLevelsInData > 0 else {
         return nil
@@ -512,6 +520,7 @@ extension WKBridgeUSDConfiguration {
 
     var standardDynamicRange: Bool = false
 
+    @concurrent
     func makeStandaloneResources() async {
         do {
             appRenderer.pendingStandaloneResources = try await LowLevelRenderContextStandalone.Resources(device: self.device)
@@ -531,6 +540,7 @@ extension WKBridgeUSDConfiguration {
         }
     }
 
+    @concurrent
     func makeRendererResources() async {
         do {
             let colorPixelFormat: MTLPixelFormat = standardDynamicRange ? .bgra8Unorm : .rgba16Float
@@ -607,6 +617,10 @@ extension WKBridgeReceiver {
     @nonobjc
     fileprivate var modelTransform: simd_float4x4 = matrix_identity_float4x4
     @nonobjc
+    fileprivate var nodeTransforms: [NodeIdentifier: simd_float4x4] = [:]
+    @nonobjc
+    fileprivate var meshNodes: [WKBridgeTypedResourceId: NodeIdentifier] = [:]
+    @nonobjc
     fileprivate var rotationAngle: Float = 0
 
     @nonobjc
@@ -643,6 +657,13 @@ extension WKBridgeReceiver {
 
     @nonobjc
     fileprivate let fallbackTexture: LowLevelTextureResource
+
+    @nonobjc
+    fileprivate let defaultDiffuseTexture: LowLevelTextureResource
+    @nonobjc
+    fileprivate let defaultSpecularTexture: LowLevelTextureResource
+    @nonobjc
+    fileprivate let emptyEnvironmentTexture: LowLevelTextureResource?
 
     struct DeferredMeshUpdate {
         enum UpdateType {
@@ -721,6 +742,14 @@ extension WKBridgeReceiver {
                 diffuseTexture, specularTexture,
             ]
         )
+        self.defaultDiffuseTexture = diffuseTexture
+        self.defaultSpecularTexture = specularTexture
+        self.emptyEnvironmentTexture = makeEmptyEnvironmentTextureResource(
+            renderContext,
+            commandQueue: configuration.commandQueue,
+            device: configuration.device,
+            memoryOwner: configuration.appRenderer.memoryOwner
+        )
 
         self.fallbackTexture = makeFallBackTextureResource(
             renderContext,
@@ -738,14 +767,15 @@ extension WKBridgeReceiver {
 
     @objc(renderWithTexture:commandBuffer:)
     func render(with texture: any MTLTexture, commandBuffer: any MTLCommandBuffer) {
-        // Apply the latest model transform to every mesh instance, composed with
-        // each instance's original USD-space transform.
+        // Apply the latest model transform and the mesh's node transform to every
+        // mesh instance, composed with each instance's original USD-space transform.
         for (identifier, meshes) in meshToMeshInstances {
             // FIXME: https://bugs.webkit.org/show_bug.cgi?id=305857
             // swift-format-ignore: NeverForceUnwrap
             let originalTransforms = meshTransforms[identifier]!
+            let nodeTransform = meshNodes[identifier].flatMap { nodeTransforms[$0] } ?? matrix_identity_float4x4
             for (index, meshInstance) in meshes.enumerated() {
-                meshInstance.transform = modelTransform * originalTransforms[index]
+                meshInstance.transform = modelTransform * nodeTransform * originalTransforms[index]
             }
         }
 
@@ -910,6 +940,7 @@ extension WKBridgeReceiver {
                     }
                 }
                 meshResources.removeValue(forKey: meshId)
+                meshNodes.removeValue(forKey: meshId)
                 meshResourceToMaterials.removeValue(forKey: meshId)
                 meshResourceToDeformationContext.removeValue(forKey: meshId)
             }
@@ -930,13 +961,14 @@ extension WKBridgeReceiver {
         return true
     }
 
-    @objc(updateMesh:)
-    func updateMesh(_ updates: [WKBridgeUpdateMesh]) {
+    @objc(updateMesh:forNode:)
+    func updateMesh(_ updates: [WKBridgeUpdateMesh], forNode node: NodeIdentifier) {
         do {
             var deferredMeshUpdates: [DeferredMeshUpdate] = []
 
             for meshData in updates {
                 let identifier = meshData.identifier
+                meshNodes[identifier] = node
 
                 let meshResource: LowLevelMeshResource
                 if meshData.updateType == .initial || meshData.descriptor != nil {
@@ -1092,6 +1124,16 @@ extension WKBridgeReceiver {
         modelTransform = transform
     }
 
+    @objc(setTransform:forNode:)
+    func setTransform(_ transform: simd_float4x4, forNode node: NodeIdentifier) {
+        nodeTransforms[node] = transform
+    }
+
+    @objc(removeNode:)
+    func removeNode(_ node: NodeIdentifier) {
+        nodeTransforms.removeValue(forKey: node)
+    }
+
     func setFOV(_ fovY: Float) {
         appRenderer.setFOV(fovY)
     }
@@ -1164,6 +1206,29 @@ extension WKBridgeReceiver {
             commandBuffer.commit()
         } catch {
             fatalError(error.localizedDescription)
+        }
+    }
+
+    func setDefaultEnvironmentMap() {
+        do {
+            try lightingArguments.setTexture(defaultDiffuseTexture, at: 0)
+            try lightingArguments.setTexture(defaultSpecularTexture, at: 1)
+        } catch {
+            logError("Could not restore the default environment map: \(error.localizedDescription)")
+        }
+    }
+
+    func removeEnvironmentMap() {
+        guard let emptyEnvironmentTexture else {
+            logError("Could not remove the environment map, no empty environment texture")
+            return
+        }
+
+        do {
+            try lightingArguments.setTexture(emptyEnvironmentTexture, at: 0)
+            try lightingArguments.setTexture(emptyEnvironmentTexture, at: 1)
+        } catch {
+            logError("Could not remove the environment map: \(error.localizedDescription)")
         }
     }
 }
@@ -1860,15 +1925,17 @@ private func fromWKBridgeDataType(_ dataType: WKBridgeDataType) -> ShaderGraph.D
     }
 }
 
+
+private let cgColorComponentCount = 3
+
 private func makeCGColor3(colorSpace: CGColorSpace, _ a: CGFloat, _ b: CGFloat, _ c: CGFloat) -> CGColor {
-    // rdar://177971578 - CG should provide an API for not requiring unsafe
-    guard let cs = unsafe CGColor(colorSpace: colorSpace, components: [a, b, c, 1.0]) else {
-        fatalError("\(a) \(b) \(c) could not form a CGColor with colorSpace \(colorSpace)")
-    }
-    return cs
+    makeCGColor4(colorSpace: colorSpace, a, b, c, 1.0)
 }
 
 private func makeCGColor4(colorSpace: CGColorSpace, _ a: CGFloat, _ b: CGFloat, _ c: CGFloat, _ d: CGFloat) -> CGColor {
+    guard colorSpace.numberOfComponents == cgColorComponentCount else {
+        fatalError("colorSpace \(colorSpace) has \(colorSpace.numberOfComponents) components, expected \(cgColorComponentCount)")
+    }
     // rdar://177971578 - CG should provide an API for not requiring unsafe
     guard let cs = unsafe CGColor(colorSpace: colorSpace, components: [a, b, c, d]) else {
         fatalError("\(a) \(b) \(c) \(d) could not form a CGColor with colorSpace \(colorSpace)")
@@ -1876,18 +1943,29 @@ private func makeCGColor4(colorSpace: CGColorSpace, _ a: CGFloat, _ b: CGFloat, 
     return cs
 }
 
-private func fromWKBridgeConstant(_ constant: WKBridgeConstantContainer) -> ShaderGraph.Value {
-    let values = constant.constantValues
+private func bridgeColorSpace(named name: String?) -> CGColorSpace {
     // Resolve the color space from the transmitted name, falling back to extendedLinearSRGB.
     // USD color3f/color4f values are in linear sRGB, so extendedLinearSRGB is the correct fallback.
-    // swift-format-ignore: NeverForceUnwrap
-    guard
-        let colorSpace =
-            (constant.colorSpaceName.flatMap { CGColorSpace(name: $0 as CFString) }
-                ?? CGColorSpace(name: CGColorSpace.extendedLinearSRGB))
-    else {
+    if let name, let colorSpace = CGColorSpace(name: name as CFString) {
+        if colorSpace.model == .rgb && colorSpace.numberOfComponents == cgColorComponentCount {
+            return colorSpace
+        }
+        logError(
+            "rejecting color space \"\(name)\": model \(colorSpace.model.rawValue) with "
+                + "\(colorSpace.numberOfComponents) components, expected a "
+                + "\(cgColorComponentCount)-component RGB space"
+        )
+    }
+    guard let fallback = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) else {
         fatalError("extendedLinearSRGB could not be constructed, should never occur")
     }
+    return fallback
+}
+
+
+private func fromWKBridgeConstant(_ constant: WKBridgeConstantContainer) -> ShaderGraph.Value {
+    let values = constant.constantValues
+    let colorSpace = bridgeColorSpace(named: constant.colorSpaceName)
 
     switch constant.constant {
     case .bool:
@@ -2247,6 +2325,8 @@ final class USDModelLoader {
     private let objcLoader: WKBridgeModelLoader
     private let gpuFamily: MTLGPUFamily
     private var rootJointIndicesCache: [String: [UInt32]] = [:]
+    private var primsByName: [String: USDPrim] = [:]
+    private var missingPrimNames: Set<String> = []
 
     // TextureID → shader parameter name (e.g. "diffuseColor"). Populated from
     // MaterialData.assignedTextures so we can set WKBridgeUpdateTexture.hashString
@@ -2296,6 +2376,8 @@ final class USDModelLoader {
 
     private func resetLoaderState() {
         rootJointIndicesCache.removeAll()
+        primsByName.removeAll()
+        missingPrimNames.removeAll()
         textureIdToParameterName.removeAll()
         deformationDataById.removeAll()
         deformationOverridesById.removeAll()
@@ -2345,12 +2427,46 @@ final class USDModelLoader {
         endTime - startTime
     }
 
-    func treatZAsUpAxis() -> Bool {
-        stage?.upAxis == USDToken("Z")
-    }
-
     func currentTime() -> Double {
         time - startTime
+    }
+
+    private func prim(named name: String, in stage: USDStage) -> USDPrim? {
+        if let cachedPrim = primsByName[name] {
+            return cachedPrim
+        }
+
+        guard !missingPrimNames.contains(name) else {
+            return nil
+        }
+
+        guard let prim = stage.descendants.first(where: { $0.path.name.string == name }) else {
+            logError("the model has no prim named '\(name)'")
+            missingPrimNames.insert(name)
+            return nil
+        }
+
+        primsByName[name] = prim
+        return prim
+    }
+
+    func localToWorldTransform(ofPrimNamed name: String) -> simd_float4x4? {
+        guard let stage, let prim = prim(named: name, in: stage) else {
+            return nil
+        }
+
+        let timeCode = USDStage.TimeCode(time * timeCodePerSecond)
+
+        var transform = matrix_identity_float4x4
+        var current: USDPrim? = prim
+        while let ancestor = current, ancestor.isValid {
+            if let local = ancestor.transform(at: timeCode) {
+                transform = simd_float4x4(local.projectiveTransform) * transform
+            }
+            current = ancestor.parent
+        }
+
+        return transform
     }
 
     func setCurrentTime(_ newTime: Double) {
@@ -2706,15 +2822,15 @@ extension WKBridgeModelLoader {
         return loader.duration()
     }
 
-    func treatZAsUpAxis() -> Bool {
-        loader?.treatZAsUpAxis() ?? false
-    }
-
     func currentTime() -> Double {
         guard let loader else {
             return 0.0
         }
         return loader.currentTime()
+    }
+
+    func anchorPlacementNamed(_ name: String) -> simd_float4x4 {
+        loader?.localToWorldTransform(ofPrimNamed: name) ?? matrix_identity_float4x4
     }
 
     func setCurrentTime(_ newTime: Double) {
@@ -2811,6 +2927,52 @@ private func makeFallBackTextureResource(
     return fallbackTexture
 }
 
+private func makeEmptyEnvironmentTextureResource(
+    _ renderContext: any LowLevelRenderContext,
+    commandQueue: any MTLCommandQueue,
+    device: any MTLDevice,
+    memoryOwner: task_id_token_t
+) -> LowLevelTextureResource? {
+    let cubeDescriptor = MTLTextureDescriptor.textureCubeDescriptor(
+        pixelFormat: .r8Unorm,
+        size: 1,
+        mipmapped: false
+    )
+    guard
+        let emptyTexture = try? renderContext.makeTextureResource(
+            descriptor: LowLevelTextureResource.Descriptor.from(cubeDescriptor)
+        ),
+        let commandBuffer = commandQueue.makeCommandBuffer(),
+        let blitEncoder = commandBuffer.makeBlitCommandEncoder()
+    else {
+        logError("could not create the empty environment texture")
+        return nil
+    }
+
+    let blackPixel: [UInt8] = [0]
+    let stagingBuffer = device.makeBuffer(fromSpan: blackPixel.span, length: blackPixel.count, memoryOwner: memoryOwner)
+
+    let emptyMTLTexture = emptyTexture.replace(commandBuffer: commandBuffer, memoryOwner: memoryOwner)
+    for slice in 0..<6 {
+        blitEncoder.copy(
+            from: stagingBuffer,
+            sourceOffset: 0,
+            sourceBytesPerRow: blackPixel.count,
+            sourceBytesPerImage: blackPixel.count,
+            sourceSize: MTLSize(width: 1, height: 1, depth: 1),
+            to: emptyMTLTexture,
+            destinationSlice: slice,
+            destinationLevel: 0,
+            destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+        )
+    }
+    blitEncoder.endEncoding()
+
+    commandBuffer.commit()
+
+    return emptyTexture
+}
+
 #else
 @objc
 @implementation
@@ -2820,12 +2982,14 @@ extension WKBridgeUSDConfiguration {
 
     var standardDynamicRange: Bool = false
 
+    @concurrent
     func makeStandaloneResources() async {
     }
 
     func createMaterialCompiler() {
     }
 
+    @concurrent
     func makeRendererResources() async {
     }
 
@@ -2859,8 +3023,12 @@ extension WKBridgeReceiver {
     func updateMaterial(_ data: [WKBridgeUpdateMaterial]) {
     }
 
-    @objc(updateMesh:)
-    func updateMesh(_ data: [WKBridgeUpdateMesh]) {
+    @objc(updateMesh:forNode:)
+    func updateMesh(_ data: [WKBridgeUpdateMesh], forNode node: NodeIdentifier) {
+    }
+
+    @objc(removeNode:)
+    func removeNode(_ node: NodeIdentifier) {
     }
 
     @objc
@@ -2876,6 +3044,10 @@ extension WKBridgeReceiver {
     func setTransform(_ transform: simd_float4x4) {
     }
 
+    @objc(setTransform:forNode:)
+    func setTransform(_ transform: simd_float4x4, forNode node: NodeIdentifier) {
+    }
+
     func setFOV(_ fovY: Float) {
     }
 
@@ -2883,6 +3055,12 @@ extension WKBridgeReceiver {
     }
 
     func setEnvironmentMap(_ imageAsset: WKBridgeUpdateTexture) {
+    }
+
+    func setDefaultEnvironmentMap() {
+    }
+
+    func removeEnvironmentMap() {
     }
 }
 
@@ -2929,12 +3107,12 @@ extension WKBridgeModelLoader {
         0.0
     }
 
-    func treatZAsUpAxis() -> Bool {
-        false
-    }
-
     func currentTime() -> Double {
         0.0
+    }
+
+    func anchorPlacementNamed(_ name: String) -> simd_float4x4 {
+        matrix_identity_float4x4
     }
 
     func setCurrentTime(_ newTime: Double) {

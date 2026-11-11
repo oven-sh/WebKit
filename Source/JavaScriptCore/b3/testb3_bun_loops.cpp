@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3EliminateRedundantPhiCycles.h"
+#include "B3LoopUtilities.h"
 #include "B3RotateLoops.h"
 #include "B3SimplifyTerminals.h"
 #include "B3SwitchValue.h"
@@ -141,7 +142,40 @@ static void testRotateLoopsSkipsRareBackEdge()
     checkSumsIntegersBelowBound(proc);
 }
 
-static void testRotateLoopsKeepsUnlikelyBackEdge()
+static void testRotateLoopsMovesTestOfCounterThatLeavesRarelyToBottom()
+{
+    Procedure proc(policyWith([](Policy&) { }));
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    graph.increase(loop.body, loop.sum, graph.get(loop.body, loop.index));
+    loop.endBody(loop.body);
+    loop.header->setSuccessors(FrequentedBlock(loop.body), rarely(loop.exit));
+
+    loop.rotate();
+
+    B3::NaturalLoops& loops = proc.naturalLoops();
+    CHECK_EQ(loops.numLoops(), 1u);
+    CHECK(loops.loop(0).header() == loop.body);
+    CHECK(!loops.belongsTo(loop.header, loops.loop(0)));
+    CHECK_EQ(valueCountInLoops(proc, Branch), 1u);
+    checkSumsIntegersBelowBound(proc);
+}
+
+static void testRotateLoopsSkipsTestThatLeavesRarelyAndComparesNoCounter()
+{
+    Procedure proc(policyWith([](Policy&) { }));
+    Graph graph { proc };
+    TopTestedLoop loop(graph);
+    graph.increase(loop.body, loop.sum, graph.get(loop.body, loop.index));
+    loop.endBody(loop.body);
+    loop.header->setSuccessors(FrequentedBlock(loop.body), rarely(loop.exit));
+    proc.setKnownInduction({ loop.counter(), loop.nextCounter(), nullptr, 1, false, false });
+
+    CHECK(!rotateLoops(proc));
+    checkSumsIntegersBelowBound(proc);
+}
+
+static void testRotateLoopsSendsUnlikelyBackEdgeToBottomTest()
 {
     Procedure proc;
     Graph graph { proc };
@@ -172,15 +206,15 @@ static void testRotateLoopsKeepsUnlikelyBackEdge()
     CHECK(bottomTest != header);
     CHECK(bottomTest->last()->opcode() == Branch);
     CHECK(bottomTest->successorBlock(0) == body);
-    CHECK(body->successor(0) == unlikely(header));
+    CHECK(body->successor(0) == unlikely(bottomTest));
     fixSSA(proc);
     validate(proc);
 
     B3::NaturalLoops& loops = proc.naturalLoops();
-    CHECK_EQ(loops.numLoops(), 2u);
-    CHECK(loops.headerOf(header));
+    CHECK_EQ(loops.numLoops(), 1u);
+    CHECK(!loops.headerOf(header));
     CHECK(loops.headerOf(body));
-    CHECK(!loops.belongsTo(header, *loops.headerOf(body)));
+    CHECK(loops.belongsTo(bottomTest, *loops.headerOf(body)));
     auto code = compileProc(proc);
     for (int64_t argument : { -1, 0, 1, 2, 5, 10 }) {
         int64_t numberOfEvenIntegers = argument > 0 ? argument / 2 : 0;
@@ -234,9 +268,17 @@ static void testRotateLoopsNestedLoops()
     checkSumsIntegersBelowBound(proc);
 }
 
+static unsigned numberOfPollsIn(BasicBlock* block)
+{
+    unsigned result = 0;
+    for (Value* value : *block)
+        result += isLoopPoll(value);
+    return result;
+}
+
 static void testRotateLoopsMovesPollInHeaderToBottomTest()
 {
-    for (bool hasUnlikelyBackEdge : { false, true }) {
+    for (bool hasRareBackEdge : { false, true }) {
         Procedure proc(remarkPolicy());
         Graph graph { proc };
         PollState state;
@@ -252,8 +294,8 @@ static void testRotateLoopsMovesPollInHeaderToBottomTest()
         appendPoll(graph, header, state);
         graph.branch(header, graph.make(header, LessThan, graph.get(header, index), bound), body, exit);
         graph.increase(body, index, 1);
-        if (hasUnlikelyBackEdge)
-            graph.branch(body, graph.make(body, Equal, graph.get(body, index), graph.int64(body, 2)), unlikely(header), FrequentedBlock(latch));
+        if (hasRareBackEdge)
+            graph.branch(body, graph.make(body, Equal, graph.get(body, index), graph.int64(body, 2)), rarely(header), FrequentedBlock(latch));
         else
             graph.jump(body, latch);
         graph.jump(latch, header);
@@ -264,11 +306,95 @@ static void testRotateLoopsMovesPollInHeaderToBottomTest()
         CHECK(rotateLoops(proc));
         fixSSA(proc);
         validate(proc);
-        CHECK_EQ(numberOfValues(proc, Patchpoint), hasUnlikelyBackEdge ? 2u : 1u);
-        CHECK_EQ(valueCountInLoops(proc, Patchpoint), hasUnlikelyBackEdge ? 2u : 1u);
+        CHECK_EQ(numberOfValues(proc, Patchpoint), hasRareBackEdge ? 2u : 1u);
+        CHECK_EQ(valueCountInLoops(proc, Patchpoint), hasRareBackEdge ? 2u : 1u);
+        CHECK_EQ(numberOfPollsIn(header), 0u);
         CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(5)), 5);
-        CHECK_EQ(state.numberOfPolls, hasUnlikelyBackEdge ? 6 : 5);
+        CHECK_EQ(state.numberOfPolls, 5);
     }
+}
+
+// A rare edge leaves the loop and leads back in front of its top. Where that cycle has no poll of its own, its turns poll on the way back, and what enters the loop from outside polls nowhere.
+static void testRotateLoopsPollsOnWayBackOfCycleWithoutPoll()
+{
+    for (bool cycleHasPoll : { false, true }) {
+        Procedure proc(remarkPolicy());
+        Graph graph { proc };
+        PollState state;
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* entry = proc.addBlock();
+        BasicBlock* header = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* latch = proc.addBlock();
+        BasicBlock* wayBack = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Variable* index = proc.addVariable(Int64);
+        Value* bound = cCallArgumentValues<int64_t>(proc, root)[0];
+        graph.set(root, index, graph.int64(root, 0));
+        graph.jump(root, entry);
+        if (cycleHasPoll)
+            appendPoll(graph, entry, state);
+        graph.jump(entry, header);
+        appendPoll(graph, header, state);
+        graph.branch(header, graph.make(header, LessThan, graph.get(header, index), bound), body, exit);
+        graph.increase(body, index, 1);
+        graph.branch(body, graph.make(body, BitAnd, graph.get(body, index), graph.int64(body, 1)), rarely(wayBack), FrequentedBlock(latch));
+        graph.jump(latch, header);
+        graph.jump(wayBack, entry);
+        graph.ret(exit, graph.get(exit, index));
+        proc.resetReachability();
+        fixSSA(proc);
+
+        CHECK(rotateLoops(proc));
+        fixSSA(proc);
+        validate(proc);
+        CHECK_EQ(numberOfPollsIn(header), 0u);
+        CHECK_EQ(numberOfValues(proc, Patchpoint), 2u);
+        CHECK_EQ(wayBack->numSuccessors(), 1u);
+        CHECK_EQ(numberOfPollsIn(wayBack->successorBlock(0)), 1u);
+        CHECK_EQ(wayBack->successorBlock(0) == entry, cycleHasPoll);
+        CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(6)), 6);
+        CHECK_EQ(state.numberOfPolls, cycleHasPoll ? 7 : 6);
+    }
+}
+
+// The loop around has no poll, and its turns are likely: they are as many as the entries into the inner loop, so they poll in the test that stays in front of it.
+static void testRotateLoopsKeepsPollInFrontOfLoopInsideLikelyCycleWithoutPoll()
+{
+    Procedure proc(remarkPolicy());
+    Graph graph { proc };
+    PollState state;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* outerHeader = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* outerLatch = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Variable* index = proc.addVariable(Int64);
+    Variable* turns = proc.addVariable(Int64);
+    Value* bound = cCallArgumentValues<int64_t>(proc, root)[0];
+    graph.set(root, index, graph.int64(root, 0));
+    graph.set(root, turns, graph.int64(root, 0));
+    graph.jump(root, outerHeader);
+    graph.jump(outerHeader, header);
+    appendPoll(graph, header, state);
+    graph.branch(header, graph.make(header, BitAnd, graph.get(header, index), graph.int64(header, 1)), body, outerLatch);
+    graph.increase(body, index, 1);
+    graph.jump(body, header);
+    graph.increase(outerLatch, index, 1);
+    graph.increase(outerLatch, turns, 1);
+    graph.branch(outerLatch, graph.make(outerLatch, LessThan, graph.get(outerLatch, turns), bound), outerHeader, exit);
+    graph.ret(exit, graph.get(exit, turns));
+    proc.resetReachability();
+    fixSSA(proc);
+
+    CHECK(rotateLoops(proc));
+    fixSSA(proc);
+    validate(proc);
+    CHECK_EQ(numberOfPollsIn(header), 1u);
+    CHECK_EQ(numberOfValues(proc, Patchpoint), 2u);
+    CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(4)), 4);
+    CHECK_EQ(state.numberOfPolls, 7);
 }
 
 static void testRotateLoopsWritesRemark()
@@ -379,6 +505,103 @@ static void testRotateLoopsSkipsGuardWhoseRarePathRejoinsBody()
     CHECK(!rotateLoops(proc));
     CHECK_EQ(proc.naturalLoops().numLoops(), 1u);
     CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(20)), 190 + 2 * 100);
+}
+
+// for (index = 0, flag = 1; index < bound; ) { if (!flag) return sum + 1000; sum += ++index; flag = ..; }
+// The latch has two Upsilons for flag. The next iteration sees the last one.
+static void testRotateLoopsUsesLastUpsilonInLatch()
+{
+    enum class Written : uint8_t { OneThenZero, OneThenLowestBitOfIndex, ZeroThenOne };
+    for (Written written : { Written::OneThenZero, Written::OneThenLowestBitOfIndex, Written::ZeroThenOne }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* header = proc.addBlock();
+        BasicBlock* test = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* earlyReturn = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Value* bound = cCallArgumentValues<int64_t>(proc, root)[0];
+        Value* index = graph.phi(header, Int64);
+        Value* sum = graph.phi(header, Int64);
+        Value* flag = graph.phi(header, Int64);
+        graph.upsilon(root, graph.int64(root, 0), index);
+        graph.upsilon(root, graph.int64(root, 0), sum);
+        graph.upsilon(root, graph.int64(root, 1), flag);
+        graph.jump(root, header);
+        graph.branch(header, graph.make(header, LessThan, index, bound), test, exit);
+        graph.branch(test, flag, body, earlyReturn);
+        Value* next = graph.make(body, Add, index, graph.int64(body, 1));
+        graph.upsilon(body, next, index);
+        graph.upsilon(body, graph.make(body, Add, sum, next), sum);
+        graph.upsilon(body, graph.int64(body, written == Written::ZeroThenOne ? 0 : 1), flag);
+        graph.upsilon(body, written == Written::OneThenLowestBitOfIndex ? graph.make(body, BitAnd, next, graph.int64(body, 1)) : graph.int64(body, written == Written::ZeroThenOne ? 1 : 0), flag);
+        graph.jump(body, header);
+        graph.ret(earlyReturn, graph.make(earlyReturn, Add, sum, graph.int64(earlyReturn, 1000)));
+        graph.ret(exit, sum);
+        resetAndValidate(proc);
+
+        CHECK(rotateLoops(proc));
+        fixSSA(proc);
+        validate(proc);
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, 0), 0);
+        CHECK_EQ(invoke<int64_t>(*code, 1), 1);
+        switch (written) {
+        case Written::OneThenZero:
+            CHECK_EQ(invoke<int64_t>(*code, 2), 1001);
+            CHECK_EQ(invoke<int64_t>(*code, 5), 1001);
+            break;
+        case Written::OneThenLowestBitOfIndex:
+            CHECK_EQ(invoke<int64_t>(*code, 2), 3);
+            CHECK_EQ(invoke<int64_t>(*code, 5), 1003);
+            break;
+        case Written::ZeroThenOne:
+            CHECK_EQ(invoke<int64_t>(*code, 2), 3);
+            CHECK_EQ(invoke<int64_t>(*code, 5), 15);
+            break;
+        }
+    }
+}
+
+// One latch passes back the index + 1 that the header computes and tests, the other an index + 1 of its own.
+static void testRotateLoopsKeepsIncrementComputedInHeader()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* odd = proc.addBlock();
+    BasicBlock* even = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Value* bound = cCallArgumentValues<int64_t>(proc, root)[0];
+    Value* index = graph.phi(header, Int64);
+    Value* sum = graph.phi(header, Int64);
+    graph.upsilon(root, graph.int64(root, 0), index);
+    graph.upsilon(root, graph.int64(root, 0), sum);
+    graph.jump(root, header);
+    Value* nextInHeader = graph.make(header, Add, index, graph.int64(header, 1));
+    graph.branch(header, graph.make(header, LessEqual, nextInHeader, bound), body, exit);
+    graph.branch(body, graph.make(body, BitAnd, index, graph.int64(body, 1)), odd, even);
+    graph.upsilon(odd, nextInHeader, index);
+    graph.upsilon(odd, graph.make(odd, Add, sum, graph.int64(odd, 1)), sum);
+    graph.jump(odd, header);
+    graph.upsilon(even, graph.make(even, Add, index, graph.int64(even, 1)), index);
+    graph.upsilon(even, graph.make(even, Add, sum, graph.int64(even, 10)), sum);
+    graph.jump(even, header);
+    graph.ret(exit, sum);
+    resetAndValidate(proc);
+
+    CHECK(rotateLoops(proc));
+    CHECK(nextInHeader->opcode() == Add);
+    fixSSA(proc);
+    validate(proc);
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int64_t>(*code, 0), 0);
+    CHECK_EQ(invoke<int64_t>(*code, 1), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 2), 11);
+    CHECK_EQ(invoke<int64_t>(*code, 5), 32);
 }
 
 static void testSimplifyTerminals()
@@ -537,23 +760,35 @@ static void testEliminateRedundantPhiCycles()
     }
 }
 
-static void testEliminateRedundantPhiCyclesKeepsPhiOfValueInSameBlock()
+static void testEliminateRedundantPhiCyclesFoldsPhiThatFollowsItsUpsilon()
 {
-    Procedure proc;
-    Graph graph { proc };
-    BasicBlock* root = proc.addBlock();
-    Value* x = cCallArgumentValues<int64_t>(proc, root)[0];
-    UpsilonValue* upsilon = root->appendNew<UpsilonValue>(proc, Origin(), graph.make(root, Add, x, graph.int64(root, 1)));
-    Value* phi = graph.phi(root, Int64);
-    upsilon->setPhi(phi);
-    graph.ret(root, phi);
-    proc.resetReachability();
-    validate(proc);
+    for (bool hasOtherUpsilon : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* other = proc.addBlock();
+        BasicBlock* rest = proc.addBlock();
+        Value* x = cCallArgumentValues<int64_t>(proc, root)[0];
+        graph.branch(root, graph.make(root, Equal, x, graph.int64(root, 7)), other, rest);
+        UpsilonValue* otherUpsilon = hasOtherUpsilon ? other->appendNew<UpsilonValue>(proc, Origin(), graph.int64(other, 3)) : nullptr;
+        graph.ret(other, graph.int64(other, -1));
+        UpsilonValue* upsilon = rest->appendNew<UpsilonValue>(proc, Origin(), graph.make(rest, Add, x, graph.int64(rest, 1)));
+        Value* phi = graph.phi(rest, Int64);
+        upsilon->setPhi(phi);
+        if (otherUpsilon)
+            otherUpsilon->setPhi(phi);
+        graph.ret(rest, phi);
+        proc.resetReachability();
+        validate(proc);
 
-    CHECK(!eliminateRedundantPhiCycles(proc));
-    validate(proc);
-    CHECK_EQ(numberOfValues(proc, Phi), 1u);
-    CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(41)), 42);
+        CHECK(eliminateRedundantPhiCycles(proc));
+        validate(proc);
+        CHECK_EQ(numberOfValues(proc, Phi), 0u);
+        CHECK_EQ(numberOfValues(proc, Upsilon), 0u);
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(41)), 42);
+        CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(7)), -1);
+    }
 }
 
 void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
@@ -563,19 +798,25 @@ void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testRotateLoopsSkipsLargeTest());
     RUN(testRotateLoopsSkipsUncloneableTest());
     RUN(testRotateLoopsSkipsRareBackEdge());
-    RUN(testRotateLoopsKeepsUnlikelyBackEdge());
+    RUN(testRotateLoopsMovesTestOfCounterThatLeavesRarelyToBottom());
+    RUN(testRotateLoopsSkipsTestThatLeavesRarelyAndComparesNoCounter());
+    RUN(testRotateLoopsSendsUnlikelyBackEdgeToBottomTest());
     RUN(testRotateLoopsHonorsHeaderFilter());
     RUN(testRotateLoopsNestedLoops());
     RUN(testRotateLoopsMovesPollInHeaderToBottomTest());
+    RUN(testRotateLoopsPollsOnWayBackOfCycleWithoutPoll());
+    RUN(testRotateLoopsKeepsPollInFrontOfLoopInsideLikelyCycleWithoutPoll());
     RUN(testRotateLoopsWritesRemark());
     RUN(testRotateLoopsCountsRareBlockLimit());
     RUN(testRotateLoopsSkipsGuardWhoseRarePathRejoinsBody());
+    RUN(testRotateLoopsUsesLastUpsilonInLatch());
+    RUN(testRotateLoopsKeepsIncrementComputedInHeader());
     RUN(testSimplifyTerminals());
     RUN(testSimplifyTerminalsKeepsNonConstantBranch());
     RUN(testSimplifyTerminalsLooksThroughIdentity());
     RUN(testSimplifyTerminalsOfSwitch());
     RUN(testEliminateRedundantPhiCycles());
-    RUN(testEliminateRedundantPhiCyclesKeepsPhiOfValueInSameBlock());
+    RUN(testEliminateRedundantPhiCyclesFoldsPhiThatFollowsItsUpsilon());
 }
 
 #endif // ENABLE(B3_JIT)

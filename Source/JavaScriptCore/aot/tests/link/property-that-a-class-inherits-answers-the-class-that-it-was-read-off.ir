@@ -1,0 +1,27 @@
+# Uint8Array[Symbol.species].from([1])
+# The property lies on the class above all views. What it answers is the receiver of the read, `Uint8Array`, and not the class that holds it: `from` is found from there.
+# LIBRARY: own
+# RUN(FUNCTIONS): link functions mechanisms=all
+# FUNCTIONS-NOT: function f1 unreached
+# RUN(LOOKUPS): link lookups mechanisms=all
+# LOOKUPS-NOT: lookup lost
+# LOOKUPS-NOT: lookup let-go TypedArray
+# LOOKUPS-NOT: lookup let-go Uint8Array
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="TypedArrayConstructor.js" displayPath="TypedArrayConstructor.js" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=TypedArrayConstructorFrom function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Uint8Array
+    v1 = PropGet v0 key=@@species
+    v2 = PropGet v1 key="from"
+    v3 = String string="hi"
+    v4 = Call v2, v1, v3 calleeKey="from"
+    Return v4
+}
+function f1 name="from" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=TypedArrayConstructorFrom thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

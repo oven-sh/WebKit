@@ -52,7 +52,7 @@ RenderButton::RenderButton(HTMLFormControlElement& element, Style::ComputedStyle
 
 RenderButton::~RenderButton() = default;
 
-HTMLFormControlElement& LEGACY_NODELETE RenderButton::formControlElement() const
+NODELETE HTMLFormControlElement& RenderButton::formControlElement() const
 {
     return downcast<HTMLFormControlElement>(nodeForNonAnonymous());
 }
@@ -73,14 +73,11 @@ void RenderButton::setInnerRenderer(RenderBlock& innerRenderer)
     m_inner = innerRenderer;
     updateAnonymousChildStyle(m_inner->mutableStyle());
 
-    if (m_inner && m_inner->layoutBox()) {
+    if (m_inner && LayoutIntegration::BoxTreeUpdater::isLaidOutByIntegration(*m_inner)) {
         if (auto* inlineFormattingContextRoot = dynamicDowncast<RenderBlockFlow>(*m_inner); inlineFormattingContextRoot && inlineFormattingContextRoot->inlineLayout())
             inlineFormattingContextRoot->inlineLayout()->rootStyleWillChange(*inlineFormattingContextRoot, inlineFormattingContextRoot->style());
         if (auto* lineLayout = LayoutIntegration::LineLayout::containing(*m_inner))
             lineLayout->styleWillChange(*m_inner, m_inner->style(), Style::DifferenceResult::Layout);
-        LayoutIntegration::LineLayout::updateStyle(*m_inner);
-        for (auto& child : childrenOfType<RenderText>(*m_inner))
-            LayoutIntegration::LineLayout::updateStyle(child);
     }
 }
 

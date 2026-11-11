@@ -55,9 +55,9 @@ struct AwaitCondition {
 inline constexpr unsigned promiseFlagsShift = CompactPointerTuple<JSCell*, uint16_t>::maxNumberOfBitsInPointer;
 inline constexpr ptrdiff_t offsetOfMicrotaskQueue = AOT_INSTANCE_OFFSET(realm.microtaskQueue);
 inline constexpr ptrdiff_t offsetOfPromiseHeader = AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].header);
+static_assert(offsetOfPromiseHeader == AOT_INSTANCE_OFFSET(allocation.inlineAllocations[0].header));
 inline constexpr AwaitConditionWord noWord { AwaitConditionBase::Instance, 0, 0, false };
 
-// The first one stands for three: a job entered the frame as the last thing it does, the frame is still that one, and awaitMustSuspend is clear.
 inline constexpr std::array<AwaitCondition, 2> awaitConditionsOnState { {
     { { AwaitConditionBase::Instance, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue), 8, false }, AwaitConditionTest::EqualsFramePointer, 0, noWord },
     { { AwaitConditionBase::MicrotaskQueue, MicrotaskQueue::offsetOfStart(), 8, false }, AwaitConditionTest::EqualsOther, 0, { AwaitConditionBase::MicrotaskQueue, MicrotaskQueue::offsetOfEnd(), 8, false } },
@@ -67,7 +67,6 @@ inline constexpr AwaitCondition awaitedHasPromiseStructure { { AwaitConditionBas
 inline constexpr AwaitCondition awaitedIsFulfilled { { AwaitConditionBase::AwaitedPromise, JSPromise::offsetOfPacked(), 8, false }, AwaitConditionTest::HasAnyBit, static_cast<uint64_t>(JSPromise::Status::Fulfilled) << promiseFlagsShift, noWord };
 inline constexpr std::array<AwaitCondition, 2> awaitConditionsOnObject { awaitedHasPromiseStructure, awaitedIsFulfilled };
 
-// A pending promise without a reaction takes one in its own two words, with the async context, a cell, in the place that the reaction of another task has for its cell.
 inline constexpr uint64_t pendingPromiseWithoutReactionBits = (static_cast<uint64_t>(JSPromise::isHandledFlag) | JSPromise::isFirstResolvingFunctionCalledFlag) << promiseFlagsShift;
 inline constexpr AwaitCondition tracksNoAsyncContext { { AwaitConditionBase::VM, OBJECT_OFFSETOF(VM, m_asyncContextTrackingEnabled), 1, false }, AwaitConditionTest::IsZero, 0, noWord };
 inline constexpr AwaitCondition awaitedTakesInlineReaction { { AwaitConditionBase::AwaitedPromise, JSPromise::offsetOfPacked(), 8, false }, AwaitConditionTest::HasNoBit, ~pendingPromiseWithoutReactionBits, noWord };

@@ -66,6 +66,32 @@ public:
     void setIsLoading(bool loading) { m_isLoading = loading; }
 
     void appendVisited(VM&, CyclicModuleRecord*);
+#if ENABLE(AOT)
+    // Removes the most recent entry for this module.
+    void removeVisited(CyclicModuleRecord* cyclic)
+    {
+        if (m_rootState)
+            m_rootState->removeVisited(cyclic);
+        Locker locker { cellLock() };
+        bool wasVisited = m_visited.removeLastMatching([&](const auto& visited) { return visited.get() == cyclic; });
+        ASSERT_UNUSED(wasVisited, wasVisited);
+        m_visitedSet.remove(cyclic);
+    }
+
+    // moduleLoadStep() gives each module its own state, and each state visits every record that is still New. On a cycle that is the whole cycle.
+    // When a graph load requests a compiled record, the record's state points to the load's root state, so each compiled record is visited once per load, by the first state that reaches it.
+    // Every record such a state visits, compiled or not, is also added to the root state's [[Visited]] list.
+    void setRootState(VM& vm, ModuleGraphLoadingState* parentState) { m_rootState.set(vm, this, parentState->m_rootState ? parentState->m_rootState.get() : parentState); }
+    bool hasRootState() const { return !!m_rootState; }
+    // Returns true if no other state of this load has visited the record yet, and marks it visited.
+    bool markVisitedInRootState(VM& vm, CyclicModuleRecord* cyclic)
+    {
+        if (m_rootState->containsVisited(cyclic))
+            return false;
+        m_rootState->appendVisited(vm, cyclic);
+        return true;
+    }
+#endif
     bool containsVisited(const AbstractModuleRecord* record) const { return m_visitedSet.contains(record); }
     void iterateVisited(NOESCAPE const auto& function) const
     {
@@ -106,6 +132,9 @@ private:
     // dynamicDowncast on the per-edge fast path.
     UncheckedKeyHashSet<const AbstractModuleRecord*> m_visitedSet;
     Vector<AbstractModuleRecord*, 8> m_innerLoadQueue;
+#if ENABLE(AOT)
+    WriteBarrier<ModuleGraphLoadingState> m_rootState;
+#endif
     // Slot used only at top-level loadModule to AND-join loadPromise and statePromise into combinedPromise.
     WriteBarrier<Unknown> m_fulfillment;
     // [[PendingModulesCount]]

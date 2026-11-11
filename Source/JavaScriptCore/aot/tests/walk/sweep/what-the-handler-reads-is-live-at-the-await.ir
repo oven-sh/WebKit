@@ -1,0 +1,29 @@
+# const a = make(); try { return await x; } catch (e) { return use(a, e); }
+# The await may throw when the function goes on, so b1 keeps its handler, and what b2 reads is live behind the await: v0 and v2. Nothing reads v1 any more.
+# RUN: sweep-code
+# CHECK: # live at v3 [v0, v2]
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+entry module=m0
+
+# -- code
+# code f0:CoroutineBody {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: anything @JSValue = Call v0, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b1()
+#   b1() handler=b2():
+#     v3: anything @JSValue = AwaitBySavingFrame v0, v1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, maySuspend, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b3()
+#   b2() role=CatchHandler:
+#     v4: anything @JSValue = CatchValue traits=[mayCollect, mayTouchMemory]
+#     v5: anything @JSValue = Call v0, -, v2, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Return v5
+#   b3():
+#     Return v3
+# }
+# -- end of code

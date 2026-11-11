@@ -1,0 +1,73 @@
+# `pos < end`: all that is known is that `pos` is a number, and it lies boxed; of `end` nothing is known. Both are int32s wherever such code runs: the number is taken as it lies, one test asks both tags,
+# two integers are compared, and whatever else goes to one stub out of line. By doubles the number was asked for its tag and converted, the value asked twice and converted, and two doubles compared.
+# function before(pos, end) { if (typeof pos === "number") return pos < end; }
+# RUN(FORM): walk f1 mechanisms=all-ParameterGuards
+# FORM-LABEL: code f1:Body
+# FORM-NOT: = Unbox
+# FORM: = Less {{*}}form=NumberAndValue
+# RUN(CODE): emit f1 mechanisms=all-ParameterGuards
+# CODE: = BitAnd(
+# CODE: = AboveEqual(
+# CODE: = LessThan(
+# RUN(NEVER): emit f1 mechanisms=all-ParameterGuards
+# NEVER-NOT: IToD
+# The number behind the value: function behind(pos, end) { if (typeof pos === "number") return end >= pos; }
+# RUN(BEHIND): walk f2 mechanisms=all-ParameterGuards
+# BEHIND-LABEL: code f2:Body
+# BEHIND-NOT: = Unbox
+# BEHIND: = GreaterEq {{*}}form=NumberAndValue
+# Control: a number that has a fraction by its type is no int32: it goes by doubles as ever: function half(pos, end) { if (typeof pos === "number") return pos * 0.5 < end; }
+# RUN(RAW): walk f3 mechanisms=all-ParameterGuards
+# RAW-LABEL: code f3:Body
+# RAW: @Double = Mul
+# RAW: = Less {{*}}form=NumberAndValue
+# RUN(RAWCODE): emit f3 mechanisms=all-ParameterGuards
+# RAWCODE: IToD
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="before" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = Less v3, v1
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+function f2 name="behind" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GreaterEq v1, v3
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+function f3 name="half" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = Double number=0.5
+    v5 = Mul v3, v4
+    v6 = Less v5, v1
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}

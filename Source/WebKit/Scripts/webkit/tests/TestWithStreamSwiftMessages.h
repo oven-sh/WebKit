@@ -43,7 +43,7 @@ namespace WebKit {
 
 class TestWithStreamSwiftMessageForwarder final : public IPC::StreamMessageReceiver {
 public:
-    static Ref<TestWithStreamSwiftMessageForwarder> createFromWeak(WebKit::TestWithStreamSwiftWeakRef* _Nonnull handler)
+    static Ref<TestWithStreamSwiftMessageForwarder> createFromWeak(WebKit::TestWithStreamSwiftWeakRef* WTF_NONNULL handler)
     {
         return adoptRef(*new TestWithStreamSwiftMessageForwarder(handler));
     }
@@ -52,7 +52,7 @@ public:
     void ref() const { StreamMessageReceiver::ref(); }
     void deref() const { StreamMessageReceiver::deref(); }
 private:
-    TestWithStreamSwiftMessageForwarder(WebKit::TestWithStreamSwiftWeakRef* _Nonnull);
+    TestWithStreamSwiftMessageForwarder(WebKit::TestWithStreamSwiftWeakRef* WTF_NONNULL);
     std::unique_ptr<WebKit::TestWithStreamSwift> getMessageTarget();
     std::unique_ptr<WebKit::TestWithStreamSwiftWeakRef> m_handler;
 } DERIVED_CLASS_SWIFT_SHARED_REFERENCE(.ref, .deref);
@@ -73,7 +73,7 @@ class SendString {
 public:
     using Arguments = std::tuple<String>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithStreamSwift_SendString; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithStreamSwift_SendString; }
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -100,7 +100,7 @@ class SendStringSync {
 public:
     using Arguments = std::tuple<String>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithStreamSwift_SendStringSync; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithStreamSwift_SendStringSync; }
     static constexpr bool isSync = true;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -135,6 +135,8 @@ namespace TestWithStreamSwift {
 using SendStringSyncCompletionHandler = WTF::RefCountable<Messages::TestWithStreamSwift::SendStringSync::Reply>;
 
 void completeWithDefaultReply(SendStringSyncCompletionHandler&);
+
+void complete(SendStringSyncCompletionHandler&, int64_t);
 } // namespace TestWithStreamSwift
 } // namespace CompletionHandlers
 

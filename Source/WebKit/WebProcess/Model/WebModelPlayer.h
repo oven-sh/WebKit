@@ -93,6 +93,10 @@ private:
 
         bool isPlaying() const { return pauseState == PauseState::Playing; }
 
+#if ENABLE(SPATIAL_PORTAL)
+        WebCore::TransformationMatrix anchorPlacementTransform(const HostedModel& anchor);
+#endif
+
         RetainPtr<WKBridgeModelLoader> loader;
         RetainPtr<NSData> retainedData;
 
@@ -109,6 +113,12 @@ private:
         bool isLooping { false };
 
         std::optional<WebCore::ModelPlayerAnimationState> animationStateToRestore;
+#if ENABLE(SPATIAL_PORTAL)
+        std::optional<WebCore::TransformationMatrix> childTransform;
+        std::optional<WebCore::NodeIdentifier> anchorNode;
+        String anchorPlacementName;
+        std::optional<WebCore::TransformationMatrix> anchorCorrection;
+#endif
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
         RefPtr<WebCore::Model> cachedModelSource;
 #endif
@@ -184,13 +194,22 @@ private:
     void setStageMode(WebCore::StageModeOperation) final;
     void notifyEntityTransformUpdated();
     void setEnvironmentMap(Ref<WebCore::SharedBuffer>&&, const URL&) final;
+#if ENABLE(SPATIAL_PORTAL)
+    void disableEnvironmentMap() final;
+    void enableSystemEnvironmentMap() final;
+#endif
+    String environmentMapForTesting() const final;
+    void pushEnvironmentMapToModel();
     WebCore::StageModeOperation effectiveStageMode() const;
 #if ENABLE(SPATIAL_PORTAL)
     void setPortalTransform(const WebCore::UsedPortalTransform&) final;
     void setPortalAction(WebCore::PortalActionKind) final;
     bool isSpatialPortal() const { return !!m_portalTransform; }
-    void pushPortalStateToModel();
     void notifyPortalTransformUpdated();
+    void setAnchor(WebCore::NodeIdentifier, std::optional<WebCore::NodeIdentifier> anchorNode, const String& placement) final;
+    bool isAnchoredTo(const HostedModel&, WebCore::NodeIdentifier ancestorNode) const;
+    void pushPortalChildTransform(WebCore::NodeIdentifier);
+    void pushAnchoredPortalChildTransforms(WebCore::NodeIdentifier anchorNode);
 #endif
 
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
@@ -218,6 +237,9 @@ private:
     WebCore::IntSize m_currentPixelSize;
     std::optional<WebCore::LayoutPoint> m_initialPoint;
     std::optional<Ref<WebCore::SharedBuffer>> m_environmentMap;
+    URL m_environmentMapURL;
+    WebCore::EnvironmentMapKind m_environmentMapKind { WebCore::EnvironmentMapKind::Default };
+    bool m_environmentMapPushedToCurrentModel { false };
     const RetainPtr<WKStageModeOrbitSimulator> m_orbitSimulator;
     MonotonicTime m_lastUpdateTime;
 #if ENABLE(SPATIAL_PORTAL)

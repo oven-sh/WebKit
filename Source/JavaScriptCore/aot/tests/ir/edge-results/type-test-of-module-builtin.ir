@@ -1,8 +1,13 @@
-# A test that names import.meta cannot tell the object, which each module has one of, from another object: the edge that is not taken keeps it. Where import.meta is the only object the value may be, the test asks for an object and decides. A built-in of the realm is one cell, and the edge that is not taken has lost it
-# FORM: Prepared
-# RUN: print
+# Each module has its own import.meta, so no test finds it. A test that names it among other objects refuses it as it refuses them, and the edge that is not taken keeps it. Where import.meta is the only object the value may be, the test asks for an object and decides. What can be tested of import.meta by itself is that it is an object: among other objects that test passes them all and narrows nothing. A built-in of the realm is one cell: the edge that is not taken has lost it, behind a test and behind a comparison. A comparison with import.meta that fails takes nothing away
+# RUN: edge-results
+# RUN(EDGES): edges
+# RUN(WRITTEN): edges
+# RUN(EQUAL): edges
+# RUN(WRONG): edges
+# TYPES: f4
 
 module m0 path="main.js" displayPath="main.js"
+entry module=m0
 function f0 name="amongObjects" parameters=[{type=builtin(GlobalThis)|builtin(ImportMeta)}] results=[{type=undefined}] {
     v1 = TypeTest v0 testedType=builtin(ImportMeta)
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
@@ -12,8 +17,8 @@ function f0 name="amongObjects" parameters=[{type=builtin(GlobalThis)|builtin(Im
     Return
 }
 # CHECK-LABEL: name="amongObjects"
-# CHECK: b1(v2: builtin(ImportMeta)):
-# CHECK: b2(v3: builtin(GlobalThis)|builtin(ImportMeta)):
+# CHECK: b0 -> b1 proof: TestedType test: v1 subject: v0 operand index: 0 side: taken parameter: v2
+# CHECK: b0 -> b2 proof: TestedType test: v1 subject: v0 operand index: 0 side: notTaken parameter: v3
 function f1 name="onlyObject" parameters=[{type=number|builtin(ImportMeta)}] results=[{type=undefined}] {
     v1 = TypeTest v0 testedType=builtin(ImportMeta)
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
@@ -22,9 +27,6 @@ function f1 name="onlyObject" parameters=[{type=number|builtin(ImportMeta)}] res
   b2(v3):
     Return
 }
-# CHECK-LABEL: name="onlyObject"
-# CHECK: b1(v2: builtin(ImportMeta)):
-# CHECK: b2(v3: number):
 function f2 name="ofRealm" parameters=[{type=builtin(GlobalThis)|builtin(ImportMeta)}] results=[{type=undefined}] {
     v1 = TypeTest v0 testedType=builtin(GlobalThis)
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
@@ -33,9 +35,9 @@ function f2 name="ofRealm" parameters=[{type=builtin(GlobalThis)|builtin(ImportM
   b2(v3):
     Return
 }
-# CHECK-LABEL: name="ofRealm"
-# CHECK: b1(v2: builtin(GlobalThis)):
-# CHECK: b2(v3: builtin(ImportMeta)):
+# CHECK-LABEL: name="onlyObject"
+# CHECK-COUNT-4: proof: TestedType test: v1 subject: v0 operand index: 0 side:
+# CHECK-NOT: proof:
 function f3 name="compared" parameters=[{type=number|builtin(ImportMeta)}] results=[{type=undefined}] {
     v1 = ModuleBuiltin builtin=ImportMeta module=m0
     v2 = StrictEq v0, v1
@@ -46,5 +48,31 @@ function f3 name="compared" parameters=[{type=number|builtin(ImportMeta)}] resul
     Return
 }
 # CHECK-LABEL: name="compared"
-# CHECK: b1(v3: builtin(ImportMeta)):
-# CHECK: b2(v4: number|builtin(ImportMeta)):
+# CHECK: b0 -> b1 proof: Equality test: v2 subject: v0 operand index: 0 side: taken parameter: v3
+# CHECK: b0 -> b2 proof: Equality test: v2 subject: v0 operand index: 0 side: notTaken parameter: v4
+# CHECK-NOT: proof:
+function f4 name="types" parameters=[{type=builtin(GlobalThis)|builtin(ImportMeta)}, {type=number|builtin(ImportMeta)}, {type=builtin(ImportMeta)}, {type=builtin(GlobalThis)}] results=[{type=undefined}] {
+    Return
+}
+# EDGES: t0 passing t2 = builtin({{*}})|builtin({{*}})
+# EDGES: t0 failing t2 = never
+# EDGES: t0 passing t3 = builtin(GlobalThis)
+# EDGES: t0 failing t3 = builtin(ImportMeta)
+# EDGES: t1 passing t2 = builtin(ImportMeta)
+# EDGES: t1 failing t2 = number
+# EDGES: laws hold
+# WRITTEN: t0 passing t2 as written = builtin(ImportMeta)
+# WRITTEN: t0 failing t2 as written = builtin({{*}})|builtin({{*}})
+# WRITTEN: t1 passing t2 as written = builtin(ImportMeta)
+# WRITTEN: t1 failing t2 as written = number
+# EQUAL: t0 equal to t3 = builtin(GlobalThis)
+# EQUAL: t0 unequal to t3 = builtin(ImportMeta)
+# EQUAL: t1 equal to t2 = builtin(ImportMeta)
+# EQUAL: t1 unequal to t2 = number|builtin(ImportMeta)
+# WRONG-NOT: t0 passing t3 = builtin(GlobalThis)|
+# WRONG-NOT: t0 failing t3 = builtin(ImportMeta)|
+# WRONG-NOT: t0 equal to t3 = builtin(GlobalThis)|
+# WRONG-NOT: t0 unequal to t3 = builtin(ImportMeta)|
+# WRONG-NOT: t1 failing t2 = number|
+# WRONG-NOT: t0 passing t2 as written = builtin(ImportMeta)|
+# WRONG-NOT: t1 failing t2 as written = number|

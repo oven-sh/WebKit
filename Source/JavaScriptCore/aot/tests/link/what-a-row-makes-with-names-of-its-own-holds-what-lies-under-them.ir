@@ -1,0 +1,31 @@
+# If a match were taken to hold its captures alone, what Object.values() reads out of it would be proven a text or undefined while it is a number: the match has `index`, `input` and `groups` as properties of its own.
+# function use(e) { return e; }  use(Object.values(/(a)/.exec("xa"))[2]);
+# The row lists what it lays under names on the list that it makes. That lies among the own values of the list, for whoever reads them out.
+# The row also calls the list unaliased, so whoever reads its own values out lets it escape, and nothing is proven of what comes out.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK-NOT: proven=
+# CHECK: referrers f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewRegExp pattern="(a)"
+    v1 = PropGet v0 key="exec"
+    v2 = String string="xa"
+    v3 = Call v1, v0, v2 calleeKey="exec" calleeName="exec"
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectValues
+    v6 = Call v5, v4, v3 calleeName="Object.values"
+    v7 = Integer integer=2
+    v8 = ElemGet v6, v7
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v8 calleeName="use"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="use" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

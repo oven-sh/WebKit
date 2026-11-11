@@ -1,0 +1,45 @@
+# async function each(things) { for await (const thing of things) keep(thing); }
+# The engine steps an async generator with the loop as the driver only where the iterable itself is an async generator and its method under Symbol.asyncIterator is the engine's own.
+# The open lays that verdict beside the iterator and `next`: whether the method is the engine's, which gives what it is called on; the step itself asks for the class.
+# There is one step. It names the built-in whose call it stands for, and the verdict rides in as an operand: where it is true the step goes by the driver, where not it awaits in the loop's own context.
+# RUN(VERDICT): walk f1:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# VERDICT-LABEL: code f1:CoroutineBody
+# VERDICT: [[isOfEngine]]: boolean @Boolean = TypeTest [[method]] testedType=builtin(AsyncIteratorPrototypeSymbolAsyncIterator)
+# VERDICT: ([[iterator]]: {{*}}, [[next]]: {{*}}, [[verdict]]: boolean @Boolean)
+# VERDICT: = StepAsyncGenerator [[generator]], [[sent]], [[driver]], [[verdict]] calledBuiltin=AsyncGeneratorPrototypeNext
+# RUN(STEPS): walk f1:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# STEPS-COUNT-1: = StepAsyncGenerator
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="each" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3() handler=b4():
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v5
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v1:
+    v10 = CatchException
+    IteratorClose v1 iteratorKind=Async completion=Throw
+    Rethrow v10
+}

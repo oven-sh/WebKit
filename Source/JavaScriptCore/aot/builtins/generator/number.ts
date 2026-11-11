@@ -245,7 +245,6 @@ function closedKeysOf(
   return { holder, keys: inNumberOrder(closed), openNames: inNumberOrder(openNames) };
 }
 
-// A constructor of the engine without a lock of its own is called like every built-in function: `Error.call(this, message)`, `x instanceof Error`.
 function isConstructorWithoutLock({ kind, origin, holder, flags, sameObjectAs }: ModelBuiltin): boolean {
   return (
     kind === "Constructor" &&
@@ -345,23 +344,16 @@ export function numberModel(builder: ModelBuilder, types: TypeInterner): TableMo
     ),
     closedKeys: Object.freeze(
       builtins
-        .filter(holder => holder.flags.includes("HasLockedMembers") || isConstructorWithoutLock(holder))
+        .filter(
+          holder =>
+            (holder.flags.includes("HasLockedMembers") && holder.prototype.link !== "Unknown") ||
+            isConstructorWithoutLock(holder),
+        )
         .map(holder =>
           isConstructorWithoutLock(holder)
             ? namesOfCallsClosedOn(holder, names)
             : closedKeysOf(holder, names, internedProtocolKeys, builder.openNames.get(holder) ?? []),
         ),
-    ),
-    namesReadByNativeCode: Object.freeze(
-      builtins.flatMap(holder => {
-        const read = builder.namesReadByNativeCode.get(holder);
-        if (read === undefined) return [];
-        const inNumberOrder = (unordered: readonly ModelName[]): readonly ModelName[] =>
-          Object.freeze([...unordered].sort((left, right) => left.number - right.number));
-        return [
-          { holder, names: inNumberOrder(read.names), namesOnlyInspected: inNumberOrder(read.namesOnlyInspected) },
-        ];
-      }),
     ),
     overloads: numberOverloads(builtins),
     dispatches,
@@ -381,8 +373,6 @@ export function numberModel(builder: ModelBuilder, types: TypeInterner): TableMo
     hostRoles: resolveHostRoles(builder),
     hostClassRoles: resolveHostClassRoles(builder),
     hostObjects: Object.freeze([...builder.hostObjects]),
-    namedMemberCalls: Object.freeze([...builder.namedMemberCalls]),
-    hostMethodCalls: Object.freeze([...builder.hostMethodCalls]),
     checkedNumbers: orderCheckedNumbers(builder.checkedNumbers),
     startup: builder.startup,
     syntax: builder.syntax,

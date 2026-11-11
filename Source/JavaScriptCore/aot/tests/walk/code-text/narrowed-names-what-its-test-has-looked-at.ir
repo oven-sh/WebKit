@@ -1,0 +1,23 @@
+# the test has looked at one parameter, and the record narrows the other
+# whoever narrows takes a name that leads back to the operand of the test through Narrowed records and conversions alone
+# RUN: verify-code
+# CHECK: the value of a Narrowed is not what its test has looked at
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: boolean @Boolean = TypeTest v0 testedType=number
+#     Branch v2 -> taken b1(), notTaken b2()
+#   b1():
+#     v3: number @JSValue = Narrowed v1, v2 [isOnTakenEdge]
+#     Return v3
+#   b2():
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="picks" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+entry module=m0

@@ -1,0 +1,43 @@
+# If all lists shared one node for their elements, as in the second version, what comes out of a list of strings would be taken for whatever any list of the program holds, and nothing that passes through a list would keep its type
+# function first(l) { return l[0]; }  function head(l) { return l[0]; }  first(["a"]);  head([{ x: true }]);
+# What a list holds hangs on the place that makes the list. Each of the two is one site, so each read finds the elements of its own list.
+# RUN: summary f0
+# CHECK: edge Constant string -> Contents Element of ClassInstance Array #1
+# CHECK: edge Allocation L0 -> Contents Element of ClassInstance Array #7
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f1 callers-known one-callee {{*}}result=undefined|string
+# LINK-NEXT: parameter 0 {{*}}proven=Array
+# LINK: function f2 callers-known one-callee {{*}}result=undefined|L0
+# LINK: field L0.0 "x" proven=true writers-known written-at-construction-alone
+# LINK: layout L0 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v1 calleeName="first"
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewArray v6 contents=anything
+    v8 = NewClosure function=f2
+    v9 = Call v8, -, v7 calleeName="head"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="head" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}

@@ -60,7 +60,7 @@ RenderAttachment::RenderAttachment(HTMLAttachmentElement& element, Style::Comput
 
 RenderAttachment::~RenderAttachment() = default;
 
-HTMLAttachmentElement& LEGACY_NODELETE RenderAttachment::attachmentElement() const
+NODELETE HTMLAttachmentElement& RenderAttachment::attachmentElement() const
 {
     return downcast<HTMLAttachmentElement>(nodeForNonAnonymous());
 }
@@ -142,7 +142,7 @@ void RenderAttachment::layoutShadowContent(const LayoutSize& size)
         CheckedRef style = renderBox->mutableStyle();
         style->setHeight(Style::PreferredSize::Fixed { size.height() });
         style->setWidth(Style::PreferredSize::Fixed { size.width() });
-        renderBox->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        renderBox->setNeedsLayout(MarkingBehavior::OnlyThis);
         renderBox->layout();
     }
 }

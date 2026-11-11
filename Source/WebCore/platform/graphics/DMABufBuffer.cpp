@@ -128,8 +128,7 @@ static std::optional<Vector<EGLAttrib>> buildEGLAttributesForDMABuf(const DMABuf
     static constexpr unsigned modifierAttributeCount = 4;
     static constexpr unsigned colorSpaceAttributeCount = 4;
 
-    Vector<EGLAttrib> eglAttributes;
-    eglAttributes.reserveInitialCapacity(baseAttributeCount + planeCount * (planeAttributeCount + (hasModifiers ? modifierAttributeCount : 0)) + (hasColorSpaceHint ? colorSpaceAttributeCount : 0) + 1);
+    Vector<EGLAttrib> eglAttributes(ReserveCapacityTag { }, baseAttributeCount + planeCount * (planeAttributeCount + (hasModifiers ? modifierAttributeCount : 0)) + (hasColorSpaceHint ? colorSpaceAttributeCount : 0) + 1);
 
     eglAttributes.appendList<EGLAttrib>({
         EGL_WIDTH, static_cast<EGLAttrib>(dmaBufAttributes.size.width()),
@@ -233,14 +232,6 @@ std::optional<Vector<EGLint>> DMABufBuffer::buildEGLImageAttributes(const Attrib
         return static_cast<EGLint>(value);
     });
 }
-
-#if USE(TEXTURE_MAPPER)
-void DMABufBuffer::setBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&& buffer)
-{
-    m_buffer = WTF::move(buffer);
-}
-
-#else
 
 static bool formatIsYUV(uint32_t fourcc)
 {
@@ -588,7 +579,6 @@ sk_sp<SkImage> DMABufBuffer::createPromiseImageForQualcommVideoFrame(const sk_sp
             Ref context = adoptRef(*static_cast<PromiseDMABufImageContext*>(userData));
         }, &context.leakRef());
 }
-#endif
 #endif
 
 } // namespace WebCore

@@ -28,7 +28,6 @@
 
 #if ENABLE(B3_JIT)
 
-#include "AOTCurrentWork.h"
 #include "B3Common.h"
 #include "B3Procedure.h"
 #include "B3Validate.h"
@@ -42,9 +41,6 @@ PhaseScope::PhaseScope(Procedure& procedure, ASCIILiteral name)
     , m_name(name)
     , m_timingScope("B3"_s, name)
 {
-#if ENABLE(AOT)
-    AOT::currentWork().enterBackEndPhase(procedure.subjectOfClient(), name);
-#endif
     if (shouldDumpIRAtEachPhase(B3Mode)) {
         dataLog("B3 after ", procedure.lastPhaseName(), ", before ", name, ":\n");
         dataLog(procedure);
@@ -58,7 +54,7 @@ PhaseScope::~PhaseScope()
 {
     m_procedure.setLastPhaseName(m_name);
     if (!m_procedure.report().failure && shouldValidateIRAtEachPhase(m_procedure))
-        validate(m_procedure, m_dumpBefore);
+        validateAfterPhase(m_procedure, m_dumpBefore);
 
     if (Options::dumpIonGraph()) [[unlikely]]
         m_procedure.appendIonGraphPass(m_name);

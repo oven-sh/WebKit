@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
+#include "AOTRepresentationRules.h"
 #include "AOTStubsStringLiterals.h"
 #include <initializer_list>
 #include <optional>
@@ -16,12 +17,13 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Whoever reads through `characters` ends with ensureStillAliveHere(owner).
 struct CharacterView {
     Pointer characters;
     Word32 length;
     Condition is8Bit;
     CellPointer owner;
+    ValueID possibleRope { };
+    Word32 implFlags { };
 };
 
 struct CharacterSource {
@@ -35,11 +37,9 @@ struct CodeUnitRange {
     Word32 end;
 };
 
-// A position after ToIntegerOrInfinity. The range holds where the position is used, not wherever B3 computes the value: it chooses what is emitted and is never made a known range of the B3 value.
 struct StringPosition {
     Integer value;
     Range range { Range::full() };
-    // The conversion has made the least int64 of NaN and of whatever lies beyond int64. Whoever finds the value negative asks the number.
     std::optional<Number> numberBehindBareConversion { };
 };
 
@@ -48,6 +48,22 @@ enum class SearchDirection : uint8_t { Forward, Backward };
 
 uint64_t packStringIntoRegister(StringView);
 LValue loadBytes(Output&, unsigned width, TypedPointer);
+
+class StringEmitter;
+
+class FlatStringCell {
+public:
+    CellPointer cell() const { return m_cell; }
+
+private:
+    friend class StringEmitter;
+    explicit FlatStringCell(CellPointer cell)
+        : m_cell(cell)
+    {
+    }
+
+    CellPointer m_cell;
+};
 
 class StringEmitter final : public OperationEmitter {
 public:
@@ -58,38 +74,51 @@ public:
 
     void generateSubstring(const ValueContext&);
     void generateSubstringOrUndefined(const ValueContext&);
+    void generateBoundsOfStringSplit(const ValueContext&);
+    void generateNewStringSplitArray(const ValueContext&);
     void generateFlattenString(const ValueContext&);
     void generateStringRange(const ValueContext&);
     void generateStringOrder(const ValueContext&);
     void generateStringOrderToCharacter(const ValueContext&);
     void generateStringEqualsLiteral(const ValueContext&);
     void generateValueEqualsLiteral(const ValueContext&);
-    void generateValueLooselyEqualsLiteral(const ValueContext&);
     void generateStringStartsWithLiteral(const ValueContext& value) { generateEndsLiteral(value, LiteralEnd::Start); }
     void generateStringEndsWithLiteral(const ValueContext& value) { generateEndsLiteral(value, LiteralEnd::End); }
     void generateStringIndexOfLiteral(const ValueContext& value) { generateFindLiteral(value, SearchDirection::Forward); }
     void generateStringIndexOfCharacter(const ValueContext&);
     void generateStringLastIndexOfLiteral(const ValueContext& value) { generateFindLiteral(value, SearchDirection::Backward); }
+    void generateStringRangeEqualsLiteral(const ValueContext&);
+    void generateStringRangeToNumber(const ValueContext&);
+    void generateStringRangeParseInt(const ValueContext&);
+    void generateFindStringRangeInMap(const ValueContext&);
+    CharacterView viewOfRange(const ValueContext&);
+    void holdRangeInside(const ValueContext&, Word32 start, Word32 end);
 
-    // What follows is emitted where the condition holds.
-    void continueIf(Condition, B3::FrequentedBlock otherwise);
-    // The 8-bit side falls through.
-    template<typename T> T selectByWidth(Condition is8Bit, NOESCAPE const Invocable<T(bool is8Bit)> auto& read, B3::FrequencyClass frequencyOfWide = B3::FrequencyClass::Unlikely);
+    void continueIf(Condition, BlockEdge otherwise);
+    template<typename T> T selectByWidth(Condition is8Bit, NOESCAPE const Invocable<T(bool is8Bit)> auto& read, Machine::EdgeClass frequencyOfWide = Machine::EdgeClass::Unlikely);
 
     Word32 word32Of(ValueID);
-    // ToIntegerOrInfinity of a position that arrives as an integer or as a double, saturated beyond the length of every string.
-    StringPosition truncatedPositionOf(ValueID, StringRangeMethod);
-    Integer truncateToIndex(Number position);
     String textOf(StringID) const;
 
     Word32 lengthOf(ValueID string);
     Word32 lengthOf(CellPointer string);
     CharacterView viewOf(const OperationContext&, ValueID string);
     CharacterView viewOfFlatString(CellPointer flat);
+    bool widthIsFoundAtRun(ValueID flatString);
+    std::optional<Condition> findWidth(ValueID flatString, bool isNarrow);
+    void forgetWidthsFound()
+    {
+        m_flagsFoundNarrow.shrink(0);
+        m_flagsFoundWide.shrink(0);
+    }
+    std::optional<FlatStringCell> flatStringByType(ValueID string);
+    Pointer implOfFlatString(FlatStringCell);
     CharacterView viewOfString(const OperationContext&, CellPointer string);
-    CharacterView subview(const CharacterView&, CodeUnitRange);
+    CharacterView viewWithoutResolving(const OperationContext&, CellPointer string, BlockEdge otherwise);
 
-    Word32 codeUnitAt(const CharacterView&, Word32 index);
+    Word32 codeUnitAt(const CharacterView&, Word32 index, std::optional<Integer> indexInWholeNumber = std::nullopt);
+    Word32 codeUnitOfPossibleRope(const CharacterView&, Word32 index);
+    void passOpenedRope(ValueID string, BlockID from, LValue characters, LValue implFlags);
     Word32 codePointAt(const CharacterView&, Word32 index);
     CellPointer stringFromCodeUnit(const OperationContext&, Word32 codeUnit);
     CellPointer substring(const OperationContext&, CellPointer string, CodeUnitRange);
@@ -102,52 +131,85 @@ public:
     Condition areEqual(const OperationContext&, CellPointer, CellPointer, StringIdentity = StringIdentity::Unknown);
     Word32 order(const OperationContext&, CellPointer, CellPointer);
     Word32 orderToCharacter(const CharacterView&, char16_t codeUnit);
-    Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, bool subjectIsFlat = false, bool everyCellIsString = false);
-    void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets, bool subjectIsFlat = false, bool everyCellIsString = false);
-    // For a subject that the comparison in place cannot answer: a rope, a 16-bit string.
+    Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, std::optional<FlatStringCell> flatSubject = std::nullopt, bool everyCellIsString = false, std::optional<Word32> lengthOfSubject = std::nullopt);
+    void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets, std::optional<FlatStringCell> flatSubject = std::nullopt, bool everyCellIsString = false, std::optional<Word32> lengthOfSubject = std::nullopt);
     void branchOnEqualsLiteralByStub(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets);
-    Condition hasTextAt(const CharacterView&, Word32 offset, StringID);
+    void makeCellsHoldAtomOf(StringID);
+    void makeCellsHoldAtomOf(StringID, const String& text);
     void branchOnTextAt(const CharacterView&, Word32 offset, StringID, BranchTargets);
     bool canCompareInline(StringID) const;
+    static bool canCompareInline(const String& text) { return text.length() <= maxLengthComparedInPlace; }
 
     Word32 find(const CharacterView& subject, const CharacterView& sought, Word32 position, SearchDirection);
     Word32 findCodeUnit(const CharacterView& subject, Word32 codeUnit, Word32 position, SearchDirection);
 
-    CellPointer concatenate(const OperationContext&, std::span<const CellPointer>);
-    CellPointer concatenate(const OperationContext& context, std::initializer_list<CellPointer> strings) { return concatenate(context, std::span<const CellPointer>(strings.begin(), strings.size())); }
-    CellPointer concatenateValues(const OperationContext&, std::span<const Boxed> primitives, bool isLikelyKey);
+    struct StringPart {
+        StringPart(CellPointer cell)
+            : cell(cell)
+        {
+        }
+        StringPart(StringID constant)
+            : constant(constant)
+        {
+        }
+
+        std::optional<CellPointer> cell { };
+        StringID constant { };
+    };
+    StringID findNumberedStringConstant(const OperationContext&, ValueID);
+    CellPointer concatenate(const OperationContext&, std::span<const StringPart>);
+    CellPointer concatenate(const OperationContext& context, std::initializer_list<StringPart> parts) { return concatenate(context, std::span<const StringPart>(parts.begin(), parts.size())); }
+    enum class KeyUse : uint8_t { AnyKey, NameOfProperty };
+    CellPointer concatenateKey(const OperationContext&, std::span<const Boxed> primitives, KeyUse);
     CellPointer integerToString(const OperationContext& context, Word32 value) { return integerToString(context, signExtended(value)); }
     CellPointer integerToString(const OperationContext&, Integer);
     CellPointer numberToString(const OperationContext&, Number);
 
 private:
-    Word32 flagsInImpl(Pointer impl, bool isImmutable);
-    CharacterSource sourceInImpl(Pointer impl, bool isImmutable);
-    Pointer implOfFlatString(CellPointer flat);
+    static constexpr unsigned maxLengthComparedInPlace = maxLengthOfTextComparedInPlace;
+
+    CellPointer cellOf(const OperationContext&, const StringPart&);
+    CellPointer concatenateTwoOrThree(const OperationContext&, std::span<const StringPart>);
+    Word32 flagsInImpl(Pointer impl);
+    CharacterSource sourceInImpl(Pointer impl);
     CharacterSource sourceOfRope(const OperationContext&, CellPointer rope, Pointer fiber);
     CharacterView viewOfSource(const CharacterSource&, CellPointer owner);
     CellPointer substringBaseOf(CellPointer rope);
-    Word32 loadCodeUnit(Pointer characters, Word32 index, bool is8Bit);
+    Word32 loadCodeUnit(Pointer characters, Word32 index, bool is8Bit, std::optional<Integer> indexInWholeNumber = std::nullopt);
 
-    void generateEqualsLiteral(const ValueContext&, ComparedOperand, LValue subject, bool subjectIsFlat, bool everyCellIsString = false);
+    void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, const String& text, BranchTargets, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, std::optional<Word32> lengthOfSubject);
+    void branchOnEqualsLiteralByStub(const OperationContext&, ComparedOperand, LValue subject, StringID, const String& text, BranchTargets);
+    void generateEqualsLiteral(const ValueContext&, ComparedOperand, LValue subject, std::optional<FlatStringCell> flatSubject, bool everyCellIsString = false);
     void generateEndsLiteral(const ValueContext&, LiteralEnd);
     void generateFindLiteral(const ValueContext&, SearchDirection);
-    bool comparesLiteralInPlace(const OperationContext&, const String& text) const;
-    void branchOnBytesAt(Pointer address, std::span<const uint8_t> bytes, const B3::AbstractHeap&, CellPointer owner, BranchTargets);
+    bool comparesLiteralInPlace(const String& text) const;
+    bool readsCharactersInLine(const OperationContext&);
+    void branchOnBytesAt(Pointer address, std::span<const uint8_t> bytes, const Machine::AbstractHeap&, CellPointer owner, BranchTargets);
     Integer truncateToInteger(Number position);
     StringPosition truncatedPositionOf(Number position, StringRangeMethod);
+    StringPosition truncatedPositionOf(ValueID, StringRangeMethod);
     Word32 clampToLength(const StringPosition&, Word32 length, bool isRelativeToEnd);
 
     struct OpenedString {
         Pointer impl;
         CharacterSource source;
+        bool mayBeRope { false };
     };
-    // What FlattenString has read where it made the flat string, which is in front of every reader of it.
+    struct OpenedRope {
+        ValueID string;
+        BlockID block;
+        Pointer characters;
+        Word32 implFlags;
+    };
+    const OpenedRope& openedRopeAt(ValueID string, BlockID) const;
+    Vector<OpenedRope, 4> m_openedRopes;
     UncheckedKeyHashMap<LValue, OpenedString> m_openedStrings;
+    Vector<LValue, 2> m_flagsFoundNarrow;
+    Vector<LValue, 2> m_flagsFoundWide;
 };
 
 template<typename T>
-T StringEmitter::selectByWidth(Condition is8Bit, NOESCAPE const Invocable<T(bool is8Bit)> auto& read, B3::FrequencyClass frequencyOfWide)
+T StringEmitter::selectByWidth(Condition is8Bit, NOESCAPE const Invocable<T(bool is8Bit)> auto& read, Machine::EdgeClass frequencyOfWide)
 {
     if (is8Bit.value()->hasInt())
         return read(is8Bit.value()->asInt());
@@ -155,7 +217,7 @@ T StringEmitter::selectByWidth(Condition is8Bit, NOESCAPE const Invocable<T(bool
     LBasicBlock narrow = newBlock();
     LBasicBlock wide = newBlock();
     Join<T> join(m_out);
-    m_out.branch(is8Bit.value(), normalEdge(narrow), B3::FrequentedBlock(wide, frequencyOfWide));
+    m_out.branch(is8Bit.value(), normalEdge(narrow), BlockEdge(wide, frequencyOfWide));
     m_out.appendTo(narrow);
     join.add(read(true));
     m_out.appendTo(wide);

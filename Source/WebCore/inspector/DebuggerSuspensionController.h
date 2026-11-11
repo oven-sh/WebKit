@@ -52,8 +52,9 @@ public:
     // main thread, and related pages (an opener and its popup) can call into each other synchronously.
     static void frameDebuggerDidPause(LocalFrame&);
     static void frameDebuggerDidContinue();
+    static bool isFrameDebuggerPaused();
 
-    void addSessionHold(DebuggerPauseSessionIdentifier);
+    bool addSessionHold(DebuggerPauseSessionIdentifier);
     void removeSessionHold(DebuggerPauseSessionIdentifier);
 
     void documentDidBecomeCurrent(Document&);
@@ -61,7 +62,7 @@ public:
 private:
     static void updateHeldDocumentsInAllPages();
 
-    bool LEGACY_NODELETE shouldHoldDocuments() const;
+    NODELETE bool shouldHoldDocuments() const;
     void updateHeldDocuments();
     void holdDocument(Document&);
     void releaseDocument(Document&);

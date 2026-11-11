@@ -54,7 +54,6 @@
 #include "RenderLayerScrollableArea.h"
 #include "RenderLayoutState.h"
 #include "RenderLineBreak.h"
-#include "RenderListBox.h"
 #include "RenderListItem.h"
 #include "RenderListOutsideMarker.h"
 #include "RenderMathMLBlock.h"
@@ -86,14 +85,14 @@ static inline void adjustBorderForTable(const RenderBoxModelObject& renderer, Re
         borderWidths = tableCell->borderWidths();
 }
 
-static inline LayoutUnit LEGACY_NODELETE intrinsicBorder(const RenderBoxModelObject& renderer)
+NODELETE static inline LayoutUnit intrinsicBorder(const RenderBoxModelObject& renderer)
 {
     if (auto* block = dynamicDowncast<RenderBlock>(renderer); block && renderer.isFieldset())
         return block->intrinsicBorderForFieldset();
     return { };
 }
 
-static inline Layout::BoxGeometry::VerticalEdges LEGACY_NODELETE intrinsicPaddingForTableCell(const RenderBox& renderer)
+NODELETE static inline Layout::BoxGeometry::VerticalEdges intrinsicPaddingForTableCell(const RenderBox& renderer)
 {
     if (auto* tableCell = dynamicDowncast<RenderTableCell>(renderer))
         return { tableCell->intrinsicPaddingBefore(), tableCell->intrinsicPaddingAfter() };
@@ -114,7 +113,7 @@ void BoxGeometryUpdater::clear()
 
 void BoxGeometryUpdater::setListMarkerOffsetForMarkerOutside(const RenderListOutsideMarker& listMarker)
 {
-    CheckedRef layoutBox = *listMarker.layoutBox();
+    CheckedRef layoutBox = listMarker.layoutBox();
     ASSERT(layoutBox->isListMarkerBox());
     auto* ancestor = listMarker.containingBlock();
 
@@ -372,7 +371,7 @@ static std::optional<LayoutUnit> baselineForBox(const RenderBox& renderBox)
         UNUSED_VARIABLE(renderImage);
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
         if (renderImage->isMultiRepresentationHEIC())
-            return marginBoxBottom - LayoutUnit::fromFloatRound(renderImage->style().fontCascade().primaryFont().metricsForMultiRepresentationHEIC().descent);
+            return marginBoxBottom - LayoutUnit::fromFloatRound(protect(renderImage->style().fontCascade().primaryFont())->metricsForMultiRepresentationHEIC().descent);
 #endif
         return { };
     }
@@ -397,13 +396,6 @@ static std::optional<LayoutUnit> baselineForBox(const RenderBox& renderBox)
         // We cannot rely on RenderFlexibleBox::baselinePosition() because of flexboxes have some special behavior
         // regarding baselines that shouldn't apply to buttons.
         return renderBox.lastLineBaseline();
-    }
-
-    if (is<RenderListBox>(renderBox)) {
-        // FIXME: This hardcoded baselineAdjustment is what we used to do for the old
-        // widget, but I'm not sure this is right for the new control.
-        const int baselineAdjustment = 7;
-        return marginBoxBottom - baselineAdjustment;
     }
 
     if (CheckedPtr textControl = dynamicDowncast<RenderTextControlSingleLine>(renderBox)) {
@@ -529,8 +521,9 @@ static std::optional<LayoutUnit> baselineForBox(const RenderBox& renderBox)
     return { };
 }
 
-static inline void setIntegrationBaseline(const RenderBox& renderBox)
+static inline void setIntegrationBaseline(const RenderBox& renderBox, Layout::BoxGeometry& boxGeometry)
 {
+    boxGeometry.setBaseline({ });
     if (renderBox.isFloatingOrOutOfFlowPositioned())
         return;
 
@@ -544,7 +537,6 @@ static inline void setIntegrationBaseline(const RenderBox& renderBox)
         // These are special RenderBlock renderers that override the default baseline position behavior of the inline block box.
 
         bool overrideDefaultBaselineBehavior = isAnyOf<
-            RenderListBox,
             RenderSlider,
             RenderTextControlMultiLine,
             RenderTable,
@@ -593,15 +585,13 @@ static inline void setIntegrationBaseline(const RenderBox& renderBox)
 
             return rootWritingMode.prefersCentralBaseline() && !isWritingModeRoot ? marginBoxLogicalHeight / 2 : marginBoxLogicalHeight;
         };
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<Layout::ElementBox&>(*renderBox.layoutBox()).setBaselineForIntegration(baselinePosition());
+        boxGeometry.setBaseline(baselinePosition());
     }
 }
 
 void BoxGeometryUpdater::updateLayoutBoxDimensions(const RenderBox& renderBox, std::optional<LayoutUnit> availableWidth, std::optional<Layout::IntrinsicWidthMode> intrinsicWidthMode)
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto& layoutBox = const_cast<Layout::ElementBox&>(*renderBox.layoutBox());
+    auto& layoutBox = const_cast<Layout::ElementBox&>(renderBox.layoutBox());
     auto& boxGeometry = layoutState().ensureGeometryForBox(layoutBox);
     auto writingMode = renderBox.parent()->writingMode();
 
@@ -619,7 +609,8 @@ void BoxGeometryUpdater::updateLayoutBoxDimensions(const RenderBox& renderBox, s
             auto widthContribution = *intrinsicWidthMode == Layout::IntrinsicWidthMode::Minimum ? renderBox.minContentLogicalWidthContribution() : renderBox.maxContentLogicalWidthContribution();
             return widthContribution - (border.horizontal.start + border.horizontal.end + padding.horizontal.start + padding.horizontal.end + scrollbarSize.width());
         };
-        boxGeometry.setContentBoxWidth(contentBoxLogicalWidth());
+        if (!renderBox.isOutOfFlowPositioned())
+            boxGeometry.setContentBoxWidth(contentBoxLogicalWidth());
         boxGeometry.setHorizontalMargin(inlineMargin);
         boxGeometry.setHorizontalBorder(border.horizontal);
         boxGeometry.setHorizontalPadding(padding.horizontal);
@@ -642,12 +633,12 @@ void BoxGeometryUpdater::updateLayoutBoxDimensions(const RenderBox& renderBox, s
 void BoxGeometryUpdater::updateLineBreakBoxDimensions(const RenderLineBreak& lineBreakBox)
 {
     // This is just a box geometry reset (see InlineFormattingContext::layoutInFlowContent).
-    layoutState().ensureGeometryForBox(*lineBreakBox.layoutBox()).reset();
+    layoutState().ensureGeometryForBox(lineBreakBox.layoutBox()).reset();
 }
 
 void BoxGeometryUpdater::updateInlineBoxDimensions(const RenderBoxModelObject& inlineBox, std::optional<LayoutUnit> availableWidth, std::optional<Layout::IntrinsicWidthMode> intrinsicWidthMode)
 {
-    auto& boxGeometry = layoutState().ensureGeometryForBox(*inlineBox.layoutBox());
+    auto& boxGeometry = layoutState().ensureGeometryForBox(inlineBox.layoutBox());
 
     auto writingMode = inlineBox.writingMode();
 
@@ -766,13 +757,12 @@ void BoxGeometryUpdater::updateBoxGeometryAfterIntegrationLayout(const Layout::E
 
     auto integrationAdjustments = [&] {
         // FIXME: These should eventually be all absorbed by LFC layout.
-        setIntegrationBaseline(*renderBox);
+        setIntegrationBaseline(*renderBox, boxGeometry);
 
         if (CheckedPtr renderListMarker = dynamicDowncast<RenderListOutsideMarker>(*renderBox)) {
             CheckedRef style = layoutBox.parent().style();
             boxGeometry.setHorizontalMargin(horizontalLogicalMargin(*renderListMarker, { }, style->writingMode()));
             setListMarkerOffsetForMarkerOutside(*renderListMarker);
-            const_cast<Layout::ElementBox&>(layoutBox).setListMarkerLayoutBounds(renderListMarker->layoutBounds());
         }
 
         if (is<RenderTable>(*renderBox)) {

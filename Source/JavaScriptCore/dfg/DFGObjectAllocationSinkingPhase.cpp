@@ -160,12 +160,12 @@ public:
     }
 
 
-    const Fields& LEGACY_NODELETE fields() const
+    NODELETE const Fields& fields() const
     {
         return m_fields;
     }
 
-    Fields& LEGACY_NODELETE fields()
+    NODELETE Fields& fields()
     {
         return m_fields;
     }
@@ -192,36 +192,36 @@ public:
         set(descriptor, nullptr);
     }
 
-    IndexingType LEGACY_NODELETE indexingType() const
+    NODELETE IndexingType indexingType() const
     {
         return m_indexingType;
     }
 
-    unsigned LEGACY_NODELETE length() const
+    NODELETE unsigned length() const
     {
         return m_initializedIndices.size();
     }
 
-    bool LEGACY_NODELETE isIndexInitialized(unsigned index) const
+    NODELETE bool isIndexInitialized(unsigned index) const
     {
         ASSERT(index < length());
         return m_initializedIndices[index];
     }
 
-    void LEGACY_NODELETE setIndexInitialized(unsigned index)
+    NODELETE void setIndexInitialized(unsigned index)
     {
         ASSERT(index < length());
         m_initializedIndices[index] = true;
     }
 
-    Allocation& LEGACY_NODELETE mergeInitializedIndices(const Allocation& other)
+    NODELETE Allocation& mergeInitializedIndices(const Allocation& other)
     {
         ASSERT(length() == other.length());
         m_initializedIndices &= other.m_initializedIndices;
         return *this;
     }
 
-    bool LEGACY_NODELETE hasStructures() const
+    NODELETE bool hasStructures() const
     {
         switch (kind()) {
         case Kind::Object:
@@ -258,61 +258,61 @@ public:
         return *this;
     }
 
-    const RegisteredStructureSet& LEGACY_NODELETE structures() const
+    NODELETE const RegisteredStructureSet& structures() const
     {
         return m_structures;
     }
 
-    const RegisteredStructureSet& LEGACY_NODELETE structuresForMaterialization() const
+    NODELETE const RegisteredStructureSet& structuresForMaterialization() const
     {
         return m_structuresForMaterialization;
     }
 
-    Node* LEGACY_NODELETE identifier() const { return m_identifier; }
+    NODELETE Node* identifier() const { return m_identifier; }
 
-    Kind LEGACY_NODELETE kind() const { return m_kind; }
+    NODELETE Kind kind() const { return m_kind; }
 
-    bool LEGACY_NODELETE isEscapedAllocation() const
+    NODELETE bool isEscapedAllocation() const
     {
         return kind() == Kind::Escaped;
     }
 
-    bool LEGACY_NODELETE isArrayAllocation() const
+    NODELETE bool isArrayAllocation() const
     {
         return m_kind == Kind::Array;
     }
 
-    bool LEGACY_NODELETE isObjectAllocation() const
+    NODELETE bool isObjectAllocation() const
     {
         return m_kind == Kind::Object;
     }
 
-    bool LEGACY_NODELETE isActivationAllocation() const
+    NODELETE bool isActivationAllocation() const
     {
         return m_kind == Kind::Activation;
     }
 
-    bool LEGACY_NODELETE isFunctionAllocation() const
+    NODELETE bool isFunctionAllocation() const
     {
         return m_kind == Kind::Function || m_kind == Kind::GeneratorFunction || m_kind == Kind::AsyncFunction || m_kind == Kind::AsyncGeneratorFunction;
     }
 
-    bool LEGACY_NODELETE isInternalFieldObjectAllocation() const
+    NODELETE bool isInternalFieldObjectAllocation() const
     {
         return m_kind == Kind::InternalFieldObject;
     }
 
-    bool LEGACY_NODELETE isRegExpObjectAllocation() const
+    NODELETE bool isRegExpObjectAllocation() const
     {
         return m_kind == Kind::RegExpObject;
     }
 
-    bool LEGACY_NODELETE isPromiseAllocation() const
+    NODELETE bool isPromiseAllocation() const
     {
         return m_kind == Kind::Promise;
     }
 
-    friend bool LEGACY_NODELETE operator==(const Allocation&, const Allocation&) = default;
+    NODELETE friend bool operator==(const Allocation&, const Allocation&) = default;
 
     void dump(PrintStream& out) const
     {
@@ -464,12 +464,12 @@ public:
     // set, the current escapees can be retrieved at any time using
     // takeEscapees(), which will clear the cached set of escapees;
     // otherwise the heap won't remember escaping allocations.
-    void LEGACY_NODELETE setWantEscapees()
+    NODELETE void setWantEscapees()
     {
         m_wantEscapees = true;
     }
 
-    UncheckedKeyHashMap<Node*, Allocation> LEGACY_NODELETE takeEscapees()
+    NODELETE UncheckedKeyHashMap<Node*, Allocation> takeEscapees()
     {
         return WTF::move(m_escapees);
     }
@@ -641,7 +641,7 @@ public:
             && m_pointers == other.m_pointers;
     }
 
-    const UncheckedKeyHashMap<Node*, Allocation>& LEGACY_NODELETE allocations() const
+    NODELETE const UncheckedKeyHashMap<Node*, Allocation>& allocations() const
     {
         return m_allocations;
     }
@@ -661,12 +661,12 @@ public:
         }
     }
 
-    bool LEGACY_NODELETE reached() const
+    NODELETE bool reached() const
     {
         return m_reached;
     }
 
-    void LEGACY_NODELETE setReached()
+    NODELETE void setReached()
     {
         m_reached = true;
     }
@@ -1635,12 +1635,13 @@ escapeChildren:
         };
 
         auto shouldDemote = [] (Node* candidate, Node* where) {
-            InlineCallFrame* inlineCallFrame = candidate->origin.semantic.inlineCallFrame();
-            if (!inlineCallFrame)
-                return false;
-            if (!inlineCallFrame->isClosureCall && !inlineCallFrame->isVarargs())
-                return false;
-            return inlineCallFrame != where->origin.semantic.inlineCallFrame();
+            for (InlineCallFrame* inlineCallFrame = candidate->origin.semantic.inlineCallFrame(); inlineCallFrame; inlineCallFrame = inlineCallFrame->directCaller.inlineCallFrame()) {
+                // Only the innermost closure-call or varargs frame needs checking: if `where` is
+                // inlined into that one, it is inlined into all of its callers as well.
+                if (inlineCallFrame->isClosureCall || inlineCallFrame->isVarargs())
+                    return !where->origin.semantic.inlineStackContains(*inlineCallFrame);
+            }
+            return false;
         };
 
         // Closure rule #2: for each candidate, promote every `dependencies` entry
@@ -1660,12 +1661,13 @@ escapeChildren:
             // If we're moving an allocation to `where` in the program, we need to ensure
             // we can still walk the stack at that point in the program for the
             // InlineCallFrame of the original allocation. Certain InlineCallFrames rely on
-            // data in the stack when taking a stack trace. All allocation sites can do a
-            // stack walk (we do a stack walk when we GC). Conservatively, we say we're
-            // still ok to move this allocation if we are moving within the same InlineCallFrame.
-            // We could be more precise here and do an analysis of stack writes. However,
-            // this scenario is so rare that we just take the conservative-and-straight-forward
-            // approach of checking that we're in the same InlineCallFrame.
+            // data in the stack when taking a stack trace: a closure call's callee and a
+            // varargs call's argument count each live in a stack slot belonging to that
+            // frame, and intervening code is free to reuse those slots once execution has
+            // left it. All allocation sites can do a stack walk (we do a stack walk when we
+            // GC). So an allocation inside a closure-call or varargs frame can only be sunk
+            // to a point that is also inside that frame. When `where` is not, we demote the
+            // candidate and leave the allocation where it was.
             forEachEscapee([&] (UncheckedKeyHashMap<Node*, Allocation>& escapees, Node* where) {
                 for (Node* allocation : escapees.keys()) {
                     if (shouldDemote(allocation, where)) {

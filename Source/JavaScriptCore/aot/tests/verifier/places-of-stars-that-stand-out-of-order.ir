@@ -1,0 +1,8 @@
+# the dynamic stars of a module whose stars stand out of order bear their ranks among the star statements, each once
+# RUN: verify
+
+module m0 path="main" displayPath="main" requests=[{target=m1 isDynamicStarExport=true completes=true starPlace=1}, {target=m3 completes=true}, {target=m2 isDynamicStarExport=true completes=true starPlace=0}]
+module m1 path="first" displayPath="first"
+module m2 path="second" displayPath="second"
+module m3 path="third" displayPath="third"
+entry module=m0

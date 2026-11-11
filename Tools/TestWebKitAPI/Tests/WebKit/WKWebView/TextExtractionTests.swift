@@ -274,12 +274,24 @@ extension WKWebView {
     }
 }
 
+#endif // ENABLE_UNIFIED_PDF
+
 private func decodeJSONObject(_ text: String) throws -> [String: Any] {
     let data = try #require(text.data(using: .utf8))
     return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
 }
 
-#endif // ENABLE_UNIFIED_PDF
+private func firstJSONNode(in node: [String: Any], where predicate: ([String: Any]) -> Bool) -> [String: Any]? {
+    if predicate(node) {
+        return node
+    }
+    for child in node["children"] as? [[String: Any]] ?? [] {
+        if let match = firstJSONNode(in: child, where: predicate) {
+            return match
+        }
+    }
+    return nil
+}
 
 private let mainFrameMarkup = """
     <!DOCTYPE html>
@@ -591,6 +603,31 @@ struct TextExtractionTests {
     }
 
     @Test
+    func interactionDescriptionUsesDataAttributeForUnlabeledIconButton() async throws {
+        try await webView.load(
+            html: """
+                <div><button class='txkz4s0' data-test-id='user-settings-dropdown-menu'><svg width='16' height='16'></svg></button><span>Account</span></div>\
+                <div><button aria-label='Notifications' data-test-id='notifications-bell-button'><svg width='16' height='16'></svg></button></div>
+                """
+        )
+
+        let debugText = try await webView.debugText()
+        let settingsButtonID = try #require(extractNodeIdentifier(debugText, "user-settings-dropdown-menu"))
+        let notificationsButtonID = try #require(extractNodeIdentifier(debugText, "Notifications"))
+        #expect(!debugText.contains("notifications-bell-button"))
+
+        let interaction = _WKTextExtractionInteraction(action: .click)
+
+        interaction.nodeIdentifier = settingsButtonID
+        var expected = "Click on button with data-test-id “user-settings-dropdown-menu” before rendered text “Account”"
+        #expect(try await interaction.debugDescription(in: webView) == expected)
+
+        interaction.nodeIdentifier = notificationsButtonID
+        expected = "Click on button labeled “Notifications”"
+        #expect(try await interaction.debugDescription(in: webView) == expected)
+    }
+
+    @Test
     func interactionDescriptionAndSearchTextForLabellessIcons() async throws {
         try await webView.load(
             html: """
@@ -664,8 +701,9 @@ struct TextExtractionTests {
         let debugText = try await webView.debugText()
 
         func clickDescription(_ locator: String, _ searchText: String) async throws -> String {
+            let nodeIdentifier = try #require(extractNodeIdentifier(debugText, locator))
             let interaction = _WKTextExtractionInteraction(action: .click)
-            interaction.nodeIdentifier = try #require(extractNodeIdentifier(debugText, locator))
+            interaction.nodeIdentifier = nodeIdentifier
             interaction.text = searchText
             return try await interaction.debugDescription(in: webView)
         }
@@ -693,8 +731,9 @@ struct TextExtractionTests {
         let debugText = try await webView.debugText()
 
         func clickDescription(_ className: String, _ searchText: String) async throws -> String {
+            let nodeIdentifier = try #require(extractNodeIdentifier(debugText, className))
             let interaction = _WKTextExtractionInteraction(action: .click)
-            interaction.nodeIdentifier = try #require(extractNodeIdentifier(debugText, className))
+            interaction.nodeIdentifier = nodeIdentifier
             interaction.text = searchText
             return try await interaction.debugDescription(in: webView)
         }
@@ -1443,84 +1482,104 @@ struct TextExtractionTests {
 
     @Test
     func replacementStringsForEmailAddresses() async throws {
-        func textAfterReplacing(
-            _ markup: String,
-            _ outputFormat: _WKTextExtractionOutputFormat,
-            _ replacementStrings: [String: String]?,
-            _ customizeConfiguration: ((_WKTextExtractionConfiguration) -> Void)? = nil
-        ) async throws -> String {
-            try await webView.load(html: markup)
-            let configuration = _WKTextExtractionConfiguration()
-            configuration.outputFormat = outputFormat
-            configuration.replacementStrings = replacementStrings
-            customizeConfiguration?(configuration)
-            return try await webView.debugText(configuration)
-        }
-
-        func expectAddressRedacted(
-            _ markup: String,
-            _ outputFormat: _WKTextExtractionOutputFormat,
-            _ customizeConfiguration: ((_WKTextExtractionConfiguration) -> Void)? = nil,
-            sourceLocation: SourceLocation = #_sourceLocation
-        ) async throws {
-            let format: Comment = "output format: \(outputFormat)"
-
-            let text = try await textAfterReplacing(markup, outputFormat, nil, customizeConfiguration)
-            #expect(text.contains("wenson@me.com"), format, sourceLocation: sourceLocation)
-
-            let redactedText = try await textAfterReplacing(
-                markup,
-                outputFormat,
-                ["wenson@me.com": "jane.doe@example.com"],
-                customizeConfiguration
-            )
-            #expect(redactedText.contains("jane.doe@example.com"), format, sourceLocation: sourceLocation)
-            #expect(redactedText.contains("wenson@me.com") == false, format, sourceLocation: sourceLocation)
-        }
-
-        do {
-            let text = try await textAfterReplacing(
-                "<p>Send a codewenson@me.com</p><p>codewenson@me.comnow</p>",
-                .textTree,
-                ["wenson@me.com": "jane.doe@example.com"]
-            )
-            #expect(text.contains("Send a codejane.doe@example.com"))
-            #expect(text.contains("codejane.doe@example.comnow"))
-            #expect(text.contains("wenson@me.com") == false)
-        }
-
-        for format in [_WKTextExtractionOutputFormat.textTree, .HTML, .JSON] {
-            try await expectAddressRedacted(
-                "<div aria-label='Send a code to wenson@me.com'><p>Choose a delivery method</p></div>",
-                format
-            )
-            try await expectAddressRedacted("<button title='Signed in as wenson@me.com'>Menu</button>", format)
-            try await expectAddressRedacted(
-                """
-                <input type='radio' id='otp-email' name='otpEmail'>\
-                <label for='otp-email'>Email me a verification code<span>wenson@me.com</span></label>
-                """,
-                format
-            )
-            try await expectAddressRedacted("<h1>Verify</h1><input type='radio' name='otpEmail' value='wenson@me.com'>", format)
-            try await expectAddressRedacted("<input type='email' placeholder='wenson@me.com'>", format)
-            try await expectAddressRedacted(
-                "<img src='https://example.com/avatar.png' alt='Profile photo for wenson@me.com'>",
-                format
-            )
-            try await expectAddressRedacted(
-                "<select><option value='primary'>wenson@me.com</option><option value='backup'>Other address</option></select>",
-                format
-            )
-            try await expectAddressRedacted("<select><option>wenson@me.com</option></select>", format) { configuration in
-                configuration.includeSelectOptions = false
+        var server = try HTTPServer(protocol: .httpsProxy) {
+            Route("/avatar.png") {
+                ""
             }
         }
 
-        try await expectAddressRedacted(
-            "<img src='https://example.com/avatar.png' alt='Profile photo for wenson@me.com'>",
-            .markdown
-        )
+        try await server.run { serverConfiguration in
+            let storeConfiguration = _WKWebsiteDataStoreConfiguration(nonPersistentConfiguration: ())
+            storeConfiguration.httpsProxy = serverConfiguration.httpsProxy
+
+            let configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = WKWebsiteDataStore._store(with: storeConfiguration)
+            configuration.preferences._textExtractionEnabled = true
+
+            let webView = TestWKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+
+            @MainActor
+            func textAfterReplacing(
+                _ markup: String,
+                _ outputFormat: _WKTextExtractionOutputFormat,
+                _ replacementStrings: [String: String]?,
+                _ customizeConfiguration: ((_WKTextExtractionConfiguration) -> Void)? = nil
+            ) async throws -> String {
+                webView.loadHTMLString(markup, baseURL: Bundle.testResources.resourceURL)
+                try await webView._test_waitForDidFinishNavigationWhileIgnoringSSLErrors()
+                let configuration = _WKTextExtractionConfiguration()
+                configuration.outputFormat = outputFormat
+                configuration.replacementStrings = replacementStrings
+                customizeConfiguration?(configuration)
+                return try await webView.debugText(configuration)
+            }
+
+            @MainActor
+            func expectAddressRedacted(
+                _ markup: String,
+                _ outputFormat: _WKTextExtractionOutputFormat,
+                _ customizeConfiguration: ((_WKTextExtractionConfiguration) -> Void)? = nil,
+                sourceLocation: SourceLocation = #_sourceLocation
+            ) async throws {
+                let format: Comment = "output format: \(outputFormat)"
+
+                let text = try await textAfterReplacing(markup, outputFormat, nil, customizeConfiguration)
+                #expect(text.contains("wenson@me.com"), format, sourceLocation: sourceLocation)
+
+                let redactedText = try await textAfterReplacing(
+                    markup,
+                    outputFormat,
+                    ["wenson@me.com": "jane.doe@example.com"],
+                    customizeConfiguration
+                )
+                #expect(redactedText.contains("jane.doe@example.com"), format, sourceLocation: sourceLocation)
+                #expect(redactedText.contains("wenson@me.com") == false, format, sourceLocation: sourceLocation)
+            }
+
+            do {
+                let text = try await textAfterReplacing(
+                    "<p>Send a codewenson@me.com</p><p>codewenson@me.comnow</p>",
+                    .textTree,
+                    ["wenson@me.com": "jane.doe@example.com"]
+                )
+                #expect(text.contains("Send a codejane.doe@example.com"))
+                #expect(text.contains("codejane.doe@example.comnow"))
+                #expect(text.contains("wenson@me.com") == false)
+            }
+
+            for format in [_WKTextExtractionOutputFormat.textTree, .HTML, .JSON] {
+                try await expectAddressRedacted(
+                    "<div aria-label='Send a code to wenson@me.com'><p>Choose a delivery method</p></div>",
+                    format
+                )
+                try await expectAddressRedacted("<button title='Signed in as wenson@me.com'>Menu</button>", format)
+                try await expectAddressRedacted(
+                    """
+                    <input type='radio' id='otp-email' name='otpEmail'>\
+                    <label for='otp-email'>Email me a verification code<span>wenson@me.com</span></label>
+                    """,
+                    format
+                )
+                try await expectAddressRedacted("<h1>Verify</h1><input type='radio' name='otpEmail' value='wenson@me.com'>", format)
+                try await expectAddressRedacted("<input type='email' placeholder='wenson@me.com'>", format)
+                try await expectAddressRedacted(
+                    "<img src='https://example.com/avatar.png' alt='Profile photo for wenson@me.com'>",
+                    format
+                )
+                try await expectAddressRedacted(
+                    "<select><option value='primary'>wenson@me.com</option><option value='backup'>Other address</option></select>",
+                    format
+                )
+                try await expectAddressRedacted("<select><option>wenson@me.com</option></select>", format) { configuration in
+                    configuration.includeSelectOptions = false
+                }
+            }
+
+            try await expectAddressRedacted(
+                "<img src='https://example.com/avatar.png' alt='Profile photo for wenson@me.com'>",
+                .markdown
+            )
+        }
     }
 
     @Test
@@ -2318,8 +2377,26 @@ struct TextExtractionTests {
 
     @Test
     func invalidURLsAreSkipped() async throws {
-        try await webView.load(
-            html: """
+        var server = try HTTPServer(protocol: .httpsProxy) {
+            Route("/valid.png") {
+                ""
+            }
+            Route("/broken.png") {
+                ""
+            }
+        }
+
+        try await server.run { serverConfiguration in
+            let storeConfiguration = _WKWebsiteDataStoreConfiguration(nonPersistentConfiguration: ())
+            storeConfiguration.httpsProxy = serverConfiguration.httpsProxy
+
+            let configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = WKWebsiteDataStore._store(with: storeConfiguration)
+            configuration.preferences._textExtractionEnabled = true
+
+            let webView = TestWKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+            webView.loadHTMLString(
+                """
                 <!DOCTYPE html>
                 <html>
                 <body>
@@ -2329,32 +2406,37 @@ struct TextExtractionTests {
                 .com/newline">Link with newline</a>
                     <a href="">Empty href</a>
                     <img src="https://example.com/valid.png" alt="Valid image">
-                    <img src="   not a valid src   " alt="Image with spaces">
+                    <img src="   https://not a valid src   " alt="Image with spaces">
                     <img src="https://example
                 .com/broken.png" alt="Image with newline">
                     <img src="" alt="Empty src">
                 </body>
                 </html>
-                """
-        )
+                """,
+                baseURL: Bundle.testResources.resourceURL
+            )
+            try await webView._test_waitForDidFinishNavigationWhileIgnoringSSLErrors()
 
-        for format in [_WKTextExtractionOutputFormat.textTree, .markdown] {
-            let configuration = _WKTextExtractionConfiguration()
-            configuration.includeURLs = true
-            configuration.shortenURLs = true
-            configuration.outputFormat = format
+            for shortenURLs in [true, false] {
+                for format in [_WKTextExtractionOutputFormat.textTree, .markdown] {
+                    let configuration = _WKTextExtractionConfiguration()
+                    configuration.includeURLs = true
+                    configuration.shortenURLs = shortenURLs
+                    configuration.outputFormat = format
 
-            let debugText = try await webView.debugText(configuration)
-            #expect(debugText.contains("Valid link"))
-            #expect(debugText.contains("example.com"))
-            #expect(debugText.contains("Valid image"))
+                    let debugText = try await webView.debugText(configuration)
+                    #expect(debugText.contains("Valid link"))
+                    #expect(debugText.contains("example.com"))
+                    #expect(debugText.contains("Valid image"))
 
-            #expect(debugText.contains("Link with spaces"))
-            #expect(debugText.contains("Link with newline"))
-            #expect(debugText.contains("Image with spaces"))
-            #expect(debugText.contains("Image with newline"))
+                    #expect(debugText.contains("Link with spaces"))
+                    #expect(debugText.contains("Link with newline"))
+                    #expect(debugText.contains("Image with spaces"))
+                    #expect(debugText.contains("Image with newline"))
 
-            #expect(debugText.contains("not a valid") == false)
+                    #expect(debugText.contains("not a valid") == false)
+                }
+            }
         }
     }
 
@@ -2588,6 +2670,77 @@ struct TextExtractionTests {
             #expect(debugText.contains("origin=localhost:\(serverConfiguration.port)"))
             #expect(debugText.contains("origin=http://localhost") == false)
             #expect(debugText.contains("origin=127.0.0.1") == false)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func subframeRectsIncludeSubframePositionWithSiteIsolation(crossSite: Bool) async throws {
+        // The button is at (20, 30) in the iframe, which is at (100, 150) in the main frame, so its bounds in
+        // the web view are (120, 180, 120, 40).
+        func mainFrameMarkupWithSubframe(from subframeHost: String) -> String {
+            """
+            <meta name='viewport' content='width=device-width, initial-scale=1'>
+            <body style='margin: 0'>
+            <iframe style='position: absolute; left: 100px; top: 150px; width: 400px; height: 300px; border: none;'></iframe>
+            <script>
+                subframeLoaded = false;
+                const iframe = document.querySelector('iframe');
+                iframe.addEventListener('load', () => subframeLoaded = true, { once: true });
+                iframe.src = `http://\(subframeHost):${location.port}/subframe.html`;
+            </script>
+            </body>
+            """
+        }
+
+        // 127.0.0.1 and localhost are different sites, so only the latter puts the iframe in another process.
+        var server = try HTTPServer(protocol: .http) {
+            Route("/same-site.html") {
+                mainFrameMarkupWithSubframe(from: "127.0.0.1")
+            }
+            Route("/cross-site.html") {
+                mainFrameMarkupWithSubframe(from: "localhost")
+            }
+            Route("/subframe.html") {
+                """
+                <body style='margin: 0'>
+                <button style='position: absolute; left: 20px; top: 30px; width: 120px; height: 40px;'>Target button</button>
+                </body>
+                """
+            }
+        }
+
+        try await server.run { serverConfiguration in
+            let webView = makeWebViewForTextExtractionTesting(webFeatures: ["SiteIsolationEnabled"])
+            let subframes = SubframeCollector()
+            let navigationDelegate = TestNavigationDelegate()
+            subframes.install(on: navigationDelegate)
+            webView.navigationDelegate = navigationDelegate
+
+            let url = try #require(URL(string: "http://127.0.0.1:\(serverConfiguration.port)/\(crossSite ? "cross-site" : "same-site").html"))
+            webView.load(URLRequest(url: url))
+            try await navigationDelegate.waitForDidFinishNavigation()
+            try await waitForCondition("subframe to finish loading", timeout: .seconds(2)) {
+                try await webView.callJavaScript(returning: Bool.self) { "return subframeLoaded" }
+            }
+
+            let configuration = _WKTextExtractionConfiguration()
+            configuration.outputFormat = .JSON
+            configuration.includeRects = true
+            configuration.additionalFrames = subframes.frames
+
+            let json = try decodeJSONObject(await webView.debugText(configuration))
+            let button = try #require(firstJSONNode(in: json) { $0["nodeName"] as? String == "button" })
+            let rect = try #require(button["rect"] as? [String: Any])
+            #expect(rect["x"] as? Int == 120)
+            #expect(rect["y"] as? Int == 180)
+            #expect(rect["width"] as? Int == 120)
+            #expect(rect["height"] as? Int == 40)
+
+            let interaction = _WKTextExtractionInteraction(action: .click)
+            interaction.nodeIdentifier = try #require(button["uid"] as? String)
+            let result = try #require(await webView._performInteraction(interaction))
+            #expect(result.error == nil)
+            #expect(result.interactedElementBounds == CGRect(x: 120, y: 180, width: 120, height: 40))
         }
     }
 

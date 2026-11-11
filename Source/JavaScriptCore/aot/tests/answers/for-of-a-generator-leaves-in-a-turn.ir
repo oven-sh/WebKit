@@ -1,0 +1,116 @@
+# function* two(a, b) { yield a; yield b; }
+# function sum(a, b) { let total = 0; for (const value of two(a, b)) total += value as number; return total; }
+# function behind(a, last) { let total = 0; for (const value of two(a, a)) total += value as number; return total + (last as number); }
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN(ANSWER): run-in-shell
+# ANSWER: 3 1x 0x1 4 2y 0zz2
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = Integer integer=2
+    v3 = String string="x"
+    v4 = Call v0, -, v1, v2 calleeName="sum" [isNeverInlined]
+    v5 = Call v0, -, v1, v3 calleeName="sum" [isNeverInlined]
+    v6 = Call v0, -, v3, v1 calleeName="sum" [isNeverInlined]
+    v7 = NewClosure function=f2
+    v8 = String string="y"
+    v9 = String string="z"
+    v10 = Call v7, -, v1, v2 calleeName="behind" [isNeverInlined]
+    v11 = Call v7, -, v1, v8 calleeName="behind" [isNeverInlined]
+    v12 = Call v7, -, v9, v2 calleeName="behind" [isNeverInlined]
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="console" [isFreeName]
+    v15 = PropGet v14 key="log"
+    v16 = Call v15, v14, v4, v5, v6, v10, v11, v12 calleeKey="log" calleeName="console.log"
+    v17 = Undefined
+    Return v17
+}
+function f1 name="sum" module=m0 flags=[HasExplicitName, IsChecked] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = NewClosure function=f3
+    v3 = Call v2, -, v0, v1 calleeName="two"
+    v4 = IteratorOpen v3
+    v5 = Integer
+    Jump -> next b2(v5)
+  b2(v6: anything):
+    LoopHint
+    v8 = IteratorResume v4
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    Return v6
+  b4():
+    Jump -> next b5()
+  b5() handler=b6():
+    v11 = Convert v10 declared={type=number} illTypedCause=Assertion
+    v12 = Add v6, v11
+    Jump -> next b2(v12)
+  b6() role=IterationCleanup subject=v4:
+    v13 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v13
+}
+function f2 name="behind" module=m0 flags=[HasExplicitName, IsChecked] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = NewClosure function=f3
+    v3 = Call v2, -, v0, v0 calleeName="two"
+    v4 = IteratorOpen v3
+    v5 = Integer
+    Jump -> next b2(v5)
+  b2(v6: anything):
+    LoopHint
+    v8 = IteratorResume v4
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v11 = Convert v1 declared={type=number} illTypedCause=Assertion
+    v12 = Add v6, v11
+    Return v12
+  b4():
+    Jump -> next b5()
+  b5() handler=b6():
+    v13 = Convert v10 declared={type=number} illTypedCause=Assertion
+    v14 = Add v6, v13
+    Jump -> next b2(v14)
+  b6() role=IterationCleanup subject=v4:
+    v15 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v15
+}
+function f3 name="two" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: function, v2: anything, v3: anything):
+    Jump -> next b1()
+  b1():
+    InitialYield v2, v3
+    v5 = Yield v2, v2, v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Switch v7 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2():
+    Throw v6
+  b3():
+    Return v6
+  b4():
+    v8 = Yield v3, v2, v3
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
+  b5():
+    Throw v9
+  b6():
+    Return v9
+  b7():
+    v11 = Undefined
+    Return v11
+}

@@ -84,6 +84,15 @@ public:
 #endif
     }
 
+    bool haveTextScaleFactor() const
+    {
+#if HAVE(TEXT_SCALE_FACTOR)
+        return true;
+#else
+        return false;
+#endif
+    }
+
     bool keyboardAppearsOverContent() const
     {
 #if PLATFORM(VISION)
@@ -297,6 +306,8 @@ public:
     void setBackgroundFetchPermission(bool);
     void setVirtualWalletBehavior(JSStringRef action, JSStringRef protocol, JSStringRef responseJSON);
     RefPtr<OpaqueJSString> lastAddedBackgroundFetchIdentifier() const;
+
+    double textScaleFactorForContentSizeCategory(JSStringRef contentSizeCategory);
     RefPtr<OpaqueJSString> lastRemovedBackgroundFetchIdentifier() const;
     RefPtr<OpaqueJSString> lastUpdatedBackgroundFetchIdentifier() const;
     RefPtr<OpaqueJSString> backgroundFetchState(JSStringRef);
@@ -381,6 +392,7 @@ public:
     void setStatisticsTopFrameUniqueRedirectTo(JSStringRef hostName, JSStringRef hostNameRedirectedTo);
     void setStatisticsTopFrameUniqueRedirectFrom(JSStringRef hostName, JSStringRef hostNameRedirectedFrom);
     void setStatisticsCrossSiteLoadWithLinkDecoration(JSStringRef fromHost, JSStringRef toHost, bool wasFiltered);
+    void setStatisticsLinkDecorationFilteringData(JSStringRef queryParameter);
     void setStatisticsTimeToLiveUserInteraction(double seconds);
     void setStatisticsTimeAdvanceForTesting(double);
     void setStatisticsIsRunningTest(bool);
@@ -482,6 +494,7 @@ public:
     }
 
     void setHasMouseDeviceForTesting(bool);
+    void setHasFakePaymentUIForTesting(bool);
     void exitImmersive();
 
 private:

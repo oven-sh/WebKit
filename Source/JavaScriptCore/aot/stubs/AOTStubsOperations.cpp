@@ -11,86 +11,16 @@
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTState.h"
-#include "AOTStubCatalog.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
 #include "Exception.h"
-#include <initializer_list>
-#include <iterator>
 
 namespace JSC { namespace AOT {
 
 static constexpr OperationCall operationCallOf(const OperationCallShape& shape)
 {
-    return { .returns = shape.returns, .firstArgument = shape.firstArgument, .saves = shape.saves, .checksException = shape.checksException };
-}
-
-static constexpr bool savesAtLeast(OperationCall::Saves saves, OperationCall::Saves requested)
-{
-    return saves == requested || saves == OperationCall::Saves::CallerSavedRegisters;
-}
-
-static consteval bool factoriesRoundTrip()
-{
-    for (uint8_t form = 0; form < std::size(operationCallShapes); ++form) {
-        if (callOperation(operationCallShapes[form].returns, operationCallShapes[form].firstArgument).form() != form)
-            return false;
-    }
-    for (uint8_t form = 0; form < std::size(preservingCallShapes); ++form) {
-        if (callOperationPreservingRegisters(operationCallOf(preservingCallShapes[form])).form() != form)
-            return false;
-    }
-    return true;
-}
-
-static consteval bool hasExpectedShape(const OperationCallShape& requested)
-{
-    std::optional<StubKey> key = tryCallOperationPreservingRegisters(operationCallOf(requested));
-    bool isRejected = (requested.firstArgument == OperationCall::FirstArgument::None && requested.checksException)
-        || (requested.returns == OperationCall::Returns::Double && requested.saves == OperationCall::Saves::CallerSavedGPRs)
-        || requested.returns == OperationCall::Returns::Pair;
-    if (isRejected || !key)
-        return isRejected && !key;
-    const OperationCallShape& shape = preservingCallShapes[key->form()];
-    return shape.firstArgument == requested.firstArgument
-        && (shape.returns == requested.returns || requested.returns == OperationCall::Returns::Void)
-        && savesAtLeast(shape.saves, requested.saves)
-        && (shape.checksException || !requested.checksException);
-}
-
-static consteval bool shapesCoverPreservingCalls()
-{
-    for (auto returns : { OperationCall::Returns::Value, OperationCall::Returns::Void, OperationCall::Returns::Double, OperationCall::Returns::Pair }) {
-        for (auto firstArgument : { OperationCall::FirstArgument::Instance, OperationCall::FirstArgument::None }) {
-            for (auto saves : { OperationCall::Saves::CallerSavedGPRs, OperationCall::Saves::CallerSavedRegisters }) {
-                for (bool checksException : { false, true }) {
-                    if (!hasExpectedShape({ returns, firstArgument, saves, checksException }))
-                        return false;
-                }
-            }
-        }
-    }
-    return true;
-}
-
-static_assert(factoriesRoundTrip());
-static_assert(shapesCoverPreservingCalls());
-static_assert(!tryCallOperationPreservingRegisters({ .saves = OperationCall::Saves::CallerSavedRegisters, .fourthArgumentIn = GPRInfo::returnValueGPR }));
-static_assert(!tryCallOperationPreservingRegisters({ .saves = OperationCall::Saves::CallerSavedRegisters, .valueDestination = GPRInfo::returnValueGPR }));
-static_assert(!tryCallOperationPreservingRegisters({ }));
-static_assert(callOperationFor(Entry::operationAOTAllocateSlow, OperationCall::Returns::Value, OperationCall::FirstArgument::Instance).family() == StubFamily::TailCallOperation);
-static_assert(callOperationFor(Entry::operationAOTThrow, OperationCall::Returns::Void, OperationCall::FirstArgument::Instance).family() == StubFamily::CallOperation);
-
-RegisterSet registersClobberedByPreservingCall(const StubCatalog& stubs, OperationCall call)
-{
-    RegisterSet clobbered;
-    for (OperationCall::Saves saves : { OperationCall::Saves::CallerSavedRegisters, OperationCall::Saves::CallerSavedGPRs }) {
-        call.saves = saves;
-        if (std::optional<StubKey> key = tryCallOperationPreservingRegisters(call))
-            clobbered.merge(stubs.summaryOf(*key).clobbered);
-    }
-    return clobbered;
+    return { .returns = shape.returns, .firstArgument = shape.firstArgument, .saves = shape.saves, .checksException = shape.checksException, .pollsBeforeReturning = shape.pollsBeforeReturning };
 }
 
 static StubSignature operationCallSignature(OperationCall::Returns returns, GPRReg immediate)
@@ -115,15 +45,6 @@ static StubSignature operationCallSignature(OperationCall::Returns returns, GPRR
         break;
     }
     return signature;
-}
-
-static std::optional<OperationCallShape> tryGetShape(StubKey key)
-{
-    if (key.family() == StubFamily::CallOperation)
-        return operationCallShapes[key.form()];
-    if (key.family() == StubFamily::CallOperationPreservingRegisters)
-        return preservingCallShapes[key.form()];
-    return std::nullopt;
 }
 
 #if CPU(ARM64)
@@ -158,12 +79,27 @@ void generateTailCallOperation(StubAssembler& jit)
 
 StubSignature signatureOfCallOperationPreservingRegisters(StubKey key)
 {
-    return operationCallSignature(preservingCallShapes[key.form()].returns, preservingCallImmediateGPR);
+    StubSignature signature = operationCallSignature(preservingCallShapes[key.form()].returns, preservingCallImmediateGPR);
+    if (signature.result == StubResult::GPR)
+        signature.firstResult = resultGPROfPreservingCall();
+    return signature;
 }
 
 void generateCallOperationPreservingRegisters(StubAssembler& jit)
 {
-    jit.callOperationAndReturn(jit.immediate(), operationCallOf(preservingCallShapes[jit.key().form()]));
+    OperationCall call = operationCallOf(preservingCallShapes[jit.key().form()]);
+    if (call.returns == OperationCall::Returns::Value && resultGPROfPreservingCall() != GPRInfo::returnValueGPR)
+        call.valueDestination = resultGPROfPreservingCall();
+    if (call.firstArgument == OperationCall::FirstArgument::Instance) {
+        std::span<const GPRReg> registers = registersThatPreservingCallsTakeArgumentsIn();
+        call.secondArgumentIn = registers[0];
+        call.thirdArgumentIn = registers[1];
+        if (registers.size() > 2) {
+            call.fourthArgumentIn = registers[2];
+            call.fifthArgumentIn = registers[3];
+        }
+    }
+    jit.callOperationAndReturn(jit.immediate(), call);
 }
 
 static_assert(MacroAssembler::numberOfRegisters() <= ThrowSiteWord::numberOfRegistersPerBank && MacroAssembler::numberOfFPRegisters() <= ThrowSiteWord::numberOfRegistersPerBank);
@@ -171,38 +107,39 @@ static_assert(MacroAssembler::numberOfRegisters() <= ThrowSiteWord::numberOfRegi
 static void storeRegisterBanks(StubAssembler& jit)
 {
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-    constexpr unsigned numberOfRegistersPerBank = ThrowSiteWord::numberOfRegistersPerBank;
-    jit.subPtr(TrustedImm32(2 * numberOfRegistersPerBank * 8), sp);
+    constexpr unsigned numberOfStoredGPRs = ThrowSiteWord::numberOfStoredGPRs;
+    static_assert(!((numberOfStoredGPRs + ThrowSiteWord::numberOfStoredFPRs) % 2));
+    jit.subPtr(TrustedImm32((numberOfStoredGPRs + ThrowSiteWord::numberOfStoredFPRs) * 8), sp);
 #if CPU(ARM64)
-    for (unsigned i = 0; i < 30; i += 2) {
+    for (unsigned i = 0; i < numberOfStoredGPRs; i += 2) {
         if (i == 18)
-            jit.store64(ARM64Registers::x19, Address(sp, 19 * 8));
+            jit.storePair64(ARM64Registers::x19, ARM64Registers::x19, sp, TrustedImm32(i * 8));
         else
             jit.storePair64(static_cast<GPRReg>(ARM64Registers::x0 + i), static_cast<GPRReg>(ARM64Registers::x0 + i + 1), sp, TrustedImm32(i * 8));
     }
     for (unsigned i = 0; i < 32; i += 2)
-        jit.storePairDouble(static_cast<FPRReg>(ARM64Registers::q0 + i), static_cast<FPRReg>(ARM64Registers::q0 + i + 1), Address(sp, (numberOfRegistersPerBank + i) * 8));
+        jit.storePairDouble(static_cast<FPRReg>(ARM64Registers::q0 + i), static_cast<FPRReg>(ARM64Registers::q0 + i + 1), Address(sp, (numberOfStoredGPRs + i) * 8));
 #else
     for (unsigned i = 0; i < 16; ++i)
         jit.store64(static_cast<GPRReg>(X86Registers::eax + i), Address(sp, i * 8));
     for (unsigned i = 0; i < 16; ++i)
-        jit.storeDouble(static_cast<FPRReg>(X86Registers::xmm0 + i), Address(sp, (numberOfRegistersPerBank + i) * 8));
+        jit.storeDouble(static_cast<FPRReg>(X86Registers::xmm0 + i), Address(sp, (numberOfStoredGPRs + i) * 8));
 #endif
 }
 
 static void loadRegisterBanks(StubAssembler& jit)
 {
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-    constexpr unsigned numberOfRegistersPerBank = ThrowSiteWord::numberOfRegistersPerBank;
+    constexpr unsigned numberOfStoredGPRs = ThrowSiteWord::numberOfStoredGPRs;
 #if CPU(ARM64)
-    for (unsigned i = 0; i < 30; i += 2) {
+    for (unsigned i = 0; i < numberOfStoredGPRs; i += 2) {
         if (i == 18)
             jit.load64(Address(sp, 19 * 8), ARM64Registers::x19);
         else
             jit.loadPair64(sp, TrustedImm32(i * 8), static_cast<GPRReg>(ARM64Registers::x0 + i), static_cast<GPRReg>(ARM64Registers::x0 + i + 1));
     }
     for (unsigned i = 0; i < 32; i += 2)
-        jit.loadPairDouble(Address(sp, (numberOfRegistersPerBank + i) * 8), static_cast<FPRReg>(ARM64Registers::q0 + i), static_cast<FPRReg>(ARM64Registers::q0 + i + 1));
+        jit.loadPairDouble(Address(sp, (numberOfStoredGPRs + i) * 8), static_cast<FPRReg>(ARM64Registers::q0 + i), static_cast<FPRReg>(ARM64Registers::q0 + i + 1));
 #else
     for (unsigned i = 0; i < 16; ++i) {
         GPRReg reg = static_cast<GPRReg>(X86Registers::eax + i);
@@ -210,7 +147,7 @@ static void loadRegisterBanks(StubAssembler& jit)
             jit.load64(Address(sp, i * 8), reg);
     }
     for (unsigned i = 0; i < 16; ++i)
-        jit.loadDouble(Address(sp, (numberOfRegistersPerBank + i) * 8), static_cast<FPRReg>(X86Registers::xmm0 + i));
+        jit.loadDouble(Address(sp, (numberOfStoredGPRs + i) * 8), static_cast<FPRReg>(X86Registers::xmm0 + i));
 #endif
 }
 
@@ -240,7 +177,6 @@ static void dumpRegistersAndThrow(StubAssembler& jit, ThrowSiteSource source)
         jit.move(instanceGPR, operationArgumentGPR(0));
         jit.move(TrustedImm32(static_cast<uint32_t>(source)), operationArgumentGPR(3));
         jit.callOperation(Entry::operationAOTThrowAtSite, jit.allocateScratch(StubRegister::T9));
-        // The operation makes the Error. What throws it comes behind.
         jit.bindReturnLabel(StubFrameKind::FirstOfTwoReads);
     };
     if (!isFrameless) {
@@ -278,14 +214,18 @@ void generateThrowAtFault(StubAssembler& jit)
     dumpRegistersAndThrow(jit, ThrowSiteSource::FaultSite);
 }
 
+static GPRReg registerOfPreludeAnswer(StubAssembler& jit)
+{
+    return jit.key().family() == StubFamily::CallOperationPreservingRegisters ? jit.result() : jit.reuseScratch(StubRegister::R0);
+}
+
 enum class CaughtWord : uint8_t { Value, Exception, ValueAndException };
 
-// The word holds what compiled code threw: the value, or the Exception that a cleanup throws on.
 static PreludeExit emitCatchPrelude(StubAssembler& jit, CaughtWord wanted)
 {
     if (jit.key().family() != StubFamily::TailCallOperation && jit.signature().result != StubResult::GPR)
         return PreludeExit::CallsOperation;
-    const GPRReg value = jit.reuseScratch(StubRegister::R0);
+    const GPRReg value = registerOfPreludeAnswer(jit);
     Address thrownValue(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.thrownValue));
     jit.load64(thrownValue, value);
     JumpList callsOperation;
@@ -339,15 +279,23 @@ PreludeExit emitAddressOfThrowPrelude(StubAssembler& jit)
 {
     if (jit.key().family() != StubFamily::TailCallOperation && jit.signature().result != StubResult::GPR)
         return PreludeExit::CallsOperation;
-    jit.loadCallerReturnAddress(0, jit.reuseScratch(StubRegister::R0));
+    jit.loadCallerReturnAddress(0, registerOfPreludeAnswer(jit));
     jit.returnToCaller();
-    // Like every head of an operation this one ends in the call, so that what is known of the call holds for the head.
     return PreludeExit::CallsOperation;
+}
+
+static std::optional<OperationCallShape> tryGetShapeOfOperationCall(StubKey key)
+{
+    if (key.family() == StubFamily::CallOperation)
+        return operationCallShapes[key.form()];
+    if (key.family() == StubFamily::CallOperationPreservingRegisters)
+        return preservingCallShapes[key.form()];
+    return std::nullopt;
 }
 
 static PreludeExit emitThrowPrelude(StubAssembler& jit, bool endsCleanup)
 {
-    std::optional<OperationCallShape> shape = tryGetShape(jit.key());
+    std::optional<OperationCallShape> shape = tryGetShapeOfOperationCall(jit.key());
     if (!shape || shape->returns != OperationCall::Returns::Void || shape->firstArgument != OperationCall::FirstArgument::Instance || !shape->checksException)
         return PreludeExit::CallsOperation;
     jit.store64(operationArgumentGPR(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.thrownValue)));

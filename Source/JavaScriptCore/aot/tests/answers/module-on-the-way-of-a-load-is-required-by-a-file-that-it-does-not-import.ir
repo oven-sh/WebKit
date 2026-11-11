@@ -1,0 +1,92 @@
+# start.cjs: require("./top.js")    top.js: import "./reader.js"; import "./side.js"    reader.js: import "./old.cjs"    side.js: import "./deep.js"    old.cjs: require("./side.js")
+# RUN: run-in-shell globalThis.register = closure => { globalThis.registered = closure; }; const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const result = start(entry); Promise.resolve(result).then(() => registered()).then(() => print("imported")); return result; };
+# CHECK: start.cjs begins
+# CHECK-NEXT: old.cjs begins
+# CHECK-NEXT: deep.js
+# CHECK-NEXT: side.js
+# CHECK-NEXT: old.cjs ends
+# CHECK-NEXT: reader.js
+# CHECK-NEXT: top.js
+# CHECK-NEXT: start.cjs ends
+# CHECK-NEXT: imported
+# CHECK: exited with 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/start.cjs" displayPath="start.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}]
+module m2 path="/top.js" displayPath="top.js" body=f2 requests=[{target=m7 completes=true isHoisted=true}, {target=m3 completes=true}, {target=m4 completes=true}]
+module m3 path="/reader.js" displayPath="reader.js" body=f3 requests=[{target=m7 completes=true}]
+module m4 path="/side.js" displayPath="side.js" flags=[IsRequiredDuringLoad] body=f4 requests=[{target=m5 completes=true}]
+module m5 path="/deep.js" displayPath="deep.js" body=f5
+module m6 path="/old.cjs" displayPath="old.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g1 requests=[{target=m4 kind=Require completes=true}]
+module m7 path="#7" displayPath="old.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f7 requests=[{target=m6 kind=Require completes=true}] syntheticExports=[{name="default" variable=g2}]
+entry module=m0
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m6 declared={type=anything} initialization=Undefined
+variable g2 name="default" module=m7 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f8
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="start" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="start.cjs begins"
+    v3 = Call v1, -, v2
+    EvaluateModule module=m2 referrer=m1 [isCallOfRequire]
+    v5 = String string="start.cjs ends"
+    v6 = Call v1, -, v5
+    v7 = NewDictionary
+    PutModuleVariable v7 variable=g0
+    Return
+}
+function f2 name="top" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="top.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f3 name="reader" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="reader.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f4 name="side" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="side.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f5 name="deep" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="deep.js"
+    v3 = Call v1, -, v2
+    Return
+}
+function f6 name="old" module=m6 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="old.cjs begins"
+    v3 = Call v1, -, v2
+    EvaluateModule module=m4 referrer=m6 [isCallOfRequire]
+    v5 = String string="old.cjs ends"
+    v6 = Call v1, -, v5
+    v7 = NewDictionary
+    PutModuleVariable v7 variable=g1
+    Return
+}
+function f7 name="facadeOfOld" module=m6 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m6 referrer=m7 [isBare]
+    Return
+}
+function f8 name="importStart" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}

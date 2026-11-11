@@ -7,12 +7,11 @@
 
 #if ENABLE(AOT)
 
-#include "AOTLayoutData.h"
+#include "JSCJSValue.h"
 #include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC {
 
-class JSCell;
 class VM;
 
 namespace AOT {
@@ -21,15 +20,11 @@ class Closure;
 
 namespace StaticFields {
 
-bool ownsVariables(const Closure& classObject);
-const FieldData* findOwnField(const Closure& classObject, UniquedStringImpl*);
-bool isInVariable(const Closure& classObject, const FieldData&);
-bool canEnterVariable(VM&, const Closure& classObject, const FieldData&);
-void ensureProperties(VM&, Closure& classObject);
-void moveToProperty(VM&, Closure& classObject, const FieldData&);
-void willPutDirect(VM&, Closure& classObject, UniquedStringImpl*);
-void didDeleteProperty(VM&, Closure& classObject, const FieldData&);
-const FieldData* findFieldForCache(VM&, JSCell* classObject, UniquedStringImpl*);
+JSValue tryRead(const Closure& classObject, UniquedStringImpl*);
+bool tryStore(Closure& classObject, UniquedStringImpl*, JSValue);
+bool tryRedefine(Closure& classObject, UniquedStringImpl*, JSValue valueOrEmpty);
+bool tryCreate(Closure& classObject, UniquedStringImpl*, JSValue);
+void moveToProperties(VM&, Closure& classObject);
 
 } // namespace StaticFields
 

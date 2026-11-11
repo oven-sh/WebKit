@@ -40,8 +40,8 @@ class CursorImage final : public MultiImage {
 public:
     using HotSpot = SpaceSeparatedPoint<Number<>>;
 
-    static Ref<CursorImage> LEGACY_NODELETE create(const Ref<Image>&, std::optional<HotSpot>, const URL&);
-    static Ref<CursorImage> LEGACY_NODELETE create(Ref<Image>&&, std::optional<HotSpot>, URL&&);
+    NODELETE static Ref<CursorImage> create(const Ref<Image>&, std::optional<HotSpot>, const URL&);
+    NODELETE static Ref<CursorImage> create(Ref<Image>&&, std::optional<HotSpot>, URL&&);
     virtual ~CursorImage();
 
     bool operator==(const Image&) const final;
@@ -56,10 +56,9 @@ private:
     explicit CursorImage(const Ref<Image>&, std::optional<HotSpot>, const URL&);
     explicit CursorImage(Ref<Image>&&, std::optional<HotSpot>, URL&&);
 
-    ImageDrawingExtras drawingExtrasForRenderer(const RenderElement&) const final;
     Ref<CSSValue> computedStyleValue(const Style::ComputedStyle&) const final;
     Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const final;
-    ImageWithScale selectBestFitImage(const Document&) final;
+    ImageWithResolution selectBestFitImage(const Document&) final;
 
     const Ref<Image> m_image;
     const std::optional<HotSpot> m_hotSpot;

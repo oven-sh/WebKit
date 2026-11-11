@@ -1,0 +1,27 @@
+# the same callee, and a caller hands it a function, which passes the test: the store runs. It runs code that nobody knows, or it writes in an object that no layout stands for
+# function mark(o) { if (typeof o === "function") o.seen = 1; }  mark(mark);
+# RUN: link functions mechanisms=all
+# CHECK: function f1
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f1 {{*}}layouts-written=none
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, -, v0
+    Return v1
+}
+function f1 name="mark" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=function
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Integer integer=1
+    PropSet v2, v3 key="seen"
+    Jump -> next b2()
+  b2():
+    v5 = Undefined
+    Return v5
+}

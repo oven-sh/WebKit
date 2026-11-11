@@ -1,0 +1,52 @@
+# function pick(c, v) { if (c === null) return one(v).x; if (c === undefined) return two(v).y; return v; }
+# two parts of the body call, each behind a test that needs no frame, and the way past both returns at once. Each part sets the frame up at its own head, so that way has none
+# f1 = pick, f2 = one, f3 = two. pick is handed to sink
+# REQUIRES: unsanitized-code
+# RUN: allocate f1:Body mechanisms=none+DirectCalls
+# CHECK-LABEL: unit f1:Body
+# CHECK: headOfFramedPart =
+# CHECK-NEXT: headOfFramedPart =
+# CHECK-NOT: needsFrameAheadOfFramedPart
+
+variable g0 name="one" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="two" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="pick" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=null
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v1 calleeName="one"
+    v5 = PropGet v4 key="x"
+    Return v5
+  b2():
+    v6 = TypeTest v0 testedType=undefined
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = GetModuleVariable variable=g1
+    v8 = Call v7, -, v1 calleeName="two"
+    v9 = PropGet v8 key="y"
+    Return v9
+  b4():
+    Return v1
+}
+function f2 name="one" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+function f3 name="two" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="b"
+    Return v1
+}

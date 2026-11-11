@@ -1,0 +1,39 @@
+# If `this` of a function that `new` enters were expected to be of the function's own layout alone, `Base.call(this, a)` in the function below would fail the test in front of the typed stores of Base, and every object of Below would be filled by name: 180 instructions a store.
+# function Base(a) { this.a = a; }  function Below(a) { Base.call(this, a); }  publish(Base, Below, new Base(1), new Below(2));
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: PutSlotOrAdd {{*}} key="a" receivers=[L0, L1]
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Below" module=m0 base=L0 constructor=f2 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    v3 = Integer integer=1
+    v4 = Construct v0, v3
+    v5 = Integer integer=2
+    v6 = Construct v2, v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="publish" [isFreeName]
+    v9 = Call v8, -, v0, v2, v4, v6
+    Return v9
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="Below" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = PropGet v2 key="call"
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Base.call"
+    v5 = Undefined
+    Return v5
+}

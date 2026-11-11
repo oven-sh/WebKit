@@ -7,17 +7,28 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCellAllocationEmitter.h"
 #include "AOTOperationEmitter.h"
-#include "AOTRuntimeRecords.h"
+#include "AOTStaleAnswers.h"
 #include <optional>
 #include <wtf/ScopedLambda.h>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
+
+enum class PresenceQuestion : uint8_t;
+
+namespace Typed {
+
+struct MentionedAllocation;
+
+bool namesSizeOfTables(const Program&, const Facts&, PropertyKeyID);
 
 class AccessEmitter final : public OperationEmitter {
 public:
-    explicit AccessEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
+    explicit AccessEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+        , m_functionComesAgain(!m_program.at(m_id).isModuleBody())
+    {
+    }
 
     void generatePropGet(const ValueContext&);
     void generatePropSet(const ValueContext&);
@@ -27,7 +38,14 @@ public:
     void generateGetGlobalBinding(const ValueContext&);
     void generateSetGlobalBinding(const ValueContext&);
     void generateGetCachedGetter(const ValueContext&);
+    void generateElemGetOrOwnAccessor(const ValueContext&);
+    void generateGetGetterOfAccessorOrUndefined(const ValueContext&);
+    void generateGetValueAtSiteOrAbsent(const ValueContext&);
+    void generateGetOwnValueUnderKeyOrAbsent(const ValueContext&);
+    void generateGetPropertyOfHeir(const ValueContext&);
+    void generatePutPropertyOfHeir(const ValueContext&);
     void generateElemGet(const ValueContext&);
+    void generateElemGetByKeyParts(const ValueContext&);
     void generateElemSet(const ValueContext&);
     void generateElemHas(const ValueContext&);
     void generateElemDelete(const ValueContext&);
@@ -40,30 +58,54 @@ public:
     void generateSetLiteralPrototype(const ValueContext&);
     void generateCopyDataProperties(const ValueContext&);
     void generateCopyObject(const ValueContext&);
+    void generateCopyObjectAndDefine(const ValueContext&);
+    void generateCopyTwoObjects(const ValueContext&);
     void generateTryCopyFields(const ValueContext&);
+    Vector<FieldIndex, 8> fieldsThatTakeCopyFromOtherLayout(const Operation& copy);
+    void copyFieldsFromOtherLayout(const Operation& copy, CellPointer source, CellPointer target);
+    void noteCopyMadeAtAllocation(ValueID copy);
     void generateGetSuperBase(const ValueContext&);
     void generateSuperGet(const ValueContext&);
     void generateSuperSet(const ValueContext&);
 
-    Boxed getById(const OperationContext&, Boxed receiver, PropertyKeyID, SiteCacheID, std::optional<Origin> = std::nullopt);
-    Boxed getMemberAboveLayouts(const ValueContext&);
-    // What the slot at the site finds for every object with its Structure, where the object has that Structure and the slot is of the kind.
-    Boxed loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure);
-    void putById(const OperationContext&, Boxed receiver, PropertyKeyID, Boxed value, PutMode, SiteCacheID);
+    Boxed getById(const OperationContext&, Boxed receiver, PropertyKeyID, ValueID receiverID = { });
+    Boxed getByIdThroughStub(const OperationContext&, Boxed receiver, PropertyKeyID, ValueID receiverID);
+    bool verifiesFastPathAnswers(PropertyKeyID);
+    Word32 slowPathReadCount() { return loadMutable32(AOT_INSTANCE_OFFSET(propertyCaches.slowPathReadCount)); }
+    Word32 recordPendingRead(Boxed receiver, PropertyKeyID);
+    void verifyFastPathAnswer(const OperationContext&, Boxed receiver, PropertyKeyID, Boxed answer, StubThatAnswers, Word32 countBeforeRead);
+    void putById(const OperationContext&, Boxed receiver, PropertyKeyID, Boxed value, PutMode, std::optional<Pointer> site = std::nullopt);
+    std::optional<Pointer> siteOf(const OperationContext&, PropertyKeyID, SlotAccess);
+    std::optional<Pointer> siteOfStore(const OperationContext&, PropertyKeyID, SlotAccess);
+    std::optional<NumberedImmediate> answersOf(const OperationContext&, PropertyKeyID, SiteUse);
+    struct ReadOfGroup {
+        ValueID id;
+        PropertyKeyID key;
+        NumberedImmediate answers;
+    };
+    std::optional<NumberedImmediate> answersOfReadOutOfRow(BlockID, const Operation&);
+    void readGroupOffOneValue(const ValueContext&, Boxed receiver, bool mayBeNoCell, NumberedImmediate answersOfFirst);
+    StubKey stubThatReadsAtSite(PropertyKeyID, ValueID receiver);
     Condition hasById(const OperationContext&, Boxed receiver, PropertyKeyID);
+    Condition findsName(const OperationContext&, Boxed receiver, PropertyKeyID, PresenceQuestion);
     Boxed getByVal(const OperationContext&, Boxed receiver, Boxed key);
+    LValue tryUnboxConstantIndex(Boxed key);
+    bool isSymbolOfRealm(PropertyKeyID key) const { return !m_plan.hasOneInstance() && !liesInThread(key) && m_program.at(key).kind == PropertyKeyKind::CreatedSymbol; }
+    Boxed cellOfKey(const OperationContext&, PropertyKeyID);
     void putByVal(const OperationContext&, Boxed receiver, Boxed key, Boxed value, PutMode);
     Condition hasByVal(const OperationContext&, Boxed receiver, Boxed key);
-    void recordArrival(const OperationContext&, Boxed receiver, uint32_t part = 0);
-    // What countSiteCacheMiss() does in a stub: whether the site has missed often enough to be filled again.
-    Condition countMissAtSite(Pointer site);
-    // The Structure that the same change of prototype led to before. Storing it is the whole change only for an object that is extensible and is no prototype itself.
     Word32 findPrototypeTransition(CellPointer object, Boxed prototype, LBasicBlock isUnknown);
     void storeStructureAfterPrototypeTransition(CellPointer object, Word32 structureID);
+    std::optional<CellPointer> tryAllocateCopyOfFields(const ValueContext& allocation, const MentionedAllocation&, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty);
+    bool tryCallMethodByName(const ValueContext& call);
+    bool readsTruthAtSite(BlockID, ValueID read) const;
+    std::optional<unsigned> integerThatLengthIsAskedFor(BlockID, ValueID read, ValueID test);
+    bool isPatternLeftToCall(ValueID pattern) const { return m_readLeftToCall && m_readLeftToCall->pattern == pattern; }
+    bool methodMayBeUnread(ValueID read) const { return m_methodsThatMayBeUnread.get(read.index()); }
     static PutMode putModeOf(ECMAMode mode) { return forMode(mode, PutMode::Strict, PutMode::Sloppy); }
-    std::optional<CellPointer> tryAllocateCopyOfFields(const ValueContext& allocation, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty);
 
 private:
+    HashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesReadInFront;
     template<typename T> static T forMode(ECMAMode mode, T whenStrict, T whenSloppy)
     {
         switch (mode) {
@@ -75,22 +117,41 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    std::optional<uint32_t> findIdentifierNumber(const OperationContext&, PropertyKeyID);
-    bool comesAgain(const OperationContext&);
+    bool comesAgain(const OperationContext&) const;
+    std::optional<NumberedImmediate> answersOfKeyThatIsNoSymbolOfRealm(const OperationContext&, PropertyKeyID, SiteUse);
+    struct StoreOfKnownField {
+        StubKey stub;
+        uint32_t offsetOfRecord;
+    };
+    std::optional<StoreOfKnownField> findStoreOfKnownField(const Type& receiver, PropertyKeyID, PutMode);
     void putNamedProperty(const ValueContext&, Boxed object, PutMode);
+    Boxed getNamedProperty(const ValueContext&);
+    void branchOnTruthAtSite(const ValueContext& read);
+    void branchOnWhetherLengthIs(const ValueContext& read, unsigned integer);
+    std::optional<Boxed> lookWhetherReceiverIsAsMadeInPlaceOfRead(const ValueContext&);
+    bool isReadOfMethodCalledNext(const ValueContext& read);
+    ValueID findPatternLeftToCall(const ValueContext& read);
+    void returnWhatMethodOfBuiltinClassGives(const ValueContext& read);
+    Boxed loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure);
+    Boxed getMemberAboveLayouts(const ValueContext&, Boxed receiver, Pointer site);
+    Boxed getMemberInSlotOrByName(const ValueContext&, Boxed receiver, const PlacedSlot&);
+    bool storeAskingSiteInLine(const ValueContext&, Boxed receiver, Boxed stored, PutMode, Pointer site);
+    std::optional<PlacedSlot> findSlotInCellOfEveryReceiver(const Type& receiver, PropertyKeyID);
     Boxed getFreeName(const ValueContext&);
     void putFreeName(const ValueContext&);
     CellPointer globalObject();
-    Pointer globalBindingAddress(GlobalBindingID);
+    Pointer globalBindingAddress(PropertyKeyID, OptionSet<GlobalBindingFlags>);
     TypedPointer globalBindingLocationOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss);
-    void validateGlobalBinding(const ValueContext&, Boxed read);
+    bool lookVouchesForPropertyOfHeir(const ValueContext&) const;
+    TypedPointer locationOfPropertyOfHeir(const ValueContext&, CellPointer object);
     void defineAccessor(const ValueContext&, uint32_t accessorFlags);
-    // An index in a register, or any value.
     struct ElementKey {
         LValue value;
         bool isInteger;
     };
     std::optional<ElementKey> elementKeyOf(const ValueContext&);
+    bool readsElementsInLoop(const ValueContext&, ValueID object);
+    Boxed presentElementOrElse(ValueID objectOperand, const ElementKey&, LBasicBlock outOfLine);
     Boxed keyOperand(const OperationContext&, PropertyKeyID key, ValueID computedKey);
     struct ExcludedKeys {
         Word32 run;
@@ -98,20 +159,26 @@ private:
         Pointer keys;
     };
     ExcludedKeys excludedKeysOf(const ValueContext&);
-    void copyDataProperties(const ValueContext&);
-
-    // Between a CopyObject and the CopyDataProperties right behind it: the object that holds what both copy, or null where each has to do its own.
-    struct CopyOfTwo {
-        ValueID second;
-        CellPointer copy;
-    };
-    std::optional<CopyOfTwo> m_copyOfTwo;
+    ExcludedKeys noExcludedKeys();
+    CellPointer copyObject(const ValueContext&, Boxed source, ExcludedKeys);
+    void copyDataProperties(const ValueContext&, CellPointer target, ValueID source, Origin, NOESCAPE const Invocable<ExcludedKeys()> auto& excludedKeys);
 
     struct CopyAtAllocation {
         ValueID copy;
         Condition didCopy;
     };
     std::optional<CopyAtAllocation> m_copyAtAllocation;
+
+    struct ReadLeftToCall {
+        ValueID read;
+        PropertyKeyID key;
+        Origin origin;
+        ValueID pattern;
+    };
+    std::optional<ReadLeftToCall> m_readLeftToCall;
+    ValueID m_baseOfSuperLeftToRead;
+    BitVector m_methodsThatMayBeUnread;
+    const bool m_functionComesAgain;
 };
 
 } } } // namespace JSC::AOT::Typed

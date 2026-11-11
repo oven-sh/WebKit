@@ -1,5 +1,5 @@
 # Listed functions and built-ins are compared by list, a function of the application overlaps no built-in, and function holds every callable one
-# RUN: subset
+# RUN: subset f1 f1|f2 function object f3 builtin(ArrayPrototypePush) builtin(ArrayPrototypePush)|builtin(ObjectFreeze) builtin(GlobalThis)
 # CHECK: t0 <= t1: yes overlaps: yes
 # CHECK: t0 <= t2: yes overlaps: yes
 # CHECK: t0 <= t3: yes overlaps: yes
@@ -20,7 +20,8 @@
 # CHECK: laws hold
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="types" parameters=[{type=f1}, {type=f1|f2}, {type=function}, {type=object}, {type=f3}, {type=builtin(ArrayPrototypePush)}, {type=builtin(ArrayPrototypePush)|builtin(ObjectFreeze)}, {type=builtin(GlobalThis)}] results=[{type=undefined}]
-function f1 name="first" results=[{type=anything}]
-function f2 name="second" results=[{type=anything}]
-function f3 name="third" results=[{type=anything}]
+function f0 name="types" role=Signature results=[{type=undefined}]
+function f1 name="first" role=Signature results=[{type=anything}]
+function f2 name="second" role=Signature results=[{type=anything}]
+function f3 name="third" role=Signature results=[{type=anything}]
+entry module=m0

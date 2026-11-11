@@ -13,11 +13,19 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ResolvedCallEmitter final : public OperationEmitter {
 public:
-    explicit ResolvedCallEmitter(CodeGenerator&);
+    explicit ResolvedCallEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
 
     void generateResolveCallTarget(const ValueContext&);
     void generateCallResolved(const ValueContext&);
     void generateRegExpMatchLiteral(const ValueContext&);
+    void generateRegExpMatchLiteralInParts(const ValueContext&);
+    void generateBoundsOfRegExpMatch(const ValueContext&);
+    void generateNewRegExpMatchArray(const ValueContext&);
+
+private:
 };
 
 } } } // namespace JSC::AOT::Typed

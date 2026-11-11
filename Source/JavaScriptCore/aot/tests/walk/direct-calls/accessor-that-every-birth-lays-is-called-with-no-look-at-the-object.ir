@@ -1,0 +1,97 @@
+# const meter = { raw: 0, get value() { return this.raw; }, set value(next) { this.raw = next; } };   meter.value = 6;   return meter.value;
+# Link has proven both halves, and neither function needs its closure: the store is the body of the setter and the read the body of the getter. No look at the slot, no load of a half, no test, no access as written
+# use(o) { return o.value }   the receiver arrives as a parameter, proven by Link
+# make(x) { return { get held() { return x } } }   the getter needs its closure: outside of a loop the read stays a read, typed by what the getter returns; no test of the function is ever built
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: IsSlotFilled
+# CHECK-NOT: GetSlotSetter
+# CHECK-NOT: GetSlotGetter
+# CHECK-NOT: = PropSet
+# CHECK-NOT: = PropGet
+# CHECK: = PutSlot {{*}}key="raw"
+# RUN(CALLS): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots+DirectCalls
+# CALLS-LABEL: code f1:Body
+# CALLS-NOT: = PropSet
+# CALLS-NOT: = PropGet
+# CALLS: = CallDirect {{*}}function=f3
+# CALLS: = CallDirect {{*}}function=f2
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# WITHHELD: = PropSet {{*}}key="value"
+# WITHHELD: = PropGet {{*}}key="value"
+# RUN(PARAMETER): walk f4 mechanisms=all
+# PARAMETER-LABEL: code f4:Body
+# PARAMETER-NOT: = PropGet
+# PARAMETER-NOT: GetSlotGetter
+# PARAMETER: = GetSlot {{*}}key="raw"
+# RUN(CLOSURE): walk f7 mechanisms=all-PromotedEnvironments
+# CLOSURE-LABEL: code f7:Body
+# CLOSURE-NOT: TypeTest
+# CLOSURE: : int[0, 2147483647] {{*}} = PropGet {{*}}key="held"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="raw" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 fields=[{key="held" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    v2 = NewClosure function=f5
+    v3 = Integer integer=7
+    v4 = Call v2, -, v3
+    v5 = NewClosure function=f7
+    v6 = Call v5, -, v4
+    v7 = Add v1, v6
+    Return v7
+}
+function f1 name="main" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    DefineGetter v1, v2 key="value"
+    v4 = NewClosure function=f3
+    DefineSetter v1, v4 key="value"
+    v6 = FinishObject v1
+    v7 = Integer integer=6
+    PropSet v6, v7 key="value"
+    v9 = PropGet v6 key="value"
+    v10 = NewClosure function=f4
+    v11 = Call v10, -, v6
+    v12 = Add v9, v11
+    Return v12
+}
+function f2 name="value" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="raw"
+    Return v1
+}
+function f3 name="value" module=m0 kind=Setter flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="raw"
+    v3 = Undefined
+    Return v3
+}
+function f4 name="use" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="value"
+    Return v1
+}
+function f5 name="make" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L1
+    v2 = NewClosure v0 function=f6
+    DefineGetter v1, v2 key="held"
+    v4 = FinishObject v1
+    Return v4
+}
+function f6 name="held" module=m0 kind=Getter captures=[{type=anything variableName="x"}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="held"
+    Return v1
+}

@@ -1,0 +1,34 @@
+# function make() { return { n: 1 }; }
+# function read() { return make().n; }
+# A typed read by name loads a slot. Under the word that checks the walk the receiver, the name and what was loaded go to the leaf that asks the object again by an inquiry: 2560 says "a value, answered by a typed read by name".
+# RUN: walk f1:Body mechanisms=none+TypedOperations+DirectCalls testing=CheckWalkAtRunTime
+# CHECK: = GetSlot {{*}} key="n" receivers=[L0] level=Proven
+# RUN(EMIT): emit f1:Body mechanisms=none+TypedOperations+DirectCalls testing=CheckWalkAtRunTime
+# EMIT: = Const32(2560)
+# without the word nothing is asked
+# RUN(PLAIN): emit f1:Body mechanisms=none+TypedOperations+DirectCalls
+# PLAIN-NOT: = Const32(2560)
+
+layout L0 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    Return v1
+}
+function f1 name="read" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0, -
+    v2 = PropGet v1 key="n"
+    Return v2
+}
+function f2 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}

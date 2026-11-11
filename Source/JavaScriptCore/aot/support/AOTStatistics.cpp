@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTVector.h"
-#include <wtf/PrintStream.h>
 #include <wtf/Threading.h>
 
 namespace JSC { namespace AOT {
@@ -21,7 +20,7 @@ Statistics::Statistics()
 {
 }
 
-void Statistics::count(StatisticID id, uint64_t amount)
+NEVER_INLINE void Statistics::count(StatisticID id, uint64_t amount)
 {
     if (!amount)
         return;
@@ -43,29 +42,6 @@ Vector<uint64_t> Statistics::values() const
             sums[index] += m_counters[stripe * countersPerStripe + index].load(std::memory_order_relaxed);
     }
     return sums;
-}
-
-void Statistics::addPassTime(PassID pass, const PassTime& time)
-{
-    unsigned index = static_cast<unsigned>(pass);
-    RELEASE_ASSERT(index < numberOfPasses);
-    if (m_passTimes.isEmpty())
-        m_passTimes.grow(numberOfPasses);
-    PassTime& passTime = m_passTimes[index];
-    passTime.wall += time.wall;
-    passTime.cpu += time.cpu;
-    passTime.runs += time.runs;
-}
-
-void Statistics::dumpPassTimes(PrintStream& out) const
-{
-    if (m_passTimes.isEmpty())
-        return;
-    for (PassID pass : allMembersOf<PassID>) {
-        const PassTime& passTime = m_passTimes[static_cast<unsigned>(pass)];
-        if (passTime.runs)
-            out.println("  ", nameOf(pass), ": wall ", passTime.wall.milliseconds(), " ms, cpu ", passTime.cpu.milliseconds(), " ms, ", passTime.runs, " runs");
-    }
 }
 
 } } // namespace JSC::AOT

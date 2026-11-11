@@ -1,0 +1,47 @@
+# If the list that a `for of` goes over flowed into unseen code, as in the first version, the first such loop of a program would let go of all that any list holds
+# function last(list) { let t;  for (const e of list) t = e;  return t; }  function get(o) { return o.x; }  const a = { x: "a", only: 0 };  get(last([a]));
+# The loop is a call by name for each key of the protocol. On a list the table of built-ins finds the iterator of lists, whose steps hand out what lists hold.
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f1 callers-known one-callee {{*}}result=undefined|L0
+# LINK: function f2 callers-known one-callee {{*}}result=string
+# LINK: field L0.0 "x" proven=string writers-known written-at-construction-alone
+# LINK: layout L0 changes=[]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="only" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Integer integer=0
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewArray v3 contents=anything
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v4 calleeName="last"
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v6 calleeName="get"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="last" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = IteratorResume v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v3
+  b3():
+    Jump -> next b1(v7)
+}
+function f2 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

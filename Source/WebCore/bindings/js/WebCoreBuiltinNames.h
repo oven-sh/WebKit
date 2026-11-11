@@ -69,6 +69,7 @@ namespace WebCore {
     macro(AudioProcessingEvent) \
     macro(AudioScheduledSourceNode) \
     macro(AudioSession) \
+    macro(AudioSinkInfo) \
     macro(AudioWorklet) \
     macro(AudioWorkletGlobalScope) \
     macro(AudioWorkletNode) \
@@ -110,7 +111,6 @@ namespace WebCore {
     macro(Credential) \
     macro(CredentialsContainer) \
     macro(CryptoKey) \
-    macro(CSPViolationReportBody) \
     macro(CSSAnimation) \
     macro(CSSCounterStyleRule) \
     macro(CSSColor) \
@@ -173,7 +173,6 @@ namespace WebCore {
     macro(DecompressionStreamDecoder) \
     macro(DecompressionStreamTransform) \
     macro(DelayNode) \
-    macro(DeprecationReportBody) \
     macro(DeviceMotionEvent) \
     macro(DeviceOrientationEvent) \
     macro(DevicePosture) \
@@ -380,8 +379,6 @@ namespace WebCore {
     macro(PushSubscription) \
     macro(PushSubscriptionChangeEvent) \
     macro(PushSubscriptionOptions) \
-    macro(Report) \
-    macro(ReportBody) \
     macro(ReportingObserver) \
     macro(ResizeObserver) \
     macro(ResizeObserverEntry) \
@@ -452,7 +449,6 @@ namespace WebCore {
     macro(StorageManagerFileSystem) \
     macro(Subscriber) \
     macro(SubtleCrypto) \
-    macro(TestReportBody) \
     macro(TextDecoderStream) \
     macro(TextDecoderStreamDecoder) \
     macro(TextDetector) \
@@ -484,6 +480,7 @@ namespace WebCore {
     macro(WakeLock) \
     macro(WakeLockSentinel) \
     macro(WaveShaperNode) \
+    macro(WebAuthnOperationException) \
     macro(WebGL2RenderingContext) \
     macro(WebGLActiveInfo) \
     macro(WebGLBuffer) \
@@ -547,6 +544,8 @@ namespace WebCore {
     macro(XRJointSpace) \
     macro(XRLayer) \
     macro(XRLayerEvent) \
+    macro(XRPlane) \
+    macro(XRPlaneSet) \
     macro(XRPose) \
     macro(XRProjectionLayer) \
     macro(XRQuadLayer) \

@@ -1,0 +1,70 @@
+# The list follows from the program alone. To make a pattern out of a text the engine goes through every character, at some 330 instructions: two operations: a new text takes them out of the pot of its file, which says what one file may cost the build.
+# Seven texts of 524,289 characters fit the pot of a small file; of the eighth no pattern is made and it is left to the run; a short one behind them is still found.
+# const long = doubled("a", 19); new RegExp(long + "1"); .. new RegExp(long + "9"); new RegExp("z".toUpperCase());   (doubled(text, k): text = text + text, k times)
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /Z/
+# CHECK: aaaa1/
+# CHECK: aaaa7/
+# CHECK-NOT: aaaa8/
+# CHECK-NOT: aaaa9/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Add v0, v0
+    v2 = Add v1, v1
+    v3 = Add v2, v2
+    v4 = Add v3, v3
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Add v6, v6
+    v8 = Add v7, v7
+    v9 = Add v8, v8
+    v10 = Add v9, v9
+    v11 = Add v10, v10
+    v12 = Add v11, v11
+    v13 = Add v12, v12
+    v14 = Add v13, v13
+    v15 = Add v14, v14
+    v16 = Add v15, v15
+    v17 = Add v16, v16
+    v18 = Add v17, v17
+    v19 = Add v18, v18
+    v20 = Builtin builtin=RegExp
+    v21 = String string="1"
+    v22 = Add v19, v21
+    v23 = Construct v20, -, v22
+    v24 = String string="2"
+    v25 = Add v19, v24
+    v26 = Construct v20, -, v25
+    v27 = String string="3"
+    v28 = Add v19, v27
+    v29 = Construct v20, -, v28
+    v30 = String string="4"
+    v31 = Add v19, v30
+    v32 = Construct v20, -, v31
+    v33 = String string="5"
+    v34 = Add v19, v33
+    v35 = Construct v20, -, v34
+    v36 = String string="6"
+    v37 = Add v19, v36
+    v38 = Construct v20, -, v37
+    v39 = String string="7"
+    v40 = Add v19, v39
+    v41 = Construct v20, -, v40
+    v42 = String string="8"
+    v43 = Add v19, v42
+    v44 = Construct v20, -, v43
+    v45 = String string="9"
+    v46 = Add v19, v45
+    v47 = Construct v20, -, v46
+    v48 = String string="z"
+    v49 = PropGet v48 key="toUpperCase"
+    v50 = Call v49, v48 calleeKey="toUpperCase"
+    v51 = Construct v20, -, v50
+    v52 = NewArray v23, v26, v29, v32, v35, v38, v41, v44, v47, v51 contents=anything
+    Return v52
+}

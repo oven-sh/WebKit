@@ -53,6 +53,8 @@ public:
             if (copy.testedValue)
                 setTestedVariable(copy.testedValue);
         }
+        for (Value* value : targets.otherTestedValues)
+            setTestedVariable(value);
     }
 
     Value* appendTested(BasicBlock* block)

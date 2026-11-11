@@ -40,14 +40,11 @@ typedef struct CF_BRIDGED_TYPE(id) __CVBuffer* CVPixelBufferRef;
 
 WTF_DECLARE_CF_TYPE_TRAIT(CVPixelBuffer);
 
-struct WGPUExternalTextureImpl {
-};
-
 namespace WebGPU::Metal {
 
 class CommandEncoder;
 
-class ExternalTexture final : public WebGPU::ExternalTexture, public WGPUExternalTextureImpl, public TrackedResource {
+class ExternalTexture final : public WebGPU::ExternalTexture, public TrackedResource {
     WTF_MAKE_TZONE_ALLOCATED(ExternalTexture);
 public:
     static Ref<ExternalTexture> create(CVPixelBufferRef pixelBuffer, WebGPU::PredefinedColorSpace colorSpace, simd::uint2 visibleSize, Device& device)
@@ -70,14 +67,15 @@ public:
     void destroy() final;
     void undestroy() final;
     void setCommandEncoder(CommandEncoder&) const;
-    bool LEGACY_NODELETE isDestroyed() const;
+    NODELETE bool isDestroyed() const;
 
     void setLabel(String&&) final { }
-    bool LEGACY_NODELETE isValid() const final;
+    NODELETE bool isValid() const final;
     void update(CVPixelBufferRef);
     void updateExternalTexture(CVPixelBufferRef pixelBuffer) final { update(pixelBuffer); }
     size_t openCommandEncoderCount() const;
     void updateExternalTextures(id<MTLTexture>, id<MTLTexture>);
+    Device& device() const { return m_device; }
 
 private:
     ExternalTexture(CVPixelBufferRef, WebGPU::PredefinedColorSpace, simd::uint2 visibleSize, Device&);

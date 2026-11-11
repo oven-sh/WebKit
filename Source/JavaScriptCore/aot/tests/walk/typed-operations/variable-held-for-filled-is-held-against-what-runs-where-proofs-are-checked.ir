@@ -1,0 +1,34 @@
+# testing=CheckProofsAtRunTime: that a variable is filled where it is read is a proof like any other, whoever gives it.
+# Of a variable that the run time may fill Link says nothing, so the rule gives the type that is written on the variable whether Link is believed or not. Where that type has no `absent` nobody claimed more than it, and nothing was checked.
+# The empty word passes for a cell in every test of the tag bits: the stub that calls a value read a byte of it.
+# export function toShort(name) { return name; }      a test run may replace it, and another module calls it in front of its first store
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: [[read]]: {{*}} = GetModuleVariable variable=g0
+# CHECK: CheckProof [[read]] checkedType={{*}} typeWithoutProof={{*}}absent{{*}} source=Variable
+
+variable g0 name="toShort" module=m0 declared={type=anything} flags=[IsReplaceable]
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="toShort" variable=g0}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = PropGet v0 key="sink" [isFreeName]
+    v3 = Call v2, -, v1 calleeName="sink"
+    v4 = NewClosure function=f2
+    PutModuleVariable v4 variable=g0
+    Return v3
+}
+function f1 name="calls" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0 calleeName="toShort"
+    Return v1
+}
+function f2 name="toShort" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

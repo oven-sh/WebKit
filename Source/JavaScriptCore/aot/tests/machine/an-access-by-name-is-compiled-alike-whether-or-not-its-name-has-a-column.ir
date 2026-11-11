@@ -1,0 +1,24 @@
+# function readIt(object) { return object.m; }   publish(readIt);   globalThis.config
+# Whether a name has a column in the front tables hangs on how many names the whole program mentions, so no access by name is compiled by it: there is one stub for every name, and it asks the number of its name where it first needs it.
+# RUN: bytes f1:Body
+# CHECK-LABEL: unit f1:Body
+# CHECK: Call Stub ReadAtSiteAskingStructureFirst.OfAnyValue
+# CHECK-NOT: UnderNameWithColumn
+# The image, which gives the names their numbers, lays the call on the stub's sibling under a name with a column: `m` has one.
+# RUN(LAID): compile ColumnStubVariantsSelected NamesWithoutColumn
+# LAID: ColumnStubVariantsSelected 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="config"
+    Return v4
+}
+function f1 name="readIt" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m" @10
+    Return v1
+}

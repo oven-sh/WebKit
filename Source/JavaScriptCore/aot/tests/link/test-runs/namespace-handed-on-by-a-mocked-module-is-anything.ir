@@ -1,0 +1,59 @@
+# a mock that is laid over a module which hands a namespace object on gives what it likes in its place, so nothing is proven of what the name finds there
+# space.js: export const inner = "real inner"   lib.js, which a test mocks: export * as space from "./space.js"
+# main.test.js: mock.module("./lib.js", () => ({ space: { inner: 1 } })); import * as ns from "./lib.js"; out = ns.space.inner
+# the control stands beside it: other.js hands on space2.js, nobody mocks either, and the read is proven a text
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link variables mechanisms=all
+# CHECK-NOT: variable g1 proven=
+# CHECK: variable g3 proven={{*}}string
+# RUN(MOCKS): test-run
+# MOCKS: through-mock m1 "space"
+# MOCKS-NOT: through-mock
+
+module m0 path="/main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}, {target=m3 completes=true}]
+module m1 path="/lib.js" displayPath="lib.js" flags=[MayBeMocked] body=f1 requests=[{target=m2 completes=true}] exports=[{name="space" kind=Namespace module=m2}]
+module m2 path="/space.js" displayPath="space.js" body=f2 exports=[{name="inner" variable=g0}]
+module m3 path="/other.js" displayPath="other.js" body=f3 requests=[{target=m4 completes=true}] exports=[{name="space" kind=Namespace module=m4}]
+module m4 path="/space2.js" displayPath="space2.js" body=f4 exports=[{name="inner" variable=g2}]
+entry module=m0
+variable g0 name="inner" module=m2 declared={type=anything}
+variable g1 name="out" module=m0 declared={type=anything}
+variable g2 name="inner" module=m4 declared={type=anything}
+variable g3 name="out2" module=m0 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="space"
+    v2 = PropGet v1 key="inner"
+    PutModuleVariable v2 variable=g1
+    v4 = ModuleNamespace module=m3
+    v5 = PropGet v4 key="space"
+    v6 = PropGet v5 key="inner"
+    PutModuleVariable v6 variable=g3
+    v8 = Undefined
+    Return v8
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="real inner"
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f3 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 module=m4 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="real inner"
+    PutModuleVariable v0 variable=g2
+    v2 = Undefined
+    Return v2
+}

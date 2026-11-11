@@ -41,7 +41,7 @@ public:
 
     PasteboardCustomData takeCustomData();
 
-    bool LEGACY_NODELETE hasNonDefaultData() const;
+    NODELETE bool hasNonDefaultData() const;
     bool isStatic() const final { return true; }
 
     bool hasData() final;
@@ -72,7 +72,7 @@ public:
     bool canSmartReplace() final { return false; }
 
 #if ENABLE(DRAG_SUPPORT)
-    void setDragImage(DragImage, const IntPoint&) final { }
+    void setDragImage(DragImage&&, const IntPoint&) final { }
 #endif
 
 private:

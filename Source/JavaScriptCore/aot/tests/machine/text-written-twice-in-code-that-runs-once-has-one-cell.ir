@@ -1,0 +1,19 @@
+# const first = print("the same text"); print("the same text", "another text");   in the body of a module, which runs once
+# A text has one cell, whoever asks for it: the stub reads the word of the text and fills it where it is empty, and what it answered is found again where the text is written a second time. A cell of its own at each place where a text is written kept 13,802 cells alive beside the first of their text in one application.
+# RUN: bytes f0:Body
+# CHECK-LABEL: unit f0:Body
+# CHECK-COUNT-2: Call Stub CreateConstant.String
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="the same text"
+    v3 = Call v1, -, v2
+    v4 = String string="the same text"
+    v5 = String string="another text"
+    v6 = Call v1, -, v4, v5
+    Return v6
+}

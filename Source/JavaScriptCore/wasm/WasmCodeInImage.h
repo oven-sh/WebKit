@@ -11,9 +11,10 @@
 #include "WasmCallee.h"
 #include <array>
 #include <atomic>
-#include <optional>
 #include <span>
 #include <wtf/FixedVector.h>
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
@@ -30,42 +31,54 @@ public:
     JS_EXPORT_PRIVATE static void addImage(std::span<const uint8_t> directory, std::span<const uint8_t> code);
     JS_EXPORT_PRIVATE static bool isInProcess();
     static bool needsSourceDigests();
-    // Safe to call from a signal handler.
+    // These are safe to call from a signal handler.
     static bool contains(const void* pc);
+    static bool isInFunction(const void* pc);
+    // The stub that sets up a frame for a fault at pc. Null if the frame of the function is already set up.
+    static const void* framelessFaultStub(const void* pc);
 
+    // Where the unwinder sends a frame whose handler lies at this place in an image. Nothing for a place outside every image.
+    static CodePtr<ExceptionHandlerPtrTag> catchRunwayFor(const void* pc);
+
+    // Stores the digest of the bytes, so that the parser does not hash them again.
+    static const ModuleInImage* findBeforeParsing(std::span<const uint8_t> source, ModuleInformation&);
     static const ModuleInImage* find(const ModuleInformation&);
     static bool isModuleOfProgram(const ModuleInformation&);
-    static std::span<const FunctionInImage> functionsOf(const ModuleInImage&);
-    static std::optional<InterpreterFallbackReason> fallbackReason(const ModuleInformation&, MemoryMode);
-    static RefPtr<CodeInImage> tryCreate(const ModuleInformation&, const IPIntCallees&, MemoryMode, CodePtr<WasmEntryPtrTag> interpreterEntrypoint);
+    static std::span<const FunctionInImage> functionsOf(const ModuleInImage&, ImageCodeFlavor);
+    JS_EXPORT_PRIVATE static ImageCodeFlavor flavorFor(const ModuleInformation&, MemoryMode);
+    static RefPtr<CodeInImage> tryCreate(const ModuleInformation&, const IPIntCallees&, MemoryMode);
 
-    static void didFallBackToInterpreter(InterpreterFallbackReason);
-    JS_EXPORT_PRIVATE static unsigned interpreterFallbackCount(InterpreterFallbackReason);
-
-    bool isSafeToRun(MemoryMode mode) const { return !m_isForSignalingMemory || mode == MemoryMode::Signaling; }
+    bool serves(const ModuleInformation& info, MemoryMode mode) const { return m_servesEveryFlavor || m_flavor == flavorFor(info, mode); }
     ~CodeInImage();
 
     void* const* pointers() const { return m_pointers.span().data(); }
-    CodePtr<WasmEntryPtrTag> entrypoint(size_t functionCodeIndex) const { return m_callees[functionCodeIndex] ? m_callees[functionCodeIndex]->entrypoint() : nullptr; }
-    bool holds(const Callee* callee, size_t functionCodeIndex) const { return m_callees[functionCodeIndex].get() == callee; }
+    CodePtr<WasmEntryPtrTag> entrypoint(size_t functionCodeIndex) const { return m_callees[functionCodeIndex]->entrypoint(); }
+    bool holds(const Callee*, size_t functionCodeIndex) const;
+    // A callee for frames set up by framelessFaultStub(), which hold no saved registers.
+    Ref<OMGCallee> calleeWithoutSavedRegisters(const void* pc);
     CodePtr<WasmEntryPtrTag> importStub(size_t index) const { return m_importStubs[index]; }
+    CodePtr<WasmEntryPtrTag> javaScriptImportStub(size_t index) const { return m_javaScriptImportStubs[index]; }
     CodePtr<JSEntryPtrTag> jsEntrypoint(const RTT&) const;
 
 private:
-    CodeInImage(const ModuleInformation&, const IPIntCallees&, const ModuleInImage&, CodePtr<WasmEntryPtrTag> interpreterEntrypoint);
+    CodeInImage(const ModuleInformation&, const IPIntCallees&, const ModuleInImage&, ImageCodeFlavor);
 
     FixedVector<void*> m_pointers;
-    FixedVector<RefPtr<OMGCallee>> m_callees;
+    // The code never leaves for another tier, which is all that the class of the callees says.
+    Vector<Ref<OMGCallee>> m_callees;
     FixedVector<CodePtr<WasmEntryPtrTag>> m_importStubs;
+    FixedVector<CodePtr<WasmEntryPtrTag>> m_javaScriptImportStubs;
     Vector<std::pair<const RTT*, Ref<JSToWasmICCallee>>> m_jsEntrypoints;
-    bool m_isForSignalingMemory { false };
+    mutable Lock m_faultCalleesLock;
+    UncheckedKeyHashMap<size_t, Ref<OMGCallee>, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>> m_faultCallees WTF_GUARDED_BY_LOCK(m_faultCalleesLock);
+    ImageCodeFlavor m_flavor;
+    bool m_servesEveryFlavor;
 
     struct PublishedImage;
     static const PublishedImage& imageHolding(const ModuleInImage&);
     static const ModuleInImage* findRecord(const ModuleInformation&);
 
     static std::atomic<const PublishedImage*> s_lastPublished;
-    static std::array<std::atomic<unsigned>, numberOfInterpreterFallbackReasons> s_interpreterFallbackCounts;
 };
 
 } } // namespace JSC::Wasm

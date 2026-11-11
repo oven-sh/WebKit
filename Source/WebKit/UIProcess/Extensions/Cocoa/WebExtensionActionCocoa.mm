@@ -121,7 +121,7 @@ using namespace WebKit;
 
     // New window or main frame navigation to an external URL opens in a new tab.
     if (!navigationAction.targetFrame || (navigationAction.targetFrame.isMainFrame && !isURLForThisExtension)) {
-        if (!extensionContext->canOpenURLInNewTabOrWindow(targetURL)) {
+        if (!extensionContext->canNavigateToURL(targetURL)) {
             decisionHandler(WKNavigationActionPolicyCancel);
             return;
         }
@@ -173,7 +173,7 @@ using namespace WebKit;
     if (!extensionContext)
         return nil;
 
-    if (!extensionContext->canOpenURLInNewTabOrWindow(navigationAction.request.URL))
+    if (!extensionContext->canNavigateToURL(navigationAction.request.URL))
         return nil;
 
     WebExtensionTabParameters tabParameters;
@@ -706,6 +706,9 @@ void WebExtensionAction::propertiesDidChange()
         };
 
         if (isWindowAction()) {
+            // Call the delegate about the window action, since it is retrievable via the API.
+            [delegate webExtensionController:extensionController->wrapper() didUpdateAction:wrapper() forExtensionContext:extensionContext->wrapper()];
+
             // Call the delegate about tab-specific actions that inherit from the window.
             RefPtr window = protectedThis->window();
             callDelegateForTabs(window->tabs());

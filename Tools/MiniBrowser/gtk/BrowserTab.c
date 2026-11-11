@@ -355,6 +355,7 @@ static gchar *WebKitXRSessionFeaturesToString(WebKitXRSessionFeatures features)
     APPEND_FEATURE(WEBKIT_XR_SESSION_FEATURES_UNBOUNDED, "unbounded");
     APPEND_FEATURE(WEBKIT_XR_SESSION_FEATURES_HAND_TRACKING, "hand-tracking");
     APPEND_FEATURE(WEBKIT_XR_SESSION_FEATURES_HIT_TEST, "hit-test");
+    APPEND_FEATURE(WEBKIT_XR_SESSION_FEATURES_PLANE_DETECTION, "plane-detection");
 #undef APPEND_FEATURE
     gchar *result = str->str;
     g_string_free(str, FALSE);
@@ -537,8 +538,24 @@ static gboolean runColorChooserCallback(WebKitWebView *webView, WebKitColorChoos
 
 static void webProcessTerminatedCallback(WebKitWebView *webView, WebKitWebProcessTerminationReason reason)
 {
-    if (reason == WEBKIT_WEB_PROCESS_CRASHED)
+    const char *message;
+    switch (reason) {
+    case WEBKIT_WEB_PROCESS_CRASHED:
         g_warning("WebProcess CRASHED");
+        message = "The web process crashed";
+        break;
+    case WEBKIT_WEB_PROCESS_EXCEEDED_MEMORY_LIMIT:
+        g_warning("WebProcess exceeded memory limit");
+        message = "The web process exceeded the memory limit";
+        break;
+    default:
+        return;
+    }
+
+    const char *uri = webkit_web_view_get_uri(webView);
+    g_autofree char *escapedURI = g_markup_escape_text(uri ? uri : "", -1);
+    g_autofree char *html = g_strdup_printf("<html><head><title>%s</title></head><body><h1>%s</h1><p>%s</p></body></html>", message, message, escapedURI);
+    webkit_web_view_load_alternate_html(webView, html, uri, NULL);
 }
 
 static void certificateDialogResponse(GtkDialog *dialog, int response, WebKitAuthenticationRequest *request)

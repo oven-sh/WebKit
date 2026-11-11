@@ -55,6 +55,7 @@ set(angle_unittests_sources
     "src/gpu_info_util/SystemInfo_unittest.cpp"
     "src/image_util/AstcDecompressor_unittest.cpp"
     "src/image_util/LoadToNative_unittest.cpp"
+    "src/libANGLE/ResourceMap_unittest.cpp"
     "src/libANGLE/TransformFeedback_unittest.cpp"
     "src/tests/angle_unittest_main.cpp"
     "src/tests/compiler_tests/API_test.cpp"
@@ -68,6 +69,7 @@ set(angle_unittests_sources
     "src/tests/compiler_tests/VariablePacker_test.cpp"
     "src/tests/test_expectations/GPUTestConfig.cpp"
     "src/tests/test_expectations/GPUTestExpectationsParser.cpp"
+    "src/tests/test_utils/runner/PartitionAllocSupport.cpp"
     "src/tests/test_utils/runner/TestSuite.cpp"
 )
 
@@ -86,6 +88,7 @@ set(angle_end2end_tests_sources
     "src/tests/egl_tests/EGLContextSharingTest.cpp"
     "src/tests/egl_tests/EGLCreateContextAttribsTest.cpp"
     "src/tests/egl_tests/EGLDebugTest.cpp"
+    "src/tests/egl_tests/EGLDeviceWebGPUTest.cpp"
     "src/tests/egl_tests/EGLDisplaySelectionTest.cpp"
     "src/tests/egl_tests/EGLDisplayTest.cpp"
     "src/tests/egl_tests/EGLFeatureControlTest.cpp"
@@ -268,6 +271,7 @@ set(angle_end2end_tests_sources
     "src/tests/test_utils/angle_test_instantiate.cpp"
     "src/tests/test_utils/angle_test_instantiate_apple.mm"
     "src/tests/test_utils/angle_test_platform.cpp"
+    "src/tests/test_utils/runner/PartitionAllocSupport.cpp"
     "src/tests/test_utils/runner/TestSuite.cpp"
     "src/tests/test_utils/system_info_util.cpp"
 )
@@ -557,6 +561,7 @@ set(angle_deqp_gles2_tests_sources
     "src/tests/test_expectations/GPUTestConfig.cpp"
     "src/tests/test_expectations/GPUTestExpectationsParser.cpp"
     "src/tests/test_utils/RenderDoc.cpp"
+    "src/tests/test_utils/runner/PartitionAllocSupport.cpp"
     "src/tests/test_utils/runner/TestSuite.cpp"
     "third_party/VK-GL-CTS/src/modules/gles2/accuracy/es2aAccuracyTests.cpp"
     "third_party/VK-GL-CTS/src/modules/gles2/accuracy/es2aTextureFilteringTests.cpp"
@@ -677,6 +682,7 @@ set(angle_deqp_gles3_tests_sources
     "src/tests/test_expectations/GPUTestConfig.cpp"
     "src/tests/test_expectations/GPUTestExpectationsParser.cpp"
     "src/tests/test_utils/RenderDoc.cpp"
+    "src/tests/test_utils/runner/PartitionAllocSupport.cpp"
     "src/tests/test_utils/runner/TestSuite.cpp"
     "third_party/VK-GL-CTS/src/modules/gles3/accuracy/es3aAccuracyTests.cpp"
     "third_party/VK-GL-CTS/src/modules/gles3/accuracy/es3aTextureFilteringTests.cpp"

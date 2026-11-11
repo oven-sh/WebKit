@@ -42,6 +42,10 @@
 #include <wtf/glib/GRefPtr.h>
 typedef struct _SoupServer SoupServer;
 typedef struct _SoupWebsocketConnection SoupWebsocketConnection;
+#elif PLATFORM(COCOA)
+#include <Network/Network.h>
+#include <wtf/HashSet.h>
+#include <wtf/OSObjectPtr.h>
 #endif
 
 namespace WebDriver {
@@ -84,9 +88,12 @@ private:
 
 class WebSocketMessageHandler {
 public:
+    virtual ~WebSocketMessageHandler() = default;
 
 #if USE(SOUP)
     using Connection = GRefPtr<SoupWebsocketConnection>;
+#elif PLATFORM(COCOA)
+    using Connection = OSObjectPtr<nw_connection_t>;
 #endif
 
     struct Message {
@@ -100,6 +107,8 @@ public:
         static Message reply(const String& type, unsigned id, Ref<JSON::Value>&& result);
     };
 
+    // Same semantics as HTTPRequestHandler::validateRequestHeaders()
+    virtual std::expected<void, String> validateHandshakeHeaders(const String& hostHeader, const String& originHeader) const = 0;
     virtual bool acceptHandshake(HTTPRequestHandler::Request&&) = 0;
     virtual void handleMessage(Message&&, Function<void(Message&&)>&& replyHandler) = 0;
     virtual void clientDisconnected(const Connection&) = 0;
@@ -146,6 +155,15 @@ private:
 
     void sendMessage(WebSocketMessageHandler::Connection, const String& message);
     void sendErrorResponse(WebSocketMessageHandler::Connection, std::optional<unsigned> commandId, CommandResult::ErrorCode, const String& errorMessage, std::optional<String> stacktrace = std::nullopt);
+
+#if PLATFORM(COCOA)
+    void startConnection(WebSocketMessageHandler::Connection&&);
+    void didOpenConnection(const WebSocketMessageHandler::Connection&, const String& resourcePath);
+    void receiveMessage(const WebSocketMessageHandler::Connection&);
+    void didReceiveMessage(const WebSocketMessageHandler::Connection&, dispatch_data_t, nw_ws_opcode_t);
+    void didCloseConnection(const WebSocketMessageHandler::Connection&);
+#endif
+
     WebSocketMessageHandler& m_messageHandler;
     RefPtr<WebSocketListener> m_listener;
     HashMap<WebSocketMessageHandler::Connection, String> m_connectionToSession;
@@ -153,6 +171,10 @@ private:
 #if USE(SOUP)
     GRefPtr<SoupServer> m_soupServer;
     std::vector<GRefPtr<SoupWebsocketConnection>> m_staticConnections;
+#elif PLATFORM(COCOA)
+    OSObjectPtr<nw_listener_t> m_networkListener;
+    std::vector<WebSocketMessageHandler::Connection> m_staticConnections;
+    HashSet<WebSocketMessageHandler::Connection> m_openConnections;
 #endif
 };
 

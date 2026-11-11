@@ -1,0 +1,41 @@
+# export function one(v) { return v.x; }  one = function other(v) { return v.y; };  export function caller(v) { return one(v) + one(v); }   a spy may replace `one`
+# The program itself lays two functions, so neither is expected: a test for the first would fail from the second store on, and its bytes would buy nothing.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: TypeTest
+# CHECK: Call {{*}}calleeName="one"
+# CHECK-NOT: TypeTest
+
+variable g0 name="one" module=m0 declared={type=anything} initialization=Function function=f1 flags=[IsReplaceable]
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="one" variable=g0}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f3
+    PutModuleVariable v4 variable=g0
+    Return v3
+}
+function f1 name="one" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="caller" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="one"
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v0 calleeName="one"
+    v5 = Add v2, v4
+    Return v5
+}
+function f3 name="other" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="y"
+    Return v1
+}

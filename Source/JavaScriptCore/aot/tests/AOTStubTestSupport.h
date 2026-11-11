@@ -8,11 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTNativeTest.h"
+#include "AOTRuntimeTable.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubBlob.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
-#include "AOTStubFrontEnds.h"
 #include "AOTStubRegisters.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -70,12 +70,15 @@ inline Vector<StubKey> entriesOf(StubKey body)
 inline Vector<StubOptions> stubOptionVariants()
 {
     Vector<StubOptions> variants { StubOptions { } };
-    for (bool StubOptions::* member : { &StubOptions::useWideReferences, &StubOptions::forceGCSlowPaths, &StubOptions::imageHasWebAssembly, &StubOptions::hasOneInstance, &StubOptions::validates }) {
+    for (bool StubOptions::* member : { &StubOptions::useWideReferences, &StubOptions::imageHasWebAssembly, &StubOptions::hasOneInstance, &StubOptions::matchesRegExps, &StubOptions::recordsLastMatch, &StubOptions::checksProofs, &StubOptions::checksWalk, &StubOptions::methodsOfBuiltinsMayBeReplaced, &StubOptions::callsNumberOrStringByValue }) {
         StubOptions options;
         options.*member = !(options.*member);
         variants.append(options);
     }
     variants.append(StubOptions { .targetFeatures = CPUFeatureSet::buildTarget() });
+    StubOptions holdsNoBuiltin;
+    holdsNoBuiltin.boxedCallsOutOfReach.setAll();
+    variants.append(holdsNoBuiltin);
     return variants;
 }
 

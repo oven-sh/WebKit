@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,37 +26,26 @@
 #include "config.h"
 #include "LayoutIntegrationBoxTreeUpdater.h"
 
+#include "FontCascadeFonts.h"
+#include "FontCascadeInlines.h"
+#include "FontSelector.h"
 #include "FormattingContextBoxIterator.h"
-#include "InlineWalker.h"
-#include "LayoutDescendantIterator.h"
 #include "LayoutElementBox.h"
-#include "LayoutInlineTextBox.h"
 #include "RenderBlock.h"
 #include "RenderBlockFlow.h"
 #include "RenderBlockFlowInlines.h"
-#include "RenderButton.h"
-#include "RenderChildIterator.h"
-#include "RenderCombineText.h"
 #include "RenderCounter.h"
 #include "RenderElementInlines.h"
-#include "RenderFlexibleBox.h"
 #include "RenderGlyph.h"
-#include "RenderGrid.h"
-#include "RenderImage.h"
-#include "RenderLineBreak.h"
 #include "RenderListItem.h"
-#include "RenderListOutsideMarker.h"
-#include "RenderMenuList.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGInline.h"
-#include "RenderSlider.h"
-#include "RenderTable.h"
-#include "RenderTextControl.h"
-#include "RenderView.h"
+#include "RenderText.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 #include "StyleComputedStyle+SettersInlines.h"
 #include "TextUtil.h"
+#include <wtf/unicode/CharacterNames.h>
 
 #if ENABLE(TREE_DEBUGGING)
 #include "LayoutIntegrationLineLayout.h"
@@ -65,122 +54,41 @@
 namespace WebCore {
 namespace LayoutIntegration {
 
-static std::unique_ptr<Style::ComputedStyle> firstLineStyleFor(const RenderObject& renderer)
-{
-    CheckedRef firstLineStyle = renderer.firstLineStyle();
-    if (&renderer.style() == firstLineStyle.ptr())
-        return { };
-    return Style::ComputedStyle::clonePtr(firstLineStyle.get());
-}
-
-static Layout::Box::IsAnonymous LEGACY_NODELETE isAnonymous(const RenderObject& renderer)
-{
-    return renderer.isAnonymous() ? Layout::Box::IsAnonymous::Yes : Layout::Box::IsAnonymous::No;
-}
-
-static Layout::Box::ElementAttributes elementAttributes(const RenderElement& renderer)
-{
-    auto nodeType = [&] {
-        if (is<RenderListOutsideMarker>(renderer))
-            return Layout::Box::NodeType::ListMarker;
-        if (is<RenderReplaced>(renderer))
-            return is<RenderImage>(renderer) ? Layout::Box::NodeType::Image : Layout::Box::NodeType::ReplacedElement;
-        if (isAnyOf<RenderButton, RenderMenuList, RenderTextControlInnerContainer, RenderSlider>(renderer) || renderer.isRenderSliderContainer())
-            return Layout::Box::NodeType::ImplicitFlexBox;
-        if (auto* renderLineBreak = dynamicDowncast<RenderLineBreak>(renderer))
-            return renderLineBreak->isWBR() ? Layout::Box::NodeType::WordBreakOpportunity : Layout::Box::NodeType::LineBreak;
-        if (is<RenderTable>(renderer))
-            return Layout::Box::NodeType::TableBox;
-        if (renderer.isInlineBox())
-            return Layout::Box::NodeType::InlineBox;
-        return Layout::Box::NodeType::GenericElement;
-    }();
-
-    return { nodeType, isAnonymous(renderer) };
-}
-
 BoxTreeUpdater::BoxTreeUpdater(RenderBlock& rootRenderer)
     : m_rootRenderer(rootRenderer)
-    , m_document(rootRenderer.document())
-{
-}
-
-BoxTreeUpdater::BoxTreeUpdater(RenderBlock& rootRenderer, const Document& document)
-    : m_rootRenderer(rootRenderer)
-    , m_document(document)
 {
 }
 
 BoxTreeUpdater::~BoxTreeUpdater() = default;
 
-CheckedRef<Layout::ElementBox> BoxTreeUpdater::build()
+Layout::ElementBox& BoxTreeUpdater::rootLayoutBox()
 {
-    CheckedPtr rootBox = m_rootRenderer.layoutBox();
-    if (!rootBox) {
-        auto newRootBox = createLayoutBox(m_rootRenderer);
-        rootBox = downcast<Layout::ElementBox>(newRootBox.ptr());
-        m_rootRenderer.setLayoutBox(*rootBox);
-        initialContainingBlock().appendChild(WTF::move(newRootBox));
-    }
-
-    if (is<RenderBlockFlow>(m_rootRenderer))
-        rootBox->setIsInlineIntegrationRoot();
-
-    auto isAnonymousTextIndentCandidateForIntegration = [&] {
-        if (!m_rootRenderer.isAnonymousBlock())
-            return false;
-        if (m_rootRenderer.isBlockBox())
-            return !m_rootRenderer.parent() || m_rootRenderer.parent()->firstChild() == &m_rootRenderer;
-        // E.g. flex and grid items are not block boxes (they are block containers though).
-        return m_rootRenderer.isBlockContainer();
-    };
-    rootBox->setIsAnonymousTextIndentCandidateForIntegration(isAnonymousTextIndentCandidateForIntegration());
-
-    if (is<RenderBlockFlow>(m_rootRenderer))
-        buildTreeForInlineContent();
-    else if (is<RenderFlexibleBox>(m_rootRenderer))
-        buildTreeForFlexContent();
-    else if (is<RenderGrid>(m_rootRenderer))
-        buildTreeForGridContent();
-    else
-        ASSERT_NOT_IMPLEMENTED_YET();
-
-    return rootLayoutBox();
+    return m_rootRenderer.layoutBox();
 }
 
 void BoxTreeUpdater::tearDown()
 {
-    if (m_document->renderTreeState() == Document::RenderTreeState::BeingDestroyed)
-        return rootLayoutBox().destroyChildren();
+    if (m_rootRenderer.renderTreeBeingDestroyed())
+        return;
 
-    Vector<CheckedRef<Layout::Box>> boxesToDetach;
-    for (CheckedRef constLayoutBox : formattingContextBoxes(rootLayoutBox())) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST CheckedRef layoutBox = const_cast<Layout::Box&>(constLayoutBox.get());
-        CheckedPtr renderer = layoutBox->rendererForIntegration();
-        if (!renderer)
+    for (CheckedRef layoutBox : formattingContextBoxes(rootLayoutBox())) {
+        // Nested formatting context roots keep what their own live layout needs.
+        if (layoutBox->isIntegrationRoot())
             continue;
-
-        CheckedPtr renderBlockFlow = dynamicDowncast<RenderBlockFlow>(*renderer);
-        auto isLFCInlineBlock = renderBlockFlow && renderBlockFlow->inlineLayout();
-        if (isLFCInlineBlock)
-            boxesToDetach.append(layoutBox);
+        const_cast<Layout::Box&>(layoutBox.get()).clearFormattingContextData();
+        // The inline items are gone, so content changes that waited for them can go in.
+        if (CheckedPtr textRenderer = dynamicDowncast<RenderText>(layoutBox->rendererForIntegration()))
+            textRenderer->updateLayoutBoxContentIfNeeded();
     }
 
-    for (auto& toDetach : boxesToDetach) {
-        auto detachedBox = toDetach->removeFromParent();
-        initialContainingBlock().appendChild(WTF::move(detachedBox));
-    }
-
-    if (&rootLayoutBox().parent() == &initialContainingBlock())
-        rootLayoutBox().removeFromParent();
-    else
-        rootLayoutBox().destroyChildren();
+    if (!isInLiveFormattingContext(m_rootRenderer))
+        rootLayoutBox().clearFormattingContextData();
 }
 
-static Layout::ElementBox::IsListMarkerImage isListMarkerImage(const RenderListOutsideMarker& listMarkerRenderer)
+static bool canUseSimplifiedMeasuring(const RenderText& renderer, StringView content)
 {
-    return listMarkerRenderer.isImage() ? Layout::ElementBox::IsListMarkerImage::Yes : Layout::ElementBox::IsListMarkerImage::No;
+    CheckedRef style = renderer.style();
+    return Layout::TextUtil::canUseSimplifiedTextMeasuring(content, style->fontCascade(), style->collapseWhiteSpace(), &renderer.firstLineStyle());
 }
 
 static bool synthesizesGlyph(const RenderText& textRenderer)
@@ -198,247 +106,163 @@ static bool synthesizesGlyph(const RenderText& textRenderer)
     return false;
 }
 
-UniqueRef<Layout::Box> BoxTreeUpdater::createLayoutBox(RenderObject& renderer)
+static constexpr float textCombineMargin = 1.15f; // Allow em + 15% margin.
+
+static std::unique_ptr<Layout::InlineTextBox::CombinedText> computeCombinedText(const RenderText& textRenderer, StringView content)
 {
-    std::unique_ptr<Style::ComputedStyle> firstLineStyle = firstLineStyleFor(renderer);
+    CheckedRef style = textRenderer.style();
+    // text-combine-upright works only in vertical typographic mode.
+    if (style->textCombine() == TextCombine::None || !style->writingMode().isVerticalTypographic())
+        return nullptr;
 
-    if (auto* textRenderer = dynamicDowncast<RenderText>(renderer)) {
-        auto style = Style::ComputedStyle::createAnonymousStyleWithDisplay(textRenderer->style(), Style::DisplayType::InlineFlow);
-        auto isCombinedText = [&] {
-            auto* combineTextRenderer = dynamicDowncast<RenderCombineText>(*textRenderer);
-            return combineTextRenderer && combineTextRenderer->isCombined();
-        }();
-        auto text = style.textSecurity() == TextSecurity::None
-            ? (isCombinedText ? textRenderer->originalText() : textRenderer->text())
-            : RenderBlock::updateSecurityDiscCharacters(style, isCombinedText ? textRenderer->originalText() : String { textRenderer->text() });
+    RefPtr fontSelector = style->fontCascade().fontSelector();
+    auto fontFor = [&](const FontCascadeDescription& description) {
+        auto font = FontCascade { FontCascadeDescription { description }, style->fontCascade() };
+        font.update(fontSelector.copyRef());
+        font.setLetterSpacing(0);
+        return font;
+    };
 
-        auto canUseSimpleFontCodePath = textRenderer->canUseSimpleFontCodePath();
-        auto canUseSimplifiedTextMeasuring = textRenderer->canUseSimplifiedTextMeasuring();
-        if (!canUseSimplifiedTextMeasuring) {
-            canUseSimplifiedTextMeasuring = canUseSimpleFontCodePath && Layout::TextUtil::canUseSimplifiedTextMeasuring(text, style.fontCascade(), style.collapseWhiteSpace(), firstLineStyle.get());
-            textRenderer->setCanUseSimplifiedTextMeasuring(*canUseSimplifiedTextMeasuring);
+    GlyphOverflow glyphOverflow;
+    glyphOverflow.computeBounds = true;
+    auto measure = [&](const FontCascade& font) {
+        glyphOverflow.left = glyphOverflow.top = glyphOverflow.right = glyphOverflow.bottom = 0;
+        if (content.length() == 1 && content[0] == space)
+            return font.widthOfSpaceString();
+        auto run = RenderBlock::constructTextRun(content, style);
+        run.setCharacterScanForCodePath(!textRenderer.canUseSimpleFontCodePath());
+        run.setTabSize(!style->collapseWhiteSpace(), Style::toPlatform(style->tabSize(), style->usedZoomForLength()));
+        return font.width(run, nullptr, &glyphOverflow);
+    };
+    auto combinedText = [&](FontCascade&& font, float width) {
+        return makeUnique<Layout::InlineTextBox::CombinedText>(Layout::InlineTextBox::CombinedText { WTF::move(font), width, glyphOverflow.top, glyphOverflow.bottom });
+    };
+
+    auto description = style->fontCascade().fontDescription();
+    float emWidth = description.usedSize() * textCombineMargin;
+    // Combined text is drawn horizontally.
+    description.setOrientation(FontOrientation::Horizontal);
+
+    auto horizontalFont = fontFor(description);
+    auto width = measure(horizontalFont);
+    if (width <= emWidth)
+        return combinedText(WTF::move(horizontalFont), width);
+
+    // Try compressed glyphs.
+    float bestFitDelta = width - emWidth;
+    auto bestFitDescription = description;
+    static constexpr auto widthVariants = WTF::toArray<FontWidthVariant>({ FontWidthVariant::HalfWidth, FontWidthVariant::ThirdWidth, FontWidthVariant::QuarterWidth });
+    for (auto widthVariant : widthVariants) {
+        // When modifying this, make sure to keep it in sync with FontPlatformData::isForTextCombine()!
+        description.setWidthVariant(widthVariant);
+        auto compressedFont = fontFor(description);
+        auto runWidth = measure(compressedFont);
+        if (runWidth <= emWidth)
+            return combinedText(WTF::move(compressedFont), runWidth);
+        if (auto widthDelta = runWidth - emWidth; widthDelta < bestFitDelta) {
+            bestFitDelta = widthDelta;
+            bestFitDescription = description;
         }
-
-        auto hasPositionDependentContentWidth = textRenderer->hasPositionDependentContentWidth();
-        if (!hasPositionDependentContentWidth) {
-            hasPositionDependentContentWidth = Layout::TextUtil::hasPositionDependentContentWidth(text);
-            textRenderer->setHasPositionDependentContentWidth(*hasPositionDependentContentWidth);
-        }
-
-        auto hasStrongDirectionalityContent = textRenderer->hasStrongDirectionalityContent();
-        if (!hasStrongDirectionalityContent) {
-            hasStrongDirectionalityContent = Layout::TextUtil::containsStrongDirectionalityText(text);
-            textRenderer->setHasStrongDirectionalityContent(*hasStrongDirectionalityContent);
-        }
-
-        auto contentCharacteristic = EnumSet<Layout::InlineTextBox::ContentCharacteristic> { };
-        if (canUseSimpleFontCodePath)
-            contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::CanUseSimpleFontCodepath);
-        if (textRenderer->shouldUseSimpleGlyphOverflowCodePath())
-            contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::ShouldUseSimpleGlyphOverflowCodePath);
-        if (*canUseSimplifiedTextMeasuring)
-            contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::CanUseSimplifiedContentMeasuring);
-        if (*hasPositionDependentContentWidth)
-            contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::HasPositionDependentContentWidth);
-        if (*hasStrongDirectionalityContent)
-            contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::HasStrongDirectionalityContent);
-        if (synthesizesGlyph(*textRenderer))
-            contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::HasSynthesizedGlyph);
-
-        return makeUniqueRef<Layout::InlineTextBox>(text, isCombinedText, contentCharacteristic, WTF::move(style), WTF::move(firstLineStyle));
     }
 
-    auto& renderElement = downcast<RenderElement>(renderer);
-
-    auto style = Style::ComputedStyle::clone(renderElement.style());
-
-    if (CheckedPtr listMarkerRenderer = dynamicDowncast<RenderListOutsideMarker>(renderElement))
-        return makeUniqueRef<Layout::ElementBox>(elementAttributes(renderElement), isListMarkerImage(*listMarkerRenderer), WTF::move(style), WTF::move(firstLineStyle));
-
-    return makeUniqueRef<Layout::ElementBox>(elementAttributes(renderElement), WTF::move(style), WTF::move(firstLineStyle));
-};
-
-void BoxTreeUpdater::buildTreeForInlineContent()
-{
-    for (auto walker = InlineWalker(downcast<RenderBlockFlow>(m_rootRenderer)); !walker.atEnd(); walker.advance()) {
-        CheckedRef childRenderer = *walker.current();
-        if (childRenderer->isExcludedMarker())
-            continue;
-        auto childLayoutBox = [&] {
-            if (auto existingChildBox = childRenderer->layoutBox())
-                return existingChildBox->removeFromParent();
-            return createLayoutBox(childRenderer.get());
-        };
-        insertChild(childLayoutBox(), childRenderer.get(), childRenderer->previousSibling());
-    }
+    // Then a smaller size.
+    float scaleFactor = std::max(0.4f, emWidth / (emWidth + bestFitDelta));
+    float originalSize = bestFitDescription.usedSize();
+    do {
+        bestFitDescription.setUsedSize(originalSize * scaleFactor);
+        auto scaledFont = fontFor(bestFitDescription);
+        auto runWidth = measure(scaledFont);
+        if (runWidth <= emWidth)
+            return combinedText(WTF::move(scaledFont), runWidth);
+        scaleFactor -= 0.05f;
+    } while (scaleFactor >= 0.4f);
+    return nullptr;
 }
 
-void BoxTreeUpdater::buildTreeForFlexContent()
+bool BoxTreeUpdater::updateCombinedText(RenderText& textRenderer)
 {
-    for (CheckedRef flexItemRenderer : childrenOfType<RenderElement>(m_rootRenderer)) {
-        if (auto existingChildBox = flexItemRenderer->layoutBox()) {
-            insertChild(existingChildBox->removeFromParent(), flexItemRenderer.get(), flexItemRenderer->previousSibling());
-            continue;
-        }
-        auto style = Style::ComputedStyle::clone(flexItemRenderer->style());
-        auto flexItemBox = makeUniqueRef<Layout::ElementBox>(elementAttributes(flexItemRenderer.get()), WTF::move(style));
-        insertChild(WTF::move(flexItemBox), flexItemRenderer.get(), flexItemRenderer->previousSibling());
-    }
+    CheckedRef inlineTextBox = textRenderer.layoutBox();
+    auto wasCombined = inlineTextBox->isCombined();
+    inlineTextBox->setCombinedText(computeCombinedText(textRenderer, inlineTextBox->content()));
+    return wasCombined != inlineTextBox->isCombined();
 }
 
-void BoxTreeUpdater::buildTreeForGridContent()
+void BoxTreeUpdater::updateContent(RenderText& textRenderer)
 {
-    for (CheckedRef gridItemRenderer : childrenOfType<RenderElement>(m_rootRenderer)) {
-        if (auto existingChildBox = gridItemRenderer->layoutBox()) {
-            insertChild(existingChildBox->removeFromParent(), gridItemRenderer.get(), gridItemRenderer->previousSibling());
-            continue;
-        }
-        insertChild(createLayoutBox(gridItemRenderer.get()), gridItemRenderer.get(), gridItemRenderer->previousSibling());
+    ASSERT(textRenderer.parent());
+    CheckedRef style = textRenderer.style();
+    auto content = textRenderer.text();
+    if (style->textSecurity() != TextSecurity::None)
+        content = RenderBlock::updateSecurityDiscCharacters(style, WTF::move(content));
+
+    using ContentCharacteristic = Layout::InlineTextBox::ContentCharacteristic;
+    auto contentCharacteristics = EnumSet<ContentCharacteristic> { };
+    if (textRenderer.canUseSimpleFontCodePath()) {
+        contentCharacteristics.add(ContentCharacteristic::CanUseSimpleFontCodepath);
+        if (canUseSimplifiedMeasuring(textRenderer, content))
+            contentCharacteristics.add(ContentCharacteristic::CanUseSimplifiedContentMeasuring);
     }
-}
-
-void BoxTreeUpdater::insertChild(UniqueRef<Layout::Box> childBox, RenderObject& childRenderer, const RenderObject* beforeChild)
-{
-    CheckedRef parentBox = *childRenderer.parent()->layoutBox();
-    CheckedPtr beforeChildBox = beforeChild ? beforeChild->layoutBox() : nullptr;
-
-    childRenderer.setLayoutBox(childBox);
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST parentBox->insertChild(WTF::move(childBox), const_cast<Layout::Box*>(beforeChildBox.get()));
-}
-
-static void updateContentCharacteristic(const RenderText& rendererText, Layout::InlineTextBox& inlineTextBox)
-{
-    CheckedRef rendererStyle = rendererText.style();
-    auto shouldUpdateContentCharacteristic = !rendererStyle->fontCascadeEqual(inlineTextBox.style());
-    if (!shouldUpdateContentCharacteristic)
-        return;
-
-    auto contentCharacteristic = EnumSet<Layout::InlineTextBox::ContentCharacteristic> { };
-    // These may only change when content changes.
-    if (inlineTextBox.canUseSimpleFontCodePath())
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::CanUseSimpleFontCodepath);
-    if (inlineTextBox.shouldUseSimpleGlyphOverflowCodePath())
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::ShouldUseSimpleGlyphOverflowCodePath);
-    if (inlineTextBox.hasPositionDependentContentWidth())
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::HasPositionDependentContentWidth);
-    if (inlineTextBox.hasStrongDirectionalityContent())
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::HasStrongDirectionalityContent);
-    if (inlineTextBox.hasSynthesizedGlyph())
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::HasSynthesizedGlyph);
-
-    if (inlineTextBox.canUseSimpleFontCodePath() && Layout::TextUtil::canUseSimplifiedTextMeasuring(inlineTextBox.content(), rendererStyle->fontCascade(), rendererStyle->collapseWhiteSpace(), &rendererText.firstLineStyle()))
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::CanUseSimplifiedContentMeasuring);
-
-    inlineTextBox.setContentCharacteristic(contentCharacteristic);
-}
-
-void BoxTreeUpdater::updateStyle(const RenderObject& renderer)
-{
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST CheckedPtr layoutBox = const_cast<Layout::Box*>(renderer.layoutBox());
-    if (!layoutBox) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
-
-    if (auto* renderText = dynamicDowncast<RenderText>(renderer)) {
-        if (CheckedPtr inlineTextBox = dynamicDowncast<Layout::InlineTextBox>(*layoutBox)) {
-            updateContentCharacteristic(*renderText, *inlineTextBox);
-            inlineTextBox->updateStyle(Style::ComputedStyle::createAnonymousStyleWithDisplay(renderText->style(), Style::DisplayType::InlineFlow), firstLineStyleFor(*renderText));
-            return;
-        }
-        ASSERT_NOT_REACHED();
-        return;
-    }
-
-    auto firstLineNewStyle = firstLineStyleFor(renderer);
-    auto newStyle = Style::ComputedStyle::clone(downcast<RenderElement>(renderer).style());
-    layoutBox->updateStyle(WTF::move(newStyle), WTF::move(firstLineNewStyle));
-    if (auto* listMarkerRenderer = dynamicDowncast<RenderListOutsideMarker>(renderer)) {
-        if (auto* elementBox = dynamicDowncast<Layout::ElementBox>(*layoutBox))
-            elementBox->setIsListMarkerImage(isListMarkerImage(*listMarkerRenderer));
-    }
-}
-
-void BoxTreeUpdater::updateContent(const RenderText& textRenderer)
-{
-    CheckedRef inlineTextBox = const_cast<Layout::InlineTextBox&>(*textRenderer.layoutBox());
-    CheckedRef style = inlineTextBox->style();
-    auto isCombinedText = [&] {
-        auto* combineTextRenderer = dynamicDowncast<RenderCombineText>(textRenderer);
-        return combineTextRenderer && combineTextRenderer->isCombined();
-    }();
-    auto text = style->textSecurity() == TextSecurity::None ? (isCombinedText ? textRenderer.originalText() : String { textRenderer.text() }) : RenderBlock::updateSecurityDiscCharacters(style.get(), isCombinedText ? textRenderer.originalText() : String { textRenderer.text() });
-    auto contentCharacteristic = EnumSet<Layout::InlineTextBox::ContentCharacteristic> { };
-    if (textRenderer.canUseSimpleFontCodePath())
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::CanUseSimpleFontCodepath);
-    if (textRenderer.canUseSimpleFontCodePath() && Layout::TextUtil::canUseSimplifiedTextMeasuring(text, style->fontCascade(), style->collapseWhiteSpace(), &inlineTextBox->firstLineStyle()))
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::CanUseSimplifiedContentMeasuring);
     if (textRenderer.shouldUseSimpleGlyphOverflowCodePath())
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::ShouldUseSimpleGlyphOverflowCodePath);
-    auto hasPositionDependentContentWidth = textRenderer.hasPositionDependentContentWidth();
-    if (!hasPositionDependentContentWidth) {
-        hasPositionDependentContentWidth = Layout::TextUtil::hasPositionDependentContentWidth(text);
-        const_cast<RenderText&>(textRenderer).setHasPositionDependentContentWidth(*hasPositionDependentContentWidth);
-    }
-    if (*hasPositionDependentContentWidth)
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::HasPositionDependentContentWidth);
-    auto hasStrongDirectionalityContent = textRenderer.hasStrongDirectionalityContent();
-    if (!hasStrongDirectionalityContent) {
-        hasStrongDirectionalityContent = Layout::TextUtil::containsStrongDirectionalityText(text);
-        const_cast<RenderText&>(textRenderer).setHasStrongDirectionalityContent(*hasStrongDirectionalityContent);
-    }
-    if (*hasStrongDirectionalityContent)
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::HasStrongDirectionalityContent);
+        contentCharacteristics.add(ContentCharacteristic::ShouldUseSimpleGlyphOverflowCodePath);
+    if (Layout::TextUtil::hasPositionDependentContentWidth(content))
+        contentCharacteristics.add(ContentCharacteristic::HasPositionDependentContentWidth);
+    if (Layout::TextUtil::containsStrongDirectionalityText(content))
+        contentCharacteristics.add(ContentCharacteristic::HasStrongDirectionalityContent);
     if (synthesizesGlyph(textRenderer))
-        contentCharacteristic.add(Layout::InlineTextBox::ContentCharacteristic::HasSynthesizedGlyph);
+        contentCharacteristics.add(ContentCharacteristic::HasSynthesizedGlyph);
 
-    inlineTextBox->setContent(text, contentCharacteristic);
+    CheckedRef inlineTextBox = textRenderer.layoutBox();
+    inlineTextBox->setContent(WTF::move(content), contentCharacteristics);
+    inlineTextBox->setCombinedText(computeCombinedText(textRenderer, inlineTextBox->content()));
 }
 
-const Layout::Box& BoxTreeUpdater::insert(const RenderElement& parent, RenderObject& child, const RenderObject* beforeChild)
+void BoxTreeUpdater::updateSimplifiedMeasuring(RenderText& textRenderer)
 {
-    UNUSED_PARAM(parent);
-
-    insertChild(createLayoutBox(child), child, beforeChild);
-    return *child.layoutBox();
+    CheckedRef inlineTextBox = textRenderer.layoutBox();
+    inlineTextBox->setCanUseSimplifiedContentMeasuring(inlineTextBox->canUseSimpleFontCodePath() && canUseSimplifiedMeasuring(textRenderer, inlineTextBox->content()));
 }
 
-void BoxTreeUpdater::remove(const RenderElement& parent, RenderObject& child)
+Layout::Box::ElementAttributes BoxTreeUpdater::elementAttributes(const RenderObject& renderer)
 {
-    UNUSED_PARAM(parent);
-    ASSERT(child.layoutBox());
-
-    auto removedBox = [&] {
-        CheckedPtr layoutBox = child.layoutBox();
-        child.clearLayoutBox();
-        return layoutBox->removeFromParent();
+    auto nodeType = [&] {
+        if (renderer.isRenderListOutsideMarker())
+            return Layout::Box::NodeType::ListMarker;
+        if (renderer.isRenderReplaced())
+            return renderer.isRenderImage() && !renderer.isRenderMedia() ? Layout::Box::NodeType::Image : Layout::Box::NodeType::ReplacedElement;
+        if (renderer.isRenderButton() || renderer.isRenderMenuList() || renderer.isRenderTextControlInnerContainer() || renderer.isRenderSlider() || renderer.isRenderSliderContainer())
+            return Layout::Box::NodeType::ImplicitFlexBox;
+        if (renderer.isRenderLineBreak())
+            return renderer.isWBR() ? Layout::Box::NodeType::WordBreakOpportunity : Layout::Box::NodeType::LineBreak;
+        if (renderer.isRenderTable())
+            return Layout::Box::NodeType::TableBox;
+        if (renderer.isInlineBox())
+            return Layout::Box::NodeType::InlineBox;
+        return Layout::Box::NodeType::GenericElement;
     }();
-
-#if ASSERT_ENABLED
-    // Nothing may refer to the removed boxes, except the renderers in the subtree, which the boxes unlink on destruction.
-    ASSERT(!removedBox->checkedPtrCount());
-    if (CheckedPtr removedElementBox = dynamicDowncast<Layout::ElementBox>(removedBox.get())) {
-        for (auto& descendant : Layout::descendantsOfType<Layout::Box>(*removedElementBox))
-            ASSERT(descendant.checkedPtrCount() == (descendant.rendererForIntegration() ? 1u : 0u));
-    }
-#endif
+    return { nodeType, renderer.isAnonymous() ? Layout::Box::IsAnonymous::Yes : Layout::Box::IsAnonymous::No };
 }
 
-const Layout::ElementBox& BoxTreeUpdater::rootLayoutBox() const
+void BoxTreeUpdater::updateFirstLineStyleState(RenderElement& renderer)
 {
-    return *m_rootRenderer.layoutBox();
+    // As RenderElement::firstLineStyle() finds it. Anonymous blocks use the parent's, if they are its first in-flow child.
+    auto mayHaveFirstLineStyle = [&] {
+        if (renderer.isAnonymousBlock()) {
+            CheckedPtr parent = renderer.parent();
+            return parent && parent->style().pseudoElementStyle({ PseudoElementType::FirstLine });
+        }
+        return !!renderer.style().pseudoElementStyle({ PseudoElementType::FirstLine });
+    };
+    renderer.layoutBox().setMayHaveFirstLineStyle(mayHaveFirstLineStyle());
 }
 
-Layout::ElementBox& BoxTreeUpdater::rootLayoutBox()
+void BoxTreeUpdater::remove(RenderObject& child)
 {
-    return *m_rootRenderer.layoutBox();
-}
-
-Layout::InitialContainingBlock& BoxTreeUpdater::initialContainingBlock()
-{
-    return m_rootRenderer.view().initialContainingBlock();
+    // Only text and line breaks are removed without invalidating the whole formatting context.
+    ASSERT(!is<RenderElement>(child) || !downcast<RenderElement>(child).firstChild());
+    child.layoutBox().clearFormattingContextData();
+    // The inline items are gone, so content changes that waited for them can go in.
+    if (CheckedPtr textRenderer = dynamicDowncast<RenderText>(child))
+        textRenderer->updateLayoutBoxContentIfNeeded();
 }
 
 #if ENABLE(TREE_DEBUGGING)

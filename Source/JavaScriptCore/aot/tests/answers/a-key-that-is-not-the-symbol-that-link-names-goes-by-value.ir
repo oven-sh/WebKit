@@ -1,0 +1,146 @@
+# const depth = Symbol("depth");
+# const width = Symbol("width");
+# function pick() { const got = id(width); return typeof got === "symbol" ? got : depth; }
+# function read(box, key) { return box[key]; }
+# function store(box, key, value) { box[key] = value; }
+# function has(box, key) { return key in box; }
+# function remove(box, key) { return delete box[key]; }
+# const box = { [depth]: "deep", [width]: "wide" };
+# print(read(box, pick()));
+# store(box, pick(), "wider");
+# print(box[width], box[depth]);
+# print(has(box, pick()));
+# print(remove(box, pick()), width in box, depth in box);
+# print("went on");
+# The walk derives nothing about a parameter by itself. So the key is compared with the symbol that Link names, at the access.
+# After a successful comparison the access uses the name. The generic branch is the access by key value.
+# This is the failing control. Fault injection, testing=AssumeUnknownCallsReturnUndefined (see false-proofs-are-stopped-where-the-value-comes-in.ir): Link assumes that the shell's `id` returns undefined.
+# So nothing passes the program's test for a symbol, and `depth` is the only symbol that Link names. The program used to print "deep", then "wide wider".
+# Now a mistake in Link only costs speed: the program prints what it should.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(LINK): link accesses mechanisms=all
+# LINK: access f2 v2 under symbol("depth")@m0:0
+# LINK: access f3 v3 under symbol("depth")@m0:0
+# RUN(FORM): walk f2 mechanisms=-Inlining
+# FORM: TypeTest v1 testedType=symbol("depth")@m0:0
+# FORM: key=symbol("depth")@m0:0
+# FORM: frequency=Rare
+# FORM: ElemGet v0
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: wide
+# ALL-NEXT: wider deep
+# ALL-NEXT: true
+# ALL-NEXT: true false true
+# ALL-NEXT: went on
+# RUN(CALLS): run-in-shell mechanisms=-Inlining
+# CALLS: wide
+# CALLS-NEXT: wider deep
+# CALLS-NEXT: true
+# CALLS-NEXT: true false true
+# CALLS-NEXT: went on
+
+layout L0 module=m0 fields=[{key=symbol("depth")@m0:0 declared={type=anything} flags=[IsRequired]}, {key=symbol("width")@m0:1 declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="depth" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="width" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]}
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]}
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]}
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]}
+    v10 = Builtin builtin=Symbol
+    v11 = String string="depth"
+    v12 = Call v10, -, v11 calleeName="Symbol" callNumber=0
+    PutModuleVariable v12 variable=g0
+    v14 = Builtin builtin=Symbol
+    v15 = String string="width"
+    v16 = Call v14, -, v15 calleeName="Symbol" callNumber=1
+    PutModuleVariable v16 variable=g1
+    v18 = ToPropertyKey v12
+    v19 = String string="deep"
+    v20 = NewObject layout=L0
+    ElemDefine v20, v18, v19
+    v22 = ToPropertyKey v16
+    v23 = String string="wide"
+    ElemDefine v20, v22, v23
+    v25 = FinishObject v20
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="print" [isFreeName]
+    v28 = Call v1 calleeName="pick"
+    v29 = Call v3, -, v25, v28 calleeName="read"
+    v30 = Call v27, -, v29 calleeName="print"
+    v31 = Call v1 calleeName="pick"
+    v32 = String string="wider"
+    v33 = Call v5, -, v25, v31, v32 calleeName="store"
+    v34 = Builtin builtin=GlobalThis
+    v35 = PropGet v34 key="print" [isFreeName]
+    v36 = ElemGet v25, v16
+    v37 = ElemGet v25, v12
+    v38 = Call v35, -, v36, v37 calleeName="print"
+    v39 = Builtin builtin=GlobalThis
+    v40 = PropGet v39 key="print" [isFreeName]
+    v41 = Call v1 calleeName="pick"
+    v42 = Call v7, -, v25, v41 calleeName="has"
+    v43 = Call v40, -, v42 calleeName="print"
+    v44 = Builtin builtin=GlobalThis
+    v45 = PropGet v44 key="print" [isFreeName]
+    v46 = Call v1 calleeName="pick"
+    v47 = Call v9, -, v25, v46 calleeName="remove"
+    v48 = ElemHas v25, v16
+    v49 = ElemHas v25, v12
+    v50 = Call v45, -, v47, v48, v49 calleeName="print"
+    v51 = Builtin builtin=GlobalThis
+    v52 = PropGet v51 key="print" [isFreeName]
+    v53 = String string="went on"
+    v54 = Call v52, -, v53 calleeName="print"
+    v55 = Undefined
+    Return v55
+}
+function f1 name="pick" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="id" [isFreeName]
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="width"
+    v4 = Call v1, -, v3 calleeName="id"
+    v5 = TypeTest v4 testedType=symbol
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6):
+    v7 = NarrowByTest v4, v6
+    Jump -> next b3(v7)
+  b2(v8):
+    v9 = GetModuleVariable variable=g0
+    v10 = CheckInitialized v9 name="depth"
+    Jump -> next b3(v10)
+  b3(v11):
+    Return v11
+}
+function f2 name="read" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|symbol flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: undefined|null|symbol):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="store" module=m0 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|symbol flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: undefined|null|symbol, v2: undefined|null|string):
+    ElemSet v0, v1, v2
+    v4 = Undefined
+    Return v4
+}
+function f4 name="has" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|symbol flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: undefined|null|symbol):
+    v2 = ElemHas v0, v1
+    Return v2
+}
+function f5 name="remove" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|symbol flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: undefined|null|symbol):
+    v2 = ElemDelete v0, v1
+    Return v2
+}
+entry module=m0

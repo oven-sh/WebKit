@@ -1,0 +1,34 @@
+# What --external leaves out runs uncompiled. It is handed the module object of the file that asks for it, main.js. What it asks the loader for is never answered with parse.cjs:
+# the run time refuses a file whose exports stay in compiled code to the host, and stops where its module object is asked for them.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link functions variables mechanisms=all
+# CHECK: function f2 callers-known
+# CHECK: variable g0 {{*}}writers-known
+
+layout L0 module=m1 fields=[{key="parse" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/parse.cjs" displayPath="parse.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
+module m2 path="left-out" displayPath="left-out" kind=External externalKind=UncompiledCode referrer=m0
+entry module=m0
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0 [isCallOfRequire]
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="parse"
+    v3 = Integer integer=1
+    v4 = Call v2, v1, v3 calleeKey="parse" calleeName="parse"
+    Return
+}
+function f1 name="file" module=m1 kind=CommonJsModule results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    Return
+}
+function f2 name="parse" module=m1 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

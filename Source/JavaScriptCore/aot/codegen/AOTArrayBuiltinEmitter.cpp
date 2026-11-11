@@ -11,15 +11,15 @@
 #include "AOTBarrierEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
-#include "AOTEdgeResults.h"
 #include "AOTElementEmitterAllocation.h"
-#include "AOTFunctionAnalyses.h"
 #include "AOTRepresentation.h"
 #include "AOTResultRules.h"
 #include "AOTStubsArrays.h"
-#include "AOTUseLists.h"
-#include "AOTValueIdentity.h"
-#include "AOTVector.h"
+#include "AOTStubsElements.h"
+#include "AOTTypeTestEmitter.h"
+#include "ArrayConventions.h"
+#include "JSArray.h"
+#include "JSType.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -38,7 +38,7 @@ Operand ArrayBuiltinEmitter::resultFromRawElement(const InlineCall& call, const 
     Representation representation = resultRepresentationOf(call);
     if (representation == Representation::Void)
         return { };
-    return elements().convertRawElement(form, rawElement, representation, resultTypeOf(call));
+    return elements().convertRawElement(call.context(), form, rawElement, representation, resultTypeIDOf(call));
 }
 
 Operand ArrayBuiltinEmitter::undefinedResult(const InlineCall& call)
@@ -49,27 +49,38 @@ Operand ArrayBuiltinEmitter::undefinedResult(const InlineCall& call)
     return elements().absentElement(call.context(), representation);
 }
 
+TypeID ArrayBuiltinEmitter::elementTypeOf(const InlineCall& call, TypeLevel level)
+{
+    const PositionTypes& positions = PositionTypes::knowingNothing();
+    TypingContext context { m_program, types(), positions, level };
+    return typeOfContentsRead(context, typeIDOf(call.receiver()), ContentsSlot::Element);
+}
+
 ArrayStorageFormList ArrayBuiltinEmitter::candidateFormsOf(const InlineCall& call)
 {
-    const Type& array = typeOf(call.receiver());
-    Type contents = typeOfContentsRead({ m_program, m_function, types(), TypeLevel::Expected }, array, ContentsSlot::Element);
-    const ArrayStorageForm& expected = ArrayAllocationEmitter(generator()).formAtAllocation(array);
-    // new Array(n) declares an array that holds nothing, which says nothing about what is stored later.
-    bool expectsContents = !contents.isNever();
+    TypeID contents = elementTypeOf(call, TypeLevel::Expected);
+    const ArrayStorageForm& expected = elements().expectedFormOf(call.receiver());
+    bool expectsContents = !isNeverType(contents);
     ArrayStorageFormList forms { &expected };
     for (const ArrayStorageForm& form : arrayStorageForms) {
         if (form.kind == expected.kind)
             continue;
-        if (!expectsContents || widestTypeOf(form.element).overlaps(contents, m_program))
+        if (!expectsContents || types().overlap(widestTypeOf(form.element), contents))
             forms.append(&form);
     }
     return forms;
 }
 
+ElementAccessEmitter::FirstForm ArrayBuiltinEmitter::firstCandidateFormOf(const InlineCall& call)
+{
+    return types().at(elementTypeOf(call, TypeLevel::Expected)).isAnything() ? ElementAccessEmitter::FirstForm::IsLikeTheOthers : ElementAccessEmitter::FirstForm::IsExpected;
+}
+
 void ArrayBuiltinEmitter::forEachFormOrMiss(const InlineCall& call, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>& functor)
 {
     ElementAccessEmitter::ShapeTest test = mask == IndexingShapeAndWritabilityMask ? &ElementAccessEmitter::hasWritableShape : &ElementAccessEmitter::hasShape;
-    elements().forEachFormByShape(elements().indexingMode(array, mask), test, candidateFormsOf(call), missBlockOf(call), functor);
+    Word32 mode = elements().indexingMode(array, mask);
+    elements().forEachFormByShape(mode, test, candidateFormsOf(call), missBlockOf(call), functor, firstCandidateFormOf(call));
 }
 
 void ArrayBuiltinEmitter::generateArrayIterator(const InlineCall& call)
@@ -89,11 +100,12 @@ void ArrayBuiltinEmitter::generateArrayAt(const InlineCall& call)
     Integer index = typeOf(position).isInteger() ? integerOperand(position) : elements().indexOrElse(position, false, missBlockOf(call));
     ArrayElements storage = elements().elementsOf(array);
     Integer length = elements().publicLength(storage);
-    Integer relative = select(lessThan(index, integer(0)), add(index, length), index);
+    Condition countsFromEnd = lessThan(index, 0);
+    Integer relative = select(countsFromEnd, add(index, length), index);
     branchUnless(below(relative, length), isAbsent);
     forEachFormOrMiss(call, array, arrayStorageTestMask, [&](const ArrayStorageForm& form) {
         Operand raw = elements().loadRawElement(form, storage, relative);
-        branchUnless(logicalNot(elements().isHoleIn(call.receiver(), form, raw)), isAbsent);
+        branchUnless(logicalNot(elements().isHole(form, raw)), isAbsent);
         join.add(resultFromRawElement(call, form, raw));
     });
 
@@ -122,9 +134,9 @@ void ArrayBuiltinEmitter::generateArrayJoin(const InlineCall& call)
 
 Operand ArrayBuiltinEmitter::removeFirstElement(const InlineCall& call, const ArrayStorageForm& form, const ArrayElements& storage, LBasicBlock isAbsent)
 {
-    Integer last = sub(elements().publicLength(storage), integer(1));
+    Integer last = sub(elements().publicLength(storage), 1);
     Operand first = elements().loadRawElement(form, storage, integer(0));
-    branchUnless(logicalNot(elements().isHoleIn(call.receiver(), form, first)), isAbsent);
+    branchUnless(logicalNot(elements().isHole(form, first)), isAbsent);
 
     LBasicBlock loop = newBlock();
     LBasicBlock element = newBlock();
@@ -133,7 +145,7 @@ Operand ArrayBuiltinEmitter::removeFirstElement(const InlineCall& call, const Ar
     m_out.jump(loop);
 
     m_out.appendTo(loop);
-    Integer index(m_out.phi(B3::Int64, start));
+    Integer index(m_out.phi(Machine::Int64, start));
     branch(below(index, last), { normalEdge(element), normalEdge(moved) });
 
     m_out.appendTo(element);
@@ -150,74 +162,77 @@ Operand ArrayBuiltinEmitter::removeFirstElement(const InlineCall& call, const Ar
     return first;
 }
 
+Operand ArrayBuiltinEmitter::shiftLongArray(const InlineCall& call, const ArrayStorageForm& form, const ArrayElements& storage, Integer length)
+{
+    Integer last = sub(length, integer(1));
+    missUnless(call, below(last, integer(JSArray::shiftThreshold)));
+    Operand first = elements().loadRawElement(form, storage, integer(0));
+    missUnless(call, logicalNot(elements().isHole(form, first)));
+    if (form.holdsCells)
+        missUnless(call, logicalNot(Condition(m_out.load8ZeroExt32(instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))))));
+    callStub(call.context(), moveElementsDown(), { storage.butterfly.value(), last.value() });
+    elements().storeRawElement(form, storage, last, elements().rawHole(form));
+    elements().setPublicLength(storage, last);
+    return first;
+}
+
 void ArrayBuiltinEmitter::removeElementAtEnd(const InlineCall& call, bool removesFirst)
 {
     if (!checkChosenForm(call, call.canMiss()))
         return;
     CellPointer array = receiverOf(call);
-    LBasicBlock hasNoElements = newBlock();
+    bool mayHaveNoElements = resultTypeOf(call).primitives & Primitive::Undefined;
+    LBasicBlock hasNoElements = mayHaveNoElements ? newBlock() : nullptr;
     OperandJoin join(m_out, resultRepresentationOf(call));
     ArrayElements storage = elements().elementsOf(array);
     Integer length = elements().publicLength(storage);
     Integer last = removesFirst ? Integer() : sub(length, integer(1));
     forEachFormOrMiss(call, array, IndexingShapeAndWritabilityMask, [&](const ArrayStorageForm& form) {
-        branchUnless(isNotZero(length), hasNoElements);
+        if (mayHaveNoElements)
+            branchUnless(isNotZero(length), hasNoElements);
         if (removesFirst) {
-            missUnless(call, belowOrEqual(length, integer(maxLengthForElementwiseMove)));
+            Condition areFew = belowOrEqual(length, integer(maxLengthForElementwiseMove));
+            if (!generator().paysForCodeInLine(call.context().block()))
+                missUnless(call, areFew);
+            else {
+                LBasicBlock few = newBlock();
+                LBasicBlock many = newBlock();
+                branch(areFew, { normalEdge(few), normalEdge(many) });
+                m_out.appendTo(many);
+                join.add(resultFromRawElement(call, form, shiftLongArray(call, form, storage, length)));
+                m_out.appendTo(few);
+            }
             join.add(resultFromRawElement(call, form, removeFirstElement(call, form, storage, missBlockOf(call))));
             return;
         }
         Operand raw = elements().loadRawElement(form, storage, last);
-        missUnless(call, logicalNot(elements().isHoleIn(call.receiver(), form, raw)));
+        missUnless(call, logicalNot(elements().isHole(form, raw)));
         elements().storeRawElement(form, storage, last, elements().rawHole(form));
         elements().setPublicLength(storage, last);
         join.add(resultFromRawElement(call, form, raw));
     });
 
-    m_out.appendTo(hasNoElements);
-    join.add(undefinedResult(call));
+    if (mayHaveNoElements) {
+        m_out.appendTo(hasNoElements);
+        join.add(undefinedResult(call));
+    }
     finishInlineCall(call, join.finish());
 }
 
-// Whether this function goes on to store a named property into the array that the call makes.
 bool ArrayBuiltinEmitter::resultGetsNamedProperties(const InlineCall& call)
 {
-    constexpr unsigned maxValuesFollowed = 16;
-    const UseLists& useLists = analyses().useLists();
-    Vector<ValueID, maxValuesFollowed> aliases;
-    auto follow = [&](ValueID alias) {
-        if (alias && aliases.size() < maxValuesFollowed && !aliases.contains(alias))
-            aliases.append(alias);
-    };
-    if (call.value())
-        follow(call.value()->id());
-    else if (BlockID from = call.terminator()->block(); numberOfEdgeResults(m_function, from, 0))
-        follow(m_function.at((*call.terminator())->done().block).parameters[firstEdgeResultParameter(m_function, from, 0)]);
-    for (unsigned index = 0; index < aliases.size(); ++index) {
-        for (const Use& use : useLists.usesOf(aliases[index])) {
-            switch (use.kind) {
-            case Use::Kind::Operand: {
-                const Value& user = m_function.at(use.user);
-                if (user.opcode == Opcode::PropSet && use.operandIndex == OperandIndex::PropSet::object)
-                    return true;
-                if (isCast(user.opcode))
-                    follow(use.user);
-                break;
-            }
-            case Use::Kind::EdgeArgument: {
-                auto& parameters = m_function.at(targetOf(m_function, use.edge()).block).parameters;
-                if (use.operandIndex < parameters.size())
-                    follow(parameters[use.operandIndex]);
-                break;
-            }
-            case Use::Kind::TerminatorOperand:
-            case Use::Kind::HandlerArgument:
-            case Use::Kind::BlockSubject:
-                break;
-            }
-        }
-    }
-    return false;
+    const Code& code = generator().code();
+    std::span<const ValueID> continuationParameters = call.terminator() ? code.at(code.at((*call.terminator())->done()).to).parameters() : std::span<const ValueID>();
+    ValueID made = call.value() ? call.value()->id() : continuationParameters.empty() ? ValueID() : continuationParameters.front();
+    return made && generator().isStoredIntoByName(made);
+}
+
+bool ArrayBuiltinEmitter::resultIsExpectedToHoldDoubles(const InlineCall& call)
+{
+    const Type& result = resultTypeOf(call);
+    if (!result.hasObjects())
+        return false;
+    return arrayStorageDeclaredBy(m_program, types(), types().intern(result)).predicted() == ArrayStorage::Double;
 }
 
 void ArrayBuiltinEmitter::generateArraySlice(const InlineCall& call)
@@ -229,17 +244,28 @@ void ArrayBuiltinEmitter::generateArraySlice(const InlineCall& call)
         return;
     CellPointer array = receiverOf(call);
     bool withPropertyRoom = resultGetsNamedProperties(call);
+    bool makesDoubles = !withPropertyRoom && resultIsExpectedToHoldDoubles(call);
+    Integer start = call.numberOfArguments() ? wholeNumberOrElse(call.argument(0), missBlockOf(call)) : Integer();
+    Integer end = call.numberOfArguments() > 1 ? wholeNumberOrElse(call.argument(1), missBlockOf(call)) : Integer();
     StubCallResult copy;
-    if (!call.numberOfArguments())
-        copy = callStub(call.context(), arrayCopy(withPropertyRoom), { array.value() });
-    else {
-        Integer start = wholeNumberOrElse(call.argument(0), missBlockOf(call));
-        Integer end = call.numberOfArguments() > 1 ? wholeNumberOrElse(call.argument(1), missBlockOf(call)) : integer(arraySliceToEnd);
-        copy = callStub(call.context(), arraySlice(withPropertyRoom), { array.value(), start.value(), end.value() });
-    }
-    Boxed copied(copy.first);
-    missUnless(call, isNotEmpty(copied));
-    finish(call, copied);
+    if (!start)
+        copy = callStub(call.context(), makesDoubles ? arrayCopyAsDoubles() : arrayCopy(withPropertyRoom), { array.value() });
+    else
+        copy = callStub(call.context(), makesDoubles ? arraySliceAsDoubles() : arraySlice(withPropertyRoom), { array.value(), start.value(), (end ? end : integer(arraySliceToEnd)).value() });
+    missUnless(call, isNotEmpty(Boxed(copy.first)));
+    finish(call, CellPointer(copy.first));
+}
+
+Boxed ArrayBuiltinEmitter::copyWithPropertyRoomInFrontOfClosedCall(const OperationContext& context, ValueID list, LBasicBlock closed)
+{
+    Boxed receiver = in<Boxed>(list);
+    branchUnless(isCell(receiver), closed);
+    CellPointer array = unboxCell(receiver);
+    branchUnless(hasCellType(array, ArrayType), closed);
+    branchUnless(emitter<TypeTestEmitter>().isPristine(array, BuiltinClasses::Array, { PristineAspects::Storage, PristineAspects::Names }), closed);
+    Boxed copy(callStub(context, arrayCopy(true), { array.value() }).first);
+    branchUnless(isNotEmpty(copy), closed);
+    return copy;
 }
 
 void ArrayBuiltinEmitter::generateArrayUnshift(const InlineCall& call)
@@ -252,29 +278,29 @@ void ArrayBuiltinEmitter::generateArrayUnshift(const InlineCall& call)
     finish(call, newLength);
 }
 
-void ArrayBuiltinEmitter::scanShortVector(const InlineCall& call, const ArrayStorageForm& form, CellPointer array, Operand searchedRawElement, Join<Integer>& found)
+void ArrayBuiltinEmitter::scanShortVector(const ArrayStorageForm& form, CellPointer array, Operand searchedRawElement, Join<Integer>& found)
 {
-    if (call.context().shape() == CodeShape::Compact)
-        return;
+    LBasicBlock isShort = newBlock();
     LBasicBlock isLong = newBlock();
-    ArrayElements storage = elements().elementsOf(array);
     LBasicBlock loop = newBlock();
     LBasicBlock element = newBlock();
     LBasicBlock isEqual = newBlock();
     LBasicBlock isDifferent = newBlock();
     LBasicBlock isAbsent = newBlock();
+    ArrayElements storage = elements().elementsOf(array);
     Integer length = elements().publicLength(storage);
-    branchUnless(belowOrEqual(length, integer(static_cast<int64_t>(build().limit(LimitID::MaxInlineSearchedElements)))), isLong);
+    branch(belowOrEqual(length, integer(maxInlineSearchedElements)), { normalEdge(isShort), normalEdge(isLong) });
+
+    m_out.appendTo(isShort);
     ValueFromBlock start = m_out.anchor(integer(0).value());
     m_out.jump(loop);
 
     m_out.appendTo(loop);
-    Integer index(m_out.phi(B3::Int64, start));
+    Integer index(m_out.phi(Machine::Int64, start));
     branch(below(index, length), { normalEdge(element), normalEdge(isAbsent) });
 
     m_out.appendTo(element);
     Operand raw = elements().loadRawElement(form, storage, index);
-    // A hole equals nothing that is searched: it is a NaN among doubles, and the empty word among boxed integers. +0 equals -0 among doubles, as both strict equality and SameValueZero want.
     Condition isFound = form.element == Representation::Double
         ? equal(raw.as<Number>(), searchedRawElement.as<Number>())
         : equal(raw.as<Boxed>(), searchedRawElement.as<Boxed>());
@@ -296,42 +322,62 @@ void ArrayBuiltinEmitter::scanShortVector(const InlineCall& call, const ArraySto
 Integer ArrayBuiltinEmitter::indexOfNumber(const InlineCall& call, CellPointer array)
 {
     Number searched = numberOperand(call.argument(0));
+    Join<Integer> join(m_out);
+    auto searchDoubles = [&] {
+        scanShortVector(arrayStorageFormOf(ArrayStorage::Double), array, searched, join);
+        join.add(callOperation<Integer>(call.context(), RuntimeOperation::ArrayIndexOfDouble, { array, searched }));
+    };
+    auto searchIntegers = [&] {
+        LBasicBlock isInt32 = newBlock();
+        LBasicBlock isNoInt32 = newBlock();
+        Word32 truncated = emitter<ConversionEmitter>().truncateToWord(searched);
+        branch(equal(toNumber(truncated), searched), { normalEdge(isInt32), normalEdge(isNoInt32) });
+
+        m_out.appendTo(isInt32);
+        Boxed boxed = boxInt32(truncated);
+        scanShortVector(arrayStorageFormOf(ArrayStorage::Int32), array, boxed, join);
+        join.add(callOperation<Integer>(call.context(), RuntimeOperation::ArrayIndexOfInt32, { array, boxed }));
+
+        m_out.appendTo(isNoInt32);
+        join.add(integer(-1));
+    };
     Word32 shape = elements().indexingMode(array, arrayStorageTestMask);
     LBasicBlock holdsDoubles = newBlock();
     LBasicBlock holdsNoDoubles = newBlock();
-    Join<Integer> join(m_out);
     branch(elements().hasShape(shape, arrayStorageFormOf(ArrayStorage::Double)), { normalEdge(holdsDoubles), normalEdge(holdsNoDoubles) });
 
     m_out.appendTo(holdsDoubles);
-    scanShortVector(call, arrayStorageFormOf(ArrayStorage::Double), array, searched, join);
-    join.add(callOperation<Integer>(call.context(), RuntimeOperation::ArrayIndexOfDouble, { array, searched }));
+    searchDoubles();
 
     m_out.appendTo(holdsNoDoubles);
     missUnless(call, elements().hasShape(shape, arrayStorageFormOf(ArrayStorage::Int32)));
-    Word32 truncated = low32(emitter<ConversionEmitter>().toInteger(searched));
-    join.add(either<Integer>(equal(toNumber(truncated), searched), [&] {
-        Boxed boxed = boxInt32(truncated);
-        scanShortVector(call, arrayStorageFormOf(ArrayStorage::Int32), array, boxed, join);
-        return callOperation<Integer>(call.context(), RuntimeOperation::ArrayIndexOfInt32, { array, boxed });
-    }, [&] {
-        return integer(-1);
-    }));
+    searchIntegers();
     return join.finish();
 }
 
-// An object, a function, a symbol, a boolean, undefined or null equals what has the same bits and nothing else. Whatever else is searched leaves for the general form.
 Integer ArrayBuiltinEmitter::indexOfValueComparedByIdentity(const InlineCall& call, CellPointer array, HoleIs hole)
 {
     const ArrayStorageForm& form = arrayStorageFormOf(ArrayStorage::Contiguous);
     uint16_t primitives = typeOf(call.argument(0)).primitives;
     Boxed searched = boxedOperand(call.context(), call.argument(0));
+    Join<Integer> join(m_out);
+    if (primitives & Primitive::AnyString) {
+        LBasicBlock isCellBlock = newBlock();
+        LBasicBlock isStringBlock = newBlock();
+        LBasicBlock isNotString = newBlock();
+        branch(isCell(searched), { normalEdge(isCellBlock), normalEdge(isNotString) });
+        m_out.appendTo(isCellBlock);
+        branch(hasCellType(unboxCell(searched), StringType), { normalEdge(isStringBlock), normalEdge(isNotString) });
+        m_out.appendTo(isStringBlock);
+        join.add(indexOfString(call, array, unboxCell(searched)));
+        m_out.appendTo(isNotString);
+    }
     missUnless(call, elements().hasShape(elements().indexingMode(array, arrayStorageTestMask), form));
     if (primitives & Primitive::Number)
         missUnless(call, logicalNot(isNumber(searched)));
-    // A hole is the empty word, which equals nothing that is searched.
     if (hole == HoleIs::Undefined && primitives & Primitive::Undefined)
         missUnless(call, notEqual(searched, undefined()));
-    if (primitives & (Primitive::AnyString | Primitive::BigInt)) {
+    if (primitives & Primitive::BigInt) {
         LBasicBlock isCellBlock = newBlock();
         LBasicBlock isComparedByBits = newBlock();
         branch(isCell(searched), { normalEdge(isCellBlock), normalEdge(isComparedByBits) });
@@ -341,31 +387,54 @@ Integer ArrayBuiltinEmitter::indexOfValueComparedByIdentity(const InlineCall& ca
         m_out.appendTo(isComparedByBits);
     }
 
-    Join<Integer> join(m_out);
-    scanShortVector(call, form, array, searched, join);
+    scanShortVector(form, array, searched, join);
     join.add(callOperation<Integer>(call.context(), RuntimeOperation::ArrayIndexOfInt32, { array, searched }));
     return join.finish();
+}
+
+Integer ArrayBuiltinEmitter::indexOfString(const InlineCall& call, CellPointer array, CellPointer searched)
+{
+    if (call.numberOfArguments() == 1) {
+        StubKey stub = arrayIndexOfString(SearchedElements::Values);
+        return Integer(callStub(call.context(), stub, { array.value(), searched.value() }).first);
+    }
+    Integer start = wholeNumberOrElse(call.argument(1), missBlockOf(call));
+    missUnless(call, below(start, integer(1ll << 32)));
+    StubKey stub = arrayIndexOfString(SearchedElements::ValuesFromStart);
+    return Integer(callStub(call.context(), stub, { array.value(), searched.value(), start.value() }).first);
 }
 
 Integer ArrayBuiltinEmitter::indexOfSearched(const InlineCall& call, HoleIs hole)
 {
     if (typeOf(call.argument(0)).isNumber())
         return indexOfNumber(call, receiverOf(call));
+    if (typeOf(call.argument(0)).isAnyString()) {
+        CellPointer array = receiverOf(call);
+        return indexOfString(call, array, cellOperand(call.argument(0)));
+    }
     return indexOfValueComparedByIdentity(call, receiverOf(call), hole);
+}
+
+bool ArrayBuiltinEmitter::handlesSearch(const InlineCall& call)
+{
+    if (call.numberOfArguments() == 2)
+        return call.canMiss() && typeOf(call.argument(0)).isAnyString() && typeOf(call.argument(1)).isNumber();
+    return call.numberOfArguments() == 1 && (call.canMiss() || typeOf(call.argument(0)).isAnyString());
 }
 
 void ArrayBuiltinEmitter::generateArrayIndexOf(const InlineCall& call)
 {
-    if (!checkChosenForm(call, call.canMiss() && call.numberOfArguments() == 1))
+    if (!checkChosenForm(call, handlesSearch(call)))
         return;
-    finish(call, indexOfSearched(call, HoleIs::Nothing), Range { -1, INT32_MAX });
+    bool maySearchForString = typeOf(call.argument(0)).primitives & Primitive::AnyString;
+    finish(call, indexOfSearched(call, HoleIs::Nothing), Range { -1, maySearchForString ? static_cast<int64_t>(MAX_ARRAY_INDEX) : INT32_MAX });
 }
 
 void ArrayBuiltinEmitter::generateArrayIncludes(const InlineCall& call)
 {
-    if (!checkChosenForm(call, call.canMiss() && call.numberOfArguments() == 1))
+    if (!checkChosenForm(call, handlesSearch(call)))
         return;
-    finish(call, notEqual(indexOfSearched(call, HoleIs::Undefined), integer(-1)));
+    finish(call, notEqual(indexOfSearched(call, HoleIs::Undefined), -1));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -1,0 +1,28 @@
+# a parameter that is written `number` is filled with char codes alone: int32 but for the NaN behind the end of the text. NaN does not count against int32, so the guard tests for int32, and NaN takes the slow version
+# function isLetter(ch: number) { return ch >= 65; }   isLetter("abc".charCodeAt(1)); sink(isLetter)
+# TODO: types of numbers: the row of charCodeAt writes `number`, fractions and all (builtins/string.builtins.ts: b.f64; the table has no word for "an integer or NaN"). So that is what Link holds at `ch`, a fraction counts against int32, the guard asks for a number and the fast version compares doubles
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:ParameterGuard {{*}} tests (i32)
+
+module m0 path="letter.ts" displayPath="letter.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="abc"
+    v2 = PropGet v1 key="charCodeAt"
+    v3 = Integer integer=1
+    v4 = Call v2, v1, v3 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+    v5 = Call v0, -, v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="sink" [isFreeName]
+    v8 = Call v7, -, v0
+    v9 = Undefined
+    Return v9
+}
+function f1 name="isLetter" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=boolean}] {
+  b0(v0: number):
+    v1 = Integer integer=65
+    v2 = GreaterEq v0, v1
+    Return v2
+}

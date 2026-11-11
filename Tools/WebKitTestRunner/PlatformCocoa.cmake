@@ -1,4 +1,4 @@
-if (WEBKIT_SDK_IS_MACOS)
+if (WEBKIT_PLATFORM_MAC)
 
 # TestRunnerShared/CMakeLists.txt defines TestRunnerShared_DIR; this file uses the old name.
 set(WebKitTestRunner_SHARED_DIR ${TOOLS_DIR}/TestRunnerShared)
@@ -219,13 +219,20 @@ set(PRODUCT_BUNDLE_IDENTIFIER com.apple.WebKitTestRunner.InjectedBundle)
 configure_file("${WebKitTestRunner_DIR}/InjectedBundle-Info.plist"
                "${CMAKE_CURRENT_BINARY_DIR}/InjectedBundle-Info.plist")
 set(_wktr_app_dir "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/WebKitTestRunnerApp.app")
+if (NOT WEBKIT_SDK_IS_MACOS)
+    set(_wktr_app_plugins_dir "${_wktr_app_dir}/PlugIns")
+    set(_wktr_app_resources_dir "${_wktr_app_dir}")
+else ()
+    set(_wktr_app_plugins_dir "${_wktr_app_dir}/Contents/PlugIns")
+    set(_wktr_app_resources_dir "${_wktr_app_dir}/Contents/Resources")
+endif ()
 # TestControllerIOS.mm loads the injected bundle out of the app's PlugIns directory.
 set_target_properties(TestRunnerInjectedBundle PROPERTIES
     BUNDLE TRUE
     BUNDLE_EXTENSION bundle
     OUTPUT_NAME WebKitTestRunnerInjectedBundle
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/InjectedBundle-Info.plist"
-    LIBRARY_OUTPUT_DIRECTORY "${_wktr_app_dir}/PlugIns"
+    LIBRARY_OUTPUT_DIRECTORY "${_wktr_app_plugins_dir}"
     CODE_SIGN_BUNDLE "$<TARGET_BUNDLE_DIR:TestRunnerInjectedBundle>"
 )
 
@@ -359,11 +366,9 @@ set(PRODUCT_NAME WebKitTestRunnerApp)
 set(EXECUTABLE_NAME WebKitTestRunnerApp)
 set(PRODUCT_BUNDLE_IDENTIFIER ${_wktr_bundle_id})
 set(_wktr_app_plist "${CMAKE_CURRENT_BINARY_DIR}/WebKitTestRunnerApp-Info.plist")
-configure_file("${WebKitTestRunner_DIR}/WebKitTestRunnerApp/WebKitTestRunnerApp-Info.plist"
-               "${_wktr_app_plist}")
-
-WEBKIT_GET_DEVICE_FAMILY(_wktr_device_family 1 2 3 4 7)
-WEBKIT_ADD_EMBEDDED_BUNDLE_PLIST_KEYS(${_wktr_app_plist} ${_wktr_device_family})
+WEBKIT_PROCESS_INFO_PLIST("${WebKitTestRunner_DIR}/WebKitTestRunnerApp/WebKitTestRunnerApp-Info.plist"
+    "${_wktr_app_plist}"
+    TARGETED_DEVICE_FAMILY 1 2 3 4 7)
 
 # webkitpy and DefaultWebBrowserChecks.mm expect WebKitTestRunnerApp.app.
 set(WebKitTestRunner_OUTPUT_NAME WebKitTestRunnerApp)
@@ -391,20 +396,20 @@ set_target_properties(WebKitTestRunner PROPERTIES
 )
 
 add_custom_command(
-    OUTPUT "${_wktr_app_dir}/Launch.storyboardc"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${_wktr_app_dir}"
-    COMMAND ibtool --compile "${_wktr_app_dir}/Launch.storyboardc" "${WebKitTestRunner_DIR}/ios/Launch.storyboard"
+    OUTPUT "${_wktr_app_resources_dir}/Launch.storyboardc"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_wktr_app_resources_dir}"
+    COMMAND ibtool --compile "${_wktr_app_resources_dir}/Launch.storyboardc" "${WebKitTestRunner_DIR}/ios/Launch.storyboard"
     DEPENDS "${WebKitTestRunner_DIR}/ios/Launch.storyboard"
     VERBATIM)
 
-target_sources(WebKitTestRunner PRIVATE "${_wktr_app_dir}/Launch.storyboardc")
+target_sources(WebKitTestRunner PRIVATE "${_wktr_app_resources_dir}/Launch.storyboardc")
 # The app signs in POST_BUILD, which only re-runs on relink.
 set_property(TARGET WebKitTestRunner APPEND PROPERTY LINK_DEPENDS
     "$<TARGET_FILE:TestRunnerInjectedBundle>"
-    "${_wktr_app_dir}/Launch.storyboardc")
+    "${_wktr_app_resources_dir}/Launch.storyboardc")
 
 if (USE_EXTENSIONKIT)
-    add_dependencies(WebKitTestRunner WebContentExtension WebContentCaptivePortalExtension NetworkingExtension)
+    add_dependencies(WebKitTestRunner WebContentExtension WebContentCaptivePortalExtension WebContentEnhancedSecurityExtension NetworkingExtension)
     if (ENABLE_GPU_PROCESS)
         add_dependencies(WebKitTestRunner GPUExtension)
     endif ()
@@ -412,6 +417,8 @@ if (USE_EXTENSIONKIT)
     WEBKIT_EMBED_EXTENSION(WebKitTestRunner WebContentExtension ${_wktr_bundle_id}
         CHANGE_EXTENSION_POINT ADD_ATS)
     WEBKIT_EMBED_EXTENSION(WebKitTestRunner WebContentCaptivePortalExtension ${_wktr_bundle_id}
+        CHANGE_EXTENSION_POINT ADD_ATS)
+    WEBKIT_EMBED_EXTENSION(WebKitTestRunner WebContentEnhancedSecurityExtension ${_wktr_bundle_id}
         CHANGE_EXTENSION_POINT ADD_ATS)
     WEBKIT_EMBED_EXTENSION(WebKitTestRunner NetworkingExtension ${_wktr_bundle_id}
         ADD_ATS)

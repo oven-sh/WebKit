@@ -1,0 +1,55 @@
+# const first = { k: undefined };   Object.defineProperty(first, "k", { value: "text", writable: true, enumerable: true, configurable: true });
+# const second = { m: null };       Object.defineProperty(second, "m", { value: () => 1, writable: true, enumerable: true, configurable: true });
+# print(typeof first.k, typeof second.m);
+# Where a descriptor lies in sight and goes to the definition alone, the scan leads its value straight to the field that is defined and takes the edge to the descriptor's own field away.
+# The descriptor is made and the value is stored in it all the same: of that field Link knows no writer, so no door holds a store to a proof of it. It said `proven=string writers-known`, and the second literal was stopped: StoreOfOtherType.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS-NOT: field L0.0 "value"{{*}}writers-known
+# FIELDS: field L0.1 "writable" proven=true writers-known
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN-NOT: "value"{{*}}doors=
+# RUN: run-in-shell mechanisms=all
+# CHECK: string function
+# CHECK: exited with 0
+
+layout L0 fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="configurable" declared={type=undefined|boolean}}] ownFieldCount=4
+layout L1 module=m0 fields=[{key="k" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 fields=[{key="m" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = String string="k"
+    v6 = String string="text"
+    v7 = Boolean boolean=true
+    v8 = NewObject -, v6, v7, v7, v7 layout=L0 fields=[0, 1, 2, 3]
+    v9 = FinishObject v8
+    v10 = Call v4, v3, v2, v5, v9 calleeName="Object.defineProperty"
+    v11 = Null
+    v12 = NewObject -, v11 layout=L2 fields=[0]
+    v13 = FinishObject v12
+    v14 = String string="m"
+    v15 = NewClosure function=f1
+    v16 = NewObject -, v15, v7, v7, v7 layout=L0 fields=[0, 1, 2, 3]
+    v17 = FinishObject v16
+    v18 = Call v4, v3, v13, v14, v17 calleeName="Object.defineProperty"
+    v19 = PropGet v2 key="k"
+    v20 = TypeOf v19
+    v21 = PropGet v13 key="m"
+    v22 = TypeOf v21
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="print" [isFreeName]
+    v25 = Call v24, -, v20, v22 calleeName="print"
+    v26 = Undefined
+    Return v26
+}
+function f1 name="value" module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

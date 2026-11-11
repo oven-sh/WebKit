@@ -77,11 +77,6 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, CodeBlock* codeBlock, BytecodeInde
 }
 
 #if ENABLE(AOT)
-StackFrame::StackFrame(VM& vm, JSCell* owner, const AOT::TraceFrame& frame, JSCell* callee)
-    : m_frameData(CompiledFrameData { frame, callee ? WriteBarrier<JSCell>(vm, owner, callee) : WriteBarrier<JSCell>() })
-{
-}
-
 void StackFrame::appendCompiledFrames(const AOT::ReturnAddressTrace& trace, Vector<StackFrame>& results)
 {
     results.reserveCapacity(results.size() + std::min<uint32_t>(trace.limit, trace.numberOfReturnAddresses));
@@ -95,17 +90,17 @@ std::optional<AOT::SourcePosition> StackFrame::compiledPosition() const
     return isCompiledFrame() ? AOT::positionOf(compiledFrame()) : std::nullopt;
 }
 
-static String compiledSourceURL(const std::optional<AOT::SourcePosition>& position)
-{
-    return position ? AOT::sourceProviderURLOf(position->source) : emptyString();
-}
 
 static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFrame, const AOT::FunctionDescription& description)
 {
     if (description.codeType() == ModuleCode)
         return "module code"_s;
+    if (description.codeType() == EvalCode)
+        return "eval code"_s;
+    if (compiledFrame.frame.isAtFailedTailCall)
+        return description.name(vm);
     if (!compiledFrame.frame.isAsyncFrame)
-        return description.calculatedDisplayName(vm, compiledFrame.callee.get(), compiledFrame.frame.calleeLiesInFrame);
+        return description.calculatedDisplayName(vm);
     String name = description.name(vm);
     if (name.isEmpty() || description.isNamedByOwner())
         return emptyString();
@@ -205,10 +200,7 @@ void StackFrame::visitAggregate(Visitor& visitor)
         },
         [](const WasmFrameData&) { }
 #if ENABLE(AOT)
-        , [&visitor](const CompiledFrameData& compiledFrame) {
-            if (compiledFrame.callee)
-                visitor.append(compiledFrame.callee);
-        }
+        , [](const CompiledFrameData&) { }
 #endif
     );
 }
@@ -223,9 +215,7 @@ bool StackFrame::isMarked(VM& vm) const
         },
         [](const WasmFrameData&) { return true; }
 #if ENABLE(AOT)
-        , [&vm](const CompiledFrameData& compiledFrame) {
-            return !compiledFrame.callee || vm.heap.isMarked(compiledFrame.callee.get());
-        }
+        , [](const CompiledFrameData&) { return true; }
 #endif
     );
 }
@@ -276,7 +266,7 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
         }
 #if ENABLE(AOT)
         , [this](const CompiledFrameData&) -> String {
-            return representsHostFunction() ? "[native code]"_s : compiledSourceURL(compiledPosition());
+            return representsHostFunction() ? "[native code]"_s : AOT::sourceProviderURLOf(compiledFrame(), compiledPosition());
         }
 #endif
     );
@@ -305,7 +295,7 @@ String StackFrame::sourceURLStripped(VM& vm) const
         }
 #if ENABLE(AOT)
         , [this](const CompiledFrameData&) -> String {
-            return representsHostFunction() ? "[native code]"_s : compiledSourceURL(compiledPosition());
+            return representsHostFunction() ? "[native code]"_s : AOT::sourceProviderURLOf(compiledFrame(), compiledPosition());
         }
 #endif
     );
@@ -414,7 +404,9 @@ ALWAYS_INLINE auto StackFrame::withPartsOfString(VM& vm, const Functor& functor)
         if (description.builtinKind() == AOT::StackTraceBuiltinKind::HostFunction)
             return functor(functionName, "@[native code]"_s);
         auto position = AOT::positionOf(compiledFrame->frame);
-        fullSourceURL = compiledSourceURL(position);
+        fullSourceURL = AOT::sourceProviderURLOf(compiledFrame->frame, position);
+        if (!fullSourceURL.isEmpty() && position && position->source)
+            fullSourceURL = AOT::displayPathOf(position->source);
         hasLineAndColumnInfo = true;
         if (position)
             lineColumn = position->lineColumn;

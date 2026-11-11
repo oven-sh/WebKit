@@ -141,7 +141,6 @@ private:
 using NamedBuiltin = NamedTableID<BuiltinID>;
 using NamedBuiltinName = NamedTableID<BuiltinName>;
 using NamedBuiltinClass = NamedTableID<BuiltinClassID>;
-using NamedBuiltinLayout = NamedTableID<BuiltinLayoutID>;
 
 class BuiltinOperand {
 public:

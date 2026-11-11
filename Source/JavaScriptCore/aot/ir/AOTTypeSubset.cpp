@@ -8,396 +8,302 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinTableRealm.h"
-#include "AOTIRProgram.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-namespace {
-
-} // anonymous namespace
-
-ClassRelation relate(const BuiltinTable& builtins, BuiltinClassID first, BuiltinClassID second)
+static std::span<const ClassPart> classPartsToCompare(TypeReader reader, ClassPartsID parts)
 {
-    const BuiltinClass& a = builtins.at(first);
-    const BuiltinClass& b = builtins.at(second);
-    if (a.instanceTest == BuiltinInstanceTest::None || b.instanceTest == BuiltinInstanceTest::None)
-        return ClassRelation::Unknown;
-
-    bool haveSameCellType = a.type == b.type;
-    if (a.instanceTest == BuiltinInstanceTest::JSTypeEquals && b.instanceTest == BuiltinInstanceTest::JSTypeEquals)
-        return haveSameCellType ? ClassRelation::Unknown : ClassRelation::Disjoint;
-    if (a.instanceTest == BuiltinInstanceTest::SharingModeEquals && b.instanceTest == BuiltinInstanceTest::SharingModeEquals)
-        return a.sharingMode == b.sharingMode ? ClassRelation::Unknown : ClassRelation::Disjoint;
-    if (builtins.isSameOrSubclassOf(first, second) || builtins.isSameOrSubclassOf(second, first))
-        return ClassRelation::Unknown;
-    if (a.instanceTest != b.instanceTest && haveSameCellType)
-        return ClassRelation::Unknown;
-    return ClassRelation::Disjoint;
+    if (!parts)
+        return { };
+    return reader.at(parts);
 }
 
-bool isFunctionClass(const BuiltinTable& builtins, BuiltinClassID id)
+template<typename SetID>
+static auto membersToCompare(TypeReader reader, SetID set) -> decltype(reader.at(set))
 {
-    if (builtins.isSameOrSubclassOf(id, BuiltinClasses::Function))
-        return true;
-    JSType type = builtins.at(id).type;
-    return isFunctionType(type) || type == ProxyObjectType;
+    if (!set)
+        return { };
+    return reader.at(set);
 }
 
-bool isCallableBuiltin(const BuiltinTable& builtins, BuiltinID id)
+static bool functionsOverlapClasses(const BuiltinTable& builtins, std::span<const ClassPart> parts)
 {
-    switch (builtins.at(id).kind) {
-    case BuiltinKind::Constructor:
-    case BuiltinKind::Function:
-    case BuiltinKind::Method:
-        return true;
-    case BuiltinKind::Prototype:
-        return !!builtins.dispatchOf(id, BuiltinCallMode::Call);
-    case BuiltinKind::Namespace:
-    case BuiltinKind::Accessor:
-    case BuiltinKind::DataProperty:
-    case BuiltinKind::Constant:
-    case BuiltinKind::NativeBinding:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-bool isTestableBuiltin(const BuiltinTable& builtins, BuiltinID id)
-{
-    return BuiltinCellKey::object(id).hasCell(builtins);
-}
-
-bool hasCallableParts(const Type& type)
-{
-    return type.anyFunction || !type.functions.isEmpty();
-}
-
-bool includesFunction(const Type& type, FunctionID function)
-{
-    return type.anyFunction || type.functions.contains(function);
-}
-
-bool includesBuiltin(const Type& type, BuiltinID builtin, const BuiltinTable& builtins)
-{
-    return type.builtins.contains(builtin) || (type.anyFunction && isCallableBuiltin(builtins, builtin));
-}
-
-bool mayContainAnyCallable(const BuiltinTable& builtins, const Type& type)
-{
-    return type.anyFunction || std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+    return std::ranges::any_of(parts, [&](const ClassPart& part) {
         return isFunctionClass(builtins, part.builtinClass);
     });
 }
 
-bool mayContainAnyBuiltin(const Type& type)
+static bool builtinOverlapsClasses(const BuiltinTable& builtins, BuiltinID builtin, std::span<const ClassPart> parts)
 {
-    return type.anyFunction || !type.classes.isEmpty();
-}
-
-const RuntimeFunctionData* findTableRecordOf(const Program& program, FunctionID function)
-{
-    const BuiltinTable& builtins = program.builtins();
-    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
-        if (entry.function == function)
-            return builtins.contains(entry.id) ? &builtins.at(entry.id) : nullptr;
-    }
-    return nullptr;
-}
-
-static bool putsValueInto(const BuiltinTable& builtins, const BuiltinHostUses& uses, BuiltinID entry)
-{
-    return std::ranges::any_of(uses.list, [&](const BuiltinHostUse& use) {
-        if (use.use == BuiltinHostReadUse::IsValueOf)
-            return builtins.canonicalID(use.builtin) == entry;
-        return use.use == BuiltinHostReadUse::Called && use.call && putsValueInto(builtins, use.call->result, entry);
+    return std::ranges::any_of(parts, [&](const ClassPart& part) {
+        return mayBeInstanceOf(builtins, builtin, part.builtinClass);
     });
 }
 
-static bool holdsValueFromLibrary(const BuiltinTable& builtins, BuiltinID entry)
+template<typename SetID>
+static bool isInternedSetSubset(TypeReader reader, SetID set, SetID of)
 {
-    bool isExport = std::ranges::any_of(builtins.moduleLoadsOf(entry), [&](const BuiltinModuleLoad& load) {
-        return std::ranges::any_of(load.usesOfExports, [&](const BuiltinHostUses& uses) {
-            return putsValueInto(builtins, uses, entry);
-        });
-    });
-    return isExport || std::ranges::any_of(builtins.calledFunctionsOf(entry), [&](const BuiltinCalledFunction& called) {
-        return putsValueInto(builtins, called.uses, entry);
-    });
-}
-
-bool mayBeClosureOf(const TypeTable& types, BuiltinID builtin, FunctionID function, const RuntimeFunctionData* recordOfFunction)
-{
-    const Program* program = types.program();
-    if (!program)
+    if (!set || set == of)
         return true;
-    if (!isLibraryCode(*program, program->at(function)))
+    return of && isSubset(reader.at(set).untyped(), reader.at(of).untyped());
+}
+
+template<typename SetID>
+static bool internedSetsOverlap(TypeReader reader, SetID a, SetID b)
+{
+    if (!a || !b)
         return false;
+    return a == b || overlap(reader.at(a).untyped(), reader.at(b).untyped());
+}
 
-    const BuiltinTable& builtins = types.builtins();
-    BuiltinID canonical = builtins.canonicalID(builtin);
-    if (recordOfFunction && std::ranges::find(recordOfFunction->implements, canonical) != recordOfFunction->implements.end())
-        return true;
-    if (holdsValueFromLibrary(builtins, canonical))
-        return true;
-    return std::ranges::any_of(builtins.overloadsOf(canonical), [&](const BuiltinOverload& overload) {
-        const RuntimeFunctionEntry* entry = findRuntimeFunction(*program, overload.code.implementation.function);
-        return entry && entry->function == function;
+bool mayContainAnyCallable(TypeReader reader, const Type& type)
+{
+    return type.mayBeFunction() || functionsOverlapClasses(reader.builtins(), classPartsToCompare(reader, type.classes));
+}
+
+bool mayContainAnyClosure(TypeReader reader, const Type& type)
+{
+    const BuiltinTable& builtins = reader.builtins();
+    return type.anyFunction || std::ranges::any_of(classPartsToCompare(reader, type.classes), [&](const ClassPart& part) {
+        return holdsOnlyCallables(builtins, part.builtinClass);
     });
 }
 
-bool mayBeClosureOf(const TypeTable& types, BuiltinID builtin, FunctionID function)
+bool mayContainBuiltin(TypeReader reader, const Type& type, BuiltinID builtin)
 {
-    const Program* program = types.program();
-    return mayBeClosureOf(types, builtin, function, program ? findTableRecordOf(*program, function) : nullptr);
-}
-
-LibraryClosuresOfBuiltin libraryClosuresOf(const TypeTable& types, BuiltinID builtin)
-{
-    LibraryClosuresOfBuiltin closures;
-    const Program* program = types.program();
-    if (!program) {
-        closures.mayBeAnyFunctionOfLibrary = true;
-        return closures;
-    }
-
-    const BuiltinTable& builtins = types.builtins();
-    BuiltinID canonical = builtins.canonicalID(builtin);
-    closures.mayBeAnyFunctionOfLibrary = holdsValueFromLibrary(builtins, canonical);
-    for (const BuiltinOverload& overload : builtins.overloadsOf(canonical)) {
-        if (const RuntimeFunctionEntry* entry = findRuntimeFunction(*program, overload.code.implementation.function))
-            closures.functions.appendIfNotContains(entry->function);
-    }
-    return closures;
-}
-
-bool mayContainBuiltin(const TypeTable& types, const Type& type, BuiltinID builtin)
-{
-    if (mayContainAnyBuiltin(type) || type.builtins.contains(builtin))
+    if (type.anyFunction)
         return true;
-    return std::ranges::any_of(type.functions, [&](FunctionID function) {
-        return mayBeClosureOf(types, builtin, function);
+
+    const BuiltinTable& builtins = reader.builtins();
+    if (builtinOverlapsClasses(builtins, builtin, classPartsToCompare(reader, type.unnamedClasses)))
+        return true;
+
+    const ObjectTable& objects = reader.objects();
+    ObjectID object = objects.objectOf(builtin);
+    if (mayFitUnknownOf(reader, object, type))
+        return true;
+
+    BuiltinID canonical = builtins.canonicalID(builtin);
+    return membersToCompare(reader, type.objects).anyOf([&](ObjectID named) {
+        return objects.builtinOf(named) == canonical || mayBeSameObject(reader, object, named);
     });
 }
 
-bool overlapsAnotherClass(const BuiltinTable& builtins, BuiltinClassID builtinClass, const Type& type)
+bool overlapsAnotherClass(TypeReader reader, BuiltinClassID builtinClass, const Type& type)
 {
-    return std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+    const BuiltinTable& builtins = reader.builtins();
+    return std::ranges::any_of(classPartsToCompare(reader, type.classes), [&](const ClassPart& part) {
         return part.builtinClass != builtinClass && relate(builtins, builtinClass, part.builtinClass) == ClassRelation::Unknown;
     });
 }
 
-bool isPartSubset(const ClassPart& a, const ClassPart& b, const TypeTable& types)
+static bool areClassesSubset(TypeReader reader, ClassPartsID classes, const Type& of)
 {
-    if (!a.provenPristine.containsAll(b.provenPristine))
-        return false;
-    if (!b.contentsAreProven)
+    if (classes == of.unnamedClasses)
         return true;
-    if (!a.contentsAreProven)
-        return false;
-    if (b.arrayStorage != ArrayStorage::Other && a.arrayStorage != b.arrayStorage)
-        return false;
-    for (unsigned index = 0; index < b.writtenContents.size(); ++index) {
-        if (!isSubset(types.at(a.writtenContentsAt(index)), types.at(b.writtenContentsAt(index)), types))
-            return false;
-    }
-    return true;
-}
-
-static bool areCallablesSubset(const Type& a, const Type& b, const BuiltinTable& builtins)
-{
-    if (a.anyFunction && !b.anyFunction)
-        return false;
-    bool includesFunctions = std::ranges::all_of(a.functions, [&](FunctionID function) {
-        return includesFunction(b, function);
-    });
-    return includesFunctions && std::ranges::all_of(a.builtins, [&](BuiltinID builtin) {
-        return includesBuiltin(b, builtin, builtins);
+    std::span<const ClassPart> holders = classPartsToCompare(reader, of.unnamedClasses);
+    return std::ranges::all_of(classPartsToCompare(reader, classes), [&](const ClassPart& part) {
+        return (of.anyFunction && holdsOnlyCallables(reader.builtins(), part.builtinClass)) || findPartHolding(reader, holders, part.builtinClass);
     });
 }
 
-static const ClassPart* findPartHolding(const Type& type, BuiltinClassID builtinClass, const BuiltinTable& builtins)
+static bool areLayoutsSubset(TypeReader reader, LayoutSetID layouts, LayoutSetID of, std::span<const ClassPart> classesOfHolder)
 {
-    if (const ClassPart* part = type.findClassPart(builtinClass))
-        return part;
-    const BuiltinClass& held = builtins.at(builtinClass);
-    if (held.instanceTest != BuiltinInstanceTest::JSTypeEquals)
-        return nullptr;
-    for (const ClassPart& part : type.classes) {
-        const BuiltinClass& holder = builtins.at(part.builtinClass);
-        bool areToldByOneTest = holder.instanceTest == BuiltinInstanceTest::JSTypeEquals && holder.type == held.type;
-        if (areToldByOneTest && !part.contentsAreProven && !part.provenPristine.contains(PristineAspects::Names) && builtins.isSameOrSubclassOf(builtinClass, part.builtinClass))
-            return &part;
-    }
-    return nullptr;
-}
-
-static bool areClassesSubset(const Type& a, const Type& b, const TypeTable& types)
-{
-    return std::ranges::all_of(a.classes, [&](const ClassPart& part) {
-        const ClassPart* partner = findPartHolding(b, part.builtinClass, types.builtins());
-        return partner && isPartSubset(part, *partner, types);
+    if (isInternedSetSubset(reader, layouts, of))
+        return true;
+    if (classesOfHolder.empty())
+        return false;
+    auto listed = membersToCompare(reader, of);
+    return reader.at(layouts).allOf([&](LayoutID layout) {
+        return listed.contains(layout) || isInsideSomeClassPart(reader, layout, classesOfHolder);
     });
 }
 
-static bool areRegExpLiteralsSubset(const Type& a, const Type& b)
+static bool areNamedObjectsSubset(TypeReader reader, const Type& type, const Type& of)
 {
-    if (b.regExpLiteralSet.isEmpty() || !a.findClassPart(BuiltinClasses::RegExp))
+    if (isInternedSetSubset(reader, type.objects, of.objects))
         return true;
-    return !a.regExpLiteralSet.isEmpty() && a.regExpLiteralSet.isSubsetOf(b.regExpLiteralSet);
-}
-
-static bool areLayoutsSubset(const Type& a, const Type& b, const TypeTable& types)
-{
-    if (!a.layouts || a.layouts == b.layouts)
-        return true;
-    if (!b.layouts)
+    if (!of.hasUnknown())
         return false;
-    return isSubsetOf(types.at(a.layouts), types.at(b.layouts));
+
+    auto named = reader.at(type.objects);
+    auto namedByHolder = membersToCompare(reader, of.objects);
+    bool allAreInside = true;
+    forEachAddedMember(named.untyped(), namedByHolder.untyped(), [&](uint32_t member) {
+        allAreInside = allAreInside && surelyFitsUnknownOf(reader, ObjectID(member), of);
+    });
+    return allAreInside;
 }
 
-static bool areObjectsSubset(const Type& a, const Type& b, const TypeTable& types)
+static bool areObjectsSubset(TypeReader reader, const Type& type, const Type& of)
 {
-    if (!a.hasObjects() || b.anyObject)
+    if (!type.hasObjects() || of.anyObject)
         return true;
-    if (a.anyObject)
+    if (type.anyObject || (type.anyFunction && !of.anyFunction))
         return false;
-    return areCallablesSubset(a, b, types.builtins())
-        && areClassesSubset(a, b, types)
-        && areRegExpLiteralsSubset(a, b)
-        && areLayoutsSubset(a, b, types);
+
+    return areClassesSubset(reader, type.unnamedClasses, of)
+        && areLayoutsSubset(reader, type.unnamedLayouts, of.unnamedLayouts, classPartsToCompare(reader, of.unnamedClasses))
+        && areNamedObjectsSubset(reader, type, of);
 }
 
-bool isSubset(const Type& a, const Type& b, const TypeTable& types)
+bool isSubset(TypeReader reader, const Type& type, const Type& of)
 {
-    if (&a == &b)
-        return true;
-    uint16_t missingPrimitives = a.primitives & ~b.primitives;
-    if (b.primitives & Primitive::String)
+    uint16_t missingPrimitives = type.primitives & ~of.primitives;
+    if (of.primitives & Primitive::String)
         missingPrimitives &= ~Primitive::LiteralString;
-    if (b.primitives & Primitive::Symbol)
+    if (of.primitives & Primitive::Symbol)
         missingPrimitives &= ~Primitive::LiteralSymbol;
     if (missingPrimitives)
         return false;
-    if (a.primitives & Primitive::Integer && !a.integers.isSubsetOf(b.integers))
+    if (!type.integers.isSubsetOf(of.integers))
         return false;
-    if (!(b.primitives & Primitive::String) && !a.stringLiterals.isSubsetOf(b.stringLiterals))
+    if (type.primitives & Primitive::FractionalNumber && !of.boundsOfFractions.isEmpty() && (type.boundsOfFractions.isEmpty() || !type.boundsOfFractions.isSubsetOf(of.boundsOfFractions)))
         return false;
-    if (!(b.primitives & Primitive::Symbol) && !a.symbolLiterals.isSubsetOf(b.symbolLiterals))
+    if (!(of.primitives & Primitive::String) && !isInternedSetSubset(reader, type.stringLiterals, of.stringLiterals))
         return false;
-    if (a.opaque && a.opaque != b.opaque)
+    if (!(of.primitives & Primitive::Symbol) && !isInternedSetSubset(reader, type.symbolLiterals, of.symbolLiterals))
         return false;
-    if (a.environment && a.environment != b.environment)
+    if (type.opaque && type.opaque != of.opaque)
         return false;
-    return areObjectsSubset(a, b, types);
+    if (type.environment && type.environment != of.environment)
+        return false;
+    return areObjectsSubset(reader, type, of);
 }
 
-bool Type::isSubsetOf(const Type& other, const Program& program) const
+template<typename SetID>
+static bool literalsOverlap(TypeReader reader, const Type& a, const Type& b, SetID TypeParts::* literals, uint16_t widenedBit, uint16_t literalBit)
 {
-    return isSubset(*this, other, program.types);
-}
-
-template<typename T>
-static bool literalsOverlap(const Type& a, const Type& b, LiteralPart<T> part)
-{
-    uint16_t bits = part.widenedBit | part.literalBit;
+    uint16_t bits = widenedBit | literalBit;
     if (!(a.primitives & bits) || !(b.primitives & bits))
         return false;
-    return (a.primitives | b.primitives) & part.widenedBit || (a.*part.literals).overlaps(b.*part.literals);
+    return (a.primitives | b.primitives) & widenedBit || internedSetsOverlap(reader, a.*literals, b.*literals);
 }
 
-static bool callablesOverlap(const BuiltinTable& builtins, const Type& a, const Type& b)
+static bool layoutsOverlapClasses(TypeReader reader, LayoutSetID layouts, std::span<const ClassPart> classes)
 {
-    return (hasCallableParts(a) && mayContainAnyCallable(builtins, b))
-        || (hasCallableParts(b) && mayContainAnyCallable(builtins, a))
-        || a.functions.overlaps(b.functions);
-}
-
-static bool mayContainBuiltinOf(const TypeTable& types, const Type& container, const Type& type)
-{
-    return std::ranges::any_of(type.builtins, [&](BuiltinID builtin) {
-        return mayContainBuiltin(types, container, builtin);
-    });
-}
-
-static bool builtinsOverlap(const Type& a, const Type& b, const TypeTable& types)
-{
-    return mayContainBuiltinOf(types, b, a) || mayContainBuiltinOf(types, a, b);
-}
-
-static bool regExpLiteralsOverlap(const Type& a, const Type& b)
-{
-    return a.regExpLiteralSet.isEmpty() || b.regExpLiteralSet.isEmpty() || a.regExpLiteralSet.overlaps(b.regExpLiteralSet);
-}
-
-static bool classesOverlap(const BuiltinTable& builtins, const Type& a, const Type& b)
-{
-    return std::ranges::any_of(a.classes, [&](const ClassPart& part) {
-        if (overlapsAnotherClass(builtins, part.builtinClass, b))
-            return true;
-        if (!b.findClassPart(part.builtinClass))
-            return false;
-        return part.builtinClass != BuiltinClasses::RegExp || regExpLiteralsOverlap(a, b);
-    });
-}
-
-static bool layoutsOverlap(const Type& a, const Type& b, const TypeTable& types)
-{
-    if (!a.layouts || !b.layouts)
+    if (!layouts || classes.empty())
         return false;
-    return a.layouts == b.layouts || overlaps(types.at(a.layouts), types.at(b.layouts));
+    return reader.at(layouts).anyOf([&](LayoutID layout) {
+        return mayBeInsideSomeClassPart(reader, layout, classes);
+    });
 }
 
-static bool objectsOverlap(const Type& a, const Type& b, const TypeTable& types)
+static bool classesOverlap(const BuiltinTable& builtins, std::span<const ClassPart> a, std::span<const ClassPart> b)
+{
+    return std::ranges::any_of(a, [&](const ClassPart& first) {
+        return std::ranges::any_of(b, [&](const ClassPart& second) {
+            return first.builtinClass == second.builtinClass || relate(builtins, first.builtinClass, second.builtinClass) == ClassRelation::Unknown;
+        });
+    });
+}
+
+static bool unknownObjectsOverlap(TypeReader reader, const Type& a, const Type& b)
+{
+    if (a.anyFunction && b.anyFunction)
+        return true;
+
+    const BuiltinTable& builtins = reader.builtins();
+    std::span<const ClassPart> classesOfFirst = classPartsToCompare(reader, a.unnamedClasses);
+    std::span<const ClassPart> classesOfSecond = classPartsToCompare(reader, b.unnamedClasses);
+    if (a.anyFunction && functionsOverlapClasses(builtins, classesOfSecond))
+        return true;
+    if (b.anyFunction && functionsOverlapClasses(builtins, classesOfFirst))
+        return true;
+    return internedSetsOverlap(reader, a.unnamedLayouts, b.unnamedLayouts)
+        || layoutsOverlapClasses(reader, a.unnamedLayouts, classesOfSecond)
+        || layoutsOverlapClasses(reader, b.unnamedLayouts, classesOfFirst)
+        || classesOverlap(builtins, classesOfFirst, classesOfSecond);
+}
+
+static bool namedObjectOverlapsUnknownOf(TypeReader reader, ObjectID object, const Type& other, std::span<const ClassPart> classesOfOther, bool otherMayHoldAnyClosure, LayoutsFoundForCellsNobodyDescribes& found)
+{
+    if (mayFitUnknownOf(reader, object, other, found))
+        return true;
+
+    const BuiltinTable& builtins = reader.builtins();
+    if (BuiltinID builtin = reader.objects().builtinOf(object))
+        return other.anyFunction || builtinOverlapsClasses(builtins, builtin, classesOfOther);
+
+    const ObjectRecord& record = reader.at(object);
+    if (otherMayHoldAnyClosure && record.traits.containsAny({ ObjectTrait::IsClosure, ObjectTrait::IsCallable }))
+        return true;
+    return record.has(ObjectTrait::HasNoShape) && std::ranges::any_of(classesOfOther, [&](const ClassPart& part) {
+        return !hasInstanceTest(builtins, part.builtinClass);
+    });
+}
+
+static bool namedObjectsOverlapUnknownOf(TypeReader reader, const Type& type, const Type& other)
+{
+    if (!type.objects)
+        return false;
+    bool otherMayHoldAnyClosure = mayContainAnyClosure(reader, other);
+    if (!other.hasUnknown() && !otherMayHoldAnyClosure)
+        return false;
+
+    std::span<const ClassPart> classesOfOther = classPartsToCompare(reader, other.unnamedClasses);
+    LayoutsFoundForCellsNobodyDescribes found;
+    return reader.at(type.objects).anyOf([&](ObjectID object) {
+        return namedObjectOverlapsUnknownOf(reader, object, other, classesOfOther, otherMayHoldAnyClosure, found);
+    });
+}
+
+static bool namedObjectsMayBeSameObject(TypeReader reader, ObjectSetID a, ObjectSetID b)
+{
+    if (!a || !b)
+        return false;
+
+    ObjectSetAliasIndex index(reader, reader.at(b));
+    return reader.at(a).anyOf([&](ObjectID first) {
+        return index.namesAliasOf(first);
+    });
+}
+
+static bool objectsOverlap(TypeReader reader, const Type& a, const Type& b)
 {
     if (!a.hasObjects() || !b.hasObjects())
         return false;
     if (a.anyObject || b.anyObject)
         return true;
-    const BuiltinTable& builtins = types.builtins();
-    return callablesOverlap(builtins, a, b) || builtinsOverlap(a, b, types) || classesOverlap(builtins, a, b) || layoutsOverlap(a, b, types);
+    return internedSetsOverlap(reader, a.objects, b.objects)
+        || unknownObjectsOverlap(reader, a, b)
+        || namedObjectsOverlapUnknownOf(reader, a, b)
+        || namedObjectsOverlapUnknownOf(reader, b, a)
+        || namedObjectsMayBeSameObject(reader, a.objects, b.objects);
 }
 
-bool overlap(const Type& a, const Type& b, const TypeTable& types)
+static bool fractionsLieApart(const Type& a, const Type& b)
 {
-    if (a.primitives & b.primitives & plainPrimitives)
+    if (a.boundsOfFractions.isEmpty() || b.boundsOfFractions.isEmpty())
+        return false;
+    Range bounds = a.boundsOfFractions.intersectWith(b.boundsOfFractions);
+    return bounds.minimum >= bounds.maximum;
+}
+
+bool overlap(TypeReader reader, const Type& a, const Type& b)
+{
+    uint16_t primitivesOfBoth = a.primitives & b.primitives & plainPrimitives;
+    if (fractionsLieApart(a, b))
+        primitivesOfBoth &= ~Primitive::FractionalNumber;
+    if (primitivesOfBoth)
         return true;
     if (!a.integers.intersectWith(b.integers).isEmpty())
         return true;
-    if (literalsOverlap(a, b, stringPart) || literalsOverlap(a, b, symbolPart))
+    if (literalsOverlap(reader, a, b, &TypeParts::stringLiterals, Primitive::String, Primitive::LiteralString))
         return true;
-    if (a.opaque && a.opaque == b.opaque)
+    if (literalsOverlap(reader, a, b, &TypeParts::symbolLiterals, Primitive::Symbol, Primitive::LiteralSymbol))
         return true;
-    if (a.environment && a.environment == b.environment)
-        return true;
-    return objectsOverlap(a, b, types);
+    return mayBeSameObject(reader, a, b);
 }
 
-bool mayBeSameObject(const Type& a, const Type& b, const TypeTable& types)
+bool mayBeSameObject(TypeReader reader, const Type& a, const Type& b)
 {
     if (a.opaque && a.opaque == b.opaque)
         return true;
     if (a.environment && a.environment == b.environment)
         return true;
-    return objectsOverlap(a, b, types);
-}
-
-bool Type::overlaps(const Type& other, const Program& program) const
-{
-    return overlap(*this, other, program.types);
-}
-
-std::span<const LayoutID> membersOf(const TypeTable& types, const Type& type)
-{
-    if (!type.layouts)
-        return { };
-    return types.at(type.layouts).completeMembers();
-}
-
-std::span<const LayoutID> membersOf(const Program& program, const Type& type)
-{
-    return membersOf(program.types, type);
+    return objectsOverlap(reader, a, b);
 }
 
 } } } // namespace JSC::AOT::Typed

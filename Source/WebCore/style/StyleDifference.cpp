@@ -34,7 +34,7 @@
 namespace WebCore {
 namespace Style {
 
-static Visibility LEGACY_NODELETE visibilityIncludingForceHidden(const ComputedStyle& style)
+NODELETE static Visibility visibilityIncludingForceHidden(const ComputedStyle& style)
 {
     return style.isForceHidden() ? Visibility::Hidden : style.visibility();
 }
@@ -43,7 +43,7 @@ class DifferenceFunctions final {
 public:
     // MARK: DifferenceResult::Layout
 
-    static bool LEGACY_NODELETE positionChangeIsMovementOnly(const InsetBox& a, const InsetBox& b, const PreferredSize& width)
+    NODELETE static bool positionChangeIsMovementOnly(const InsetBox& a, const InsetBox& b, const PreferredSize& width)
     {
         // If any unit types are different, then we can't guarantee
         // that this was just a movement.
@@ -387,6 +387,8 @@ public:
             || a.lineSnap != b.lineSnap
             || a.lineAlign != b.lineAlign
             || a.hangingPunctuation != b.hangingPunctuation
+            || a.widows != b.widows
+            || a.orphans != b.orphans
             || a.usedContentVisibility != b.usedContentVisibility
     #if ENABLE(WEBKIT_OVERFLOW_SCROLLING_CSS_PROPERTY)
             || a.overflowScrolling != b.overflowScrolling
@@ -653,7 +655,8 @@ public:
         }
     #endif
 
-        bool currentColorDiffers = a.inheritedData().color != b.inheritedData().color;
+        auto currentColorDiffers = a.inheritedData().color != b.inheritedData().color
+            || a.inheritedRareData().overrideColor != b.inheritedRareData().overrideColor;
         if (currentColorDiffers) {
             if (a.filter().hasFilterThatRequiresRepaintForCurrentColorChange() || a.backdropFilter().hasFilterThatRequiresRepaintForCurrentColorChange())
                 return true;
@@ -664,7 +667,7 @@ public:
 
     // MARK: DifferenceResult::Repaint
 
-    static bool LEGACY_NODELETE requiresPainting(const Style::ComputedStyle& style)
+    NODELETE static bool requiresPainting(const Style::ComputedStyle& style)
     {
         if (visibilityIncludingForceHidden(style) == Visibility::Hidden)
             return false;
@@ -820,6 +823,9 @@ public:
             || a.insideDefaultButton != b.insideDefaultButton
             || a.insideSubmitButton != b.insideSubmitButton
             || a.paintOrder != b.paintOrder
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+            || a.appleColorFilterOverride != b.appleColorFilterOverride
+#endif
     #if ENABLE(DARK_MODE_CSS)
             || a.colorScheme != b.colorScheme
     #endif
@@ -860,7 +866,8 @@ public:
 
     static bool changeRequiresRepaint(const Style::ComputedStyle& a, const Style::ComputedStyle& b, OptionSet<DifferenceContextSensitiveProperty>& changedContextSensitiveProperties)
     {
-        bool currentColorDiffers = a.inheritedData().color != b.inheritedData().color;
+        auto currentColorDiffers = a.inheritedData().color != b.inheritedData().color
+            || a.inheritedRareData().overrideColor != b.inheritedRareData().overrideColor;
 
         if (currentColorDiffers || &a.svgData() != &b.svgData()) {
             SUPPRESS_UNCOUNTED_ARG if (svgDataChangeRequiresRepaint(a.svgData(), b.svgData(), currentColorDiffers))
@@ -970,7 +977,9 @@ public:
                 || a.inheritedRareData().textEmphasisStyle != b.inheritedRareData().textEmphasisStyle
                 || a.inheritedRareData().strokeColor != b.inheritedRareData().strokeColor
                 || a.inheritedRareData().caretColor != b.inheritedRareData().caretColor
-                || a.inheritedRareData().textUnderlineOffset != b.inheritedRareData().textUnderlineOffset)
+                || a.inheritedRareData().textUnderlineOffset != b.inheritedRareData().textUnderlineOffset
+                || a.inheritedRareData().overrideColor != b.inheritedRareData().overrideColor
+                || a.inheritedRareData().overrideVisitedLinkColor != b.inheritedRareData().overrideVisitedLinkColor)
                 return true;
         }
 

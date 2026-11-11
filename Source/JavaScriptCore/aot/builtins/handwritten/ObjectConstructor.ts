@@ -60,6 +60,21 @@ export function groupBy(items, callback)
     var groups = $Object.$create(null);
     var k = 0;
 
+    // The loop over a list takes no iterator while the list is as it was made. Reading @@iterator again must not show.
+    if ($isJSArray(items) && iteratorMethod === $arrayProtoValues && $readsIteratorOfListUnseen(items)) {
+        for (var item of items) {
+            var key = $toPropertyKey(callback.$call($undefined, item, k));
+            var group = groups[key];
+            if (!group) {
+                group = [];
+                $putByValDirect(groups, key, group);
+            }
+            $putByValDirect(group, group.length, item);
+            ++k;
+        }
+        return groups;
+    }
+
     var iterator = iteratorMethod.$call(items);
     // Since for-of loop once more looks up the @@iterator property of a given iterable,
     // it could be observable if the user defines a getter for @@iterator.
@@ -67,11 +82,11 @@ export function groupBy(items, callback)
     var wrapper = {
         [Symbol.iterator]: function () { return iterator; }
     };
-    for (var item of wrapper) {
+    for (item of wrapper) {
         if (k >= $MAX_SAFE_INTEGER)
             $throwTypeError("The number of iterations exceeds 2**53 - 1");
-        var key = $toPropertyKey(callback.$call($undefined, item, k));
-        var group = groups[key];
+        key = $toPropertyKey(callback.$call($undefined, item, k));
+        group = groups[key];
         if (!group) {
             group = [];
             $putByValDirect(groups, key, group);

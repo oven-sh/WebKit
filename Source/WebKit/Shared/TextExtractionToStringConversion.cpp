@@ -637,8 +637,7 @@ public:
         }
 
         if (m_lines.size() > 1) {
-            Vector<TextExtractionAggregatedLine> unduplicatedLines;
-            unduplicatedLines.reserveInitialCapacity(m_lines.size());
+            Vector<TextExtractionAggregatedLine> unduplicatedLines(ReserveCapacityTag { }, m_lines.size());
             for (auto& line : borrow(m_lines)) {
                 if (unduplicatedLines.isEmpty() || unduplicatedLines.last().textForClient != line.textForClient)
                     unduplicatedLines.append(WTF::move(line));
@@ -753,57 +752,57 @@ public:
         return index;
     }
 
-    bool LEGACY_NODELETE useTagNameForTextFormControls() const
+    NODELETE bool useTagNameForTextFormControls() const
     {
         return m_versionBehaviors.contains(TextExtractionVersionBehavior::TagNameForTextFormControls);
     }
 
-    bool LEGACY_NODELETE includeRects() const
+    NODELETE bool includeRects() const
     {
         return !usePlainTextOutput() && m_options.flags.contains(TextExtractionOptionFlag::IncludeRects);
     }
 
-    bool LEGACY_NODELETE includeSelectOptions() const
+    NODELETE bool includeSelectOptions() const
     {
         return !usePlainTextOutput() && m_options.flags.contains(TextExtractionOptionFlag::IncludeSelectOptions);
     }
 
-    bool LEGACY_NODELETE includeTagName() const
+    NODELETE bool includeTagName() const
     {
         return useTextTreeOutput() && m_options.flags.contains(TextExtractionOptionFlag::IncludeTagName);
     }
 
-    bool LEGACY_NODELETE includeURLs() const
+    NODELETE bool includeURLs() const
     {
         return !usePlainTextOutput() && m_options.flags.contains(TextExtractionOptionFlag::IncludeURLs);
     }
 
-    bool LEGACY_NODELETE shortenURLs() const
+    NODELETE bool shortenURLs() const
     {
         return m_options.flags.contains(TextExtractionOptionFlag::ShortenURLs);
     }
 
-    bool LEGACY_NODELETE usePlainTextOutput() const
+    NODELETE bool usePlainTextOutput() const
     {
         return m_options.outputFormat == TextExtractionOutputFormat::PlainText;
     }
 
-    bool LEGACY_NODELETE useHTMLOutput() const
+    NODELETE bool useHTMLOutput() const
     {
         return m_options.outputFormat == TextExtractionOutputFormat::HTMLMarkup;
     }
 
-    bool LEGACY_NODELETE useMarkdownOutput() const
+    NODELETE bool useMarkdownOutput() const
     {
         return m_options.outputFormat == TextExtractionOutputFormat::Markdown;
     }
 
-    bool LEGACY_NODELETE useTextTreeOutput() const
+    NODELETE bool useTextTreeOutput() const
     {
         return m_options.outputFormat == TextExtractionOutputFormat::TextTree;
     }
 
-    bool LEGACY_NODELETE useJSONOutput() const
+    NODELETE bool useJSONOutput() const
     {
         return m_options.outputFormat == TextExtractionOutputFormat::MinifiedJSON;
     }
@@ -863,7 +862,7 @@ public:
         m_urlStringStack.append(WTF::move(urlString));
     }
 
-    std::optional<String> LEGACY_NODELETE currentURLString() const
+    NODELETE std::optional<String> currentURLString() const
     {
         if (m_urlStringStack.isEmpty())
             return std::nullopt;
@@ -881,9 +880,9 @@ public:
         m_urlStringStack.removeLast();
     }
 
-    void LEGACY_NODELETE pushSuperscript() { m_superscriptLevel++; }
-    bool LEGACY_NODELETE superscriptLevel() const { return m_superscriptLevel; }
-    void LEGACY_NODELETE popSuperscript()
+    NODELETE void pushSuperscript() { m_superscriptLevel++; }
+    NODELETE bool superscriptLevel() const { return m_superscriptLevel; }
+    NODELETE void popSuperscript()
     {
         if (!m_superscriptLevel) {
             ASSERT_NOT_REACHED();
@@ -892,9 +891,9 @@ public:
         m_superscriptLevel--;
     }
 
-    void LEGACY_NODELETE pushStrikethrough() { m_strikethroughLevel++; }
-    bool LEGACY_NODELETE isInsideStrikethrough() const { return m_strikethroughLevel > 0; }
-    void LEGACY_NODELETE popStrikethrough()
+    NODELETE void pushStrikethrough() { m_strikethroughLevel++; }
+    NODELETE bool isInsideStrikethrough() const { return m_strikethroughLevel > 0; }
+    NODELETE void popStrikethrough()
     {
         if (!m_strikethroughLevel) {
             ASSERT_NOT_REACHED();
@@ -1042,7 +1041,7 @@ private:
         protect(rootJSONObject())->setInteger("version"_s, version());
     }
 
-    uint32_t LEGACY_NODELETE version() const
+    NODELETE uint32_t version() const
     {
         return m_options.version.value_or(currentTextExtractionOutputVersion);
     }
@@ -1200,16 +1199,13 @@ static Ref<JSON::Array> eventListenerTypesToJSONArray(OptionSet<TextExtraction::
     return result;
 }
 
-static std::pair<Vector<String>, String> recognizedClassesAndIdForItem(const TextExtraction::Item& item)
+static bool itemLacksLabelingAttributes(const TextExtraction::Item& item)
 {
-    if (item.classNames.isEmpty() && item.idAttribute.isEmpty())
-        return { };
-
     if (!item.title.isEmpty())
-        return { };
+        return false;
 
     if (!item.ariaAttributes.isEmpty() || !item.clientAttributes.isEmpty())
-        return { };
+        return false;
 
     bool hasLabelingData = WTF::switchOn(item.data,
         [](const TextExtraction::TextFormControlData& data) {
@@ -1241,17 +1237,28 @@ static std::pair<Vector<String>, String> recognizedClassesAndIdForItem(const Tex
             return false;
         });
     if (hasLabelingData)
-        return { };
+        return false;
 
     if (item.children.size() > 1)
-        return { };
+        return false;
 
     if (item.children.size() == 1) {
         if (auto* textData = std::get_if<TextExtraction::TextItemData>(&item.children[0].data)) {
             if (textData->content.trim(isASCIIWhitespace).length() > 2)
-                return { };
+                return false;
         }
     }
+
+    return true;
+}
+
+static std::pair<Vector<String>, String> recognizedClassesAndIdForItem(const TextExtraction::Item& item)
+{
+    if (item.classNames.isEmpty() && item.idAttribute.isEmpty())
+        return { };
+
+    if (!itemLacksLabelingAttributes(item))
+        return { };
 
 #if PLATFORM(COCOA)
     auto& tokenizer = TextExtractionTokenizer::singleton();
@@ -1272,6 +1279,42 @@ static std::pair<Vector<String>, String> recognizedClassesAndIdForItem(const Tex
     return { WTF::move(classes), WTF::move(idValue) };
 #else
     return { };
+#endif
+}
+
+static bool isUninformativeImage(const TextExtraction::Item&, const TextExtraction::Item& parent, const TextExtraction::Item* previousSibling, const TextExtractionAggregator&);
+
+static std::optional<std::pair<String, String>> recognizedDataAttributeForItem(const TextExtraction::Item& item, const TextExtractionAggregator& aggregator)
+{
+    if (item.dataAttributeCandidates.isEmpty())
+        return std::nullopt;
+
+    if (item.dataAs<TextExtraction::ContainerType>() != TextExtraction::ContainerType::Button || !item.accessibilityRole.isEmpty())
+        return std::nullopt;
+
+    if (!itemLacksLabelingAttributes(item))
+        return std::nullopt;
+
+    if (item.children.size() != 1 || !isUninformativeImage(item.children[0], item, nullptr, aggregator))
+        return std::nullopt;
+
+#if PLATFORM(COCOA)
+    auto& tokenizer = TextExtractionTokenizer::singleton();
+
+    std::optional<std::pair<String, String>> bestCandidate;
+    double bestFraction = 0.5;
+    for (auto& candidate : item.dataAttributeCandidates) {
+        auto fraction = tokenizer.recognizedFraction(candidate.second);
+        if (!fraction || *fraction <= bestFraction)
+            continue;
+
+        bestFraction = *fraction;
+        bestCandidate = candidate;
+    }
+
+    return bestCandidate;
+#else
+    return std::nullopt;
 #endif
 }
 
@@ -1645,6 +1688,13 @@ static TextExtractionParts partsForItem(const TextExtraction::Item& item, const 
             auto token = makeString("id="_s, quoteValue(idValue, streamlined));
             parts.append(token);
             cachedParts.append(WTF::move(token));
+        }
+        if (classes.isEmpty() && idValue.isEmpty()) {
+            if (auto dataAttribute = recognizedDataAttributeForItem(item, aggregator)) {
+                auto token = makeString(dataAttribute->first, '=', quoteValue(redactedAndEscaped(aggregator, dataAttribute->second), streamlined));
+                parts.append(token);
+                cachedParts.append(WTF::move(token));
+            }
         }
     }
 

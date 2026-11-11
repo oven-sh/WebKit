@@ -1,0 +1,94 @@
+# Under the proofs word a lookup in a map that stands in front of a loop is made again where it is written, in every turn, and its answer is held against the one from in front: no checking word saw a stale one.
+# function sum(k, n) { if (typeof k === "string" && (n | 0) === n) { const m = new Map(); m.set(k, 1); let s = 0; for (let i = 0; i < n; i++) s = s + m.get(k); return s; } }
+# As built nothing changes: one lookup, in front.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: inlineBuiltin=MapGet
+# CHECK: isLoopHead=true
+# CHECK-NOT: inlineBuiltin=MapGet
+# CHECK-NOT: source=RememberedFact
+# THE FORM IS THE SAME UNDER THE WORD: the lookup still stands in front, and what the turn computes with is that one.
+# RUN(HELD): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# HELD-LABEL: code f1:Body
+# HELD: [[front]]: {{*}}inlineBuiltin=MapGet
+# HELD: isLoopHead=true
+# HELD: [[again]]: {{*}}inlineBuiltin=MapGet
+# HELD: [[same]]: boolean @Boolean = StrictEq [[again]], [[front]]
+# HELD: Branch [[same]]
+# HELD: source=RememberedFact
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="sum" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b6()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b6()
+  b2(v5):
+    v6 = Builtin builtin=Map
+    v7 = Construct v6 calleeName="Map"
+    v8 = PropGet v7 key="set"
+    v9 = Integer integer=1
+    v10 = Call v8, v7, v3, v9 calleeKey="set"
+    v11 = Integer
+    Jump -> next b3(v11, v11)
+  b3(v12, v13):
+    LoopHint
+    v15 = Less v13, v5
+    Branch v15 -> taken b4(), notTaken b5()
+  b4():
+    v16 = PropGet v7 key="get"
+    v17 = Call v16, v7, v3 calleeKey="get"
+    v18 = Add v12, v17
+    v19 = Increment v13
+    Jump -> next b3(v18, v19)
+  b5():
+    Return v12
+  b6():
+    v20 = Undefined
+    Return v20
+}
+function f2 name="written" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b6()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b6()
+  b2(v5):
+    v6 = Builtin builtin=Map
+    v7 = Construct v6 calleeName="Map"
+    v8 = PropGet v7 key="set"
+    v9 = Integer integer=1
+    v10 = Call v8, v7, v3, v9 calleeKey="set"
+    v11 = Integer
+    Jump -> next b3(v11, v11)
+  b3(v12, v13):
+    LoopHint
+    v15 = Less v13, v5
+    Branch v15 -> taken b4(), notTaken b5()
+  b4():
+    v16 = PropGet v7 key="get"
+    v17 = Call v16, v7, v3 calleeKey="get"
+    v18 = Add v12, v17
+    v19 = PropGet v7 key="set"
+    v20 = Call v19, v7, v3, v18 calleeKey="set"
+    v21 = Increment v13
+    Jump -> next b3(v18, v21)
+  b5():
+    Return v12
+  b6():
+    v22 = Undefined
+    Return v22
+}

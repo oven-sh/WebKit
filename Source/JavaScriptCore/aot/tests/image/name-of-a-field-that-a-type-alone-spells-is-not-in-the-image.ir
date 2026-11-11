@@ -1,0 +1,29 @@
+# If the record of a layout listed every member that its type declares, a name that only a type spells could be read out of the executable
+# interface Settings { zzz..: number; qqq..?: string }  const settings: Settings = { zzz..: 1 };  hold(settings);
+# Types are erased. Nothing in the program stores under the second name (IsNeverWritten is the front end's word) and no reached code spells it: the record does not list it.
+# Whoever brings the name at run time adds a property, as under any name that the layout does not declare.
+# Each name is one letter 32 times: wherever the text begins, one line of 16 bytes holds nothing else.
+# RUN(KEPT): image Text
+# KEPT: 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a 7a
+# RUN(GONE): image Text
+# GONE-NOT: 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71 71
+# GONE-NOT: coded qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
+# RUN: run-in-shell globalThis.hold = o => { const name = "q".repeat(32); const keys = () => { const all = Object.keys(o); let text = ""; for (let i = 0; i < all.length; i++) text += all[i][0]; return text; }; print(name in o, o[name], keys()); o[name] = 2; print(name in o, o[name], keys()); delete o[name]; print(name in o, keys()); };
+# CHECK: false undefined z
+# CHECK-NEXT: true 2 zq
+# CHECK-NEXT: false z
+# CHECK-NEXT: exited with 0
+
+layout L0 fields=[{key="qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq" declared={type=undefined|string} flags=[IsNeverWritten]}, {key="zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[1]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="hold" [isFreeName]
+    v4 = Call v3, -, v1 calleeName="hold"
+    v5 = Undefined
+    Return v5
+}

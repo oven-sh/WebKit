@@ -97,7 +97,7 @@ private:
 #endif // ENABLE(GPU_PROCESS)
 #if ENABLE(MODEL_PROCESS)
     void didCreateContextInModelProcessForVisibilityPropagation(LayerHostingContextID) override;
-    void didReceiveInteractiveModelElement(std::optional<WebCore::NodeIdentifier>) override;
+    void didReceiveInteractiveModelElement(std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::NodeIdentifier>) override;
 #endif // ENABLE(MODEL_PROCESS)
     RetainPtr<UIView> createVisibilityPropagationView() override;
     void removeVisibilityPropagationView(UIView *) override;
@@ -177,9 +177,6 @@ private:
     void clearBrowsingWarningIfForMainFrameNavigation() override;
     bool hasBrowsingWarning() const override;
 
-    void enterAcceleratedCompositingMode(const LayerTreeContext&) override;
-    void exitAcceleratedCompositingMode() override;
-    void updateAcceleratedCompositingMode(const LayerTreeContext&) override;
     void setRemoteLayerTreeRootNode(RemoteLayerTreeNode*) override;
     CALayer* acceleratedCompositingRootLayer() const override;
 
@@ -189,7 +186,6 @@ private:
     void wheelEventWasNotHandledByWebCore(const NativeWebWheelEvent&) override;
 
     void didCommitLayerTree(const RemoteLayerTreeTransaction&, const std::optional<MainFrameData>&, const PageData&, const TransactionID&) final;
-    void didCommitMainFrameData(const MainFrameData&) final;
     void layerTreeCommitComplete() override;
         
     void didPerformDictionaryLookup(const WebCore::DictionaryPopupInfo&) override;
@@ -254,7 +250,7 @@ private:
     void requestScrollToRect(const WebCore::FloatRect& targetRect, const WebCore::FloatPoint& origin) override;
 
 #if ENABLE(FULLSCREEN_API)
-    WebFullScreenManagerProxyClient& LEGACY_NODELETE fullScreenManagerProxyClient() final;
+    NODELETE WebFullScreenManagerProxyClient& fullScreenManagerProxyClient() final;
 
     // WebFullScreenManagerProxyClient
     void closeFullScreenManager() override;

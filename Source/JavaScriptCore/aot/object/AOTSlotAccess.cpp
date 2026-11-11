@@ -10,9 +10,7 @@
 
 #include "AOTInstance.h"
 #include "AOTPrimitives.h"
-#include "AOTProgramStrings.h"
 #include "JSCJSValueInlines.h"
-#include "JSString.h"
 #include "PureNaN.h"
 #include <algorithm>
 
@@ -86,13 +84,13 @@ void clearSlot(SlotRepresentation representation, void* slot)
     writeSlotBits(representation, slot, traits.hasAbsent ? traits.absentBits : 0);
 }
 
-JSValue readSlot(SlotRepresentation representation, const void* slot, const ProgramStrings& strings)
+JSValue readSlot(SlotRepresentation representation, const void* slot, const Instance& instance)
 {
     auto as = [&]<typename T>(T) {
         return *static_cast<const T*>(slot);
     };
     auto decode = [&](uint32_t word) {
-        return JSValue(MarkedBlockCage::decode(strings.instance().cellCageBase, word));
+        return JSValue(MarkedBlockCage::decode(instance.cellCageBase, word));
     };
     switch (representation) {
     case SlotRepresentation::Boolean:
@@ -125,13 +123,6 @@ JSValue readSlot(SlotRepresentation representation, const void* slot, const Prog
     }
     case SlotRepresentation::OptionalBoolean:
         return JSValue::decode(as(uint8_t()));
-    case SlotRepresentation::LiteralString:
-    case SlotRepresentation::LiteralString32: {
-        uint64_t word = representation == SlotRepresentation::LiteralString ? as(uint64_t()) : as(uint32_t());
-        if (isLiteralStringWord(word))
-            return strings.stringForLiteralStringWord(word);
-        return representation == SlotRepresentation::LiteralString || word <= undefinedCell32 ? JSValue::decode(word) : decode(static_cast<uint32_t>(word));
-    }
     case SlotRepresentation::OptionalInt64:
         switch (int64_t integer = as(int64_t())) {
         case undefinedInteger:
@@ -167,7 +158,6 @@ JSValue readSlot(SlotRepresentation representation, const void* slot, const Prog
             return jsNumber(word);
         }
     case SlotRepresentation::DeferredClosure: {
-        // Only the object can make the closure that its slot still defers. Undefined and null are the words that any narrow reference has for them.
         uint32_t word = as(uint32_t());
         if (word == absentDeferredClosure)
             return { };
@@ -219,8 +209,6 @@ static bool tryWriteInteger(SlotRepresentation representation, void* slot, int64
     case SlotRepresentation::OptionalCell32:
     case SlotRepresentation::Boolean:
     case SlotRepresentation::OptionalBoolean:
-    case SlotRepresentation::LiteralString:
-    case SlotRepresentation::LiteralString32:
     case SlotRepresentation::DeferredClosure:
         return false;
     }
@@ -234,16 +222,19 @@ static bool tryWriteFloat(void* slot, double number)
     return storeInSlot(slot, static_cast<float>(number));
 }
 
-bool tryWriteSlot(ProgramStrings& strings, SlotRepresentation representation, void* slot, JSValue value)
+bool tryWriteSlot(const Instance& instance, SlotRepresentation representation, void* slot, JSValue value)
 {
     auto number = [&] {
         return value.isNumber() && tryWriteDouble(representation, slot, value.asNumber());
+    };
+    auto integer = [&] {
+        return value.isInt32() ? tryWriteInteger(representation, slot, value.asInt32()) : number();
     };
     auto marker = [&](auto undefinedMarker, auto nullMarker) {
         return value.isUndefinedOrNull() && storeInSlot(slot, value.isUndefined() ? undefinedMarker : nullMarker);
     };
     auto cell32 = [&] {
-        return value && value.isCell() && storeInSlot(slot, MarkedBlockCage::encode(strings.instance().cellCageBase, value.asCell()));
+        return value && value.isCell() && storeInSlot(slot, MarkedBlockCage::encode(instance.cellCageBase, value.asCell()));
     };
     switch (representation) {
     case SlotRepresentation::Boolean:
@@ -255,15 +246,16 @@ bool tryWriteSlot(ProgramStrings& strings, SlotRepresentation representation, vo
     case SlotRepresentation::Int32:
     case SlotRepresentation::Uint32:
     case SlotRepresentation::Int64:
+        return integer();
     case SlotRepresentation::Float:
     case SlotRepresentation::Double:
         return number();
     case SlotRepresentation::OptionalInt64:
-        return marker(undefinedInteger, nullInteger) || number();
+        return marker(undefinedInteger, nullInteger) || integer();
     case SlotRepresentation::OptionalDouble:
         return marker(undefinedDouble, nullDouble) || number();
     case SlotRepresentation::OptionalInt32:
-        return marker(undefinedInt32, nullInt32) || number();
+        return marker(undefinedInt32, nullInt32) || integer();
     case SlotRepresentation::Cell:
         if (!value || !value.isCell())
             return false;
@@ -282,15 +274,6 @@ bool tryWriteSlot(ProgramStrings& strings, SlotRepresentation representation, vo
         return cell32();
     case SlotRepresentation::OptionalBoolean:
         return (!value || value.isUndefinedOrNull() || value.isBoolean()) && storeInSlot(slot, static_cast<uint8_t>(JSValue::encode(value)));
-    case SlotRepresentation::LiteralString:
-    case SlotRepresentation::LiteralString32: {
-        if (value && !value.isUndefinedOrNull() && !value.isString())
-            return false;
-        uint64_t word = value && value.isString() ? strings.literalStringWordFor(asString(value)) : static_cast<uint64_t>(JSValue::encode(value));
-        if (representation == SlotRepresentation::LiteralString)
-            return storeInSlot(slot, word);
-        return word < minCell32 ? storeInSlot(slot, static_cast<uint32_t>(word)) : cell32();
-    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -322,8 +305,6 @@ bool tryWriteInt32(SlotRepresentation representation, void* slot, int32_t number
     case SlotRepresentation::Cell32:
     case SlotRepresentation::OptionalCell32:
     case SlotRepresentation::OptionalBoolean:
-    case SlotRepresentation::LiteralString:
-    case SlotRepresentation::LiteralString32:
     case SlotRepresentation::DeferredClosure:
         return false;
     }
@@ -355,8 +336,6 @@ bool tryWriteDouble(SlotRepresentation representation, void* slot, double number
     case SlotRepresentation::Cell32:
     case SlotRepresentation::OptionalCell32:
     case SlotRepresentation::OptionalBoolean:
-    case SlotRepresentation::LiteralString:
-    case SlotRepresentation::LiteralString32:
     case SlotRepresentation::DeferredClosure:
         return false;
     }
@@ -387,8 +366,6 @@ bool tryWriteBoolean(SlotRepresentation representation, void* slot, bool value)
     case SlotRepresentation::OptionalInt32:
     case SlotRepresentation::Cell32:
     case SlotRepresentation::OptionalCell32:
-    case SlotRepresentation::LiteralString:
-    case SlotRepresentation::LiteralString32:
     case SlotRepresentation::DeferredClosure:
         return false;
     }
@@ -402,8 +379,6 @@ JSCell* cellInSlot(SlotRepresentation representation, const void* slot, uintptr_
         return nullptr;
     if (!traits.isNarrowReference) {
         uint64_t bits = *static_cast<const uint64_t*>(slot);
-        if (isLiteralStringWord(bits))
-            return nullptr;
         JSValue value = JSValue::decode(bits);
         return value.isCell() ? value.asCell() : nullptr;
     }

@@ -1,0 +1,93 @@
+# `path.startsWith(dir + "/")` in a loop: the call is made on the part that lies at the start, and the one character that is written is read behind it. Nobody reads the joined text, so it is never made flat
+# function under(path, dir, n) { if (typeof path !== "string" || typeof dir !== "string") return; let c = 0; for (let i = 0; i < n; i++) if (path.startsWith(dir + "/")) c++; return c; }
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: StringStartsWith
+# CHECK: = GetStringCodeUnit
+# CHECK: = StrictEq {{*}}form=Integers
+# the written part is longer than one character: function below(path, dir, n) { .. path.startsWith(dir + "/x") .. }
+# RUN(LONGER): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls
+# LONGER-LABEL: code f2:Body
+# LONGER-NOT: = GetStringCodeUnit
+# LONGER: Return
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="under" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b8()
+  b1(v4):
+    v5 = TypeTest v1 testedType=string
+    Branch v5 -> taken b2(| 0), notTaken b8()
+  b2(v6):
+    v7 = Integer
+    v8 = Integer
+    Jump -> next b3(v7, v8)
+  b3(v9, v10):
+    LoopHint
+    v12 = Less v10, v2
+    Branch v12 -> taken b4(), notTaken b7()
+  b4():
+    v13 = String string="/"
+    v14 = Add v6, v13
+    v15 = PropGet v4 key="startsWith"
+    v16 = Call v15, v4, v14 calleeKey="startsWith"
+    v17 = ToBoolean v16
+    Branch v17 -> taken b5(), notTaken b6(v9)
+  b5():
+    v18 = Increment v9
+    Jump -> next b6(v18)
+  b6(v19):
+    v20 = Increment v10
+    Jump -> next b3(v19, v20)
+  b7():
+    Return v9
+  b8():
+    v21 = Undefined
+    Return v21
+}
+function f2 name="below" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b8()
+  b1(v4):
+    v5 = TypeTest v1 testedType=string
+    Branch v5 -> taken b2(| 0), notTaken b8()
+  b2(v6):
+    v7 = Integer
+    v8 = Integer
+    Jump -> next b3(v7, v8)
+  b3(v9, v10):
+    LoopHint
+    v12 = Less v10, v2
+    Branch v12 -> taken b4(), notTaken b7()
+  b4():
+    v13 = String string="/x"
+    v14 = Add v6, v13
+    v15 = PropGet v4 key="startsWith"
+    v16 = Call v15, v4, v14 calleeKey="startsWith"
+    v17 = ToBoolean v16
+    Branch v17 -> taken b5(), notTaken b6(v9)
+  b5():
+    v18 = Increment v9
+    Jump -> next b6(v18)
+  b6(v19):
+    v20 = Increment v10
+    Jump -> next b3(v19, v20)
+  b7():
+    Return v9
+  b8():
+    v21 = Undefined
+    Return v21
+}

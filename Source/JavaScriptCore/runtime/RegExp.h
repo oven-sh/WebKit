@@ -25,6 +25,7 @@
 #include "MatchResult.h"
 #include "RegExpKey.h"
 #include "Structure.h"
+#include "Weak.h"
 #include "Yarr.h"
 #include <JavaScriptCore/YarrErrorCode.h>
 #include <wtf/Atomics.h>
@@ -93,7 +94,6 @@ public:
     static constexpr uint8_t stateWithBytecode() { return ByteCode; }
     static constexpr ptrdiff_t offsetOfRegExpBytecode() { return OBJECT_OFFSETOF(RegExp, m_regExpBytecode); }
 #endif
-    static constexpr ptrdiff_t offsetOfOvector() { return OBJECT_OFFSETOF(RegExp, m_ovector); }
     static constexpr ptrdiff_t offsetOfNumSubpatterns() { return OBJECT_OFFSETOF(RegExp, m_numSubpatterns); }
     static constexpr ptrdiff_t offsetOfAtom() { return OBJECT_OFFSETOF(RegExp, m_atom); }
     static constexpr ptrdiff_t offsetOfRareData() { return OBJECT_OFFSETOF(RegExp, m_rareData); }
@@ -192,6 +192,15 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // Whether this has matched since the last full collection began.
     bool wasUsedInCurrentFullCollectionCycle(VM&) const;
 
+#if ENABLE(AOT)
+    // Runs a global search for a pattern that is one character class, or a repetition of one, in a single pass. Returns false if the caller has to search match by match.
+    bool collectMatchesOfOneSetOrRun(VM&, StringView, Vector<unsigned, 128>& matches);
+    bool hasImageCodeFor(bool subjectIs8Bit) const { return m_state == ImageCode && (subjectIs8Bit || m_regExpJITCode->has16BitCode()); }
+    // Returns the start of the match, -1, or Yarr::JSRegExpResult::JITCodeFailure, in which case the caller falls back to match().
+    template<typename CharacterType>
+    int executeImageCode(std::span<const CharacterType> subject, unsigned start, Yarr::MatchingContextHolder& context) { return m_regExpJITCode->execute(subject, start, m_ovector.mutableSpan().data(), &context).start; }
+#endif
+
     bool hasCode()
     {
 #if ENABLE(AOT)
@@ -263,11 +272,13 @@ private:
 
     static RegExp* createWithoutCaching(VM&, const String&, OptionSet<Yarr::Flags>);
     void finishCreationFromCache(VM&, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
+    enum class BytecodeIsFor : bool { Interpreter, LongSearch };
 #if ENABLE(AOT)
     void finishCreationFromImage(VM&, const AOT::ImageRegExp&);
     bool takeCodeFromImage(VM&);
     int matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, int* offsetVector);
     static void countInterpretedMatch(VM&);
+    void countBytecodeCompilation(VM&, BytecodeIsFor) const;
     void crashIfLiteralIsInterpreted() const;
 #endif
 
@@ -282,7 +293,7 @@ private:
         NotCompiled
     };
 
-    void byteCodeCompileIfNecessary(VM*);
+    void byteCodeCompileIfNecessary(VM*, BytecodeIsFor = BytecodeIsFor::Interpreter);
 
     void compile(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessary(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
@@ -311,7 +322,12 @@ private:
         // For the duplicate case, the first element is the namedCaptureGroupId.
         // The remaining elements are the subpatternIds for each of the duplicate groups.
         UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
+#if USE(BUN_JSC_ADDITIONS)
+        // Weak: the VM's cache hands one RegExp to every realm that writes the same pattern, and a Structure keeps its whole realm alive.
+        Weak<Structure> m_cachedGroupsStructure;
+#else
         WriteBarrierStructureID m_cachedGroupsStructureID;
+#endif
         std::unique_ptr<const Yarr::CharacterSetWithRanges> m_specificCharacterClass;
     };
 

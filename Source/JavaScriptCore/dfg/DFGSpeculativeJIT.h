@@ -315,7 +315,7 @@ public:
 
     void checkArgumentTypes();
 
-    void LEGACY_NODELETE clearGenerationInfo();
+    NODELETE void clearGenerationInfo();
 
     // These methods are used when generating 'unexpected'
     // calls out from JIT code to C++ helper routines -
@@ -1319,6 +1319,7 @@ public:
     void compileNewSet(Node*);
     void compileNewWeakMap(Node*);
     void compileNewWeakSet(Node*);
+    void compileNewProxyObject(Node*);
     void compileNewRegExpUntyped(Node*);
 
     void emitNewTypedArrayWithSizeInRegister(Node*, TypedArrayType, RegisteredStructure, GPRReg sizeGPR);
@@ -1539,8 +1540,12 @@ public:
     void compileNewBoundFunction(Node*);
     void compileNewRegExp(Node*);
     void compileForwardVarargs(Node*);
+    void emitLoadVarargsFromContiguousStorage(LoadVarargsData*, Address sourceStart, GPRReg lengthGPR, GPRReg tempGPR);
     void compileVarargsLength(Node*);
     void compileLoadVarargs(Node*);
+    void compileVarargsLengthWithSpread(Node*);
+    void compileLoadVarargsWithSpread(Node*);
+    EncodedJSValue* fillSpreadArgumentsBuffer(Node*, unsigned base, unsigned numArgs);
     void compileCreateActivation(Node*);
     void compileCreateDirectArguments(Node*);
     void compileGetFromArguments(Node*);
@@ -1622,7 +1627,7 @@ public:
     void compileThrow(Node*);
     void compileThrowStaticError(Node*);
 
-    void LEGACY_NODELETE compileExtractFromTuple(Node*);
+    NODELETE void compileExtractFromTuple(Node*);
     void compileStringIteratorNext(Node*);
     void compileEnumeratorNextUpdateIndexAndMode(Node*);
     void compileEnumeratorNextUpdatePropertyName(Node*);
@@ -2187,7 +2192,7 @@ public:
         return *this;
     }
 
-    void LEGACY_NODELETE adopt(GPRTemporary&);
+    NODELETE void adopt(GPRTemporary&);
 
     ~GPRTemporary()
     {

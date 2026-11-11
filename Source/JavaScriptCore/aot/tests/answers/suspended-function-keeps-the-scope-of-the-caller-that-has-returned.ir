@@ -1,0 +1,10 @@
+# two calls of `start` have returned before either `later` goes on: each finds the `held` of its own scope
+# LIBRARY: own
+# RUN(SHELL): run-in-shell globalThis.sink = start => { start(1).then(print); start(2).then(print); start(3).then(print); };
+# SHELL: 1
+# SHELL-NEXT: 2
+# SHELL-NEXT: 3
+# SHELL-NEXT: exited with 0
+# RUN(FORM): walk f2:CoroutineBody mechanisms=all
+# FORM: MarkEnvironmentEscaped
+# PROGRAM-OF: ../walk/escape-analysis/body-of-a-coroutine-marks-the-environment-that-it-is-handed.ir

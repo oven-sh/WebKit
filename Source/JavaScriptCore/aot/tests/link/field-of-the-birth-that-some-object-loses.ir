@@ -1,0 +1,5 @@
+# a deletion in sight takes `filled` from every field of the layout. It takes nothing from the birth: the object that loses the field gets its mark back, and no other object is touched
+# PROGRAM-OF: filled-field-that-some-object-loses.ir
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.0 "x" {{*}}of-birth
+# CHECK: layout L0 changes=[LosesProperty]

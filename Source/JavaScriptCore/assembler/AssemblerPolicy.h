@@ -32,6 +32,7 @@ struct AssemblerPolicy {
         policy.shortensJumps = true;
         policy.shortensEncodings = true;
         policy.oops = OopsForm::Breakpoint;
+        policy.trapsWithIllegalInstruction = true;
         return policy;
     }
 
@@ -46,6 +47,9 @@ struct AssemblerPolicy {
     bool shortensJumps { false };
     bool shortensEncodings { false };
     OopsForm oops { OopsForm::AbortWithReason };
+    bool trapsWithIllegalInstruction { false };
+    // ARM64 only. A branch of image code that spans more than half of this goes through branch islands.
+    uint32_t branchReach { 128u << 20 };
 };
 
 } // namespace JSC

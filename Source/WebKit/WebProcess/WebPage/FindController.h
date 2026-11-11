@@ -72,6 +72,7 @@ public:
     virtual ~FindController();
 
     void findString(const String&, OptionSet<FindOptions>, unsigned maxMatchCount, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>, Vector<WebCore::IntRect>&&, uint32_t, int32_t, bool)>&&);
+    void countStringMatchesByFrame(const String&, OptionSet<FindOptions>, unsigned maxMatchCount, CompletionHandler<void(Vector<std::pair<WebCore::FrameIdentifier, uint32_t>>&&)>&&);
     void selectLastFoundRange(const String&, OptionSet<FindOptions>, unsigned maxMatchCount, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>, Vector<WebCore::IntRect>&&, int32_t, bool)>&&);
 #if ENABLE(IMAGE_ANALYSIS)
     void findStringIncludingImages(const String&, OptionSet<FindOptions>, unsigned maxMatchCount, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>, Vector<WebCore::IntRect>&&, uint32_t, int32_t, bool)>&&);
@@ -86,7 +87,7 @@ public:
     uint32_t replaceMatches(const Vector<uint32_t>& matchIndices, const String& replacementText, bool selectionOnly);
 
     void hideFindIndicator();
-    void LEGACY_NODELETE resetMatchIndex();
+    NODELETE void resetMatchIndex();
     void showFindIndicatorInSelection();
 
     bool isShowingOverlay() const { return m_findIndicator && m_findIndicator->isShowing() && m_findPageOverlay; }
@@ -115,10 +116,11 @@ private:
     void updateFindIndicatorIfNeeded(bool found, OptionSet<FindOptions>, bool shouldShowOverlay);
     unsigned markMatches(const String&, OptionSet<FindOptions>, unsigned maxMatchCount, unsigned cueMatchCount);
     unsigned getMatchCount(const String&, OptionSet<FindOptions>, unsigned maxMatchCount, unsigned cueMatchCount);
-    void LEGACY_NODELETE updateMatchIndex(unsigned matchCount, OptionSet<FindOptions>);
+    NODELETE void updateMatchIndex(unsigned matchCount, OptionSet<FindOptions>);
     void didScrollAffectingFindIndicatorPosition();
 
     RefPtr<WebCore::LocalFrame> frameWithSelection(WebCore::Page*);
+    std::optional<int32_t> indexOfSelectedMatchInFrame(const String&, OptionSet<FindOptions>);
 
     std::optional<WebCore::FrameIdentifier> applyFindMatch(const FindMatch&, OptionSet<FindOptions>);
 

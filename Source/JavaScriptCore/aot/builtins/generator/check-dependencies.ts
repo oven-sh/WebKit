@@ -1,6 +1,6 @@
 import type { Problems } from "./declarations.ts";
-import { DependencyClosure, type RuntimeDependencies } from "./dependency-closure.ts";
-import type { ModelFunction, ModelModule, TableModel } from "./model.ts";
+import { closureOf, type RuntimeDependencies } from "./dependency-closure.ts";
+import type { ModelBuiltin, ModelFunction, ModelModule, TableModel } from "./model.ts";
 
 const maximumHostFunctionCount = 20;
 const undeclaredNativeCode = "%UndeclaredNativeCode%";
@@ -33,29 +33,18 @@ function checkHostFunctionCount(dependencies: RuntimeDependencies, owner: string
   );
 }
 
-function checkUndeclaredNativeCode(model: TableModel, everyProgram: RuntimeDependencies, problems: Problems): void {
-  const entry = model.builtins.find(builtin => builtin.text === undeclaredNativeCode);
-  if (entry === undefined) {
+function checkUndeclaredNativeCode(model: TableModel, problems: Problems): void {
+  if (!model.builtins.some(builtin => builtin.text === undeclaredNativeCode)) {
     problems.add(null, `there is no ${undeclaredNativeCode}`);
-    return;
-  }
-  for (const { function: called } of entry.attachments.calledFunctions) {
-    if (everyProgram.calls.has(called)) continue;
-    problems.add(
-      null,
-      `${undeclaredNativeCode} calls ${describeFunction(called)}, and no program mentions that entry: ` +
-        "the front end sends the function only if an object of the language leads to it too",
-    );
   }
 }
 
 export function checkDependencies(model: TableModel, problems: Problems): void {
-  const closure = new DependencyClosure(model);
-  const undescribedCount = closure.undescribedResults().length;
+  const closure = closureOf(model);
   const anyHostObject = closure.dependenciesOfAnyHostObject();
   checkLoadsNothing(
     anyHostObject,
-    `an instance of a host class leads to it, so each of the ${undescribedCount} entries with a result that is not described would load the module`,
+    "an instance of a host class leads to it, so every program in which a value may be anything would load the module",
     problems,
   );
   checkHostFunctionCount(anyHostObject, "an instance of any host class", problems);
@@ -66,21 +55,33 @@ export function checkDependencies(model: TableModel, problems: Problems): void {
     problems,
   );
   checkHostFunctionCount(everyProgram, "every program", problems);
-  checkUndeclaredNativeCode(model, everyProgram, problems);
+  checkUndeclaredNativeCode(model, problems);
 }
 
 export function describeUndescribedResults(model: TableModel): string {
-  return new DependencyClosure(model)
+  return closureOf(model)
     .undescribedResults()
     .map(({ builtin, reason }) => `${builtin.text}: ${reason}\n`)
     .join("");
 }
 
+export function undescribedProperties(model: Pick<TableModel, "builtins" | "modules">): ModelBuiltin[] {
+  const writtenInJavaScript = new Set(model.modules.filter(({ hasSource }) => hasSource).map(module => module.namespace));
+  const isExportOfSource = ({ holder }: ModelBuiltin): boolean => holder !== null && writtenInJavaScript.has(holder);
+  return model.builtins.filter(
+    builtin =>
+      builtin.kind === "DataProperty" &&
+      !isExportOfSource(builtin) &&
+      builtin.overloads.some(({ mode, result }) => mode === "Get" && result.type.isAnything),
+  );
+}
+
 export function summarizeUndescribedResults(model: TableModel): string {
-  const closure = new DependencyClosure(model);
+  const closure = closureOf(model);
   const { loads, calls, implementedBy } = closure.dependenciesOfAnyHostObject();
   return (
-    `${closure.undescribedResults().length} host entries have a result that is not described, ` +
-    `and each needs what any host class needs: ${loads.size} modules, ${calls.union(implementedBy).size} functions`
+    `${closure.undescribedResults().length} host entries have a result that is not described; ` +
+    `${undescribedProperties(model).length} properties that native code fills hold a value that is not described; ` +
+    `a program in which a value may be anything holds what any host class needs: ${loads.size} modules, ${calls.union(implementedBy).size} functions`
   );
 }

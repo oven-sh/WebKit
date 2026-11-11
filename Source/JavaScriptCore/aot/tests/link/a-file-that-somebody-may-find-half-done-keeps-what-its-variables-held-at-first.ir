@@ -1,0 +1,60 @@
+# ledger.cjs    const probe = require("./probe.mjs"); exports.first = probe.look(); exports.total = 41;
+# probe.mjs     export function look() { const ledger = require("./ledger.cjs"); return ledger.total; }
+# steady.cjs    exports.count = 3;
+# main.cjs      const ledger = require("./ledger.cjs"); const steady = require("./steady.cjs"); globalThis.seen = [ledger.total, steady.count];
+# The run time answers for an ES module on a ring (RequireModule), so no request leads out of ledger.cjs and the requests show no ring. look() runs in the middle of the body of ledger.cjs and finds the `undefined`
+# that `total` held at first. The front end knows every load and says so: the requests for ledger.cjs do not say `completes`. Those for steady.cjs do, and whoever names `count` finds what the body stored.
+# RUN: link variables mechanisms=all
+# CHECK: variable g1 proven=undefined|int[0, 2147483647] writers-known
+# CHECK: variable g3 proven=int[0, 2147483647] writers-known filled
+
+module m0 path="probe.mjs" displayPath="probe.mjs" flags=[CachesEvaluationError] body=f0 requests=[{target=m1 kind=Require}] exports=[{name="look" variable=g0}] namespaceLayout=L(m0)
+module m1 path="ledger.cjs" displayPath="ledger.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2
+module m2 path="steady.cjs" displayPath="steady.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f3
+module m3 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f4 requests=[{target=m1 kind=Require}, {target=m2 kind=Require completes=true}]
+entry module=m3
+variable g0 name="look" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="total" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="first" module=m1 declared={type=anything} initialization=Undefined
+variable g3 name="count" module=m2 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="look" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0 [isCallOfRequire]
+    v1 = GetModuleVariable variable=g1
+    Return v1
+}
+function f2 module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m0 referrer=m1 specifier="./probe.mjs"
+    v1 = PropGet v0 key="look"
+    v2 = Call v1, v0 calleeKey="look" calleeName="probe.look"
+    PutModuleVariable v2 variable=g2
+    v4 = Integer integer=41
+    PutModuleVariable v4 variable=g1
+    v6 = Undefined
+    Return v6
+}
+function f3 module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    PutModuleVariable v0 variable=g3
+    v2 = Undefined
+    Return v2
+}
+function f4 module=m3 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m3 [isBare, isCallOfRequire]
+    v1 = GetModuleVariable variable=g1
+    EvaluateModule module=m2 referrer=m3 [isBare, isCallOfRequire]
+    v3 = GetModuleVariable variable=g3
+    v4 = Builtin builtin=GlobalThis
+    PropSet v4, v1 key="seenTotal"
+    PropSet v4, v3 key="seenCount"
+    v7 = Undefined
+    Return v7
+}

@@ -1,0 +1,41 @@
+# a Miss is made with `ok: true` too, so true may have been read out of either member. Were the holder narrowed to a Hit, the read of `value` would load a slot of a Miss
+# the program of tested-field-narrows-its-holder.ir with one more allocation
+# the read of `value` serves both members: by name, or, with the rest of the mechanism in, by the read that answers undefined for the member that lacks the field
+# RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="ok" receivers=[L1, L2] level=Proven
+# CHECK: key="value"
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# NEVER-NOT: key="value" receivers=[L1]
+
+layout L0 name="Result" module=m0 flags=[IsNeverAllocated]
+layout L1 name="Hit" module=m0 fields=[{key="ok" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Miss" module=m0 fields=[{key="ok" declared={type=anything} flags=[IsRequired]}, {key="error" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Boolean boolean=true
+    v2 = Boolean
+    v3 = NewObject -, v1, v0 layout=L1 fields=[0, 1]
+    v4 = NewObject -, v2, v0 layout=L2 fields=[0, 1]
+    v5 = NewObject -, v1, v0 layout=L2 fields=[0, 1]
+    v6 = NewClosure function=f1
+    v7 = Call v6, -, v3 calleeName="unwrap"
+    v8 = Call v6, -, v4 calleeName="unwrap"
+    v9 = Call v6, -, v5 calleeName="unwrap"
+    Return v0
+}
+function f1 name="unwrap" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="ok"
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="value"
+    Return v3
+  b2():
+    v4 = PropGet v0 key="error"
+    Return v4
+}

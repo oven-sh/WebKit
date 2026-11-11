@@ -8,23 +8,28 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
 #include "AOTConvention.h"
 #include "AOTStubHelpers.h"
-#include "AOTStubsArrays.h"
 #include "AOTStubsBoxedCalls.h"
+#include "AOTStubsBoxedCallsOfLanguage.h"
 #include "AOTStubsCalls.h"
+#include "AOTStubsExceptions.h"
+#include "AOTStubsPropertyKeys.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
+#include "JSCustomGetterFunction.h"
 #include "JSFunction.h"
 #include "NativeExecutable.h"
-#include "ProxyObject.h"
 
 namespace JSC { namespace AOT {
 
 StubSignature signatureOfCallHostFunction(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallHostFunctionWithoutBoxedCall(StubKey) { return callConventionSignature({ }); }
+StubSignature signatureOfCallHostFunctionThatMayBeUnfetched(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallInternalFunction(StubKey) { return callConventionSignature({ }); }
-StubSignature signatureOfCallProxy(StubKey) { return callConventionSignature({ }); }
+StubSignature signatureOfCallHostFunctionWithCount(StubKey) { return callConventionSignatureWithCount(); }
+StubSignature signatureOfCallHostGetter(StubKey) { return callConventionSignature({ }); }
 
 static void emitLoadExecutable(StubAssembler& jit, GPRReg executable)
 {
@@ -38,15 +43,14 @@ static void emitLoadExecutable(StubAssembler& jit, GPRReg executable)
     });
 }
 
-// The caller has put the operands where the native function takes its arguments.
 StubSignature signatureOfCallDirectFunction(StubKey key)
 {
     StubSignature signature;
     signature.result = StubResult::GPR;
     signature.firstResult = GPRInfo::returnValueGPR;
-    if (static_cast<DirectFunctionCall>(key.form()) == DirectFunctionCall::LeafReturningFields) {
-        signature.result = StubResult::TwoGPRs;
-        signature.secondResult = GPRInfo::returnValueGPR2;
+    if (static_cast<DirectFunctionCall>(key.form()) == DirectFunctionCall::LeafReturningNumber) {
+        signature.result = StubResult::FPR;
+        signature.firstResult = FPRInfo::returnValueFPR;
     }
     signature.immediate = gprOf(stubImmediateRegister);
     return signature;
@@ -55,7 +59,6 @@ StubSignature signatureOfCallDirectFunction(StubKey key)
 static constexpr GPRReg directThisGPR = operationArgumentGPR(directThisArgumentIndex);
 static constexpr GPRReg directCalleeGPR = operationArgumentGPR(directCalleeArgumentIndex);
 
-// The native function is no operation: it stores no frame, and it reports an exception by the empty value.
 void generateCallDirectFunction(StubAssembler& jit)
 {
     const DirectFunctionCall form = static_cast<DirectFunctionCall>(jit.key().form());
@@ -70,7 +73,7 @@ void generateCallDirectFunction(StubAssembler& jit)
     const GPRReg function = jit.reuseScratch(StubRegister::Operation);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(builtinBindings.directFunctions)), function);
     jit.loadPtr(CCallHelpers::BaseIndex(function, jit.immediate(), CCallHelpers::TimesOne), function);
-    if (form == DirectFunctionCall::Leaf || form == DirectFunctionCall::LeafReturningFields) {
+    if (form == DirectFunctionCall::Leaf || form == DirectFunctionCall::LeafReturningNumber) {
         jit.farJump(function, HostFunctionPtrTag);
         return;
     }
@@ -81,7 +84,6 @@ void generateCallDirectFunction(StubAssembler& jit)
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
     GPRReg topCallFrame = form == DirectFunctionCall::WithHostFrame ? CCallHelpers::stackPointerRegister : GPRInfo::callFrameRegister;
 #if CPU(ARM64)
-    // In a store the number of sp names the zero register.
     if (form == DirectFunctionCall::WithHostFrame) {
         static_assert(noOverlap(gprOf(StubRegister::T10), gprOf(StubRegister::Operation), gprOf(stubImmediateRegister), operationArgumentGPR(0), operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3), operationArgumentGPR(4), operationArgumentGPR(5)));
         topCallFrame = jit.allocateScratch(StubRegister::T10);
@@ -90,24 +92,40 @@ void generateCallDirectFunction(StubAssembler& jit)
 #endif
     jit.storePtr(topCallFrame, Address(vm, VM::offsetOfTopCallFrame()));
     jit.call(function, HostFunctionPtrTag);
-    if (jit.options().validates) {
-        RELEASE_ASSERT(vm != GPRInfo::returnValueGPR);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
-        Jump isEmpty = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
-        Jump answered = jit.branchTestPtr(CCallHelpers::Zero, Address(vm, VM::exceptionOffset()));
-        jit.breakpoint();
-        isEmpty.link(&jit);
-        Jump threw = jit.branchTestPtr(CCallHelpers::NonZero, Address(vm, VM::exceptionOffset()));
-        jit.breakpoint();
-        answered.link(&jit);
-        threw.link(&jit);
-    }
     jit.emitFunctionEpilogue();
     Jump exception = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
+    jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
 
     exception.link(&jit);
     jit.jumpToExceptionHandler();
+}
+
+static void fetchFunctionLeftUnfetched(StubAssembler& jit, GPRReg scratch, unsigned count)
+{
+    Jump isFetched = jit.branch64(CCallHelpers::AboveOrEqual, calleeGPR, TrustedImm32(limitOfNumbersOfBuiltinCells));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(builtinCells)), scratch);
+    jit.load64(BaseIndex(scratch, calleeGPR, CCallHelpers::TimesEight), scratch);
+    Jump isNotCreated = jit.branchTest64(CCallHelpers::Zero, scratch);
+    jit.move(scratch, calleeGPR);
+    isFetched.link(&jit);
+    Label goesOn = jit.label();
+
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        isNotCreated.link(&jit);
+        Vector<GPRReg, 6> preserved { thisGPR };
+        for (unsigned index = 0; index < count; ++index)
+            preserved.append(argumentGPR(index));
+        jit.emitFunctionPrologue();
+        jit.preserving(preserved.span(), [&] {
+            jit.move(calleeGPR, operationArgumentGPR(1));
+            jit.move(instanceGPR, operationArgumentGPR(0));
+            jit.callOperation(Entry::operationAOTBuiltinCell, jit.reuseScratch(StubRegister::Operation));
+            jit.move(GPRInfo::returnValueGPR, calleeGPR);
+        });
+        jit.emitFunctionEpilogue();
+        jit.jump().linkTo(goesOn, &jit);
+    });
 }
 
 void generateCallHostFunction(StubAssembler& jit)
@@ -120,9 +138,9 @@ void generateCallHostFunction(StubAssembler& jit)
     JumpList hasNoBoxedCall;
     if (exists(callHostFunctionWithoutBoxedCall(count))) {
         emitLoadExecutable(jit, executable);
-        // Under validation every call reaches the function, where it is compared with the entry of the built-in.
-        if (!jit.options().validates)
-            emitBoxedCallDispatch(jit, registers, count, hasNoBoxedCall);
+        emitBoxedCallDispatch(jit, registers, count, hasNoBoxedCall);
+        jit.bindEntry(callHostFunctionThatMayBeUnfetched(count));
+        fetchFunctionLeftUnfetched(jit, executable, count);
         jit.bindEntry(callHostFunctionWithoutBoxedCall(count));
     }
     emitLoadExecutable(jit, executable);
@@ -130,6 +148,95 @@ void generateCallHostFunction(StubAssembler& jit)
     jit.emitFunctionPrologue();
     emitHostCallFrame(jit, { calleeGPR, thisGPR, count, std::nullopt });
     callNativeFunctionAndReturn(jit, CodeSpecializationKind::CodeForCall, registers.word, Address(calleeGPR, JSCallee::offsetOfScopeChain()), nativeFunction);
+}
+
+void generateCallHostGetter(StubAssembler& jit)
+{
+    const CallRegisters registers = CallRegisters::allocate(jit);
+    loadStructure(jit, calleeGPR, registers.word);
+    jit.loadPtr(Address(registers.word, Structure::classInfoOffset()), registers.word);
+    jit.loadRuntimePointer(Entry::CustomGetterClassInfo, registers.scratch);
+    jit.linkToStub(jit.branchPtr(CCallHelpers::NotEqual, registers.word, registers.scratch), callHostFunctionWithoutBoxedCall(0));
+
+    jit.emitFunctionPrologue();
+    const GPRReg function = registers.word;
+    const GPRReg realmArgument = jit.reuseScratch(StubRegister::A0);
+    const GPRReg receiverArgument = jit.reuseScratch(StubRegister::A1);
+    const GPRReg nameArgument = jit.reuseScratch(StubRegister::A2);
+    RELEASE_ASSERT(noOverlap(calleeGPR, realmArgument, receiverArgument, nameArgument, function, registers.scratch) && noOverlap(thisGPR, realmArgument, nameArgument, function, registers.scratch));
+    jit.loadPtr(Address(calleeGPR, JSCustomGetterFunction::offsetOfGetter()), function);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), registers.scratch);
+    jit.storePtr(GPRInfo::callFrameRegister, Address(registers.scratch, VM::offsetOfTopCallFrame()));
+    jit.move(thisGPR, receiverArgument);
+    jit.loadPtr(Address(calleeGPR, JSCustomGetterFunction::offsetOfPropertyName()), nameArgument);
+    jit.loadPtr(Address(calleeGPR, JSCallee::offsetOfScopeChain()), realmArgument);
+    jit.call(function, CustomAccessorPtrTag);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), registers.scratch);
+    Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, Address(registers.scratch, VM::exceptionOffset()));
+    jit.emitFunctionEpilogue();
+    jit.pollBeforeReturningFromNativeCode();
+    jit.returnToCaller();
+
+    exception.link(&jit);
+    jit.emitFunctionEpilogue();
+    jit.jumpToExceptionHandler();
+}
+
+StubSignature signatureOfCallFunctionOfBuiltinAtSite(StubKey key) { return signatureOf(callMethodAtSite(key.count())); }
+
+void generateCallFunctionOfBuiltinAtSite(StubAssembler& jit)
+{
+    const auto form = static_cast<BoxedCallForm>(jit.key().form());
+    const unsigned count = jit.key().count();
+    const GPRReg distance = jit.immediate();
+    if (!acceptsArgumentCount(form, count)) {
+        jit.jumpToStub(callMethodAtSite(count));
+        return;
+    }
+    const ptrdiff_t words = AOT_INSTANCE_OFFSET(builtins.functionsAsBuilt) + jit.key().form() * sizeof(FunctionOfBuiltinAsBuilt);
+    const Address receiver(instanceGPR, words + OBJECT_OFFSETOF(FunctionOfBuiltinAsBuilt, receiver));
+    const Address function(instanceGPR, words + OBJECT_OFFSETOF(FunctionOfBuiltinAsBuilt, function));
+    RELEASE_ASSERT(noOverlap(thisGPR, calleeGPR, distance, instanceGPR));
+
+    Label asks = jit.label();
+    Jump isOtherReceiver = jit.branch64(CCallHelpers::NotEqual, receiver, thisGPR);
+    jit.load64(function, calleeGPR);
+    jit.jumpToStub(callBoxedBuiltin(form, count));
+
+    isOtherReceiver.link(&jit);
+    Jump isNotAskedYet = jit.branchTest64(CCallHelpers::Zero, function);
+    jit.jumpToStub(callMethodAtSite(count));
+
+    isNotAskedYet.link(&jit);
+    Vector<GPRReg, 8> preserved { thisGPR, distance };
+    for (unsigned index = 0; index < count; ++index)
+        preserved.append(argumentGPR(index));
+    jit.emitFunctionPrologue();
+    jit.preserving(preserved.span(), [&] {
+        jit.move(TrustedImm32(static_cast<int32_t>(jit.key().form())), operationArgumentGPR(1));
+        jit.move(instanceGPR, operationArgumentGPR(0));
+        jit.callOperation(Entry::operationAOTFunctionOfBuiltinAsBuilt, jit.reuseScratch(StubRegister::Operation));
+    });
+    jit.emitFunctionEpilogue();
+    jit.jump().linkTo(asks, &jit);
+}
+
+void generateCallHostFunctionWithCount(StubAssembler& jit)
+{
+    const CallRegisters registers = CallRegisters::allocate(jit);
+    const GPRReg count = jit.clobberOperand(0);
+    const GPRReg executable = registers.scratch;
+    const Address nativeFunction(executable, NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall));
+    JumpList doesNotFitOnStack;
+
+    jit.emitFunctionPrologue();
+    emitHostCallFrameOfCallWithCount(jit, calleeGPR, thisGPR, count, doesNotFitOnStack);
+    emitLoadExecutable(jit, executable);
+    callNativeFunctionAndReturn(jit, CodeSpecializationKind::CodeForCall, registers.word, Address(calleeGPR, JSCallee::offsetOfScopeChain()), nativeFunction);
+
+    doesNotFitOnStack.link(&jit);
+    jit.emitFunctionEpilogue();
+    emitThrowStackOverflow(jit);
 }
 
 static CodeSpecializationKind specializationKindOf(InternalFunctionEntry entry)
@@ -147,85 +254,14 @@ void generateCallInternalFunction(StubAssembler& jit)
 {
     const CodeSpecializationKind kind = specializationKindOf(static_cast<InternalFunctionEntry>(jit.key().form()));
     const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    if (kind == CodeSpecializationKind::CodeForCall) {
+        emitCallOfBooleanConstructor(jit, scratch);
+        emitCallOfNumberOrStringConstructor(jit, scratch);
+    }
 
     jit.emitFunctionPrologue();
     emitHostCallFrame(jit, { calleeGPR, thisGPR, jit.key().count(), std::nullopt });
     callNativeFunctionAndReturn(jit, kind, scratch, Address(calleeGPR, InternalFunction::offsetOfGlobalObject()), Address(calleeGPR, InternalFunction::offsetOfNativeFunctionFor(kind)));
-}
-
-// As ProxyObject.cpp performProxyCall(), in the frame that it would have, which a stack trace lists.
-void generateCallProxy(StubAssembler& jit)
-{
-    static_assert(numberOfArgumentGPRs >= 3);
-    constexpr GPRReg function = GPRInfo::returnValueGPR;
-    constexpr GPRReg list = GPRInfo::returnValueGPR2;
-    const unsigned count = jit.key().count();
-    const bool makesList = count <= maxArrayElementsInRegisters;
-    auto inFrame = [&](CallFrameSlot slot, unsigned index = 0) {
-        return Address(fp, (static_cast<int>(slot) + static_cast<int>(index)) * static_cast<int>(sizeof(Register)));
-    };
-    auto loadCallFromFrame = [&] {
-        jit.load64(inFrame(CallFrameSlot::thisArgument), thisGPR);
-        for (unsigned i = 0; i < count; ++i)
-            jit.load64(inFrame(CallFrameSlot::firstArgument, i), argumentGPR(i));
-    };
-    auto leaveFrames = [&] {
-        jit.loadPtr(Address(fp, CallFrame::callerFrameOffset()), fp);
-        jit.emitFunctionEpilogue();
-    };
-
-    jit.emitFunctionPrologue();
-    emitHostCallFrame(jit, { calleeGPR, thisGPR, count, std::nullopt });
-    jit.move(sp, fp);
-    jit.move(sp, operationArgumentGPR(1));
-    jit.move(TrustedImm32(!makesList), operationArgumentGPR(2));
-    jit.move(instanceGPR, operationArgumentGPR(0));
-    jit.callOperation(Entry::operationAOTPrepareProxyCall, jit.reuseScratch(StubRegister::Operation));
-    jit.bindReturnLabel(StubFrameKind::InHostCallFrame);
-    Jump isEngines = jit.branchTestPtr(CCallHelpers::Zero, function);
-    Jump hasNoTrap = jit.branchTestPtr(CCallHelpers::Zero, list);
-
-    if (makesList) {
-        jit.subPtr(TrustedImm32(stackAlignmentBytes()), sp);
-        jit.storePtr(function, Address(sp));
-        for (unsigned i = 0; i < count; ++i)
-            jit.load64(inFrame(CallFrameSlot::firstArgument, i), operationArgumentGPR(1 + i));
-        jit.callStub(arrayLiteral(count));
-        jit.bindReturnLabel(StubFrameKind::InHostCallFrame);
-        jit.move(GPRInfo::returnValueGPR, argumentGPR(2));
-        jit.loadPtr(Address(sp), calleeGPR);
-        jit.addPtr(TrustedImm32(stackAlignmentBytes()), sp);
-    } else
-        jit.shuffleRegisters<GPRReg, 2>({ function, list }, { calleeGPR, argumentGPR(2) });
-    jit.loadPtr(inFrame(CallFrameSlot::callee), argumentGPR(0));
-    jit.load64(Address(argumentGPR(0), ProxyObject::offsetOfInternalField(static_cast<unsigned>(ProxyObject::Field::Handler))), thisGPR);
-    jit.load64(Address(argumentGPR(0), ProxyObject::offsetOfInternalField(static_cast<unsigned>(ProxyObject::Field::Target))), argumentGPR(0));
-    jit.load64(inFrame(CallFrameSlot::thisArgument), argumentGPR(1));
-    jit.callStub(callValueCell(3));
-    jit.bindReturnLabel(StubFrameKind::InHostCallFrame);
-    leaveFrames();
-    jit.returnToCaller();
-
-    hasNoTrap.link(&jit);
-    jit.move(function, calleeGPR);
-    loadCallFromFrame();
-    jit.callStub(callValueCell(count));
-    jit.bindReturnLabel(StubFrameKind::InHostCallFrame);
-    leaveFrames();
-    jit.returnToCaller();
-
-    isEngines.link(&jit);
-    jit.move(list, calleeGPR);
-    loadCallFromFrame();
-    Jump isForwarded = jit.branchTestPtr(CCallHelpers::NonZero, calleeGPR);
-    jit.loadPtr(inFrame(CallFrameSlot::callee), calleeGPR);
-    leaveFrames();
-    jit.move(TrustedImm32(count), countGPR);
-    jit.jumpToStub(callEngineCallee());
-
-    isForwarded.link(&jit);
-    leaveFrames();
-    jit.jumpToStub(callValueCell(count));
 }
 
 } } // namespace JSC::AOT

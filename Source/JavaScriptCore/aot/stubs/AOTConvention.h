@@ -57,7 +57,9 @@ constexpr ptrdiff_t offsetOfStackWordFromFrame(unsigned stackIndex)
 
 static constexpr unsigned maxArrayElementsInRegisters = 4;
 static constexpr unsigned arrayLiteralVectorLength(unsigned count) { return (count ? count : 5) | 1; }
+static constexpr unsigned maxArrayLengthInStubKey = 16;
 static constexpr unsigned capacityShiftInArrayLiteralCount = 27;
+static constexpr unsigned int32ValuesInArrayLiteralCount = 1u << 26;
 
 static constexpr unsigned maxFrameSizeWithoutStackCheck = 240;
 static constexpr unsigned maxUncheckedFrameSize = 256;
@@ -79,7 +81,8 @@ struct ClosureRequest {
 #else
     static constexpr unsigned maxNumberOfCaptures = 2;
 #endif
-    static constexpr unsigned maxSlimClosureCaptures = 4;
+    static constexpr unsigned maxSlimClosureCaptures = 8;
+    static constexpr unsigned maxSlimClosureCapturesInRegisters = 4;
     static constexpr bool canEncode(uint32_t function, unsigned executable, uint32_t allocation)
     {
         return function <= ClosureWord::functionMask && executable < 1u << (isSlimBit - executableShift) && allocation < 1u << (countShift - allocationShift);
@@ -89,7 +92,7 @@ struct ClosureRequest {
         RELEASE_ASSERT(canEncode(function, executable, allocation));
         return function | static_cast<uint64_t>(executable) << executableShift | static_cast<uint64_t>(allocation) << allocationShift;
     }
-    static constexpr uint32_t functionOf(uint64_t request) { return request & ClosureWord::functionMask; }
+    static constexpr uint32_t closureNumberOf(uint64_t request) { return request & ClosureWord::functionMask; }
     static constexpr unsigned executableOf(uint64_t request) { return request >> executableShift & ((1u << (isSlimBit - executableShift)) - 1); }
     static constexpr uint32_t allocationOf(uint64_t request) { return request >> allocationShift & ((1u << (countShift - allocationShift)) - 1); }
     static constexpr unsigned countOf(uint64_t request) { return request >> countShift & 0x1f; }
@@ -114,7 +117,6 @@ struct ResumeClosureRequest {
     static constexpr unsigned stubFrameWord = 2;
     static constexpr unsigned allocationShiftForStub = ClosureRequest::executableShift;
     static constexpr uint32_t maxAllocationForStub = (1u << (32 - allocationShiftForStub)) - 1;
-    static constexpr uint32_t encodeForStub(uint32_t function, uint32_t allocation) { return function | allocation << allocationShiftForStub; }
 };
 
 static_assert(numberOfArgumentGPRs <= numberOfDirectArgumentGPRs);

@@ -207,7 +207,7 @@ void JSToken::dump(PrintStream& out) const
     out.print(*m_data.cooked);
 }
 
-static ALWAYS_INLINE bool LEGACY_NODELETE isPrivateFieldName(UniquedStringImpl* uid)
+NODELETE static ALWAYS_INLINE bool isPrivateFieldName(UniquedStringImpl* uid)
 {
     return uid->length() && uid->at(0) == '#';
 }
@@ -444,6 +444,8 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseSourceEl
                     // Since strict mode is changed, restoring lexer state by calling next() may cause errors.
                     restoreSavePoint(context, *savePoint);
                     propagateError();
+                    // Drop any directives parsed so far because they will be parsed again.
+                    sourceElements = context.createSourceElements();
                     continue;
                 }
 
@@ -1242,7 +1244,7 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseAs
     return createAssignmentElement(context, element, startPosition, lastTokenEndPosition());
 }
 
-static const char* LEGACY_NODELETE destructuringKindToVariableKindName(DestructuringKind kind)
+NODELETE static const char* destructuringKindToVariableKindName(DestructuringKind kind)
 {
     switch (kind) {
     case DestructuringKind::DestructureToLet:
@@ -2345,7 +2347,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFormalParameters(TreeB
 #undef failIfDuplicateIfViolation
 }
 
-static ALWAYS_INLINE SuperBinding LEGACY_NODELETE adjustSuperBindingForBaseConstructor(ConstructorKind constructorKind, SuperBinding expectedSuperBinding, SourceParseMode parseMode, bool scopeNeedsSuperBinding, bool currentScopeUsesEval, InnerArrowFunctionCodeFeatures innerArrowFunctionFeatures)
+NODELETE static ALWAYS_INLINE SuperBinding adjustSuperBindingForBaseConstructor(ConstructorKind constructorKind, SuperBinding expectedSuperBinding, SourceParseMode parseMode, bool scopeNeedsSuperBinding, bool currentScopeUsesEval, InnerArrowFunctionCodeFeatures innerArrowFunctionFeatures)
 {
     if (expectedSuperBinding == SuperBinding::NotNeeded)
         return SuperBinding::NotNeeded;
@@ -2367,7 +2369,7 @@ static ALWAYS_INLINE SuperBinding LEGACY_NODELETE adjustSuperBindingForBaseConst
     return SuperBinding::Needed;
 }
 
-static ALWAYS_INLINE SuperBinding LEGACY_NODELETE adjustSuperBindingForBaseConstructor(ConstructorKind constructorKind, SuperBinding expectedSuperBinding, SourceParseMode parseMode, Scope* functionScope)
+NODELETE static ALWAYS_INLINE SuperBinding adjustSuperBindingForBaseConstructor(ConstructorKind constructorKind, SuperBinding expectedSuperBinding, SourceParseMode parseMode, Scope* functionScope)
 {
     return adjustSuperBindingForBaseConstructor(constructorKind, expectedSuperBinding, parseMode, functionScope->needsSuperBinding(), functionScope->usesEval(), functionScope->innerArrowFunctionFeatures());
 }
@@ -2413,7 +2415,7 @@ template <class TreeBuilder> TreeFunctionBody Parser<LexerType>::parseFunctionBo
     return context.createFunctionMetadata(startLocation, endLocation, functionStart, functionNameStart, parametersStart, implementationVisibility, lexicallyScopedFeatures(), constructorKind, functionSuperBinding, parameterCount, sourceParseMode(), isArrowFunctionBodyExpression);
 }
 
-static const char* LEGACY_NODELETE stringArticleForFunctionMode(SourceParseMode mode)
+NODELETE static const char* stringArticleForFunctionMode(SourceParseMode mode)
 {
     switch (mode) {
     case SourceParseMode::GetterMode:
@@ -2446,7 +2448,7 @@ static const char* LEGACY_NODELETE stringArticleForFunctionMode(SourceParseMode 
     return nullptr;
 }
     
-static const char* LEGACY_NODELETE stringForFunctionMode(SourceParseMode mode)
+NODELETE static const char* stringForFunctionMode(SourceParseMode mode)
 {
     switch (mode) {
     case SourceParseMode::GetterMode:
@@ -2806,28 +2808,20 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         functionBodyType = StandardFunctionBodyBlock;
     }
 
-    // FIXME: https://bugs.webkit.org/show_bug.cgi?id=156962
-    // This loop collects the set of capture candidates that aren't
-    // part of the set of this function's declared parameters. We will
-    // figure out which parameters are captured for this function when
-    // we actually generate code for it. For now, we just propagate to
-    // our parent scopes which variables we might have closed over that
-    // belong to them. This is necessary for correctness when using
-    // the source provider cache because we can't close over a variable
-    // that we don't claim to close over. The source provider cache must
-    // know this information to properly cache this function.
-    // This might work itself out nicer if we declared a different
-    // Scope struct for the parameters (because they are indeed implemented
-    // as their own scope).
+    // Parameter expressions cannot see the body's declarations, which live in a separate environment
+    // (https://tc39.es/ecma262/#sec-functiondeclarationinstantiation). The parameters and the body
+    // share this Scope, so the parameter list's free variables must reach the parent before the
+    // body's declarations hide them, as they would hide x in `function f(a = x) { var x; }`.
+    // FIXME: Give the parameters their own Scope. Until then, a closure in a parameter expression
+    // makes a same-named body declaration look captured. https://bugs.webkit.org/show_bug.cgi?id=156962
     UniquedStringImplPtrSet nonLocalCapturesFromParameterExpressions;
     functionScope->forEachUsedVariable([&] (UniquedStringImpl* impl) {
-        if (!functionScope->hasDeclaredParameter(impl)) {
+        if (!functionScope->hasDeclaredParameter(impl))
             nonLocalCapturesFromParameterExpressions.add(impl);
-            if (TreeBuilder::NeedsFreeVariableInfo)
-                parentScope->addClosedVariableCandidateUnconditionally(impl);
-        }
         return IterationStatus::Continue;
     });
+    if (!nonLocalCapturesFromParameterExpressions.isEmpty())
+        parentScope->collectFreeVariablesFrom(functionScope.scope(), TreeBuilder::NeedsFreeVariableInfo);
 
     auto performParsingFunctionBody = [&] {
         return parseFunctionBody(context, syntaxChecker, startLocation, functionStart, functionNameStart, parametersStart, constructorKind, expectedSuperBinding, functionBodyType, functionInfo.parameterCount);
@@ -2932,8 +2926,8 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     return true;
 }
 
-static NO_RETURN_DUE_TO_CRASH FunctionMetadataNode* LEGACY_NODELETE getMetadata(ParserFunctionInfo<SyntaxChecker>&) { RELEASE_ASSERT_NOT_REACHED(); }
-static FunctionMetadataNode* LEGACY_NODELETE getMetadata(ParserFunctionInfo<ASTBuilder>& info) { return info.body; }
+NODELETE static NO_RETURN_DUE_TO_CRASH FunctionMetadataNode* getMetadata(ParserFunctionInfo<SyntaxChecker>&) { RELEASE_ASSERT_NOT_REACHED(); }
+NODELETE static FunctionMetadataNode* getMetadata(ParserFunctionInfo<ASTBuilder>& info) { return info.body; }
 
 template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseFunctionDeclaration(TreeBuilder& context, FunctionDeclarationType declarationType, ExportType exportType, DeclarationDefaultContext declarationDefaultContext, std::optional<int> functionConstructorParametersEndPosition)
@@ -4737,8 +4731,8 @@ namedProperty:
 
         if (match(COMMA) || match(CLOSEBRACE)) {
             semanticFailureDueToKeywordCheckingToken(identToken, "shorthand property name");
-            JSTextPosition start = tokenStartPosition();
-            JSTokenLocation location(tokenLocation());
+            JSTextPosition start = identToken.m_startPosition;
+            JSTokenLocation location(identToken.location());
             currentScope()->useVariable(ident, m_vm.propertyNames->eval == *ident);
             TreeExpression node = context.createResolve(location, *ident, start, lastTokenEndPosition());
             return context.createProperty(ident, node, static_cast<PropertyNode::Type>(PropertyNode::Constant | PropertyNode::Shorthand), SuperBinding::NotNeeded, InferName::Allowed, ClassElementTag::No);
@@ -5788,7 +5782,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseArrowFunctio
     return context.createArrowFunctionExpr(location, info);
 }
 
-static const char* LEGACY_NODELETE operatorString(bool prefix, unsigned tok)
+NODELETE static const char* operatorString(bool prefix, unsigned tok)
 {
     switch (tok) {
     case MINUSMINUS:

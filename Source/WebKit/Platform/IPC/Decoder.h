@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AsyncReplyID.h"
 #include "Attachment.h"
 #include "MessageNames.h"
 #include "ReceiverMatcher.h"
@@ -32,6 +33,7 @@
 #include <memory>
 #include <span>
 #include <wtf/ArgumentCoder.h>
+#include <wtf/CanBorrow.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/Markable.h>
@@ -62,7 +64,7 @@ template<typename T, typename = IsObjCObject<T>> Class getClass()
 }
 #endif
 
-class Decoder {
+class Decoder : public CanBorrow {
     WTF_MAKE_TZONE_ALLOCATED(Decoder);
 public:
     static std::unique_ptr<Decoder> create(std::span<const uint8_t> buffer, Vector<Attachment>&&);
@@ -81,20 +83,26 @@ public:
     ReceiverName messageReceiverName() const { return receiverName(m_messageName); }
     MessageName messageName() const { return m_messageName; }
     uint64_t destinationID() const { return m_destinationID; }
-    SyncRequestID syncRequestID() const { ASSERT(m_syncRequestID); return *m_syncRequestID; }
+    SyncRequestID syncRequestID() const { ASSERT(m_replyID); return SyncRequestID(m_replyID); }
+    AsyncReplyID asyncReplyID() const { ASSERT(m_replyID); return AsyncReplyID(m_replyID); }
     bool matches(const ReceiverMatcher& matcher) const { return matcher.matches(messageReceiverName(), destinationID()); }
 
     bool isSyncMessage() const { return messageIsSync(messageName()); }
-    ShouldDispatchWhenWaitingForSyncReply LEGACY_NODELETE shouldDispatchMessageWhenWaitingForSyncReply() const;
+    bool isAsyncWithReplyMessage() const { return messageIsAsyncWithReply(messageName()); }
+    bool isAsyncReplyMessage() const { return messageIsReplyToAsyncWithReply(messageName()); }
+
+    NODELETE ShouldDispatchWhenWaitingForSyncReply shouldDispatchMessageWhenWaitingForSyncReply() const;
     bool isAllowedWhenWaitingForSyncReply() const { return messageAllowedWhenWaitingForSyncReply(messageName()) || m_isAllowedWhenWaitingForSyncReplyOverride; }
     bool isAllowedWhenWaitingForUnboundedSyncReply() const { return messageAllowedWhenWaitingForUnboundedSyncReply(messageName()); }
-    bool LEGACY_NODELETE shouldUseFullySynchronousModeForTesting() const;
-    bool LEGACY_NODELETE shouldMaintainOrderingWithAsyncMessages() const;
+    NODELETE bool shouldUseFullySynchronousModeForTesting() const;
+    NODELETE bool shouldMaintainOrderingWithAsyncMessages() const;
     void setIsAllowedWhenWaitingForSyncReplyOverride(bool value) { m_isAllowedWhenWaitingForSyncReplyOverride = value; }
-    bool isAsyncReplyMessage() const { return isAsyncReply(messageName()); }
+
+    bool wasHandled() const { return m_wasHandled; }
+    void markHandled() { m_wasHandled = true; }
 
 #if PLATFORM(MAC)
-    void LEGACY_NODELETE setImportanceAssertion(ImportanceAssertion&&);
+    NODELETE void setImportanceAssertion(ImportanceAssertion&&);
 #endif
 
 #if ENABLE(IPC_TESTING_API)
@@ -144,6 +152,11 @@ public:
     }
 
     std::optional<Attachment> takeLastAttachment();
+    bool hasAttachments() const { return !m_attachments.isEmpty(); }
+
+    // Rewinds to the first argument so that the message can be decoded again, for example when a stream message
+    // is deferred. The attachments that have been taken are not restored.
+    void rewindToArguments();
 
     void addIndexOfDecodingFailure(uint32_t indexOfObjectFailingDecoding) { m_indicesOfObjectsFailingDecoding.append(indexOfObjectFailingDecoding); }
     const Vector<uint32_t>& indicesOfObjectsFailingDecoding() const LIFETIME_BOUND { return m_indicesOfObjectsFailingDecoding; }
@@ -153,6 +166,7 @@ private:
 
     std::span<const uint8_t> m_buffer;
     std::span<const uint8_t>::iterator m_bufferPosition;
+    size_t m_argumentsOffset { 0 };
     BufferDeallocator m_bufferDeallocator;
 
     Vector<Attachment> m_attachments;
@@ -166,13 +180,16 @@ private:
 #endif
 
     uint64_t m_destinationID;
-    Markable<SyncRequestID> m_syncRequestID;
+    // Holds the SyncRequestID (sync messages) or the AsyncReplyID (async messages with a reply),
+    // both decoded from the message header. 0 means neither is present.
+    uint64_t m_replyID { 0 };
 
     Vector<uint32_t> m_indicesOfObjectsFailingDecoding;
 
 #if ENABLE(IPC_TESTING_API)
     ASCIILiteral m_errorString;
 #endif
+    bool m_wasHandled { false };
 };
 
 template<>

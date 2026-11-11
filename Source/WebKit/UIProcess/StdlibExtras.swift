@@ -21,15 +21,22 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if compiler(>=6.2.3)
+import WebKit_Internal
+import wtf
+
+extension WTF.String {
+    /// Return a `Swift.String` from this `WTF.String`.
+    var description: Swift.String {
+        // We could possibly make this quicker by treating a C++ span as
+        // a Sequence. For now, we want to avoid unsafe as much as possible.
+        Swift.String(utf8(WTF.LenientConversion).toStdString())
+    }
+}
 
 // FIXME (rdar://164119356): Move parts of StdLibExtras.swift into WTF
 // (those parts which are not specific to WebKit-level types) - and enable
 // irrespective of BACK_FORWARD_LIST_SWIFT
 #if ENABLE_BACK_FORWARD_LIST_SWIFT
-
-import WebKit_Internal
-import wtf
 
 /// Conform any WTF::Ref<T> to this protocol to get useful extensions.
 protocol CxxRef {
@@ -63,18 +70,19 @@ extension WTF.String {
         // Safety - we are guaranteed to get a valid buffer from the Swift
         // string for the duration that we're using it to construct the WTF::String.
         // The WTF::String will take a copy.
+        #if compiler(>=6.4)
+        self = string.utf8CString.span.withUnsafeBufferPointer { ptr in
+            // swift-format-ignore: NeverForceUnwrap
+            let cppspan = unsafe SpanConstChar(UnsafeBufferPointer(start: ptr.baseAddress!, count: string.utf8CString.count))
+            return unsafe WTF.String.fromUTF8(cppspan)
+        }
+        #else
         self = unsafe string.utf8CString.span.withUnsafeBufferPointer { ptr in
             // swift-format-ignore: NeverForceUnwrap
             let cppspan = unsafe SpanConstChar(UnsafeBufferPointer(start: ptr.baseAddress!, count: string.utf8CString.count))
             return unsafe WTF.String.fromUTF8(cppspan)
         }
-    }
-
-    /// Return a `Swift.String` from this `WTF.String`.
-    var description: Swift.String {
-        // We could possibly make this quicker by treating a C++ span as
-        // a Sequence. For now, we want to avoid unsafe as much as possible.
-        Swift.String(utf8(WTF.LenientConversion).toStdString())
+        #endif
     }
 }
 
@@ -99,5 +107,3 @@ extension CxxRefVector {
 }
 
 #endif // ENABLE_BACK_FORWARD_LIST_SWIFT
-
-#endif // compiler(>=6.2.3)

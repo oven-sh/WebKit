@@ -85,7 +85,7 @@ public:
         return sizeof(JSFunction);
     }
 
-    static Structure* LEGACY_NODELETE selectStructureForNewFuncExp(JSGlobalObject*, FunctionExecutable*);
+    NODELETE static Structure* selectStructureForNewFuncExp(JSGlobalObject*, FunctionExecutable*);
 
     JS_EXPORT_PRIVATE static JSFunction* create(VM&, JSGlobalObject*, unsigned length, const String& name, NativeFunction, ImplementationVisibility, Intrinsic = NoIntrinsic, NativeFunction nativeConstructor = callHostFunctionAsConstructor, const DOMJIT::Signature* = nullptr);
     
@@ -121,7 +121,7 @@ public:
     inline FunctionExecutable* jsExecutable() const;
     inline Intrinsic intrinsic() const;
 
-    JS_EXPORT_PRIVATE const SourceCode* LEGACY_NODELETE sourceCode() const;
+    NODELETE JS_EXPORT_PRIVATE const SourceCode* sourceCode() const;
 
     DECLARE_EXPORT_INFO;
 
@@ -139,7 +139,7 @@ public:
 
     JS_EXPORT_PRIVATE static CallData getConstructData(JSCell*);
     static CallData getConstructDataInline(JSCell*);
-    JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getCallData(JSCell*);
+    NODELETE JS_EXPORT_PRIVATE static CallData getCallData(JSCell*);
     static CallData getCallDataInline(JSCell*);
 
     static constexpr ptrdiff_t offsetOfExecutableOrRareData()
@@ -168,7 +168,7 @@ public:
     bool isHostOrBuiltinFunction() const;
     bool isHostOrPrivateBuiltinFunction() const;
     bool isBuiltinFunction() const;
-    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isHostFunctionNonInline() const;
+    NODELETE JS_EXPORT_PRIVATE bool isHostFunctionNonInline() const;
     bool isClassConstructorFunction() const;
     bool isRemoteFunction() const;
     bool isCompiledClosure() const { return type() == CompiledClosureType; }
@@ -194,6 +194,8 @@ public:
     JSString* originalName(JSGlobalObject*);
 
     bool mayHaveNonReifiedPrototype();
+
+    bool canPerformFastEnumerablePropertyEnumeration(VM&);
 
     // This method may be called for host functions, in which case it
     // will return an arbitrary value. This should only be used for

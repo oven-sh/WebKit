@@ -32,15 +32,13 @@
 #import <wtf/Ref.h>
 #import <wtf/WeakPtr.h>
 
-struct WGPUXRProjectionLayerImpl {
-};
 
 namespace WebGPU::Metal {
 
 class CommandEncoder;
 class Device;
 
-class XRProjectionLayer final : public WebGPU::XRProjectionLayer, public WGPUXRProjectionLayerImpl {
+class XRProjectionLayer final : public WebGPU::XRProjectionLayer {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(XRProjectionLayer);
 public:
     static Ref<XRProjectionLayer> create(const WebGPU::XRProjectionLayerDescriptor& descriptor, Device& device)
@@ -54,16 +52,17 @@ public:
 
     ~XRProjectionLayer();
 
-    void LEGACY_NODELETE setLabel(String&&) final;
+    NODELETE void setLabel(String&&) final;
 
-    bool LEGACY_NODELETE isValid() const final;
-    void LEGACY_NODELETE startFrame(size_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples) final;
+    NODELETE bool isValid() const final;
+    NODELETE void startFrame(size_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples) final;
     void endFrame() final { }
+    void destroy() final;
 
-    id<MTLTexture> LEGACY_NODELETE colorTexture() const;
-    id<MTLTexture> LEGACY_NODELETE depthTexture() const;
-    const std::pair<id<MTLSharedEvent>, uint64_t>& LEGACY_NODELETE completionEvent() const;
-    size_t LEGACY_NODELETE reusableTextureIndex() const;
+    NODELETE id<MTLTexture> colorTexture() const;
+    NODELETE id<MTLTexture> depthTexture() const;
+    NODELETE const std::pair<id<MTLSharedEvent>, uint64_t>& completionEvent() const;
+    NODELETE size_t reusableTextureIndex() const;
     WebGPU::TextureFormat colorFormat() const { return m_colorFormat; }
     std::optional<WebGPU::TextureFormat> optionalDepthStencilFormat() const { return m_optionalDepthStencilFormat; }
     OptionSet<WebGPU::TextureUsage> flags() const { return m_flags; }
@@ -73,6 +72,8 @@ public:
 private:
     XRProjectionLayer(const WebGPU::XRProjectionLayerDescriptor&, Device&);
     XRProjectionLayer(Device&);
+
+    void clearDepthTexture();
 
     NSMutableDictionary<NSNumber*, id<MTLTexture>>* m_colorTextures { nil };
     NSMutableDictionary<NSNumber*, id<MTLTexture>>* m_depthTextures { nil };

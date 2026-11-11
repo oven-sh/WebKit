@@ -1,0 +1,63 @@
+# function twice(first, second) { kept = first; return first() + second(); }
+# function borrows(given, holder, list) { const n: number = list[0]; const it = () => given.size; return holder.twice(it, it) + n; }
+# let kept; const list = JSON.parse('["a",5]'), holder = { twice }; print(borrows({ size: 1 }, holder, list) + borrows({ size: 2 }, holder, list) + kept());
+# RUN(ANSWER): run-in-shell
+# ANSWER: 2a4a2
+# ANSWER-NEXT: exited with 0
+
+layout L0 name="Sized" fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=JSON
+    v3 = PropGet v2 key="parse"
+    v4 = String string="[\"a\",5]"
+    v5 = Call v3, v2, v4 calleeKey="parse" calleeName="JSON.parse"
+    v6 = NewDictionary
+    v7 = NewClosure function=f3
+    PropSet v6, v7 key="twice"
+    v9 = Integer integer=1
+    v10 = NewObject -, v9 layout=L0 fields=[0]
+    v11 = NewClosure function=f1
+    v12 = Call v11, -, v10, v6, v5 calleeName="borrows" [isNeverInlined]
+    v13 = Integer integer=2
+    v14 = NewObject -, v13 layout=L0 fields=[0]
+    v15 = Call v11, -, v14, v6, v5 calleeName="borrows" [isNeverInlined]
+    v16 = Add v12, v15
+    v17 = GetModuleVariable variable=g0
+    v18 = Call v17 calleeName="kept"
+    v19 = Add v16, v18
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="print" [isFreeName]
+    v22 = Call v21, -, v19 calleeName="print"
+    v23 = Undefined
+    Return v23
+}
+function f1 name="borrows" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    v4 = ElemGet v2, v3
+    v5 = Convert v4 declared={type=number} illTypedCause=FromLooseType
+    v6 = NewClosure v0 function=f2
+    v7 = PropGet v1 key="twice"
+    v8 = Call v7, v1, v6, v6 calleeKey="twice" calleeName="holder.twice"
+    v9 = Add v8, v5
+    Return v9
+}
+function f2 name="it" module=m0 kind=Arrow flags=[IsChecked] captures=[{type=anything variableName="given"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+function f3 name="twice" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    PutModuleVariable v0 variable=g0
+    v3 = Call v0 calleeName="first"
+    v4 = Call v1 calleeName="second"
+    v5 = Add v3, v4
+    Return v5
+}

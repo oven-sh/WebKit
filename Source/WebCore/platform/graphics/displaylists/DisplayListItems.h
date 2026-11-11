@@ -35,11 +35,12 @@
 #include <WebCore/GlyphBuffer.h>
 #include <WebCore/Gradient.h>
 #include <WebCore/GraphicsContext.h>
-#include <WebCore/Image.h>
+#include <WebCore/MeshGradient.h>
 #include <WebCore/NativeImage.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/SystemImage.h>
 #include <WebCore/TextFlags.h>
+#include <wtf/ArgumentCoder.h>
 #include <wtf/Box.h>
 #include <wtf/TypeCasts.h>
 
@@ -50,14 +51,14 @@ class TextStream;
 namespace WebCore {
 
 class ControlFactory;
-struct ImageDrawingOptions;
+struct RasterDrawingOptions;
 
 namespace DisplayList {
 class DisplayList;
 
 class Save {
 public:
-    static constexpr char name[] = "save";
+    static constexpr ASCIILiteral name = "save"_s;
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const { }
@@ -65,7 +66,7 @@ public:
 
 class Restore {
 public:
-    static constexpr char name[] = "restore";
+    static constexpr ASCIILiteral name = "restore"_s;
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const { }
@@ -73,7 +74,7 @@ public:
 
 class Translate {
 public:
-    static constexpr char name[] = "translate";
+    static constexpr ASCIILiteral name = "translate"_s;
 
     Translate(float x, float y)
         : m_x(x)
@@ -94,7 +95,7 @@ private:
 
 class Rotate {
 public:
-    static constexpr char name[] = "rotate";
+    static constexpr ASCIILiteral name = "rotate"_s;
 
     Rotate(float angle)
         : m_angle(angle)
@@ -112,7 +113,7 @@ private:
 
 class Scale {
 public:
-    static constexpr char name[] = "scale";
+    static constexpr ASCIILiteral name = "scale"_s;
 
     Scale(const FloatSize& size)
         : m_size(size)
@@ -130,7 +131,7 @@ private:
 
 class SetCTM {
 public:
-    static constexpr char name[] = "set-ctm";
+    static constexpr ASCIILiteral name = "set-ctm"_s;
 
     SetCTM(const AffineTransform& transform)
         : m_transform(transform)
@@ -148,7 +149,7 @@ private:
 
 class ConcatenateCTM {
 public:
-    static constexpr char name[] = "concatenate-ctm";
+    static constexpr ASCIILiteral name = "concatenate-ctm"_s;
 
     ConcatenateCTM(const AffineTransform& transform)
         : m_transform(transform)
@@ -166,7 +167,7 @@ private:
 
 class SetInlineFillColor {
 public:
-    static constexpr char name[] = "set-inline-fill-color";
+    static constexpr ASCIILiteral name = "set-inline-fill-color"_s;
 
     SetInlineFillColor(PackedColor::RGBA colorData)
         : m_colorData(colorData)
@@ -190,7 +191,7 @@ private:
 
 class SetInlineStroke {
 public:
-    static constexpr char name[] = "set-inline-stroke";
+    static constexpr ASCIILiteral name = "set-inline-stroke"_s;
 
     SetInlineStroke(std::optional<PackedColor::RGBA> colorData, std::optional<float> thickness = std::nullopt)
         : m_colorData(colorData)
@@ -223,7 +224,7 @@ private:
 
 class SetState {
 public:
-    static constexpr char name[] = "set-state";
+    static constexpr ASCIILiteral name = "set-state"_s;
 
     WEBCORE_EXPORT SetState(const GraphicsContextState&);
 
@@ -239,7 +240,7 @@ private:
 
 class SetLineCap {
 public:
-    static constexpr char name[] = "set-line-cap";
+    static constexpr ASCIILiteral name = "set-line-cap"_s;
 
     SetLineCap(LineCap lineCap)
         : m_lineCap(lineCap)
@@ -257,7 +258,7 @@ private:
 
 class SetLineDash {
 public:
-    static constexpr char name[] = "set-line-dash";
+    static constexpr ASCIILiteral name = "set-line-dash"_s;
 
     SetLineDash(const DashArray& dashArray, float dashOffset)
         : m_dashArray(dashArray)
@@ -278,7 +279,7 @@ private:
 
 class SetLineJoin {
 public:
-    static constexpr char name[] = "set-line-join";
+    static constexpr ASCIILiteral name = "set-line-join"_s;
 
     SetLineJoin(LineJoin lineJoin)
         : m_lineJoin(lineJoin)
@@ -296,7 +297,7 @@ private:
 
 class SetMiterLimit {
 public:
-    static constexpr char name[] = "set-miter-limit";
+    static constexpr ASCIILiteral name = "set-miter-limit"_s;
 
     SetMiterLimit(float miterLimit)
         : m_miterLimit(miterLimit)
@@ -314,7 +315,7 @@ private:
 
 class Clip {
 public:
-    static constexpr char name[] = "clip";
+    static constexpr ASCIILiteral name = "clip"_s;
 
     Clip(const FloatRect& rect)
         : m_rect(rect)
@@ -332,7 +333,7 @@ private:
 
 class ClipRoundedRect {
 public:
-    static constexpr char name[] = "clip-rounded-rect";
+    static constexpr ASCIILiteral name = "clip-rounded-rect"_s;
 
     ClipRoundedRect(const FloatRoundedRect& rect)
         : m_rect(rect)
@@ -350,7 +351,7 @@ private:
 
 class ClipOut {
 public:
-    static constexpr char name[] = "clip-out";
+    static constexpr ASCIILiteral name = "clip-out"_s;
 
     ClipOut(const FloatRect& rect)
         : m_rect(rect)
@@ -368,7 +369,7 @@ private:
 
 class ClipOutRoundedRect {
 public:
-    static constexpr char name[] = "clip-out-rounded-rect";
+    static constexpr ASCIILiteral name = "clip-out-rounded-rect"_s;
 
     ClipOutRoundedRect(const FloatRoundedRect& rect)
         : m_rect(rect)
@@ -386,7 +387,7 @@ private:
 
 class ClipToImageBuffer {
 public:
-    static constexpr char name[] = "clip-to-image-buffer";
+    static constexpr ASCIILiteral name = "clip-to-image-buffer"_s;
 
     ClipToImageBuffer(Ref<ImageBuffer>&& imageBuffer, const FloatRect& destinationRect)
         : m_imageBuffer(WTF::move(imageBuffer))
@@ -407,7 +408,7 @@ private:
 
 class ClipOutToPath {
 public:
-    static constexpr char name[] = "clip-out-to-path";
+    static constexpr ASCIILiteral name = "clip-out-to-path"_s;
 
     ClipOutToPath(Path&& path)
         : m_path(WTF::move(path))
@@ -430,7 +431,7 @@ private:
 
 class ClipPath {
 public:
-    static constexpr char name[] = "clip-path";
+    static constexpr ASCIILiteral name = "clip-path"_s;
 
     ClipPath(Path&& path, WindRule windRule)
         : m_path(WTF::move(path))
@@ -455,9 +456,40 @@ private:
     WindRule m_windRule;
 };
 
+class ClipTransformedPath {
+public:
+    static constexpr ASCIILiteral name = "clip-transformed-path"_s;
+
+    ClipTransformedPath(const AffineTransform& pathTransform, Path&& path, WindRule windRule)
+        : m_pathTransform(pathTransform)
+        , m_path(WTF::move(path))
+        , m_windRule(windRule)
+    {
+    }
+
+    ClipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule windRule)
+        : m_pathTransform(pathTransform)
+        , m_path(path)
+        , m_windRule(windRule)
+    {
+    }
+
+    const AffineTransform& pathTransform() const LIFETIME_BOUND { return m_pathTransform; }
+    const Path& path() const LIFETIME_BOUND { return m_path; }
+    WindRule windRule() const { return m_windRule; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    AffineTransform m_pathTransform;
+    Path m_path;
+    WindRule m_windRule;
+};
+
 class ResetClip {
 public:
-    static constexpr char name[] = "reset-clip";
+    static constexpr ASCIILiteral name = "reset-clip"_s;
 
     ResetClip()
     {
@@ -469,12 +501,18 @@ public:
 
 class DrawFilteredImageBuffer {
 public:
-    static constexpr char name[] = "draw-filtered-image-buffer";
+    static constexpr ASCIILiteral name = "draw-filtered-image-buffer"_s;
 
     DrawFilteredImageBuffer(RefPtr<ImageBuffer>&& sourceImage, const FloatRect& sourceImageRect, Filter& filter)
         : m_sourceImage(WTF::move(sourceImage))
         , m_sourceImageRect(sourceImageRect)
         , m_filter(filter)
+    {
+    }
+
+    DrawFilteredImageBuffer(const FloatRect& sourceImageRect, Ref<Filter>&& filter)
+        : m_sourceImageRect(sourceImageRect)
+        , m_filter(WTF::move(filter))
     {
     }
 
@@ -486,6 +524,8 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
+    friend struct IPC::ArgumentCoder<DrawFilteredImageBuffer>;
+
     const RefPtr<ImageBuffer> m_sourceImage;
     FloatRect m_sourceImageRect;
     const Ref<Filter> m_filter;
@@ -493,7 +533,7 @@ private:
 
 class DrawGlyphs {
 public:
-    static constexpr char name[] = "draw-glyphs";
+    static constexpr ASCIILiteral name = "draw-glyphs"_s;
 
     DrawGlyphs(Ref<const FontBase>&& font, Vector<GlyphBufferGlyph>&& glyphs, Vector<GlyphBufferAdvance>&& advances, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
         : m_font(WTF::move(font))
@@ -504,8 +544,33 @@ public:
     {
     }
 
+    DrawGlyphs(uint64_t fontIndex, Vector<GlyphBufferGlyph>&& glyphs, Vector<FloatSize>&& sizes, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
+        : m_font(fontIndex)
+        , m_glyphs(WTF::move(glyphs))
+        , m_advances(makeGlyphBufferAdvances(sizes))
+        , m_localAnchor(localAnchor)
+        , m_fontSmoothingMode(smoothingMode)
+    {
+    }
+
+    const FontBase& font() const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(isResolved());
+        return std::get<Ref<const FontBase>>(m_font);
+    }
+    void setFont(Ref<const FontBase>&& font) { m_font = WTF::move(font); }
+    void setFontIndex(uint64_t fontIndex) { m_font = fontIndex; }
+    bool isResolved() const { return std::holds_alternative<Ref<const FontBase>>(m_font); }
+
+    uint64_t fontIndex() const
+    {
+        RELEASE_ASSERT(!isResolved());
+        return std::get<uint64_t>(m_font);
+    }
+
     const Vector<GlyphBufferGlyph>& glyphs() const LIFETIME_BOUND { return m_glyphs; }
     const Vector<GlyphBufferAdvance>& advances() const LIFETIME_BOUND { return m_advances; }
+    Vector<FloatSize> sizes() const { return WebCore::sizes(m_advances); }
     size_t length() const { return m_glyphs.size(); }
 
     FloatPoint localAnchor() const { return m_localAnchor; }
@@ -515,7 +580,7 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    Ref<const FontBase> m_font;
+    Variant<Ref<const FontBase>, uint64_t> m_font;
     Vector<GlyphBufferGlyph> m_glyphs;
     Vector<GlyphBufferAdvance> m_advances;
     FloatPoint m_localAnchor;
@@ -525,7 +590,7 @@ private:
 #if USE(SKIA)
 class DrawTextBlob {
 public:
-    static constexpr char name[] = "draw-text-blob";
+    static constexpr ASCIILiteral name = "draw-text-blob"_s;
 
     DrawTextBlob(Ref<const Font>&& font, Vector<GlyphBufferGlyph>&& glyphs, Vector<GlyphBufferAdvance>&& advances, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
         : m_textBlob(font->buildTextBlob(glyphs, advances, smoothingMode))
@@ -566,29 +631,38 @@ private:
 
 class DrawDisplayList {
 public:
-    static constexpr char name[] = "draw-display-list";
+    static constexpr ASCIILiteral name = "draw-display-list"_s;
 
-    DrawDisplayList(Ref<const DisplayList>&&);
-    ~DrawDisplayList();
+    WEBCORE_EXPORT DrawDisplayList(Ref<const DisplayList>&&);
+    WEBCORE_EXPORT explicit DrawDisplayList(uint64_t displayListIndex);
+    WEBCORE_EXPORT ~DrawDisplayList();
 
-    Ref<const DisplayList> LEGACY_NODELETE displayList() const;
+    NODELETE WEBCORE_EXPORT Ref<const DisplayList> displayList() const;
+    WEBCORE_EXPORT void setDisplayList(Ref<const DisplayList>&&);
+    bool isResolved() const { return std::holds_alternative<Ref<const DisplayList>>(m_displayList); }
+
+    uint64_t displayListIndex() const
+    {
+        RELEASE_ASSERT(!isResolved());
+        return std::get<uint64_t>(m_displayList);
+    }
 
     void apply(GraphicsContext&, ControlFactory&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    Ref<const DisplayList> m_displayList;
+    Variant<Ref<const DisplayList>, uint64_t> m_displayList;
 };
 
 class DrawPlaceholder {
 public:
-    static constexpr char name[] = "draw-placeholder";
+    static constexpr ASCIILiteral name = "draw-placeholder"_s;
 
-    DrawPlaceholder(Function<void(GraphicsContext&)>&&);
-    ~DrawPlaceholder();
+    WEBCORE_EXPORT DrawPlaceholder(Function<void(GraphicsContext&)>&&);
+    WEBCORE_EXPORT ~DrawPlaceholder();
 
-    void apply(GraphicsContext&) const;
-    void LEGACY_NODELETE dump(TextStream&, OptionSet<AsTextFlag>) const;
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    NODELETE void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
     using FunctionHolder = Box<Function<void(GraphicsContext&)>>;
@@ -597,9 +671,9 @@ private:
 
 class DrawImageBuffer {
 public:
-    static constexpr char name[] = "draw-image-buffer";
+    static constexpr ASCIILiteral name = "draw-image-buffer"_s;
 
-    DrawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+    DrawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
         : m_imageBuffer(imageBuffer)
         , m_destinationRect(destRect)
         , m_srcRect(srcRect)
@@ -610,7 +684,7 @@ public:
     ImageBuffer& imageBuffer() const { return m_imageBuffer; }
     FloatRect source() const { return m_srcRect; }
     FloatRect destinationRect() const { return m_destinationRect; }
-    ImageDrawingOptions options() const { return m_options; }
+    RasterDrawingOptions options() const { return m_options; }
 
     void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -619,14 +693,14 @@ private:
     const Ref<ImageBuffer> m_imageBuffer;
     FloatRect m_destinationRect;
     FloatRect m_srcRect;
-    ImageDrawingOptions m_options;
+    RasterDrawingOptions m_options;
 };
 
 class DrawNativeImage {
 public:
-    static constexpr char name[] = "draw-native-image";
+    static constexpr ASCIILiteral name = "draw-native-image"_s;
 
-    DrawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+    DrawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
         : m_image(image)
         , m_destinationRect(destRect)
         , m_srcRect(srcRect)
@@ -637,7 +711,7 @@ public:
     const NativeImage& nativeImage() const { return m_image; }
     const FloatRect& destinationRect() const LIFETIME_BOUND { return m_destinationRect; }
     const FloatRect& source() const LIFETIME_BOUND { return m_srcRect; }
-    ImageDrawingOptions options() const { return m_options; }
+    RasterDrawingOptions options() const { return m_options; }
 
     void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -646,12 +720,12 @@ private:
     const Ref<const NativeImage> m_image;
     FloatRect m_destinationRect;
     FloatRect m_srcRect;
-    ImageDrawingOptions m_options;
+    RasterDrawingOptions m_options;
 };
 
 class DrawSystemImage {
 public:
-    static constexpr char name[] = "draw-system-image";
+    static constexpr ASCIILiteral name = "draw-system-image"_s;
 
     DrawSystemImage(SystemImage& systemImage, const FloatRect& destinationRect)
         : m_systemImage(systemImage)
@@ -672,9 +746,9 @@ private:
 
 class DrawPatternNativeImage {
 public:
-    static constexpr char name[] = "draw-pattern-nativeimage";
+    static constexpr ASCIILiteral name = "draw-pattern-nativeimage"_s;
 
-    DrawPatternNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+    DrawPatternNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
         : m_image(image)
         , m_destination(destRect)
         , m_tileRect(tileRect)
@@ -690,7 +764,7 @@ public:
     const AffineTransform& patternTransform() const LIFETIME_BOUND { return m_patternTransform; }
     FloatPoint phase() const { return m_phase; }
     FloatSize spacing() const { return m_spacing; }
-    ImageDrawingOptions options() const { return m_options; }
+    RasterDrawingOptions options() const { return m_options; }
 
     void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -702,14 +776,14 @@ private:
     AffineTransform m_patternTransform;
     FloatPoint m_phase;
     FloatSize m_spacing;
-    ImageDrawingOptions m_options;
+    RasterDrawingOptions m_options;
 };
 
 class DrawPatternImageBuffer {
 public:
-    static constexpr char name[] = "draw-pattern-imagebuffer";
+    static constexpr ASCIILiteral name = "draw-pattern-imagebuffer"_s;
 
-    DrawPatternImageBuffer(ImageBuffer& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+    DrawPatternImageBuffer(ImageBuffer& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
         : m_imageBuffer(image)
         , m_destination(destRect)
         , m_tileRect(tileRect)
@@ -725,7 +799,7 @@ public:
     const AffineTransform& patternTransform() const LIFETIME_BOUND { return m_patternTransform; }
     FloatPoint phase() const { return m_phase; }
     FloatSize spacing() const { return m_spacing; }
-    ImageDrawingOptions options() const { return m_options; }
+    RasterDrawingOptions options() const { return m_options; }
 
     void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -737,12 +811,12 @@ private:
     AffineTransform m_patternTransform;
     FloatPoint m_phase;
     FloatSize m_spacing;
-    ImageDrawingOptions m_options;
+    RasterDrawingOptions m_options;
 };
 
 class BeginTransparencyLayer {
 public:
-    static constexpr char name[] = "begin-transparency-layer";
+    static constexpr ASCIILiteral name = "begin-transparency-layer"_s;
 
     BeginTransparencyLayer(float opacity)
         : m_opacity(opacity)
@@ -760,7 +834,7 @@ private:
 
 class BeginTransparencyLayerWithCompositeMode {
 public:
-    static constexpr char name[] = "begin-transparency-layer-with-composite-mode";
+    static constexpr ASCIILiteral name = "begin-transparency-layer-with-composite-mode"_s;
 
     explicit BeginTransparencyLayerWithCompositeMode(CompositeMode compositeMode)
         : m_compositeMode(compositeMode)
@@ -778,7 +852,7 @@ private:
 
 class EndTransparencyLayer {
 public:
-    static constexpr char name[] = "end-transparency-layer";
+    static constexpr ASCIILiteral name = "end-transparency-layer"_s;
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const { }
@@ -786,7 +860,7 @@ public:
 
 class DrawRect {
 public:
-    static constexpr char name[] = "draw-rect";
+    static constexpr ASCIILiteral name = "draw-rect"_s;
 
     DrawRect(FloatRect rect, float borderThickness)
         : m_rect(rect)
@@ -807,7 +881,7 @@ private:
 
 class DrawLine {
 public:
-    static constexpr char name[] = "draw-line";
+    static constexpr ASCIILiteral name = "draw-line"_s;
 
     DrawLine(FloatPoint point1, FloatPoint point2)
         : m_point1(point1)
@@ -828,7 +902,7 @@ private:
 
 class DrawLinesForText {
 public:
-    static constexpr char name[] = "draw-lines-for-text";
+    static constexpr ASCIILiteral name = "draw-lines-for-text"_s;
 
     WEBCORE_EXPORT DrawLinesForText(const FloatPoint&, std::span<const FloatSegment> lineSegments, float thickness, bool printing, bool doubleLines, StrokeStyle);
 
@@ -851,9 +925,30 @@ private:
     StrokeStyle m_style;
 };
 
+class DrawMeshGradient {
+public:
+    static constexpr ASCIILiteral name = "draw-mesh-gradient"_s;
+
+    DrawMeshGradient(MeshGradient& gradient, const FloatRect& destination)
+        : m_gradient(gradient)
+        , m_destination(destination)
+    {
+    }
+
+    const MeshGradient& gradient() const { return m_gradient; }
+    const FloatRect& destination() const LIFETIME_BOUND { return m_destination; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    const Ref<MeshGradient> m_gradient;
+    FloatRect m_destination;
+};
+
 class DrawDotsForDocumentMarker {
 public:
-    static constexpr char name[] = "draw-dots-for-document-marker";
+    static constexpr ASCIILiteral name = "draw-dots-for-document-marker"_s;
 
     DrawDotsForDocumentMarker(const FloatRect& rect, const DocumentMarkerLineStyle& style)
         : m_rect(rect)
@@ -874,7 +969,7 @@ private:
 
 class DrawEllipse {
 public:
-    static constexpr char name[] = "draw-ellipse";
+    static constexpr ASCIILiteral name = "draw-ellipse"_s;
 
     DrawEllipse(const FloatRect& rect)
         : m_rect(rect)
@@ -892,7 +987,7 @@ private:
 
 class DrawPath {
 public:
-    static constexpr char name[] = "draw-path";
+    static constexpr ASCIILiteral name = "draw-path"_s;
 
     DrawPath(const Path& path)
         : m_path(path)
@@ -915,7 +1010,7 @@ private:
 
 class DrawFocusRingPath {
 public:
-    static constexpr char name[] = "draw-focus-ring-path";
+    static constexpr ASCIILiteral name = "draw-focus-ring-path"_s;
 
     DrawFocusRingPath(const Path& path, float outlineWidth, const Color& color, float zoomFactor)
         : m_path(path)
@@ -950,7 +1045,7 @@ private:
 
 class DrawFocusRingRects {
 public:
-    static constexpr char name[] = "draw-focus-ring-rects";
+    static constexpr ASCIILiteral name = "draw-focus-ring-rects"_s;
 
     DrawFocusRingRects(const Vector<FloatRect>& rects, float outlineWidth, const Color& color, float zoomFactor)
         : m_rects(rects)
@@ -985,7 +1080,7 @@ private:
 
 class FillRect {
 public:
-    static constexpr char name[] = "fill-rect";
+    static constexpr ASCIILiteral name = "fill-rect"_s;
 
     FillRect(const FloatRect& rect, GraphicsContext::RequiresClipToRect requiresClipToRect)
         : m_rect(rect)
@@ -1006,7 +1101,7 @@ private:
 
 class FillRectWithColor {
 public:
-    static constexpr char name[] = "fill-rect-with-color";
+    static constexpr ASCIILiteral name = "fill-rect-with-color"_s;
 
     FillRectWithColor(const FloatRect& rect, const Color& color)
         : m_rect(rect)
@@ -1027,7 +1122,7 @@ private:
 
 class FillRectWithGradient {
 public:
-    static constexpr char name[] = "fill-rect-with-gradient";
+    static constexpr ASCIILiteral name = "fill-rect-with-gradient"_s;
 
     WEBCORE_EXPORT FillRectWithGradient(const FloatRect&, Gradient&);
     WEBCORE_EXPORT FillRectWithGradient(FloatRect&&, Ref<Gradient>&&);
@@ -1039,13 +1134,15 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
+    friend struct IPC::ArgumentCoder<FillRectWithGradient>;
+
     FloatRect m_rect;
     const Ref<Gradient> m_gradient;
 };
 
 class FillRectWithGradientAndSpaceTransform {
 public:
-    static constexpr char name[] = "fill-rect-with-gradient-and-space-transform";
+    static constexpr ASCIILiteral name = "fill-rect-with-gradient-and-space-transform"_s;
 
     WEBCORE_EXPORT FillRectWithGradientAndSpaceTransform(const FloatRect&, Gradient&, const AffineTransform&, GraphicsContext::RequiresClipToRect);
     WEBCORE_EXPORT FillRectWithGradientAndSpaceTransform(FloatRect&&, Ref<Gradient>&&, AffineTransform&&, GraphicsContext::RequiresClipToRect);
@@ -1059,6 +1156,8 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
+    friend struct IPC::ArgumentCoder<FillRectWithGradientAndSpaceTransform>;
+
     FloatRect m_rect;
     const Ref<Gradient> m_gradient;
     AffineTransform m_gradientSpaceTransform;
@@ -1067,7 +1166,7 @@ private:
 
 class FillCompositedRect {
 public:
-    static constexpr char name[] = "fill-composited-rect";
+    static constexpr ASCIILiteral name = "fill-composited-rect"_s;
 
     FillCompositedRect(const FloatRect& rect, const Color& color, CompositeOperator op, BlendMode blendMode)
         : m_rect(rect)
@@ -1094,7 +1193,7 @@ private:
 
 class FillRoundedRect {
 public:
-    static constexpr char name[] = "fill-rounded-rect";
+    static constexpr ASCIILiteral name = "fill-rounded-rect"_s;
 
     FillRoundedRect(const FloatRoundedRect& rect, const Color& color, BlendMode blendMode)
         : m_rect(rect)
@@ -1118,7 +1217,7 @@ private:
 
 class FillRectWithRoundedHole {
 public:
-    static constexpr char name[] = "fill-rect-with-rounded-hole";
+    static constexpr ASCIILiteral name = "fill-rect-with-rounded-hole"_s;
 
     FillRectWithRoundedHole(const FloatRect& rect, const FloatRoundedRect& roundedHoleRect, const Color& color)
         : m_rect(rect)
@@ -1142,7 +1241,7 @@ private:
 
 class FillPath {
 public:
-    static constexpr char name[] = "fill-path";
+    static constexpr ASCIILiteral name = "fill-path"_s;
 
     FillPath(Path&& path)
         : m_path(WTF::move(path))
@@ -1165,7 +1264,7 @@ private:
 
 class FillEllipse {
 public:
-    static constexpr char name[] = "fill-ellipse";
+    static constexpr ASCIILiteral name = "fill-ellipse"_s;
 
     FillEllipse(const FloatRect& rect)
         : m_rect(rect)
@@ -1183,7 +1282,7 @@ private:
 
 class StrokeRect {
 public:
-    static constexpr char name[] = "stroke-rect";
+    static constexpr ASCIILiteral name = "stroke-rect"_s;
 
     StrokeRect(const FloatRect& rect, float lineWidth)
         : m_rect(rect)
@@ -1204,7 +1303,7 @@ private:
 
 class StrokePath {
 public:
-    static constexpr char name[] = "stroke-path";
+    static constexpr ASCIILiteral name = "stroke-path"_s;
 
     StrokePath(Path&& path)
         : m_path(WTF::move(path))
@@ -1227,7 +1326,7 @@ private:
 
 class StrokeEllipse {
 public:
-    static constexpr char name[] = "stroke-ellipse";
+    static constexpr ASCIILiteral name = "stroke-ellipse"_s;
 
     StrokeEllipse(const FloatRect& rect)
         : m_rect(rect)
@@ -1245,7 +1344,7 @@ private:
 
 class ClearRect {
 public:
-    static constexpr char name[] = "clear-rect";
+    static constexpr ASCIILiteral name = "clear-rect"_s;
 
     ClearRect(const FloatRect& rect)
         : m_rect(rect)
@@ -1263,7 +1362,7 @@ private:
 
 class DrawControlPart {
 public:
-    static constexpr char name[] = "draw-control-part";
+    static constexpr ASCIILiteral name = "draw-control-part"_s;
 
     WEBCORE_EXPORT DrawControlPart(ControlPart&, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle&);
 
@@ -1287,7 +1386,7 @@ private:
 
 class ApplyStrokePattern {
 public:
-    static constexpr char name[] = "apply-stroke-pattern";
+    static constexpr ASCIILiteral name = "apply-stroke-pattern"_s;
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const { }
@@ -1295,7 +1394,7 @@ public:
 
 class ApplyFillPattern {
 public:
-    static constexpr char name[] = "apply-fill-pattern";
+    static constexpr ASCIILiteral name = "apply-fill-pattern"_s;
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const { }
@@ -1305,7 +1404,7 @@ public:
 
 class ApplyDeviceScaleFactor {
 public:
-    static constexpr char name[] = "apply-device-scale-factor";
+    static constexpr ASCIILiteral name = "apply-device-scale-factor"_s;
 
     ApplyDeviceScaleFactor(float scaleFactor)
         : m_scaleFactor(scaleFactor)
@@ -1323,7 +1422,7 @@ private:
 
 class BeginPage {
 public:
-    static constexpr char name[] = "begin-page";
+    static constexpr ASCIILiteral name = "begin-page"_s;
 
     BeginPage(const FloatRect& pageRect)
         : m_pageRect(pageRect)
@@ -1341,7 +1440,7 @@ private:
 
 class EndPage {
 public:
-    static constexpr char name[] = "end-page";
+    static constexpr ASCIILiteral name = "end-page"_s;
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const { }
@@ -1349,7 +1448,7 @@ public:
 
 class SetURLForRect {
 public:
-    static constexpr char name[] = "set-URL-for-rect";
+    static constexpr ASCIILiteral name = "set-URL-for-rect"_s;
 
     SetURLForRect(const URL& link, const FloatRect& destRect)
         : m_link(link)

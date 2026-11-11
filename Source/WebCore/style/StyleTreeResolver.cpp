@@ -61,6 +61,7 @@
 #include "RenderText.h"
 #include "RenderView.h"
 #include "ResolvedStyle.h"
+#include "ScriptDisallowedScope.h"
 #include "SelectPopoverElement.h"
 #include "Settings.h"
 #include "ShadowRoot.h"
@@ -105,9 +106,9 @@ TreeResolver::Scope::Scope(Document& document, Update& update)
     document.setIsResolvingTreeStyle(true);
 
     // Ensure all shadow tree resolvers exist so their construction doesn't depend on traversal.
+    ScriptDisallowedScope::InMainThread scriptDisallowedScope;
     for (Ref shadowRoot : document.inDocumentShadowRoots()) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<ShadowRoot&>(shadowRoot.get()).styleScope().resolver();
+        const_cast<ShadowRoot&>(shadowRoot.get()).styleScope().resolver();
     }
 
     selectorMatchingState.containerQueryEvaluationState.styleUpdate = &update;
@@ -619,7 +620,7 @@ std::optional<ElementUpdate> TreeResolver::resolveAncestorPseudoElement(Element&
     return createAnimatedElementUpdate(WTF::move(*pseudoElementStyle), { element, pseudoElementIdentifier }, changes, resolutionContext);
 }
 
-static bool LEGACY_NODELETE isChildInBlockFormattingContext(const Style::ComputedStyle& style)
+NODELETE static bool isChildInBlockFormattingContext(const Style::ComputedStyle& style)
 {
     // FIXME: Incomplete. There should be shared code with layout for this.
     if (style.display() != DisplayType::BlockFlow && style.display() != DisplayType::BlockFlowListItem)
@@ -1120,7 +1121,7 @@ HashSet<AnimatableCSSProperty> TreeResolver::applyCascadeAfterAnimation(Style::C
     return styleBuilder.overriddenAnimatedProperties();
 }
 
-static bool LEGACY_NODELETE isInlineBox(Style::Display display)
+NODELETE static bool isInlineBox(Style::Display display)
 {
     return display == DisplayType::InlineFlow || display.isRubyContainerOrInternalRubyBox();
 }
@@ -1269,7 +1270,7 @@ auto TreeResolver::determineResolutionType(const Element& element, const Style::
     return { };
 }
 
-static void LEGACY_NODELETE clearNeedsStyleResolution(Element& element)
+NODELETE static void clearNeedsStyleResolution(Element& element)
 {
     element.setHasValidStyle();
     if (auto* before = element.beforePseudoElement())
@@ -1302,6 +1303,7 @@ static std::unique_ptr<Style::ComputedStyle> createInheritedDisplayContentsStyle
     // Compute style for imaginary unstyled <span> around the text node.
     auto style = Style::ComputedStyle::createPtr();
     style->inheritFrom(parentElementStyle);
+    style->setUseSVGZoomRulesForLength(parentElementStyle.useSVGZoomRulesForLength());
     return style;
 }
 
@@ -1356,7 +1358,7 @@ void TreeResolver::resolveComposedTree()
                 auto* textRenderer = text->renderer();
                 if (isDisplayContentsParent) {
                     if (textRenderer)
-                        return textRenderer->hasInlineWrapperForDisplayContents();
+                        return textRenderer->inheritsStyleFromDisplayContentsParent();
                     if (!containsOnlyASCIIWhitespace)
                         return true;
                 }
@@ -1829,8 +1831,7 @@ void TreeResolver::sortPositionOptionsIfNeeded(PositionOptions& options, const S
             PositionOption option;
             LayoutUnit containingBlockSize;
         };
-        Vector<SortingOption> optionsForSorting;
-        optionsForSorting.reserveInitialCapacity(options.optionStyles.size());
+        Vector<SortingOption> optionsForSorting(ReserveCapacityTag { }, options.optionStyles.size());
 
         for (size_t i = 1; i < options.optionStyles.size(); ++i) {
             auto constraints = PositionedLayoutConstraints { *box, *options.optionStyles[i].style, boxAxis };
@@ -2075,13 +2076,13 @@ void TreeResolver::collectChangedAnchorNames(const Style::ComputedStyle& newStyl
     }
 }
 
-static Vector<Function<void ()>>& LEGACY_NODELETE postResolutionCallbackQueue()
+NODELETE static Vector<Function<void ()>>& postResolutionCallbackQueue()
 {
     static NeverDestroyed<Vector<Function<void ()>>> vector;
     return vector;
 }
 
-static Vector<Ref<Frame>>& LEGACY_NODELETE memoryCacheClientCallsResumeQueue()
+NODELETE static Vector<Ref<Frame>>& memoryCacheClientCallsResumeQueue()
 {
     static NeverDestroyed<Vector<Ref<Frame>>> vector;
     return vector;

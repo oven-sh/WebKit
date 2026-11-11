@@ -1,0 +1,91 @@
+# outside of loops the cell of a text is asked of the stub, which reads its word and fills it where it is empty. The site names the text and nothing else
+# the cell is a root for good, so behind a suspension the answer of the call in front of it is found again
+# in a loop the cell is read from its word, and made on a rare arm where the word is empty: one call of the stub that fills the word. The call says that it writes the heap of the word, and nothing in the unit stores there
+# there the word is read again behind a suspension: kept, the cell would lie in the saved frame
+# The texts here are those that an operation takes for itself: the conversion of a boolean asks for "true" and for "false" each time.
+# function tell(print, a, b) { print(String(a === b)); return print(String(b === print)); }   async function tellAndWait(print, awaited) { print(String(print === awaited)); return print(String(await awaited === awaited)); }   each is called twice
+# async function tellInTurns(print, awaited, times) { let i = 0; for (; i < times; i++) { print(String(print === awaited)); print(String(await awaited === awaited)); } return i; }
+# RUN(CODE): walk f1:Body
+# CODE-LABEL: code f1:Body
+# CODE-COUNT-2: = ToString
+# RUN(STORES): emit f1:Body f3:CoroutineBody
+# STORES-LABEL: unit f1:Body
+# STORES-NOT: AOTInstance_stringCells
+# STORES-LABEL: unit f3:CoroutineBody
+# STORES-NOT: = Store({{*}}AOTInstance_stringCells
+# RUN(CALLS): bytes f1:Body f2:CoroutineBody
+# CALLS-LABEL: unit f1:Body
+# CALLS-NOT: InstanceWord StringCell
+# CALLS-COUNT-2: Call Stub CreateConstant.String
+# CALLS-NOT: InstanceWord StringCell
+# CALLS-LABEL: unit f2:CoroutineBody
+# CALLS-NOT: InstanceWord StringCell
+# CALLS-COUNT-2: Call Stub CreateConstant.String
+# CALLS: Call Stub AwaitBySavingFrame
+# CALLS-NOT: CreateConstant
+# CALLS-NOT: InstanceWord StringCell
+# RUN(AWAIT): emit f3:CoroutineBody
+# AWAIT-LABEL: unit f3:CoroutineBody
+# AWAIT: IsSuspension
+# AWAIT: = Load({{*}}AOTInstance_stringCells
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="print" [isFreeName]
+    v4 = Integer integer=1
+    v5 = Integer integer=2
+    v6 = Call v0, -, v3, v4, v5
+    v7 = Call v0, -, v3, v5, v5
+    v8 = Call v1, -, v3, v4
+    v9 = Call v1, -, v3, v5
+    v10 = NewClosure function=f3
+    v11 = Call v10, -, v3, v4, v5
+    Return v11
+}
+function f1 name="tell" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = StrictEq v1, v2
+    v4 = ToString v3
+    v5 = Call v0, -, v4
+    v6 = StrictEq v2, v0
+    v7 = ToString v6
+    v8 = Call v0, -, v7
+    Return v8
+}
+function f2 name="tellAndWait" module=m0 flags=[IsAsync, HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = StrictEq v1, v2
+    v4 = ToString v3
+    v5 = Call v1, -, v4
+    v6 = Await v2
+    v7 = StrictEq v6, v2
+    v8 = ToString v7
+    v9 = Call v1, -, v8
+    Return v9
+}
+function f3 name="tellInTurns" module=m0 flags=[IsAsync, HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5: anything):
+    LoopHint
+    v7 = Less v5, v3
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = StrictEq v1, v2
+    v9 = ToString v8
+    v10 = Call v1, -, v9
+    v11 = Await v2
+    v12 = StrictEq v11, v2
+    v13 = ToString v12
+    v14 = Call v1, -, v13
+    v15 = Increment v5
+    Jump -> next b1(v15)
+  b3():
+    Return v5
+}
+entry module=m0

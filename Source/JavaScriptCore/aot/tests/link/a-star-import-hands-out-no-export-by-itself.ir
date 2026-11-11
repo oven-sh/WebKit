@@ -1,0 +1,28 @@
+# The namespace object of a module is a value that Link follows. If `import * as ns` handed every export to unseen code by itself, a barrel that one file imports so would cost every function of the program its callers.
+# lib.ts: export function check(x: number): number { return x + 1; }   main.ts: import * as ns from "./lib.js"; ns.check(1);
+# RUN: link functions mechanisms=all
+# CHECK: function f2 callers-known one-callee
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="lib.js" displayPath="lib.js" flags=[IsImportedAsNamespace] body=f1 exports=[{name="check" variable=g0}]
+entry module=m0
+variable g0 name="check" module=m1 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ModuleNamespace module=m1
+    v2 = Integer integer=1
+    v3 = Call v0, v1, v2 calleeKey="check" calleeName="ns.check"
+    Return v3
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="check" module=m1 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}

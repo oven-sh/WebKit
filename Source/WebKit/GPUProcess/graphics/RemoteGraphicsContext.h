@@ -31,6 +31,7 @@
 #include "RemoteDisplayListIdentifier.h"
 #include "RemoteGradientIdentifier.h"
 #include "RemoteGraphicsContextIdentifier.h"
+#include "RemoteMeshGradientIdentifier.h"
 #include "RemotePathImplIdentifier.h"
 #include "RemoteRenderingBackend.h"
 #include "StreamMessageReceiver.h"
@@ -96,21 +97,23 @@ public:
     void clipOutToPath(const WebCore::Path&);
     void clipPath(const WebCore::Path&, WebCore::WindRule);
     void clipCachedPath(RemotePathImplIdentifier, WebCore::WindRule);
+    void clipTransformedPath(const WebCore::AffineTransform&, const WebCore::Path&, WebCore::WindRule);
+    void clipTransformedCachedPath(const WebCore::AffineTransform&, RemotePathImplIdentifier, WebCore::WindRule);
     void resetClip();
     void drawGlyphs(WebCore::RenderingResourceIdentifier fontIdentifier, IPC::ArrayReferenceTuple<WebCore::GlyphBufferGlyph, WebCore::FloatSize>, WebCore::FloatPoint localAnchor, WebCore::FontSmoothingMode);
     void drawDisplayList(RemoteDisplayListIdentifier);
     void drawFilteredImageBuffer(std::optional<WebCore::RenderingResourceIdentifier> sourceImageIdentifier, const WebCore::FloatRect& sourceImageRect, Ref<WebCore::Filter>&&);
-    virtual void drawImageBuffer(WebCore::RenderingResourceIdentifier imageBufferIdentifier, const WebCore::FloatRect& destinationRect, const WebCore::FloatRect& srcRect, WebCore::ImageDrawingOptions);
-    void drawNativeImage(WebCore::RenderingResourceIdentifier imageIdentifier, const WebCore::FloatRect& destRect, const WebCore::FloatRect& srcRect, WebCore::ImageDrawingOptions);
+    virtual void drawImageBuffer(WebCore::RenderingResourceIdentifier imageBufferIdentifier, const WebCore::FloatRect& destinationRect, const WebCore::FloatRect& srcRect, WebCore::RasterDrawingOptions);
+    void drawNativeImage(WebCore::RenderingResourceIdentifier imageIdentifier, const WebCore::FloatRect& destRect, const WebCore::FloatRect& srcRect, WebCore::RasterDrawingOptions);
 #if USE(SYSTEM_PREVIEW)
     void drawBadgeSystemImage(std::optional<WebCore::RenderingResourceIdentifier> imageIdentifier, const WebCore::FloatRect& destinationRect);
 #endif
     void drawSystemImage(Ref<WebCore::SystemImage>&&, const WebCore::FloatRect&);
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
-    void drawVideoFrame(SharedVideoFrame&&, const WebCore::FloatRect& destination, WebCore::ShouldDiscardAlpha, WebCore::ImageDrawingOptions);
+    void drawVideoFrame(SharedVideoFrame&&, const WebCore::FloatRect& destination, WebCore::ShouldDiscardAlpha, WebCore::RasterDrawingOptions);
 #endif
-    void drawPatternNativeImage(WebCore::RenderingResourceIdentifier imageIdentifier, const WebCore::FloatRect& destRect, const WebCore::FloatRect& tileRect, const WebCore::AffineTransform&, const WebCore::FloatPoint&, const WebCore::FloatSize& spacing, WebCore::ImageDrawingOptions);
-    void drawPatternImageBuffer(WebCore::RenderingResourceIdentifier imageIdentifier, const WebCore::FloatRect& destRect, const WebCore::FloatRect& tileRect, const WebCore::AffineTransform&, const WebCore::FloatPoint&, const WebCore::FloatSize& spacing, WebCore::ImageDrawingOptions);
+    void drawPatternNativeImage(WebCore::RenderingResourceIdentifier imageIdentifier, const WebCore::FloatRect& destRect, const WebCore::FloatRect& tileRect, const WebCore::AffineTransform&, const WebCore::FloatPoint&, const WebCore::FloatSize& spacing, WebCore::RasterDrawingOptions);
+    void drawPatternImageBuffer(WebCore::RenderingResourceIdentifier imageIdentifier, const WebCore::FloatRect& destRect, const WebCore::FloatRect& tileRect, const WebCore::AffineTransform&, const WebCore::FloatPoint&, const WebCore::FloatSize& spacing, WebCore::RasterDrawingOptions);
     void beginTransparencyLayer(float opacity);
     void beginTransparencyLayerWithCompositeMode(WebCore::CompositeMode);
     void endTransparencyLayer();
@@ -118,6 +121,7 @@ public:
     void drawLine(const WebCore::FloatPoint& point1, const WebCore::FloatPoint& point2);
     void drawLinesForText(const WebCore::FloatPoint&, float thickness, std::span<const WebCore::FloatSegment> lineSegments, bool printing, bool doubleLines, WebCore::StrokeStyle);
     void drawDotsForDocumentMarker(const WebCore::FloatRect&, const WebCore::DocumentMarkerLineStyle&);
+    void drawMeshGradient(RemoteMeshGradientIdentifier, const WebCore::FloatRect& destination);
     void drawEllipse(const WebCore::FloatRect&);
     void drawPath(const WebCore::Path&);
     void drawFocusRingPath(const WebCore::Path&, float outlineWidth, const WebCore::Color&, float zoomFactor);
@@ -155,7 +159,7 @@ public:
     void applyFillPattern();
 #endif
     void applyDeviceScaleFactor(float);
-    std::optional<WebKit::SharedPreferencesForWebProcess> LEGACY_NODELETE sharedPreferencesForWebProcess() const;
+    NODELETE std::optional<WebKit::SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 #if HAVE(IOSURFACE)
     bool useIOSurfaceWebKitBehavior() const;
 #endif
@@ -172,7 +176,7 @@ protected:
 
     void drawFilteredImageBufferInternal(std::optional<WebCore::RenderingResourceIdentifier> sourceImageIdentifier, const WebCore::FloatRect& sourceImageRect, WebCore::Filter&, WebCore::FilterResults&);
 
-    RemoteResourceCache& LEGACY_NODELETE resourceCache() const;
+    NODELETE RemoteResourceCache& resourceCache() const;
     WebCore::GraphicsContext& context() LIFETIME_BOUND { return m_context; }
     RefPtr<WebCore::ImageBuffer> imageBuffer(WebCore::RenderingResourceIdentifier) const;
     std::optional<WebCore::SourceImage> sourceImage(WebCore::RenderingResourceIdentifier) const;

@@ -104,6 +104,12 @@
 #include <wtf/RunLoop.h>
 #include <wtf/text/MakeString.h>
 
+#if ENABLE(CONTENT_EXTENSIONS)
+#include "NetworkContentRuleListManager.h"
+#include <WebCore/ContentExtensionsBackend.h>
+#include <WebCore/ContentRuleListResults.h>
+#endif
+
 #if USE(QUICK_LOOK)
 #include <WebCore/PreviewConverter.h>
 #endif
@@ -722,7 +728,7 @@ void NetworkResourceLoader::convertToDownload(DownloadID downloadID, const Resou
 
     // This can happen if the resource came from the disk cache.
     if (!m_networkLoad) {
-        protect(protect(NetworkProcess::singleton())->downloadManager())->startDownload(sessionID(), downloadID, request, m_parameters.topOrigin ? std::optional { m_parameters.topOrigin->data() } : std::nullopt, m_parameters.isNavigatingToAppBoundDomain);
+        protect(protect(NetworkProcess::singleton())->downloadManager())->startDownload(sessionID(), downloadID, request, m_parameters.topOrigin ? std::optional { m_parameters.topOrigin->data() } : std::nullopt, m_parameters.isNavigatingToAppBoundDomain, m_parameters.advancedPrivacyProtections);
         abort();
         return;
     }
@@ -916,12 +922,12 @@ bool NetworkResourceLoader::shouldInterruptWorkerLoadForCrossOriginEmbedderPolic
         // An owner can only require CORP in a secure context, which its worker inherits.
         auto responseCOEP = WebCore::obtainCrossOriginEmbedderPolicy(response, WebCore::IsSecureContext::Yes, nullptr);
         if (m_parameters.crossOriginEmbedderPolicy.reportOnlyValue == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP && responseCOEP.value == WebCore::CrossOriginEmbedderPolicyValue::UnsafeNone)
-            sendCOEPInheritenceViolation(*this, m_parameters.frameURL.isValid() ? m_parameters.frameURL : aboutBlankURL(), m_parameters.crossOriginEmbedderPolicy.reportOnlyReportingEndpoint, COEPDisposition::Reporting, "worker initialization"_s, m_firstResponseURL);
+            sendCOEPInheritenceViolation(*this, contextURLForReport(), m_parameters.crossOriginEmbedderPolicy.reportOnlyReportingEndpoint, COEPDisposition::Reporting, "worker initialization"_s, m_firstResponseURL);
 
         if (m_parameters.crossOriginEmbedderPolicy.value == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP && responseCOEP.value == WebCore::CrossOriginEmbedderPolicyValue::UnsafeNone) {
             String errorMessage = makeString("Refused to load '"_s, response.url().stringCenterEllipsizedToLength(), "' worker because of Cross-Origin-Embedder-Policy."_s);
             send(Messages::WebPage::AddConsoleMessage { frameID(),  MessageSource::Security, MessageLevel::Error, errorMessage, coreIdentifier() }, pageID());
-            sendCOEPInheritenceViolation(*this, m_parameters.frameURL.isValid() ? m_parameters.frameURL : aboutBlankURL(), m_parameters.crossOriginEmbedderPolicy.reportingEndpoint, COEPDisposition::Enforce, "worker initialization"_s, m_firstResponseURL);
+            sendCOEPInheritenceViolation(*this, contextURLForReport(), m_parameters.crossOriginEmbedderPolicy.reportingEndpoint, COEPDisposition::Enforce, "worker initialization"_s, m_firstResponseURL);
             return true;
         }
     }
@@ -1015,7 +1021,13 @@ void NetworkResourceLoader::checkLocalNetworkAccess(const ResourceRequest& reque
     } else if (m_parameters.navigationRequester)
         clientFrameID = m_parameters.navigationRequester->frameID;
 
-    auto record = clientFrameID ? connection->localNetworkAccessFrameRecord(*clientFrameID, clientParentFrameID) : std::nullopt;
+    RefPtr<NetworkConnectionToWebProcess> clientConnection = connection.ptr();
+    if (isMainResource() && m_parameters.navigationRequester && m_parameters.navigationRequester->processIdentifier) {
+        auto requesterProcess = *m_parameters.navigationRequester->processIdentifier;
+        if (requesterProcess != connection->webProcessIdentifier() && NetworkProcess::singleton().allowsWebPageProxyIdentifier(requesterProcess, webPageProxyID()))
+            clientConnection = NetworkProcess::singleton().webProcessConnection(requesterProcess);
+    }
+    auto record = clientFrameID && clientConnection ? clientConnection->localNetworkAccessFrameRecord(*clientFrameID, clientParentFrameID) : std::nullopt;
     bool recordMatchesClient = record && record->origin == sourceOrigin;
     if (!recordMatchesClient)
         sourceOrigin = SecurityOriginData::createOpaque();
@@ -1213,7 +1225,7 @@ void NetworkResourceLoader::storeCompressionDictionaryIfNeeded(const ResourceRes
     protect(m_cache)->storeCompressionDictionary(m_networkLoad ? m_networkLoad->currentRequest() : originalRequest(), response, WTF::move(body), WTF::move(*info));
 }
 
-static BrowsingContextGroupSwitchDecision LEGACY_NODELETE toBrowsingContextGroupSwitchDecision(const std::optional<CrossOriginOpenerPolicyEnforcementResult>& currentCoopEnforcementResult)
+NODELETE static BrowsingContextGroupSwitchDecision toBrowsingContextGroupSwitchDecision(const std::optional<CrossOriginOpenerPolicyEnforcementResult>& currentCoopEnforcementResult)
 {
     if (!currentCoopEnforcementResult || !currentCoopEnforcementResult->needsBrowsingContextGroupSwitch)
         return BrowsingContextGroupSwitchDecision::StayInGroup;
@@ -1288,30 +1300,74 @@ void NetworkResourceLoader::startPreconnectTask(const URL& baseURL, const LinkHe
     if (!contentSecurityPolicy.allowConnectToSource(url, { }, ContentSecurityPolicy::RedirectResponseReceived::No, originalRequest().url()))
         return;
 
-    CheckedPtr networkSession = protect(connectionToWebProcess())->networkSession();
-    if (!networkSession)
-        return;
-
-    NetworkLoadParameters parameters;
-    auto globalFrameID = this->globalFrameID();
-    parameters.webPageProxyID = globalFrameID.webPageProxyID;
-    parameters.webPageID = globalFrameID.webPageID;
-    parameters.webFrameID = globalFrameID.frameID;
+    auto parameters = this->parameters().networkLoadParameters();
+    parameters.request = constructPreconnectRequest(originalRequest(), url);
     parameters.storedCredentialsPolicy = equalLettersIgnoringASCIICase(header.crossOrigin(), "anonymous"_s) ? StoredCredentialsPolicy::DoNotUse : StoredCredentialsPolicy::Use;
     parameters.contentSniffingPolicy = ContentSniffingPolicy::DoNotSniffContent;
     parameters.contentEncodingSniffingPolicy = ContentEncodingSniffingPolicy::Default;
     parameters.shouldPreconnectOnly = PreconnectOnly::Yes;
-    parameters.request = constructPreconnectRequest(originalRequest(), url);
-    parameters.isNavigatingToAppBoundDomain = this->parameters().isNavigatingToAppBoundDomain;
+    parameters.isMainFrameNavigation = false;
+    parameters.mainResourceNavigationDataForAnyFrame = std::nullopt;
+    parameters.needsCertificateInfo = false;
+
+    startPreconnectTaskAfterContentRuleListCheck(WTF::move(parameters), baseURL);
+#else
+    UNUSED_PARAM(baseURL);
+    UNUSED_PARAM(header);
+    UNUSED_PARAM(contentSecurityPolicy);
+#endif // ENABLE(SERVER_PRECONNECT)
+}
+
+void NetworkResourceLoader::startPreconnectTaskAfterContentRuleListCheck(NetworkLoadParameters&& parameters, const URL& mainDocumentURL)
+{
+#if ENABLE(SERVER_PRECONNECT)
+#if ENABLE(CONTENT_EXTENSIONS)
+    // Without an identifier we cannot tell which content rule lists apply, so fail closed: a
+    // preconnect is only an optimization, while issuing one puts a DNS query and a TLS ClientHello
+    // carrying the target's SNI on the wire.
+    auto userContentControllerIdentifier = this->parameters().userContentControllerIdentifier;
+    if (!userContentControllerIdentifier)
+        return;
+
+    // This is a main-frame navigation (handleEarlyHintsResponse bails out otherwise), so the
+    // navigation's own URL is both the main document URL and the frame URL, matching what
+    // ContentExtensionsBackend::processContentRuleListsForLoad computes for the renderer-side path.
+    protect(protect(NetworkProcess::singleton())->networkContentRuleListManager())->contentExtensionsBackend(*userContentControllerIdentifier, [protectedThis = Ref { *this }, parameters = WTF::move(parameters), mainDocumentURL = URL { mainDocumentURL }](auto& backend) mutable {
+        auto url = parameters.request.url();
+        auto results = backend.processContentRuleListsForPingLoad(url, mainDocumentURL, mainDocumentURL, parameters.request.httpMethod(), ContentExtensions::ContentExtensionsBackend::MainFrameContext::Yes);
+        if (results.shouldBlock()) {
+            protectedThis->addConsoleMessage(MessageSource::ContentBlocker, MessageLevel::Info, makeString("Content blocker prevented frame displaying "_s, mainDocumentURL.string(), " from preconnecting to "_s, url.string(), " due to early hint"_s));
+            return;
+        }
+        ContentExtensions::applyResultsToRequest(WTF::move(results), nullptr, parameters.request);
+
+        protectedThis->startPreconnectTaskIgnoringContentRuleLists(WTF::move(parameters));
+    });
+#else
+    UNUSED_PARAM(mainDocumentURL);
+    startPreconnectTaskIgnoringContentRuleLists(WTF::move(parameters));
+#endif // ENABLE(CONTENT_EXTENSIONS)
+#else
+    UNUSED_PARAM(parameters);
+    UNUSED_PARAM(mainDocumentURL);
+#endif // ENABLE(SERVER_PRECONNECT)
+}
+
+void NetworkResourceLoader::startPreconnectTaskIgnoringContentRuleLists(NetworkLoadParameters&& parameters)
+{
+#if ENABLE(SERVER_PRECONNECT)
+    CheckedPtr networkSession = protect(connectionToWebProcess())->networkSession();
+    if (!networkSession)
+        return;
+
+    auto url = parameters.request.url();
     Ref preconnectTask = PreconnectTask::create(*networkSession, WTF::move(parameters));
     preconnectTask->start();
 
     addConsoleMessage(MessageSource::Network, MessageLevel::Info, makeString("Preconnecting to "_s, url.string(), " due to early hint"_s));
 #else
-    UNUSED_PARAM(baseURL);
-    UNUSED_PARAM(header);
-    UNUSED_PARAM(contentSecurityPolicy);
-#endif
+    UNUSED_PARAM(parameters);
+#endif // ENABLE(SERVER_PRECONNECT)
 }
 
 void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedResponse, PrivateRelayed privateRelayed, ResponseCompletionHandler&& completionHandler)
@@ -2136,7 +2192,7 @@ void NetworkResourceLoader::restartNetworkLoad(WebCore::ResourceRequest&& newReq
         startNetworkLoad(WTF::move(newRequest), FirstLoad::No);
 }
 
-static bool LEGACY_NODELETE shouldTryToMatchRegistrationOnRedirection(const FetchOptions& options, bool isServiceWorkerLoaded)
+NODELETE static bool shouldTryToMatchRegistrationOnRedirection(const FetchOptions& options, bool isServiceWorkerLoaded)
 {
     if (options.mode == FetchOptions::Mode::Navigate)
         return true;
@@ -2462,7 +2518,9 @@ void NetworkResourceLoader::checkForQualifiedServerTrust(const WebCore::Resource
         // header (as defined in IETF RFC 8288 [6]) with a rel value of tls-certificate-binding.
         if (!WebCore::LinkRelAttribute(nullptr, header.rel()).isTLSCertificateBinding)
             continue;
-        URL url { header.url() };
+        // Section 5.2(3)(a) of the same specification requires the Link header to use a relative
+        // reference to the binding, so resolve it against the URL of the response.
+        URL url { response.url(), header.url() };
         if (!url.isValid())
             continue;
         if (protocolHostAndPortAreEqual(response.url(), url))
@@ -2514,6 +2572,8 @@ void NetworkResourceLoader::continueDidRetrieveCacheEntryAfterLocalNetworkAccess
 {
     auto response = entry->response();
     recordLocalNetworkAccessFrame(protect(connectionToWebProcess()), response);
+    if (!m_firstResponseURL.isValid())
+        m_firstResponseURL = response.url();
 
     if (isMainResource() && shouldInterruptLoadForCSPFrameAncestorsOrXFrameOptions(response)) {
         LOADER_RELEASE_LOG_ERROR("didRetrieveCacheEntry: Stopping load due to CSP Frame-Ancestors or X-Frame-Options");
@@ -2991,8 +3051,20 @@ WebCore::FrameIdentifier NetworkResourceLoader::frameIdentifierForReport() const
     return frameID();
 }
 
+const URL& NetworkResourceLoader::contextURLForReport() const
+{
+    if (m_parameters.workerURL.isValid())
+        return m_parameters.workerURL;
+    auto& url = isMainResource() ? m_parameters.parentFrameURL : m_parameters.frameURL;
+    return url.isValid() ? url : aboutBlankURL();
+}
+
 void NetworkResourceLoader::notifyReportObservers(Ref<Report>&& report)
 {
+    if (auto& clientIdentifier = m_parameters.options.clientIdentifier; clientIdentifier && m_parameters.workerURL.isValid()) {
+        protect(connectionToWebProcess().connection())->send(Messages::NetworkProcessConnection::NotifyWorkerReportObservers { ScriptExecutionContextIdentifier { *clientIdentifier, connectionToWebProcess().webProcessIdentifier() }, report }, 0);
+        return;
+    }
     send(Messages::WebPage::NotifyReportObservers { frameIdentifierForReport(), report }, pageID());
 }
 
@@ -3012,6 +3084,7 @@ void NetworkResourceLoader::sendReportToEndpoints(const URL& baseURL, std::span<
             updatedEndpointTokens.append(token);
     }
 
+    // FIXME: A worker's reports should go to the worker's endpoints, but workers don't parse Reporting-Endpoints, so this uses its owner document's.
     auto [targetPageID, targetFrameID, targetConnection] = [&]() -> std::tuple<WebCore::PageIdentifier, WebCore::FrameIdentifier, Ref<NetworkConnectionToWebProcess>> {
         if (auto& requester = m_parameters.navigationRequester; requester && requester->pageID && requester->frameID && requester->processIdentifier) {
             if (RefPtr requesterConnection = protect(NetworkProcess::singleton())->webProcessConnection(*requester->processIdentifier))

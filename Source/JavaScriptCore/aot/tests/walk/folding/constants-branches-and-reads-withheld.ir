@@ -1,0 +1,11 @@
+# the same function with folding withheld: the sum, the test, the branch, both sides and the read are all there
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = Add {{*}}form=Generic
+# CHECK: = TypeTest {{*}}testedType=number
+# CHECK: Branch
+# RUN(BOTH): walk f1 mechanisms=none
+# BOTH: = GetModuleVariable {{*}}variable=g0
+# RUN(SIDES): walk f1 mechanisms=none
+# SIDES: = PropGet {{*}}key="never"
+# PROGRAM-OF: constants-branches-and-reads.ir

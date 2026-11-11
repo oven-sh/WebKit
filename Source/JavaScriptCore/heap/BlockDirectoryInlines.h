@@ -33,7 +33,7 @@ namespace JSC {
 
 inline void BlockDirectory::forEachBlock(NOESCAPE const std::invocable<MarkedBlock::Handle*> auto& functor)
 {
-    assertIsMutatorOrMutatorIsStopped();
+    assertMayAccessBitsUnlocked();
     liveBitsView().forEachSetBit(
         [&] (size_t index) {
             functor(m_blocks[index].first);
@@ -42,7 +42,7 @@ inline void BlockDirectory::forEachBlock(NOESCAPE const std::invocable<MarkedBlo
 
 inline void BlockDirectory::forEachNotEmptyBlock(NOESCAPE const std::invocable<MarkedBlock::Handle*> auto& functor)
 {
-    assertIsMutatorOrMutatorIsStopped();
+    assertMayAccessBitsUnlocked();
     markingNotEmptyBitsView().forEachSetBit(
         [&] (size_t index) {
             functor(m_blocks[index].first);
@@ -51,13 +51,10 @@ inline void BlockDirectory::forEachNotEmptyBlock(NOESCAPE const std::invocable<M
 
 inline MarkedBlock::Handle* BlockDirectory::findBlockToSweep()
 {
-    auto watched = m_unsweptCursor.watch(std::memory_order_relaxed);
-    // Order the watch before the scan, so a writer that rewinds the cursor after changing the bits either
-    // sees the watch or has its change seen by the scan; see VersionedField.
-    WTF::storeLoadFence();
+    auto watched = m_unsweptCursor.watch<MemoryOrder::FullyFenced>();
     unsigned cursor = watched.value;
     MarkedBlock::Handle* block = findBlockToSweep(cursor);
-    m_unsweptCursor.tryUpdateWatched(watched, cursor, std::memory_order_relaxed);
+    m_unsweptCursor.tryUpdateWatched<MemoryOrder::Relaxed>(watched, cursor);
     return block;
 }
 

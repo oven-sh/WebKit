@@ -10,7 +10,9 @@
 #include "AOTRecordTypes.h"
 #include "AOTVector.h"
 #include "JSCJSValue.h"
+#include "JSGlobalObject.h"
 #include "StackFrame.h"
+#include "VMInlines.h"
 
 namespace JSC {
 
@@ -19,7 +21,9 @@ class JSCell;
 class JSGlobalObject;
 class JSObject;
 class JSPromise;
+class MicrotaskCallCache;
 class VM;
+enum class InternalMicrotask : uint8_t;
 
 namespace AOT {
 
@@ -27,40 +31,47 @@ class SavedFrame;
 struct Instance;
 
 JS_EXPORT_PRIVATE void resumeAsyncFunction(JSGlobalObject*, VM&, JSValue context, JSValue resolution, bool isRejected, bool isEnteredByJobLoop);
+JS_EXPORT_PRIVATE void runAsyncFunctionResumeJob(JSGlobalObject*, VM&, InternalMicrotask, uint8_t status, JSValue, JSValue resolution, JSValue context, JSValue asyncContext, MicrotaskCallCache*);
+JS_EXPORT_PRIVATE void runHandlerJob(JSGlobalObject*, VM&, InternalMicrotask, uint8_t, JSValue promise, JSValue handler, JSValue argument, JSValue asyncContext, MicrotaskCallCache*);
+JS_EXPORT_PRIVATE void runFunctionJob(JSGlobalObject*, VM&, InternalMicrotask, uint8_t, JSValue function, JSValue, JSValue, JSValue, MicrotaskCallCache*);
+JS_EXPORT_PRIVATE void runAsyncGeneratorBodyJob(JSGlobalObject*, VM&, InternalMicrotask, uint8_t status, JSValue, JSValue resolution, JSValue generator, JSValue asyncContext, MicrotaskCallCache*);
+JS_EXPORT_PRIVATE bool hasCompiledBody(JSAsyncGenerator*);
 JS_EXPORT_PRIVATE void resumeDriver(VM&, JSObject* driver, JSValue resolution, bool isRejected, bool isEnteredByJobLoop);
 
-// For the request of an async generator, or of the wrapper of a sync iterator, that settles the target.
-JS_EXPORT_PRIVATE JSValue tryAwaitForStepInProgress(JSGlobalObject*, JSValue settlementTarget, JSValue awaited);
-JS_EXPORT_PRIVATE bool tryFinishStepInProgress(JSValue settlementTarget, JSValue value, bool isDone);
-struct AsyncGeneratorBodyEntry {
-    Instance* instance { nullptr };
+JS_EXPORT_PRIVATE JSValue tryAwaitInCurrentStep(JSGlobalObject*, JSValue settlementTarget, JSValue awaited);
+JS_EXPORT_PRIVATE bool tryFinishCurrentStep(JSValue settlementTarget, JSValue value, bool isDone);
+struct AdapterEntry {
     JSCell* outerFrame { nullptr };
     JSCell* outerAsyncGenerator { nullptr };
     JSCell* outerPromiseOfHandler { nullptr };
-    // A whole word, so that a frame that holds an entry writes all of it.
     uintptr_t outerAsyncContextIsPutBack { false };
+    const uint64_t* outerFrameThatMayContinue { nullptr };
 };
-static_assert(sizeof(AsyncGeneratorBodyEntry) == 5 * sizeof(void*));
-// The job loop enters a body as the last thing it does in a job.
+static_assert(sizeof(AdapterEntry) == 5 * sizeof(void*));
+struct AsyncGeneratorBodyEntry {
+    Instance* instance { nullptr };
+    AdapterEntry adapterEntry;
+};
 JS_EXPORT_PRIVATE AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGenerator*, bool isEnteredByJobLoop);
-// The adapter may have gone on to the consumers of the body and to the jobs that follow. Returns the generator whose body returned last, or null if something else did: that is finished here.
 JS_EXPORT_PRIVATE JSAsyncGenerator* didReturnFromAsyncGeneratorBody(const AsyncGeneratorBodyEntry&, JSAsyncGenerator* entered, JSValue returned, JSValue error, bool isTerminated);
-// Zeroes the stack where the frames of what the caller calls next will lie. A collection reads every word of a frame, and the way into compiled code does not write all of them.
-JS_EXPORT_PRIVATE void clearStackBelowCaller();
-// A PromiseReactionJob whose handler is compiled code and gets the argument alone, under the async context that is in place. False: nothing is done.
-JS_EXPORT_PRIVATE bool tryRunHandlerOfJob(JSGlobalObject*, VM&, JSValue promiseOrCapability, JSValue handler, JSValue argument, bool endsJob);
-// A BunPerformMicrotaskJob whose function is compiled code and gets no argument, where no async context is in place. What it throws is reported before this returns.
-JS_EXPORT_PRIVATE bool tryRunFunctionOfJob(JSGlobalObject*, VM&, JSValue function, bool endsJob);
-// For the job that resumes a driver.
+ALWAYS_INLINE bool canEnterJobFunction(JSGlobalObject* globalObject, VM& vm, JSValue function)
+{
+    return function.isCell() && isCompiledCalleeType(function.asCell()->type()) && function.asCell()->structure()->realm() == globalObject && globalObject->aotInstance() && vm.isSafeToRecurseSoft();
+}
+ALWAYS_INLINE bool canRunJobHandler(JSGlobalObject* globalObject, VM& vm, JSValue promiseOrCapability, JSValue handler)
+{
+    return promiseOrCapability.isCell() && promiseOrCapability.asCell()->structureID() == globalObject->promiseStructure()->id() && canEnterJobFunction(globalObject, vm, handler);
+}
 JS_EXPORT_PRIVATE JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejected);
-// A driver of compiled code needs no iterator result: its job has the value as it is, and in the first argument, which is undefined in every other job of the kind, whether the producer is done.
-JS_EXPORT_PRIVATE bool takesBareSteps(JSValue settlementTarget);
+JS_EXPORT_PRIVATE bool acceptsBareSteps(JSValue settlementTarget);
+JS_EXPORT_PRIVATE JSValue driverResumeContext(JSValue settlementTarget);
 JS_EXPORT_PRIVATE void deliverBareStepToDriver(JSObject* driver, bool isDone);
 
 JSValue enterSavedFrame(VM&, Instance&, SavedFrame*, Typed::ResumeMode, JSValue sent);
 void resumeSavedAsyncFunction(JSGlobalObject*, VM&, Instance&, SavedFrame*, Typed::ResumeMode, JSValue resolution);
-// For whoever entered the adapter, if the handler of a job is what the adapter entered last and the handler's promise is not settled yet.
 void settlePromiseOfHandler(VM&, JSCell* promise, JSValue returned, JSValue error);
+void takeAwayRightToContinue(Instance&);
+const uint64_t* frameWithAwaitingCallers(const Instance&);
 
 JS_EXPORT_PRIVATE bool isSuspendedAsyncFunction(JSCell*);
 JS_EXPORT_PRIVATE bool isSuspendedModuleBody(VM&, JSValue coroutine);

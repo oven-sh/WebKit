@@ -40,8 +40,6 @@
 #import <wtf/ThreadSafeWeakPtr.h>
 #import <wtf/WeakPtr.h>
 
-struct WGPUAdapterImpl {
-};
 
 namespace WebGPU::Metal {
 
@@ -49,7 +47,7 @@ class Device;
 class Instance;
 
 // https://gpuweb.github.io/gpuweb/#gpuadapter
-class Adapter final : public WebGPU::Adapter, public WGPUAdapterImpl {
+class Adapter final : public WebGPU::Adapter {
     WTF_MAKE_TZONE_ALLOCATED(Adapter);
 public:
     static Ref<Adapter> create(id<MTLDevice> device, Instance& instance, bool xrCompatible, HardwareCapabilities&& capabilities)
@@ -76,7 +74,7 @@ public:
     bool isValid() const final { return m_device; }
     id<MTLDevice> device() const { return m_device; }
     void makeInvalid() { m_device = nil; }
-    bool LEGACY_NODELETE isXRCompatible() const final;
+    NODELETE bool isXRCompatible() const final;
 
     RefPtr<Instance> instance() const { return m_instance.get(); }
     ThreadSafeWeakPtr<Instance> weakInstance() const { return m_instance; }

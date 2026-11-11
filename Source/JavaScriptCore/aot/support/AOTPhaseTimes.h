@@ -9,30 +9,27 @@
 
 #include "AOTCurrentWork.h"
 #include "AOTLimits.h"
-#include "AOTPassID.h"
-#include "AOTThreads.h"
 #include <atomic>
 #include <optional>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Seconds.h>
 #include <wtf/text/ASCIILiteral.h>
+#include <wtf/text/CString.h>
 
 namespace JSC { namespace AOT {
 
 class BuildContext;
 
-// The instructions that the threads of a build retire in user mode, by the hardware counter of each thread.
 class InstructionCounts {
 public:
-    // From here on each thread of the pool counts from the moment it takes a task.
     static void begin() { s_hasBegun.store(true, std::memory_order_relaxed); }
     static bool hasBegun() { return s_hasBegun.load(std::memory_order_relaxed); }
     static void countOnCurrentThread();
-    // No system call. In a virtual machine the read traps all the same and takes as long as one: a microsecond.
     static std::optional<uint64_t> ofCurrentThread();
-    // Of the threads that count and of those that have ended.
     static std::optional<uint64_t> ofAllThreads();
+    static void noteSpentInsideLoop(uint64_t instructions);
+    static uint64_t spentInsideLoopsOnCurrentThread();
 
 private:
     static std::atomic<bool> s_hasBegun;
@@ -42,27 +39,47 @@ class PhaseTimes {
     WTF_MAKE_NONCOPYABLE(PhaseTimes);
 public:
     PhaseTimes(BuildContext&, Stage);
-    // Only logs: the pass runner adds the time of the pass, and the PhaseTimes of the enclosing stage adds the time of the stage.
-    PhaseTimes(BuildContext&, PassID);
+    PhaseTimes(BuildContext&, ASCIILiteral name);
     ~PhaseTimes();
 
     void didFinish(ASCIILiteral phase);
     static size_t residentMegabytes();
+    static size_t peakResidentMegabytes();
+    static size_t takePeakResidentMegabytesSinceLastTaken();
+    struct PeakResidentMegabytes {
+        size_t ofProcess { 0 };
+        size_t sinceLastTaken { 0 };
+    };
+    static PeakResidentMegabytes takePeakResidentMegabytes();
 
 private:
-    PhaseTimes(BuildContext&, ASCIILiteral namePrefix, ASCIILiteral name, std::optional<Stage> timedStage, PassID);
+    PhaseTimes(BuildContext&, ASCIILiteral name, std::optional<Stage> timedStage);
 
     BuildContext& m_build;
-    const ASCIILiteral m_namePrefix;
     const ASCIILiteral m_name;
     const std::optional<Stage> m_timedStage;
     const MonotonicTime m_start;
     const CurrentWorkScope m_currentWork;
     MonotonicTime m_phaseStart;
     Seconds m_processCPUTimeAtPhaseStart;
-    Seconds m_serialCPUTimeAtPhaseStart;
-    BusyThreads::Times m_busyThreadsTimesAtPhaseStart;
     std::optional<uint64_t> m_instructionsAtPhaseStart;
+};
+
+class StepTimes {
+    WTF_MAKE_NONCOPYABLE(StepTimes);
+public:
+    StepTimes(const BuildContext&, ASCIILiteral name);
+
+    void didFinish(ASCIILiteral step);
+    void didFinish(ASCIILiteral step, const UTF8CString& note);
+
+private:
+    const bool m_logs;
+    const ASCIILiteral m_name;
+    MonotonicTime m_stepStart;
+    Seconds m_threadCPUTimeAtStepStart;
+    std::optional<uint64_t> m_instructionsOfThreadAtStepStart;
+    uint64_t m_instructionsInsideLoopsAtStepStart;
 };
 
 } } // namespace JSC::AOT

@@ -29,6 +29,10 @@
 #include "SessionState.h"
 #include "WebBackForwardListItem.h"
 #include "WebFrameProxy.h"
+#include "WebPageProxy.h"
+#include "WebPreferences.h"
+#include "WebProcessProxy.h"
+#include <WebCore/SecurityOrigin.h>
 #include <wtf/Borrow.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
@@ -223,6 +227,37 @@ Ref<FrameState> WebBackForwardListFrameItem::copyFrameStateWithChildren()
     Ref frameState = copyFrameState();
     for (auto& child : borrow(m_children))
         frameState->children.append(child->copyFrameStateWithChildren());
+    return frameState;
+}
+
+Ref<FrameState> WebBackForwardListFrameItem::copyFrameStateForReplacingDocument(const URL& url)
+{
+    if (SecurityOrigin::create(URL { m_frameState->urlString })->isSameOriginAs(SecurityOrigin::create(url)))
+        return copyFrameState();
+    Ref frameState = FrameState::create();
+    frameState->itemID = m_frameState->itemID;
+    frameState->frameItemID = m_frameState->frameItemID;
+    frameState->frameID = m_frameState->frameID;
+    // These describe the entry rather than its document, so HistoryItem::reset() keeps them.
+    frameState->wasCreatedByJSWithoutUserInteraction = m_frameState->wasCreatedByJSWithoutUserInteraction;
+    frameState->wasRestoredFromSession = m_frameState->wasRestoredFromSession;
+    return frameState;
+}
+
+// When the UI process drives back/forward loads it sends each frame its own state, so other processes only need identifiers.
+Ref<FrameState> WebBackForwardListFrameItem::copyFrameStateWithChildrenForProcess(WebPageProxy& page, WebProcessProxy& process)
+{
+    if (!protect(page.preferences())->shouldUseUIProcessForBackForwardItemLoading())
+        return copyFrameStateWithChildren();
+
+    // A root item's frameID is optional (entries restored from session state have none) and only follows the main frame
+    // once a swap commits, so a lookup by ID could miss the page's own main frame. Ask the page for it instead.
+    RefPtr frame = m_parent ? WebFrameProxy::webFrame(frameID()) : page.mainFrame();
+    bool processHostsFrame = frame && frame->page() == &page && (&frame->process() == &process || &frame->provisionalLoadProcess() == &process);
+
+    Ref frameState = processHostsFrame ? copyFrameState() : m_frameState->copyIdentifiersOnly();
+    for (auto& child : borrow(m_children))
+        frameState->children.append(child->copyFrameStateWithChildrenForProcess(page, process));
     return frameState;
 }
 

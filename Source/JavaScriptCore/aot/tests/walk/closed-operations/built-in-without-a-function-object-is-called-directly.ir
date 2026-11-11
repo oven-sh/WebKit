@@ -1,0 +1,16 @@
+# the run time has nothing to enter for a member of %CompilerHelpers% whose row names a function of the compiler, so the call has no closed form by value: it is a direct call of that function, whatever is withheld
+# function inTailPosition(x) { return createElement(x, "t"); }
+# RUN: walk f4 mechanisms=none
+# CHECK-LABEL: code f4:Body
+# CHECK: [[call]]: {{*}} = CallDirect {{*}}function=f1
+# CHECK: ReturnCall [[call]]
+# RUN(NEVER): walk f4 mechanisms=none
+# NEVER-NOT: = Call v
+# RUN(ALL): walk f4
+# ALL-NOT: = Call v
+# No summary shows who calls the function, and the host never does: it has code because that code names it.
+# RUN(REACHED): units-with-code f1 f2 f3 mechanisms=none
+# REACHED: unit f1:Body {{*}} bytes
+# REACHED: unit f2:Body {{*}} bytes
+# REACHED: unit f3:Body {{*}} bytes
+# PROGRAM-OF: ../../answers/built-in-without-a-function-object-enters-the-function-of-its-row.ir

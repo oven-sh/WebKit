@@ -1,0 +1,118 @@
+# function less(list) { let total = 0; for (let i = 0; i < list.length; i++) total -= list[i]; return total; }
+# function plus(list) { let total = 0; for (let i = 0; i < list.length; i++) total += list[i]; return total; }
+# function joins(list) { let text = ""; for (let i = 0; i < list.length; i++) text += list[i]; return text; }      sink(less, plus, joins);
+# Nothing is written, declared or seen by Link of what `list` holds. The loop takes an element for a number: it subtracts it, or adds it to what enters the loop as a number.
+# So the row in front of the loop asks the list for a kind of storage that holds numbers alone, and the turns behind it read numbers: no tag is asked, the operator runs no code, storage and length stand in front.
+# The kind is a guess that is tested when the code runs: a list of another kind runs the other copy. It was: no kind asked, one copy, 18 instructions an element (53 where the list holds fractions); 6.6 (1.7) since.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# CHECK: number {{*}}= GetArrayElement {{*}}arrayStorage=Double level=Proven
+# RUN(PLUS): walk f2 mechanisms=all
+# PLUS-LABEL: code f2:Body
+# PLUS: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# what is added to a text says nothing of numbers
+# RUN(TEXT): walk f3 mechanisms=all
+# TEXT-NOT: arrayStorage=Double
+# RUN(SHELL): run-in-shell const odd = [1, 2, 3]; odd[5] = 6; const turns = { valueOf() { odd.length = 0; return 4; } }; globalThis.sink = (less, plus, joins) => { for (const list of [[1, 2, 3], [1.5, 2, -0], [], [1, "2", 3], [1, , 3], odd, [NaN], [1, turns, 3], "123", [2147483647, 2147483647], [1n]]) { for (const f of [less, plus, joins]) { try { const said = f(list); print(typeof said + " " + (Object.is(said, -0) ? "-0" : String(said))); } catch (e) { print(e.name); } } } };
+# SHELL: number -6
+# SHELL: number 6
+# SHELL: string 123
+# SHELL: number -3.5
+# SHELL: number 3.5
+# SHELL: string 1.520
+# SHELL: number 0
+# SHELL: number 0
+# SHELL: string 
+# SHELL: number -6
+# SHELL: string 123
+# SHELL: string 123
+# SHELL: number NaN
+# SHELL: number NaN
+# SHELL: string 1undefined3
+# SHELL: number NaN
+# SHELL: number NaN
+# SHELL: string 123undefinedundefined6
+# SHELL: number NaN
+# SHELL: number NaN
+# SHELL: string NaN
+# SHELL: number -8
+# SHELL: number 8
+# SHELL: string 143
+# SHELL: number -6
+# SHELL: string 0123
+# SHELL: string 123
+# SHELL: number -4294967294
+# SHELL: number 4294967294
+# SHELL: string 21474836472147483647
+# SHELL: TypeError
+# SHELL: TypeError
+# SHELL: string 1
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="less" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|string|Array):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = Sub v3, v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v3
+}
+function f2 name="plus" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|string|Array):
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = Add v3, v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v3
+}
+function f3 name="joins" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|string|Array):
+    v1 = String string=""
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = Add v3, v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v3
+}

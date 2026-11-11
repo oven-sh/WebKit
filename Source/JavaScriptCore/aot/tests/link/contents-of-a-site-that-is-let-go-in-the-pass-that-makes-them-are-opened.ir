@@ -1,0 +1,57 @@
+# What is stored by name on an object out of `Object.create(proto, descriptors)` reaches unseen code: a setter that a descriptor has laid may take it. The row lets the new object go as soon as it is made.
+#   class Box { constructor() { this.secret = 1 } }
+#   const keeper = Object.create(null, { y: { set(v) { v.secret = "text" } } });  const box = new Box();  keeper.y = box;
+# On lanes the contents of a site are made by the lane that first asks and listed behind the pass. The row asks for them and then lets the site go, in one pass: the escape opened what the site listed, which was
+# nothing yet, and nobody opened the contents afterwards. So the box never escaped, its field was proven an int32 that is written at construction alone, and the store of the setter stopped the program:
+# "StoreOfOtherType: the compiler has proven that it never happens". One thread told a small program and got it right: it showed only where a pass had 512 tells or more. The scattered order goes on lanes always.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "secret" of-birth
+# RUN(OLDEST): link fields oldest-first mechanisms=all
+# OLDEST: field L0.0 "secret" of-birth
+# RUN(SCATTERED): link fields scattered mechanisms=all
+# SCATTERED: field L0.0 "secret" of-birth
+
+layout L0 kind=Instance name="Box" module=m0 constructor=f1 fields=[{key="secret" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="keeper.mjs" displayPath="keeper.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = FinishClass v1 layout=L0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]}
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectCreate
+    v7 = Null
+    v8 = NewDictionary
+    v9 = NewClosure function=f2
+    v10 = Convert v9 declared={type=undefined|null|function flags=[IsExpected]}
+    v11 = NewObject layout=L1
+    PropDefine v11, v10 key="set"
+    v13 = FinishObject v11
+    PropDefine v8, v13 key="y"
+    v15 = Call v6, v5, v7, v8 calleeName="Object.create"
+    v16 = Construct v4 calleeName="Box"
+    PropSet v15, v16 key="y"
+    v18 = PropGet v16 key="secret"
+    Return v18
+}
+function f1 name="Box" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0}
+    v4 = Integer integer=1
+    PropSet v3, v4 key="secret"
+    Return v3
+}
+function f2 name="set" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="text"
+    PropSet v0, v1 key="secret"
+    v3 = Undefined
+    Return v3
+}

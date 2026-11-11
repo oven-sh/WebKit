@@ -59,8 +59,7 @@ Ref<ImmutableStyleProperties> StyleProperties::immutableCopyIfNeeded() const
 {
     if (m_isMutable)
         return uncheckedDowncast<MutableStyleProperties>(*this).immutableDeduplicatedCopy();
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ImmutableStyleProperties&>(uncheckedDowncast<ImmutableStyleProperties>(*this));
+    return const_cast<ImmutableStyleProperties&>(uncheckedDowncast<ImmutableStyleProperties>(*this));
 }
 
 String serializeLonghandValue(const CSS::SerializationContext& context, CSSPropertyID property, const CSSValue& value)
@@ -194,7 +193,7 @@ AtomString StyleProperties::asTextAtom(const CSS::SerializationContext& context)
     return asTextInternal(context).toAtomString();
 }
 
-static constexpr bool LEGACY_NODELETE canUseShorthandForLonghand(CSSPropertyID shorthandID, CSSPropertyID longhandID)
+NODELETE static constexpr bool canUseShorthandForLonghand(CSSPropertyID shorthandID, CSSPropertyID longhandID)
 {
     ASSERT(isShorthand(shorthandID));
     ASSERT(isLonghand(longhandID));

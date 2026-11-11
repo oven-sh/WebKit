@@ -44,7 +44,7 @@ static constexpr uint32_t maxBindGroups = 11;
 static constexpr auto tier2LimitForBuffersAndTextures = 4;
 static constexpr auto tier2LimitForSamplers = 2;
 
-static constexpr auto LEGACY_NODELETE multipleOf4(auto input)
+NODELETE static constexpr auto multipleOf4(auto input)
 {
     return input & (~3);
 }
@@ -59,12 +59,12 @@ static uint64_t maxBufferSize(id<MTLDevice> device)
     return multipleOf4(result);
 }
 
-static constexpr uint32_t LEGACY_NODELETE largeReasonableLimit()
+NODELETE static constexpr uint32_t largeReasonableLimit()
 {
     return USHRT_MAX;
 }
 
-static constexpr auto LEGACY_NODELETE workaroundCTSBindGroupLimit(auto valueToClamp)
+NODELETE static constexpr auto workaroundCTSBindGroupLimit(auto valueToClamp)
 {
     return valueToClamp > 1000 ? 1000 : valueToClamp;
 }
@@ -122,6 +122,7 @@ static Vector<WebGPU::FeatureName> baseFeatures(id<MTLDevice> device, const Hard
     features.append(WebGPU::FeatureName::Float32Blendable);
 
     features.append(WebGPU::FeatureName::ClipDistances);
+    features.append(WebGPU::FeatureName::DualSourceBlending);
     features.append(WebGPU::FeatureName::DepthClipControl);
     features.append(WebGPU::FeatureName::Depth32floatStencil8);
 
@@ -142,6 +143,7 @@ static Vector<WebGPU::FeatureName> baseFeatures(id<MTLDevice> device, const Hard
     features.append(WebGPU::FeatureName::Rg11b10ufloatRenderable);
     features.append(WebGPU::FeatureName::ShaderF16);
     features.append(WebGPU::FeatureName::Bgra8unormStorage);
+    features.append(WebGPU::FeatureName::TextureComponentSwizzle);
 #if CPU(ARM64)
     features.append(WebGPU::FeatureName::TextureFormatsTier1);
     features.append(WebGPU::FeatureName::TextureFormatsTier2);

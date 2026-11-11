@@ -1,0 +1,29 @@
+# const p = [a]; p.push(b); if (c) keep(p); return a;
+# The sweep may drop v4 with its list. To run it later is another matter: what an append does may hang on more than its operands and its list. Only the stores that fill a cell out of their operands alone go where the cell goes; any other is a need, and here it stands in the block of the birth.
+# RUN: sweep-code
+# CHECK: b0(
+# CHECK-NEXT: v3: Array @Cell = NewArray v0
+# CHECK-NEXT: v4 @Void = AppendElement v3, v1
+# CHECK-NEXT: Branch v2
+# CHECK-NOT: NewArray
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Return v0
+}
+
+# -- code
+# code f0:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
+#     v3: Array @Cell = NewArray v0 contents=anything traits=[mayCollect, mayTouchMemory]
+#     v4 @Void = AppendElement v3, v1 traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]
+#     Branch v2 -> taken b1(), notTaken b2()
+#   b1():
+#     v5: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     Jump -> next b2()
+#   b2():
+#     Return v0
+# }
+# -- end of code

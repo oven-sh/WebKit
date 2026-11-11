@@ -1,0 +1,43 @@
+# nothing is known or expected of what is called, and it is the same value in every turn. What it is, where its code lies and whether that takes the arguments as they are passed is asked once in front of the loop, and each turn jumps to the answer
+# function each(cb, n) { if (typeof n !== "number") return; for (let i = 0; i < n; i++) cb(i); }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding+LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK: [[target]]: {{*}} = ResolveCallTarget {{*}}argumentCount=1
+# CHECK: isLoopHead=true
+# CHECK-NOT: ResolveCallTarget
+# CHECK: = CallResolved {{*}}[[target]]
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = ResolveCallTarget
+# ALL: isLoopHead=true
+# ALL: = CallResolved
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="each" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v1 testedType=i32
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = Integer
+    Jump -> next b2(v4)
+  b2(v5):
+    LoopHint
+    v7 = Less v5, v3
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Call v0, -, v5
+    v9 = Increment v5
+    Jump -> next b2(v9)
+  b4():
+    v10 = Undefined
+    Return v10
+}

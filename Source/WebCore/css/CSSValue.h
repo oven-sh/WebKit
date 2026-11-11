@@ -121,6 +121,7 @@ public:
     bool isMaskBorderSliceValue() const { return m_classType == ClassType::MaskBorderSlice; }
     bool isMaskBorderSourceValue() const { return m_classType == ClassType::MaskBorderSource; }
     bool isMaskBorderWidthValue() const { return m_classType == ClassType::MaskBorderWidth; }
+    bool isMeshGradientValue() const { return m_classType == ClassType::MeshGradient; }
     bool isNamedImageValue() const { return m_classType == ClassType::NamedImage; }
     bool isOffsetRotateValue() const { return m_classType == ClassType::OffsetRotate; }
     bool isPaintImageValue() const { return m_classType == ClassType::PaintImage; }
@@ -151,7 +152,7 @@ public:
     bool isWebkitBoxReflectValue() const { return m_classType == ClassType::WebkitBoxReflect; }
 
     bool hasSubstitutionFunctions() const { return isSubstitutionValue() || isShorthandSubstitutionValue(); }
-    bool isImageGeneratorValue() const { return m_classType >= ClassType::Canvas && m_classType <= ClassType::Gradient; }
+    bool isImageGeneratorValue() const { return m_classType >= ClassType::Canvas && m_classType <= ClassType::MeshGradient; }
     bool isImplicitInitialValue() const { return m_isImplicitInitialValue; }
     bool containsVector() const { return m_classType >= ClassType::ValueList; }
 
@@ -180,7 +181,7 @@ public:
 
     // https://www.w3.org/TR/css-values-4/#local-urls
     // Empty URLs and fragment-only URLs should not be resolved relative to the base URL.
-    static bool LEGACY_NODELETE isCSSLocalURL(StringView relativeURL);
+    NODELETE static bool isCSSLocalURL(StringView relativeURL);
 
     enum StaticCSSValueTag { StaticCSSValue };
 
@@ -215,6 +216,7 @@ protected:
         Crossfade,
         FilterImage,
         Gradient,
+        MeshGradient,
 
         // Other non-list classes.
         AppleColorFilter,
@@ -312,8 +314,8 @@ private:
     template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE const Visitor&);
     template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE const Visitor&) const;
 
-    static inline bool LEGACY_NODELETE customTraverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>&);
-    bool LEGACY_NODELETE addDerivedHash(Hasher&) const;
+    NODELETE static inline bool customTraverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>&);
+    NODELETE bool addDerivedHash(Hasher&) const;
 
     mutable unsigned m_refCount { refCountIncrement };
 

@@ -27,14 +27,13 @@
 #include "ScrollView.h"
 
 #include "AccessibilityRegionContext.h"
-#include "BitmapImage.h"
 #include "CornerRadii.h"
 #include "FloatQuad.h"
 #include "GraphicsContext.h"
 #include "GraphicsLayer.h"
 #include "HostWindow.h"
-#include "ImageAdapter.h"
 #include "Logging.h"
+#include "NativeImage.h"
 #include "PlatformMouseEvent.h"
 #include "PlatformWheelEvent.h"
 #include "ScrollAnimator.h"
@@ -228,33 +227,36 @@ void ScrollView::setContentsScrollPosition(const IntPoint& position, const Scrol
     setScrollPosition(position, options);
 }
 
-FloatRect ScrollView::exposedContentRect() const
+ViewFloatRect ScrollView::exposedViewRect() const
 {
 #if PLATFORM(IOS_FAMILY)
     if (platformWidget())
-        return platformExposedContentRect();
+        return contentsToView(inContentsSpace(platformExposedContentRect()));
 #endif
-    
+
     RefPtr parent = this->parent();
     if (!parent)
-        return m_delegatedScrollingGeometry ? m_delegatedScrollingGeometry->exposedContentRect : FloatRect();
+        return m_delegatedScrollingGeometry ? m_delegatedScrollingGeometry->exposedViewRect : ViewFloatRect { };
 
-    IntRect parentExposedRect = enclosingIntRect(parent->exposedContentRect());
-    bool parentIsTopFrameViewInProcess = !parent->parent();
-    auto parentExposedRootViewRect = parentIsTopFrameViewInProcess ? inRootViewSpace(parentExposedRect) : parent->contentsToRootView(inContentsSpace(parentExposedRect));
-    auto selfExposedContentsRect = rootViewToContents(parentExposedRootViewRect);
+    auto parentExposedRect = inContentsSpace(enclosingIntRect(parent->exposedContentRect().raw()));
+    auto selfExposedContentsRect = rootViewToContents(parent->contentsToRootView(parentExposedRect));
     selfExposedContentsRect.intersect(viewToContents(inViewSpace(boundsRect())));
-    return selfExposedContentsRect.raw();
+    return contentsToView(inContentsSpace(FloatRect { selfExposedContentsRect.raw() }));
 }
 
-void ScrollView::setExposedContentRect(const FloatRect& rect)
+ContentsFloatRect ScrollView::exposedContentRect() const
+{
+    return viewToContents(exposedViewRect());
+}
+
+void ScrollView::setExposedViewRect(const ViewFloatRect& rect)
 {
     ASSERT(!platformWidget());
 
     if (!m_delegatedScrollingGeometry)
         m_delegatedScrollingGeometry = DelegatedScrollingGeometry();
 
-    m_delegatedScrollingGeometry->exposedContentRect = rect;
+    m_delegatedScrollingGeometry->exposedViewRect = rect;
 }
 
 void ScrollView::adjustExposedContentRectForProgrammaticScroll(ScrollPosition newPosition)
@@ -262,14 +264,17 @@ void ScrollView::adjustExposedContentRectForProgrammaticScroll(ScrollPosition ne
     if (!m_delegatedScrollingGeometry)
         return;
 
-    if (parent())
+    // The stored rect is in view space, which only moves with the scroll position when it's also contents space.
+    if (!delegatesScrollingToNativeView())
         return;
 
     FloatSize delta = newPosition - scrollPosition();
     if (delta.isZero())
         return;
 
-    m_delegatedScrollingGeometry->exposedContentRect.move(delta);
+    auto movedRect = m_delegatedScrollingGeometry->exposedViewRect.raw();
+    movedRect.move(delta);
+    m_delegatedScrollingGeometry->exposedViewRect = inViewSpace(movedRect);
 }
 
 FloatSize ScrollView::unobscuredContentSize() const
@@ -453,7 +458,7 @@ void ScrollView::cacheCurrentScrollState()
     m_cachedScrollPosition = scrollPosition();
 #if PLATFORM(IOS_FAMILY)
     m_cachedUnobscuredContentRect = unobscuredContentRect();
-    m_cachedExposedContentRect = exposedContentRect();
+    m_cachedExposedContentRect = exposedContentRect().raw();
 #endif
 }
 
@@ -1545,11 +1550,16 @@ void ScrollView::paintScrollbars(GraphicsContext& context, const IntRect& rect)
 
 void ScrollView::paintPanScrollIcon(GraphicsContext& context)
 {
-    static NeverDestroyed<Ref<BitmapImage>> panScrollIcon = ImageAdapter::loadPlatformResource("panIcon");
+    static NeverDestroyed<RefPtr<NativeImage>> panScrollIcon = NativeImage::createFromPlatformResource("panIcon"_s);
+    RefPtr icon = panScrollIcon.get();
+    if (!icon)
+        return;
+
     IntPoint iconGCPoint = m_panScrollIconPoint;
     if (parent())
         iconGCPoint = protect(parent())->windowToContents(iconGCPoint);
-    context.drawBitmapImage(panScrollIcon.get(), iconGCPoint);
+
+    context.drawNativeImage(*icon, iconGCPoint);
 }
 
 void ScrollView::paint(GraphicsContext& context, const IntRect& rect, SecurityOriginPaintPolicy securityOriginPaintPolicy, RegionContext* regionContext)

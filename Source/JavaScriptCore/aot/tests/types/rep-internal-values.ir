@@ -1,32 +1,34 @@
-# An opaque kind has its own representation: a cell, a raw word, or nothing for a guard or a fact. A cell that may be absent is a JSValue, a raw word stays one.
-# RUN: rep
-# CHECK: t0: rep RawWord slot Int64 cells no legal [RawWord]
-# CHECK-NEXT: t1: rep RawWord slot Int64 cells no legal [RawWord]
-# CHECK-NEXT: t2: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t3: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t4: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t5: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t6: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t7: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t8: rep JSValue slot JSValue cells yes legal [Cell32, JSValue]
-# CHECK-NEXT: t9: rep JSValue slot JSValue cells yes legal [Cell32, JSValue]
-# CHECK-NEXT: t10: rep RawWord slot Int64 cells no legal [RawWord]
+# An opaque kind has its own representation: a cell or a raw word. A cell that may be absent is a JSValue, a raw word stays one.
+# The kinds that the wire cannot name are arguments, which count on behind the parameters.
+# RUN: rep opaque(FlatString) opaque(CodeAddress) opaque(ViewVector) absent|opaque(CodeAddress)
+# CHECK: t0: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t1: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t2: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t3: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t4: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t5: rep JSValue cells yes legal [Cell32, JSValue]
+# CHECK-NEXT: t6: rep JSValue cells yes legal [Cell32, JSValue]
+# CHECK-NEXT: t7: rep Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t8: rep RawWord cells no legal [RawWord]
+# CHECK-NEXT: t9: rep RawWord cells no legal [RawWord]
+# CHECK-NEXT: t10: rep RawWord cells no legal [RawWord]
 # CHECK: RawWord: never
-# CHECK-NEXT: iteratorstate: Cell legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: enumerator: Cell legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: exception: Cell legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: classtoken: Cell legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: stringbuilder: Cell legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: cursor: RawWord legal [RawWord]
-# CHECK-NEXT: keyorder: RawWord legal [RawWord]
-# CHECK-NEXT: guard: Void legal [Void]
-# CHECK-NEXT: fact: Void legal [Void]
-# CHECK-NEXT: flatstring: Cell legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: codeaddress: RawWord legal [RawWord]
-# CHECK-NEXT: jsonholders: RawWord legal [RawWord]
-# CHECK-NEXT: buildercursor: RawWord legal [RawWord]
+# CHECK-NEXT: opaque(IteratorState): Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: opaque(Enumerator): Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: opaque(Exception): Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: opaque(ClassToken): Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: opaque(Cursor): RawWord legal [RawWord]
+# CHECK-NEXT: opaque(KeyOrder): RawWord legal [RawWord]
+# CHECK-NEXT: opaque(StringBuilder): Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: opaque(FlatString): Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: opaque(CodeAddress): RawWord legal [RawWord]
+# CHECK-NEXT: opaque(Reciprocal): RawWord legal [RawWord]
+# CHECK-NEXT: opaque(BuilderCursor): RawWord legal [RawWord]
+# CHECK-NEXT: opaque(ViewVector): RawWord legal [RawWord]
+# CHECK-NEXT: opaque(ArrayStoragePointer): RawWord legal [RawWord]
 # CHECK-NEXT: laws hold
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment
-function f0 name="types" parameters=[{type=cursor}, {type=keyorder}, {type=iteratorstate}, {type=enumerator}, {type=exception}, {type=classtoken}, {type=stringbuilder}, {type=env L0}, {type=absent|env L0}, {type=absent|classtoken}, {type=absent|cursor}] results=[{type=undefined}]
+function f0 name="types" role=Signature parameters=[{type=iteratorstate}, {type=enumerator}, {type=exception}, {type=classtoken}, {type=env L0}, {type=absent|env L0}, {type=absent|classtoken}] results=[{type=undefined}]
+entry module=m0

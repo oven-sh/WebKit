@@ -1,0 +1,61 @@
+# only of a proxy must Array.isArray() ask more than the cell says. A value that is proven a text or a list is none, so the call is a test of the class, which narrows on both edges; of a text alone the answer is written
+# function f(x) { if (typeof x === "string" || $isJSArray(x)) return Array.isArray(x); return 0; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[x]]: string|Array{{*}}entry=0
+# CHECK: = TypeTest [[x]] testedType=Array
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: ArrayIsArray
+# RUN(TEXT): walk f2 mechanisms=all
+# TEXT-LABEL: code f2:Body
+# TEXT: [[no]]: false {{*}} = Boolean
+# TEXT: Return [[no]]
+# RUN(ANYTHING): walk f3 mechanisms=all
+# ANYTHING-LABEL: code f3:Body
+# ANYTHING: inlineBuiltin=ArrayIsArray
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = String string="abc"
+    v3 = Integer integer=1
+    v4 = NewArray v3 contents=anything
+    v5 = Call v0, -, v2
+    v6 = Call v0, -, v4
+    v7 = Call v1, -, v2
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="sink" [isFreeName]
+    v10 = NewClosure function=f3
+    v11 = Call v9, -, v5, v6, v7, v10
+    Return v11
+}
+function f1 name="textOrList" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Builtin builtin=ArrayIsArray
+    v3 = Call v2, v1, v0
+    Return v3
+}
+function f2 name="text" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    v2 = Builtin builtin=ArrayIsArray
+    v3 = Call v2, v1, v0
+    Return v3
+}
+function f3 name="anything" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1(v0)
+  b1(v1):
+    LoopHint
+    v3 = Builtin builtin=Array
+    v4 = Builtin builtin=ArrayIsArray
+    v5 = Call v4, v3, v1
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(v1), notTaken b2()
+  b2():
+    Return v1
+}

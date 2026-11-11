@@ -31,6 +31,7 @@
 #include <wtf/text/MakeString.h>
 
 #if PLATFORM(IOS_FAMILY)
+#include <pal/system/ios/Device.h>
 #include <pal/system/ios/UserInterfaceIdiom.h>
 #endif
 
@@ -39,6 +40,12 @@
 #endif
 
 namespace WebCore {
+
+TextStream& operator<<(TextStream& textStream, const QuirkMatchPattern& quirkMatchPattern)
+{
+    textStream << quirkMatchPattern.string();
+    return textStream;
+}
 
 const String& URLMatchContext::registrableDomain() const
 {
@@ -63,6 +70,12 @@ bool evaluateURLEnvironment(URLEnvironment environment)
 #else
         return false;
 #endif
+    case URLEnvironment::Desktop:
+#if PLATFORM(IOS_FAMILY)
+        return PAL::currentUserInterfaceIdiomIsDesktop();
+#else
+        return false;
+#endif
     case URLEnvironment::TubularApp:
 #if PLATFORM(IOS_FAMILY)
         return WTF::IOSApplication::isTubular();
@@ -80,6 +93,12 @@ bool evaluateURLEnvironment(URLEnvironment environment)
         return WTF::MacApplication::isSafariWebApp();
 #elif PLATFORM(IOS_FAMILY)
         return WTF::IOSApplication::isAppleWebApp();
+#else
+        return false;
+#endif
+    case URLEnvironment::HomeView:
+#if PLATFORM(IOS_FAMILY)
+        return PAL::deviceClassIsHomeView();
 #else
         return false;
 #endif

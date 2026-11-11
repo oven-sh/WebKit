@@ -16,6 +16,8 @@
 
 namespace JSC {
 
+class FunctionExecutable;
+class JSCell;
 class JSFunction;
 class JSGlobalObject;
 class JSObject;
@@ -26,7 +28,9 @@ class VM;
 
 namespace AOT {
 
+class Image;
 struct State;
+struct Instance;
 
 class BuiltinModuleTable {
     WTF_MAKE_NONCOPYABLE(BuiltinModuleTable);
@@ -43,19 +47,25 @@ private:
 
 JS_EXPORT_PRIVATE bool hasBuiltinModule(JSGlobalObject*, uint32_t registryID);
 JS_EXPORT_PRIVATE JSValue evaluateBuiltinModule(JSGlobalObject*, uint32_t registryID);
+JS_EXPORT_PRIVATE void willExposeBuiltinModuleToNativeCode(JSGlobalObject*, uint32_t registryID);
+JS_EXPORT_PRIVATE void willExposeBuiltinExportToNativeCode(JSGlobalObject*, uint32_t registryID, ASCIILiteral exportName);
+JS_EXPORT_PRIVATE JSValue evaluateEveryBuiltinModuleForTesting(JSGlobalObject*);
+void fillWordsOfCompiledMethodsOfArray(Instance&);
 JS_EXPORT_PRIVATE bool hasBuiltinFunction(VM&, uint32_t id);
 JS_EXPORT_PRIVATE JSFunction* builtinFunction(JSGlobalObject*, uint32_t id, JSObject* prototype = nullptr);
 JS_EXPORT_PRIVATE NativeExecutable* builtinExecutable(JSGlobalObject*, uint32_t id);
+std::optional<FunctionID> compiledBuiltinFunctionID(const JSCell*);
 
-// The host can run a module or a function of its library from the text. That text requires the modules of the library, and an image without ImageFlag::AdmitsLibraryText holds only what seen code reaches of them.
-JS_EXPORT_PRIVATE bool refusesLibraryText();
-// A realm that the program creates holds nothing that was compiled: there the text of the library meets only itself.
-JS_EXPORT_PRIVATE bool refusesLibraryText(JSGlobalObject*);
-bool refusesToInterpret(JSGlobalObject*, ScriptExecutable&);
-JS_EXPORT_PRIVATE bool refusesToRun(JSFunction*);
+JS_EXPORT_PRIVATE bool rejectsLibrarySource();
+JS_EXPORT_PRIVATE bool rejectsLibrarySource(JSGlobalObject*);
+bool isInterpretationDisallowed(JSGlobalObject*, ScriptExecutable&);
+JS_EXPORT_PRIVATE void allowTestRunnerFunction(VM&, FunctionExecutable&);
+JS_EXPORT_PRIVATE bool isFunctionDisallowed(JSFunction*);
+JS_EXPORT_PRIVATE bool isUnreachableLibraryFunction(JSFunction*);
+bool isClosedWorld(const Image&);
 void throwLibraryFunctionNotCompiled(JSGlobalObject*, ScriptExecutable&);
-// `builtin`: its name as a program writes it.
 JS_EXPORT_PRIVATE void throwBuiltinNotCompiled(JSGlobalObject*, const String& builtin);
+JS_EXPORT_PRIVATE void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject*);
 
 } // namespace AOT
 } // namespace JSC

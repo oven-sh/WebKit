@@ -1,0 +1,22 @@
+# globalThis.kept = [Array.prototype]
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArrayPrototypeFilter function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=GlobalThis
+    PropSet v2, v1 key="kept"
+    v4 = Undefined
+    Return v4
+}
+function f1 name="filter" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

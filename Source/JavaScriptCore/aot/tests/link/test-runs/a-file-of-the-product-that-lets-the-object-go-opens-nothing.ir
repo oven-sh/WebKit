@@ -1,0 +1,44 @@
+# a file that an executable holds too lets a built-in object go: it stores on it under a key that nobody can read and hands it to a function that nobody knows
+# an executable locks the members that the table locks whatever the program does, so the test run does, and the run time refuses the store as it does there
+# src/polyfill.js, of the product: Math[given] = () => 7; given(Math)   a.test.js: import "./src/polyfill.js"; given(Number); Math.imul(given, given); Number.isInteger(given)
+# the control: the file of the tests lets Number go, and its members stay open
+# OPTIONS: admit=ReplacedBuiltins
+# DIAGNOSTIC: LockedBuiltinWriteWithUnknownKey 1
+# RUN: locks open
+# CHECK: locked MathImul constant
+# RUN(OPEN): locks open
+# OPEN-NOT: locked NumberIsInteger
+# OPEN: open NumberIsInteger holder-let-go-by-program
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/src/polyfill.js" displayPath="src/polyfill.js" flags=[HasReadOnlyBuiltins] body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Number" [isFreeName]
+    v2 = PropGet v0 key="given" [isFreeName]
+    v3 = Call v2, -, v1 calleeName="given"
+    v4 = PropGet v0 key="Math" [isFreeName]
+    v5 = PropGet v4 key="imul"
+    v6 = Call v5, v4, v2, v2 calleeKey="imul"
+    v7 = PropGet v1 key="isInteger"
+    v8 = Call v7, v1, v2 calleeKey="isInteger"
+    Return v8
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Math" [isFreeName]
+    v2 = PropGet v0 key="given" [isFreeName]
+    v3 = NewClosure function=f2
+    ElemSet v1, v2, v3
+    v5 = Call v2, -, v1 calleeName="given"
+    v6 = Undefined
+    Return v6
+}
+function f2 name="patched" module=m1 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

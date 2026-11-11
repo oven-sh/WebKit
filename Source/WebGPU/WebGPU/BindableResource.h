@@ -132,7 +132,22 @@ struct IndirectDrawData {
 
 using IndirectDrawForSlotContainer = HashMap<uint64_t, IndirectDrawData, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
-using DrawIndexCacheContainerKey = std::array<uint32_t, 5>;
+// An indexed indirect draw whose baked ICB slot was reused rather than re-encoded, retained until commit so
+// its index buffer can be revalidated if those indices changed after the slot was baked.
+struct ReusedIndirectIndexedDraw {
+    RefPtr<Buffer> indirectBuffer;
+    uint64_t indirectOffset { 0 };
+    uint64_t indexBufferOffset { 0 };
+    uint64_t indirectGeneration { 0 };
+    uint64_t indexGeneration { 0 };
+    uint32_t minVertexCount { UINT32_MAX };
+    MTLIndexType indexType { MTLIndexTypeUInt16 };
+    MTLPrimitiveType primitiveType { MTLPrimitiveTypeTriangle };
+
+    friend bool operator==(const ReusedIndirectIndexedDraw&, const ReusedIndirectIndexedDraw&) = default;
+};
+
+using DrawIndexCacheContainerKey = std::array<uint32_t, 6>;
 inline void add(Hasher& hasher, const DrawIndexCacheContainerKey& input)
 {
     for (auto value : input)
@@ -150,6 +165,7 @@ struct DrawIndexCacheContainerValue {
             uint32_t icb2;
         };
     };
+    int32_t clampedBaseVertex { 0 };
     DrawIndexCacheContainerValue() { }
     DrawIndexCacheContainerValue(const DrawIndexCacheContainerKey& key)
         : firstIndex(key[0])
@@ -157,6 +173,7 @@ struct DrawIndexCacheContainerValue {
         , primitiveOffsetWithIndexType(key[2])
         , icb1(key[3])
         , icb2(key[4])
+        , clampedBaseVertex(static_cast<int32_t>(key[5]))
     {
     }
     uint32_t primitiveOffset() { return static_cast<MTLIndexType>(primitiveOffsetWithIndexType & 0x1); }

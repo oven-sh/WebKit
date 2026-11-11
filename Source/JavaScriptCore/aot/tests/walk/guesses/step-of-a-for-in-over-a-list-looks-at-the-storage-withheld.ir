@@ -1,0 +1,8 @@
+# the same functions with guesses withheld: the step over what is written to be a list has one arm, and each index comes out of the run time as a text
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = ForInStep
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
+# NEVER-NOT: IsElementInStorage
+# NEVER-NOT: GetEnumeratorIndexedLength
+# PROGRAM-OF: step-of-a-for-in-over-a-list-looks-at-the-storage.ir

@@ -33,7 +33,9 @@
 #import "WebExtensionAPIKeys.h"
 #import "WebExtensionAPINamespace.h"
 #import "WebExtensionAPIWebRequest.h"
+#import <WebCore/AuthenticationChallenge.h>
 #import <WebCore/HTTPStatusCodes.h>
+#import <WebCore/ResourceRequest.h>
 #import <WebCore/ResourceResponse.h>
 #import <wtf/Borrow.h>
 #import <wtf/URLParser.h>
@@ -41,6 +43,29 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 namespace WebKit {
+
+SUPPRESS_NODELETE NSDictionary *WebExtensionAPIWebRequest::resourceType()
+{
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/ResourceType
+
+    static NSDictionary *types = @{
+        @"MAIN_FRAME": mainFrameKey,
+        @"SUB_FRAME": subFrameKey,
+        @"STYLESHEET": stylesheetKey,
+        @"SCRIPT": scriptKey,
+        @"IMAGE": imageKey,
+        @"FONT": fontKey,
+        @"OBJECT": objectKey,
+        @"XMLHTTPREQUEST": xmlhttprequestKey,
+        @"PING": pingKey,
+        @"CSP_REPORT": cspReportKey,
+        @"MEDIA": mediaKey,
+        @"WEBSOCKET": websocketKey,
+        @"OTHER": otherKey,
+    };
+
+    return types;
+}
 
 WebExtensionAPIWebRequestEvent& WebExtensionAPIWebRequest::onBeforeRequest()
 {

@@ -63,31 +63,31 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(StringPrototype);
 
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToString);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharAt);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharCodeAt);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCodePointAt);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharAt);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharCodeAt);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCodePointAt);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIndexOf);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLastIndexOf);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLastIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncMatchAll);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncReplace);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncReplaceAll);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncReplace);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncReplaceAll);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSlice);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSubstr);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSubstr);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLowerCase);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToUpperCase);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToUpperCase);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLocaleCompare);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLocaleLowerCase);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLocaleUpperCase);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrim);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrimStart);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrimEnd);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrimStart);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrimEnd);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncStartsWith);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncEndsWith);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIncludes);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncEndsWith);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIncludes);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncNormalize);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIsWellFormed);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIsWellFormed);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToWellFormed);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncAt);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncAt);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncConcat);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncRepeat);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncAnchor);
@@ -1084,7 +1084,7 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
     auto& result = vm.stringSplitIndice;
     result.shrink(0);
     constexpr unsigned atomStringsArrayLimit = 100;
-    const bool subjectIsAtom = input->impl()->isAtom();
+    const bool subjectCanBeKey = input->impl()->isAtomOrInImage();
 
     auto cacheAndCreateArray = [&]() -> JSArray* {
         if (result.isEmpty())
@@ -1092,7 +1092,7 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
 
         unsigned resultSize = result.size();
         if (limit == 0xFFFFFFFFu && !globalObject->isHavingABadTime() && resultSize < MIN_SPARSE_ARRAY_INDEX) [[likely]] {
-            bool makeAtomStringsArray = subjectIsAtom && resultSize < atomStringsArrayLimit;
+            bool makeAtomStringsArray = subjectCanBeKey && input->impl()->isAtom() && resultSize < atomStringsArrayLimit;
             Structure* cellButterflyStructure = makeAtomStringsArray ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
 
             auto* newButterfly = JSCellButterfly::tryCreate(vm, cellButterflyStructure, resultSize);
@@ -1130,7 +1130,7 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
                 Structure* replacementStructure = vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
                 newButterfly->setStructure(vm, replacementStructure);
             }
-            if (subjectIsAtom)
+            if (subjectCanBeKey && StringSplitCache::isWorthCaching(*input->impl()))
                 vm.ensureStringSplitCache().setForString(input, separator, newButterfly);
             Structure* arrayStructure = globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous);
             return JSArray::createWithButterfly(vm, nullptr, arrayStructure, newButterfly->toButterfly());
@@ -1169,7 +1169,7 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
         ASSERT(resultSize);
 
         if (limit == 0xFFFFFFFFu && !globalObject->isHavingABadTime() && resultSize < MIN_SPARSE_ARRAY_INDEX) [[likely]] {
-            bool makeAtomStringsArray = subjectIsAtom && resultSize < atomStringsArrayLimit;
+            bool makeAtomStringsArray = subjectCanBeKey && input->impl()->isAtom() && resultSize < atomStringsArrayLimit;
             Structure* cellButterflyStructure = makeAtomStringsArray ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
 
             auto* newButterfly = JSCellButterfly::tryCreate(vm, cellButterflyStructure, resultSize);
@@ -1191,7 +1191,7 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
                 }
                 newButterfly->setIndex(vm, i, string);
             }
-            if (subjectIsAtom)
+            if (subjectCanBeKey && StringSplitCache::isWorthCaching(*input->impl()))
                 vm.ensureStringSplitCache().setForString(input, separator, newButterfly);
             Structure* arrayStructure = globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous);
             return JSArray::createWithButterfly(vm, nullptr, arrayStructure, newButterfly->toButterfly());
@@ -1959,7 +1959,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncTrimEnd, (JSGlobalObject* globalObject, 
     return JSValue::encode(trimString<TrimKind::TrimEnd>(globalObject, thisValue));
 }
 
-static inline unsigned LEGACY_NODELETE clampAndTruncateToUnsigned(double value, unsigned min, unsigned max)
+NODELETE static inline unsigned clampAndTruncateToUnsigned(double value, unsigned min, unsigned max)
 {
     if (value < min)
         return min;
@@ -2229,6 +2229,8 @@ static JSValue normalize(JSGlobalObject* globalObject, JSString* string, Normali
 
     status = U_ZERO_ERROR;
     unorm2_normalize(normalizer, characters, view->length(), buffer.data(), buffer.size(), &status);
+    if (isICUMemoryAllocationError(status))
+        return throwOutOfMemoryError(globalObject, scope);
     ASSERT(U_SUCCESS(status));
 
     RELEASE_AND_RETURN(scope, jsString(vm, result.releaseNonNull()));
@@ -2797,7 +2799,7 @@ static JSString* createHTML(JSGlobalObject* globalObject, JSValue thisValue, ASC
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
-    RELEASE_AND_RETURN(scope, jsString(vm, result.toString()));
+    RELEASE_AND_RETURN(scope, jsString(vm, WTF::move(result).toString()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncAnchor, (JSGlobalObject* globalObject, CallFrame* callFrame))

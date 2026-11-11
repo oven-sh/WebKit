@@ -1,0 +1,127 @@
+# A `const` of a module leaves its dead zone once. What has passed the check in a body is what the variable holds for the rest of that body, whatever is called in between: neither the second read nor the second check is built.
+# export const LIMIT = make();  export function twice() { const first = LIMIT; sink(); return first + LIMIT; }
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-1: = CheckInitialized
+# CHECK: = Call
+# CHECK-NOT: = GetModuleVariable
+# CHECK-NOT: = CheckInitialized
+
+# A `let` may be stored again, so it is read again. No store takes its value away, so it is not checked again.
+# RUN(LET): walk f2 mechanisms=none+Folding
+# LET-LABEL: code f2:Body
+# LET-COUNT-1: = CheckInitialized
+# LET: = Call
+# LET: = GetModuleVariable
+# LET-NOT: = CheckInitialized
+
+# A file that runs again empties its variables: they are checked at each read.
+# RUN(OTHERS): walk f4 mechanisms=none+Folding
+# OTHERS-LABEL: code f4:Body
+# OTHERS-COUNT-2: = CheckInitialized
+
+# With nothing in between there is one read, and one check of it.
+# RUN(ROW): walk f5 mechanisms=none+Folding
+# ROW-LABEL: code f5:Body
+# ROW-COUNT-1: = GetModuleVariable
+# ROW-COUNT-1: = CheckInitialized
+# ROW-NOT: = GetModuleVariable
+# ROW-NOT: = CheckInitialized
+
+# Only one arm has checked, so behind the arms the check stands.
+# RUN(ARM): walk f6 mechanisms=none+Folding
+# ARM-LABEL: code f6:Body
+# ARM-COUNT-2: = CheckInitialized
+
+variable g0 name="LIMIT" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="count" module=m0 declared={type=anything|absent}
+variable g2 name="AGAIN" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}] exports=[{name="LIMIT" variable=g0}, {name="count" variable=g1}]
+module m1 path="again.js" displayPath="again.js" flags=[MayBeReevaluated] body=f3 exports=[{name="AGAIN" variable=g2}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="make" [isFreeName]
+    v2 = Call v1 calleeName="make"
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v2 variable=g1
+    v5 = NewClosure function=f1
+    v6 = NewClosure function=f2
+    v7 = NewClosure function=f4
+    v8 = NewClosure function=f5
+    v9 = NewClosure function=f6
+    v10 = PropGet v0 key="sink" [isFreeName]
+    v11 = Call v10, -, v5, v6, v7, v8, v9 calleeName="sink"
+    Return v11
+}
+function f1 name="twice" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="LIMIT"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3 calleeName="sink"
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="LIMIT"
+    v7 = Add v1, v6
+    Return v7
+}
+function f2 name="twiceOfLet" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="count"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3 calleeName="sink"
+    v5 = GetModuleVariable variable=g1
+    v6 = CheckInitialized v5 name="count"
+    v7 = Add v1, v6
+    Return v7
+}
+function f3 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="make" [isFreeName]
+    v2 = Call v1 calleeName="make"
+    PutModuleVariable v2 variable=g2
+    v4 = Undefined
+    Return v4
+}
+function f4 name="twiceOfFileThatRunsAgain" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="AGAIN"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3 calleeName="sink"
+    v5 = GetModuleVariable variable=g2
+    v6 = CheckInitialized v5 name="AGAIN"
+    v7 = Add v1, v6
+    Return v7
+}
+function f5 name="twiceInARow" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="count"
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="count"
+    v4 = Add v1, v3
+    Return v4
+}
+function f6 name="inOneArm" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="LIMIT"
+    Jump -> next b2()
+  b2():
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5 calleeName="sink"
+    v7 = GetModuleVariable variable=g0
+    v8 = CheckInitialized v7 name="LIMIT"
+    Return v8
+}

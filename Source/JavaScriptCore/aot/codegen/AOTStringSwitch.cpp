@@ -8,44 +8,14 @@
 
 #if ENABLE(AOT)
 
-#include "AOTConversionEmitter.h"
-#include "AOTNumberLiteralStrings.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTStringEmitter.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-AOT_THRESHOLD(unsigned, maxLiteralsComparedByCalls, 2);
-AOT_THRESHOLD(unsigned, minStringsForWordDispatch, 3);
-static constexpr uint16_t otherCellPrimitives = cellPrimitives & ~Primitive::AnyString;
-
-using TextBytes = Vector<uint8_t, 16>;
-
-// The text as it lies in a string of that width.
-static TextBytes bytesOf(const String& text, bool is8Bit)
-{
-    TextBytes bytes;
-    for (unsigned i = 0; i < text.length(); ++i) {
-        char16_t unit = text[i];
-        bytes.append(static_cast<uint8_t>(unit));
-        if (!is8Bit)
-            bytes.append(static_cast<uint8_t>(unit >> 8));
-    }
-    return bytes;
-}
-
-static uint32_t littleEndianWordAt(std::span<const uint8_t> text, size_t offset, unsigned width)
-{
-    uint32_t word = 0;
-    for (unsigned i = 0; i < width; ++i)
-        word |= static_cast<uint32_t>(text[offset + i]) << (8 * i);
-    return word;
-}
 
 namespace {
 
@@ -61,18 +31,17 @@ public:
     void generate()
     {
         std::span<const StringID> literals = m_terminator->strings();
-        RELEASE_ASSERT(m_terminator->targets.size() == literals.size() + 1);
-        ControlEmitter& control = emitter<ControlEmitter>();
+        RELEASE_ASSERT(m_terminator.numberOfTargets() == literals.size() + 1);
         Vector<SwitchCase, 8> cases;
         cases.reserveInitialCapacity(literals.size());
         for (uint32_t index = 0; index < literals.size(); ++index)
-            cases.append(SwitchCase { literals[index], m_strings.textOf(literals[index]), control.countedEdgeTo(m_terminator, index) });
-        m_otherwise = control.countedEdgeTo(m_terminator, static_cast<uint32_t>(literals.size()));
+            cases.append(SwitchCase { literals[index], m_strings.textOf(literals[index]), generator().edgeTo(m_terminator, index) });
+        m_otherwise = generator().edgeTo(m_terminator, static_cast<uint32_t>(literals.size()));
 
         ValueID subjectID = m_terminator->subjectOperand();
         const Type& type = typeOf(subjectID);
         if (cases.isEmpty() || !(type.primitives & Primitive::AnyString)) {
-            m_out.jump(m_otherwise.block());
+            m_out.jump(m_otherwise);
             return;
         }
         CaseGroup allCases = cases.map<CaseGroup>([](const SwitchCase& switchCase) {
@@ -81,9 +50,6 @@ public:
 
         Operand subject = get(subjectID);
         switch (subject.representation) {
-        case Representation::LiteralString:
-            switchOnLiteralStringWord(subject.as<LiteralStringWord>(), allCases);
-            return;
         case Representation::Cell:
             switchOnValue(boxCell(subject.as<CellPointer>()), type, allCases);
             return;
@@ -96,8 +62,6 @@ public:
         case Representation::Int32:
         case Representation::Int64:
         case Representation::Double:
-        case Representation::DoubleWithPayload:
-        case Representation::ImpureDouble:
         case Representation::OptionalInt64:
         case Representation::OptionalDouble:
         case Representation::Cell32:
@@ -110,10 +74,15 @@ public:
     }
 
 private:
+    static constexpr unsigned maxLiteralsComparedOneByOne = 1;
+    static constexpr unsigned minStringsForWordDispatch = 3;
+    static constexpr size_t mostCharactersWrittenDown = std::tuple_size_v<decltype(NarrowCharactersOfString::characters)>;
+    static constexpr uint16_t otherCellPrimitives = cellPrimitives & ~Primitive::AnyString;
+
     struct SwitchCase {
         StringID string;
         String text;
-        B3::FrequentedBlock target;
+        BlockEdge target;
     };
     using CaseGroup = Vector<const SwitchCase*, 8>;
     struct KeyedCaseGroup {
@@ -126,11 +95,32 @@ private:
         size_t offset;
         unsigned width;
     };
+    using TextBytes = Vector<uint8_t, 16>;
+
+    static TextBytes bytesOf(const String& text, bool is8Bit)
+    {
+        TextBytes bytes;
+        for (unsigned i = 0; i < text.length(); ++i) {
+            char16_t unit = text[i];
+            bytes.append(static_cast<uint8_t>(unit));
+            if (!is8Bit)
+                bytes.append(static_cast<uint8_t>(unit >> 8));
+        }
+        return bytes;
+    }
+
+    static uint32_t littleEndianWordAt(std::span<const uint8_t> text, size_t offset, unsigned width)
+    {
+        uint32_t word = 0;
+        for (unsigned i = 0; i < width; ++i)
+            word |= static_cast<uint32_t>(text[offset + i]) << (8 * i);
+        return word;
+    }
 
     void switchOn(Integer value, std::span<const SwitchTarget> cases)
     {
         if (cases.empty()) {
-            m_out.jump(m_otherwise.block());
+            m_out.jump(m_otherwise);
             return;
         }
         if (cases.size() == 1) {
@@ -140,12 +130,12 @@ private:
         m_out.switchOn(value.value(), cases, m_otherwise);
     }
 
-    void emitTestChain(const CaseGroup& cases, NOESCAPE const Invocable<void(const SwitchCase&, B3::FrequentedBlock)> auto& emitTest)
+    void emitTestChain(const CaseGroup& cases, NOESCAPE const Invocable<void(const SwitchCase&, BlockEdge)> auto& emitTest)
     {
         size_t remaining = cases.size();
         RELEASE_ASSERT(remaining);
         for (const SwitchCase* switchCase : cases) {
-            B3::FrequentedBlock next = --remaining ? normalEdge(newBlock()) : m_otherwise;
+            BlockEdge next = --remaining ? normalEdge(newBlock()) : m_otherwise;
             emitTest(*switchCase, next);
             if (remaining)
                 m_out.appendTo(next.block());
@@ -187,64 +177,29 @@ private:
         switchOverGroups(zeroExtended(length), groups, emitGroup);
     }
 
-    void switchOnLiteralStringWord(LiteralStringWord subject, const CaseGroup& cases)
-    {
-        ConversionEmitter& conversions = emitter<ConversionEmitter>();
-        Vector<SwitchTarget, 8> byWord;
-        CaseGroup casesWithoutWord;
-        for (const SwitchCase* switchCase : cases) {
-            if (std::optional<uint32_t> number = inputs().literalStrings.indexOf(switchCase->string))
-                byWord.append(SwitchTarget { literalStringWord(*number), switchCase->target });
-            else
-                casesWithoutWord.append(switchCase);
-        }
-
-        if (!casesWithoutWord.isEmpty()) {
-            // A string without a word is represented by its cell.
-            LBasicBlock cellCase = newBlock();
-            LBasicBlock wordCase = newBlock();
-            branch(conversions.isStringCell(subject), { normalEdge(cellCase), normalEdge(wordCase) });
-            m_out.appendTo(cellCase);
-            switchOnValue(Boxed(subject.value()), m_program.at(TypeTable::string), casesWithoutWord);
-            m_out.appendTo(wordCase);
-        }
-        if (std::optional<NarrowReference> narrow = narrowWordBehind(subject)) {
-            switchOn(conversions.bitsOf(*narrow), byWord.span());
-            return;
-        }
-        switchOn(conversions.bitsOf(subject), byWord.span());
-    }
-
     void switchOnValue(Boxed subject, const Type& type, const CaseGroup& cases)
     {
-        if (cases.size() <= maxLiteralsComparedByCalls) {
-            emitTestChain(cases, [&](const SwitchCase& switchCase, B3::FrequentedBlock next) {
-                m_strings.branchOnEqualsLiteral(m_terminator, ComparedOperand::Value, subject.value(), switchCase.string, { switchCase.target, next });
+        if (cases.size() <= maxLiteralsComparedOneByOne) {
+            bool everyCellIsString = !type.hasObjects() && !(type.primitives & otherCellPrimitives);
+            emitTestChain(cases, [&](const SwitchCase& switchCase, BlockEdge next) {
+                m_strings.branchOnEqualsLiteral(m_terminator, ComparedOperand::Value, subject.value(), switchCase.string, { switchCase.target, next }, std::nullopt, everyCellIsString);
             });
             return;
         }
 
-        // A text with a unit above 0xFF equals no 8-bit string.
         CaseGroup narrowCases;
         for (const SwitchCase* switchCase : cases) {
+            m_strings.makeCellsHoldAtomOf(switchCase->string, switchCase->text);
             if (switchCase->text.is8Bit())
                 narrowCases.append(switchCase);
         }
         bool hasWideText = narrowCases.size() != cases.size();
 
-        bool textsAreShort = !hasWideText && std::ranges::all_of(cases, [](const SwitchCase* switchCase) {
-            return !switchCase->text.isEmpty() && switchCase->text.length() <= maxShortStringLength;
-        });
-        if (textsAreShort) {
-            switchByShortString(subject, type, cases);
-            return;
-        }
-
         CellPointer string = requireString(subject, type);
-        if ((hasWideText && m_terminator.shape() != CodeShape::Compact) || shouldDispatchOnWord(cases))
+        if (hasWideText)
             switchByLengthThenWord(string, narrowCases, cases);
         else
-            switchByLengthThenCalls(string, m_strings.lengthOf(string), cases);
+            switchByCharactersOfNarrowString(string, cases);
     }
 
     CellPointer requireString(Boxed subject, const Type& type)
@@ -257,44 +212,52 @@ private:
         return cell;
     }
 
-    void compareByCall(CellPointer string, const SwitchCase& switchCase, B3::FrequentedBlock next)
+    CharacterView viewOfFlatNarrowStringOrElse(CellPointer string, BlockEdge otherwise)
     {
-        m_strings.branchOnEqualsLiteral(m_terminator, ComparedOperand::String, string.value(), switchCase.string, { switchCase.target, next });
-    }
-
-    void switchByShortString(Boxed subject, const Type& type, const CaseGroup& cases)
-    {
-        Vector<SwitchTarget, 8> byWord;
-        for (const SwitchCase* switchCase : cases)
-            byWord.append(SwitchTarget { static_cast<int64_t>(shortStringWord(switchCase->text.span8())), switchCase->target });
-        // The stub resolves ropes and 16-bit strings, and returns noShortString for every other value.
-        auto switchOnWordFromStub = [&] {
-            switchOn(Integer(callStub(m_terminator, shortStringOfValue(), { subject.value() }).first), byWord.span());
-        };
-        if (m_terminator.shape() == CodeShape::Compact) {
-            switchOnWordFromStub();
-            return;
-        }
-
-        build().statistics().count(StatisticID::ShortStringsReadInPlace);
-        LBasicBlock needsStub = newBlock();
-        CellPointer string = requireString(subject, type);
         Pointer impl = loadField<Pointer>(string, m_heaps.JSString_value);
-        m_strings.continueIf(hasNoBits(impl, JSString::isRopeInPointer), unlikelyEdge(needsStub));
-        m_strings.continueIf(hasBits(loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags), StringImpl::flagIs8Bit()), unlikelyEdge(needsStub));
-        switchOverLengthGroups(string, { loadField<Pointer>(impl, m_heaps.StringImpl_data), loadField<Word32>(impl, m_heaps.StringImpl_length), boolean(true), string }, cases);
-
-        m_out.appendTo(needsStub);
-        switchOnWordFromStub();
+        m_strings.continueIf(hasNoBits(impl, JSString::isRopeInPointer), otherwise);
+        m_strings.continueIf(hasBits(loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags), StringImpl::flagIs8Bit()), otherwise);
+        Pointer characters = loadField<Pointer>(impl, m_heaps.StringImpl_data);
+        return { characters, loadField<Word32>(impl, m_heaps.StringImpl_length), boolean(true), string };
     }
 
-    void switchByLengthThenCalls(CellPointer string, Word32 length, const CaseGroup& cases)
+    void compareByCall(CellPointer string, const SwitchCase& switchCase, BlockEdge next)
     {
-        switchOverLength(length, cases, [&](const CaseGroup& group) {
-            emitTestChain(group, [&](const SwitchCase& switchCase, B3::FrequentedBlock next) {
-                compareByCall(string, switchCase, next);
-            });
-        });
+        m_strings.branchOnEqualsLiteralByStub(m_terminator, ComparedOperand::String, string.value(), switchCase.string, { switchCase.target, next });
+    }
+
+    void switchByCharactersOfNarrowString(CellPointer string, const CaseGroup& cases)
+    {
+        LBasicBlock needsStub = newBlock();
+        LBasicBlock hasCharacters = newBlock();
+        ScopeFork fork = m_out.forkScope();
+        CharacterView flat = viewOfFlatNarrowStringOrElse(string, rareEdge(needsStub));
+        LValue characters = m_out.phiIn(hasCharacters, flat.characters.value()->type());
+        LValue length = m_out.phiIn(hasCharacters, flat.length.value()->type());
+        auto goOnWith = [&](Pointer itsCharacters, Word32 itsLength) {
+            m_out.upsilon(itsCharacters.value(), characters);
+            m_out.upsilon(itsLength.value(), length);
+            m_out.jump(normalEdge(hasCharacters));
+        };
+        goOnWith(flat.characters, flat.length);
+
+        static_assert(maxLengthOfTextComparedInPlace <= mostCharactersWrittenDown);
+        m_out.appendTo(needsStub);
+        if (generator().isInLoop(m_terminator.block())) {
+            build().statistics().count(StatisticID::StringSwitchRopeLengthChecks);
+            unsigned shortest = cases[0]->text.length();
+            unsigned longest = shortest;
+            for (const SwitchCase* switchCase : cases) {
+                shortest = std::min(shortest, switchCase->text.length());
+                longest = std::max(longest, switchCase->text.length());
+            }
+            m_strings.continueIf(belowOrEqual(sub(m_strings.lengthOf(string), word32(static_cast<int32_t>(shortest))), word32(static_cast<int32_t>(longest - shortest))), m_otherwise);
+        }
+        StubCallResult narrow = callStub(m_terminator, narrowCharactersOfString(), { string.value() });
+        goOnWith(Pointer(narrow.first), low32(Integer(narrow.second)));
+
+        m_out.appendToJoin(hasCharacters, fork);
+        switchOverLengthGroups(string, { Pointer(characters), Word32(length), boolean(true), string }, cases);
     }
 
     void switchByLengthThenWord(CellPointer string, const CaseGroup& narrowCases, const CaseGroup& allCases)
@@ -307,12 +270,8 @@ private:
         m_out.appendTo(narrow);
         switchOverLengthGroups(string, { view.characters, view.length, boolean(true), view.owner }, narrowCases);
 
-        // Whoever writes a case that only a 16-bit string can equal expects such strings.
         m_out.appendTo(wide);
-        if (narrowCases.size() != allCases.size())
-            switchOverLengthGroups(string, { view.characters, view.length, boolean(false), view.owner }, allCases);
-        else
-            switchByLengthThenCalls(string, view.length, allCases);
+        switchOverLengthGroups(string, { view.characters, view.length, boolean(false), view.owner }, allCases);
     }
 
     void switchOverLengthGroups(CellPointer string, const CharacterView& viewOfKnownWidth, const CaseGroup& cases)
@@ -322,30 +281,20 @@ private:
         });
     }
 
-    static bool shouldDispatchOnWord(const CaseGroup& cases)
-    {
-        Vector<unsigned, 8> lengths = cases.map<Vector<unsigned, 8>>([](const SwitchCase* switchCase) {
-            return switchCase->text.length();
-        });
-        AOT::sort(lengths);
-        for (size_t first = 0; first + minStringsForWordDispatch <= lengths.size(); ++first) {
-            if (lengths[first] == lengths[first + minStringsForWordDispatch - 1])
-                return true;
-        }
-        return false;
-    }
-
     Word32 loadWord(const CharacterView& viewOfKnownWidth, DistinguishingWord word)
     {
-        const B3::AbstractHeap& heap = viewOfKnownWidth.is8Bit.value()->asInt() ? m_heaps.characters8.atAnyIndex() : m_heaps.characters16.atAnyIndex();
-        LValue load = loadBytes(m_out, word.width, m_out.address(heap, viewOfKnownWidth.characters.value(), word.offset));
-        load->as<B3::MemoryValue>()->setReadsMutability(B3::Mutability::Immutable);
-        return Word32(load);
+        RELEASE_ASSERT(!viewOfKnownWidth.is8Bit.value()->asInt() || word.offset + word.width <= mostCharactersWrittenDown);
+        const Machine::AbstractHeap& heap = viewOfKnownWidth.is8Bit.value()->asInt() ? m_heaps.characters8.atAnyIndex() : m_heaps.characters16.atAnyIndex();
+        return Word32(loadBytes(m_out, word.width, m_out.address(heap, viewOfKnownWidth.characters.value(), word.offset)));
     }
 
     void emitLengthGroup(CellPointer string, const CharacterView& view, const CaseGroup& group)
     {
         bool is8Bit = view.is8Bit.value()->asInt();
+        if (group[0]->text.length() > mostCharactersWrittenDown) {
+            compareSequentially(string, view, group);
+            return;
+        }
         Vector<TextBytes, 8> texts = group.map<Vector<TextBytes, 8>>([&](const SwitchCase* switchCase) {
             return bytesOf(switchCase->text, is8Bit);
         });
@@ -369,8 +318,43 @@ private:
         }
 
         switchOverGroups(loaded, groupCases(group, wordOf), [&](const CaseGroup& leaf) {
-            compareSequentially(string, view, leaf);
+            compareSequentially(string, view, leaf, word);
         });
+    }
+
+    static size_t numberOfLoadsOfWholeText(size_t size)
+    {
+        size_t width = size >= 8 ? 8 : size >= 4 ? 4 : size >= 2 ? 2 : 1;
+        return (size + width - 1) / width;
+    }
+
+    bool tryBranchOnBytesAround(DistinguishingWord known, const CharacterView& view, const SwitchCase& switchCase, BlockEdge next)
+    {
+        TextBytes text = bytesOf(switchCase.text, view.is8Bit.value()->asInt());
+        Vector<DistinguishingWord, 8> pieces;
+        auto cover = [&](size_t begin, size_t end) {
+            while (begin < end) {
+                unsigned width = end - begin >= 4 ? 4 : end - begin >= 2 ? 2 : 1;
+                pieces.append(DistinguishingWord { begin, width });
+                begin += width;
+            }
+        };
+        cover(0, known.offset);
+        cover(known.offset + known.width, text.size());
+        if (pieces.isEmpty() || pieces.size() >= numberOfLoadsOfWholeText(text.size()))
+            return false;
+
+        size_t remaining = pieces.size();
+        for (DistinguishingWord piece : pieces) {
+            Condition isSame = equal(loadWord(view, piece), word32(static_cast<int32_t>(littleEndianWordAt(text.span(), piece.offset, piece.width))));
+            if (--remaining) {
+                m_strings.continueIf(isSame, next);
+                continue;
+            }
+            ensureStillAliveHere(view.owner);
+            branch(isSame, { switchCase.target, next });
+        }
+        return true;
     }
 
     static std::optional<DistinguishingWord> findDistinguishingWord(std::span<const TextBytes> group)
@@ -395,20 +379,22 @@ private:
         return best;
     }
 
-    void compareSequentially(CellPointer string, const CharacterView& view, const CaseGroup& group)
+    void compareSequentially(CellPointer string, const CharacterView& view, const CaseGroup& group, std::optional<DistinguishingWord> known = std::nullopt)
     {
-        emitTestChain(group, [&](const SwitchCase& switchCase, B3::FrequentedBlock next) {
-            if (!m_strings.canCompareInline(switchCase.string)) {
+        emitTestChain(group, [&](const SwitchCase& switchCase, BlockEdge next) {
+            if (!StringEmitter::canCompareInline(switchCase.text)) {
                 compareByCall(string, switchCase, next);
                 return;
             }
+            if (known && tryBranchOnBytesAround(*known, view, switchCase, next))
+                return;
             m_strings.branchOnTextAt(view, word32(0), switchCase.string, { switchCase.target, next });
         });
     }
 
     StringEmitter& m_strings;
     const TerminatorContext& m_terminator;
-    B3::FrequentedBlock m_otherwise;
+    BlockEdge m_otherwise;
 };
 
 } // anonymous namespace

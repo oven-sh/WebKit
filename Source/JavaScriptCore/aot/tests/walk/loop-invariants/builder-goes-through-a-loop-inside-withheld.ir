@@ -1,0 +1,10 @@
+# the same functions with loop invariants withheld: a string goes through the heads of both loops
+# RUN: walk f1 f2 f3 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK: mechanisms TypedOperations,Guesses,Folding
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: isLoopHead=true
+# RUN(NEVER): walk f1 f2 f3 mechanisms=none+TypedOperations+Guesses+Folding
+# NEVER-NOT: StringBuilder
+# RUN(NONE): walk f1 f2 f3 mechanisms=none
+# NONE-NOT: StringBuilder
+# PROGRAM-OF: builder-goes-through-a-loop-inside.ir

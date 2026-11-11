@@ -1,0 +1,108 @@
+# `await steps.next()`: the call makes a promise, the generator makes an object for what its body hands out and settles the promise with it, and the await takes a job to hand the object on.
+# Where the await takes the call at once, the receiver is an async generator and the value read under `next` is the engine's own, one operation stands for the call and the await, as in a turn of `for await`.
+# It names the built-in that was called: the step answers as the call and the await would where other requests wait in the generator or contexts are tracked.
+# `done` and `value` are answered by what the step gave; the object is made where somebody takes it.
+# async function* pieces() { yield 1; }
+# async function drain() { const steps = pieces(); for (;;) { const step = await steps.next(); if (step.done) return; keep(step.value); } }
+# RUN: walk f2:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: [[next]]: {{*}} = PropGet [[steps]] key="next"
+# CHECK: = TypeTest [[next]] testedType=builtin(AsyncGeneratorPrototypeNext)
+# CHECK: [[step]]: {{*}} = StepAsyncGenerator {{*}} calledBuiltin=AsyncGeneratorPrototypeNext
+# CHECK: [[value]]: {{*}} = ResultAt [[step]]
+# CHECK: [[status]]: {{*}} = ResultAt [[step]] index=1
+# CHECK: = StrictEq [[status]], {{*}}form=Integers
+# RUN(ARM): walk f2:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# ARM: [[next]]: {{*}} = PropGet [[steps]] key="next"
+# ARM: [[promise]]: {{*}} = Call [[next]], [[steps]]
+# ARM: = AwaitBySavingFrame [[promise]]
+# RUN(WITHHELD): walk f2:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls
+# WITHHELD-NOT: StepAsyncGenerator
+# RUN(LATER): walk f3:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# LATER-NOT: StepAsyncGenerator
+# Where the object is stored to, its members are read off the object.
+# async function writes() { const step = await pieces().next(); step.value = 2; return step.value; }
+# RUN(WRITTEN): walk f4:CoroutineBody mechanisms=none+TypedOperations+UnboxedNumbers+Guesses+DirectCalls+BuiltinCalls
+# WRITTEN-LABEL: code f4:CoroutineBody
+# WRITTEN: = PropSet [[whole]], {{*}}key="value"
+# WRITTEN: = PropGet [[whole]] key="value"
+# WRITTEN: = StepAsyncGenerator {{*}} calledBuiltin=AsyncGeneratorPrototypeNext
+# WRITTEN: = NewObject
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="pieces" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f4
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="pieces" module=m0 flags=[IsAsync, IsGenerator, HasThis, TakesCallee] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    InitialYield v0
+    v3 = Integer integer=1
+    v4 = Await v3, v0
+    v5 = Yield v4, v0
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v6
+  b2():
+    Return v6
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f2 name="drain" module=m0 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0, -
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v1 key="next"
+    v4 = Call v3, v1 calleeKey="next"
+    v5 = Await v4
+    v6 = PropGet v5 key="done"
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Undefined
+    Return v8
+  b3():
+    v9 = PropGet v5 key="value"
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="keep" [isFreeName]
+    v12 = Call v11, -, v9
+    Jump -> next b1()
+}
+function f3 name="later" module=m0 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0, -
+    v2 = PropGet v1 key="next"
+    v3 = Call v2, v1 calleeKey="next"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="keep" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = Await v3
+    Return v7
+}
+function f4 name="writes" module=m0 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0, -
+    v2 = PropGet v1 key="next"
+    v3 = Call v2, v1 calleeKey="next"
+    v4 = Await v3
+    v5 = Integer integer=2
+    PropSet v4, v5 key="value"
+    v7 = PropGet v4 key="value"
+    Return v7
+}

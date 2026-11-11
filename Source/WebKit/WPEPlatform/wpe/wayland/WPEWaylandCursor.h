@@ -42,7 +42,7 @@ public:
     ~WaylandCursor();
 
     void setFromName(UTF8CStringView, double);
-    void setFromBuffer(struct wl_buffer*, uint32_t width, uint32_t height, uint32_t hotspotX, uint32_t hotspotY);
+    void setFromBuffer(struct wl_buffer*, uint32_t width, uint32_t height, uint32_t hotspotX, uint32_t hotspotY, double scale);
     void update() const;
 
 private:
@@ -50,6 +50,7 @@ private:
     struct wl_surface* m_surface { nullptr };
     const std::unique_ptr<WaylandCursorTheme> m_theme;
     UTF8CString m_name;
+    int32_t m_bufferScale { 1 };
     struct {
         int32_t x { 0 };
         int32_t y { 0 };

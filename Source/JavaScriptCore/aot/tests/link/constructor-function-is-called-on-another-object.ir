@@ -1,0 +1,31 @@
+# If only the object of the construction counted as `this`, what `P.call(other)` brings would be stored into behind Link's back.
+# function P() { this.x = 1; }  const other = { x: "text" };  P.call(other);  new P();
+# Both arrive at `this`, and neither escapes: every writer of `x` is known in both, and the literal's holds what the function stores beside what it was made with.
+# RUN: link functions fields layouts mechanisms=all
+# CHECK: function f1 callers-known one-callee cycle=
+# CHECK: field L0.0 "x" proven=i32 writers-known
+# CHECK: field L1.0 "x" proven=i32|string writers-known
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[]
+
+layout L0 kind=Instance name="P" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="text"
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = Call v0, v2
+    v4 = Construct v0
+    v5 = Undefined
+    Return v5
+}
+function f1 name="P" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}

@@ -1,0 +1,15 @@
+# the same program with typed operations withheld: the read, the store and the question go by name
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: = PropGet {{*}}key="scale"
+# RUN(STORE): walk f3 mechanisms=none
+# STORE-LABEL: code f3:Body
+# STORE: PropSet {{*}}key="scale"
+# RUN(HAS): walk f4 mechanisms=none
+# HAS-LABEL: code f4:Body
+# HAS: = PropHas {{*}}key="scale"
+# RUN(NEVER): walk f1 f3 f4 mechanisms=none
+# NEVER-NOT: GetSlot
+# NEVER-NOT: PutSlot
+# NEVER-NOT: IsSlotFilled
+# PROGRAM-OF: offset-found-by-the-shape.ir

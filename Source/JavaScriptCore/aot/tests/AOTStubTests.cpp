@@ -7,18 +7,23 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCodeUnits.h"
+#include "AOTCodeRole.h"
 #include "AOTCompiledCode.h"
 #include "AOTConvention.h"
 #include "AOTImageFormat.h"
+#include "AOTSlotRepresentation.h"
+#include "AOTStubAssembler.h"
 #include "AOTStubCalls.h"
+#include "AOTStubCatalog.h"
 #include "AOTStubFrames.h"
+#include "AOTStubFrontEnds.h"
+#include "AOTStubRecording.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
 #include "AOTStubWords.h"
-#include "AOTStubsArrays.h"
 #include "AOTStubsCalls.h"
-#include "AOTStubsCoroutines.h"
+#include "AOTStubsConstants.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsPolls.h"
 #include "AOTStubsPropertyKeys.h"
@@ -31,13 +36,14 @@
 #include <span>
 #include <wtf/BitSet.h>
 #include <wtf/FastMalloc.h>
-#include <wtf/HashSet.h>
-#include <wtf/StringPrintStream.h>
-#include <wtf/text/StringHash.h>
-#include <wtf/text/WTFString.h>
 
 #if OS(UNIX)
+#include <errno.h>
+#include <signal.h>
+#include <stdio.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 namespace JSC { namespace AOT {
@@ -59,10 +65,8 @@ static_assert(familyKey.withFamily(StubFamily::PutById).family() == StubFamily::
 
 static_assert(familyKey.withImmediate(0) != familyKey && familyKey.withImmediate(0).immediate() == 0u);
 static_assert(familyKey.withImmediate(UINT32_MAX).withoutImmediate() == familyKey);
-static_assert(familyKey.withOperandRegister(GPRInfo::regT1).withoutOperandRegister() == familyKey);
 
-static constexpr StubKey keyWithEveryAxis = familyKey.withForm(5).withCount(7).withCallerFrame(CallerFrame::Frameless)
-    .withOperandRegister(GPRInfo::regT1).withImmediate(UINT32_MAX);
+static constexpr StubKey keyWithEveryAxis = familyKey.withForm(5).withCount(7).withCallerFrame(CallerFrame::Frameless).withOperandRegister(GPRInfo::regT1).withImmediate(UINT32_MAX);
 
 static_assert(keyWithEveryAxis.family() == StubFamily::GetById && keyWithEveryAxis.form() == 5 && keyWithEveryAxis.count() == 7);
 static_assert(keyWithEveryAxis.callerFrame() == CallerFrame::Frameless);
@@ -73,8 +77,8 @@ static_assert(bodyOf(StubKey(StubFamily::ValueEqualsLiteral)) == StubKey(StubFam
 static_assert(bodyOf(StubKey(StubFamily::EnterSlimClosure)) == StubKey(StubFamily::EnterClosure));
 static_assert(exists(callValue(numberOfArgumentGPRs)) && !exists(StubKey(StubFamily::CallValue).withCount(numberOfArgumentGPRs + 1)));
 static_assert(!exists(StubKey(StubFamily::ArrayLiteralWithDouble)));
-static_assert(exists(StubKey(StubFamily::PollAtLoop)) == isX86_64());
-static_assert(exists(pollAtLoop(CallerFrame::Frameless)) == isX86_64() && exists(throwAtSite(ThrowSiteSource::FaultSite, CallerFrame::Frameless)));
+static_assert(exists(StubKey(StubFamily::PollAtLoop)));
+static_assert(exists(pollAtLoop(CallerFrame::Frameless)) && exists(throwAtSite(ThrowSiteSource::FaultSite, CallerFrame::Frameless)));
 static_assert(!exists(StubKey(StubFamily::StringsAreEqual).withCallerFrame(CallerFrame::Frameless)) && !exists(familyKey.withCallerFrame(CallerFrame::Frameless)));
 static_assert(exists(familyKey.withCallerFrame(CallerFrame::StubFrame)) && !exists(StubKey(StubFamily::StringsAreEqual).withCallerFrame(CallerFrame::StubFrame)));
 static_assert(!exists(StubKey(StubFamily::ToBoolean).withImmediate(1)));
@@ -94,14 +98,15 @@ static_assert(ClosureRequest::canEncode(0, 0, maxClosureAllocation) && !ClosureR
 static_assert(ResumeClosureRequest::canEncode(0, ResumeClosureRequest::maxExecutable, 0, 0) && !ResumeClosureRequest::canEncode(0, ResumeClosureRequest::maxExecutable + 1, 0, 0));
 static_assert(ResumeClosureRequest::canEncode(0, 0, 0, ResumeClosureRequest::maxFrameWord) && !ResumeClosureRequest::canEncode(0, 0, 0, ResumeClosureRequest::maxFrameWord + 1));
 
-static_assert(!static_cast<unsigned>(StubFrameKind::Plain) && numberOfStubFrameKinds == 15);
+static_assert(!static_cast<unsigned>(StubFrameKind::Plain) && numberOfStubFrameKinds == 20);
+static_assert(!hasSingleReturnSite(StubFrameKind::ModuleStart) && !bytesAboveReturnAddressOf(StubFrameKind::ModuleStart) && !(ModuleStartFrame::size % 16) && -ModuleStartFrame::offsetOfModuleToAbandon <= static_cast<ptrdiff_t>(ModuleStartFrame::size));
 static_assert(hasSingleReturnSite(StubFrameKind::Adapter) && hasSingleReturnSite(StubFrameKind::ConstructAdapter));
-static_assert(hasSingleReturnSite(StubFrameKind::SavedFrameAdapter) && hasSingleReturnSite(StubFrameKind::AsyncGeneratorBody) && hasSingleReturnSite(StubFrameKind::ArgumentList));
-static_assert(!hasSingleReturnSite(StubFrameKind::Plain) && !hasSingleReturnSite(StubFrameKind::EngineCallee) && !hasSingleReturnSite(StubFrameKind::HostCall));
+static_assert(hasSingleReturnSite(StubFrameKind::SavedFrameAdapter) && hasSingleReturnSite(StubFrameKind::AsyncGeneratorBody) && hasSingleReturnSite(StubFrameKind::ArgumentList) && hasSingleReturnSite(StubFrameKind::EngineCallee));
+static_assert(!hasSingleReturnSite(StubFrameKind::Plain) && !hasSingleReturnSite(StubFrameKind::HostCall));
 static_assert(!hasSingleReturnSite(StubFrameKind::GeneratorBody) && !hasSingleReturnSite(StubFrameKind::FirstOfTwoReads) && !hasSingleReturnSite(StubFrameKind::MethodRead));
-static_assert(!hasSingleReturnSite(StubFrameKind::BelowSpilledArguments) && !hasSingleReturnSite(StubFrameKind::AtStubEntry) && !hasSingleReturnSite(StubFrameKind::InHostCallFrame));
-static_assert(bytesAboveReturnAddressOf(StubFrameKind::EngineCallee) == sizeOfSpilledArgumentRegisters && bytesAboveReturnAddressOf(StubFrameKind::BelowSpilledArguments) == sizeOfSpilledArgumentRegisters);
-static_assert(!bytesAboveReturnAddressOf(StubFrameKind::Plain) && !bytesAboveReturnAddressOf(StubFrameKind::Adapter) && !bytesAboveReturnAddressOf(StubFrameKind::AtStubEntry));
+static_assert(!hasSingleReturnSite(StubFrameKind::BelowSpilledArguments) && !hasSingleReturnSite(StubFrameKind::AtStubEntry) && !hasSingleReturnSite(StubFrameKind::InHostCallFrame) && !hasSingleReturnSite(StubFrameKind::PlainFunctionConstruct) && !hasSingleReturnSite(StubFrameKind::PlainFunctionConstructMakesThis) && !hasSingleReturnSite(StubFrameKind::ConstructAdapterMakesThis) && !hasSingleReturnSite(StubFrameKind::ReturnsAfterOperation));
+static_assert(bytesAboveReturnAddressOf(StubFrameKind::EngineCallee) == sizeOfSpilledArgumentRegisters && bytesAboveReturnAddressOf(StubFrameKind::BelowSpilledArguments) == sizeOfSpilledArgumentRegisters && bytesAboveReturnAddressOf(StubFrameKind::PlainFunctionConstruct) == sizeOfSpilledArgumentRegisters && bytesAboveReturnAddressOf(StubFrameKind::PlainFunctionConstructMakesThis) == sizeOfSpilledArgumentRegisters);
+static_assert(!bytesAboveReturnAddressOf(StubFrameKind::Plain) && !bytesAboveReturnAddressOf(StubFrameKind::Adapter) && !bytesAboveReturnAddressOf(StubFrameKind::ConstructAdapterMakesThis) && !bytesAboveReturnAddressOf(StubFrameKind::AtStubEntry));
 
 static std::optional<StubKey> keyIfExists(StubKey key)
 {
@@ -173,7 +178,7 @@ static void testVariantLookup()
 {
     for (StubKey key : allStubKeys()) {
         const StubDescriptor& descriptor = descriptorOf(key.family());
-        for (CallerFrame callerFrame : { CallerFrame::HasFrame, CallerFrame::Frameless, CallerFrame::StubFrame })
+        for (CallerFrame callerFrame : { CallerFrame::HasFrame, CallerFrame::Frameless, CallerFrame::StubFrame, CallerFrame::KeepsNoFPRs })
             AOT_TEST_CHECK(tryWithCallerFrame(key, callerFrame) == keyIfExists(key.withCallerFrame(callerFrame)));
 
         AOT_TEST_CHECK(!tryWithOperandRegister(key, instanceGPR));
@@ -200,55 +205,24 @@ static void testBodyEntries()
     }
 }
 
-static String dumpedNameOf(StubKey key)
-{
-    StringPrintStream stream;
-    dump(stream, key);
-    return stream.toString();
-}
-
-static void testDumpedNames()
-{
-    HashSet<String> names;
-    for (StubKey key : allStubKeys()) {
-        const StubDescriptor& descriptor = descriptorOf(key.family());
-        String name = dumpedNameOf(key);
-        AOT_TEST_CHECK(!name.isEmpty());
-        AOT_TEST_CHECK(names.add(name).isNewEntry);
-        if (descriptor.axes.contains(StubAxis::Immediate))
-            AOT_TEST_CHECK(dumpedNameOf(key.withImmediate(17)) != name);
-        AOT_TEST_CHECK(descriptor.formNames.size() == (descriptor.axes.contains(StubAxis::Form) ? descriptor.numberOfForms : 0u));
-    }
-
-    AOT_TEST_CHECK(dumpedNameOf(StubKey()) == "<no stub>"_s);
-    AOT_TEST_CHECK(dumpedNameOf(arrayCopy()) == "ArraySlice.Whole"_s);
-    AOT_TEST_CHECK(dumpedNameOf(equal(true)) == "Equal.Strict"_s);
-    AOT_TEST_CHECK(dumpedNameOf(putById(PutMode::Define)) == "PutById.Define"_s);
-    AOT_TEST_CHECK(dumpedNameOf(putById(PutMode::Define).withImmediate(17)) == "PutById.Define#17"_s);
-    AOT_TEST_CHECK(dumpedNameOf(callValue(2)) == "CallValue.n2"_s);
-    AOT_TEST_CHECK(dumpedNameOf(getById().withCallerFrame(CallerFrame::StubFrame)) == "GetById.StubFrame"_s);
-    AOT_TEST_CHECK(dumpedNameOf(throwAtSite(ThrowSiteSource::FaultSite, CallerFrame::Frameless)) == "ThrowAtFault.Frameless"_s);
-    AOT_TEST_CHECK(dumpedNameOf(StubKey(StubFamily::ArraySlice).withForm(4)) == "ArraySlice.<no form 4>"_s);
-}
-
 static void testPackedWords()
 {
     constexpr uint64_t offsetInCode = 64;
     constexpr uintptr_t code = 4096;
     uint64_t closureWord = ClosureWord::encode({ offsetInCode, 3 }, 7, { });
-    AOT_TEST_CHECK(ClosureWord::functionOf(closureWord) == 7);
+    AOT_TEST_CHECK(ClosureWord::closureNumberOf(closureWord) == 7);
     AOT_TEST_CHECK(ClosureWord::addressOf(closureWord, code) == code + offsetInCode);
     AOT_TEST_CHECK(ClosureWord::numberOfParametersOf(closureWord) == 3);
     AOT_TEST_CHECK(ClosureWord::isCallable(closureWord) && !ClosureWord::takesNewTarget(closureWord));
 
     uint64_t classWord = ClosureWord::encode({ offsetInCode, ClosureWord::maxNumberOfParameters }, ClosureWord::firstReservedFunction - 1, { .isNotCallable = true, .takesNewTarget = true });
-    AOT_TEST_CHECK(ClosureWord::functionOf(classWord) == ClosureWord::firstReservedFunction - 1);
+    AOT_TEST_CHECK(ClosureWord::closureNumberOf(classWord) == ClosureWord::firstReservedFunction - 1);
     AOT_TEST_CHECK(ClosureWord::addressOf(classWord, code) == code + offsetInCode);
     AOT_TEST_CHECK(ClosureWord::numberOfParametersOf(classWord) == ClosureWord::maxNumberOfParameters);
     AOT_TEST_CHECK(!ClosureWord::isCallable(classWord) && ClosureWord::takesNewTarget(classWord));
 
     uint64_t request = ClosureRequest::encode(5, 2, 9);
-    AOT_TEST_CHECK(ClosureRequest::functionOf(request) == 5);
+    AOT_TEST_CHECK(ClosureRequest::closureNumberOf(request) == 5);
     AOT_TEST_CHECK(ClosureRequest::executableOf(request) == 2);
     AOT_TEST_CHECK(ClosureRequest::allocationOf(request) == 9);
 
@@ -313,41 +287,6 @@ static void testAdapterFrame()
     }
 }
 
-static void checkFrontEnds()
-{
-    WTF::BitSet<numberOfEntries> operations;
-    WTF::BitSet<numberOfEntries> rawOperations;
-    Vector<StubKey> stubs;
-    for (const OperationFrontEnd& frontEnd : operationFrontEnds()) {
-        AOT_TEST_CHECK(exists(frontEnd.stub));
-        AOT_TEST_CHECK(bodyOf(frontEnd.stub) == frontEnd.stub);
-        AOT_TEST_CHECK(descriptorOf(frontEnd.stub.family()).linkage == StubLinkage::FrontEnd);
-        AOT_TEST_CHECK(!operations.testAndSet(indexOf(frontEnd.operation)));
-        AOT_TEST_CHECK(!rawOperations.testAndSet(indexOf(frontEnd.raw)));
-        stubs.append(frontEnd.stub);
-    }
-    AOT_TEST_CHECK(stubs.size() == 9);
-    operations.filter(rawOperations);
-    AOT_TEST_CHECK(operations.isEmpty());
-    std::sort(stubs.begin(), stubs.end());
-    AOT_TEST_CHECK(stubs == stubKeysWithLinkage(StubLinkage::FrontEnd));
-}
-
-static void checkPreludes()
-{
-    WTF::BitSet<numberOfEntries> operations;
-    for (const OperationPrelude& prelude : operationPreludes()) {
-        AOT_TEST_CHECK(prelude.emit);
-        AOT_TEST_CHECK(!operations.testAndSet(indexOf(prelude.operation)));
-    }
-}
-
-static void testFrontEndsAndPreludes()
-{
-    checkFrontEnds();
-    checkPreludes();
-}
-
 static const StubDescriptor& checkedHandlerDescriptor(StubKey handler)
 {
     AOT_TEST_CHECK(exists(handler));
@@ -389,12 +328,6 @@ static void testHandlerTables()
         SlotHandlerTable table = slotHandlerTable(operationFor(mode), SlotOrigin::ById, SlotForm::Slot);
         AOT_TEST_CHECK(!isReadTable(table) && accessOf(traitsOf(table).operation) == (mode == PutMode::Define ? SlotAccess::Define : SlotAccess::Store));
     }
-}
-
-static void testResolvedValueRegister()
-{
-    for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count)
-        AOT_TEST_CHECK(signatureFor(resolveCallValue(count)).firstResult == Reg(gprOf(StubRegister::T11)));
 }
 
 static bool hasOperand(const StubSignature& signature, Reg reg)
@@ -452,8 +385,6 @@ static void checkImmediateRegister(const StubSignature& signature, const StubDes
 {
     if (descriptor.axes.contains(StubAxis::Immediate))
         AOT_TEST_CHECK(signature.immediate.has_value());
-    // A family may take its immediate in the register always: CallDirectFunction binds none.
-    AOT_TEST_CHECK(signature.boundImmediates == StubBoundImmediates::None || descriptor.binding == ImmediateBinding::ByPolicy);
     if (!signature.immediate)
         return;
     AOT_TEST_CHECK(!containsRegister(pinned, *signature.immediate));
@@ -464,15 +395,8 @@ static void checkChosenOperandRegister(StubKey key, const StubSignature& signatu
 {
     if (!key.operandRegister())
         return;
-    Reg chosen = *key.operandRegister();
     AOT_TEST_CHECK(choice != OperandRegisterChoice::NoChoice);
-    switch (choice) {
-    case OperandRegisterChoice::NoChoice:
-        break;
-    case OperandRegisterChoice::AlternateReceivers:
-        AOT_TEST_CHECK(hasOperand(signature, chosen));
-        break;
-    }
+    AOT_TEST_CHECK(hasOperand(signature, *key.operandRegister()) || signature.firstResult == Reg(*key.operandRegister()));
 }
 
 static void testSignatures()
@@ -505,41 +429,18 @@ struct AssembledCalls {
 
 } // anonymous namespace
 
-static constexpr uint32_t nameWithOwnStub = 5;
-static constexpr uint32_t nameWithoutOwnStub = 6;
-
-static StubPolicy createPolicyWithOwnStubForReads()
-{
-    StubPolicy policy;
-    policy.namesWithOwnStubByAccess[static_cast<size_t>(Typed::Access::Read)].set(nameWithOwnStub);
-    return policy;
-}
-
-static StubOptions createValidatingOptions()
-{
-    StubOptions options;
-    options.validates = true;
-    return options;
-}
+static constexpr uint32_t nameOfFirstStubCall = 5;
+static constexpr uint32_t nameOfSecondStubCall = 6;
 
 template<typename Emit>
-static Vector<uint8_t> assemble(const Emit& emit)
+static Vector<uint8_t> assemble(const Emit& emit, const AssemblerPolicy& policy = AssemblerPolicy::forImage(StubOptions { }.targetFeatures))
 {
     CCallHelpers jit;
-    RelocationRecorder relocations(jit, AssemblerPolicy::forImage(StubOptions { }.targetFeatures));
+    RelocationRecorder relocations(jit, policy);
     emit(jit);
     std::expected<RelocatableCode, LinkFailure> code = relocations.finalize(LinkBuffer::Profile::Thunk, nullptr);
     AOT_TEST_CHECK(code.has_value() && code->relocations.isEmpty());
     return WTF::move(code->bytes);
-}
-
-// Under validation a call whose preserved registers are checked is followed by a call of this stub.
-static constexpr StubKey reportOfChangedRegister = tailCallOperation(OperationCall::FirstArgument::Instance).withImmediate(offsetInRuntimeTable(Entry::operationAOTReportValidationFailure));
-
-static bool isCallOfReport(const CodeBody& body, const Relocation& relocation)
-{
-    CodeSymbol symbol = relocation.codeSymbol();
-    return relocation.kind == RelocationKind::Call && symbol.space == SymbolSpace::Stub && body.stubKeys[symbol.index] == reportOfChangedRegister;
 }
 
 template<typename Emit>
@@ -547,8 +448,7 @@ static AssembledCalls assembleCalls(const StubCatalog& catalog, const Emit& emit
 {
     CCallHelpers jit;
     RelocationRecorder relocations(jit, AssemblerPolicy::forImage(catalog.options().targetFeatures));
-    CodeUnitRecorder units;
-    StubCalls calls(catalog, relocations, units);
+    StubCalls calls(catalog, relocations);
     WTF::Vector<CCallHelpers::Label> labels;
     emit(jit, calls, [&] { labels.append(jit.label()); });
 
@@ -564,11 +464,7 @@ static AssembledCalls assembleCalls(const StubCatalog& catalog, const Emit& emit
     calls.describeCalls(result.body.relocations.span(), result.body);
     for (CCallHelpers::Label label : labels)
         result.labelOffsets.append(buffer.linkBuffer().offsetOf(label));
-    size_t numberOfReports = std::ranges::count_if(result.body.relocations, [&](const Relocation& relocation) {
-        return isCallOfReport(result.body, relocation);
-    });
-    AOT_TEST_CHECK(catalog.options().validates || !numberOfReports);
-    AOT_TEST_CHECK(result.labelOffsets.size() + numberOfReports == result.body.relocations.size());
+    AOT_TEST_CHECK(result.labelOffsets.size() == result.body.relocations.size());
     return result;
 }
 
@@ -585,29 +481,33 @@ static void checkReturnSite(const AssembledCalls& assembled, size_t returnSite, 
 
 static void testStubCallsWithImmediates()
 {
-    StubCatalog catalog(StubOptions { }, createPolicyWithOwnStubForReads());
-    constexpr StubKey key = callMethodById(1);
+    StubCatalog catalog(StubOptions { });
+    constexpr StubKey key = getById();
     AssembledCalls assembled = assembleCalls(catalog, [&](CCallHelpers& jit, StubCalls& calls, const auto& markCall) {
         markCall();
-        calls.call(jit, key, nameWithOwnStub, OptionalIndex { 1 });
+        calls.call(jit, key, nameOfFirstStubCall, OptionalIndex { 1 });
         markCall();
-        calls.call(jit, key, nameWithoutOwnStub, OptionalIndex { 2 });
+        calls.call(jit, key, nameOfSecondStubCall, OptionalIndex { 2 });
         markCall();
         calls.tailCall(jit, toBoolean());
     });
     const CodeBody& body = assembled.body;
 
-    AOT_TEST_CHECK(body.stubKeys == (Vector<StubKey> { key.withImmediate(nameWithOwnStub), key, toBoolean() }));
+    AOT_TEST_CHECK(body.stubKeys == (Vector<StubKey> { key, toBoolean() }));
     AOT_TEST_CHECK(body.relocations.size() == 3);
     checkRelocation(body.relocations[0], RelocationKind::Call, { SymbolSpace::Stub, 0 });
-    checkRelocation(body.relocations[1], RelocationKind::Call, { SymbolSpace::Stub, 1 });
-    checkRelocation(body.relocations[2], RelocationKind::Jump, { SymbolSpace::Stub, 2 });
+    checkRelocation(body.relocations[1], RelocationKind::Call, { SymbolSpace::Stub, 0 });
+    checkRelocation(body.relocations[2], RelocationKind::Jump, { SymbolSpace::Stub, 1 });
 
-    Vector<uint8_t> immediateMove = assemble([&](CCallHelpers& jit) {
-        jit.move(CCallHelpers::TrustedImm32(nameWithoutOwnStub), *catalog.summaryOf(key).signature.immediate);
-    });
-    AOT_TEST_CHECK(assembled.bytesBefore(0).empty());
-    AOT_TEST_CHECK(equalSpans(assembled.bytesBefore(1), immediateMove.span()));
+    auto assembleMoveOf = [&](uint32_t immediate) {
+        return assemble([&](CCallHelpers& jit) {
+            jit.move(CCallHelpers::TrustedImm32(immediate), *catalog.summaryOf(key).signature.immediate);
+        });
+    };
+    Vector<uint8_t> firstMove = assembleMoveOf(nameOfFirstStubCall);
+    Vector<uint8_t> secondMove = assembleMoveOf(nameOfSecondStubCall);
+    AOT_TEST_CHECK(equalSpans(assembled.bytesBefore(0), firstMove.span()));
+    AOT_TEST_CHECK(equalSpans(assembled.bytesBefore(1), secondMove.span()));
     AOT_TEST_CHECK(assembled.bytesBefore(2).empty());
 
     AOT_TEST_CHECK(body.returnSites.size() == 2);
@@ -618,7 +518,7 @@ static void testStubCallsWithImmediates()
 
 static void testStubCallsOfOperations()
 {
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubCatalog catalog(StubOptions { });
     constexpr StubKey key = callOperation(OperationCall::Returns::Value, OperationCall::FirstArgument::Instance);
     constexpr uint32_t firstOffset = offsetInRuntimeTable(Entry::operationAOTValueAdd);
     constexpr uint32_t secondOffset = offsetInRuntimeTable(Entry::operationAOTGetById);
@@ -634,9 +534,39 @@ static void testStubCallsOfOperations()
     checkReturnSite(assembled, 0, 0, { });
 }
 
+static void testStubCallsWithNumbersInKeys()
+{
+    StubCatalog catalog(StubOptions { });
+    constexpr StubKey key { StubFamily::BuiltinCell };
+    constexpr uint32_t firstMention = 3;
+    constexpr uint32_t secondMention = 8;
+    AssembledCalls assembled = assembleCalls(catalog, [&](CCallHelpers& jit, StubCalls& calls, const auto& markCall) {
+        markCall();
+        calls.call(jit, key, NumberedImmediate { firstMention }, OptionalIndex { 1 });
+        markCall();
+        calls.call(jit, key, NumberedImmediate { secondMention }, OptionalIndex { 2 });
+        markCall();
+        calls.call(jit, key, NumberedImmediate { firstMention }, OptionalIndex { 3 });
+    });
+    const CodeBody& body = assembled.body;
+
+    AOT_TEST_CHECK(body.stubKeys == (Vector<StubKey> { key.withImmediate(0), key.withImmediate(0) }));
+    constexpr uint32_t expectedSymbols[] = { 0, 1, 0 };
+    AOT_TEST_CHECK(body.relocations.size() == std::size(expectedSymbols));
+    for (size_t index = 0; index < std::size(expectedSymbols); ++index) {
+        checkRelocation(body.relocations[index], RelocationKind::Call, { SymbolSpace::Stub, expectedSymbols[index] });
+        AOT_TEST_CHECK(assembled.bytesBefore(index).empty());
+    }
+    constexpr uint32_t expectedMentions[] = { firstMention, secondMention };
+    const auto& numberedStubKeys = body.rareLists->numberedStubKeys;
+    AOT_TEST_CHECK(numberedStubKeys.size() == std::size(expectedMentions));
+    for (uint32_t index = 0; index < std::size(expectedMentions); ++index)
+        AOT_TEST_CHECK(numberedStubKeys[index].stubKey == index && numberedStubKeys[index].mention == expectedMentions[index]);
+}
+
 static void testStubCallsOfOneKey()
 {
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubCatalog catalog(StubOptions { });
     uint32_t firstIndex = UINT32_MAX;
     uint32_t secondIndex = UINT32_MAX;
     AssembledCalls assembled = assembleCalls(catalog, [&](CCallHelpers& jit, StubCalls& calls, const auto& markCall) {
@@ -664,16 +594,17 @@ static void testStubCallsOfOneKey()
 
 static void testStubCallForTwoReads()
 {
-    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubCatalog catalog(StubOptions { });
+    constexpr StubKey key = throwAtSite(ThrowSiteSource::WordsAfterCall, CallerFrame::HasFrame);
     AssembledCalls assembled = assembleCalls(catalog, [&](CCallHelpers& jit, StubCalls& calls, const auto& markCall) {
         markCall();
-        calls.call(jit, getByIdChain(), OptionalIndex { 2 });
+        calls.call(jit, key, OptionalIndex { 2 });
         markCall();
-        calls.callForTwoReads(jit, getByIdChain(), OptionalIndex { 3 }, OptionalIndex { 4 });
+        calls.callForTwoReads(jit, key, OptionalIndex { 3 }, OptionalIndex { 4 });
     });
     const CodeBody& body = assembled.body;
 
-    AOT_TEST_CHECK(body.stubKeys == Vector<StubKey> { getByIdChain() });
+    AOT_TEST_CHECK(body.stubKeys == Vector<StubKey> { key });
     AOT_TEST_CHECK(body.returnSites.size() == 2 && body.firstReadSites.size() == 1);
     checkReturnSite(assembled, 0, 0, OptionalIndex { 2 });
     checkReturnSite(assembled, 1, 1, OptionalIndex { 4 });
@@ -682,16 +613,18 @@ static void testStubCallForTwoReads()
 
 static void testStubCallsThroughArgumentThunks()
 {
-    StubCatalog catalog(StubOptions { }, createPolicyWithOwnStubForReads());
-    constexpr StubKey key = callMethodById(1);
+    StubCatalog catalog(StubOptions { });
+    constexpr StubKey key = getById();
+    constexpr StubKey keyOfOperation = callOperation(OperationCall::Returns::Value, OperationCall::FirstArgument::Instance);
+    constexpr uint32_t offsetOfOperation = offsetInRuntimeTable(Entry::operationAOTValueAdd);
     ArgumentMoves moves;
     appendArgumentMove(moves, argumentGPR(0), ArgumentSource::Constant, 42);
 
     AssembledCalls assembled = assembleCalls(catalog, [&](CCallHelpers& jit, StubCalls& calls, const auto& markCall) {
         markCall();
-        calls.call(jit, key, nameWithOwnStub, OptionalIndex { 1 }, moves);
+        calls.call(jit, keyOfOperation, offsetOfOperation, OptionalIndex { 1 }, moves);
         markCall();
-        calls.call(jit, key, nameWithoutOwnStub, OptionalIndex { 2 }, moves);
+        calls.call(jit, key, nameOfFirstStubCall, OptionalIndex { 2 }, moves);
         markCall();
         calls.call(jit, key, std::nullopt, OptionalIndex { 3 }, moves);
     });
@@ -699,26 +632,55 @@ static void testStubCallsThroughArgumentThunks()
 
     AOT_TEST_CHECK(body.stubKeys.isEmpty() && body.argumentMoves.size() == 3 && body.returnSites.size() == 3);
     const uint64_t expectedHeaders[][2] = {
-        { key.withImmediate(nameWithOwnStub).bits(), 0 },
-        { key.bits(), 1ull << 32 | nameWithoutOwnStub },
+        { keyOfOperation.withImmediate(offsetOfOperation).bits(), 0 },
+        { key.bits(), 1ull << 32 | nameOfFirstStubCall },
         { key.bits(), 0 },
     };
     for (uint32_t index = 0; index < 3; ++index) {
         checkRelocation(body.relocations[index], RelocationKind::Call, { SymbolSpace::ArgumentThunk, index });
         AOT_TEST_CHECK(assembled.bytesBefore(index).empty());
         checkReturnSite(assembled, index, index, OptionalIndex { index + 1 });
-        const ArgumentMoves& words = body.argumentMoves[index];
+        std::span<const uint64_t> words = body.argumentMoves[index];
         AOT_TEST_CHECK(words.size() == 2 + moves.size() && words[0] == expectedHeaders[index][0] && words[1] == expectedHeaders[index][1]);
-        AOT_TEST_CHECK(equalSpans(words.span().subspan(2), moves.span()));
+        AOT_TEST_CHECK(equalSpans(words.subspan(2), moves.span()));
+    }
+}
+
+static void testArgumentMovesOfUnitLieInOneList()
+{
+    constexpr size_t mostLists = 5;
+    Vector<ArgumentMoves> lists;
+    size_t numberOfWordsInLists = 0;
+    for (size_t numberOfLists = 0; numberOfLists <= mostLists; ++numberOfLists) {
+        ArgumentMovesOfUnit kept(lists.span());
+        AOT_TEST_CHECK(kept.size() == numberOfLists && kept.isEmpty() == !numberOfLists);
+        AOT_TEST_CHECK(kept.list().size() == (numberOfLists ? numberOfLists / 2 + 1 + numberOfWordsInLists : 0));
+        AOT_TEST_CHECK(kept.list().capacity() == kept.list().size());
+        for (size_t index = 0; index < numberOfLists; ++index)
+            AOT_TEST_CHECK(equalSpans(std::as_const(kept)[index], lists[index].span()));
+        AOT_TEST_CHECK(kept == ArgumentMovesOfUnit(lists.span()));
+
+        if (numberOfLists) {
+            ArgumentMovesOfUnit changed = kept;
+            changed[numberOfLists - 1][1] ^= 1;
+            AOT_TEST_CHECK(changed != kept && changed.size() == numberOfLists);
+            AOT_TEST_CHECK(changed[numberOfLists - 1][1] == (lists.last()[1] ^ 1) && changed[0][0] == lists[0][0]);
+        }
+
+        ArgumentMoves next;
+        for (size_t word = 0; word < numberOfHeaderWords + 4 * numberOfLists; ++word)
+            next.append((numberOfLists + 1) << 32 | word);
+        numberOfWordsInLists += next.size();
+        lists.append(WTF::move(next));
     }
 }
 
 static void testCallsOfFunctions()
 {
-    StubCatalog catalog(createValidatingOptions(), StubPolicy { });
+    StubCatalog catalog(StubOptions { });
     constexpr uint16_t secondaryEntry = 3;
-    FunctionID first { 11u };
-    FunctionID second { 4u };
+    Typed::CodeUnit first { FunctionID { 11u }, Typed::CodeRole::GenericCallEntry };
+    Typed::CodeUnit second { FunctionID { 11u }, Typed::CodeRole::Body };
     AssembledCalls assembled = assembleCalls(catalog, [&](CCallHelpers& jit, StubCalls& calls, const auto& markCall) {
         markCall();
         calls.callFunction(jit, first, primaryEntry, OptionalIndex { 1 });
@@ -729,7 +691,7 @@ static void testCallsOfFunctions()
     });
     const CodeBody& body = assembled.body;
 
-    AOT_TEST_CHECK(body.callees == (Vector<FunctionID> { first, second }) && body.stubKeys.isEmpty());
+    AOT_TEST_CHECK(body.callees == (Vector<Typed::CodeUnit> { first, second }) && body.stubKeys.isEmpty());
     checkRelocation(body.relocations[0], RelocationKind::Call, { SymbolSpace::Function, 0, primaryEntry });
     checkRelocation(body.relocations[1], RelocationKind::Call, { SymbolSpace::Function, 1, secondaryEntry });
     checkRelocation(body.relocations[2], RelocationKind::Jump, { SymbolSpace::Function, 0, secondaryEntry });
@@ -740,92 +702,7 @@ static void testCallsOfFunctions()
     checkReturnSite(assembled, 1, 1, { });
 }
 
-static size_t sizeOfCall(const StubCatalog& catalog, StubKey key, size_t& bytesBeforeCall)
-{
-    AssembledCalls assembled = assembleCalls(catalog, [&](CCallHelpers& jit, StubCalls& calls, const auto& markCall) {
-        markCall();
-        calls.call(jit, key, { });
-    });
-    bytesBeforeCall = assembled.bytesBefore(0).size();
-    std::span<const Relocation> relocations = assembled.body.relocations.span();
-    AOT_TEST_CHECK(!isCallOfReport(assembled.body, relocations[0]));
-    AOT_TEST_CHECK(relocations.size() == (bytesBeforeCall ? 2 : 1) && (relocations.size() == 1 || isCallOfReport(assembled.body, relocations[1])));
-    return assembled.body.bytes.size();
-}
-
-static void testCallsWithoutValidation()
-{
-    StubCatalog catalog(createValidatingOptions(), StubPolicy { });
-    AOT_TEST_CHECK(catalog.effectsOf(awaitBySavingFrame()).maySuspend && catalog.effectsOf(suspendGenerator(GeneratorSuspension::Yield)).maySuspend);
-    AOT_TEST_CHECK(catalog.summaryOf(callValue(0)).signature.usesCallConvention);
-
-    size_t bytesBeforeCall = 0;
-    for (StubKey key : { pollAtPrologue(), awaitBySavingFrame(), suspendGenerator(GeneratorSuspension::Yield), throwAtSite(ThrowSiteSource::WordInRegister, CallerFrame::HasFrame), callValue(0) }) {
-        AOT_TEST_CHECK(sizeOfCall(catalog, key, bytesBeforeCall) == sizeOfNearCall);
-        AOT_TEST_CHECK(!bytesBeforeCall);
-    }
-
-    AOT_TEST_CHECK(!catalog.effectsOf(toBoolean()).maySuspend);
-    AOT_TEST_CHECK(sizeOfCall(catalog, toBoolean(), bytesBeforeCall) > sizeOfNearCall);
-    AOT_TEST_CHECK(bytesBeforeCall);
-
-    StubCatalog catalogWithoutValidation(StubOptions { }, StubPolicy { });
-    AOT_TEST_CHECK(sizeOfCall(catalogWithoutValidation, toBoolean(), bytesBeforeCall) == sizeOfNearCall);
-}
-
 #if OS(UNIX)
-
-static StubKey findStubPreserving(const StubCatalog& catalog, GPRReg preserved)
-{
-    std::optional<StubKey> found;
-    for (StubKey body : allStubBodies()) {
-        const StubSummary& summary = catalog.summaryOf(body);
-        if (entriesOf(body).size() != 1 || body.callerFrame() != CallerFrame::HasFrame || neverReturns(body) || catalog.effectsOf(body).maySuspend)
-            continue;
-        if (summary.signature.usesCallConvention || summary.signature.immediate || summary.signature.result != StubResult::GPR)
-            continue;
-        if (containsRegister(summary.clobbered, preserved) || body == pollAtPrologue())
-            continue;
-        found = body;
-        break;
-    }
-    AOT_TEST_CHECK(found.has_value());
-    return *found;
-}
-
-template<typename Generator>
-static Vector<uint8_t> assembleValidatedCall(const StubCatalog& catalog, StubKey key, const Generator& generator)
-{
-    StubAssembler stubAssembler(catalog.options(), catalog);
-    stubAssembler.generateForTesting(key, generator);
-    ImageLinkBuffer stubBuffer(stubAssembler, LinkBuffer::Profile::Thunk);
-    AOT_TEST_CHECK(!stubBuffer.didFailToAllocate());
-    stubBuffer.finalize(false, "stub under validation"_s);
-    AOT_TEST_CHECK(stubAssembler.boundEntries().size() == 1 && !stubAssembler.relocations().numberOfRelocations());
-    uint32_t offsetOfEntry = stubBuffer.linkBuffer().offsetOf(stubAssembler.boundEntries()[0].label);
-
-    AssembledCalls caller = assembleCalls(catalog, [&](CCallHelpers& jit, StubCalls& calls, const auto& markCall) {
-        jit.emitFunctionPrologue();
-        markCall();
-        calls.call(jit, key, { });
-        jit.emitFunctionEpilogue();
-        jit.ret();
-    });
-
-    Vector<uint8_t> bytes = WTF::move(caller.body.bytes);
-    while (bytes.size() % stackAlignmentBytes())
-        bytes.append(0);
-    size_t startOfStub = bytes.size();
-    bytes.append(stubBuffer.bytes());
-    size_t startOfReport = bytes.size();
-    bytes.appendVector(assemble([](CCallHelpers& jit) {
-        jit.breakpoint();
-    }));
-    AOT_TEST_CHECK(caller.body.relocations.size() == 2 && isCallOfReport(caller.body, caller.body.relocations[1]));
-    AOT_TEST_CHECK(applyRelocation(bytes.mutableSpan(), 0, caller.body.relocations[0], startOfStub + offsetOfEntry));
-    AOT_TEST_CHECK(applyRelocation(bytes.mutableSpan(), 0, caller.body.relocations[1], startOfReport));
-    return bytes;
-}
 
 static void runInMappingOfThisProcess(std::span<const uint8_t> code)
 {
@@ -837,23 +714,67 @@ static void runInMappingOfThisProcess(std::span<const uint8_t> code)
     std::bit_cast<void (SYSV_ABI *)()>(tagCodePtr<CFunctionPtrTag>(memory))();
 }
 
-static void testValidatedCalls()
+static int signalThatEndsListener(std::span<const uint8_t> code)
+{
+    constexpr unsigned timeoutInSeconds = 10;
+
+    fflush(nullptr);
+    pid_t child = fork();
+    AOT_TEST_CHECK(child >= 0);
+    if (!child) {
+        alarm(timeoutInSeconds);
+        signal(SIGTRAP, [](int) { });
+        for (int number : { SIGILL, SIGSEGV, SIGBUS, SIGALRM })
+            signal(number, [](int number) { _exit(number); });
+        runInMappingOfThisProcess(code);
+        _exit(0);
+    }
+
+    int status = 0;
+    pid_t waited;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    AOT_TEST_CHECK(waited == child && WIFEXITED(status));
+    return WEXITSTATUS(status);
+}
+
+static void testTrapsEndListenerForBreakpoints()
 {
     WTF::fastDisableScavenger();
-    static constexpr GPRReg preserved = gprOf(StubRegister::T12);
-    StubCatalog catalog(createValidatingOptions(), StubPolicy { });
-    StubKey key = findStubPreserving(catalog, preserved);
+    auto signalBehind = [](const auto& emit) {
+        Vector<uint8_t> code = assemble([&](CCallHelpers& jit) {
+            emit(jit);
+            jit.ret();
+        });
+        return signalThatEndsListener(code.span());
+    };
+    AOT_TEST_CHECK(!signalBehind([](CCallHelpers&) { }));
+    AOT_TEST_CHECK(signalBehind([](CCallHelpers& jit) { jit.breakpoint(); }) == SIGILL);
+    AOT_TEST_CHECK(signalBehind([](CCallHelpers& jit) { jit.oops(); }) == SIGILL);
+    AOT_TEST_CHECK(signalBehind(emitPadding) == (isX86_64() ? SIGSEGV : SIGILL));
 
-    Vector<uint8_t> honestStub = assembleValidatedCall(catalog, key, [](StubAssembler& jit) {
-        jit.add64(CCallHelpers::TrustedImm32(1), jit.result());
-        jit.returnToCaller();
-    });
-    Vector<uint8_t> lyingStub = assembleValidatedCall(catalog, key, [](StubAssembler& jit) {
-        jit.add64(CCallHelpers::TrustedImm32(1), preserved);
-        jit.returnToCaller();
-    });
-    AOT_TEST_CHECK(runInChild([&] { runInMappingOfThisProcess(honestStub.span()); }) == ChildOutcome::Finished);
-    AOT_TEST_CHECK(runInChild([&] { runInMappingOfThisProcess(lyingStub.span()); }) == ChildOutcome::Crashed);
+    AOT_TEST_CHECK(!AssemblerPolicy::forJIT().trapsWithIllegalInstruction);
+    AssemblerPolicy policy = AssemblerPolicy::forImage(StubOptions { }.targetFeatures);
+    policy.trapsWithIllegalInstruction = false;
+    Vector<uint8_t> breakpoint = assemble([](CCallHelpers& jit) { jit.breakpoint(); }, policy);
+    AOT_TEST_CHECK(breakpoint.size() == codeOffsetUnit && MacroAssembler::isBreakpoint(breakpoint.mutableSpan().data()));
+}
+
+static void testAlignmentOfStubsIsPadding()
+{
+    StubCatalog catalog(StubOptions { });
+    StubAssembler jit(catalog.options(), catalog);
+    jit.ret();
+    jit.align();
+    jit.ret();
+    ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
+    AOT_TEST_CHECK(!buffer.didFailToAllocate());
+    buffer.finalize(false, "stub with an aligned part"_s);
+    std::span<uint8_t> bytes = buffer.bytes();
+    AOT_TEST_CHECK(bytes.size() > 16);
+    for (size_t offset = 0; offset < bytes.size(); offset += codeOffsetUnit)
+        AOT_TEST_CHECK(!MacroAssembler::isBreakpoint(bytes.subspan(offset).data()));
 }
 
 #endif // OS(UNIX)
@@ -861,7 +782,7 @@ static void testValidatedCalls()
 static void testRegistersLiveAcrossReads()
 {
     for (const StubOptions& options : stubOptionVariants()) {
-        StubCatalog catalog(options, StubPolicy { });
+        StubCatalog catalog(options);
         Vector<StubKey> keys { getByIdAfterFrontProbe(), getByIdHashed(), slotExit(SlotHandlerTable::ReadById, SlotExit::Miss), slotExit(SlotHandlerTable::ReadById, SlotExit::Uncached) };
         for (StubKey handler : slotHandlerKeys(SlotHandlerTable::ReadByIdPacked))
             keys.append(handler);
@@ -873,6 +794,243 @@ static void testRegistersLiveAcrossReads()
     }
 }
 
+static void testHeadsOfOperationsWriteWhatRowsName()
+{
+    for (const StubOptions& options : stubOptionVariants()) {
+        StubCatalog catalog(options);
+        unsigned numberOfHeads = 0;
+        forEachKeyWithoutImmediate([&](StubKey key) {
+            if (descriptorOf(key.family()).binding != ImmediateBinding::OperationOffset)
+                return;
+            for (const OperationPrelude& prelude : operationPreludes()) {
+                StubKey head = key.withImmediate(offsetInRuntimeTable(prelude.operation));
+                if (!exists(head))
+                    continue;
+                ++numberOfHeads;
+                AOT_TEST_CHECK(catalog.effectsOf(head).writes.isSubsetOf(effectsOf(prelude.operation).writes));
+            }
+        });
+        AOT_TEST_CHECK(numberOfHeads >= operationPreludes().size());
+        for (unsigned count = 0; count <= numberOfArgumentGPRs + 1; ++count)
+            AOT_TEST_CHECK(!catalog.effectsOf(resolveCallValue(count)).mayCollect);
+    }
+}
+
+static void testWhatFamiliesDeclareOfTheirCallsHolds()
+{
+    for (const StubOptions& options : stubOptionVariants()) {
+        StubCatalog catalog(options);
+        unsigned numberOfLeaves = 0;
+        auto lookAt = [&](StubKey key) {
+            Typed::Effects effects = catalog.effectsOf(key);
+            StubLeafness leafness = descriptorOf(key.family()).leafness;
+            if (leafness == StubLeafness::MayCall)
+                return;
+            AOT_TEST_CHECK(!effects.mayCollect && !effects.mayThrow && !effects.mayCallUnknownCode);
+            if (leafness != StubLeafness::Leaf)
+                return;
+            ++numberOfLeaves;
+            Vector<StubKey> bodies { bodyOf(key) };
+            for (size_t index = 0; index < bodies.size(); ++index) {
+                const StubRecording& recording = catalog.recordingOf(bodies[index]);
+                AOT_TEST_CHECK(recording.operationsCalled.isEmpty());
+                for (const StubReference& reference : recording.references) {
+                    StubKey body = bodyOf(reference.target);
+                    if (reference.kind != StubReference::Kind::Address && reference.kind != StubReference::Kind::ReturnedAddress && !bodies.contains(body))
+                        bodies.append(body);
+                }
+            }
+        };
+        forEachKeyWithoutImmediate([&](StubKey key) {
+            lookAt(key);
+            if (descriptorOf(key.family()).binding != ImmediateBinding::OperationOffset)
+                return;
+            for (const OperationPrelude& prelude : operationPreludes()) {
+                StubKey head = key.withImmediate(offsetInRuntimeTable(prelude.operation));
+                if (exists(head))
+                    lookAt(head);
+            }
+        });
+        AOT_TEST_CHECK(numberOfLeaves);
+    }
+}
+
+static constexpr std::array constantsAtSites { ConstantAtSite::String, ConstantAtSite::Key, ConstantAtSite::BuiltinCell };
+
+static void testConstantsAtSitesLoseNoRegister()
+{
+    RegisterSet scratch = RegisterSet::macroClobberedGPRs();
+    scratch.merge(RegisterSet::macroClobberedFPRs());
+    for (const StubOptions& options : stubOptionVariants()) {
+        StubCatalog catalog(options);
+        for (ConstantAtSite constant : constantsAtSites) {
+            for (GPRReg result : allocatableGPRs) {
+                StubKey key = createConstantAtSite(constant).withOperandRegister(result);
+                AOT_TEST_CHECK(exists(key));
+                const StubSummary& summary = catalog.summaryOf(key);
+                AOT_TEST_CHECK(summary.signature.result == StubResult::GPR && summary.signature.firstResult == Reg(result) && !summary.signature.immediate);
+                AOT_TEST_CHECK(!summary.signature.numberOfOperands);
+                RegisterSet lost = summary.clobbered;
+                lost.remove(result);
+                lost.exclude(scratch);
+                AOT_TEST_CHECK(lost.isEmpty());
+                Typed::Effects effects = catalog.effectsOf(key);
+                AOT_TEST_CHECK(!effects.mayCollect && !effects.mayExitSideways());
+            }
+        }
+    }
+}
+
+using RegistersAtSite = std::array<uint64_t, allocatableGPRs.size()>;
+
+static constexpr uint64_t valueKeptAtSiteIn(size_t index) { return 0x0a0b0c0d00000000ull + index; }
+static constexpr uint32_t numberOfConstantAtSite = 5;
+
+static RegistersAtSite callStubAtSite(StubRunner& runner, StubKey key)
+{
+    Vector<GPRReg> savedRegisters;
+    RegisterSet::vmCalleeSaveRegisters().forEach([&](Reg reg) {
+        if (reg.isGPR())
+            savedRegisters.append(reg.gpr());
+    });
+    auto slotOf = [](size_t index) {
+        return CCallHelpers::Address(GPRInfo::callFrameRegister, -static_cast<int32_t>((index + 1) * sizeof(CPURegister)));
+    };
+    const size_t slotOfAnswer = savedRegisters.size();
+    const size_t firstSlotOfRegisters = slotOfAnswer + 1;
+    constexpr int32_t offsetOfStub = static_cast<int32_t>(OBJECT_OFFSETOF(StubEnvironment, stub)) - static_cast<int32_t>(OBJECT_OFFSETOF(StubEnvironment, instance));
+
+    CCallHelpers jit;
+    jit.emitFunctionPrologue();
+    jit.subPtr(CCallHelpers::TrustedImm32(WTF::roundUpToMultipleOf<stackAlignmentBytes()>((firstSlotOfRegisters + allocatableGPRs.size()) * sizeof(CPURegister))), CCallHelpers::stackPointerRegister);
+    for (size_t index = 0; index < savedRegisters.size(); ++index)
+        jit.storePtr(savedRegisters[index], slotOf(index));
+    jit.storePtr(GPRInfo::argumentGPR1, slotOf(slotOfAnswer));
+    jit.move(GPRInfo::argumentGPR0, instanceGPR);
+#if CPU(ARM64)
+    jit.emitMaterializeTagCheckRegisters();
+#endif
+    jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(cellCageBase)), cellCageBaseGPR);
+    for (size_t index = 0; index < allocatableGPRs.size(); ++index)
+        jit.move(CCallHelpers::TrustedImm64(valueKeptAtSiteIn(index)), allocatableGPRs[index]);
+
+    jit.call(CCallHelpers::Address(instanceGPR, offsetOfStub), JITThunkPtrTag);
+#if CPU(X86_64)
+    jit.m_assembler.buffer().putByte(static_cast<int8_t>(ThrowSiteWord::opcodeInFrontOfWordBehindCall));
+#endif
+    jit.m_assembler.buffer().putInt(numberOfConstantAtSite);
+
+    for (size_t index = 0; index < allocatableGPRs.size(); ++index)
+        jit.store64(allocatableGPRs[index], slotOf(firstSlotOfRegisters + index));
+    jit.loadPtr(slotOf(slotOfAnswer), GPRInfo::regT0);
+    for (size_t index = 0; index < allocatableGPRs.size(); ++index) {
+        jit.load64(slotOf(firstSlotOfRegisters + index), GPRInfo::regT1);
+        jit.store64(GPRInfo::regT1, CCallHelpers::Address(GPRInfo::regT0, static_cast<int32_t>(index * sizeof(uint64_t))));
+    }
+    for (size_t index = 0; index < savedRegisters.size(); ++index)
+        jit.loadPtr(slotOf(index), savedRegisters[index]);
+    jit.emitFunctionEpilogue();
+    jit.ret();
+
+    LinkBuffer linkBuffer(jit, nullptr);
+    MacroAssemblerCodeRef<JSEntryPtrTag> site = FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "AOT site of a stub");
+    void* addressOfSite = untagCFunctionPtr<JSEntryPtrTag>(site.code().taggedPtr());
+
+    StubEnvironment& environment = StubEnvironment::of(&runner.instance());
+    environment.stub = runner.entryOf(key);
+    environment.numberOfOperationCalls = 0;
+    environment.numberOfRecordedCalls = 0;
+    environment.recordedArguments = { };
+    RegistersAtSite registers { };
+    std::bit_cast<void (SYSV_ABI *)(Instance*, uint64_t*)>(addressOfSite)(&runner.instance(), registers.data());
+    return registers;
+}
+
+static void checkRegistersAtSite(const RegistersAtSite& registers, GPRReg result, uint64_t expectedResult)
+{
+    for (size_t index = 0; index < allocatableGPRs.size(); ++index)
+        AOT_TEST_CHECK(registers[index] == (allocatableGPRs[index] == result ? expectedResult : valueKeptAtSiteIn(index)));
+}
+
+static constexpr size_t numberOfCellWordsAtSites = 8;
+static constexpr uint32_t narrowWordOfCellAtSite = 0x4321;
+static constexpr uint64_t cellBehindNarrowWordAtSite = static_cast<uint64_t>(narrowWordOfCellAtSite) << cell32Shift;
+
+static void testConstantsAtSitesTakeNumberBehindCall()
+{
+    constexpr uint64_t madeCell = 0x123456780;
+    struct Site {
+        ConstantAtSite constant;
+        Entry operation;
+    };
+    constexpr Site sites[] = {
+        { ConstantAtSite::Key, Entry::operationAOTKeyConstant },
+        { ConstantAtSite::BuiltinCell, Entry::operationAOTBuiltinCell },
+    };
+
+    StubRunner runner;
+    StubEnvironment& environment = StubEnvironment::of(&runner.instance());
+    std::array<uint32_t, numberOfCellWordsAtSites> keyCells { };
+    std::array<JSCell*, numberOfCellWordsAtSites> builtinCells { };
+    runner.instance().runtime.constants.keyCells = keyCells.data();
+    runner.instance().prefix().builtinCells = builtinCells.data();
+    runner.setResultOfRecordedOperation(madeCell);
+    for (const Site& site : sites) {
+        runner.recordCallsOf(site.operation);
+        for (GPRReg result : allocatableGPRs) {
+            StubKey key = createConstantAtSite(site.constant).withOperandRegister(result);
+            RegistersAtSite registers = callStubAtSite(runner, key);
+            checkRegistersAtSite(registers, result, madeCell);
+            AOT_TEST_CHECK(environment.numberOfRecordedCalls == 1 && environment.recordedArguments[0] == numberOfConstantAtSite);
+        }
+    }
+}
+
+static void testConstantsAtSitesReadFilledWord()
+{
+    constexpr uint64_t builtinCell = 0x123456780;
+    StubRunner runner;
+    StubEnvironment& environment = StubEnvironment::of(&runner.instance());
+    std::array<uint32_t, numberOfCellWordsAtSites> keyCells { };
+    std::array<JSCell*, numberOfCellWordsAtSites> builtinCells { };
+    runner.instance().runtime.constants.keyCells = keyCells.data();
+    runner.instance().prefix().builtinCells = builtinCells.data();
+    runner.stringCell(numberOfConstantAtSite) = narrowWordOfCellAtSite;
+    keyCells[numberOfConstantAtSite] = narrowWordOfCellAtSite;
+    builtinCells[numberOfConstantAtSite] = std::bit_cast<JSCell*>(builtinCell);
+    for (ConstantAtSite constant : { ConstantAtSite::String, ConstantAtSite::Key, ConstantAtSite::BuiltinCell }) {
+        for (GPRReg result : allocatableGPRs) {
+            RegistersAtSite registers = callStubAtSite(runner, createConstantAtSite(constant).withOperandRegister(result));
+            checkRegistersAtSite(registers, result, constant == ConstantAtSite::BuiltinCell ? builtinCell : cellBehindNarrowWordAtSite);
+            AOT_TEST_CHECK(!environment.numberOfOperationCalls);
+        }
+    }
+}
+
+static UGPRPair JIT_OPERATION_ATTRIBUTES makeKeyAndFillWordAtSite(Instance* instance, uint64_t number)
+{
+    ++StubEnvironment::of(instance).numberOfOperationCalls;
+    unsafeMakeSpan(instance->runtime.constants.keyCells, numberOfCellWordsAtSites)[number] = narrowWordOfCellAtSite;
+    return makeUGPRPair(cellBehindNarrowWordAtSite, 0);
+}
+
+static void testConstantAtSiteIsMadeOnce()
+{
+    StubRunner runner;
+    StubEnvironment& environment = StubEnvironment::of(&runner.instance());
+    std::array<uint32_t, numberOfCellWordsAtSites> keyCells { };
+    runner.instance().runtime.constants.keyCells = keyCells.data();
+    runner.install(Entry::operationAOTKeyConstant, makeKeyAndFillWordAtSite);
+    bool isMade = false;
+    for (GPRReg result : allocatableGPRs) {
+        RegistersAtSite registers = callStubAtSite(runner, createConstantAtSite(ConstantAtSite::Key).withOperandRegister(result));
+        checkRegistersAtSite(registers, result, cellBehindNarrowWordAtSite);
+        AOT_TEST_CHECK(environment.numberOfOperationCalls == (isMade ? 0u : 1u));
+        AOT_TEST_CHECK(keyCells[numberOfConstantAtSite] == narrowWordOfCellAtSite);
+        isMade = true;
+    }
+}
+
 std::span<const NativeTest> stubTests()
 {
     static constexpr NativeTest tests[] = {
@@ -880,25 +1038,30 @@ std::span<const NativeTest> stubTests()
         { "stubs/illegal-keys-do-not-exist"_s, testIllegalKeys },
         { "stubs/variant-lookup"_s, testVariantLookup },
         { "stubs/entries-of-a-body"_s, testBodyEntries },
-        { "stubs/dumped-names-are-distinct"_s, testDumpedNames },
         { "stubs/packed-words"_s, testPackedWords },
         { "stubs/stub-words"_s, testStubWords },
         { "stubs/adapter-frame"_s, testAdapterFrame },
-        { "stubs/front-ends-and-preludes"_s, testFrontEndsAndPreludes },
         { "stubs/handler-tables"_s, testHandlerTables },
-        { "stubs/resolved-value-register"_s, testResolvedValueRegister },
         { "stubs/signatures-are-well-formed"_s, testSignatures },
         { "stubs/calls-with-immediates"_s, testStubCallsWithImmediates },
         { "stubs/calls-of-operations"_s, testStubCallsOfOperations },
+        { "stubs/calls-with-numbers-in-keys"_s, testStubCallsWithNumbersInKeys },
         { "stubs/calls-of-one-key"_s, testStubCallsOfOneKey },
         { "stubs/call-for-two-reads"_s, testStubCallForTwoReads },
         { "stubs/calls-through-argument-thunks"_s, testStubCallsThroughArgumentThunks },
+        { "stubs/argument-moves-of-a-unit-lie-in-one-list"_s, testArgumentMovesOfUnitLieInOneList },
         { "stubs/calls-of-functions"_s, testCallsOfFunctions },
-        { "stubs/calls-without-validation"_s, testCallsWithoutValidation },
 #if OS(UNIX)
-        { "stubs/validated-calls"_s, testValidatedCalls },
+        { "stubs/traps-end-listener-for-breakpoints"_s, testTrapsEndListenerForBreakpoints },
+        { "stubs/alignment-is-padding"_s, testAlignmentOfStubsIsPadding },
 #endif
         { "stubs/registers-live-across-reads"_s, testRegistersLiveAcrossReads },
+        { "stubs/heads-of-operations-write-what-their-rows-name"_s, testHeadsOfOperationsWriteWhatRowsName },
+        { "stubs/what-families-declare-of-their-calls-holds"_s, testWhatFamiliesDeclareOfTheirCallsHolds },
+        { "stubs/constants-at-sites-lose-no-register"_s, testConstantsAtSitesLoseNoRegister },
+        { "stubs/constants-at-sites-take-the-number-behind-the-call"_s, testConstantsAtSitesTakeNumberBehindCall },
+        { "stubs/constants-at-sites-read-a-filled-word"_s, testConstantsAtSitesReadFilledWord },
+        { "stubs/constant-at-a-site-is-made-once"_s, testConstantAtSiteIsMadeOnce },
     };
     return tests;
 }

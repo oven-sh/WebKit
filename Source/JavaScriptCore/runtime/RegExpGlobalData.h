@@ -41,6 +41,8 @@ public:
 
     void setInput(JSGlobalObject*, JSString*);
     JSString* input() LIFETIME_BOUND { return m_cachedResult.input(); }
+    // Stops a program whose compiled code leaves no record of a match because nothing was found to read one.
+    static void willReadLegacyStatics(VM&);
 
     DECLARE_VISIT_AGGREGATE;
 

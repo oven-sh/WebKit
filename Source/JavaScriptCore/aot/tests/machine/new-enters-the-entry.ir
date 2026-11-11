@@ -1,0 +1,96 @@
+# function ofAnyKind(kind: number): Base { return new Node(kind); }
+# The `new` leaves the choice of the layout to the entry of the constructor that makes `this`. The callee is proven, so the code calls that unit itself.
+# The stub that finds the entry of whatever it is handed took about thirty instructions for each object.
+# RUN: bytes f2:Body mechanisms=none+TypedOperations
+# CHECK-LABEL: unit f2:Body
+# CHECK-NOT: ConstructValue
+# CHECK: Call Function AllocatingConstructEntry
+# CHECK-NOT: ConstructValue
+
+layout L0 kind=Instance name="NodeMaker" module=m0 constructor=f1 fields=[{key="kind" declared={type=number} flags=[IsRequired] originLayout=L1 originField=0}, {key="pos" declared={type=number} flags=[IsRequired] originLayout=L1 originField=1}] supertypes=[L1] flags=[IsConstructorFunction] ownFieldCount=2
+layout L1 name="Base" module=m0 fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L2, L3, L4, L5] flags=[IsNeverAllocated] ownFieldCount=2
+layout L2 name="Num" module=m0 fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated] declaredOrder=[0, 2, 1] ownFieldCount=3
+layout L3 name="Str" module=m0 fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated] declaredOrder=[0, 2, 1] ownFieldCount=3
+layout L4 name="Low" module=m0 fields=[{key="kind" declared={type=3} flags=[IsRequired]}, {key="level" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated] ownFieldCount=3
+layout L5 name="High" module=m0 fields=[{key="kind" declared={type=4} flags=[IsRequired]}, {key="level" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated] ownFieldCount=3
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="Node" module=m0 declared={type=undefined|null|function|absent flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 name="Later" module=m0 declared={type=undefined|null|function|absent flags=[OmitsNull]}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = Convert v1 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v8 variable=g0
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="report" [isFreeName]
+    v12 = PropGet v10 key="input" [isFreeName]
+    v13 = Convert v12 declared={type=number}
+    v14 = Call v3, -, v13 calleeName="ofAnyKind"
+    v15 = Call v11, -, v14 calleeName="report"
+    v16 = Call v5 calleeName="ofOneKind"
+    v17 = Call v11, -, v16 calleeName="report"
+    v18 = Integer integer=3
+    v19 = Call v7, -, v18 calleeName="ofEitherLevel"
+    v20 = Call v11, -, v19 calleeName="report"
+    v21 = Integer integer=4
+    v22 = Call v7, -, v21 calleeName="ofEitherLevel"
+    v23 = Call v11, -, v22 calleeName="report"
+    v24 = Undefined
+    v25 = Convert v24 declared={type=undefined|null|function flags=[OmitsNull]} illTypedCause=FromLooseType
+    PutModuleVariable v25 variable=g1
+    v27 = NewClosure function=f5
+    v28 = Convert v27 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v8 variable=g1
+    v30 = Call v28, -, v13 calleeName="ofLaterMaker"
+    v31 = Call v11, -, v30 calleeName="report"
+    Return v24
+}
+function f1 name="NodeMaker" module=m0 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: undefined|null|L0, v1: number):
+    PropSet v0, v1 key="kind"
+    v3 = Integer
+    PropSet v0, v3 key="pos"
+    v5 = Undefined
+    Return v5
+}
+function f2 name="ofAnyKind" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="Node"
+    v3 = Construct v2, -, v0 calleeName="Node"
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v4
+}
+function f3 name="ofOneKind" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="Node"
+    v2 = Integer integer=1
+    v3 = Construct v1, -, v2 calleeName="Node"
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v4
+}
+function f4 name="ofEitherLevel" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[3, 4]}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] {
+  b0(v0: int[3, 4]):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="Node"
+    v3 = Construct v2, -, v0 calleeName="Node"
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v4
+}
+function f5 name="ofLaterMaker" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="Later"
+    v3 = Construct v2, -, v0 calleeName="Later"
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v4
+}

@@ -64,7 +64,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLTextAreaElement);
 
 using namespace HTMLNames;
 
-static inline unsigned LEGACY_NODELETE computeLengthForAPIValue(StringView text)
+NODELETE static inline unsigned computeLengthForAPIValue(StringView text)
 {
     unsigned length = text.length();
     unsigned crlfCount = 0;
@@ -341,12 +341,10 @@ void HTMLTextAreaElement::updateValue() const
 
     ASSERT(renderer());
     m_value = innerTextValue();
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<HTMLTextAreaElement*>(this)->setFormControlValueMatchesRenderer(true);
+    const_cast<HTMLTextAreaElement*>(this)->setFormControlValueMatchesRenderer(true);
     m_isDirty = true;
     m_wasModifiedByUser = true;
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<HTMLTextAreaElement*>(this)->updatePlaceholderVisibility();
+    const_cast<HTMLTextAreaElement*>(this)->updatePlaceholderVisibility();
 }
 
 ValueOrReference<String> HTMLTextAreaElement::value() const

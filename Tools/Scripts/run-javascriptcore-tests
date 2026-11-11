@@ -600,6 +600,8 @@ sub computeFullConfiguration()
     return $result;
 }
 
+my $testLibJSCToolsRequested = $runTestLibJSCTools == DO_RUN;
+
 $runTestMasm = enableTestOrNot($runTestMasm);
 $runTestAir = enableTestOrNot($runTestAir);
 $runTestB3 = enableTestOrNot($runTestB3);
@@ -610,12 +612,6 @@ $runTestWasmDebugger = enableTestOrNot($runTestWasmDebugger);
 $runTestLibJSCTools = enableTestOrNot($runTestLibJSCTools);
 $runJSCStress = enableTestOrNot($runJSCStress);
 $runMozillaTests = enableTestOrNot($runMozillaTests);
-
-# libJavaScriptCoreTools and its test is built on Mach APIs and only available on Apple platforms.
-if ($runTestLibJSCTools && $^O ne "darwin") {
-    print "Not running testLibJSCTools: it is only available on Apple platforms.\n";
-    $runTestLibJSCTools = DONT_RUN;
-}
 
 my @buildArgs;
 
@@ -726,6 +722,21 @@ my $productDir = jscProductDir();
 if (!isWindows()) {
     $ENV{DYLD_FRAMEWORK_PATH} = $productDir;
 }
+
+if ($runTestLibJSCTools) {
+    if (isAppleCocoaWebKit()) {
+        if (webkitdirs::willUseSimulatorSDK() || isMacCatalystWebKit()) {
+            $runTestLibJSCTools = DONT_RUN; # Expected to not be supported. Just skip silently.
+        }
+        # Otherwise, testLibJSCTools is expected to be built. So a missing one is a failure.
+    } elsif ($testLibJSCToolsRequested) {
+        # User expects testLibJSCTools to be run because the request is explicit. Don't skip.
+    } elsif (!-e testPath($productDir, "testLibJSCTools")) {
+        print "Not running testLibJSCTools: it is not built for this platform.\n";
+        $runTestLibJSCTools = DONT_RUN;
+    }
+}
+
 $ENV{JSCTEST_timeout} = 120 unless $ENV{JSCTEST_timeout}; # Set a 120 second timeout on all jsc tests (if environment variable not defined already).
 $ENV{JSCTEST_hardTimeout} = 300 unless $ENV{JSCTEST_hardTimeout}; # Set a 300 second hard timeout on all jsc tests (if environment variable not defined already). If the test does not finish after 300 seconds from soft-timeout, we terminate the shell.
 $ENV{TZ}="US/Pacific"; # Some tests fail if the time zone is not set to US/Pacific (<https://webkit.org/b/136363>)
@@ -787,7 +798,7 @@ sub runTest {
         }
         $testResult = close(TEST) ? 0 : $?;
         print "$testOutput" if ($verbose or $testResult);
-        # Bun: CI reads how many tests testaot left out from its line of counts, also when all of them pass.
+        # Bun: testaot's line of counts is printed also when all of its tests pass, so that the log says how many ran.
         if (!$verbose && !$testResult && $testName eq "testaot") {
             my @counts = grep { /^\d+ passed, \d+ failed/ } split(/\n/, $testOutput);
             print "$counts[-1]\n" if @counts;

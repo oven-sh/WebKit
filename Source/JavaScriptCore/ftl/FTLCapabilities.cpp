@@ -32,7 +32,7 @@ namespace JSC { namespace FTL {
 
 using namespace DFG;
 
-static bool LEGACY_NODELETE verboseCapabilities()
+NODELETE static bool verboseCapabilities()
 {
     return verboseCompilationEnabled() || Options::verboseFTLFailure();
 }
@@ -202,6 +202,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case Construct:
     case DirectConstruct:
     case CallVarargs:
+    case CallVarargsWithSpread:
     case CallDirectEval:
     case TailCallVarargs:
     case TailCallVarargsInlinedCaller:
@@ -217,6 +218,8 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case CallCustomAccessorSetter:
     case VarargsLength:
     case LoadVarargs:
+    case VarargsLengthWithSpread:
+    case LoadVarargsWithSpread:
     case ValueToInt32:
     case DFG::Branch:
     case ToBoolean:
@@ -417,6 +420,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case NewSet:
     case NewWeakMap:
     case NewWeakSet:
+    case NewProxyObject:
     case StringReplace:
     case StringReplaceAll:
     case StringReplaceRegExp:

@@ -34,7 +34,6 @@ static_assert(sizeof(String) == sizeof(void*));
 inline constexpr unsigned maxSavedOperandsOfMatch = 3;
 inline constexpr unsigned offsetOfSavedOperandsOfMatch = roundUpToMultipleOf<sizeof(void*)>(sizeof(Yarr::MatchingContextHolder));
 inline constexpr unsigned sizeOfMatchFrame = roundUpToMultipleOf<stackAlignmentBytes()>(offsetOfSavedOperandsOfMatch + maxSavedOperandsOfMatch * sizeof(void*));
-// What StubAssembler::callLeaf wants to know inside the frame.
 inline constexpr unsigned bytesPushedInMatchFrame = sizeOfMatchFrame + (isX86_64() ? 1 : 2) * sizeof(CPURegister);
 
 inline constexpr int64_t noMatch = static_cast<int64_t>(notFound);
@@ -66,7 +65,6 @@ inline void popMatchFrame(StubAssembler& jit, GPRReg answer, std::span<const GPR
     jit.emitFunctionEpilogue();
 }
 
-// The holder is at the stack pointer of the match frame.
 inline void storeMatchingContext(StubAssembler& jit, GPRReg scratch)
 {
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
@@ -81,7 +79,6 @@ inline void loadMatchOutput(StubAssembler& jit, GPRReg output)
     jit.loadPtr(Address(output, VM::offsetOfAOTState() + VMState::offsetOfRegExpMatchOutput()), output);
 }
 
-// The characters are in A0. Without a start the match starts at 0. loadOutput(output) loads the address of the offsets, call() calls the code, whose answer goes to answer.
 inline void callMatchingCodeInFrame(StubAssembler& jit, std::span<const GPRReg> savedOperands, GPRReg subjectLength, std::optional<GPRReg> start, GPRReg answer, const auto& loadOutput, const auto& call)
 {
     const GPRReg startArgument = jit.reuseScratch(StubRegister::A1);
@@ -90,7 +87,6 @@ inline void callMatchingCodeInFrame(StubAssembler& jit, std::span<const GPRReg> 
     const GPRReg context = jit.reuseScratch(StubRegister::A4);
     pushMatchFrame(jit, savedOperands);
     jit.move(subjectLength, lengthArgument);
-    // start may share its register with output.
     if (start)
         jit.move(*start, startArgument);
     else
@@ -138,7 +134,6 @@ struct MatchRecordRegisters {
     GPRReg scratch;
 };
 
-// Leaves the match where RegExp.lastMatch and the other legacy static properties read it. Of the five registers only string is intact afterwards, and the result register is overwritten.
 void recordMatch(StubAssembler&, const MatchRecordRegisters&);
 
 } } // namespace JSC::AOT

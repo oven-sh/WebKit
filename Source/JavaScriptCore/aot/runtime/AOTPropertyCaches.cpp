@@ -9,14 +9,16 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayAllocationProfile.h"
+#include "AOTBuiltinCells.h"
+#include "AOTBuiltinTable.h"
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
-#include "AOTCompiledFrame.h"
 #include "AOTCompiledStructure.h"
 #include "AOTEmptyPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
+#include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
@@ -24,34 +26,34 @@
 #include "AOTOperationScope.h"
 #include "AOTPendingStars.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesStringKeys.h"
-#include "AOTPropertyWalk.h"
-#include "AOTRuntimeCounters.h"
 #include "AOTRuntimeRecords.h"
-#include "AOTRuntimeValidation.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSchemaRuntimeOperations.h"
-#include "AOTSlimClosure.h"
+#include "AOTSiteAnswersOfGetters.h"
+#include "AOTStaleAnswers.h"
 #include "AOTState.h"
 #include "AOTStubsPropertyKeys.h"
-#include "AOTThreshold.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "DeferGCInlines.h"
+#include "FunctionPrototype.h"
 #include "GetterSetter.h"
 #include "JSCConfig.h"
 #include "JSCInlines.h"
+#include "PropertyOffset.h"
+#include "RegExpObject.h"
 #include "SlotVisitorInlines.h"
 #include <array>
 #include <bit>
 #include <mutex>
 #include <type_traits>
-#include <wtf/AlignedStorage.h>
 #include <wtf/Atomics.h>
 #include <wtf/PageBlock.h>
 #include <wtf/SIMDHelpers.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/MakeString.h>
 #if OS(LINUX)
 #include <sys/mman.h>
 #if !defined(MADV_POPULATE_WRITE)
@@ -68,12 +70,11 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PropertyCaches);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(HashedSlotTable);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RowDisplacementTable);
 
-// The planes, and a bit for each cell of a plane. A cell is the base of a row plus a column.
 struct PagesOfPlanes {
     explicit constexpr PagesOfPlanes(uint32_t numberOfBases)
-        : sizeOfCellsInPlane((static_cast<size_t>(numberOfBases) + RowDisplacementTable::numberOfColumns) * sizeof(PackedSlot))
+        : sizeOfCellsInPlane(roundUpToMultipleOf<64>(static_cast<size_t>(numberOfBases) + RowDisplacementTable::numberOfColumns) * sizeof(PackedSlot))
         , sizeOfPlane(roundUpToMultipleOf<16 * KB>(sizeOfCellsInPlane))
-        , sizeOfOccupied(roundUpToMultipleOf<16 * KB>(roundUpToMultipleOf<64>(sizeOfCellsInPlane / sizeof(PackedSlot)) / 8 + sizeof(uint64_t)))
+        , sizeOfOccupied(roundUpToMultipleOf<16 * KB>(sizeOfCellsInPlane / sizeof(PackedSlot) / 8 + sizeof(uint64_t)))
         , offsetOfOccupied(numberOfSlotAccesses * sizeOfPlane)
         , size(offsetOfOccupied + sizeOfOccupied)
     {
@@ -85,20 +86,11 @@ struct PagesOfPlanes {
     size_t offsetOfOccupied;
     size_t size;
 };
-static_assert(!(RowDisplacementTable::numberOfColumns % 64) && !(RowDisplacementTable::initialNumberOfBases % 64));
+static_assert(RowDisplacementTable::maxColumn < RowDisplacementTable::numberOfColumns);
 
-static void* tryReservePagesOfTable(size_t size)
+static void* reservePagesOfTable(VM& vm, size_t size)
 {
-    void* result = tryReserveGuardedPages(size);
-#if OS(LINUX)
-    while (result && madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
-#endif
-    return result;
-}
-
-static void* reservePagesOfTable(size_t size)
-{
-    void* result = tryReservePagesOfTable(size);
+    void* result = vm.aotState().pages->tryAllocate(size);
     RELEASE_ASSERT(result, size);
     return result;
 }
@@ -106,23 +98,34 @@ static void* reservePagesOfTable(size_t size)
 #if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
 static constexpr bool pagesOfTablesCanGrow = true;
 
-// What the pages held stays, what is added is zero. A refusal changes nothing.
-static void* tryGrowPagesOfTable(void* pages, size_t size, size_t newSize)
+static void* tryGrowPagesOfTable(VM& vm, void* pages, size_t size, size_t newSize)
 {
     void* result = mremap(pages, size, newSize, MREMAP_MAYMOVE);
-    return result == MAP_FAILED ? nullptr : result;
+    if (result == MAP_FAILED)
+        return nullptr;
+    if (result != pages)
+        vm.aotState().pages->didMoveAway(pages, size);
+    return result;
 }
 #else
 static constexpr bool pagesOfTablesCanGrow = false;
-static void* tryGrowPagesOfTable(void*, size_t, size_t) { return nullptr; }
+static void* tryGrowPagesOfTable(VM&, void*, size_t, size_t) { return nullptr; }
 #endif
+
+static constexpr uint32_t limitOfBasesInFrontTable = 2097152;
+static_assert(limitOfBasesInFrontTable <= RowDisplacementTable::maxNumberOfBases);
+
+static uint32_t numberOfBasesAtStart(uint32_t limitOfBases)
+{
+    return pagesOfTablesCanGrow ? std::min(RowDisplacementTable::initialNumberOfBases, limitOfBases) : limitOfBases;
+}
 
 StructureRows& StructureRows::singleton()
 {
-    static AlignedStorage<StructureRows> rows;
+    static StructureRows* rows;
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        new (NotNull, rows.get()) StructureRows;
+        rows = new StructureRows;
     });
     return *rows;
 }
@@ -133,9 +136,17 @@ StructureRows::StructureRows()
     size_t size = g_jscConfig.sizeOfStructureHeap;
     RELEASE_ASSERT(start && size);
     RELEASE_ASSERT((start & StructureID::structureIDMask) + (size - 1) <= StructureID::structureIDMask);
-    void* words = reservePagesOfTable((size >> StructureRowWords::granuleShift) << StructureRowWords::wordShift);
-    // SAFETY: The pointer lies outside the allocation. It is only indexed with the bits of a StructureID shifted by granuleShift: the low 32 bits of an address in the structure heap, which does not cross a 4 GB boundary.
+    size_t sizeOfWords = (size >> StructureRowWords::granuleShift) << StructureRowWords::wordShift;
+    void* words = reserveGuardedPages(sizeOfWords);
+#if OS(LINUX)
+    while (madvise(words, sizeOfWords, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+#endif
     m_rowsForStructureIDZero = static_cast<uint32_t*>(words) - (static_cast<uint32_t>(start) >> StructureRowWords::granuleShift);
+}
+
+size_t RowDisplacementTable::sizeOfPagesAtStart(uint64_t valueOfLimitOfBases)
+{
+    return PagesOfPlanes(numberOfBasesAtStart(static_cast<uint32_t>(std::clamp<uint64_t>(valueOfLimitOfBases, firstBase + 1, maxNumberOfBases)))).size;
 }
 
 RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, const CustomAccessorTable& customAccessors)
@@ -144,10 +155,11 @@ RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, cons
     , m_structureRows(StructureRows::singleton())
     , m_cageBase(vm.heap.cage().base())
 {
-    m_limitOfBases = static_cast<uint32_t>(std::clamp<uint64_t>(runtimeLimitValue(vm, LimitID::LookupTableBases), firstBase + 1, maxNumberOfBases));
-    m_capacityOfBases = pagesOfTablesCanGrow ? std::min(initialNumberOfBases, m_limitOfBases) : m_limitOfBases;
+    static_assert(limitOfBasesInFrontTable > firstBase);
+    m_limitOfBases = limitOfBasesInFrontTable;
+    m_capacityOfBases = numberOfBasesAtStart(m_limitOfBases);
     PagesOfPlanes layout(m_capacityOfBases);
-    auto* pages = static_cast<uint8_t*>(reservePagesOfTable(layout.size));
+    auto* pages = static_cast<uint8_t*>(reservePagesOfTable(vm, layout.size));
     for (unsigned i = 0; i < numberOfSlotAccesses; ++i) {
         uint8_t* plane = pages + i * layout.sizeOfPlane;
         m_planes[i] = reinterpret_cast<RememberedSlot<PackedSlot>*>(plane);
@@ -161,16 +173,16 @@ RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, cons
 RowDisplacementTable::~RowDisplacementTable()
 {
     clear();
+    PagesOfVM& pages = *m_vm.aotState().pages;
     if (!pagesOfTablesCanGrow) {
-        releaseGuardedPages(m_planes[0], PagesOfPlanes(m_capacityOfBases).size);
+        pages.release(m_planes[0], PagesOfPlanes(m_capacityOfBases).size);
         return;
     }
     for (unsigned i = 0; i < numberOfSlotAccesses; ++i)
-        releaseGuardedPages(m_planes[i], PagesOfPlanes(m_numbersOfBasesWithPages[i]).sizeOfPlane);
-    releaseGuardedPages(m_occupied, PagesOfPlanes(m_numbersOfBasesWithPages[numberOfSlotAccesses]).sizeOfOccupied);
+        pages.release(m_planes[i], PagesOfPlanes(m_numbersOfBasesWithPages[i]).sizeOfPlane);
+    pages.release(m_occupied, PagesOfPlanes(m_numbersOfBasesWithPages[numberOfSlotAccesses]).sizeOfOccupied);
 }
 
-// Where there is no room for more pages the table stays as large as it is, and rows give way to rows as they do at the limit.
 bool RowDisplacementTable::tryGrow()
 {
     if (m_capacityOfBases >= m_limitOfBases)
@@ -180,7 +192,7 @@ bool RowDisplacementTable::tryGrow()
     auto tryGrowPart = [&](unsigned part, void* pages, size_t PagesOfPlanes::* size) -> void* {
         if (m_numbersOfBasesWithPages[part] == numberOfBases)
             return pages;
-        void* result = tryGrowPagesOfTable(pages, PagesOfPlanes(m_numbersOfBasesWithPages[part]).*size, to.*size);
+        void* result = tryGrowPagesOfTable(m_vm, pages, PagesOfPlanes(m_numbersOfBasesWithPages[part]).*size, to.*size);
         if (result)
             m_numbersOfBasesWithPages[part] = numberOfBases;
         return result;
@@ -209,14 +221,12 @@ void RowDisplacementTable::writeCell(SlotAccess access, uint32_t index, PackedSl
 {
     unsigned plane = static_cast<unsigned>(access);
     m_planes[plane][index].set(*m_writtenRegions[plane], cell);
-    BitVector& bits = m_dependsOnChain[plane];
+    Bits& bits = m_dependsOnChain[plane];
     if (!dependsOnChain) {
         bits.clear(index);
         return;
     }
-    if (index >= bits.size())
-        bits.ensureSize(std::max<size_t>(index + 1, bits.size() * 2));
-    bits.quickSet(index);
+    bits.set(index);
 }
 
 void RowDisplacementTable::clearCell(SlotAccess access, uint32_t index)
@@ -239,6 +249,8 @@ bool RowDisplacementTable::trySet(Structure* structure, uint32_t column, SlotAcc
     if (!cell)
         return false;
     uint32_t index = ensureIndex(structure, static_cast<uint16_t>(column));
+    if (!index || (slot.has(Slot::dependsOnChain) && !m_dependsOnChain[static_cast<unsigned>(access)].tryMakeRoomFor(index)))
+        return false;
     writeCell(access, index, *cell, slot.has(Slot::dependsOnChain));
     if (cell->canOutliveWhatItNames()) {
         uint32_t rowNumber = reservationAt(index - column).payload;
@@ -308,14 +320,14 @@ size_t RowDisplacementTable::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     size_t numberRemoved = 0;
     if (scope == CollectionScope::Eden) {
-        for (size_t rowNumber : m_rowsWrittenSinceLastSweep)
+        m_rowsWrittenSinceLastSweep.forEachSetBit([&](size_t rowNumber) {
             numberRemoved += sweepRow(vm, static_cast<uint32_t>(rowNumber));
+        });
     } else {
         for (unsigned rowNumber = 0; rowNumber < m_rows.size(); ++rowNumber)
             numberRemoved += sweepRow(vm, rowNumber);
     }
-    if (!m_rowsWrittenSinceLastSweep.isEmpty())
-        m_rowsWrittenSinceLastSweep.clearAll();
+    m_rowsWrittenSinceLastSweep.clearAll();
     if (scope == CollectionScope::Full && vm.heap.collectionScope() != CollectionScope::Eden) {
         compactBases();
         for (unsigned i = 0; i < numberOfSlotAccesses; ++i)
@@ -387,7 +399,7 @@ uint32_t RowDisplacementTable::firstFittingBase(uint32_t from, std::span<const u
 uint32_t RowDisplacementTable::findBase(std::span<const uint16_t> columns, uint32_t preferredBase)
 {
     constexpr unsigned basesPerBatch = 64;
-    AOT_THRESHOLD(unsigned, maxProbesBetweenRows, 4);
+    static constexpr unsigned maxProbesBetweenRows = 4;
     if (uint32_t base = preferredBase ? firstFittingBase(preferredBase, columns) : 0) {
         m_endOfBases = std::max(m_endOfBases, base + 1);
         return base;
@@ -415,7 +427,6 @@ uint32_t RowDisplacementTable::findBase(std::span<const uint16_t> columns, uint3
 
 uint32_t RowDisplacementTable::findBaseEvictingRows(std::span<const uint16_t> columns, StructureID keep)
 {
-    countLimitHit(m_vm, LimitID::LookupTableBases);
     Vector<uint32_t, 33> occupiedIndexes;
     for (uint32_t basesLeft = m_capacityOfBases - firstBase; basesLeft; --basesLeft) {
         uint32_t base = m_evictionHand;
@@ -471,19 +482,73 @@ void RowDisplacementTable::vacate(uint32_t index)
     }
 }
 
-void RowDisplacementTable::RowColumns::append(uint16_t column)
+bool RowDisplacementTable::RowColumns::tryMakeRoomForOneMore()
 {
-    if (m_size == m_capacity) {
-        uint16_t newCapacity = static_cast<uint16_t>(std::min<unsigned>(m_capacity * 2, UINT16_MAX));
-        RELEASE_ASSERT(newCapacity > m_capacity);
-        auto* newStorage = static_cast<uint16_t*>(fastMalloc(newCapacity * sizeof(uint16_t)));
-        memcpy(newStorage, storage(), m_size * sizeof(uint16_t));
-        if (m_capacity != inlineCapacity)
-            fastFree(storage());
-        memcpy(m_storage, &newStorage, sizeof(newStorage));
-        m_capacity = newCapacity;
-    }
+    if (m_size < m_capacity)
+        return true;
+    uint16_t newCapacity = static_cast<uint16_t>(std::min<unsigned>(m_capacity * 2, UINT16_MAX));
+    RELEASE_ASSERT(newCapacity > m_capacity);
+    void* taken = nullptr;
+    if (!tryFastMalloc(newCapacity * sizeof(uint16_t)).getValue(taken))
+        return false;
+    auto* newStorage = static_cast<uint16_t*>(taken);
+    memcpy(newStorage, storage(), m_size * sizeof(uint16_t));
+    if (m_capacity != inlineCapacity)
+        fastFree(storage());
+    memcpy(m_storage, &newStorage, sizeof(newStorage));
+    m_capacity = newCapacity;
+    return true;
+}
+
+bool RowDisplacementTable::RowColumns::tryAppend(uint16_t column)
+{
+    if (!tryMakeRoomForOneMore())
+        return false;
     storage()[m_size++] = column;
+    return true;
+}
+
+RowDisplacementTable::Rows::~Rows()
+{
+    for (uint32_t number = 0; number < m_size; ++number)
+        (*this)[number].~Row();
+    for (Row* segment : m_segments)
+        fastFree(segment);
+}
+
+bool RowDisplacementTable::Rows::tryAlloc()
+{
+    if (!(m_size % rowsInSegment)) {
+        void* segment = nullptr;
+        if (!m_segments.tryReserveCapacity(std::max<size_t>(m_segments.size() + 1, m_segments.size() == m_segments.capacity() ? m_segments.capacity() * 2 : 0)) || !tryFastMalloc(rowsInSegment * sizeof(Row)).getValue(segment))
+            return false;
+        m_segments.append(static_cast<Row*>(segment));
+    }
+    new (NotNull, &m_segments[m_size / rowsInSegment][m_size % rowsInSegment]) Row();
+    ++m_size;
+    return true;
+}
+
+bool RowDisplacementTable::Bits::tryMakeRoomFor(size_t number)
+{
+    size_t had = m_words.size();
+    if (number / 64 < had)
+        return true;
+    if (!m_words.tryGrow(std::max(number / 64 + 1, had * 2)))
+        return false;
+    zeroSpan(m_words.mutableSpan().subspan(had));
+    return true;
+}
+
+bool RowDisplacementTable::tryAddRow()
+{
+    uint32_t number = m_rows.size();
+    if (m_freeRows.capacity() <= number && !m_freeRows.tryReserveCapacity(std::max<size_t>(number + 1, m_freeRows.capacity() * 2)))
+        return false;
+    if (!m_rowsThatCanOutliveWhatTheyName.tryMakeRoomFor(number) || !m_rowsWrittenSinceLastSweep.tryMakeRoomFor(number) || !m_rows.tryAlloc())
+        return false;
+    m_freeRows.append(number);
+    return true;
 }
 
 void RowDisplacementTable::RowColumns::clear()
@@ -501,6 +566,8 @@ static PackedSlot markerOfRow(uint32_t rowNumber)
 
 uint32_t RowDisplacementTable::createRow(Structure* structure, uint16_t column)
 {
+    if (m_freeRows.isEmpty() && !tryAddRow())
+        return 0;
     constexpr unsigned maxExpectedColumns = 32;
     Vector<uint16_t, maxExpectedColumns> expectedColumns;
     expectedColumns.append(column);
@@ -517,13 +584,12 @@ uint32_t RowDisplacementTable::createRow(Structure* structure, uint16_t column)
     if (!base)
         base = findBaseEvictingRows(expectedColumns.span(), structure->id());
     ASSERT(base);
-    uint32_t number = m_freeRows.isEmpty() ? m_rows.size() : m_freeRows.takeLast();
-    if (number == m_rows.size())
-        m_rows.alloc();
+    uint32_t number = m_freeRows.takeLast();
     m_rows[number].owner = structure->id();
     m_rowsWrittenSinceLastSweep.set(number);
     last = { column, number };
-    m_rows[number].columns.append(column);
+    bool hadRoom = m_rows[number].columns.tryAppend(column);
+    ASSERT_UNUSED(hadRoom, hadRoom);
     reserve(base, markerOfRow(number));
     reserve(base + column, emptyCellNamed(column));
     m_structureRows.setRowOf(structure->id(), base);
@@ -535,6 +601,8 @@ uint32_t RowDisplacementTable::moveRow(uint32_t base, std::optional<uint16_t> co
     uint32_t rowNumber = reservationAt(base).payload;
     StructureID owner = m_rows[rowNumber].owner;
     Vector<uint16_t, 32> columns;
+    if (!columns.tryReserveCapacity(m_rows[rowNumber].columns.size() + 1) || (columnToAdd && !m_rows[rowNumber].columns.tryMakeRoomForOneMore()))
+        return 0;
     columns.append(m_rows[rowNumber].columns.span());
     unsigned numberOfMovedColumns = columns.size();
     if (columnToAdd)
@@ -544,6 +612,10 @@ uint32_t RowDisplacementTable::moveRow(uint32_t base, std::optional<uint16_t> co
         newBase = findBaseEvictingRows(columns.span(), owner);
     if (!newBase)
         return 0;
+    for (SlotAccess access : allSlotAccesses) {
+        if (!m_dependsOnChain[static_cast<unsigned>(access)].tryMakeRoomFor(newBase + std::ranges::max(columns)))
+            return 0;
+    }
     vacate(base);
     reserve(newBase, markerOfRow(rowNumber));
     for (unsigned i = 0; i < numberOfMovedColumns; ++i) {
@@ -557,7 +629,8 @@ uint32_t RowDisplacementTable::moveRow(uint32_t base, std::optional<uint16_t> co
     }
     if (columnToAdd) {
         reserve(newBase + *columnToAdd, emptyCellNamed(*columnToAdd));
-        m_rows[rowNumber].columns.append(*columnToAdd);
+        bool hadRoom = m_rows[rowNumber].columns.tryAppend(*columnToAdd);
+        ASSERT_UNUSED(hadRoom, hadRoom);
     }
     m_structureRows.setRowOf(owner, newBase);
     return newBase;
@@ -578,7 +651,8 @@ uint32_t RowDisplacementTable::ensureIndex(Structure* structure, uint16_t column
             isOccupied = false;
     }
     if (!isOccupied) {
-        rowAt(base).columns.append(column);
+        if (!rowAt(base).columns.tryAppend(column))
+            return 0;
         reserve(index, emptyCellNamed(column));
         return index;
     }
@@ -604,7 +678,10 @@ void RowDisplacementTable::release(uint32_t base)
 }
 
 static constexpr uint64_t maxAddressableEntries = 1ull << (32 - HashedSlot::sizeShift);
+static constexpr uint32_t limitOfEntriesInHashedTable = 131072;
+static constexpr uint32_t limitOfCustomAccessorRecords = 4096;
 static_assert(hasOneBitSet(HashedSlotTable::initialNumberOfEntries) && HashedSlotTable::initialNumberOfEntries >= HashedSlot::ways);
+static_assert(hasOneBitSet(limitOfEntriesInHashedTable) && limitOfEntriesInHashedTable >= HashedSlotTable::initialNumberOfEntries && limitOfEntriesInHashedTable <= maxAddressableEntries);
 static_assert(!((1u << HashedSlotTable::regionShift) % (HashedSlot::ways * sizeof(HashedSlot))));
 
 static size_t sizeOfRecords(uint32_t capacity)
@@ -614,15 +691,15 @@ static size_t sizeOfRecords(uint32_t capacity)
 
 CustomAccessorTable::CustomAccessorTable(VM& vm, CacheRegistry& registry)
     : m_vm(vm)
-    , m_capacity(safeCast<uint32_t>(runtimeLimitValue(vm, LimitID::CustomAccessorRecords)))
+    , m_capacity(limitOfCustomAccessorRecords)
 {
-    m_records = static_cast<CustomAccessorRecord*>(reserveGuardedPages(sizeOfRecords(m_capacity)));
+    m_records = static_cast<CustomAccessorRecord*>(vm.aotState().pages->allocate(sizeOfRecords(m_capacity)));
     registry.add(CacheKind::WeakByKey, "CustomAccessorTable"_s, *this);
 }
 
 CustomAccessorTable::~CustomAccessorTable()
 {
-    releaseGuardedPages(m_records, sizeOfRecords(m_capacity));
+    m_vm.aotState().pages->release(m_records, sizeOfRecords(m_capacity));
 }
 
 std::optional<uint32_t> CustomAccessorTable::find(const CustomAccessorRecord& record) const
@@ -640,10 +717,8 @@ std::optional<uint32_t> CustomAccessorTable::add(const CustomAccessorRecord& rec
         index = m_freeIndexes.takeLast();
     else if (m_numberOfRecordsEverUsed < m_capacity)
         index = m_numberOfRecordsEverUsed++;
-    else {
-        countLimitHit(m_vm, LimitID::CustomAccessorRecords);
+    else
         return std::nullopt;
-    }
     m_records[index] = record;
     m_records[index].unused = 0;
     m_indexByKey.add(keyOf(record), index);
@@ -684,9 +759,9 @@ static size_t sizeOfReservation(uint32_t maxNumberOfEntries)
 HashedSlotTable::HashedSlotTable(VM& vm, CacheRegistry& registry, const CustomAccessorTable& customAccessors)
     : m_vm(vm)
     , m_customAccessors(customAccessors)
-    , m_maxNumberOfEntries(static_cast<uint32_t>(std::bit_floor(std::clamp<uint64_t>(runtimeLimitValue(vm, LimitID::HashedTableEntries), initialNumberOfEntries, maxAddressableEntries))))
+    , m_maxNumberOfEntries(limitOfEntriesInHashedTable)
     , m_numberOfEntries(initialNumberOfEntries)
-    , m_entries(static_cast<Entry*>(reservePagesOfTable(sizeOfReservation(m_maxNumberOfEntries))))
+    , m_entries(static_cast<Entry*>(reservePagesOfTable(vm, sizeOfReservation(m_maxNumberOfEntries))))
     , m_writtenRegions(asByteSpan(allEntries()), regionShift)
 {
     registry.add(CacheKind::WeakByKey, "HashedSlotTable"_s, *this);
@@ -695,7 +770,7 @@ HashedSlotTable::HashedSlotTable(VM& vm, CacheRegistry& registry, const CustomAc
 HashedSlotTable::~HashedSlotTable()
 {
     clear();
-    releaseGuardedPages(m_entries, sizeOfReservation(m_maxNumberOfEntries));
+    m_vm.aotState().pages->release(m_entries, sizeOfReservation(m_maxNumberOfEntries));
 }
 
 auto HashedSlotTable::findEntry(StructureID structureID, UniquedStringImpl* uid, uintptr_t key) const -> Entry*
@@ -715,8 +790,34 @@ auto HashedSlotTable::findChainDependentEntry(StructureID structureID, UniquedSt
     return entry && entry->get().slot.has(Slot::dependsOnChain) ? entry : nullptr;
 }
 
+NEVER_INLINE void HashedSlotTable::forgetPlacesCopiedFromSlotForStores(const Slot& slot)
+{
+    if (slot.kind != Slot::Kind::Transition && slot.kind != Slot::Kind::Field && slot.kind != Slot::Kind::FieldCreation)
+        return;
+    for (Instance* instance : m_vm.aotState().instances) {
+        PropertyCacheWords& words = instance->propertyCaches;
+        if (std::exchange(words.hasCachedSlotValues, 0))
+            zeroSpan(instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>());
+    }
+}
+
+NEVER_INLINE void HashedSlotTable::forgetOrdinaryConstructorsWith(StructureID structureID)
+{
+    for (Instance* instance : m_vm.aotState().instances)
+        instance->propertyCaches.headersOfPrototypeSlotsOfOrdinaryConstructors[PlaceOfOrdinaryConstructor::indexFor(structureID.bits())] = 0;
+}
+
+ALWAYS_INLINE_INTO_OTHER_FILES void HashedSlotTable::forgetPlacesCopiedFrom(const HashedSlot& filed)
+{
+    if (filed.access() == SlotAccess::Store) [[unlikely]]
+        forgetPlacesCopiedFromSlotForStores(filed.slot);
+    else if (filed.key == HashedSlot::keyFor(m_vm.propertyNames->hasInstanceSymbol.impl(), SlotAccess::Read) || filed.key == HashedSlot::keyFor(m_vm.propertyNames->prototype.impl(), SlotAccess::Read)) [[unlikely]]
+        forgetOrdinaryConstructorsWith(filed.slot.structureID);
+}
+
 void HashedSlotTable::erase(Entry& entry)
 {
+    forgetPlacesCopiedFrom(entry.get());
     UniquedStringImpl* uid = entry.get().uid();
     entry.clear();
     --m_numberOfFilledEntries;
@@ -743,13 +844,11 @@ HashedSlotTable::SetResult HashedSlotTable::set(UniquedStringImpl* uid, SlotAcce
             if (m_numberOfFilledEntries >= m_numberOfEntries / 2)
                 ++m_evictionsWhileHalfFull;
             erase(*entry);
-            count(m_vm, RuntimeCounterID::HashedTableEvictions);
-            if (m_numberOfEntries == m_maxNumberOfEntries)
-                countLimitHit(m_vm, LimitID::HashedTableEntries);
         }
         uid->ref();
         ++m_numberOfFilledEntries;
-    }
+    } else
+        forgetPlacesCopiedFrom(entry->get());
     entry->set(m_writtenRegions, HashedSlot { slot, key });
     if (m_numberOfEntries >= m_maxNumberOfEntries || (m_evictionsWhileHalfFull <= m_numberOfEntries / 64 && m_evictionsSinceCollection <= m_numberOfEntries / 4))
         return SetResult::Stored;
@@ -779,7 +878,6 @@ void HashedSlotTable::grow()
     }
     m_evictionsWhileHalfFull = 0;
     m_evictionsSinceCollection = 0;
-    count(m_vm, RuntimeCounterID::HashedTableGrowths);
 }
 
 const Slot* HashedSlotTable::find(StructureID structureID, UniquedStringImpl* uid, SlotAccess access) const
@@ -849,6 +947,14 @@ static std::optional<uint32_t> columnForNumber(std::optional<uint32_t> identifie
     return identifierNumber && RowDisplacementTable::hasColumn(*identifierNumber) ? identifierNumber : std::nullopt;
 }
 
+static std::optional<uint32_t> frontColumnFor(VM& vm, const CachedName& name)
+{
+    std::optional<uint32_t> column = columnForNumber(name.identifierNumber);
+    if (column && name.uid->isSymbol() && vm.aotState().identifiers->isSymbolOfRealm(*column))
+        return std::nullopt;
+    return column;
+}
+
 static void setBitOfName(auto& bits, uint32_t identifierNumber)
 {
     bits[identifierNumber / 64] |= uint64_t { 1 } << identifierNumber % 64;
@@ -859,11 +965,11 @@ VMPropertyCaches::VMPropertyCaches(VM& vm)
     , m_customAccessors(vm, *vm.aotState().caches)
     , m_front(vm, *vm.aotState().caches, m_customAccessors)
     , m_hashedTable(vm, *vm.aotState().caches, m_customAccessors)
+    , m_tables(*static_cast<Tables*>(vm.aotState().pages->allocate(sizeof(Tables))))
 {
     vm.aotState().caches->add(CacheKind::WeakByKey, "absence filters"_s, *this);
 }
 
-// A filter names its Structure by its number, and the number of one that has ended goes to another.
 size_t VMPropertyCaches::removeDeadEntries(VM& vm, CollectionScope)
 {
     size_t numberRemoved = 0;
@@ -884,6 +990,7 @@ VMPropertyCaches::~VMPropertyCaches()
         if (entry.uid)
             entry.uid->deref();
     }
+    m_vm.aotState().pages->release(&m_tables, sizeof(Tables));
 }
 
 void VMPropertyCaches::rememberNameOfText(UniquedStringImpl* uid)
@@ -918,22 +1025,37 @@ static bool listsEveryNameInItsTable(Structure* structure)
 void VMPropertyCaches::didCreateInstance(Instance& instance)
 {
     if (m_hasInstance && !m_isSharedByInstances) {
-        m_isSharedByInstances = m_vm.aotState().instances.size() > 1;
+        m_isSharedByInstances = std::ranges::count_if(m_vm.aotState().instances, [&](const Instance* each) {
+            return !each->globalObject || each->globalObject->microtaskRunnability() != QueuedTaskResult::Discard;
+        }) > 1;
         m_front.clear();
         m_hashedTable.clear();
-        for (Instance* earlier : m_vm.aotState().instances)
+        for (Instance* earlier : m_vm.aotState().instances) {
+            if (!earlier->propertyCaches.hasRunSinceClear)
+                continue;
             zeroSpan(earlier->keyedValuePlaces());
+            zeroSpan(earlier->acceptedKindsOfValues());
+            earlier->propertyCaches.hasCachedSlotValues = 0;
+            earlier->propertyCaches.accessTable.forgetEverything();
+            if (StringKeyCache* keys = earlier->state ? earlier->state->stringKeys.getIfCreated() : nullptr)
+                keys->forgetPlacesOfPairs();
+            bool isRetired = earlier->globalObject && earlier->globalObject->microtaskRunnability() == QueuedTaskResult::Discard;
+            earlier->propertyCaches.hasRunSinceClear = !isRetired || m_vm.entryScope || m_vm.topEntryFrame;
+        }
     }
     m_hasInstance = true;
-    if (instance.globalObject)
+    instance.propertyCaches.hasRunSinceClear = true;
+    if (instance.globalObject) {
+        m_filteredObjects.add(instance.globalObject->objectPrototype());
         didChangeObjectPrototype(instance.globalObject->objectPrototype(), nullptr);
+    }
     publishWords(instance);
 }
 
 void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull)
 {
     Structure* structure = prototype->structure();
-    const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
+    const ProgramIdentifiers* identifiers = identifiersOfRealm(m_vm, structure->realm());
     if (!identifiers || !listsEveryNameInItsTable(structure) || !structure->storedPrototype().isNull()) {
         m_namesOfObjectPrototypes.fill(UINT64_MAX);
         return;
@@ -953,11 +1075,12 @@ void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStri
     });
 }
 
-size_t VMPropertyCaches::maxSizeOfPagesAtStart(const Image& image)
+size_t VMPropertyCaches::maxSizeOfPagesAtStart(const Image&)
 {
-    return sizeOfRecords(safeCast<uint32_t>(runtimeLimitValue(&image, LimitID::CustomAccessorRecords)))
-        + PagesOfPlanes(RowDisplacementTable::initialNumberOfBases).size
-        + sizeOfReservation(static_cast<uint32_t>(std::bit_floor(std::clamp<uint64_t>(runtimeLimitValue(&image, LimitID::HashedTableEntries), HashedSlotTable::initialNumberOfEntries, maxAddressableEntries))));
+    return roundUpToMultipleOf(pageSize(), sizeof(Tables))
+        + sizeOfRecords(limitOfCustomAccessorRecords)
+        + RowDisplacementTable::sizeOfPagesAtStart(limitOfBasesInFrontTable)
+        + sizeOfReservation(limitOfEntriesInHashedTable);
 }
 
 void VMPropertyCaches::publishWords(Instance& instance) const
@@ -971,6 +1094,7 @@ void VMPropertyCaches::publishWords(Instance& instance) const
     words.customAccessors = m_customAccessors.records();
     words.absenceFilters = const_cast<AbsenceFilter*>(m_absenceFilters.data());
     words.absenceFilterGenerationForStores = m_absenceFilterGenerationForStores;
+    words.changesUnderNamesOnChains = m_changesUnderNamesOnChains;
     words.namesChangedOnChains = m_namesChangedOnChains.data();
     words.namesOfObjectPrototypes = m_namesOfObjectPrototypes.data();
     words.missesOfPairs = const_cast<uint8_t*>(m_missesOfPairs.data());
@@ -1006,11 +1130,11 @@ static bool addOwnNamesThatStopStores(VM& vm, const ProgramIdentifiers& identifi
         return !compiled->hasExtraProperties() || addNamesInTable(compiled->extraPropertiesStructure());
     }
     if (object->classInfo() == ClassPrototype::info()) {
-        Instance* instance = Instance::of(structure->realm());
+        Instance* instance = Instance::owning(object);
         State* state = instance ? instance->state : nullptr;
         if (!state || object->butterfly())
             return false;
-        const LayoutData* classLayout = state->objects->classes.classWithIndex(uncheckedDowncast<ClassPrototype>(object)->classIndex());
+        const LayoutData* classLayout = state->objects->classes.classOf(*uncheckedDowncast<ClassPrototype>(object));
         for (const MethodData& method : classLayout->methods()) {
             if (method.flags & methodHasComputedName)
                 return false;
@@ -1027,22 +1151,53 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
     Structure* structure = object->structure();
     if (structure->hasPolyProto() || structure->typeInfo().overridesGetPrototype())
         return;
+    static constexpr unsigned maxObjectsAbove = 8;
+    AbsenceFilter& filter = m_absenceFilters[AbsenceFilter::indexFor(structure->id().bits())];
+    if (filter.structureID == structure->id().bits() && filter.generationForStores == m_absenceFilterGenerationForStores && filter.changesUnderNames == m_changesUnderNamesOnChains)
+        return;
     for (JSObject* holder = structure->storedPrototypeObject(); holder; holder = holder->getPrototypeDirect().getObject())
         Object::ensureStructureForExtraPropertiesIfNeeded(m_vm, holder);
-    AOT_THRESHOLD(unsigned, maxObjectsAbove, 8);
-    AbsenceFilter& filter = m_absenceFilters[AbsenceFilter::indexFor(structure->id().bits())];
-    if (filter.structureID == structure->id().bits() && filter.generationForStores == m_absenceFilterGenerationForStores)
-        return;
-    const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
+    const ProgramIdentifiers* identifiers = identifiersOfRealm(m_vm, globalObject);
     if (!identifiers || structure->realm() != globalObject)
         return;
-    AbsenceFilter filled { structure->id().bits(), m_absenceFilterGenerationForStores, { }, 0 };
+    AbsenceFilter filled { structure->id().bits(), m_absenceFilterGenerationForStores, { }, m_changesUnderNamesOnChains, 0 };
     unsigned numberOfObjects = 0;
     for (JSObject* holder = object->getPrototypeDirect().getObject(); holder; holder = holder->getPrototypeDirect().getObject()) {
         if (++numberOfObjects > maxObjectsAbove || !addOwnNamesThatStopStores(m_vm, *identifiers, holder, filled))
             return;
+        m_filteredObjects.add(holder);
+    }
+    if (const Object* receiver = compiledObjectOrNull(object)) {
+        AbsenceFilter ofAllNames = std::exchange(filled, AbsenceFilter { filled.structureID, filled.generationForStores, { }, filled.changesUnderNames, 0 });
+        for (const FieldData& field : receiver->layout().fields()) {
+            if (ofAllNames.letsStoresPass(field.name) || !FieldTableEntry::hasColumn(field.name))
+                continue;
+            ChainWalk walk = walkChain({ globalObject, structure, object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, identifiersOfRealm(m_vm, structure->realm())->identifier(field.name).impl());
+            if (storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
+                filled.addNameThatStopsStores(field.name);
+        }
     }
     filter = filled;
+}
+
+bool VMPropertyCaches::storeCreatesOwnField(const Object& object, uint32_t name) const
+{
+    if (!FieldTableEntry::hasColumn(name))
+        return false;
+    if (object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
+        return !mayBeNameOfObjectPrototype(name);
+    const AbsenceFilter& filter = absenceFilterFor(object.structureID());
+    return filter.structureID == object.structureID().bits() && filter.generationForStores == m_absenceFilterGenerationForStores && filter.letsStoresPass(name)
+        && (filter.changesUnderNames == m_changesUnderNamesOnChains || !wasChangedOnSomeChain(name));
+}
+
+bool VMPropertyCaches::addFilterAndCheckStoreCreatesOwnField(JSGlobalObject* globalObject, Object& object, uint32_t name)
+{
+    if (!FieldTableEntry::hasColumn(name))
+        return false;
+    if (!object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
+        fileAbsenceFilterForStores(globalObject, &object);
+    return storeCreatesOwnField(object, name);
 }
 
 static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
@@ -1054,9 +1209,9 @@ static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
         if (field && object->isInSlot(*field))
             return object->attributesOf(*field) & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || field->slot.representation() == SlotRepresentation::DeferredClosure;
         isField = field;
-        JSObject* extra = extraPropertiesIfMade(*object);
+        JSObject* extra = extraPropertiesIfCreated(*object);
         if (!extra)
-            return hasPendingStars(*object);
+            return true;
         structure = extra->structure();
         if (structure->isUncacheableDictionary())
             return true;
@@ -1066,25 +1221,54 @@ static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
     std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(uid, attributes);
     if (!offset)
         return true;
-    return isValidOffset(*offset) && (isField || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
+    return !isValidOffset(*offset) || isField || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue;
 }
 
-void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull)
+void VMPropertyCaches::didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull)
 {
-    const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
+    const ProgramIdentifiers* identifiers = identifiersOfRealm(m_vm, changed ? changed->structure()->realm() : nullptr);
     if (uidOrNull && identifiers) {
         std::optional<uint32_t> number = identifiers->numberOf(uidOrNull);
-        if (number && FieldTableEntry::hasColumn(*number) && mayStopStores(changed, uidOrNull))
-            setBitOfName(m_namesChangedOnChains, *number);
+        if (!number && uidOrNull->isSymbol()) {
+            for (Instance* instance : m_vm.aotState().instances) {
+                number = identifiersOf(*instance).numberOf(uidOrNull);
+                if (number)
+                    break;
+            }
+        }
+        if (!number || !FieldTableEntry::hasColumn(*number) || !mayStopStores(changed, uidOrNull))
+            return;
+        setBitOfName(m_namesChangedOnChains, *number);
+        if (!++m_changesUnderNamesOnChains) [[unlikely]]
+            m_absenceFilters.fill(AbsenceFilter { });
     } else if (!++m_absenceFilterGenerationForStores) [[unlikely]] {
         m_absenceFilters.fill(AbsenceFilter { });
         m_absenceFilterGenerationForStores = 1;
     }
     for (Instance* instance : m_vm.aotState().instances) {
         instance->propertyCaches.absenceFilterGenerationForStores = m_absenceFilterGenerationForStores;
-        if (std::exchange(instance->propertyCaches.placesSayAbsence, 0))
-            zeroSpan(instance->keyedValuePlaces().first<KeyedValuePlace::numberOfPlacesPerAccess>());
+        instance->propertyCaches.changesUnderNamesOnChains = m_changesUnderNamesOnChains;
     }
+}
+
+void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull)
+{
+    if (!changed || m_filteredObjects.mayContain(changed))
+        didChangeFilteredObject(changed, uidOrNull);
+    for (Instance* instance : m_vm.aotState().instances) {
+        instance->propertyCaches.accessTable.didChangeObjectOnSomeChain();
+        if (std::exchange(instance->propertyCaches.placesSayAbsence, 0)) {
+            zeroSpan(instance->keyedValuePlaces().first<KeyedValuePlace::numberOfPlacesPerAccess>());
+            if (!(++instance->propertyCaches.timesAbsencesWereForgotten & StringKeyCache::KeyOfPair::maskBelowOtherRead)) [[unlikely]]
+                StringKeyCache::forgetPlacesOfPairs(*instance);
+        }
+    }
+}
+
+void VMPropertyCaches::didReplaceValueOnObjectOfSomeChain(JSObject* changed, UniquedStringImpl* uid)
+{
+    if (m_filteredObjects.mayContain(changed))
+        didChangeFilteredObject(changed, uid);
 }
 
 void VMPropertyCaches::didStartWatchingReplacements()
@@ -1099,7 +1283,7 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
 {
     StructureID id = structure->id();
     ASSERT(slot.structureID == id);
-    if (std::optional<uint32_t> column = hasFrontCells(access) ? columnForNumber(name.identifierNumber) : std::nullopt) {
+    if (std::optional<uint32_t> column = hasFrontCells(access) ? frontColumnFor(m_vm, name) : std::nullopt) {
         bool isSet = m_front.trySet(structure, *column, access, slot);
         if (m_front.takeDidMovePlanes()) {
             for (Instance* instance : m_vm.aotState().instances)
@@ -1117,8 +1301,7 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
         }
         m_front.remove(id, *column, access);
     }
-    // An access by value finds what this table holds. The cells in front are for accesses by name alone. A store that makes the field finds nothing there that the library keeps in a form of its own.
-    if (slot.kind != Slot::Kind::FieldCreation && isPreparedBeforeLookups(m_vm, name.uid))
+    if (access == SlotAccess::Read && isPreparedBeforeLookups(m_vm, name.uid))
         return;
     if (m_hashedTable.set(name.uid, access, slot) == HashedSlotTable::SetResult::Stored)
         return;
@@ -1135,6 +1318,12 @@ std::optional<Slot> VMPropertyCaches::find(StructureID id, const CachedName& nam
     if (const Slot* slot = m_hashedTable.find(id, name.uid, access))
         return *slot;
     return std::nullopt;
+}
+
+bool VMPropertyCaches::holdsInFrontRows(StructureID id, const CachedName& name, SlotAccess access) const
+{
+    std::optional<uint32_t> column = hasFrontCells(access) ? columnForNumber(name.identifierNumber) : std::nullopt;
+    return column && m_front.find(id, *column, access);
 }
 
 void VMPropertyCaches::remove(StructureID id, const CachedName& name, SlotAccess access)
@@ -1162,6 +1351,76 @@ bool VMPropertyCaches::hasChainDependent(VM&, uint32_t structureIDBits, UniquedS
     return (column && m_front.hasChainDependentCell(id, *column)) || m_hashedTable.hasChainDependentEntry(id, uid);
 }
 
+static std::optional<Slot> slotBehindCreatedMember(const Slot& slot, const CreatedMembers& created, UniquedStringImpl* uid, PropertyOffset offset, unsigned attributes)
+{
+    if (!slot.structureID || slot.kind == Slot::Kind::Uncacheable)
+        return std::nullopt;
+    Structure* structure = slot.structureID.decode();
+    if (!structure->isObject() || !structure->hasMonoProto())
+        return std::nullopt;
+    JSObject* prototype = created.prototype;
+    for (JSObject* object = structure->storedPrototypeObject(); object != prototype; object = object->getPrototypeDirect().getObject()) {
+        if (!object)
+            return std::nullopt;
+        if (object->classInfo() == ClassPrototype::info() && ClassPrototype::hasMember(object, uid))
+            return slot;
+    }
+    bool isValue = slot.kind == Slot::Kind::Value;
+    if ((!isValue && slot.kind != Slot::Kind::Getter && slot.kind != Slot::Kind::Setter) || slot.has(Slot::isOwn) || slot.holder->structure() != created.structureOfDeclaredMemberHolders)
+        return std::nullopt;
+    JSValue kept = valueAtOffset(asObject(slot.holder), slot.offsetInStorage());
+    JSValue made = prototype->getDirect(offset);
+    if (isValue) {
+        if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue || kept != made)
+            return std::nullopt;
+    } else {
+        if (!(attributes & PropertyAttribute::Accessor))
+            return std::nullopt;
+        auto* keptAccessor = uncheckedDowncast<GetterSetter>(kept.asCell());
+        auto* madeAccessor = uncheckedDowncast<GetterSetter>(made.asCell());
+        if (keptAccessor->getter() != madeAccessor->getter() || keptAccessor->setter() != madeAccessor->setter())
+            return std::nullopt;
+    }
+    Slot moved = Slot::createInStorage(slot.structureID, slot.kind, slot.flags & ~Slot::isOutOfLine, prototype, offset);
+    if (moved.kind != slot.kind)
+        return std::nullopt;
+    return moved;
+}
+
+static bool belongsToOneObject(Structure*);
+
+bool VMPropertyCaches::keepChainDependent(VM& vm, uint32_t structureIDBits, UniquedStringImpl* uid, const CreatedMembers& created)
+{
+    ASSERT(uid);
+    ASSERT(vm.heap.isDeferred());
+    unsigned attributes = 0;
+    PropertyOffset offset = created.prototype->structure()->get(vm, uid, attributes);
+    if (!isValidOffset(offset))
+        return true;
+    StructureID id = std::bit_cast<StructureID>(structureIDBits);
+    std::optional<uint16_t> column = m_columnsByNameAddress.getOptional(uid);
+    CachedName name { uid, column ? std::optional<uint32_t>(*column) : std::nullopt };
+    bool keepsSome = false;
+    for (SlotAccess access : allSlotAccesses) {
+        std::optional<Slot> slot = find(id, name, access);
+        if (!slot || !slot->has(Slot::dependsOnChain))
+            continue;
+        std::optional<Slot> kept = slotBehindCreatedMember(*slot, created, uid, offset, attributes);
+        if (!kept) {
+            if (column && hasFrontCells(access))
+                m_front.remove(id, *column, access);
+            m_hashedTable.remove(id, uid, access);
+            continue;
+        }
+        keepsSome = true;
+        if (kept->headerBits() == slot->headerBits() && kept->payloadBits() == slot->payloadBits())
+            continue;
+        Structure* structure = id.decode();
+        set(structure, belongsToOneObject(structure) ? CachedName { uid, std::nullopt } : name, access, *kept);
+    }
+    return keepsSome;
+}
+
 void initializePropertyCacheWords(Instance& instance)
 {
     VM& vm = *instance.vm;
@@ -1172,6 +1431,8 @@ void initializePropertyCacheWords(Instance& instance)
     Structure* structureOfNoReceiver = vm.structureStructure.get();
     words.numberStructureID = (numberStructure ? numberStructure : structureOfNoReceiver)->id().bits();
     words.booleanStructureID = (booleanStructure ? booleanStructure : structureOfNoReceiver)->id().bits();
+    uintptr_t wordsToUndefined = (std::bit_cast<uintptr_t>(instance.state->objectThatHoldsUndefined->inlineStorage()) - vm.heap.cage().base()) / sizeof(EncodedJSValue);
+    words.wordOfCageThatHoldsUndefined = wordsToUndefined <= UINT32_MAX ? static_cast<uint32_t>(wordsToUndefined) : 0;
     words.hasInstanceUID = vm.propertyNames->hasInstanceSymbol.impl();
     words.prototypeUID = vm.propertyNames->prototype.impl();
     words.lengthUID = vm.propertyNames->length.impl();
@@ -1179,50 +1440,64 @@ void initializePropertyCacheWords(Instance& instance)
     words.lookupOfOrdinaryObjects = std::bit_cast<const void*>(JSFinalObject::info()->methodTable.getOwnPropertySlot);
     words.lookupOfArrays = std::bit_cast<const void*>(JSArray::info()->methodTable.getOwnPropertySlot);
     words.lookupOfFunctions = std::bit_cast<const void*>(JSFunction::info()->methodTable.getOwnPropertySlot);
-    auto setNumberOfName = [&](TrapOfProxy trap, const Identifier& name) {
-        words.numbersOfNamesOfTraps[static_cast<unsigned>(trap)] = vm.aotState().identifiers->numberOf(name.impl()).value_or(0);
+    const ProgramIdentifiers* identifiers = vm.aotState().identifiers.get();
+    auto setNumberOfNameOfTrap = [&](TrapOfProxy trap, const Identifier& name) {
+        words.numbersOfNamesOfTraps[static_cast<unsigned>(trap)] = identifiers ? identifiers->numberOf(name.impl()).value_or(0) : 0;
     };
-    setNumberOfName(TrapOfProxy::Get, vm.propertyNames->get);
-    setNumberOfName(TrapOfProxy::Has, vm.propertyNames->has);
-    setNumberOfName(TrapOfProxy::Set, vm.propertyNames->set);
+    setNumberOfNameOfTrap(TrapOfProxy::Get, vm.propertyNames->get);
+    setNumberOfNameOfTrap(TrapOfProxy::Has, vm.propertyNames->has);
+    setNumberOfNameOfTrap(TrapOfProxy::Set, vm.propertyNames->set);
     words.defaultHasInstanceFunction = globalObject->functionProtoHasInstanceSymbolFunction();
+    words.holderOfDefaultHasInstanceFunction = globalObject->functionPrototype();
     const Image& image = *vm.aotState().image;
     if (image.sharedCodeCopies().empty())
         return;
     uint8_t* sharedCode = const_cast<uint8_t*>(image.sharedCodeCopy(0));
     std::span offsets = image.slotHandlerOffsets();
-    std::span handlers(&instance.slotHandlers()[0][0], numberOfSlotHandlerTables * numberOfSlotKindsWithHandlers);
+    std::span handlers(&instance.slotHandlers()[0][0], sizeof(SlotHandlers) / sizeof(void*));
     RELEASE_ASSERT(offsets.size() == handlers.size());
     for (size_t index = 0; index < handlers.size(); ++index)
         handlers[index] = offsets[index] == offsetOfAbsentStub ? nullptr : sharedCode + offsets[index];
 }
 
-LazyPropertyCaches::LazyPropertyCaches(State& state)
+template<typename T>
+CreatedAtFirstUse<T>::CreatedAtFirstUse(State& state)
     : m_state(state)
+    , m_value(state.tableArena)
 {
 }
 
-LazyPropertyCaches::~LazyPropertyCaches() = default;
+template<typename T>
+CreatedAtFirstUse<T>::~CreatedAtFirstUse() = default;
 
-NEVER_INLINE PropertyCaches& LazyPropertyCaches::create()
+template<typename T>
+NEVER_INLINE T& CreatedAtFirstUse<T>::create()
 {
-    m_caches = makeUnique<PropertyCaches>(m_state);
-    return *m_caches;
+    return m_value.make(m_state);
 }
+
+template class CreatedAtFirstUse<PropertyCaches>;
+template class CreatedAtFirstUse<StringKeyCache>;
 
 PropertyCaches::PropertyCaches(State& state)
     : m_state(state)
     , m_vm(*state.instance.vm)
-    , m_tables(*m_vm.aotState().propertyCaches)
+    , m_tables(*state.instance.vm->aotState().propertyCaches)
     , m_tablesOwnerID(state.chainDependents->addOwner(m_tables))
-    , m_siteCaches(*state.siteCaches)
-    , m_watchedValues(state)
-    , m_stringKeys(state)
+    , m_siteCaches(state, m_tables.customAccessors())
+    , m_answersAtSites(state, m_siteCaches)
+    , m_structuresBelowBuiltinClasses(state)
 {
     state.caches->add(CacheKind::StrongRoots, "Structures of additions in an Eden collection"_s, *this);
     state.caches->addObserver("PropertyCaches"_s, *this);
-    if (Options::aotCountsPath())
-        m_countedFilings = makeUnique<UncheckedKeyHashSet<uint64_t>>();
+    state.caches->addClearedEachCollection("exits of fields"_s, asMutableByteSpan(std::span { m_fieldExits }));
+    state.caches->addClearedEachCollection("returns of fields"_s, asMutableByteSpan(std::span { m_fieldReturns }));
+    state.caches->addClearedEachCollection("extra properties added"_s, asMutableByteSpan(std::span { m_addedExtraProperties }));
+    state.caches->addClearedEachCollection("ordinary constructors"_s, asMutableByteSpan(std::span { state.instance.propertyCaches.headersOfPrototypeSlotsOfOrdinaryConstructors }));
+    state.caches->add(CacheKind::ClearedEachCollection, "exits of fields beside their table"_s, m_fieldExitsBesideTable);
+    state.caches->add(CacheKind::ClearedEachCollection, "extra properties added beside their table"_s, m_addedExtraPropertiesBesideTable);
+    state.instance.propertyCaches.fieldExits = m_fieldExits.data();
+    state.instance.propertyCaches.fieldReturns = m_fieldReturns.data();
 }
 
 PropertyCaches::~PropertyCaches() = default;
@@ -1230,6 +1505,8 @@ PropertyCaches::~PropertyCaches() = default;
 void PropertyCaches::didAddProperty(Structure* before, Structure* after)
 {
     if (before == after || after->isDictionary())
+        return;
+    if (const CompiledStructure* compiled = compiledObjectStructureOrNull(after); compiled && compiled->hasOutOfLineKeyOrder())
         return;
     Locker locker { m_state.caches->lock() };
     m_additionsSinceCollection.append({ before->id(), after->id() });
@@ -1254,6 +1531,7 @@ void PropertyCaches::prepareHoldersBeforeLookupsUnder(Symbol* symbol, JSObject* 
 {
     Locker locker { m_state.caches->lock() };
     m_preparationsBeforeLookups.set(&symbol->uid(), PreparationBeforeLookups { symbol, function });
+    symbol->setPerCellBit(true);
 }
 
 template<typename Visitor>
@@ -1296,12 +1574,12 @@ void PropertyCaches::ensureChangesAreReported(std::span<JSObject* const> objects
 
 CachedName PropertyCaches::nameOf(uint32_t identifierNumber) const
 {
-    return { m_vm.aotState().identifiers->identifier(identifierNumber).impl(), identifierNumber };
+    return { identifiersOf(m_state.instance).uid(identifierNumber), identifierNumber };
 }
 
 CachedName PropertyCaches::nameOf(UniquedStringImpl* uid) const
 {
-    return { uid, m_vm.aotState().identifiers->numberOf(uid) };
+    return { uid, identifiersOf(m_state.instance).numberOf(uid) };
 }
 
 bool PropertyCaches::canCache(Structure* structure, const PropertyAnswer& answer) const
@@ -1322,7 +1600,7 @@ static bool belongsToOneObject(Structure* structure)
     if (structure->isDictionary() || structure->typeInfo().type() == GlobalProxyType)
         return true;
     const CompiledStructure* compiled = compiledObjectStructureOrNull(structure);
-    return compiled && compiled->extraPropertiesStructure() && !compiled->listsEveryExtraProperty();
+    return compiled && ((compiled->extraPropertiesStructure() && !compiled->listsEveryExtraProperty()) || compiled->hasKeyOrderOfOneObject());
 }
 
 void PropertyCaches::cache(const CachedAccess& access, const PropertyAnswer& answer)
@@ -1333,12 +1611,8 @@ void PropertyCaches::cache(const CachedAccess& access, const PropertyAnswer& ans
     }
     ASSERT(answer.access == access.access);
     Structure* structure = access.structure;
-    if (!canCache(structure, answer)) {
-        count(m_state.instance, RuntimeCounterID::AnswersNotFiled);
+    if (!canCache(structure, answer))
         return;
-    }
-    if (m_countedFilings) [[unlikely]]
-        countFiling(access);
     if (structure == m_state.instance.globalObject->numberObjectStructureConcurrently())
         m_state.instance.propertyCaches.numberStructureID = structure->id().bits();
     else if (structure == m_state.instance.globalObject->booleanObjectStructureConcurrently())
@@ -1348,224 +1622,15 @@ void PropertyCaches::cache(const CachedAccess& access, const PropertyAnswer& ans
     m_tables.set(structure, belongsToOneObject(structure) ? CachedName { access.name.uid, std::nullopt } : access.name, access.access, slot);
     if (slot.has(Slot::dependsOnChain))
         m_state.chainDependents->add(answer.changeableObjects.span(), { access.name.uid, structure->id().bits(), m_tablesOwnerID });
-    if (access.site)
-        m_siteCaches.fill(access.site, slot, { access.name.uid, access.access, answer.changeableObjects.span() });
     if (answer.newStructure)
         didAddProperty(structure, answer.newStructure);
+    if (access.access == SlotAccess::Read)
+        keepIfBelowBuiltinClass(structure);
 }
 
-void PropertyCaches::countFiling(const CachedAccess& access)
+static unsigned hashOfName(UniquedStringImpl* uidOrNull)
 {
-    StructureID id = access.structure->id();
-    uint64_t pair = (static_cast<uint64_t>(id.bits()) << 32 | WTF::PtrHash<UniquedStringImpl*>::hash(access.name.uid)) + static_cast<uint64_t>(access.access) + 1;
-    if (m_countedFilings->add(pair).isNewEntry)
-        return;
-    count(m_state.instance, RuntimeCounterID::PairsFiledAgain);
-    static constexpr std::array kindNames {
-#define AOT_NAME_SLOT_KIND(name, payload, location, presence, kindFlag) #name ""_s,
-        FOR_EACH_AOT_SLOT_KIND(AOT_NAME_SLOT_KIND)
-#undef AOT_NAME_SLOT_KIND
-    };
-    std::optional<Slot> present = m_tables.find(id, nameOf(access.name.uid), access.access);
-    if (!present) {
-        countNamed(access.access == SlotAccess::Read ? "read filed again"_s : "other access filed again"_s, access.name.uid);
-        return;
-    }
-    count(m_state.instance, RuntimeCounterID::PairsFiledAgainWhilePresent);
-    countNamed(kindNames[static_cast<size_t>(present->kind)], access.name.uid);
-}
-
-void PropertyCaches::countNamed(ASCIILiteral what, UniquedStringImpl* name)
-{
-    if (!m_countedFilings)
-        return;
-    ++m_namedCounts.add(makeString(what, ':', StringView(name)), 0).iterator->value;
-}
-
-static ASCIILiteral describeReceiverOfMiss(JSValue receiver)
-{
-    if (!receiver.isCell())
-        return "primitive"_s;
-    JSCell* cell = receiver.asCell();
-    if (PropertyWalk::isCompiledObject(cell)) {
-        auto& structure = *uncheckedDowncast<CompiledStructure>(cell->structure());
-        if (structure.hasExtraProperties())
-            return structure.hasOtherPrototype() ? "compiled object with extra properties and another prototype"_s : "compiled object with extra properties"_s;
-        return structure.hasOtherPrototype() ? "compiled object with another prototype"_s : "compiled object as its layout says"_s;
-    }
-    if (cell->type() == FinalObjectType)
-        return cell->structure()->isDictionary() ? "ordinary object, dictionary"_s : "ordinary object"_s;
-    if (cell->type() == SlimClosureType) {
-        auto* closure = uncheckedDowncast<SlimClosure>(cell);
-        if (closure->isBound())
-            return closure->perCellBit() ? "slim closure, bound, name read before"_s : "slim closure, bound"_s;
-        return closure->perCellBit() ? "slim closure, name read before"_s : "slim closure"_s;
-    }
-    return cell->classInfo()->className;
-}
-
-static ASCIILiteral describeFieldOfMiss(JSValue receiver, UniquedStringImpl* name)
-{
-    Object* object = compiledObjectOrNull(receiver);
-    if (!object)
-        return ""_s;
-    const FieldData* field = object->fieldNamed(object->state(), name);
-    if (!field)
-        return ", no such field"_s;
-    if (field->isAccessor())
-        return ", an accessor field"_s;
-    return object->isInSlot(*field) ? ", a field in its slot"_s : ", a field outside its slot"_s;
-}
-
-// For the counts alone: why answerFromObjectsAndReturn(), the walk of the stubs over the receiver and the objects above it, left a name to the run time. The tests are those of the stub, in its order.
-static ASCIILiteral whyObjectsDidNotAnswer(VM& vm, JSValue receiver, UniquedStringImpl* uid)
-{
-    constexpr unsigned flagsOfOwnLookup = OverridesGetOwnPropertySlot | OverridesGetPrototype;
-    if (!receiver.isCell())
-        return "the receiver is no cell"_s;
-    if (!receiver.isObject())
-        return "the receiver is a cell and no object"_s;
-    if (!uid->length())
-        return "the empty name"_s;
-    bool isReceiver = true;
-    auto at = [&](ASCIILiteral ofReceiver, ASCIILiteral ofObjectAbove) { return isReceiver ? ofReceiver : ofObjectAbove; };
-    enum class InTable : uint8_t { Absent, Value, Stops };
-    ASCIILiteral stop;
-    bool hasElementsThatDoNotMatter = false;
-    auto askPropertyTable = [&](JSObject* object, ASCIILiteral hasElements, ASCIILiteral hasNoTable, ASCIILiteral isCustom, ASCIILiteral isAccessor) {
-        if (object->indexingType() & IndexingShapeMask && !hasElementsThatDoNotMatter) {
-            stop = hasElements;
-            return InTable::Stops;
-        }
-        Structure* structure = object->structure();
-        if (structure->seenProperties().ruleOut(CompactPtr<UniquedStringImpl>::encode(uid)))
-            return InTable::Absent;
-        PropertyTable* table = *std::bit_cast<PropertyTable* const*>(std::bit_cast<const uint8_t*>(structure) + Structure::propertyTableUnsafeOffset());
-        if (!table) {
-            stop = hasNoTable;
-            return InTable::Stops;
-        }
-        auto [offset, attributes] = table->get(uid);
-        if (!isValidOffset(offset))
-            return InTable::Absent;
-        if (attributes & PropertyAttribute::CustomAccessorOrValue) {
-            stop = isCustom;
-            return InTable::Stops;
-        }
-        if (attributes & PropertyAttribute::Accessor) {
-            stop = isAccessor;
-            return InTable::Stops;
-        }
-        return InTable::Value;
-    };
-    for (JSObject* object = asObject(receiver);; isReceiver = false) {
-        bool asksPropertyTable = !(object->inlineTypeFlags() & flagsOfOwnLookup);
-        hasElementsThatDoNotMatter = false;
-        JSType type = object->type();
-        if (!asksPropertyTable) {
-            if (uid->isSymbol())
-                return at("a symbol, and the receiver has a lookup of its own"_s, "a symbol, and an object above has a lookup of its own"_s);
-            if (type == CompiledObjectType) {
-                Object& compiled = *uncheckedDowncast<Object>(object);
-                std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(uid);
-                if (number && *number > FieldTableEntry::maxName)
-                    return at("the name has no column, and the receiver is a compiled object"_s, "the name has no column, and an object above is a compiled object"_s);
-                if (const FieldData* field = number ? compiled.fieldNamed(compiled.state(), uid) : nullptr) {
-                    if (field->isPrivate())
-                        return "a private field"_s;
-                    if (compiled.isInSlot(*field)) {
-                        if (field->isAccessor())
-                            return at("an accessor field of the receiver, in its slot"_s, "an accessor field of an object above, in its slot"_s);
-                        if (field->slot.representation() == SlotRepresentation::DeferredClosure)
-                            return at("a closure of the receiver that is not made yet"_s, "a closure of an object above that is not made yet"_s);
-                        return at("a field of the receiver in its slot, in a form that the stub does not read"_s, "a field of an object above in its slot, in a form that the stub does not read"_s);
-                    }
-                    if (field->flags & fieldMayExistWithoutStorage)
-                        return at("a field of the receiver that may exist without storage"_s, "a field of an object above that may exist without storage"_s);
-                }
-                if (compiled.hasExtraProperties()) {
-                    JSObject* extra = compiled.compiledStructure().extraPropertiesSlot() ? compiled.extraProperties() : nullptr;
-                    if (!extra || extra->type() != FinalObjectType)
-                        return at("the extra properties of the receiver are not where the stub looks"_s, "the extra properties of an object above are not where the stub looks"_s);
-                    switch (askPropertyTable(extra, "the extra properties have elements"_s, at("the extra properties of the receiver have no property table"_s, "the extra properties of an object above have no property table"_s), "an extra property is a custom accessor or value"_s, "an extra property is an accessor: the stub could not call the getter"_s)) {
-                    case InTable::Stops:
-                        return stop;
-                    case InTable::Value:
-                        return "an extra property that is a plain value: NOTHING STOOD IN THE WAY"_s;
-                    case InTable::Absent:
-                        break;
-                    }
-                }
-            } else if (type == CompiledClosureType || isSlimClosureType(type)) {
-                if (uid == vm.propertyNames->name.impl() || uid == vm.propertyNames->length.impl() || uid == vm.propertyNames->prototype.impl())
-                    return at("name, length or prototype of a function object"_s, "name, length or prototype, and a function object is above"_s);
-                if (type == CompiledClosureType && uncheckedDowncast<Closure>(object)->kind().isConstructor)
-                    return at("the receiver is a class object"_s, "a class object is above"_s);
-                asksPropertyTable = type != SlimClosureType;
-            } else if (object->classInfo() == ClassPrototype::info()) {
-                if (object->butterfly())
-                    return "a prototype object of a class that has been given something"_s;
-                if (ClassPrototype::hasMember(object, uid))
-                    return "a member that a class declares: its closure is not made yet, or the stub could not call the getter"_s;
-            } else if (!(object->inlineTypeFlags() & OverridesGetPrototype) && object->methodTable()->getOwnPropertySlot == JSFinalObject::info()->methodTable.getOwnPropertySlot)
-                asksPropertyTable = true;
-            else if (!(object->inlineTypeFlags() & OverridesGetPrototype) && object->methodTable()->getOwnPropertySlot == JSArray::info()->methodTable.getOwnPropertySlot) {
-                if (uid == vm.propertyNames->length.impl() || isASCIIDigit((*uid)[0]))
-                    return at("the length of an array, or a name that begins with a digit"_s, "the length, or a name that begins with a digit, and an array is above"_s);
-                asksPropertyTable = true;
-                hasElementsThatDoNotMatter = true;
-            } else if (!(object->inlineTypeFlags() & OverridesGetPrototype) && object->methodTable()->getOwnPropertySlot == JSFunction::info()->methodTable.getOwnPropertySlot) {
-                if (uid == vm.propertyNames->name.impl() || uid == vm.propertyNames->length.impl() || uid == vm.propertyNames->prototype.impl())
-                    return at("name, length or prototype of a function of the engine or the host"_s, "name, length or prototype, and a function of the engine or the host is above"_s);
-                asksPropertyTable = true;
-            } else if (type == ProxyObjectType)
-                return at("the receiver is a proxy"_s, "a proxy is above"_s);
-            else
-                return at("the receiver is of another class with a lookup of its own"_s, "an object of another class with a lookup of its own is above"_s);
-        }
-        if (asksPropertyTable) {
-            switch (askPropertyTable(object, at("the receiver has elements"_s, "an object above has elements"_s), at("the receiver has no property table"_s, "an object above has no property table"_s), at("a custom accessor or value of the receiver"_s, "a custom accessor or value of an object above"_s), "an accessor: the stub could not call the getter"_s)) {
-            case InTable::Stops:
-                return stop;
-            case InTable::Value:
-                return "a plain value: NOTHING STOOD IN THE WAY"_s;
-            case InTable::Absent:
-                break;
-            }
-            if (TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags()) && !object->structure()->staticPropertiesReified())
-                return at("the receiver has a static table that is not all in its property table"_s, "an object above has a static table that is not all in its property table"_s);
-        }
-        JSValue above = object->structure()->storedPrototype();
-        if (!above)
-            return "an object that has its prototype in a slot of its own"_s;
-        if (!above.isObject())
-            return "nothing has the name: NOTHING STOOD IN THE WAY"_s;
-        object = asObject(above);
-    }
-}
-
-NEVER_INLINE void PropertyCaches::countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name)
-{
-    if (!m_countedFilings)
-        return;
-    if (access == "read"_s)
-        ++m_namedCounts.add(makeString("miss by reason:read:"_s, shouldFile && !m_counterOfPairToFile ? "one miss in sixteen that the stub sends to be filed"_s : whyObjectsDidNotAnswer(m_vm, receiver, name)), 0).iterator->value;
-    ASCIILiteral which = shouldFile ? "later"_s : "first"_s;
-    ASCIILiteral ofReceiver = describeReceiverOfMiss(receiver);
-    ASCIILiteral ofField = describeFieldOfMiss(receiver, name);
-    ++m_namedCounts.add(makeString("miss by receiver:"_s, access, ':', which, ':', ofReceiver, ofField), 0).iterator->value;
-    ++m_namedCounts.add(makeString("miss by name:"_s, access, ':', which, ':', StringView(name)), 0).iterator->value;
-    auto frames = CompiledFrameIterator::tryCreateAtTop(m_vm);
-    if (!frames || frames->isAtEnd())
-        return;
-    uintptr_t offset = std::bit_cast<uintptr_t>(frames->callSite().address) - std::bit_cast<uintptr_t>(m_vm.aotState().image->code().data());
-    ++m_namedCounts.add(makeString("miss by site:"_s, access, ':', offset, ':', StringView(name), ':', ofReceiver, ofField), 0).iterator->value;
-}
-
-void PropertyCaches::dumpNamedCounts(PrintStream& out) const
-{
-    for (auto& [name, times] : m_namedCounts)
-        out.println(times, "\tnamed:", name);
+    return uidOrNull ? uidOrNull->existingSymbolAwareHash() : 0;
 }
 
 bool PropertyCaches::shouldFile(StructureID structureID, UniquedStringImpl* uid, SlotAccess access)
@@ -1582,7 +1647,7 @@ bool PropertyCaches::shouldFile(StructureID structureID, UniquedStringImpl* uid,
     constexpr uint32_t countersOfPair = 4;
     static_assert(hasOneBitSet(numberOfMissCounters) && numberOfMissCounters <= 1u << 24 && missesBeforeFiling < wasFiled && storeMissesBeforeFiling < wasFiled);
     static_assert(hasOneBitSet(countersOfPair) && countersOfPair <= numberOfMissCounters);
-    uint32_t hash = WTF::pairIntHash(structureID.bits(), WTF::PtrHash<UniquedStringImpl*>::hash(uid) + static_cast<uint32_t>(access));
+    uint32_t hash = WTF::pairIntHash(structureID.bits(), hashOfName(uid) + static_cast<uint32_t>(access));
     uint32_t first = hash % numberOfMissCounters;
     uint8_t bitsOfPair = static_cast<uint8_t>(hash >> 24) & ~maskOfCount;
     uint8_t* ofPair = nullptr;
@@ -1606,8 +1671,15 @@ bool PropertyCaches::shouldFile(StructureID structureID, UniquedStringImpl* uid,
         return true;
     }
     ++counter;
-    count(m_state.instance, RuntimeCounterID::FirstMissesNotFiled);
     return false;
+}
+
+void PropertyCaches::remember(const FieldExit& exit)
+{
+    FieldExit& place = placeOf(exit.structureBefore, exit.name);
+    putAtPlace(place, m_fieldExitsBesideTable, exit);
+    if (exit.widthOfSlot)
+        m_state.instance.propertyCaches.placesOfFieldExitsBySlot[((exit.structureBefore.bits() >> StructureRowWords::granuleShift) + (exit.offsetOfSlot >> 2)) % FieldExit::numberOfPlacesBySlot] = static_cast<uint8_t>(&place - m_fieldExits.data());
 }
 
 void PropertyCaches::didFileNothing()
@@ -1616,18 +1688,32 @@ void PropertyCaches::didFileNothing()
         *counter = 0;
 }
 
-bool PropertyCaches::shouldMakeStructureForAdditionByKey(Structure* structure, UniquedStringImpl* uid)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FirstAdditions);
+
+FirstAdditions::FirstAdditions(State& state)
+    : m_pairs(static_cast<uint32_t*>(state.pages.allocate(numberOfPairs * sizeof(uint32_t))), numberOfPairs)
 {
-    if (structure->id() == m_structureMadeForAdditionByKey)
+    state.caches->add(CacheKind::WeakByKey, "objects being filled"_s, *this);
+}
+
+FirstAdditions& firstAdditionsOf(State& state)
+{
+    if (!state.firstAdditions)
+        state.firstAdditions = makeUnique<FirstAdditions>(state);
+    return *state.firstAdditions;
+}
+
+bool FirstAdditions::shouldMakeStructure(Structure* structure, UniquedStringImpl* uid)
+{
+    if (structure->id() == m_structureMade)
         return true;
-    // A pair that came once has the highest bit set. One that came again has it clear: it is still found once nothing holds its Structure any more, until a newcomer takes its place. Zero stands for no pair.
     constexpr uint32_t cameOnce = 1u << 31;
     uint32_t hash = WTF::pairIntHash(structure->id().bits(), uid->existingSymbolAwareHash()) | cameOnce;
-    constexpr uint32_t numberOfSets = numberOfFirstAdditionsByKey / firstAdditionsByKeyPerSet;
-    static_assert(hasOneBitSet(numberOfSets) && !(firstAdditionsByKeyPerSet % SIMD::stride<uint32_t>));
-    uint32_t* set = &m_firstAdditionsByKey[hash % numberOfSets * firstAdditionsByKeyPerSet];
+    constexpr uint32_t numberOfSets = numberOfPairs / pairsPerSet;
+    static_assert(hasOneBitSet(numberOfSets) && !(pairsPerSet % SIMD::stride<uint32_t>));
+    uint32_t* set = &m_pairs[hash % numberOfSets * pairsPerSet];
     auto findInSet = [&](auto matches) -> uint32_t* {
-        for (uint32_t* places = set; places < set + firstAdditionsByKeyPerSet; places += SIMD::stride<uint32_t>) {
+        for (uint32_t* places = set; places < set + pairsPerSet; places += SIMD::stride<uint32_t>) {
             if (std::optional<uint8_t> index = SIMD::findFirstNonZeroIndex(matches(SIMD::load(places))))
                 return places + *index;
         }
@@ -1637,9 +1723,8 @@ bool PropertyCaches::shouldMakeStructureForAdditionByKey(Structure* structure, U
         return SIMD::equal(SIMD::bitOr(words, SIMD::splat32(cameOnce)), SIMD::splat32(hash));
     };
     if (uint32_t* found = findInSet(holdsPair)) {
-        // Newcomers take the lowest place that they may, so it moves above the free ones.
         *found = 0;
-        uint32_t* highestFree = set + firstAdditionsByKeyPerSet - 1;
+        uint32_t* highestFree = set + pairsPerSet - 1;
         while (*highestFree)
             --highestFree;
         *highestFree = hash & ~cameOnce;
@@ -1650,12 +1735,105 @@ bool PropertyCaches::shouldMakeStructureForAdditionByKey(Structure* structure, U
     };
     uint32_t* place = findInSet(isForNewcomers);
     if (!place) {
-        // Each place of a full set is replaced half as often as the one before it, so a pair is remembered until it returns whether few or many others arrive in between.
         m_evictionSeed = m_evictionSeed * 1664525 + 1013904223;
-        place = set + std::min<uint32_t>(std::countl_zero(m_evictionSeed), firstAdditionsByKeyPerSet - 1);
+        place = set + std::min<uint32_t>(std::countl_zero(m_evictionSeed), pairsPerSet - 1);
     }
     *place = hash;
     return false;
+}
+
+void didFinishFilling(Structure* structure)
+{
+    ASSERT(!structure->isDictionary());
+    structure->setHasBeenFlattenedBefore(false);
+    structure->setHasBeenDictionary(false);
+}
+
+bool hasFewEnoughNamesToBeFilled(Structure* structure)
+{
+    static constexpr unsigned maxNamesCopiedIntoTable = 64;
+    return numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity()) <= maxNamesCopiedIntoTable;
+}
+
+static void makeFlatWhatWasFilled(VM& vm, JSObject* object)
+{
+    if (!object)
+        return;
+    Structure* structure = object->structure();
+    if (!structure->isDictionary() || structure->isUncacheableDictionary() || structure->hasBeenFlattenedBefore())
+        return;
+    structure->flattenDictionaryStructure(vm, object);
+    didFinishFilling(structure);
+}
+
+bool FirstAdditions::forget(JSObject* object)
+{
+    for (JSObject*& filled : m_objectsBeingFilled) {
+        if (filled == object) {
+            filled = nullptr;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool FirstAdditions::mayBeginToFill(JSObject* object) const
+{
+    static constexpr uintptr_t maxTimesOneObjectIsFilled = 4;
+    static_assert(maxTimesOneObjectIsFilled < timesMask);
+    uintptr_t times = m_timesObjectsBeganToFill[placeOfTimes(object)] ^ std::bit_cast<uintptr_t>(object);
+    return times > timesMask || times < maxTimesOneObjectIsFilled;
+}
+
+void FirstAdditions::didBeginToFill(VM& vm, JSObject* object)
+{
+    uintptr_t& times = m_timesObjectsBeganToFill[placeOfTimes(object)];
+    times = (times ^ std::bit_cast<uintptr_t>(object)) > timesMask ? std::bit_cast<uintptr_t>(object) | 1 : times + 1;
+    makeFlatWhatWasFilled(vm, std::exchange(m_objectsBeingFilled[m_numberOfObjectsFilled++ % numberOfObjectsBeingFilled], object));
+    vm.aotState().hasObjectsBeingFilled = true;
+}
+
+void FirstAdditions::finishFilling(VM& vm)
+{
+    for (JSObject*& object : m_objectsBeingFilled)
+        makeFlatWhatWasFilled(vm, std::exchange(object, nullptr));
+}
+
+size_t FirstAdditions::removeDeadEntries(VM& vm, CollectionScope)
+{
+    m_timesObjectsBeganToFill.fill(0);
+    size_t numberOfDeadObjects = 0;
+    for (JSObject*& object : m_objectsBeingFilled) {
+        if (object && !vm.heap.isMarked(object)) {
+            object = nullptr;
+            ++numberOfDeadObjects;
+        }
+    }
+    return numberOfDeadObjects;
+}
+
+static void askAgainWhatSlotAnswers(Instance& instance, JSCell* base, UniquedStringImpl* name, const Slot& slot)
+{
+    constexpr ASCIILiteral table = "the slot table"_s;
+    switch (slot.kind) {
+    case Slot::Kind::Value: {
+        JSCell* holder = slot.has(Slot::isOwn) ? base : slot.holder;
+        if (holder && holder->isObject())
+            stopAtStaleAnswer(instance, base, name, KindOfAnswer::Value, valueAtOffset(asObject(holder), Slot::offsetFor(slot.wordIndex())), table);
+        return;
+    }
+    case Slot::Kind::Getter:
+    case Slot::Kind::ExtraGetter:
+        stopAtStaleAnswer(instance, base, name, KindOfAnswer::Accessor, { }, table);
+        return;
+    case Slot::Kind::Absent:
+        stopAtStaleAnswer(instance, base, name, KindOfAnswer::Absent, { }, table);
+        return;
+    default:
+        if (Slot::presenceOf(slot.kind) == SlotPresence::Present)
+            stopAtStaleAnswer(instance, base, name, KindOfAnswer::Present, { }, table);
+        return;
+    }
 }
 
 const Slot* PropertyCaches::findByKey(Structure* structure, UniquedStringImpl* uid, SlotAccess access)
@@ -1680,14 +1858,19 @@ void PropertyCaches::fillSiteCacheFromTables(SiteCache site, JSCell* base, uint3
         m_siteCaches.didFailToFill(site);
         return;
     }
-    m_siteCaches.didMissRepeatedly(site);
+    if (access == SlotAccess::Read && m_vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+        askAgainWhatSlotAnswers(m_state.instance, base, name.uid, *slot);
     if (!belongsToOneObject(structure) && RowDisplacementTable::hasColumn(identifierNumber) && !m_tables.front().find(id, identifierNumber, access))
         m_tables.set(structure, name, access, *slot);
     if (!slot->has(Slot::dependsOnChain)) {
-        m_siteCaches.fill(site, *slot, { name.uid, access, { } });
+        m_siteCaches.fill(site, *slot, name.uid, { });
         return;
     }
     JSGlobalObject* globalObject = m_state.instance.globalObject;
+    if (JSGlobalObject* realm = structure->realm(); realm && Instance::of(realm) != &m_state.instance) {
+        m_siteCaches.didFailToFill(site);
+        return;
+    }
     ChainWalkUse use = access == SlotAccess::Read ? ChainWalkUse::KeptForReadsThatAskObjects : ChainWalkUse::KeptForStores;
     ChainWalk walk = structure->typeInfo().type() == GlobalProxyType
         ? walkChainThroughGlobalProxy(globalObject, *slot, name.uid)
@@ -1697,414 +1880,27 @@ void PropertyCaches::fillSiteCacheFromTables(SiteCache site, JSCell* base, uint3
         return;
     }
     ensureChangesAreReported(walk.changeableObjects.span());
-    m_siteCaches.fill(site, *slot, { name.uid, access, walk.changeableObjects.span() });
-}
-
-JSValue PropertyCaches::findGetterAndFillSiteCache(SiteCache site, JSCell* base, uint32_t identifierNumber)
-{
-    VM& vm = *m_state.instance.vm;
-    DeferGCForAWhile deferGC(vm);
-    Structure* structure = base->structure();
-    CachedName name = nameOf(identifierNumber);
-    auto find = [&]() -> JSValue {
-        Object* object = compiledObjectOrNull(base);
-        if (!object || !Object::structureGuaranteesAbsence(structure, name.uid) || hasPendingStars(*object))
-            return { };
-        JSGlobalObject* globalObject = m_state.instance.globalObject;
-        ChainWalk walk = walkChain({ globalObject, structure, object, ChainWalkMode::AllocatesNothing }, name.uid);
-        if (walk.result != ChainWalkResult::Found || !isValidOffset(walk.offset) || !(walk.attributes & PropertyAttribute::Accessor))
-            return { };
-        auto* accessor = uncheckedDowncast<GetterSetter>(valueAtOffset(walk.holder, walk.offset).asCell());
-        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        slot.setCacheableGetterSlot(walk.holder, walk.attributes, accessor, walk.offset);
-        PropertyAnswer answer = classifyRead({ globalObject, object, structure, name.uid, slot, ChainWalkMode::AllocatesNothing });
-        if (answer.kind != PropertyAnswerKind::Accessor || !canCache(structure, answer))
-            return { };
-        m_siteCaches.didMissRepeatedly(site);
-        cache({ structure, name, SlotAccess::Read, site }, answer);
-        return accessor->getter();
-    };
-    if (JSValue getter = find())
-        return getter;
-    m_siteCaches.didFindNothingToFill(site);
-    return jsUndefined();
-}
-
-void PropertyCaches::cacheFreeName(SiteCache site, UniquedStringImpl* uid, SlotAccess access, const PropertyAnswer& answer)
-{
-    if (answer.didFlatten)
-        return;
-    ASSERT(site);
-    ASSERT(answer.access == access);
-    Slot slot = slotFor(answer, nullptr);
-    if (answer.kind == PropertyAnswerKind::Constant && !answer.dependsOnChain()) {
-        m_siteCaches.fill(site, slot, { uid, access, { } });
-        return;
-    }
-    slot.flags |= Slot::dependsOnChain;
-    ChainObjects objects;
-    objects.append(m_state.instance.globalObject);
-    objects.appendVector(answer.changeableObjects);
-    ensureChangesAreReported(objects.span());
-    m_siteCaches.fill(site, slot, { uid, access, objects.span() });
-}
-
-namespace {
-
-enum class StructureLookup : uint8_t { Unknown, Absent, Own, Inherited };
-
-struct StructureLookupResult {
-    StructureLookup outcome { StructureLookup::Unknown };
-    JSObject* holder { nullptr };
-    PropertyOffset offset { invalidOffset };
-    unsigned attributes { 0 };
-};
-
-}
-
-static StructureLookupResult lookUpByStructure(Structure* structure, UniquedStringImpl* uid)
-{
-    for (JSObject* holder = nullptr;; structure = holder->structure()) {
-        TypeInfo info = structure->typeInfo();
-        if (!info.isObject() || !structure->hasMonoProto() || info.overridesGetOwnPropertySlot() || info.overridesGetPrototype()
-            || TypeInfo::hasStaticPropertyTable(info.inlineTypeFlags()) || structure->isCompiledStructure() || structure->isUncacheableDictionary())
-            return { };
-        unsigned attributes = 0;
-        PropertyOffset offset = structure->getConcurrently(uid, attributes);
-        if (isValidOffset(offset))
-            return { holder ? StructureLookup::Inherited : StructureLookup::Own, holder, offset, attributes };
-        holder = structure->storedPrototypeObject();
-        if (!holder)
-            return { StructureLookup::Absent };
-    }
-}
-
-static bool slotInStorageAgrees(const Slot& slot, SlotAccess access, const StructureLookupResult& found)
-{
-    bool isOwn = slot.has(Slot::isOwn);
-    if (found.outcome != (isOwn ? StructureLookup::Own : StructureLookup::Inherited) || (!isOwn && found.holder != slot.holder) || found.offset != slot.offsetInStorage())
-        return false;
-    if (slot.kind == Slot::Kind::Getter || slot.kind == Slot::Kind::Setter)
-        return found.attributes & PropertyAttribute::Accessor;
-    if (access == SlotAccess::Define)
-        return !found.attributes;
-    return !(found.attributes & (access == SlotAccess::Read ? PropertyAttribute::AccessorOrCustomAccessorOrValue : PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue));
-}
-
-// A Structure that has dropped its chain takes the first like chain that comes to it for its own: other objects built that one anew, name by name, while an object or a cache kept the end of the old one.
-// It no longer names the Structure of the slot then. The store replays the addition by the offset and the StructureID alone, so all that these two rely on is compared.
-static bool hasPropertiesOfAndOneMore(Structure* structure, Structure* newStructure, UniquedStringImpl* uid)
-{
-    if (structure->isDictionary() || newStructure->isDictionary() || newStructure->typeInfoBlob() != structure->typeInfoBlob() || newStructure->inlineCapacity() != structure->inlineCapacity())
-        return false;
-    if (newStructure->classInfoForCells() != structure->classInfoForCells() || newStructure->realm() != structure->realm() || !structure->hasMonoProto() || !newStructure->hasMonoProto() || newStructure->storedPrototype() != structure->storedPrototype())
-        return false;
-    if (newStructure->mayBePrototype() != structure->mayBePrototype() || newStructure->isStructureExtensible() != structure->isStructureExtensible() || newStructure->mayHaveImmutableProperties() != structure->mayHaveImmutableProperties())
-        return false;
-    // Each list is taken under the lock of the Structure that has the table, which may be one and the same for both.
-    Vector<PropertyTableEntry> properties = structure->getPropertiesConcurrently();
-    Vector<PropertyTableEntry> newProperties = newStructure->getPropertiesConcurrently();
-    if (newProperties.size() != properties.size() + 1)
-        return false;
-    UncheckedKeyHashMap<UniquedStringImpl*, std::pair<PropertyOffset, unsigned>> placesInNewStructure;
-    for (const PropertyTableEntry& entry : newProperties)
-        placesInNewStructure.add(entry.key(), std::pair { entry.offset(), entry.attributes() });
-    for (const PropertyTableEntry& entry : properties) {
-        auto place = placesInNewStructure.find(entry.key());
-        if (place == placesInNewStructure.end() || place->value != std::pair<PropertyOffset, unsigned> { entry.offset(), entry.attributes() })
-            return false;
-    }
-    auto added = placesInNewStructure.find(uid);
-    return added != placesInNewStructure.end() && !added->value.second;
-}
-
-static bool transitionSlotAgrees(const Slot& slot, SlotAccess access, const StructureLookupResult& found, UniquedStringImpl* uid)
-{
-    if (found.outcome == StructureLookup::Own || (access == SlotAccess::Store && found.outcome == StructureLookup::Inherited && found.attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue))
-        return false;
-    Structure* structure = slot.structureID.decode();
-    Structure* newStructure = slot.transition.newStructureID.decode();
-    if (newStructure->getConcurrently(uid) != slot.offsetInStorage())
-        return false;
-    return newStructure->isTransitionFrom(structure) || isLastAdditionOfRun(structure, newStructure, uid) || hasPropertiesOfAndOneMore(structure, newStructure, uid);
-}
-
-bool slotAgreesWithStructures(VM&, const Slot& slot, SlotAccess access, UniquedStringImpl* uid)
-{
-    if (!slot.structureID)
-        return true;
-    StructureLookupResult found = lookUpByStructure(slot.structureID.decode(), uid);
-    if (found.outcome == StructureLookup::Unknown)
-        return true;
-    switch (slot.kind) {
-    case Slot::Kind::Value:
-    case Slot::Kind::FarValue:
-    case Slot::Kind::Getter:
-    case Slot::Kind::Setter:
-        return slotInStorageAgrees(slot, access, found);
-    case Slot::Kind::Absent:
-        return found.outcome == StructureLookup::Absent;
-    case Slot::Kind::Transition:
-        return transitionSlotAgrees(slot, access, found, uid);
-    case Slot::Kind::Removal:
-        return found.outcome == StructureLookup::Own && found.offset == slot.offsetInStorage() && !(found.attributes & PropertyAttribute::DontDelete) && !isValidOffset(slot.removal.newStructureID.decode()->getConcurrently(uid));
-    case Slot::Kind::NothingToRemove:
-        return found.outcome != StructureLookup::Own;
-    case Slot::Kind::Empty:
-    case Slot::Kind::CustomGetter:
-    case Slot::Kind::CustomSetter:
-    case Slot::Kind::Field:
-    case Slot::Kind::FieldGetter:
-    case Slot::Kind::FieldCreation:
-    case Slot::Kind::FieldOrInherited:
-    case Slot::Kind::FieldOrInheritedSetter:
-    case Slot::Kind::InheritedField:
-    case Slot::Kind::FieldOrInheritedField:
-    case Slot::Kind::Variable:
-    case Slot::Kind::ExtraProperty:
-    case Slot::Kind::ExtraGetter:
-    case Slot::Kind::ExtraSetter:
-    case Slot::Kind::ExtraPropertyAddition:
-    case Slot::Kind::ExtraPropertyRemoval:
-    case Slot::Kind::FieldRemoval:
-    case Slot::Kind::ArrayLength:
-    case Slot::Kind::TypedArrayLength:
-    case Slot::Kind::StringLength:
-    case Slot::Kind::ClosureLength:
-    case Slot::Kind::ClosureName:
-    case Slot::Kind::Constant:
-    case Slot::Kind::Uncacheable:
-        return true;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void validateSlotLiveness(VM& vm, const CustomAccessorTable& customAccessors, const Slot& slot)
-{
-    if (!customAccessors.namesOnlyWhatIsLive(vm, slot))
-        crashOnValidationFailure(vm, { ValidationFailureKind::CacheEntryDropped, { }, { }, JSValue() });
-}
-
-static bool requiresFinishedWalk(Slot::Kind kind)
-{
-    return kind == Slot::Kind::Value || kind == Slot::Kind::Absent || kind == Slot::Kind::Getter || kind == Slot::Kind::Setter || kind == Slot::Kind::Transition || kind == Slot::Kind::TypedArrayLength;
-}
-
-static JSObject* findUnregisteredChainObject(const ChainDependents& dependents, Structure* receiverStructure, const StructureLookupResult& found, UniquedStringImpl* uid)
-{
-    if (found.outcome != StructureLookup::Absent && found.outcome != StructureLookup::Inherited)
-        return nullptr;
-    for (JSObject* object = receiverStructure->storedPrototypeObject(); object; object = object->structure()->storedPrototypeObject()) {
-        Structure* structure = object->structure();
-        bool isHolder = object == found.holder;
-        bool canGainProperty = structure->isStructureExtensible() && !structure->isImmutablePropertyForReader(uid);
-        bool canChange = isHolder ? !structure->isImmutablePropertyForReader(uid) : canGainProperty || !structure->hasImmutablePrototype();
-        if (canChange && !dependents.hasDependents(object))
-            return object;
-        if (isHolder)
-            break;
-    }
-    return nullptr;
-}
-
-bool VMPropertyCaches::isBelowUnreportedChange(Structure* structure) const
-{
-    if (m_objectsWithUnreportedChange.isEmpty()) [[likely]]
-        return false;
-    while (structure->isObject() && structure->hasMonoProto()) {
-        JSObject* prototype = structure->storedPrototypeObject();
-        if (!prototype)
-            return false;
-        if (m_objectsWithUnreportedChange.contains(prototype))
-            return true;
-        structure = prototype->structure();
-    }
-    return false;
-}
-
-static void validateSlotAnswer(VM& vm, const Slot& slot, SlotAccess access, UniquedStringImpl* uid, const ChainDependents* dependents)
-{
-    Structure* structure = slot.structureID.decode();
-    if (!structure->isObject())
-        return;
-    if (slot.has(Slot::dependsOnChain) && vm.aotState().propertyCaches->isBelowUnreportedChange(structure))
-        return;
-    if (!slotAgreesWithStructures(vm, slot, access, uid)) {
-        dataLogLn("AOT validation: a row of the property caches does not agree with the Structure it is filed under: name ", uid ? String(uid) : "(none)"_str, ", kind of row ", static_cast<unsigned>(slot.kind), ", access ", static_cast<unsigned>(access), ", kind of dictionary ", static_cast<unsigned>(structure->dictionaryKind()), ", flattened before ", structure->hasBeenFlattenedBefore(), ", may be a prototype ", structure->mayBePrototype(), ", properties up to offset ", structure->maxOffset());
-        if (slot.kind == Slot::Kind::Transition) {
-            Structure* newStructure = slot.transition.newStructureID.decode();
-            Structure* named = newStructure->previousID();
-            PropertyOffset offsetByTable = invalidOffset;
-            Structure* reached = structure->isDictionary() ? nullptr : Structure::addPropertyTransitionToExistingStructure(structure, uid, 0, offsetByTable);
-            dataLogLn("AOT validation: the addition: offset in the row ", slot.offsetInStorage(), ", in the new Structure ", newStructure->getConcurrently(uid), ", in the old one ", structure->getConcurrently(uid), "; the new Structure names ", named == structure ? "the old one" : named ? "another" : "none", " as its predecessor, kind of its transition ", static_cast<unsigned>(newStructure->transitionKind()), ", by this name ", newStructure->transitionPropertyName() == uid, ", table pinned ", newStructure->isPinnedPropertyTable(), ", kind of dictionary ", static_cast<unsigned>(newStructure->dictionaryKind()), ", properties up to offset ", newStructure->maxOffset(), "; the old one's table pinned ", structure->isPinnedPropertyTable(), ", kind of its transition ", static_cast<unsigned>(structure->transitionKind()), ", it leads by this name to ", reached == newStructure ? "the new one" : reached ? "another" : "none");
-        }
-        crashOnValidationFailure(vm, { ValidationFailureKind::CacheHitDiffers, { }, { }, structure });
-    }
-    if (!dependents || !slot.has(Slot::dependsOnChain) || !requiresFinishedWalk(slot.kind))
-        return;
-    if (JSObject* object = findUnregisteredChainObject(*dependents, structure, lookUpByStructure(structure, uid), uid))
-        crashOnValidationFailure(vm, { ValidationFailureKind::CacheEntryDropped, { }, { }, object });
-}
-
-void VMPropertyCaches::validate(VM& vm) const
-{
-    auto validateSlot = [&](const Slot& slot, SlotAccess access, UniquedStringImpl* uidOrNull) {
-        validateSlotLiveness(vm, m_customAccessors, slot);
-        if (!uidOrNull)
-            return;
-        JSGlobalObject* realm = slot.structureID.decode()->realm();
-        Instance* instance = realm ? Instance::of(realm) : nullptr;
-        validateSlotAnswer(vm, slot, access, uidOrNull, instance && instance->state ? instance->state->chainDependents.get() : nullptr);
-    };
-    const ProgramIdentifiers* identifiers = vm.aotState().identifiers.get();
-    m_front.forEachSlot([&](const Slot& slot, uint32_t column, SlotAccess access) {
-        validateSlot(slot, access, identifiers && column < identifiers->count() ? identifiers->tryGetIdentifierConcurrently(column) : nullptr);
-    });
-    m_hashedTable.forEachEntry([&](const HashedSlot& entry) {
-        validateSlot(entry.slot, entry.access(), entry.uid());
-    });
-}
-
-void PropertyCaches::didFinishCollection(VM& vm, CollectionScope)
-{
-    {
-        Locker locker { m_state.caches->lock() };
-        m_additionsSinceCollection.shrink(0);
-    }
-    m_shouldForgetMisses.store(true, std::memory_order_relaxed);
-    if (!validatesRuntime(vm))
-        return;
-    if (vm.aotState().instances.first() == &m_state.instance)
-        m_tables.validate(vm);
-    m_siteCaches.forEachValidatedSite([&](const Slot& slot, UniquedStringImpl* uid, SlotAccess access) {
-        validateSlotLiveness(vm, m_tables.customAccessors(), slot);
-        if (slot.structureID)
-            validateSlotAnswer(vm, slot, access, uid, m_state.chainDependents.get());
-    });
-}
-
-static void countReason(Instance& instance, uint32_t reason)
-{
-    ASSERT(countsStubExit(static_cast<RuntimeCounterID>(reason)));
-    count(instance, static_cast<RuntimeCounterID>(reason));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTCallGetterOfSlot, EncodedJSValue, (Instance* instance, EncodedJSValue base, JSCell* getterSetter, uint32_t reason))
-{
-    constexpr Entry entry = Entry::operationAOTCallGetterOfSlot;
-    AOT_OPERATION_BEGIN(instance, entry);
-    countReason(*instance, reason);
-    OPERATION_RETURN(scope, JSValue::encode(cellArgument<GetterSetter>(getterSetter, entry)->callGetter(globalObject, JSValue::decode(base))));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTCallSetterOfSlot, void, (Instance* instance, EncodedJSValue base, JSCell* getterSetter, EncodedJSValue value, uint32_t putMode, uint32_t reason))
-{
-    constexpr Entry entry = Entry::operationAOTCallSetterOfSlot;
-    AOT_OPERATION_BEGIN(instance, entry);
-    countReason(*instance, reason);
-    cellArgument<GetterSetter>(getterSetter, entry)->callSetter(globalObject, JSValue::decode(base), JSValue::decode(value), static_cast<PutMode>(putMode) == PutMode::Strict);
-    OPERATION_RETURN(scope);
-}
-
-static void addPropertyByTransition(VM& vm, JSObject* target, Structure* newStructure, PropertyOffset offset, JSValue value)
-{
-    ASSERT(newStructure->isValidOffset(offset) && newStructure->inlineCapacity() == target->structure()->inlineCapacity() && newStructure->storedPrototype() == target->structure()->storedPrototype());
-    bool hasRoomInOwnCell = !target->structure()->outOfLineCapacity() && newStructure->outOfLineCapacity() == initialOutOfLineCapacity
-        && std::bit_cast<char*>(target->butterfly()) == std::bit_cast<char*>(target) + sizeOfArrayWithStorage(0, propertyRoomOfArray);
-    if (!hasRoomInOwnCell)
-        target->growOutOfLineStorageForTransition(vm, newStructure);
-    target->putDirectOffset(vm, offset, value);
-    target->setStructure(vm, newStructure);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddPropertyBySlot, void, (Instance* instance, JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTAddPropertyBySlot);
-    countReason(*instance, reason);
-    Slot slot = std::bit_cast<Slot>(std::array<uint64_t, 2> { header, payload });
-    RELEASE_ASSERT(object->structureID() == slot.structureID);
-    if (slot.kind == Slot::Kind::Transition) {
-        addPropertyByTransition(vm, asObject(object), WTF::opaque(slot.transition.newStructureID.decode()), slot.offsetInStorage(), JSValue::decode(value));
-        return;
-    }
-    RELEASE_ASSERT(slot.kind == Slot::Kind::ExtraPropertyAddition);
-    Object* receiver = uncheckedDowncast<Object>(object);
-    // The slot is a copy out of a weak cache, and no object need have this Structure yet: this pointer alone keeps it alive while the extra properties are allocated.
-    // The collector knows no StructureID on the stack, so the compiler must not make the pointer anew from the ID behind the call.
-    Structure* newStructure = WTF::opaque(slot.extraPropertyAddition.newStructureID.decode());
-    JSObject* extraProperties = receiver->ensureExtraProperties(vm);
-    RELEASE_ASSERT(extraProperties);
-    addPropertyByTransition(vm, extraProperties, compiledObjectStructureOrNull(newStructure)->extraPropertiesStructure(), Slot::offsetFor(slot.extraPropertyAddition.wordIndex), JSValue::decode(value));
-    receiver->JSCell::setStructure(vm, newStructure);
-}
-
-WatchedValues::WatchedValues(State& state)
-    : m_state(state)
-{
-    state.caches->add(CacheKind::WeakByKey, "WatchedValues"_s, *this);
-}
-
-bool WatchedValues::tryWatchConstant(VM& vm, JSObject* holder, UniquedStringImpl* uid, JSValue expected, SiteCache site)
-{
-    // A free-name site with a cached store compares no Structure and fires no watchpoint, and each later Structure of the holder starts with a valid replacement set.
-    if (!site || m_namesWithCachedStore.contains(uid) || !holder->structure()->propertyAccessesAreCacheable())
-        return false;
-    SiteCaches& sites = m_state.propertyCaches->siteCaches();
-    auto isExpected = [&](JSValue held) { return held == expected; };
-    auto watch = PropertyValueWatchpoint::tryWatch(vm, holder, uid, isExpected, [](PropertyValueWatchpoint& fired) {
-        auto& owner = fired.owner<WatchedValues>();
-        owner.m_writtenSinceCollection.recordAll();
-        SiteCaches& sites = owner.m_state.propertyCaches->siteCaches();
-        sites.clear(sites.at(fired.number()));
-    }, this, sites.indexOf(site));
-    if (!watch)
-        return false;
-
-    // Clearing a site that holds a constant stops the watch of that site, which must not be the watch created here.
-    if (site->get().kind == Slot::Kind::Constant)
-        sites.clear(site);
-    m_constantsBySite.set(watch->number(), WTF::move(watch));
-    m_writtenSinceCollection.recordAll();
-    return true;
-}
-
-void WatchedValues::stopWatchingConstant(SiteCache site)
-{
-    auto iterator = m_constantsBySite.find(m_state.propertyCaches->siteCaches().indexOf(site));
-    if (iterator != m_constantsBySite.end() && !iterator->value->hasFired())
-        m_constantsBySite.remove(iterator);
-}
-
-size_t WatchedValues::removeDeadEntries(VM& vm, CollectionScope scope)
-{
-    size_t numberOfRemovedWatches = 0;
-    m_writtenSinceCollection.forEachRegionToSweep(scope, [&](size_t, size_t) {
-        m_constantsBySite.removeIf([&](auto& entry) {
-            bool isDead = entry.value->hasFired() || !vm.heap.isMarked(entry.value->key().object());
-            numberOfRemovedWatches += isDead;
-            return isDead;
-        });
-    });
-    return numberOfRemovedWatches;
+    m_siteCaches.fill(site, *slot, name.uid, walk.changeableObjects.span());
 }
 
 static_assert(!((1u << SiteCaches::regionShift) % sizeof(Slot)));
-static_assert(std::is_same_v<decltype(SiteCacheState::missesLeft), uint8_t>, "the stub's countSiteCacheMiss wraps from 0 to 255");
+static_assert(std::is_same_v<decltype(SiteCacheState::missesLeft), uint16_t>, "the stub's countSiteCacheMiss wraps from 0 to 65535");
 
-static std::span<uint8_t> allocateCards(State& state, size_t sizeOfSlots)
+static std::span<uint8_t> allocateCardsOfSiteCaches(State& state, size_t sizeOfSlots)
 {
     size_t numberOfCards = RememberedSlotSet::numberOfCardsFor(sizeOfSlots, SiteCaches::regionShift);
     return { state.tableArena.allocate<uint8_t>(numberOfCards), numberOfCards };
 }
 
-SiteCaches::SiteCaches(State& state)
+SiteCaches::SiteCaches(State& state, const CustomAccessorTable& customAccessors)
     : m_state(state)
-    , m_customAccessors(state.instance.vm->aotState().propertyCaches->customAccessors())
+    , m_customAccessors(customAccessors)
     , m_slots(state.instance.siteCaches())
     , m_states(state.tableArena.allocate<SiteCacheState>(SiteCacheState::numberOfStates))
-    , m_sitesThatMissed(state.tableArena.allocate<uint64_t>(numberOfMissWords(m_slots.size())))
+    , m_refillCounts(state.tableArena.allocate<uint8_t>(SiteCacheState::numberOfStates))
+    , m_sitesThatMissed(state.tableArena.allocate<uint64_t>((std::min<size_t>(m_slots.size(), numberOfMissBits) + 63) / 64))
     , m_ownerID(state.chainDependents->addOwner(*this))
-    , m_writtenRegions(asByteSpan(m_slots), regionShift, allocateCards(state, m_slots.size_bytes()))
+    , m_writtenRegions(asByteSpan(m_slots), regionShift, allocateCardsOfSiteCaches(state, m_slots.size_bytes()))
 {
     state.instance.propertyCaches.siteCacheStates = m_states;
     state.caches->add(CacheKind::WeakByKey, "SiteCaches"_s, *this);
@@ -2113,80 +1909,74 @@ SiteCaches::SiteCaches(State& state)
 
 bool SiteCaches::didMissBefore(SiteCache site)
 {
-    uint32_t missBit = indexOf(site) % maxNumberOfMissBits;
+    uint32_t missBit = indexOf(site) % numberOfMissBits;
     uint64_t& word = m_sitesThatMissed[missBit / 64];
     uint64_t bit = 1ull << (missBit % 64);
     return std::exchange(word, word | bit) & bit;
 }
 
-static void waitLongerForNextFill(SiteCacheState& state)
+void SiteCaches::waitLongerForNextFill(const void* site)
 {
-    state.missesLeft = SiteCacheState::missesBeforeRefill(state.refillCount);
-    if (state.refillCount < SiteCacheState::maxRefillCount)
-        ++state.refillCount;
+    uint8_t& refillCount = refillCountOf(site);
+    stateOf(site).missesLeft = SiteCacheState::missesBeforeRefill(refillCount);
+    if (refillCount < SiteCacheState::maxRefillCount)
+        ++refillCount;
+}
+
+unsigned SiteCaches::takeSamplesToLeaveOutBeforeNextFill(const void* site)
+{
+    uint8_t& refillCount = refillCountOf(site);
+    unsigned samples = SiteCacheState::missesBeforeRefill(refillCount) / SiteCacheState::missesOfEmptySitesPerSample;
+    if (refillCount < SiteCacheState::maxRefillCount)
+        ++refillCount;
+    return samples;
+}
+
+bool SiteCaches::didWaitForSamples(const void* site)
+{
+    uint16_t& missesLeft = stateOf(site).missesLeft;
+    if (missesLeft < SiteCacheState::missesOfEmptySitesPerSample)
+        return true;
+    missesLeft -= SiteCacheState::missesOfEmptySitesPerSample;
+    return false;
+}
+
+void SiteCaches::forgetHowOftenItWasFilled(const void* site)
+{
+    refillCountOf(site) = 0;
+    stateOf(site).missesLeft = 0;
 }
 
 void SiteCaches::didFailToFill(SiteCache site)
 {
-    if (site->get().isEmpty())
-        stateOf(site).missesLeft = SiteCacheState::missesBeforeRefill(0);
-    else
-        waitLongerForNextFill(stateOf(site));
-}
-
-// Whoever asks on behalf of an empty site looks the name up each time, so it asks more and more seldom.
-void SiteCaches::didFindNothingToFill(SiteCache site)
-{
-    waitLongerForNextFill(stateOf(site));
-}
-
-bool SiteCaches::tryWrite(SiteCache site, const Slot& slot)
-{
-    if (!didMissBefore(site)) {
-        stateOf(site).missesLeft = 0;
-        return false;
+    if (site->get().isEmpty()) {
+        site->set(m_writtenRegions, Slot::createWithoutPayload(StructureID(), Slot::Kind::Uncacheable, 0));
+        m_wasWrittenSinceLastSweep = true;
     }
-    if (site->get().kind == Slot::Kind::Constant)
-        m_state.propertyCaches->watchedValues().stopWatchingConstant(site);
-    if (!site->get().isEmpty())
-        count(m_state.instance, RuntimeCounterID::SiteCacheRefills);
+    waitLongerForNextFill(site);
+}
+
+static void countIfRefill(State& state, SiteCache site)
+{
+    if (!site->get().isEmpty() && site->get().structureID)
+        countEvent(*state.instance.vm, RuntimeCounterID::SiteCacheRefills);
+}
+
+void SiteCaches::fill(SiteCache site, const Slot& slot, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
+{
+    RELEASE_ASSERT(slot.has(Slot::dependsOnChain) || changeableObjects.empty());
+    countIfRefill(m_state, site);
     site->set(m_writtenRegions, slot);
     m_wasWrittenSinceLastSweep = true;
-    waitLongerForNextFill(stateOf(site));
-    return true;
-}
-
-void SiteCaches::fill(SiteCache site, const Slot& slot)
-{
-    RELEASE_ASSERT(!slot.has(Slot::dependsOnChain));
-    tryWrite(site, slot);
-}
-
-void SiteCaches::fill(SiteCache site, const Slot& slot, const NamedFill& named)
-{
-    if (!tryWrite(site, slot))
-        return;
+    waitLongerForNextFill(site);
     if (slot.has(Slot::dependsOnChain))
-        m_state.chainDependents->add(named.changeableObjects, { named.uid, indexOf(site), m_ownerID });
-    if (validatesRuntime(*m_state.instance.vm)) [[unlikely]]
-        m_validatedSites.set(indexOf(site), std::pair { named.uid, named.access });
-}
-
-void SiteCaches::fill(SiteCache site, const Slot& slot, std::span<const ChainDependence> dependences)
-{
-    if (!tryWrite(site, slot))
-        return;
-    for (const ChainDependence& dependence : dependences) {
-        RELEASE_ASSERT(slot.has(Slot::dependsOnChain) || dependence.changeableObjects.empty());
-        m_state.chainDependents->add(dependence.changeableObjects, { dependence.uid, indexOf(site), m_ownerID });
-    }
+        m_state.chainDependents->add(changeableObjects, { uid, indexOf(site), m_ownerID });
 }
 
 void SiteCaches::clear(SiteCache site)
 {
-    if (site->get().kind == Slot::Kind::Constant)
-        m_state.propertyCaches->watchedValues().stopWatchingConstant(site);
     site->clear();
+    forgetHowOftenItWasFilled(site);
 }
 
 void SiteCaches::dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl*)
@@ -2195,12 +1985,34 @@ void SiteCaches::dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl*)
         clear(at(siteIndex));
 }
 
+bool SiteCaches::keepChainDependent(VM& vm, uint32_t siteIndex, UniquedStringImpl* uid, const CreatedMembers& created)
+{
+    ASSERT(vm.heap.isDeferred());
+    if (!uid)
+        return false;
+    unsigned attributes = 0;
+    PropertyOffset offset = created.prototype->structure()->get(vm, uid, attributes);
+    if (!isValidOffset(offset))
+        return true;
+    Slot slot = m_slots[siteIndex].get();
+    if (!slot.has(Slot::dependsOnChain))
+        return false;
+    std::optional<Slot> kept = slotBehindCreatedMember(slot, created, uid, offset, attributes);
+    if (!kept)
+        return false;
+    if (kept->headerBits() != slot.headerBits() || kept->payloadBits() != slot.payloadBits()) {
+        m_slots[siteIndex].set(m_writtenRegions, *kept);
+        m_wasWrittenSinceLastSweep = true;
+    }
+    return true;
+}
+
 bool SiteCaches::hasChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl*) const
 {
     return m_slots[siteIndex].get().has(Slot::dependsOnChain);
 }
 
-static void forEachStructureNamedBy(const Slot& slot, const Invocable<void(StructureID)> auto& functor)
+static void forEachStructureNamedBySlotOfSite(const Slot& slot, const Invocable<void(StructureID)> auto& functor)
 {
     if (slot.structureID)
         functor(slot.structureID);
@@ -2243,6 +2055,8 @@ void SiteCaches::visitRoots(Visitor& visitor)
         Structure* structure = id.decode();
         if (visitor.isMarked(structure))
             return true;
+        if (belongsToOneObject(structure))
+            return true;
         auto* compiled = dynamicDowncast<CompiledStructure>(structure);
         JSObject* prototype = structure->hasMonoProto() ? structure->storedPrototype().getObject() : nullptr;
         JSGlobalObject* realm = structure->globalObject();
@@ -2256,7 +2070,7 @@ void SiteCaches::visitRoots(Visitor& visitor)
         RememberedSlotSet::forEachEntryInRegion(m_slots, beginOffset, endOffset, [&](RememberedSlot<Slot>& site) {
             if (site.get().isEmpty())
                 return;
-            forEachStructureNamedBy(site.get(), [&](StructureID id) {
+            forEachStructureNamedBySlotOfSite(site.get(), [&](StructureID id) {
                 if (!isSettled(id) && looksOnceAtEachSite)
                     m_structuresThatWait.add(id);
             });
@@ -2284,7 +2098,6 @@ size_t SiteCaches::removeDeadEntries(VM& vm, CollectionScope scope)
             const Slot& slot = site.get();
             if (slot.isEmpty() || (slot.namesOnlyLiveCells(isMarked, cageBase) && (Slot::payloadOf(slot.kind) != SlotPayload::CustomAccessor || m_customAccessors.isInUse(slot.customAccessor.index))))
                 return;
-            // Not SiteCaches::clear(): a sweep unlinks no watchpoint. WatchedValues::removeDeadEntries drops the watch of a Constant slot.
             site.clear();
             ++numberOfClearedSites;
         });
@@ -2294,262 +2107,991 @@ size_t SiteCaches::removeDeadEntries(VM& vm, CollectionScope scope)
     return numberOfClearedSites;
 }
 
-StringKeyCache::StringKeyCache(State& state)
-    : m_instance(state.instance)
-    , m_cageBase(state.instance.vm->heap.cage().base())
-    , m_cageSize(state.instance.vm->heap.cage().size())
-    , m_maxCachedKeyLength(runtimeLimitValue(*state.instance.vm, LimitID::MaxCachedKeyLength))
+static_assert(sizeof(SiteAnswers) == InstanceLayout::sizeOfSiteAnswers && sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers);
+static_assert(!(InstanceLayout::bytesReservedForSiteAnswers % sizeof(WideSiteAnswers)));
+
+AnswersAtSites::AnswersAtSites(State& state, SiteCaches& states)
+    : m_state(state)
+    , m_states(states)
+    , m_indices(state.instance.indicesOfSiteAnswers())
+    , m_answers(state.instance.siteAnswers())
+    , m_endOfWideAnswers(reinterpret_cast<WideSiteAnswers*>(state.instance.siteAnswers().data() + state.instance.siteAnswers().size()))
+    , m_placesInPageShift(WTF::fastLog2(static_cast<unsigned>(pageSize() / sizeof(uint16_t))))
+    , m_requestsOfPages(state.tableArena.allocate<uint8_t>((m_indices.size() >> m_placesInPageShift) + 1))
+    , m_ownerID(state.chainDependents->addOwner(*this))
 {
-    state.caches->add(CacheKind::WeakByKey, "StringKeyCache"_s, *this);
-    publishIntegerKeys();
-    m_instance.realm.caseConversions = m_caseConversions.data();
+    m_places.append(UINT32_MAX);
+    m_places.append(UINT32_MAX);
+    m_answers[numberOfAnswersThatHoldNothing] = SiteAnswers::forPlacesWithout();
+    state.caches->add(CacheKind::WeakByKey, "AnswersAtSites"_s, *this);
 }
 
-void StringKeyCache::publishIntegerKeys()
+uint32_t AnswersAtSites::placeAtDistanceFromInstance(uint32_t distance) const
 {
-    m_instance.realm.integerKeys = m_integerKeys.isEmpty() ? nullptr : m_integerKeys.span().data();
-    m_instance.realm.integerKeyMask = m_integerKeys.isEmpty() ? 0 : m_integerKeys.size() - 1;
+    size_t offset = distance - InstanceLayout::offsetOfIndicesOfSiteAnswers(m_state.instance.tables().instanceSizes);
+    RELEASE_ASSERT(!(offset % sizeof(uint16_t)) && offset / sizeof(uint16_t) < m_indices.size());
+    return static_cast<uint32_t>(offset / sizeof(uint16_t));
 }
 
-JSString* StringKeyCache::findOrAdd(VM& vm, std::span<const Latin1Character> characters)
+uint8_t* AnswersAtSites::missesAndSamplesLeftOutAt(uint32_t place)
 {
-    if (characters.size() < 2)
-        return characters.empty() ? jsEmptyString(vm) : jsSingleCharacterString(vm, characters[0]);
-    if (characters.size() > m_maxCachedKeyLength) {
-        countLimitHit(vm, LimitID::MaxCachedKeyLength);
-        return jsNontrivialString(vm, String(characters));
-    }
-    unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters);
-    if (JSString* key = tryFindCachedKey(characters, hash))
-        return key;
-    return makeKey(vm, characters, hash);
+    uint8_t* instance = reinterpret_cast<uint8_t*>(&m_state.instance);
+    size_t distance = reinterpret_cast<uint8_t*>(&m_indices[place]) - instance;
+    return instance + InstanceLayout::offsetOfMissesOfPlaces + distance % InstanceLayout::bytesReservedForMissesOfPlaces;
 }
 
-NEVER_INLINE JSString* StringKeyCache::findAmongEqualHashes(const uint64_t* pair, std::span<const Latin1Character> characters) const
+void AnswersAtSites::beginPeriodOfAnotherLength(uint32_t place)
 {
-    if (JSString* key = matchingKey(pair[0], characters))
-        return key;
-    return matchingKey(pair[1], characters);
+    static constexpr std::array<uint8_t, 8> missesLeftOut { 0, 5, 2, 7, 1, 4, 6, 3 };
+    uint8_t& misses = *missesAndSamplesLeftOutAt(place);
+    uint8_t turn = (misses + 1) & 7;
+    misses = static_cast<uint8_t>(SiteCacheState::sampleStep * missesLeftOut[turn] | turn);
+    samplesLeftOutAt(place) = 0;
 }
 
-JSString* StringKeyCache::caseConvertedString(VM& vm, std::span<const Latin1Character> characters)
+void AnswersAtSites::waitLongerForNextFill(uint32_t place)
 {
-    ASSERT(characters.size() >= 2);
-    unsigned hash = StringHasher::computeHashAndMaskTop8Bits<Latin1Character>(characters);
-    uint64_t& entry = m_caseConvertedStrings[hash % m_caseConvertedStrings.size()];
-    if (entry && entry >> 32 == hash) {
-        if (JSString* key = matchingKey(entry, characters))
-            return key;
-    }
-    JSString* newString = jsNontrivialString(vm, String(characters));
-    if (vm.heap.cage().contains(newString)) {
-        entry = static_cast<uint64_t>(hash) << 32 | MarkedBlockCage::encode(m_cageBase, newString);
-        m_writtenSinceCollection.recordAll();
-    }
-    return newString;
+    static_assert(SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount) / SiteCacheState::missesOfEmptySitesPerSample <= UINT8_MAX);
+    samplesLeftOutAt(place) = static_cast<uint8_t>(m_states.takeSamplesToLeaveOutBeforeNextFill(keyOfState(place)));
 }
 
-void StringKeyCache::cacheCaseConversion(VM& vm, const JSString* source, LetterCase letterCase, JSString* converted)
+bool AnswersAtSites::isDueForFilling(uint32_t place)
 {
-    if (!vm.heap.cage().contains(source) || !vm.heap.cage().contains(converted))
+    if (answersOf(place))
+        return true;
+    uint8_t& requests = m_requestsOfPages[place >> m_placesInPageShift];
+    if (requests >= requestsThatOpenPage)
+        return true;
+    ++requests;
+    return false;
+}
+
+SiteAnswers* AnswersAtSites::ensureAnswersOf(uint32_t place, SiteUse use)
+{
+    if (SiteAnswers* answers = answersOf(place))
+        return answers;
+    uint32_t number;
+    if (!m_numbersGivenBack.isEmpty())
+        number = m_numbersGivenBack.takeLast();
+    else if ((m_places.size() + 1) * wordsInAnswers <= m_state.instance.propertyCaches.firstWordOfWideAnswers) {
+        number = m_places.size();
+        m_places.append(UINT32_MAX);
+    } else
+        return nullptr;
+    ASSERT(m_answers[number].isEmpty());
+    countEvent(*m_state.instance.vm, RuntimeCounterID::SiteCacheEntriesAllocated);
+    m_answers[number].first = SiteAnswers::withoutKey(use, true);
+    m_places[number] = place;
+    m_indices[place] = static_cast<uint16_t>(number * wordsInAnswers);
+    return &m_answers[number];
+}
+
+void AnswersAtSites::giveBackIfEmpty(uint32_t number)
+{
+    SiteAnswers& answers = m_answers[number];
+    if (!answers.isEmpty() || m_places[number] == UINT32_MAX)
         return;
-    uint32_t encoded = MarkedBlockCage::encode(m_cageBase, source);
-    size_t way = 0;
-    while (way < waysOfCaseConversions - 1 && m_caseConversions[indexOfCaseConversion(encoded, letterCase, way)])
-        ++way;
-    for (; way; --way)
-        m_caseConversions[indexOfCaseConversion(encoded, letterCase, way)] = m_caseConversions[indexOfCaseConversion(encoded, letterCase, way - 1)];
-    m_caseConversions[indexOfCaseConversion(encoded, letterCase)] = static_cast<uint64_t>(encoded) << 32 | MarkedBlockCage::encode(m_cageBase, converted);
-    m_hashesWithCaseConversions.set(indexOfCaseConversion(encoded, letterCase) >> caseConversionSetShift);
-    m_writtenSinceCollection.recordAll();
+    answers = { };
+    m_indices[m_places[number]] = 0;
+    m_places[number] = UINT32_MAX;
+    m_numbersGivenBack.append(static_cast<uint16_t>(number));
 }
 
-JSString* StringKeyCache::makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash)
+WideSiteAnswers* AnswersAtSites::wideAnswersOf(uint32_t place) const
 {
-    return makeKey(vm, characters, hash, { });
+    uint32_t word = m_indices[place];
+    if (word < m_state.instance.propertyCaches.firstWordOfWideAnswers)
+        return nullptr;
+    return &wideAnswersAt(static_cast<uint32_t>((m_answers.size() * wordsInAnswers - word) / wordsInWideAnswers - 1));
 }
 
-void StringKeyCache::growCachedKeys()
+WideSiteAnswers* AnswersAtSites::ensureWideAnswersOf(uint32_t place)
 {
-    Vector<uint64_t> former = std::exchange(m_cachedKeys, { });
-    m_cachedKeys.fill(0, former.size() * 2);
-    for (uint64_t formerEntry : former) {
-        if (!formerEntry)
-            continue;
-        unsigned hash = formerEntry >> 32;
-        size_t index = firstIndex(hash, m_cachedKeys.size());
-        if (m_cachedKeys[index])
-            index += m_cachedKeys[index + 1] ? hash >> 23 & 1 : 1;
-        m_cachedKeys[index] = formerEntry;
-    }
-    m_cachedKeyEvictionCount = 0;
+    if (WideSiteAnswers* wide = wideAnswersOf(place))
+        return wide;
+    uint32_t number;
+    if (!m_numbersOfWideAnswersGivenBack.isEmpty())
+        number = m_numbersOfWideAnswersGivenBack.takeLast();
+    else if (m_places.size() * wordsInAnswers + (m_placesOfWideAnswers.size() + 1) * wordsInWideAnswers <= m_answers.size() * wordsInAnswers) {
+        number = m_placesOfWideAnswers.size();
+        m_placesOfWideAnswers.append(UINT32_MAX);
+        m_state.instance.propertyCaches.firstWordOfWideAnswers = firstWordOfWideAnswersAt(number);
+    } else
+        return nullptr;
+    WideSiteAnswers& wide = wideAnswersAt(number);
+    ASSERT(wide.namesNoStructure() && !wide.answers.first.key && !wide.answers.second.key);
+    if (SiteAnswers* narrow = answersOf(place)) {
+        uint32_t numberOfNarrow = static_cast<uint32_t>(narrow - m_answers.data());
+        wide.answers = std::exchange(*narrow, { });
+        m_places[numberOfNarrow] = UINT32_MAX;
+        m_numbersGivenBack.append(static_cast<uint16_t>(numberOfNarrow));
+    } else
+        wide.answers.first = SiteAnswers::withoutKey(SiteUse::Read, true);
+    m_placesOfWideAnswers[number] = place;
+    m_indices[place] = static_cast<uint16_t>(firstWordOfWideAnswersAt(number));
+    return &wide;
 }
 
-void StringKeyCache::cacheKeyByParts(const KeyByParts& parts, JSString* key)
+void AnswersAtSites::giveBackWideAnswersIfEmpty(uint32_t number)
 {
-    if (!canEncode(key))
+    WideSiteAnswers& wide = wideAnswersAt(number);
+    if (!wide.answers.isEmpty() || !wide.namesNoStructure() || m_placesOfWideAnswers[number] == UINT32_MAX)
         return;
-    addKeyByParts(parts, key);
-    m_writtenSinceCollection.recordAll();
+    wide = { };
+    m_indices[m_placesOfWideAnswers[number]] = 0;
+    m_placesOfWideAnswers[number] = UINT32_MAX;
+    m_numbersOfWideAnswersGivenBack.append(static_cast<uint16_t>(number));
 }
 
-void StringKeyCache::resizeIntegerKeys(size_t tableSize)
+void AnswersAtSites::didFailToFill(uint32_t place)
 {
-    m_integerKeyEvictionCount = 0;
-    Vector<uint64_t> former = std::exchange(m_integerKeys, { });
-    m_integerKeys.fill(0, tableSize);
-    for (uint64_t formerEntry : former) {
-        if (formerEntry)
-            m_integerKeys[formerEntry >> 32 & (tableSize - 1)] = formerEntry;
-    }
-    publishIntegerKeys();
+    waitLongerForNextFill(place);
 }
 
-void StringKeyCache::cacheIntegerKey(VM& vm, uint32_t integer, JSString* keyOrNull)
+static bool isRoad(SiteUse use, SiteAnswers::Answer answer)
 {
-    if (keyOrNull && !vm.heap.cage().contains(keyOrNull))
-        return;
-    if (m_integerKeys.isEmpty()) [[unlikely]] {
-        m_integerKeys.fill(0, minIntegerKeyTableSize);
-        publishIntegerKeys();
-    }
-    size_t tableSize = m_integerKeys.size();
-    uint64_t& entry = m_integerKeys[integer & (tableSize - 1)];
-    bool overwrites = entry && entry >> 32 != integer;
-    entry = static_cast<uint64_t>(integer) << 32;
-    if (keyOrNull) {
-        entry |= MarkedBlockCage::encode(m_cageBase, keyOrNull);
-        ++m_integerKeysEnteredSinceSweep;
-        m_writtenSinceCollection.recordAll();
-    }
-    if (!overwrites || ++m_integerKeyEvictionCount <= tableSize / 4 || tableSize >= maxIntegerKeyTableSize) [[likely]]
-        return;
-    resizeIntegerKeys(tableSize * 2);
+    return isRead(use) && answer.isByStructure() && SiteAnswers::formOf(use, answer.key) == SiteAnswers::Form::Nothing;
 }
 
-JSString* StringKeyCache::makeIntegerKey(VM& vm, uint32_t integer, std::span<const Latin1Character> characters)
+static bool borrowsOperandOfOtherAnswer(SiteUse use, SiteAnswers::Answer answer)
 {
-    ASSERT(characters.size() >= 2);
-    unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters);
-    JSString* key = jsNontrivialString(vm, String(StringImpl::create(characters, hash)));
-    cacheIntegerKey(vm, integer, key);
-    return key;
+    if (!answer.isByStructure())
+        return false;
+    SiteAnswers::Form form = SiteAnswers::formOf(use, answer.key);
+    return form == SiteAnswers::Form::ValueInStorageOfHolder || form == SiteAnswers::Form::GetterInStorageOfHolder;
 }
 
-void StringKeyCache::growKeysByParts()
+static bool isValueInStorageOfHolderAtCall(SiteAnswers::Answer answer)
 {
-    m_keysByPartsEvictionCount = 0;
-    if (m_keysByParts.size() >= maxKeysByPartsTableSize)
-        return;
-    Vector<KeyByParts> former = std::exchange(m_keysByParts, { });
-    m_keysByParts.fill({ }, former.size() * 2);
-    for (const KeyByParts& entry : former) {
-        if (!entry.countAndKinds)
-            continue;
-        uint32_t count = entry.countAndKinds & 0xff;
-        uint64_t mixed = count;
-        for (uint32_t i = 0; i < count; ++i)
-            mixed = (mixed ^ entry.part(i)) * 0x9e3779b97f4a7c15ull;
-        uint32_t hash = static_cast<uint32_t>((mixed ^ entry.countAndKinds >> 8) >> 32);
-        size_t index = firstIndex(hash, m_keysByParts.size());
-        if (m_keysByParts[index].countAndKinds && !m_keysByParts[index + 1].countAndKinds)
-            ++index;
-        else if (m_keysByParts[index].countAndKinds) {
-            index += hash >> 31;
-            ++m_keysByPartsEvictionCount;
+    return answer.isByStructure() && SiteAnswers::formOf(SiteUse::Call, answer.key) == SiteAnswers::Form::ValueInStorageOfHolder;
+}
+
+static SiteAnswers::Answer asNewestAtRead(SiteUse use, SiteAnswers::Answer answer)
+{
+    static_assert(Slot::wordIndexFor(0) > 0 && Slot::wordIndexFor(firstOutOfLineOffset) < 0);
+    if (!answer.isByStructure() || SiteAnswers::formOf(use, answer.key) != SiteAnswers::Form::OwnValueInCell)
+        return answer;
+    uint32_t key = (answer.key & ~SiteAnswers::formMask) | SiteAnswers::bitsOf(use, SiteAnswers::mostCommonForm(use));
+    return { key, use == SiteUse::Read ? static_cast<uint32_t>(answer.operand / sizeof(EncodedJSValue)) : answer.operand };
+}
+
+static bool secondRepeatsFirst(SiteUse use, const SiteAnswers& answers)
+{
+    using Form = SiteAnswers::Form;
+    if (!answers.holdsShape() || !answers.second.isByStructure() || answers.second.operand != answers.first.operand)
+        return false;
+    Form form = SiteAnswers::formOf(use, answers.second.key);
+    uint32_t bitTurned = form == Form::OwnNarrowReferenceInCell ? SiteAnswers::bitTurnedForNarrowReferenceInCell : form == Form::OwnInt32InCell ? SiteAnswers::bitTurnedForInt32InCell : form == Form::OwnFieldInExtension ? SiteAnswers::bitTurnedForFieldInExtension : 0;
+    if (!bitTurned && form != Form::OwnFieldInCell)
+        return false;
+    const CompiledStructure* compiled = compiledObjectStructureOrNull(WTF::opaque(answers.second.structureID().decode()));
+    return compiled && answers.first.key == (shapeWordOf(compiled->layout().shape) ^ bitTurned);
+}
+
+void AnswersAtSites::fill(uint32_t place, SiteUse use, const AnswerByStructure& filled, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects, bool stubFollowsFurtherAnswers)
+{
+    RELEASE_ASSERT(filled.answer.isByStructure());
+    if (isRead(use) && holdsAnotherStructure(place, use, filled.answer.structureID())) {
+        SiteAnswers::Form form = SiteAnswers::formOf(use, filled.answer.key);
+        bool comesBack = stubFollowsFurtherAnswers && wasPutOut(place, filled.answer.structureID());
+        if (std::ranges::contains(WideSiteAnswers::formsOfFurtherAnswers, form) || (comesBack && WideSiteAnswers::canBeFurtherAnswer(form, filled.indexInStorageOfHolder))) {
+            addFurtherAnswer(place, filled, uid, changeableObjects);
+            return;
         }
-        m_keysByParts[index] = entry;
+        if (stubFollowsFurtherAnswers)
+            m_visitorsPutOut.add(static_cast<uint64_t>(place) << 32 | answersOf(place)->second.structureID().bits());
+    }
+    SiteAnswers* answers = ensureAnswersOf(place, use);
+    if (!answers) {
+        didFailToFill(place);
+        return;
+    }
+    waitLongerForNextFill(place);
+    SiteAnswers::Answer& newest = answers->newestByStructure(use);
+    SiteAnswers::Answer& other = answers->besideNewestByStructure(use);
+    const bool otherIsFirst = &other == &answers->first;
+    const bool otherReadsOperandOfNewest = use == SiteUse::Call && isValueInStorageOfHolderAtCall(other);
+    if (use == SiteUse::Call && isValueInStorageOfHolderAtCall(filled.answer) && (otherReadsOperandOfNewest || isValueInStorageOfHolderAtCall(newest)) && newest.operand == filled.answer.operand && other.operand == static_cast<uint32_t>(filled.indexInStorageOfHolder)) {
+        if (newest.key && newest.key != filled.answer.key)
+            other.key = newest.key;
+        newest.key = filled.answer.key;
+        m_wasWrittenSinceLastSweep = true;
+        if (!changeableObjects.empty())
+            m_state.chainDependents->add(changeableObjects, { uid, place, m_ownerID });
+        return;
+    }
+    if (otherReadsOperandOfNewest)
+        other = SiteAnswers::withoutKey(use, otherIsFirst);
+    bool didBorrow = borrowsOperandOfOtherAnswer(use, newest);
+    if (didBorrow)
+        newest = { };
+    if (borrowsOperandOfOtherAnswer(use, filled.answer))
+        other = SiteAnswers::withoutKey(use, otherIsFirst, static_cast<uint32_t>(filled.indexInStorageOfHolder));
+    else if (!isRead(use)) {
+        if (newest.key)
+            other = newest;
+    } else if (didBorrow)
+        other = SiteAnswers::withoutKey(use, otherIsFirst);
+    newest = isRead(use) ? asNewestAtRead(use, filled.answer) : filled.answer;
+    if (isRoad(use, filled.answer))
+        countEvent(*m_state.instance.vm, RuntimeCounterID::SiteCacheRoutingEntriesStored);
+    ASSERT(use != SiteUse::Call || !answers->second.isByStructure() || SiteAnswers::formOf(use, answers->second.key) != SiteAnswers::Form::GetterInStorageOfHolder);
+    m_wasWrittenSinceLastSweep = true;
+    if (!changeableObjects.empty())
+        m_state.chainDependents->add(changeableObjects, { uid, place, m_ownerID });
+}
+
+void AnswersAtSites::fillByShape(uint32_t place, SiteUse use, SiteAnswers::Answer answer, std::optional<SiteAnswers::Answer> sameByStructure)
+{
+    RELEASE_ASSERT(answer.isByShape());
+    SiteAnswers* answers = ensureAnswersOf(place, use);
+    if (!answers) {
+        didFailToFill(place);
+        return;
+    }
+    waitLongerForNextFill(place);
+    if (borrowsOperandOfOtherAnswer(use, answers->second))
+        answers->second = { };
+    answers->first = answer;
+    if (sameByStructure && (!answers->second.key || isRoad(use, answers->second))) {
+        answers->second = *sameByStructure;
+        m_wasWrittenSinceLastSweep = true;
     }
 }
 
-size_t StringKeyCache::removeDeadKeysByParts(VM& vm)
+bool AnswersAtSites::holdsAnotherStructure(uint32_t place, SiteUse use, StructureID id) const
 {
-    size_t removedCount = 0;
-    for (KeyByParts& entry : m_keysByParts) {
-        if (!entry.countAndKinds)
-            continue;
-        bool isAlive = vm.heap.isMarked(MarkedBlockCage::decode(m_cageBase, entry.key));
-        for (uint32_t areCells = entry.countAndKinds >> 8, i = 0; areCells && isAlive; areCells >>= 1, ++i) {
-            if (areCells & 1)
-                isAlive = vm.heap.isMarked(MarkedBlockCage::decode(m_cageBase, entry.part(i)));
-        }
-        if (!isAlive) {
-            entry = { };
-            ++removedCount;
-        }
-    }
-    return removedCount;
+    const SiteAnswers* answers = answersOf(place);
+    return answers && answers->second.isByStructure() && answers->second.structureID() != id && !secondRepeatsFirst(use, *answers) && !isRoad(use, answers->second);
 }
 
-size_t StringKeyCache::removeDeadCaseConversions(VM& vm)
+void AnswersAtSites::moveUpFurtherAnswer(uint32_t place, SiteUse use, StructureID id)
 {
-    size_t removedCount = 0;
-    m_hashesWithCaseConversions.forEachSetBit([&](size_t hash) {
-        bool hasEntries = false;
-        for (uint64_t& entry : std::span { m_caseConversions }.subspan(hash << caseConversionSetShift, size_t { 1 } << caseConversionSetShift)) {
-            if (!entry)
+    using Form = SiteAnswers::Form;
+    WideSiteAnswers* wide = wideAnswersOf(place);
+    if (!wide)
+        return;
+    if (uint8_t& leftOut = samplesLeftOutAt(place)) {
+        --leftOut;
+        return;
+    }
+    auto found = std::ranges::find(wide->structuresOfFurtherAnswers, id.bits());
+    if (found == wide->structuresOfFurtherAnswers.end())
+        return;
+    size_t index = found - wide->structuresOfFurtherAnswers.begin();
+    SiteAnswers::Answer& first = wide->answers.first;
+    SiteAnswers::Answer& second = wide->answers.second;
+    const WideSiteAnswers::FormOfFurtherAnswer held = wide->formsOfFurtherAnswersHeld[index];
+    const AnswerByStructure up { { id.bits() | held.bits, wide->operandsOfFurtherAnswers[index] }, held.indexInStorageOfHolder };
+    const bool upBorrows = borrowsOperandOfOtherAnswer(use, up.answer);
+    if (upBorrows && wide->answers.holdsShape())
+        return;
+    AnswerByStructure down { isRoad(use, second) ? SiteAnswers::Answer { } : second, 0 };
+    if (down.answer.isByStructure()) {
+        if (borrowsOperandOfOtherAnswer(use, second))
+            down.indexInStorageOfHolder = static_cast<int32_t>(first.operand);
+        else if (SiteAnswers::formOf(use, second.key) == Form::OwnValueInStorage && static_cast<int32_t>(second.operand) > 0)
+            down.answer = { (second.key & ~SiteAnswers::formMask) | SiteAnswers::bitsOf(use, Form::OwnValueInCell), static_cast<uint32_t>(second.operand * sizeof(EncodedJSValue)) };
+        if (!WideSiteAnswers::canBeFurtherAnswer(SiteAnswers::formOf(use, down.answer.key), down.indexInStorageOfHolder))
+            return;
+    }
+    waitLongerForNextFill(place);
+    if (upBorrows)
+        first = SiteAnswers::withoutKey(use, true, static_cast<uint32_t>(up.indexInStorageOfHolder));
+    else if (down.indexInStorageOfHolder)
+        first = SiteAnswers::withoutKey(use, true);
+    second = asNewestAtRead(use, up.answer);
+    *found = down.answer.isByStructure() ? down.answer.structureID().bits() : 0;
+    wide->operandsOfFurtherAnswers[index] = down.answer.operand;
+    wide->formsOfFurtherAnswersHeld[index] = { static_cast<uint8_t>(down.answer.key & SiteAnswers::formMask), static_cast<int8_t>(down.indexInStorageOfHolder) };
+    m_wasWrittenSinceLastSweep = true;
+}
+
+void AnswersAtSites::addFurtherAnswer(uint32_t place, const AnswerByStructure& filled, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
+{
+    const SiteAnswers::Answer answer = filled.answer;
+    WideSiteAnswers* wide = ensureWideAnswersOf(place);
+    if (!wide) {
+        waitLongerForNextFill(place);
+        return;
+    }
+    auto& structures = wide->structuresOfFurtherAnswers;
+    if (std::ranges::contains(structures, answer.structureID().bits())) {
+        waitLongerForNextFill(place);
+        return;
+    }
+    auto room = std::ranges::find(structures, 0u);
+    if (room == structures.end()) {
+        room = structures.begin() + m_nextStructureToForget++ % structures.size();
+        waitLongerForNextFill(place);
+    }
+    size_t index = room - structures.begin();
+    *room = answer.structureID().bits();
+    wide->operandsOfFurtherAnswers[index] = answer.operand;
+    wide->formsOfFurtherAnswersHeld[index] = { static_cast<uint8_t>(answer.key & SiteAnswers::formMask), static_cast<int8_t>(filled.indexInStorageOfHolder) };
+    m_wasWrittenSinceLastSweep = true;
+    if (!changeableObjects.empty())
+        m_state.chainDependents->add(changeableObjects, { uid, place, m_ownerID });
+}
+
+void AnswersAtSites::addStructureThatLacksName(uint32_t place, StructureID id, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
+{
+    WideSiteAnswers* wide = ensureWideAnswersOf(place);
+    if (!wide) {
+        waitLongerForNextFill(place);
+        return;
+    }
+    auto& structures = wide->structuresThatLackName;
+    if (std::ranges::contains(structures, id.bits())) {
+        waitLongerForNextFill(place);
+        return;
+    }
+    auto room = std::ranges::find(structures, 0u);
+    if (room == structures.end()) {
+        room = structures.begin() + m_nextStructureToForget++ % structures.size();
+        waitLongerForNextFill(place);
+    }
+    *room = id.bits();
+    m_wasWrittenSinceLastSweep = true;
+    if (!changeableObjects.empty())
+        m_state.chainDependents->add(changeableObjects, { uid, place, m_ownerID });
+}
+
+bool AnswersAtSites::findsSlotOf(uint32_t place, SiteUse use, const Object& object) const
+{
+    const SiteAnswers* answers = answersOf(place);
+    if (!answers)
+        return false;
+    if (answers->holdsShape() && !((answers->first.key ^ object.shapeWordWithMark()) & ~SiteAnswers::bitsTurnedForAnswersByShape))
+        return true;
+    if (!answers->second.isByStructure() || answers->second.structureID() != object.structureID())
+        return false;
+    SiteAnswers::Form form = SiteAnswers::formOf(use, answers->second.key);
+    return form == SiteAnswers::Form::OwnFieldInCell || form == SiteAnswers::Form::OwnNarrowReferenceInCell || form == SiteAnswers::Form::OwnInt32InCell || form == SiteAnswers::Form::OwnFieldInExtension;
+}
+
+void AnswersAtSites::fillAboveFieldLeftOut(uint32_t place, StructureID id, WhatStandsAbove above, UniquedStringImpl* uid, std::span<JSObject* const> changeableObjects)
+{
+    waitLongerForNextFill(place);
+    WideSiteAnswers* wide = ensureWideAnswersOf(place);
+    if (!wide)
+        return;
+    wide->structureThatLeavesFieldOut = id.bits();
+    wide->holderOrWordAbove = above.holderOrWord;
+    wide->indexInStorageOfHolderAbove = above.indexInStorageOfHolder;
+    m_wasWrittenSinceLastSweep = true;
+    if (!changeableObjects.empty())
+        m_state.chainDependents->add(changeableObjects, { uid, place, m_ownerID });
+}
+
+void AnswersAtSites::dropChainDependent(VM&, uint32_t place, UniquedStringImpl*)
+{
+    SiteAnswers* answers = answersOf(place);
+    if (!answers)
+        return;
+    for (SiteAnswers::Answer* answer : { &answers->first, &answers->second }) {
+        if (!answer->isByShape())
+            *answer = { };
+    }
+    if (WideSiteAnswers* wide = wideAnswersOf(place)) {
+        wide->forgetStructures();
+        giveBackWideAnswersIfEmpty(numberOf(*wide));
+    } else
+        giveBackIfEmpty(static_cast<uint32_t>(answers - m_answers.data()));
+    m_states.forgetHowOftenItWasFilled(keyOfState(place));
+    samplesLeftOutAt(place) = 0;
+}
+
+bool AnswersAtSites::hasChainDependent(VM&, uint32_t place, UniquedStringImpl*) const
+{
+    const SiteAnswers* answers = answersOf(place);
+    if (!answers)
+        return false;
+    const WideSiteAnswers* wide = wideAnswersOf(place);
+    return answers->first.isByStructure() || answers->second.isByStructure() || (wide && !wide->namesNoStructure());
+}
+
+size_t AnswersAtSites::removeDeadEntries(VM& vm, CollectionScope scope)
+{
+    if (scope == CollectionScope::Full)
+        m_visitorsPutOut.clear();
+    if (scope == CollectionScope::Eden && !m_wasWrittenSinceLastSweep)
+        return 0;
+    m_wasWrittenSinceLastSweep = false;
+
+    size_t numberOfClearedAnswers = 0;
+    for (uint32_t number = 1; number < m_places.size(); ++number) {
+        SiteAnswers& answers = m_answers[number];
+        bool didClear = false;
+        for (SiteAnswers::Answer* answer : { &answers.first, &answers.second }) {
+            if (!answer->isByStructure() || vm.heap.isMarked(answer->structureID().decode()))
                 continue;
-            if (vm.heap.isMarked(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry >> 32))) && vm.heap.isMarked(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)))) {
-                hasEntries = true;
+            answer->key = 0;
+            didClear = true;
+            ++numberOfClearedAnswers;
+        }
+        if (didClear)
+            giveBackIfEmpty(number);
+    }
+    auto isDead = [&](uint32_t bits) {
+        return bits && !vm.heap.isMarked(std::bit_cast<StructureID>(bits).decode());
+    };
+    for (uint32_t number = 0; number < m_placesOfWideAnswers.size(); ++number) {
+        WideSiteAnswers& wide = wideAnswersAt(number);
+        size_t numberBefore = numberOfClearedAnswers;
+        for (SiteAnswers::Answer* answer : { &wide.answers.first, &wide.answers.second }) {
+            if (!answer->isByStructure() || vm.heap.isMarked(answer->structureID().decode()))
                 continue;
+            *answer = { };
+            ++numberOfClearedAnswers;
+        }
+        for (std::span<uint32_t> structures : { std::span<uint32_t>(wide.structuresOfFurtherAnswers), std::span<uint32_t>(wide.structuresThatLackName) }) {
+            for (uint32_t& bits : structures) {
+                if (!isDead(bits))
+                    continue;
+                bits = 0;
+                ++numberOfClearedAnswers;
             }
-            entry = 0;
-            ++removedCount;
         }
-        if (!hasEntries)
-            m_hashesWithCaseConversions.clear(hash);
-    });
-    return removedCount;
+        if (isDead(wide.structureThatLeavesFieldOut)) {
+            wide.forgetWhatStandsAbove();
+            ++numberOfClearedAnswers;
+        }
+        if (numberOfClearedAnswers != numberBefore)
+            giveBackWideAnswersIfEmpty(number);
+    }
+    return numberOfClearedAnswers;
 }
 
-size_t StringKeyCache::removeDeadEntries(VM& vm, std::span<uint64_t> entries)
+static std::optional<uint32_t> offsetOfPlainValueInCell(const FieldData& field)
 {
-    size_t removedCount = 0;
-    for (uint64_t& entry : entries) {
-        if (entry && !vm.heap.isMarked(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)))) {
-            entry = 0;
-            ++removedCount;
+    SlotRepresentation representation = field.slot.representation();
+    if (field.isAccessor() || field.isOutOfLine() || (representation != SlotRepresentation::JSValue && representation != SlotRepresentation::Cell) || field.slot.offset % sizeof(EncodedJSValue))
+        return std::nullopt;
+    return field.slot.offset;
+}
+
+static bool isPlainValueInExtension(const Object& object, const FieldData& field)
+{
+    SlotRepresentation representation = field.slot.representation();
+    if (field.isAccessor() || !field.isOutOfLine() || (representation != SlotRepresentation::JSValue && representation != SlotRepresentation::Cell))
+        return false;
+    return object.layout().extensionSlot() == SlotData::create(offsetOfFirstField, SlotRepresentation::Cell32);
+}
+
+static std::optional<SiteAnswers::Answer> answerForPlainValueInExtension(const Object& object, const FieldData& field)
+{
+    if (!isPlainValueInExtension(object, field))
+        return std::nullopt;
+    return SiteAnswers::tryByShapeInExtension(object.shapeWord(), field.slot.offset);
+}
+
+static std::optional<SiteAnswers::Answer> answerForTypedSlotInCell(const Object& object, const FieldData& field)
+{
+    if (field.isAccessor() || field.isOutOfLine())
+        return std::nullopt;
+    return SiteAnswers::tryByShapeInTypedSlot(object.shapeWord(), field.slot.representation(), field.slot.offset);
+}
+
+static std::optional<AnswersAtSites::AnswerByStructure> answerOfSlot(SiteUse use, const Slot& slot, uintptr_t cageBase, bool usesWideReferences, JSObject* objectThatHoldsUndefined)
+{
+    using Form = SiteAnswers::Form;
+    auto answer = [&](Form form, uint32_t operand, int32_t indexInStorageOfHolder = 0) -> std::optional<AnswersAtSites::AnswerByStructure> {
+        std::optional<SiteAnswers::Answer> made = SiteAnswers::tryByStructure(use, slot.structureID, form, operand);
+        if (!made)
+            return std::nullopt;
+        return AnswersAtSites::AnswerByStructure { *made, indexInStorageOfHolder };
+    };
+    switch (slot.kind) {
+    case Slot::Kind::Value: {
+        int32_t wordIndex = slot.wordIndex();
+        if (slot.has(Slot::isOwn)) {
+            if (slot.has(Slot::isOutOfLine))
+                return answer(Form::OwnValueInStorage, static_cast<uint32_t>(wordIndex));
+            return answer(isRead(use) ? Form::OwnValueInCell : Form::OwnFieldInCell, static_cast<uint32_t>(wordIndex) * sizeof(EncodedJSValue));
+        }
+        if (!slot.holder || usesWideReferences)
+            return std::nullopt;
+        uintptr_t wordsToHolder = (std::bit_cast<uintptr_t>(slot.holder) - cageBase) / sizeof(EncodedJSValue);
+        if (wordsToHolder + static_cast<uint32_t>(std::max(wordIndex, 0)) > UINT32_MAX)
+            return std::nullopt;
+        if (slot.has(Slot::isOutOfLine))
+            return answer(Form::ValueInStorageOfHolder, static_cast<uint32_t>(wordsToHolder), wordIndex);
+        return answer(Form::ValueInWordOfCage, static_cast<uint32_t>(wordsToHolder) + static_cast<uint32_t>(wordIndex));
+    }
+    case Slot::Kind::Getter: {
+        std::optional<WordOfGetterForSiteAnswers> word = findWordOfGetterForSiteAnswers(use, slot, cageBase, usesWideReferences);
+        return word ? answer(word->form, word->operand, word->indexInStorageOfHolder) : std::nullopt;
+    }
+    case Slot::Kind::FieldGetter: {
+        if ((use != SiteUse::Call && !isRead(use)) || slot.has(Slot::isOutOfLine))
+            return std::nullopt;
+        SlotRepresentation representation = slot.field.slot.representation();
+        if ((representation != SlotRepresentation::JSValue && representation != SlotRepresentation::Cell) || slot.field.slot.offset % sizeof(EncodedJSValue))
+            return std::nullopt;
+        return answer(Form::OwnGetterInCell, slot.field.slot.offset);
+    }
+    case Slot::Kind::Absent: {
+        if (!isRead(use) || usesWideReferences)
+            return std::nullopt;
+        uintptr_t words = (std::bit_cast<uintptr_t>(objectThatHoldsUndefined->inlineStorage()) - cageBase) / sizeof(EncodedJSValue);
+        return words <= UINT32_MAX ? answer(Form::ValueInWordOfCage, static_cast<uint32_t>(words)) : std::nullopt;
+    }
+    case Slot::Kind::ArrayLength:
+        return isRead(use) && slot.has(Slot::isLastIndexOfRegExp) ? answer(Form::OwnValueInCell, static_cast<uint32_t>(RegExpObject::offsetOfLastIndex())) : std::nullopt;
+    case Slot::Kind::TypedArrayLength:
+        return isRead(use) && !slot.has(Slot::readsByteOffset) ? answer(Form::LengthOfTypedArray, 0) : std::nullopt;
+    case Slot::Kind::ExtraProperty:
+    case Slot::Kind::ExtraGetter: {
+        const bool isGetter = slot.kind == Slot::Kind::ExtraGetter;
+        if (isGetter && use != SiteUse::Call)
+            return std::nullopt;
+        constexpr int32_t maxIndex = (1 << (31 - SiteAnswers::indexShiftInOperandOfExtraValue)) - 1;
+        uint32_t hiddenWordOffset = slot.hiddenWordOffset();
+        int32_t wordIndex = slot.extraProperty.wordIndex;
+        if (usesWideReferences || hiddenWordOffset % sizeof(uint32_t) || hiddenWordOffset / sizeof(uint32_t) > UINT8_MAX || wordIndex > maxIndex || wordIndex < -maxIndex)
+            return std::nullopt;
+        uint32_t operand = static_cast<uint32_t>(wordIndex) << SiteAnswers::indexShiftInOperandOfExtraValue | hiddenWordOffset / sizeof(uint32_t);
+        if (isGetter)
+            return answer(slot.has(Slot::isOutOfLine) ? Form::ExtraGetterInStorageAtCall : Form::ExtraGetterInCellAtCall, operand);
+        return answer(slot.has(Slot::isOutOfLine) ? Form::ExtraValueInStorage : Form::ExtraValueInCell, operand);
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+static std::optional<AnswersAtSites::WhatStandsAbove> findWhatStandsAboveFieldLeftOut(const Slot& slot, const ChainWalk& walk, uintptr_t cageBase, JSObject* objectThatHoldsUndefined)
+{
+    if (walk.firstObjectWithEmptySlot)
+        return std::nullopt;
+    switch (slot.kind) {
+    case Slot::Kind::Field: {
+        if (walk.result != ChainWalkResult::Absent || (!slot.has(Slot::absentIsUndefined) && !slot.has(Slot::emptySlotMayBeUndefined)))
+            return std::nullopt;
+        uintptr_t words = (std::bit_cast<uintptr_t>(objectThatHoldsUndefined->inlineStorage()) - cageBase) / sizeof(EncodedJSValue);
+        return words <= UINT32_MAX ? std::optional(AnswersAtSites::WhatStandsAbove { static_cast<uint32_t>(words) }) : std::nullopt;
+    }
+    case Slot::Kind::FieldOrInherited: {
+        JSCell* holder = MarkedBlockCage::decode(cageBase, slot.fieldAndHolder.holder);
+        if (walk.result != ChainWalkResult::Found || walk.holder != holder || slot.has(Slot::inheritsGetter) || slot.has(Slot::emptySlotMayBeUndefined) || holder->structure()->isDictionary())
+            return std::nullopt;
+        int32_t wordIndex = slot.wordIndex();
+        if (slot.has(Slot::inheritedIsOutOfLine))
+            return wordIndex < 0 ? std::optional(AnswersAtSites::WhatStandsAbove { slot.fieldAndHolder.holder, wordIndex }) : std::nullopt;
+        uint64_t words = static_cast<uint64_t>(slot.fieldAndHolder.holder) + static_cast<uint32_t>(wordIndex);
+        return wordIndex > 0 && words <= UINT32_MAX ? std::optional(AnswersAtSites::WhatStandsAbove { static_cast<uint32_t>(words) }) : std::nullopt;
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+bool PropertyCaches::fillAboveFieldLeftOut(uint32_t place, SiteUse use, Object& object, const CachedName& name)
+{
+    Structure* structure = object.structure();
+    if (m_state.instance.options().useWideReferences() || object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype) || !m_answersAtSites.findsSlotOf(place, use, object))
+        return false;
+    std::optional<Slot> slot = m_tables.find(structure->id(), name, SlotAccess::Read);
+    if (!slot || belongsToOneObject(structure))
+        return false;
+    if (m_vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+        askAgainWhatSlotAnswers(m_state.instance, &object, name.uid, *slot);
+    if (JSGlobalObject* realm = structure->realm(); realm && Instance::of(realm) != &m_state.instance)
+        return false;
+    ChainWalk walk = walkChain({ m_state.instance.globalObject, structure, &object, ChainWalkMode::AllocatesNothing, ChainWalkUse::KeptForReadsThatAskObjects }, name.uid);
+    std::optional<AnswersAtSites::WhatStandsAbove> above = findWhatStandsAboveFieldLeftOut(*slot, walk, m_vm.heap.cage().base(), m_state.objectThatHoldsUndefined);
+    if (!above)
+        return false;
+    ensureChangesAreReported(walk.changeableObjects.span());
+    m_answersAtSites.fillAboveFieldLeftOut(place, structure->id(), *above, name.uid, walk.changeableObjects.span());
+    return true;
+}
+
+StructuresBelowBuiltinClasses::StructuresBelowBuiltinClasses(State& state)
+    : m_state(state)
+    , m_ownerID(state.chainDependents->addOwner(*this))
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    for (unsigned index = 0; index < table.classCount(); ++index) {
+        if (const BuiltinClass& builtinClass = table.at(BuiltinClassID(index)); builtinClass.keepsStructuresOfClassesBelow)
+            m_classes.append({ builtinClass.type, builtinClass.id });
+    }
+    state.caches->add(CacheKind::WeakByKey, "structures below built-in classes"_s, *this);
+}
+
+void StructuresBelowBuiltinClasses::dropChainDependent(VM&, uint32_t structureID, UniquedStringImpl*)
+{
+    uint32_t& place = m_state.instance.propertyCaches.placeOfStructureBelowBuiltinClass(structureID);
+    if (place == structureID)
+        place = 0;
+}
+
+bool StructuresBelowBuiltinClasses::hasChainDependent(VM&, uint32_t structureID, UniquedStringImpl*) const
+{
+    return m_state.instance.propertyCaches.placeOfStructureBelowBuiltinClass(structureID) == structureID;
+}
+
+size_t StructuresBelowBuiltinClasses::removeDeadEntries(VM& vm, CollectionScope)
+{
+    size_t numberCleared = 0;
+    for (uint32_t& place : m_state.instance.propertyCaches.structuresBelowBuiltinClasses) {
+        if (!place || vm.heap.isMarked(std::bit_cast<StructureID>(place).decode()))
+            continue;
+        place = 0;
+        ++numberCleared;
+    }
+    return numberCleared;
+}
+
+BuiltinClassID StructuresBelowBuiltinClasses::classAbove(Structure* structure) const
+{
+    JSType type = structure->typeInfo().type();
+    for (auto [typeOfInstances, builtinClass] : m_classes) {
+        if (type == typeOfInstances)
+            return builtinClass;
+    }
+    return { };
+}
+
+bool StructuresBelowBuiltinClasses::holds(Structure* structure) const
+{
+    return m_state.instance.propertyCaches.placeOfStructureBelowBuiltinClass(structure->id().bits()) == structure->id().bits();
+}
+
+void StructuresBelowBuiltinClasses::keep(Structure* structure, std::span<JSObject* const> changeableObjects)
+{
+    m_state.chainDependents->add(changeableObjects, { nullptr, structure->id().bits(), m_ownerID });
+    m_state.instance.propertyCaches.placeOfStructureBelowBuiltinClass(structure->id().bits()) = structure->id().bits();
+    countEvent(*m_state.instance.vm, RuntimeCounterID::StructuresInheritingBuiltinMethods);
+}
+
+void PropertyCaches::keepIfBelowBuiltinClass(Structure* structure)
+{
+    BuiltinClassID builtinClass = m_structuresBelowBuiltinClasses.classAbove(structure);
+    if (!builtinClass) [[likely]]
+        return;
+    if (structure->isPristine() || structure->isDictionary() || structure->hasPolyProto() || structure->typeInfo().overridesGetOwnPropertySlot() || m_structuresBelowBuiltinClasses.holds(structure))
+        return;
+    JSGlobalObject* globalObject = m_state.instance.globalObject;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinID prototype = table.at(builtinClass).prototype;
+    JSObject* prototypeOfClass = m_state.builtinCells ? m_state.builtinCells->lockedObjects().get(prototype.index()) : nullptr;
+    if (structure->realm() != globalObject || !prototypeOfClass)
+        return;
+    ChainObjects changeableObjects;
+    for (BuiltinID member : table.membersOf(prototype)) {
+        if (!table.boxedCallStubOf(table.canonicalID(member)))
+            continue;
+        Identifier name = table.identifierOf(m_vm, table.at(member).name);
+        unsigned attributes = 0;
+        std::optional<PropertyOffset> own = structure->getWithoutMaterializing(name.impl(), attributes);
+        if (!own || isValidOffset(*own))
+            return;
+        ChainWalk walk = walkChain({ globalObject, structure, nullptr, ChainWalkMode::AllocatesNothing, ChainWalkUse::KeptForReads }, name.impl());
+        if (walk.result != ChainWalkResult::Found || walk.holder != prototypeOfClass)
+            return;
+        for (JSObject* object : walk.changeableObjects) {
+            if (!changeableObjects.contains(object))
+                changeableObjects.append(object);
         }
     }
-    return removedCount;
+    ensureChangesAreReported(changeableObjects.span());
+    m_structuresBelowBuiltinClasses.keep(structure, changeableObjects.span());
 }
 
-size_t StringKeyCache::removeDeadIntegerKeys(VM& vm)
+ReadGroupCache::Row* PropertyCaches::claimReadGroupRow(JSValue base, ReadGroupCache& group)
 {
-    size_t removedCount = 0;
-    size_t aliveCount = 0;
-    for (uint64_t& entry : m_integerKeys) {
-        // An integer without a key names no cell: nothing dies with it, and its entry needs no record.
-        if (!static_cast<uint32_t>(entry)) {
-            entry = 0;
-            continue;
+    JSObject* object = base.getObject();
+    Structure* structure = object ? WTF::opaque(object->structure()) : nullptr;
+    bool isAnsweredByStubAlone = !structure || structure->isDictionary() || structure->isCompiledStructure() || structure->typeInfo().overridesGetOwnPropertySlot() || TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags());
+    uint32_t id = isAnsweredByStubAlone ? 0 : structure->id().bits();
+    RELEASE_ASSERT(!(id & ReadGroupCache::markOfHiddenRow));
+
+    if (group.samplesLeft) {
+        ReadGroupCache::Row* hidden = nullptr;
+        for (unsigned index = 0; index < ReadGroupCache::numberOfRows; ++index) {
+            if (id && group.rows[index].structure == (id | ReadGroupCache::markOfHiddenRow)) {
+                hidden = &group.rows[index];
+                ++group.cameInLastSample[index];
+            }
         }
-        if (vm.heap.isMarked(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)))) {
-            ++aliveCount;
-            continue;
+        for (unsigned index = 0; id && !hidden && index < ReadGroupCache::numberOfRows; ++index) {
+            if (group.rows[index].structure)
+                continue;
+            hidden = &group.rows[index];
+            hidden->structure = id | ReadGroupCache::markOfHiddenRow;
+            std::ranges::fill(hidden->places, ReadGroupCache::placeIsNotKnown);
+            ++group.cameInLastSample[index];
         }
-        entry = 0;
-        ++removedCount;
+        group.samplesThatHadRow += !!hidden;
+        if (!--group.samplesLeft) {
+            for (unsigned index = 0; index < ReadGroupCache::numberOfRows; ++index)
+                group.rows[index].structure &= ~ReadGroupCache::markOfHiddenRow;
+            if (group.samplesThatHadRow * 3 < ReadGroupCache::numberOfSamples)
+                group.hasGivenUp = 1;
+            group.missesLeft = ReadGroupCache::firstWait << group.doublings;
+            if (group.doublings < ReadGroupCache::maxDoublings)
+                ++group.doublings;
+        }
+        return hidden;
     }
-    // A text that died is found no more, so the table has to hold what is alive and what will be entered until the next sweep, which is taken to be as much as since the last one.
-    size_t wantedSize = std::max(minIntegerKeyTableSize, roundUpToPowerOfTwo((aliveCount + m_integerKeysEnteredSinceSweep) * 2));
-    m_integerKeysEnteredSinceSweep = 0;
-    if (wantedSize < m_integerKeys.size())
-        resizeIntegerKeys(wantedSize);
-    return removedCount;
+
+    static constexpr uint8_t waitsWhileNothingIsClaimed = 3;
+    if (!id && std::ranges::none_of(group.rows, [](const ReadGroupCache::Row& row) { return !!row.structure; })) {
+        if (group.doublings >= waitsWhileNothingIsClaimed)
+            group.hasGivenUp = 1;
+        else
+            group.missesLeft = ReadGroupCache::firstWait << group.doublings++;
+        return nullptr;
+    }
+
+    ReadGroupCache::Row* claimed = nullptr;
+    if (id) {
+        for (ReadGroupCache::Row& row : group.rows) {
+            if (row.structure == id)
+                return &row;
+            if (!row.structure && !claimed)
+                claimed = &row;
+        }
+    }
+    bool putsOutRow = id && !claimed;
+    if (putsOutRow) {
+        unsigned fewest = ReadGroupCache::numberOfRows - 1;
+        for (unsigned index = ReadGroupCache::numberOfRows - 1; index--;) {
+            if (group.cameInLastSample[index] < group.cameInLastSample[fewest])
+                fewest = index;
+        }
+        claimed = &group.rows[fewest];
+    }
+    if (claimed) {
+        claimed->structure = id;
+        std::ranges::fill(claimed->places, ReadGroupCache::placeIsNotKnown);
+    }
+    if (!id || putsOutRow) {
+        for (ReadGroupCache::Row& row : group.rows) {
+            if (row.structure)
+                row.structure |= ReadGroupCache::markOfHiddenRow;
+        }
+        group.samplesLeft = ReadGroupCache::numberOfSamples;
+        group.samplesThatHadRow = 0;
+        std::ranges::fill(group.cameInLastSample, 0);
+    }
+    return claimed;
 }
 
-size_t StringKeyCache::removeDeadEntries(VM& vm, CollectionScope scope)
+void PropertyCaches::fillReadGroupOffset(JSCell* base, uint32_t identifierNumber, ReadGroupCache::Row& row, uint32_t index)
 {
-    size_t removedCount = 0;
-    m_writtenSinceCollection.forEachRegionToSweep(scope, [&](size_t, size_t) {
-        removedCount += removeDeadEntries(vm, m_cachedKeys.mutableSpan());
-        removedCount += removeDeadEntries(vm, m_caseConvertedStrings);
-        removedCount += removeDeadCaseConversions(vm);
-        removedCount += removeDeadIntegerKeys(vm);
-        removedCount += removeDeadKeysByParts(vm);
-    });
-    return removedCount;
+    Structure* structure = WTF::opaque(base->structure());
+    RELEASE_ASSERT(index < ReadGroupCache::numberOfPlaces);
+    if ((row.structure & ~ReadGroupCache::markOfHiddenRow) != structure->id().bits())
+        return;
+    int16_t& place = row.places[index];
+    place = ReadGroupCache::placeIsAskedOfStub;
+    unsigned attributes;
+    std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(nameOf(identifierNumber).uid, attributes);
+    if (!offset || !isValidOffset(*offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+        return;
+    static_assert(!(JSObject::offsetOfInlineStorage() % sizeof(EncodedJSValue)));
+    ptrdiff_t wordIndex = isInlineOffset(*offset) ? static_cast<ptrdiff_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offsetInInlineStorage(*offset)) : static_cast<ptrdiff_t>(offsetInButterfly(*offset));
+    if (wordIndex <= INT16_MIN || wordIndex > INT16_MAX || (wordIndex > 0) != isInlineOffset(*offset) || !wordIndex)
+        return;
+    place = static_cast<int16_t>(wordIndex);
+}
+
+void PropertyCaches::fileOwnPlainValueUnlessFiled(JSObject* base, uint32_t identifierNumber)
+{
+    Structure* structure = WTF::opaque(base->structure());
+    CachedName name = nameOf(identifierNumber);
+    if (structure->isDictionary() || structure->typeInfo().overridesGetOwnPropertySlot() || TypeInfo::hasStaticPropertyTable(base->inlineTypeFlags()) || m_tables.find(structure->id(), name, SlotAccess::Read))
+        return;
+    unsigned attributes;
+    std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(name.uid, attributes);
+    if (!offset || !isValidOffset(*offset) || attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+        return;
+    JSValue value = valueAtOffset(base, *offset);
+    if (!value)
+        return;
+    PropertySlot slot(base, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
+    slot.setValue(base, attributes, value, *offset);
+    PropertyAnswer answer = classifyRead({ m_state.instance.globalObject, base, structure, name.uid, slot, ChainWalkMode::AllocatesNothing });
+    if (answer.isCacheable())
+        cache({ structure, name, SlotAccess::Read }, answer);
+}
+
+void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse use, bool stubFollowsFurtherAnswers, bool stubJumpsToArmOfAnswer)
+{
+    Structure* structure = WTF::opaque(base->structure());
+    StructureID id = structure->id();
+    CachedName name = nameOf(identifierNumber);
+    if (compiledObjectStructureOrNull(structure))
+        holdExtraPropertiesToStructureThatIsNamed(m_state.instance.globalObject, *uncheckedDowncast<Object>(base), "caching a lookup at a site"_s);
+    if (use == SiteUse::AbsenceAmongExtraProperties) {
+        const CompiledStructure* compiled = compiledObjectStructureOrNull(structure);
+        unsigned attributes = 0;
+        std::optional<PropertyOffset> offset = compiled && compiled->listsEveryExtraProperty() && !belongsToOneObject(structure) ? compiled->extraPropertiesStructure()->getWithoutMaterializing(name.uid, attributes) : std::nullopt;
+        std::optional<SiteAnswers::Answer> answer = offset && !isValidOffset(*offset) ? SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::Nothing, 0) : std::nullopt;
+        const SiteAnswers* answers = m_answersAtSites.answersOf(place);
+        if (!answer)
+            m_answersAtSites.didFailToFill(place);
+        else if (answers && answers->first.isByStructure() && answers->second.isByStructure())
+            m_answersAtSites.addStructureThatLacksName(place, id, name.uid, { });
+        else
+            m_answersAtSites.fill(place, use, { *answer }, name.uid, { });
+        return;
+    }
+    if (use == SiteUse::Call)
+        keepIfBelowBuiltinClass(structure);
+
+    if (compiledObjectStructureOrNull(structure)) {
+        auto* object = uncheckedDowncast<Object>(base);
+        const FieldData* field = object->fieldNamed(m_state, name.uid);
+        bool isLeftOut = field && isRead(use) && !object->isInSlot(*field) && !(object->orderWord() & orderWordHasFieldOutsideSlot);
+        if (isLeftOut && fillAboveFieldLeftOut(place, use, *object, name))
+            return;
+        if (std::optional<uint32_t> offset = field ? offsetOfPlainValueInCell(*field) : std::nullopt; offset && (object->isInSlot(*field) || isLeftOut)) {
+            const SiteAnswers* answers = m_answersAtSites.answersOf(place);
+            bool hasRoomOnlyByStructure = answers && answers->holdsShape() && answers->first.key != object->shapeWord() && (!answers->second.key || isRoad(use, answers->second) || stubFollowsFurtherAnswers);
+            if (isRead(use) && !hasRoomOnlyByStructure && !object->bearsMark()) {
+                m_answersAtSites.fillByShape(place, use, SiteAnswers::byShape(object->shapeWord(), *offset), stubJumpsToArmOfAnswer ? SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::OwnFieldInCell, *offset) : std::nullopt);
+                return;
+            }
+            if (std::optional<SiteAnswers::Answer> answer = SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::OwnFieldInCell, *offset))
+                m_answersAtSites.fill(place, use, { *answer }, name.uid, { });
+            else
+                m_answersAtSites.didFailToFill(place);
+            return;
+        }
+        if (std::optional<SiteAnswers::Answer> answer = field && isRead(use) ? answerForTypedSlotInCell(*object, *field) : std::nullopt; answer && (object->isInSlot(*field) || isLeftOut)) {
+            const SiteAnswers* answers = m_answersAtSites.answersOf(place);
+            bool hasRoomOnlyByStructure = answers && answers->holdsShape() && answers->first.key != answer->key && (!answers->second.key || isRoad(use, answers->second));
+            std::optional<SiteAnswers::Form> form = hasRoomOnlyByStructure || object->bearsMark() ? SiteAnswers::formByStructureOfSlotInCell(field->slot.representation()) : std::nullopt;
+            if (std::optional<SiteAnswers::Answer> byStructure = form ? SiteAnswers::tryByStructure(use, id, *form, field->slot.offset) : std::nullopt) {
+                m_answersAtSites.fill(place, use, { *byStructure }, name.uid, { });
+                return;
+            }
+            if (object->bearsMark())
+                m_answersAtSites.didFailToFill(place);
+            else {
+                std::optional<SiteAnswers::Form> sameForm = stubJumpsToArmOfAnswer ? SiteAnswers::formByStructureOfSlotInCell(field->slot.representation()) : std::nullopt;
+                m_answersAtSites.fillByShape(place, use, *answer, sameForm ? SiteAnswers::tryByStructure(use, id, *sameForm, field->slot.offset) : std::nullopt);
+            }
+            return;
+        }
+        if (std::optional<SiteAnswers::Answer> answer = field && isRead(use) && !object->bearsMark() ? answerForPlainValueInExtension(*object, *field) : std::nullopt; answer && (object->isInSlot(*field) || isLeftOut)) {
+            m_answersAtSites.fillByShape(place, use, *answer, stubJumpsToArmOfAnswer ? SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::OwnFieldInExtension, answer->operand) : std::nullopt);
+            return;
+        }
+        if (std::optional<uint32_t> operand = field && (use == SiteUse::Call || stubJumpsToArmOfAnswer) && isPlainValueInExtension(*object, *field) && object->isInSlot(*field) ? SiteAnswers::operandOfFieldInExtension(field->slot.offset) : std::nullopt) {
+            if (std::optional<SiteAnswers::Answer> answer = SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::OwnFieldInExtension, *operand))
+                m_answersAtSites.fill(place, use, { *answer }, name.uid, { });
+            else
+                m_answersAtSites.didFailToFill(place);
+            return;
+        }
+    }
+
+    std::optional<Slot> slot = m_tables.find(id, name, SlotAccess::Read);
+    if (slot && m_vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+        askAgainWhatSlotAnswers(m_state.instance, base, name.uid, *slot);
+    auto hasNoFormAtPlaces = [](Slot::Kind kind) {
+        return (kind == Slot::Kind::ClosureName || kind == Slot::Kind::ClosureLength || kind == Slot::Kind::CustomGetter || kind == Slot::Kind::Getter || kind == Slot::Kind::ExtraGetter);
+    };
+    bool rowAnswers = slot && stubJumpsToArmOfAnswer && hasNoFormAtPlaces(slot->kind) && !belongsToOneObject(structure) && m_tables.holdsInFrontRows(id, name, SlotAccess::Read)
+        && !(compiledObjectStructureOrNull(structure) && uncheckedDowncast<Object>(base)->fieldNamed(m_state, name.uid));
+    if (slot && (slot->kind == Slot::Kind::ExtraProperty || slot->kind == Slot::Kind::ExtraGetter) && belongsToOneObject(structure))
+        slot = std::nullopt;
+    bool placeMayNotCallGetter = slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure);
+    std::optional<AnswersAtSites::AnswerByStructure> answer = slot && !placeMayNotCallGetter ? answerOfSlot(use, *slot, m_vm.heap.cage().base(), m_state.instance.options().useWideReferences(), m_state.objectThatHoldsUndefined) : std::nullopt;
+    if (!answer && rowAnswers && !m_answersAtSites.holdsAnotherStructure(place, use, id)) {
+        if (std::optional<SiteAnswers::Answer> road = SiteAnswers::tryByStructure(use, id, SiteAnswers::Form::Nothing, 0))
+            answer = AnswersAtSites::AnswerByStructure { *road, 0 };
+    }
+    if (!answer) {
+        m_answersAtSites.didFailToFill(place);
+        return;
+    }
+    bool isOneMoreStructureThatLacksName = slot->kind == Slot::Kind::Absent && m_answersAtSites.holdsAnotherStructure(place, use, id);
+    if (!slot->has(Slot::dependsOnChain)) {
+        if (isOneMoreStructureThatLacksName)
+            m_answersAtSites.addStructureThatLacksName(place, id, name.uid, { });
+        else
+            m_answersAtSites.fill(place, use, *answer, name.uid, { }, stubFollowsFurtherAnswers);
+        return;
+    }
+    JSGlobalObject* globalObject = m_state.instance.globalObject;
+    if (JSGlobalObject* realm = structure->realm(); (realm && Instance::of(realm) != &m_state.instance) || structure->typeInfo().type() == GlobalProxyType) {
+        m_answersAtSites.didFailToFill(place);
+        return;
+    }
+    ChainWalk walk = walkChain({ globalObject, structure, base->isObject() ? asObject(base) : nullptr, ChainWalkMode::AllocatesNothing, ChainWalkUse::KeptForReadsThatAskObjects }, name.uid);
+    if (walk.result == ChainWalkResult::Unknown || (slot->kind == Slot::Kind::Absent && (walk.result != ChainWalkResult::Absent || walk.firstObjectWithEmptySlot))) {
+        m_answersAtSites.didFailToFill(place);
+        return;
+    }
+    ensureChangesAreReported(walk.changeableObjects.span());
+    if (isOneMoreStructureThatLacksName)
+        m_answersAtSites.addStructureThatLacksName(place, id, name.uid, walk.changeableObjects.span());
+    else
+        m_answersAtSites.fill(place, use, *answer, name.uid, walk.changeableObjects.span(), stubFollowsFurtherAnswers);
+}
+
+void PropertyCaches::didFinishCollection(VM&, CollectionScope)
+{
+    {
+        Locker locker { m_state.caches->lock() };
+        m_additionsSinceCollection.shrink(0);
+    }
+    m_shouldForgetMisses.store(true, std::memory_order_relaxed);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCallGetterOfSlot, EncodedJSValue, (Instance* instance, EncodedJSValue base, JSCell* getterSetter, uint32_t))
+{
+    constexpr Entry entry = Entry::operationAOTCallGetterOfSlot;
+    AOT_OPERATION_BEGIN(instance, entry);
+    if (vm.aotState().verifiesFastPathAnswers) [[unlikely]]
+        stopAtStaleGetterOfPendingRead(*instance, JSValue::decode(base), getterSetter);
+    ++instance->propertyCaches.slowPathReadCount;
+    OPERATION_RETURN(scope, JSValue::encode(cellArgument<GetterSetter>(getterSetter, entry)->callGetter(globalObject, JSValue::decode(base))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCallSetterOfSlot, void, (Instance* instance, EncodedJSValue base, JSCell* getterSetter, EncodedJSValue value, uint32_t putMode, uint32_t))
+{
+    constexpr Entry entry = Entry::operationAOTCallSetterOfSlot;
+    AOT_OPERATION_BEGIN(instance, entry);
+    cellArgument<GetterSetter>(getterSetter, entry)->callSetter(globalObject, JSValue::decode(base), JSValue::decode(value), static_cast<PutMode>(putMode) == PutMode::Strict);
+    OPERATION_RETURN(scope);
+}
+
+static void addPropertyByTransition(VM& vm, JSObject* target, Structure* newStructure, PropertyOffset offset, JSValue value)
+{
+    ASSERT(newStructure->isValidOffset(offset) && newStructure->inlineCapacity() == target->structure()->inlineCapacity() && newStructure->storedPrototype() == target->structure()->storedPrototype());
+    bool hasRoomInOwnCell = !target->structure()->outOfLineCapacity() && newStructure->outOfLineCapacity() == initialOutOfLineCapacity
+        && std::bit_cast<char*>(target->butterfly()) == std::bit_cast<char*>(target) + sizeOfArrayWithStorage(0, propertyRoomOfArray);
+    if (!hasRoomInOwnCell)
+        target->growOutOfLineStorageForTransition(vm, newStructure);
+    target->putDirectOffset(vm, offset, value);
+    target->setStructure(vm, newStructure);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddPropertyBySlot, void, (Instance* instance, JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTAddPropertyBySlot);
+    Slot slot = std::bit_cast<Slot>(std::array<uint64_t, 2> { header, payload });
+    RELEASE_ASSERT(object->structureID() == slot.structureID);
+    if (slot.kind == Slot::Kind::Transition) {
+        addPropertyByTransition(vm, asObject(object), WTF::opaque(slot.transition.newStructureID.decode()), slot.offsetInStorage(), JSValue::decode(value));
+        holdClosureToLackingName(vm, object, object->structure()->transitionPropertyName());
+        return;
+    }
+    RELEASE_ASSERT(slot.kind == Slot::Kind::ExtraPropertyAddition);
+    Object* receiver = uncheckedDowncast<Object>(object);
+    // The slot is a copy out of a weak cache, and no object need have this Structure yet: this pointer alone keeps it alive while the extra properties are allocated.
+    Structure* newStructure = WTF::opaque(slot.extraPropertyAddition.newStructureID.decode());
+    JSObject* extraProperties = receiver->ensureExtraProperties(vm);
+    RELEASE_ASSERT(extraProperties);
+    addPropertyByTransition(vm, extraProperties, compiledObjectStructureOrNull(newStructure)->extraPropertiesStructure(), Slot::offsetFor(slot.extraPropertyAddition.wordIndex), JSValue::decode(value));
+    receiver->JSCell::setStructure(vm, newStructure);
 }
 
 } } // namespace JSC::AOT

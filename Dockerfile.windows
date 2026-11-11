@@ -279,6 +279,7 @@ COPY icu/ /icu-bun/
 # stage comment above); it lands in the cross-built sicuuc.lib. The host tools in `base` were built without it, which
 # is the same thing: the hook is null in them either way.
 RUN patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch
+RUN patch -p1 -d /icu-src < /icu-bun/decnum-allocation-failure.patch
 
 # Filter the prebuilt data package the same way the native build does
 # (build-icu.ps1 STAGE 1b): drop charset converters, transliteration rules,

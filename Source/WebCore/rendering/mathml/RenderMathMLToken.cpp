@@ -77,7 +77,7 @@ void RenderMathMLToken::updateTokenContent()
     setMathVariantGlyphDirty();
 }
 
-void RenderMathMLToken::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderMathMLToken::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
@@ -90,15 +90,12 @@ void RenderMathMLToken::computeIntrinsicLogicalWidthContributions()
     if (m_mathVariantCodePoint) {
         auto mathVariantGlyph = protect(style().fontCascade())->glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
         if (mathVariantGlyph.font) {
-            m_maxContentLogicalWidthContribution = protect(mathVariantGlyph.font)->widthForGlyph(mathVariantGlyph.glyph);
-            m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-            adjustContentLogicalWidthsForBorderAndPadding();
-            clearContentLogicalWidthsInvalidation();
-            return;
+            LayoutUnit glyphWidth { protect(mathVariantGlyph.font)->widthForGlyph(mathVariantGlyph.glyph) };
+            return { glyphWidth, glyphWidth };
         }
     }
 
-    RenderMathMLBlock::computeIntrinsicLogicalWidthContributions();
+    return RenderMathMLBlock::computeIntrinsicLogicalWidthContributions();
 }
 
 void RenderMathMLToken::updateMathVariantGlyph()
@@ -213,9 +210,9 @@ void RenderMathMLToken::paint(PaintInfo& info, const LayoutPoint& paintOffset)
     auto advance = makeGlyphBufferAdvance(protect(mathVariantGlyph.font)->widthForGlyph(mathVariantGlyph.glyph));
     auto location = paintOffset + this->location() + LayoutPoint { borderLeft() + paddingLeft(), glyphAscent + borderAndPaddingBefore() };
     if (style().writingMode().isHorizontal())
-        location.setY(roundToDevicePixel(LayoutUnit { location.y() }, protect(document())->deviceScaleFactor()));
+        location.setY(roundToDevicePixel(LayoutUnit { location.y() }, document().deviceScaleFactor()));
     else
-        location.setX(roundToDevicePixel(LayoutUnit { location.x() }, protect(document())->deviceScaleFactor()));
+        location.setX(roundToDevicePixel(LayoutUnit { location.x() }, document().deviceScaleFactor()));
 
     info.context().drawGlyphs(protect(*mathVariantGlyph.font), singleElementSpan(mathVariantGlyph.glyph), singleElementSpan(advance), location, style().fontCascade().fontDescription().usedFontSmoothing());
 }

@@ -8,40 +8,33 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCurrentWork.h"
 #include "AOTThreads.h"
-#include "AOTThreshold.h"
-#include <algorithm>
+#include <array>
 #include <stdlib.h>
-#include <wtf/OSAllocator.h>
-#include <wtf/PageBlock.h>
 #include <wtf/StackAllocation.h>
 
 #if OS(WINDOWS)
 #include <io.h>
-#include <windows.h>
 #else
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/resource.h>
 #include <unistd.h>
 #endif
 
 namespace JSC { namespace AOT {
 
-// Allocates nothing, and leaves the other threads of the build as they are.
-[[noreturn]] static void exitWithError(ASCIILiteral lines)
+static void writeToStandardError(std::span<const char> lines)
 {
 #if OS(WINDOWS)
-    _write(2, lines.characters(), static_cast<unsigned>(lines.length()));
+    _write(2, lines.data(), static_cast<unsigned>(lines.size()));
 #else
-    [[maybe_unused]] ssize_t written = write(STDERR_FILENO, lines.characters(), lines.length());
+    [[maybe_unused]] ssize_t written = write(STDERR_FILENO, lines.data(), lines.size());
 #endif
-    _exit(1);
 }
 
-[[noreturn]] void exitOutOfMemory()
+[[noreturn]] static void exitWithError(ASCIILiteral lines)
 {
-    exitWithError("error: Out of memory while compiling\n"_s);
+    writeToStandardError(lines.span());
+    _exit(1);
 }
 
 Ref<Thread> startBuildThread(ASCIILiteral name, Function<void()>&& function)
@@ -52,73 +45,15 @@ Ref<Thread> startBuildThread(ASCIILiteral name, Function<void()>&& function)
     return thread.releaseNonNull();
 }
 
-void* allocatePages(size_t bytes)
+void exitIfBuildIsOutOfMemory()
 {
-    void* pages = OSAllocator::tryReserveAndCommit(bytes);
-    if (!pages) [[unlikely]]
-        exitOutOfMemory();
-    return pages;
-}
-
-void* reservePages(size_t bytes)
-{
-    void* pages = OSAllocator::tryReserveUncommitted(bytes, OSAllocator::FastMallocPages);
-    if (!pages) [[unlikely]]
-        exitOutOfMemory();
-    return pages;
-}
-
-#if !OS(WINDOWS)
-static size_t bytesOfAddressSpaceInUse()
-{
-#if OS(LINUX)
-    int file = open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
-    if (file < 0)
-        return 0;
-    char text[32];
-    ssize_t length = read(file, text, sizeof(text) - 1);
-    close(file);
-    if (length <= 0)
-        return 0;
-    text[length] = 0;
-    return strtoull(text, nullptr, 10) * pageSize();
-#else
-    return 0;
-#endif
-}
-#endif
-
-size_t bytesToReserve(size_t wanted)
-{
-#if !OS(WINDOWS)
-    AOT_THRESHOLD(size_t, reservationsInFreeAddressSpace, 8);
-    struct rlimit limit;
-    if (!getrlimit(RLIMIT_AS, &limit) && limit.rlim_cur != RLIM_INFINITY) {
-        size_t inUse = bytesOfAddressSpaceInUse();
-        return std::min<size_t>(wanted, limit.rlim_cur > inUse ? (limit.rlim_cur - inUse) / reservationsInFreeAddressSpace : 0);
-    }
-#endif
-    return wanted;
-}
-
-void commitPages(void* pages, size_t bytes)
-{
-#if OS(WINDOWS)
-    if (!VirtualAlloc(pages, bytes, MEM_COMMIT, PAGE_READWRITE)) [[unlikely]]
-        exitOutOfMemory();
-#else
-    OSAllocator::commit(pages, bytes, true, false);
-#endif
-}
-
-void releasePages(void* pages, size_t bytes)
-{
-#if OS(WINDOWS)
-    UNUSED_PARAM(bytes);
-    VirtualFree(pages, 0, MEM_RELEASE);
-#else
-    munmap(pages, bytes);
-#endif
+    std::array<char, 768> place;
+    size_t length = describeCurrentThreadWork(place);
+    if (!length)
+        return;
+    writeToStandardError("error: Out of memory while compiling\n"_s.span());
+    writeToStandardError(std::span<const char>(place).first(length));
+    _exit(1);
 }
 
 } } // namespace JSC::AOT

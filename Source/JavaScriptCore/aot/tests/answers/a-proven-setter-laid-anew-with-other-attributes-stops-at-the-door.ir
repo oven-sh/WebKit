@@ -1,0 +1,89 @@
+# const box = { kept: "", set x(v) { this.kept = "first" + v; } };
+# function hides(b) { Object.defineProperty(b, "x", { set(v) { this.kept = "other" + v; }, enumerable: false }); }
+# function store(b) { b.x = 5; return b.kept; }
+# if (which === 1) id(hides)(box);
+# print(store(box));   print("went on");
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# So `box` never escapes from compiled code and the setter that its literal defines is proven: store() calls it without a check.
+# With the same attributes the accessor pair stays in its slot, and the entry check of that slot tests the redefinition. With other attributes the pair leaves its slot.
+# The compiled program then printed first5 and continued, where the program without AoT prints other5.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(OTHERATTRIBUTES): run-in-shell mechanisms=all globalThis.which = 1;
+# OTHERATTRIBUTES: bun: internal AOT error: object mutation check failed
+# OTHERATTRIBUTES-NEXT: RedefineProperty on an {{*}}, but the compiler proved that
+# OTHERATTRIBUTES-NOT: went on
+# OTHERATTRIBUTES: crashed with
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: first5
+# NONE-NEXT: went on
+# NONE-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="kept" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 fields=[{key="set" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string=""
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    DefineSetter v1, v2 key="x"
+    v4 = FinishObject v1
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="which" [isFreeName]
+    v7 = PropGet v5 key="id" [isFreeName]
+    v8 = Integer integer=1
+    v9 = StrictEq v6, v8
+    Branch v9 -> taken b1(), notTaken b2()
+  b1():
+    v10 = NewClosure function=f2
+    v11 = Call v7, -, v10 calleeName="id"
+    v12 = Call v11, -, v4
+    Jump -> next b2()
+  b2():
+    v13 = NewClosure function=f4
+    v14 = Call v13, -, v4 calleeName="store"
+    v15 = PropGet v5 key="print" [isFreeName]
+    v16 = Call v15, -, v14 calleeName="print"
+    v17 = String string="went on"
+    v18 = Call v15, -, v17 calleeName="print"
+    v19 = Undefined
+    Return v19
+}
+function f1 name="x" module=m0 kind=Setter flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="first"
+    v3 = Add v2, v1
+    PropSet v0, v3 key="kept"
+    v5 = Undefined
+    Return v5
+}
+function f2 name="hides" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Object" [isFreeName]
+    v3 = PropGet v2 key="defineProperty"
+    v4 = String string="x"
+    v5 = NewClosure function=f3
+    v6 = Boolean
+    v7 = NewObject -, v5, v6 layout=L1 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = Call v3, v2, v0, v4, v8 calleeKey="defineProperty"
+    v10 = Undefined
+    Return v10
+}
+function f3 name="set" module=m0 kind=Method flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="other"
+    v3 = Add v2, v1
+    PropSet v0, v3 key="kept"
+    v5 = Undefined
+    Return v5
+}
+function f4 name="store" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=5
+    PropSet v0, v1 key="x"
+    v3 = PropGet v0 key="kept"
+    Return v3
+}

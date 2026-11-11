@@ -1,0 +1,76 @@
+# `for (; i < bound && $hasContiguousIndex(array, i); i++);` counts the elements before the first hole or the end. After the hoisted guard, the test names the storage that was read in the preheader.
+# Where the walk has found that the index is below the length, the operation says isInBounds and the test loads the element without reading the length.
+# Fault injection, testing=AssumeIndexesInBounds: every index from zero up counts as in bounds. In a default build the loop would keep counting into whatever follows the array in memory.
+# With testing=CheckBoundsAtRunTime (--aot-harden=ignore-told-ranges) and with testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the same operation is built,
+# and its claim is checked against the array: the process crashes with a named error.
+# The check used to be a branch: a false result took the path of an absent element, which gives the right result, so a false claim was never noticed.
+# RUN(EVENT): walk f1 mechanisms=all testing=CheckBoundsAtRunTime,AssumeIndexesInBounds
+# EVENT: [[storage]]: {{*}} = GetArrayStorage
+# EVENT: isLoopHead=true
+# EVENT: = HasContiguousIndex {{*}} storage=[[storage]] [isInBounds]
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
+# RIGHT: 3
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,CheckProofsAtRunTime globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
+# HARDENED: 3
+# HARDENED-NEXT: exited with 0
+# RUN(POSITIONS): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,AssumeIndexesInBounds globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
+# POSITIONS: bun: internal AOT error: redundancy elimination check failed
+# POSITIONS-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# POSITIONS: crashed with
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeIndexesInBounds globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
+# PROOFS: bun: internal AOT error: redundancy elimination check failed
+# PROOFS-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# PROOFS: crashed with
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="each"
+    v3 = PropGet v1 key="after"
+    v4 = Call v3, -
+    v5 = Undefined
+    Return v5
+}
+function f1 name="each" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = ToObject v0 message="no object"
+    v4 = PropGet v3 key="length"
+    v5 = ToLength v4
+    v6 = Integer
+    v7 = Convert v6 declared={type=undefined|number}
+    v8 = HasJSType v3
+    v9 = ToBoolean v8
+    Branch v9 -> taken b2(| 0), notTaken b9(| 0)
+  b2(v10):
+    Jump -> next b3(v7)
+  b3(v11: undefined|number):
+    LoopHint
+    v13 = Less v11, v2
+    Branch v13 -> taken b4(), notTaken b8()
+  b4():
+    v14 = Convert v3 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+    v15 = Convert v11 declared={type=int flags=[IsFromCompiler, IsClaim]}
+    v16 = HasContiguousIndex v14, v15
+    v17 = ToBoolean v16
+    Branch v17 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v18):
+    Jump -> next b6()
+  b6():
+    v19 = Increment v11
+    v20 = Convert v19 declared={type=undefined|number}
+    Jump -> next b3(v20)
+  b7(v21):
+    Jump -> next b8()
+  b8():
+    Return v11
+  b9(v22):
+    v23 = Undefined
+    Return v23
+}

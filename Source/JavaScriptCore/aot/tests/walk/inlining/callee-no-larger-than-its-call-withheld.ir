@@ -1,0 +1,8 @@
+# the same call with inlining withheld: a direct call, and no frame but the caller's own
+# RUN: walk f2 mechanisms=none+DirectCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: = CallDirect {{*}}function=f1
+# RUN(NEVER): walk f2 mechanisms=none+DirectCalls
+# NEVER-NOT: callee=f1
+# NEVER-NOT: PropGet
+# PROGRAM-OF: ../direct-calls/callee-found-by-binding.ir

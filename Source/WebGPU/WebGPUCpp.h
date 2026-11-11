@@ -51,6 +51,8 @@
 // must also compile as C and Objective-C.
 #ifdef __cplusplus
 
+#include <wtf/Platform.h> // NOLINT
+
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -105,6 +107,10 @@ enum class BlendFactor : uint8_t {
     SrcAlphaSaturated,
     Constant,
     OneMinusConstant,
+    Src1,
+    OneMinusSrc1,
+    Src1Alpha,
+    OneMinusSrc1Alpha,
 };
 
 enum class BlendOperation : uint8_t {
@@ -174,6 +180,8 @@ enum class CompilationMessageType : uint8_t {
     Info,
 };
 
+// https://gpuweb.github.io/gpuweb/#dom-gputextureviewdescriptor-swizzle
+// Each of the 'r', 'g', 'b', 'a', '0' and '1' characters a swizzle string may contain.
 enum class ComponentSwizzle : uint8_t {
     Zero,
     One,
@@ -230,6 +238,7 @@ enum class FeatureName : uint8_t {
     TextureFormatsTier2,
     PrimitiveIndex,
     Subgroups,
+    TextureComponentSwizzle,
 };
 
 enum class FilterMode : uint8_t {
@@ -589,11 +598,18 @@ struct Color {
     double a { 0 };
 };
 
+// https://gpuweb.github.io/gpuweb/#dom-gputextureviewdescriptor-swizzle
+// The mapping a shader reads a texture view through, defaulting to the identity.
 struct TextureComponentSwizzle {
     ComponentSwizzle r { ComponentSwizzle::R };
     ComponentSwizzle g { ComponentSwizzle::G };
     ComponentSwizzle b { ComponentSwizzle::B };
     ComponentSwizzle a { ComponentSwizzle::A };
+
+    bool isIdentity() const
+    {
+        return r == ComponentSwizzle::R && g == ComponentSwizzle::G && b == ComponentSwizzle::B && a == ComponentSwizzle::A;
+    }
 
     friend bool operator==(const TextureComponentSwizzle&, const TextureComponentSwizzle&) = default;
 };
@@ -1719,6 +1735,9 @@ public:
     virtual void startFrame(size_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples) = 0;
 #endif
     virtual void endFrame() = 0;
+    // Drops the compositor textures the layer holds. Called when the page destroys the layer, which can
+    // happen long before the last reference to it goes away.
+    virtual void destroy() = 0;
     virtual void setLabel(String&&) = 0;
     virtual bool isValid() const = 0;
 

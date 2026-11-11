@@ -1,0 +1,6 @@
+# the same program with typed operations withheld: the shapes follow the order of the layouts, and the record that is no member stands between the two members
+# RUN: plan shapes mechanisms=none
+# CHECK: shape [[circle]] L0
+# CHECK-NEXT: shape {{*}} L1
+# CHECK-NEXT: shape {{*}} L2
+# PROGRAM-OF: declared-union-is-a-range-of-shapes.ir

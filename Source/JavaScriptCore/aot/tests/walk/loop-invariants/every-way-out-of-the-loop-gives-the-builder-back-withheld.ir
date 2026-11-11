@@ -1,0 +1,10 @@
+# the same functions with loop invariants withheld: there is no builder, so no edge gives one back
+# RUN: walk f1 f2 f3 f4 mechanisms=none+TypedOperations+Guesses+Folding
+# CHECK: mechanisms TypedOperations,Guesses,Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# RUN(NEVER): walk f1 f2 f3 f4 mechanisms=none+TypedOperations+Guesses+Folding
+# NEVER-NOT: StringBuilder
+# RUN(NONE): walk f1 f2 f3 f4 mechanisms=none
+# NONE-NOT: StringBuilder
+# PROGRAM-OF: every-way-out-of-the-loop-gives-the-builder-back.ir

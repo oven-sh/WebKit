@@ -89,7 +89,15 @@ static_assert(sizeof(ContainerNode) == sizeof(SameSizeAsContainerNode), "Contain
 static void dispatchChildInsertionEvents(Node&);
 static void dispatchChildRemovalEvents(Ref<Node>&);
 
-unsigned ScriptDisallowedScope::s_count = 0;
+#if OS(WINDOWS) || PLATFORM(PLAYSTATION)
+unsigned& ScriptDisallowedScope::count()
+{
+    static thread_local unsigned s_count = 0;
+    return s_count;
+}
+#else
+thread_local unsigned ScriptDisallowedScope::s_count = 0;
+#endif
 #if ASSERT_ENABLED
 ScriptDisallowedScope::EventAllowedScope* ScriptDisallowedScope::EventAllowedScope::s_currentScope = nullptr;
 #endif
@@ -355,7 +363,7 @@ static ContainerNode::ChildChange makeChildChangeForMoveInsertion(ContainerNode&
     };
 }
 
-static ContainerNode::ChildChange LEGACY_NODELETE makeChildChangeForInsertion(ContainerNode& containerNode, NodeVector& children, Node* beforeChild, ContainerNode::ChildChange::Source source, ReplacedAllChildren replacedAllChildren)
+NODELETE static ContainerNode::ChildChange makeChildChangeForInsertion(ContainerNode& containerNode, NodeVector& children, Node* beforeChild, ContainerNode::ChildChange::Source source, ReplacedAllChildren replacedAllChildren)
 {
     using Type = ContainerNode::ChildChange::Type;
     using AffectsElements = ContainerNode::ChildChange::AffectsElements;
@@ -395,7 +403,7 @@ static ContainerNode::ChildChange LEGACY_NODELETE makeChildChangeForInsertion(Co
 }
 
 enum class ClonedChildIncludesElements { No, Yes };
-static ContainerNode::ChildChange LEGACY_NODELETE makeChildChangeForCloneInsertion(ClonedChildIncludesElements clonedChildIncludesElements)
+NODELETE static ContainerNode::ChildChange makeChildChangeForCloneInsertion(ClonedChildIncludesElements clonedChildIncludesElements)
 {
     return { ContainerNode::ChildChange::Type::AllChildrenReplaced, nullptr, nullptr, nullptr, nullptr, ContainerNode::ChildChange::Source::Clone,
         clonedChildIncludesElements == ClonedChildIncludesElements::Yes ? ContainerNode::ChildChange::AffectsElements::Yes : ContainerNode::ChildChange::AffectsElements::No };
@@ -529,7 +537,7 @@ void ContainerNode::removeDetachedChildren()
     removeDetachedChildrenInContainer(*this);
 }
 
-static inline bool LEGACY_NODELETE hasDisplayContents(Element *element)
+NODELETE static inline bool hasDisplayContents(Element *element)
 {
     return element && element->hasDisplayContents();
 }
@@ -573,7 +581,7 @@ ContainerNode::ContainerNode(ClangVTableWorkaroundTag, Document& document)
 {
 }
 
-static inline bool LEGACY_NODELETE isChildTypeAllowed(ContainerNode& newParent, Node& child)
+NODELETE static inline bool isChildTypeAllowed(ContainerNode& newParent, Node& child)
 {
     if (!child.isDocumentFragment())
         return newParent.childTypeAllowed(child.nodeType());
@@ -585,7 +593,7 @@ static inline bool LEGACY_NODELETE isChildTypeAllowed(ContainerNode& newParent, 
     return true;
 }
 
-static inline const ContainerNode* LEGACY_NODELETE hostIncludingParent(const Node& node)
+NODELETE static inline const ContainerNode* hostIncludingParent(const Node& node)
 {
     if (auto* parent = node.parentNode())
         return parent;
@@ -1111,7 +1119,7 @@ ExceptionOr<void> ContainerNode::insertChildrenBeforeWithoutPreInsertionValidity
     InspectorInstrumentation::willInsertDOMNode(protect(document()), *this);
 
     executeNodeInsertionWithScriptAssertion(*this, newChildren, refChild.get(), ChildChange::Source::API, ReplacedAllChildren::No, [&](auto& child) {
-        child->setTreeScopeRecursively(treeScope());
+        child->setTreeScopeRecursively(protect(treeScope()));
         if (refChild)
             insertBeforeCommon(*refChild, child);
         else

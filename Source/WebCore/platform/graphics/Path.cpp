@@ -139,10 +139,11 @@ const PathImpl* Path::asImpl() const
     return nullptr;
 }
 
-void Path::setNotTransient()
+Path Path::createNonTransient(Vector<PathSegment>&& segments)
 {
-    if (RefPtr impl = asImpl())
-        impl->setNotTransient();
+    if (segments.size() <= 1)
+        return Path { WTF::move(segments) };
+    return Path { PathStream::create(WTF::move(segments), IsTransient::No) };
 }
 
 static FloatRoundedRect calculateEvenRoundedRect(const FloatRect& rect, const FloatSize& roundingRadii)
@@ -267,8 +268,7 @@ void Path::applyElements(NOESCAPE const PathElementApplier& applier) const
     if (impl && impl->applyElements(applier))
         return;
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST protect(const_cast<Path&>(*this).ensurePlatformPathImpl())->applyElements(applier);
+    protect(const_cast<Path&>(*this).ensurePlatformPathImpl())->applyElements(applier);
 }
 
 void Path::clear()
@@ -317,6 +317,24 @@ std::optional<PathDataLine> Path::singleDataLine() const
     return std::nullopt;
 }
 
+std::optional<PathArc> Path::pieWedgeArc() const
+{
+    auto* segments = segmentsIfExists();
+    if (!segments || segments->size() != 3)
+        return std::nullopt;
+
+    auto* moveTo = std::get_if<PathMoveTo>(&(*segments)[0].data());
+    auto* arc = std::get_if<PathArc>(&(*segments)[1].data());
+    auto* lineTo = std::get_if<PathLineTo>(&(*segments)[2].data());
+    if (!moveTo || !arc || !lineTo)
+        return std::nullopt;
+
+    if (moveTo->point != arc->center || lineTo->point != arc->center)
+        return std::nullopt;
+
+    return *arc;
+}
+
 bool Path::definitelySingleLine() const
 {
     return !!singleDataLine();
@@ -328,8 +346,7 @@ PlatformPathPtr Path::platformPath() const
         return PlatformPathImpl::emptyPlatformPath();
 
 #if USE(CG)
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Path&>(*this).ensurePlatformPathImpl().platformPath();
+    return const_cast<Path&>(*this).ensurePlatformPathImpl().platformPath();
 #else
     return const_cast<Path&>(*this).ensurePlatformPathImpl().platformPath();
 #endif
@@ -408,8 +425,7 @@ bool Path::contains(const FloatPoint& point, WindRule rule) const
     if (isEmpty())
         return false;
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return protect(const_cast<Path&>(*this).ensurePlatformPathImpl())->contains(point, rule);
+    return protect(const_cast<Path&>(*this).ensurePlatformPathImpl())->contains(point, rule);
 }
 
 bool Path::strokeContains(const FloatPoint& point, NOESCAPE const Function<void(GraphicsContext&)>& strokeStyleApplier) const
@@ -419,8 +435,7 @@ bool Path::strokeContains(const FloatPoint& point, NOESCAPE const Function<void(
     if (isEmpty())
         return false;
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return protect(const_cast<Path&>(*this).ensurePlatformPathImpl())->strokeContains(point, strokeStyleApplier);
+    return protect(const_cast<Path&>(*this).ensurePlatformPathImpl())->strokeContains(point, strokeStyleApplier);
 }
 
 bool Path::hasSubpaths() const
@@ -458,8 +473,7 @@ FloatRect Path::boundingRect() const
 
 FloatRect Path::strokeBoundingRect(NOESCAPE const Function<void(GraphicsContext&)>& strokeStyleApplier) const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return protect(const_cast<Path&>(*this).ensurePlatformPathImpl())->strokeBoundingRect(strokeStyleApplier);
+    return protect(const_cast<Path&>(*this).ensurePlatformPathImpl())->strokeBoundingRect(strokeStyleApplier);
 }
 
 TextStream& operator<<(TextStream& ts, const Path& path)

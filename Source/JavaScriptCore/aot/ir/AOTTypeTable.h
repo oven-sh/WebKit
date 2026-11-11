@@ -7,109 +7,129 @@
 
 #if ENABLE(AOT)
 
-#include "AOTNonMovingVector.h"
+#include "AOTIDSets.h"
+#include "AOTObjects.h"
 #include "AOTSchemaRecords.h"
-#include "AOTSharedTypeMemo.h"
+#include "AOTSharedAnswers.h"
 #include "AOTType.h"
-#include "AOTVector.h"
-#include <array>
-#include <atomic>
-#include <concepts>
+#include <compare>
 #include <memory>
 #include <optional>
 #include <span>
-#include <utility>
+#include <tuple>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/SegmentedVector.h>
-#include <wtf/StdLibExtras.h>
 
-namespace JSC { namespace AOT {
+namespace JSC { namespace AOT { namespace Typed {
 
-class ParallelLoops;
-class Statistics;
+struct DeclaredType;
 
-namespace Typed {
-
-class HashedIndex {
-public:
-    std::optional<uint32_t> find(uint32_t hash, NOESCAPE const Invocable<bool(uint32_t position)> auto& isEqual) const
-    {
-        if (m_slots.isEmpty())
-            return std::nullopt;
-        size_t mask = m_slots.size() - 1;
-        for (size_t index = hash & mask; m_slots[index].positionPlusOne; index = (index + 1) & mask) {
-            const Slot& slot = m_slots[index];
-            if (slot.hash == hash && isEqual(slot.positionPlusOne - 1))
-                return slot.positionPlusOne - 1;
-        }
-        return std::nullopt;
-    }
-
-    void add(uint32_t hash, uint32_t position);
-
-    void reserve(const ParallelLoops&, size_t numberOfAdditions);
-    void addConcurrently(uint32_t hash, uint32_t position);
-    void didAddConcurrently(size_t numberOfAdditions) { m_size += static_cast<unsigned>(numberOfAdditions); }
-
-    void prefetch(uint32_t hash) const
-    {
-        if (!m_slots.isEmpty())
-            __builtin_prefetch(&m_slots[hash & (m_slots.size() - 1)]);
-    }
-
-private:
-    struct alignas(8) Slot {
-        uint32_t hash;
-        uint32_t positionPlusOne;
-    };
-
-    void insert(Slot);
-
-    Vector<Slot> m_slots;
-    unsigned m_size { 0 };
+struct ObjectSetSummary {
+    LayoutSetID layouts;
+    ClassPartsID classes;
+    OptionSet<ObjectTrait> traits;
 };
+inline constexpr uint32_t wordsOfObjectSetSummary = 3;
 
-void add(Hasher&, const LayoutSet&);
-void add(Hasher&, const CalleeSet&);
-void add(Hasher&, const PropertyKey&);
+inline constexpr uint32_t log2OfFirstInternedSegment = 8;
+inline constexpr uint32_t sizeOfFirstInternedSegment = 1u << log2OfFirstInternedSegment;
 
-template<typename Record, typename RecordID, size_t segmentSize, typename Storage = SegmentedVector<Record, segmentSize>>
+constexpr uint32_t internedSegmentOf(uint32_t position)
+{
+    return static_cast<uint32_t>(std::bit_width(position + sizeOfFirstInternedSegment)) - 1 - log2OfFirstInternedSegment;
+}
+
+constexpr uint32_t firstPositionOfInternedSegment(uint32_t segment)
+{
+    return (sizeOfFirstInternedSegment << segment) - sizeOfFirstInternedSegment;
+}
+
+inline constexpr uint32_t numberOfInternedSegments = internedSegmentOf(largestIDPosition) + 1;
+
+template<typename Record>
 class InternedRecords {
+    WTF_MAKE_NONCOPYABLE(InternedRecords);
 public:
-    const Record& at(RecordID id) const { return m_records[id.index()]; }
-    unsigned size() const { return m_records.size(); }
+    static constexpr uint32_t numberOfShards = 64;
 
-    std::optional<RecordID> find(const Record& record, uint32_t hash) const
-    {
-        auto position = m_index.find(hash, [&](uint32_t candidate) {
-            return m_records[candidate] == record;
-        });
-        if (!position)
-            return std::nullopt;
-        return RecordID(*position);
-    }
+    InternedRecords();
+    ~InternedRecords();
 
-    void prefetch(uint32_t hash) const { m_index.prefetch(hash); }
-
-    RecordID findOrAdd(Record&& record, uint32_t hash)
-    {
-        if (auto existing = find(record, hash))
-            return *existing;
-        RecordID id(m_records.size());
-        m_records.append(WTF::move(record));
-        m_index.add(hash, id.index());
-        return id;
-    }
+    const Record& at(uint32_t position) const;
+    std::optional<uint32_t> find(uint32_t hash, const Record&) const;
+    uint32_t findOrAdd(uint32_t hash, const Record&);
+    uint32_t addAfterMiss(uint32_t hash, const Record&);
+    using PrepareCandidate = ScopedLambda<std::optional<uint32_t>(uint32_t candidate, unsigned worker)>;
+    using FinishCandidate = ScopedLambda<void(uint32_t candidate, uint32_t position, bool isNew, unsigned worker)>;
+    void findOrAddInOrder(const ParallelLoops&, std::span<Record> candidates, NOESCAPE const PrepareCandidate&, NOESCAPE const FinishCandidate&);
+    void freeOutgrownSlots();
+    uint32_t size() const;
+    size_t sizeInBytes() const;
 
 private:
-    template<typename, typename, typename> friend class OrderedInterning;
+    void addAt(uint32_t position, uint32_t hash, const Record&);
 
-    Storage m_records;
-    HashedIndex m_index;
+    struct Shard;
+    std::unique_ptr<Shard[]> m_shards;
 };
 
-class TypeInterningPhase;
+class InternedWordLists {
+    WTF_MAKE_NONCOPYABLE(InternedWordLists);
+public:
+    InternedWordLists();
+    ~InternedWordLists();
+
+    std::span<const uint32_t> at(uint32_t position) const;
+    std::optional<uint32_t> find(uint32_t hash, std::span<const uint32_t>) const;
+    uint32_t findOrAdd(uint32_t hash, std::span<const uint32_t>);
+    void freeOutgrownSlots();
+    size_t sizeInBytes() const;
+
+private:
+    struct Shard;
+    std::unique_ptr<Shard[]> m_shards;
+};
+
+constexpr uint64_t addToInternedHash(uint64_t hash, uint64_t bits)
+{
+    hash = (hash ^ bits) * 0x9e3779b97f4a7c15ull;
+    return hash ^ hash >> 32;
+}
+
+constexpr uint64_t addToInternedHash(uint64_t hash, uint32_t first, uint32_t second)
+{
+    return addToInternedHash(hash, static_cast<uint64_t>(first) << 32 | second);
+}
+
+constexpr uint32_t finishInternedHash(uint64_t hash)
+{
+    return static_cast<uint32_t>(addToInternedHash(hash, 0));
+}
+
+ALWAYS_INLINE uint32_t hashOf(const TypeParts& parts)
+{
+    uint64_t flags = parts.primitives
+        | static_cast<uint64_t>(parts.seeds.toRaw()) << 16
+        | static_cast<uint64_t>(parts.anyObject) << 32
+        | static_cast<uint64_t>(parts.anyFunction) << 33
+        | (parts.opaque ? static_cast<uint64_t>(*parts.opaque) + 1 : 0) << 34;
+    uint64_t hash = addToInternedHash(0, flags);
+    if (!parts.integers.isEmpty()) {
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.integers.minimum));
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.integers.maximum));
+    }
+    if (!parts.boundsOfFractions.isEmpty()) {
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.boundsOfFractions.minimum));
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.boundsOfFractions.maximum));
+    }
+    hash = addToInternedHash(hash, parts.environment.bits(), parts.stringLiterals.bits());
+    hash = addToInternedHash(hash, parts.symbolLiterals.bits(), parts.objects.bits());
+    hash = addToInternedHash(hash, parts.unnamedLayouts.bits(), parts.unnamedClasses.bits());
+    return finishInternedHash(hash);
+}
+
+uint32_t hashOf(std::span<const uint32_t> words);
+uint32_t hashOf(const PropertyKey&);
 
 class TypeTable {
     WTF_MAKE_NONCOPYABLE(TypeTable);
@@ -117,136 +137,243 @@ public:
     explicit TypeTable(const BuiltinTable&, const Program* = nullptr);
     ~TypeTable();
 
-    static constexpr TypeID never { 0u };
-    static constexpr TypeID undefined { 1u };
-    static constexpr TypeID boolean { 2u };
-    static constexpr TypeID int32 { 3u };
-    static constexpr TypeID integer { 4u };
-    static constexpr TypeID number { 5u };
-    static constexpr TypeID string { 6u };
-    static constexpr TypeID function { 7u };
-    static constexpr TypeID object { 8u };
-    static constexpr TypeID anything { 9u };
-    static constexpr TypeID null { 10u };
-    static constexpr TypeID nullish { 11u };
-    static constexpr TypeID absent { 12u };
-    static constexpr TypeID guard { 13u };
-    static constexpr TypeID length { 14u };
-    static constexpr TypeID anythingOrAbsent { 15u };
+    static constexpr TypeID never = typeOfPrimitives(0);
+    static constexpr TypeID undefined = typeOfPrimitives(Primitive::Undefined);
+    static constexpr TypeID null = typeOfPrimitives(Primitive::Null);
+    static constexpr TypeID nullish = typeOfPrimitives(Primitive::UndefinedOrNull);
+    static constexpr TypeID absent = typeOfPrimitives(Primitive::Absent);
+    static constexpr TypeID boolean = typeOfPrimitives(Primitive::Boolean);
+    static constexpr TypeID int32 = *tryMakeTypeOfPrimitives(Primitive::Integer, Range::int32());
+    static constexpr TypeID uint32 = *tryMakeTypeOfPrimitives(Primitive::Integer, Range::uint32());
+    static constexpr TypeID length = *tryMakeTypeOfPrimitives(Primitive::Integer, Range::length());
+    static constexpr TypeID integer = typeOfPrimitives(Primitive::Integer);
+    static constexpr TypeID number = typeOfPrimitives(Primitive::Number);
+    static constexpr TypeID string = typeOfPrimitives(Primitive::String);
+    static constexpr TypeID symbol = typeOfPrimitives(Primitive::Symbol);
+    static constexpr TypeID bigInt = typeOfPrimitives(Primitive::BigInt);
+    // The constructor interns these first, in this order, without seeds: for the target of a test, a bound, the widest type of a representation.
+    static constexpr TypeID function = idAt<TypeID>(IDHome::Program, 0);
+    static constexpr TypeID object = idAt<TypeID>(IDHome::Program, 1);
+    static constexpr TypeID anything = idAt<TypeID>(IDHome::Program, 2);
+    static constexpr TypeID anythingOrAbsent = idAt<TypeID>(IDHome::Program, 3);
+    static constexpr TypeID cell = idAt<TypeID>(IDHome::Program, 4);
+    static constexpr TypeID cellOrMarker = idAt<TypeID>(IDHome::Program, 5);
+    static constexpr TypeID int16 = idAt<TypeID>(IDHome::Program, 6);
+    static constexpr TypeID uint16 = idAt<TypeID>(IDHome::Program, 7);
+    static constexpr TypeID anythingButUndefined = idAt<TypeID>(IDHome::Program, 8);
+    static constexpr TypeID anythingButNull = idAt<TypeID>(IDHome::Program, 9);
+    static constexpr TypeID anythingButNullish = idAt<TypeID>(IDHome::Program, 10);
+    static constexpr TypeID anythingButString = idAt<TypeID>(IDHome::Program, 11);
+    static constexpr TypeID anythingButNumber = idAt<TypeID>(IDHome::Program, 12);
+    static constexpr TypeID anythingButBoolean = idAt<TypeID>(IDHome::Program, 13);
+    static constexpr uint32_t numberOfTypesInternedAtStart = 14;
+    static constexpr bool passesEveryObject(TypeID id) { return id == anything || (id.bits() >= anythingButUndefined.bits() && id.bits() <= anythingButBoolean.bits()); }
+    static constexpr bool isAnythingButNullish(TypeID id) { return id == anythingButUndefined || id == anythingButNull || id == anythingButNullish; }
+    static constexpr TypeID anythingBut(TypeID primitives)
+    {
+        if (primitives == undefined)
+            return anythingButUndefined;
+        if (primitives == null)
+            return anythingButNull;
+        if (primitives == nullish)
+            return anythingButNullish;
+        if (primitives == string)
+            return anythingButString;
+        if (primitives == number)
+            return anythingButNumber;
+        if (primitives == boolean)
+            return anythingButBoolean;
+        return { };
+    }
     static constexpr TypeID valuesOf(TypeID held) { return held == anythingOrAbsent ? anything : held; }
-
-    static constexpr uint32_t provisionalBit = 1u << 31;
-    static constexpr uint32_t storageShift = 20;
-    static constexpr uint32_t maxRecordsPerStorage = 1u << storageShift;
-    static constexpr uint32_t maxStorages = 2047;
-
-    template<typename Tag> static constexpr bool isProvisional(ID<Tag> id) { return id && id.index() & provisionalBit; }
-    template<typename IDType> static constexpr IDType provisionalID(uint32_t storage, uint32_t position) { return IDType(provisionalBit | storage << storageShift | position); }
-    template<typename Tag> static constexpr uint32_t storageNumberOf(ID<Tag> provisional) { return (provisional.index() & ~provisionalBit) >> storageShift; }
-    template<typename Tag> static constexpr uint32_t positionOf(ID<Tag> provisional) { return provisional.index() & (maxRecordsPerStorage - 1); }
 
     const BuiltinTable& builtins() const { return m_builtins; }
     const Program* program() const { return m_program; }
 
-    const Type& at(TypeID id) const { return isProvisional(id) ? provisionalAt(id) : m_types.at(id); }
-    const LayoutSet& at(LayoutSetID id) const { return isProvisional(id) ? provisionalAt(id) : m_layoutSets.at(id); }
-    const CalleeSet& at(CalleeSetID id) const { return isProvisional(id) ? provisionalAt(id) : m_calleeSets.at(id); }
-    const PropertyKey& at(PropertyKeyID id) const { return isProvisional(id) ? provisionalAt(id) : m_propertyKeys.at(id); }
+    void setObjects(std::unique_ptr<ObjectTable>&&);
+    ObjectTable& objects() { return *m_objects; }
+    const ObjectTable& objects() const { return *m_objects; }
+    void reserveMembersOfLayoutSets(uint32_t numberOfLayouts) { m_layoutSets.reserveMembers(numberOfLayouts); }
 
-    unsigned size() const { return m_types.size(); }
-    unsigned numberOfLayoutSets() const { return m_layoutSets.size(); }
-    unsigned numberOfCalleeSets() const { return m_calleeSets.size(); }
-    unsigned numberOfPropertyKeys() const { return m_propertyKeys.size(); }
-    void didInternKeysThatOperationsSpell() { m_numberOfKeysThatOperationsSpell = m_propertyKeys.size(); }
-    bool isSpelledByOperations(PropertyKeyID key) const { return key.index() < m_numberOfKeysThatOperationsSpell; }
+    Type at(TypeID) const;
+    const Type& typeKeptAt(TypeID) const;
+    JS_EXPORT_PRIVATE const Type& typeKeptBeforeFreezeAt(TypeID) const;
+    static Type typeInID(TypeID);
+    static constexpr uint32_t positionInProgramOf(TypeID id) { return id.bits() - (static_cast<uint32_t>(IDHome::Program) << idHomeShift); }
+    TypeID typeOfLiteralString(StringID string) const { return string.index() < m_typesOfLiteralStrings.size() ? m_typesOfLiteralStrings[string.index()] : TypeID(); }
+    SetView<LayoutID, LayoutSetID> at(LayoutSetID set) const { return SetView<LayoutID, LayoutSetID>(m_layoutSets.viewOf(set.bits())); }
+    std::span<const LayoutID> listOf(LayoutSetID set) const
+    {
+        static_assert(sizeof(LayoutID) == sizeof(uint32_t));
+        std::span<const uint32_t> numbers = m_layoutSets.listOf(set.bits());
+        return unsafeMakeSpan(reinterpret_cast<const LayoutID*>(numbers.data()), numbers.size());
+    }
+    SetView<ObjectID, ObjectSetID> at(ObjectSetID set) const { return SetView<ObjectID, ObjectSetID>(m_objectSets.viewOf(set.bits())); }
+    SetView<StringID, StringSetID> at(StringSetID set) const { return SetView<StringID, StringSetID>(m_stringSets.viewOf(set.bits())); }
+    SetView<PropertyKeyID, KeySetID> at(KeySetID set) const { return SetView<PropertyKeyID, KeySetID>(m_keySets.viewOf(set.bits())); }
+    std::span<const ClassPart> at(ClassPartsID) const;
+    const PropertyKey& at(PropertyKeyID) const;
+    JS_EXPORT_PRIVATE void keepAddressesOfPropertyKeys();
+    JS_EXPORT_PRIVATE void keepAddressesOfTypes();
 
-    ProvenInEveryVersion provenTypeOf(const DeclaredType&) const;
+    TypeID typeOfWireIndex(uint32_t index) const { return m_typeOfWireIndex[index]; }
+    std::span<const TypeID> typesOfWireIndexes() const LIFETIME_BOUND { return m_typeOfWireIndex.span(); }
+    void setTypesOfWireIndexes(Vector<TypeID>&& types) { m_typeOfWireIndex = WTF::move(types); }
 
-    std::optional<TypeID> find(const Type& canonical) const;
+    uint32_t numberOfTypes() const { return m_types.size(); }
+
+    unsigned numberOfPropertyKeys() const;
+    void endStableNumbersOfPropertyKeys();
+    void endStableNumbersOfPropertyKeys(const ParallelLoops&);
+    void addKeysOfTexts(uint32_t numberOfStrings, const ParallelLoops&);
+    bool hasStableNumber(PropertyKeyID key) const { return key.index() < m_numberOfKeysWithStableNumbers; }
+    bool isLookedUpAsName(PropertyKeyID key) const { return key.index() < m_keysLookedUpAsNames.size() && m_keysLookedUpAsNames[key.index()]; }
+    std::optional<uint8_t> locationBitOf(PropertyKeyID key) const
+    {
+        if (key.index() >= m_locationBitsOfKeys.size())
+            return std::nullopt;
+        return m_locationBitsOfKeys[key.index()];
+    }
+    std::strong_ordering compareByContent(PropertyKeyID first, PropertyKeyID second) const
+    {
+        auto contentOf = [](const PropertyKey& key) {
+            const auto& [kind, text, owner, wellKnownSymbol, module, callNumber] = key;
+            return std::tuple(kind, text, owner, wellKnownSymbol, module, callNumber);
+        };
+        return contentOf(at(first)) <=> contentOf(at(second));
+    }
     std::optional<PropertyKeyID> find(const PropertyKey&) const;
 
-    TypeID intern(const Type&);
-    TypeID intern(Type&&);
-    LayoutSetID intern(LayoutSet&&);
-    CalleeSetID intern(CalleeSet&&);
-    PropertyKeyID intern(const PropertyKey&);
-
-    static uint32_t hashOfCanonical(const Type&);
-    static uint32_t hashOfCanonical(const LayoutSet&);
-    TypeID internCanonicalWithHash(Type&&, uint32_t hash);
-    LayoutSetID internCanonicalWithHash(LayoutSet&&, uint32_t hash);
-    void prefetchForType(uint32_t hash) const { m_types.prefetch(hash); }
-    void prefetchForLayoutSet(uint32_t hash) const { m_layoutSets.prefetch(hash); }
-
-    template<typename Record> auto& recordsForOrderedInterning()
+    ALWAYS_INLINE ProvenInEveryVersion provenTypeOf(const DeclaredType& declared) const
     {
-        RELEASE_ASSERT(!m_openPhase);
-        if constexpr (std::same_as<Record, Type>)
-            return m_types;
-        else if constexpr (std::same_as<Record, LayoutSet>)
-            return m_layoutSets;
-        else if constexpr (std::same_as<Record, CalleeSet>)
-            return m_calleeSets;
-        else {
-            static_assert(std::same_as<Record, PropertyKey>);
-            return m_propertyKeys;
+        if (std::optional<ProvenInEveryVersion> established = declared.established())
+            return *established;
+        return provenTypeOfWhatIsOnlyExpected(declared);
+    }
+    ProvenInEveryVersion provenTypeOfWhatIsOnlyExpected(const DeclaredType&) const;
+
+    void beginKeepingMemosAtRest();
+    void invalidateMemosAtRest();
+
+    void freeze();
+    bool isFrozen() const { return m_isFrozen; }
+    class RoundWithoutAdditions {
+        WTF_MAKE_NONCOPYABLE(RoundWithoutAdditions);
+    public:
+        explicit RoundWithoutAdditions(TypeTable& table)
+            : m_table(table)
+        {
+            m_table.m_numberOfRoundsWithoutAdditions.fetch_add(1, std::memory_order_relaxed);
+            for (IDSetTable* sets : { &m_table.m_layoutSets, &m_table.m_objectSets, &m_table.m_stringSets, &m_table.m_keySets })
+                sets->beginRoundWithoutAdditions();
         }
-    }
+        ~RoundWithoutAdditions()
+        {
+            for (IDSetTable* sets : { &m_table.m_layoutSets, &m_table.m_objectSets, &m_table.m_stringSets, &m_table.m_keySets })
+                sets->endRoundWithoutAdditions();
+            m_table.m_numberOfRoundsWithoutAdditions.fetch_sub(1, std::memory_order_relaxed);
+        }
 
-    bool hasOpenPhase() const { return m_openPhase; }
+    private:
+        TypeTable& m_table;
+    };
+    bool takesNoAdditions() const { return m_isFrozen || m_numberOfRoundsWithoutAdditions.load(std::memory_order_relaxed); }
+    SharedAnswers* sharedAnswers() const { return m_sharedAnswers.get(); }
 
-    SharedTypeMemo* sharedMemo(SharedAnswers answers) const { return m_sharedMemos[static_cast<size_t>(answers)].load(std::memory_order_acquire); }
-    void setSharedMemos(SharedTypeMemo* aboutTypes, SharedTypeMemo* aboutProgram) const
-    {
-        m_sharedMemos[static_cast<size_t>(SharedAnswers::AboutTypes)].store(aboutTypes, std::memory_order_release);
-        m_sharedMemos[static_cast<size_t>(SharedAnswers::AboutProgram)].store(aboutProgram, std::memory_order_release);
-    }
-    std::unique_ptr<SharedTypeMemo> takeSavedSharedMemo() const { return std::exchange(m_savedSharedMemo, nullptr); }
-    void saveSharedMemo(std::unique_ptr<SharedTypeMemo>&& aboutTypes) const { m_savedSharedMemo = WTF::move(aboutTypes); }
-
-    void addTo(Statistics&) const;
+    size_t sizeInBytes() const;
 
 private:
-    friend class ScratchTypeArena;
     friend class TypeArena;
-    friend class TypeInterningPhase;
+    friend class ArenasOfWorkers;
 
-    const Type& provisionalAt(TypeID) const;
-    const LayoutSet& provisionalAt(LayoutSetID) const;
-    const CalleeSet& provisionalAt(CalleeSetID) const;
-    const PropertyKey& provisionalAt(PropertyKeyID) const;
+    std::span<const ClassPart> classPartsKeptAt(ClassPartsID) const;
+    const PropertyKey& propertyKeyKeptAt(PropertyKeyID) const;
+    const PropertyKey& propertyKeyFoundByAddressAt(uint32_t position) const;
 
-    const TypeInterningPhase* phaseOfProvisionalIDs() const;
-    TypeInterningPhase& attachScratchArena() const;
-    void detachScratchArena(const TypeInterningPhase&) const;
-    void destroyPhaseOfScratchArenas() const;
+    struct MemosOfArena {
+        IDPairMemo types;
+        IDPairMemo layoutSets;
+        IDPairMemo objectSets;
+        IDPairMemo stringSets;
+        IDPairMemo keySets;
+        IDListMemo unionsOfMany;
+    };
+    mutable Lock m_memosAtRestLock;
+    bool m_keepsMemosAtRest WTF_GUARDED_BY_LOCK(m_memosAtRestLock) { false };
+    Vector<MemosOfArena> m_memosAtRest WTF_GUARDED_BY_LOCK(m_memosAtRestLock);
+
+    Vector<ClassPart> m_partOfClassAlone;
 
     const BuiltinTable& m_builtins;
     const Program* m_program;
-    template<typename Record, typename RecordID> using RecordsThatNeverMove = InternedRecords<Record, RecordID, 0, NonMovingVector<Record>>;
-
-    RecordsThatNeverMove<Type, TypeID> m_types;
-    RecordsThatNeverMove<LayoutSet, LayoutSetID> m_layoutSets;
-    RecordsThatNeverMove<CalleeSet, CalleeSetID> m_calleeSets;
-    RecordsThatNeverMove<PropertyKey, PropertyKeyID> m_propertyKeys;
-    unsigned m_numberOfKeysThatOperationsSpell { UINT_MAX };
-    mutable TypeInterningPhase* m_openPhase { nullptr };
-    mutable std::atomic<TypeInterningPhase*> m_phaseOfScratchArenas { nullptr };
-    mutable std::atomic<unsigned> m_numberOfArenasInPhaseOfScratchArenas { 0 };
-    mutable Lock m_phaseOfScratchArenasLock;
-    mutable std::array<std::atomic<SharedTypeMemo*>, numberOfSharedAnswerKinds> m_sharedMemos { };
-    mutable std::unique_ptr<SharedTypeMemo> m_savedSharedMemo;
-    uint64_t m_numberOfProvisionalTypes { 0 };
+    std::unique_ptr<ObjectTable> m_objects;
+    bool m_isFrozen { false };
+    std::unique_ptr<SharedAnswers> m_sharedAnswers;
+    InternedRecords<Type> m_types;
+    Vector<const Type*> m_typesOnceFrozen;
+    uint32_t m_numberOfTypesFoundByAddress { 0 };
+    std::array<uintptr_t, numberOfInternedSegments> m_addressesOfPositionZeroInTypeSegments { };
+    std::atomic<unsigned> m_numberOfRoundsWithoutAdditions { 0 };
+    IDSetTable m_layoutSets { IDSetForm::ChunksWithLazyList, 0 };
+    IDSetTable m_objectSets { IDSetForm::ListsAndChunks, wordsOfObjectSetSummary };
+    IDSetTable m_stringSets { IDSetForm::ListsAndChunks, 0 };
+    IDSetTable m_keySets { IDSetForm::ListsAndChunks, 0 };
+    InternedWordLists m_classParts;
+    InternedRecords<PropertyKey> m_propertyKeys;
+    uint32_t m_numberOfPropertyKeysFoundByAddress { 0 };
+    std::array<uintptr_t, numberOfInternedSegments> m_addressesOfPositionZeroInKeySegments { };
+    uint32_t m_numberOfKeysWithStableNumbers { UINT32_MAX };
+    Vector<uint8_t> m_locationBitsOfKeys;
+    Vector<uint8_t> m_keysLookedUpAsNames;
+    Vector<TypeID> m_typeOfWireIndex;
+    Vector<TypeID> m_typesOfLiteralStrings;
 };
 
-static_assert(TypeTable::storageNumberOf(TypeID()) == TypeTable::maxStorages, "The null id must not decode to a storage.");
-static_assert(TypeTable::storageNumberOf(TypeID(TypeID::hashTableDeletedIndex)) == TypeTable::maxStorages, "The deleted id must not decode to a storage.");
+ALWAYS_INLINE const Type& TypeTable::typeKeptAt(TypeID id) const
+{
+    uint32_t position = positionInProgramOf(id);
+    if (position < m_typesOnceFrozen.size()) [[likely]]
+        return *m_typesOnceFrozen[position];
+    return typeKeptBeforeFreezeAt(id);
+}
 
-void canonicalize(LayoutSet&);
-void canonicalize(CalleeSet&);
+ALWAYS_INLINE Type TypeTable::typeInID(TypeID id)
+{
+    Type type;
+    type.primitives = primitivesInID(id);
+    type.integers = integersInID(id);
+    return type;
+}
 
-bool isSubsetOf(const LayoutSet&, const LayoutSet&);
-bool overlaps(const LayoutSet&, const LayoutSet&);
+ALWAYS_INLINE Type TypeTable::at(TypeID id) const
+{
+    if (isItsOwnValue(id))
+        return typeInID(id);
+    return typeKeptAt(id);
+}
+
+inline std::span<const ClassPart> TypeTable::at(ClassPartsID id) const
+{
+    if (holdsOneMember(id))
+        return std::span<const ClassPart>(&m_partOfClassAlone[positionOf(id)], 1);
+    return classPartsKeptAt(id);
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+ALWAYS_INLINE const PropertyKey& TypeTable::propertyKeyFoundByAddressAt(uint32_t position) const
+{
+    return *reinterpret_cast<const PropertyKey*>(m_addressesOfPositionZeroInKeySegments.data()[internedSegmentOf(position)] + static_cast<uintptr_t>(position) * sizeof(PropertyKey));
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+ALWAYS_INLINE const PropertyKey& TypeTable::at(PropertyKeyID key) const
+{
+    if (key.bits() < m_numberOfPropertyKeysFoundByAddress) [[likely]]
+        return propertyKeyFoundByAddressAt(key.bits());
+    return propertyKeyKeptAt(key);
+}
 
 } } } // namespace JSC::AOT::Typed
 

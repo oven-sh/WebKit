@@ -39,16 +39,17 @@ class TextTrackCueGeneric final : public VTTCue {
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(TextTrackCueGeneric);
 public:
     WEBCORE_EXPORT static Ref<TextTrackCueGeneric> create(ScriptExecutionContext&, const MediaTime& start, const MediaTime& end, const String& content);
+    ~TextTrackCueGeneric();
 
     ExceptionOr<void> setPosition(const LineAndPositionSetting&) final;
 
     bool useDefaultPosition() const { return m_useDefaultPosition; }
 
     double baseFontSizeRelativeToVideoHeight() const { return m_baseFontSizeRelativeToVideoHeight; }
-    void LEGACY_NODELETE setBaseFontSizeRelativeToVideoHeight(double);
+    NODELETE void setBaseFontSizeRelativeToVideoHeight(double);
 
     double fontSizeMultiplier() const { return m_fontSizeMultiplier; }
-    void LEGACY_NODELETE setFontSizeMultiplier(double);
+    NODELETE void setFontSizeMultiplier(double);
 
     const String& fontName() const LIFETIME_BOUND { return m_fontName; }
     void setFontName(const String& name) { m_fontName = name; }

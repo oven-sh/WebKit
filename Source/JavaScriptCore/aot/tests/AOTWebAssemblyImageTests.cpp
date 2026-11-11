@@ -13,64 +13,33 @@
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 
 #include "AOTBuildContext.h"
-#include "AOTCodeTemplates.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTIRParser.h"
 #include "AOTIRProgram.h"
+#include "AOTImageBuilder.h"
+#include "AOTImageTestSupport.h"
 #include "AOTProgramFile.h"
 #include "AOTWasmModules.h"
-#include "B3RelocatableValue.h"
+#include "JSCPtrTag.h"
 #include "JSLock.h"
-#include "Options.h"
 #include "VM.h"
 #include "WasmCodeInImage.h"
-#include "WasmModule.h"
+#include "WasmHandlerInfo.h"
 #include "WasmOperations.h"
 #include <algorithm>
 #include <array>
 #include <bmalloc/Gigacage.h>
 #include <wtf/BitVector.h>
 #include <wtf/DataLog.h>
-#include <wtf/NeverDestroyed.h>
 
 namespace JSC { namespace AOT {
 
+using ImageTests::testTemplates;
+
 namespace {
 
-class TestVM {
-public:
-    TestVM()
-        : m_vm(VM::create(HeapType::Small))
-        , m_locker(*m_vm)
-    {
-    }
-
-    ~TestVM() { m_vm = nullptr; }
-
-    VM& get() { return *m_vm; }
-
-private:
-    RefPtr<VM> m_vm;
-    JSLockHolder m_locker;
-};
-
-using CompiledModule = std::expected<Wasm::ModuleForImage, Wasm::ImageDeclineReason>;
-
-constexpr uint8_t emptyModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-};
-
-constexpr uint8_t invalidModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0xff,
-};
-
-constexpr uint8_t structTypeModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x08, 0x02, 0x5f, 0x01, 0x7f, 0x00, 0x60, 0x00, 0x00,
-    0x03, 0x02, 0x01, 0x01,
-    0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b,
-};
+constexpr size_t trapping = static_cast<size_t>(Wasm::ImageCodeFlavor::Trapping);
+constexpr size_t checking = static_cast<size_t>(Wasm::ImageCodeFlavor::Checking);
 
 constexpr uint8_t callModule[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
@@ -79,125 +48,46 @@ constexpr uint8_t callModule[] = {
     0x0a, 0x0b, 0x02, 0x04, 0x00, 0x41, 0x01, 0x0b, 0x04, 0x00, 0x10, 0x00, 0x0b,
 };
 
-constexpr uint8_t tailCallModule[] = {
+constexpr uint8_t memoryModule[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
-    0x03, 0x03, 0x02, 0x00, 0x00,
-    0x0a, 0x0b, 0x02, 0x04, 0x00, 0x41, 0x01, 0x0b, 0x04, 0x00, 0x12, 0x00, 0x0b,
+    0x01, 0x0a, 0x02, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x00, 0x01, 0x7f,
+    0x03, 0x04, 0x03, 0x00, 0x01, 0x00,
+    0x05, 0x03, 0x01, 0x00, 0x01,
+    0x0a, 0x15, 0x03, 0x07, 0x00, 0x20, 0x00, 0x28, 0x02, 0x00, 0x0b, 0x04, 0x00, 0x41, 0x07, 0x0b, 0x06, 0x00, 0x20, 0x00, 0x10, 0x00, 0x0b,
 };
 
-constexpr uint8_t onlyTailCallModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
-    0x03, 0x02, 0x01, 0x00,
-    0x0a, 0x06, 0x01, 0x04, 0x00, 0x12, 0x00, 0x0b,
-};
-
-constexpr uint8_t callToInterpretedFunctionModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
-    0x03, 0x04, 0x03, 0x00, 0x00, 0x00,
-    0x0a, 0x10, 0x03, 0x04, 0x00, 0x12, 0x01, 0x0b, 0x04, 0x00, 0x41, 0x01, 0x0b, 0x04, 0x00, 0x10, 0x00, 0x0b,
-};
-
-constexpr uint8_t callToCompiledFunctionModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
-    0x03, 0x04, 0x03, 0x00, 0x00, 0x00,
-    0x0a, 0x10, 0x03, 0x04, 0x00, 0x12, 0x01, 0x0b, 0x04, 0x00, 0x41, 0x01, 0x0b, 0x04, 0x00, 0x10, 0x01, 0x0b,
-};
-
-constexpr uint8_t throwModule[] = {
+constexpr uint8_t catchModule[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x01, 0x08, 0x02, 0x60, 0x00, 0x00, 0x60, 0x00, 0x01, 0x7f,
     0x03, 0x03, 0x02, 0x00, 0x01,
     0x0d, 0x03, 0x01, 0x00, 0x00,
-    0x0a, 0x0b, 0x02, 0x04, 0x00, 0x08, 0x00, 0x0b, 0x04, 0x00, 0x41, 0x02, 0x0b,
+    0x0a, 0x14, 0x02, 0x04, 0x00, 0x08, 0x00, 0x0b, 0x0d, 0x00, 0x06, 0x7f, 0x10, 0x00, 0x41, 0x01, 0x07, 0x00, 0x41, 0x02, 0x0b, 0x0b,
 };
 
-constexpr uint8_t referenceTypeTestModule[] = {
+// Two functions, a table with the first one in it, and no memory. The second function calls through the table with six arguments:
+// (type (func (param i32 i32 i32 i32 i32 i32) (result i32))) (type (func (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+// (table (export "table") 1 funcref) (elem (i32.const 0) 0) (func (export "callee") (type 0) local.get 0)
+// (func (export "indirect") (type 1) local.get 0 ... local.get 5 local.get 6 call_indirect (type 0))
+constexpr uint8_t indirectCallModule[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x0a, 0x02, 0x60, 0x01, 0x70, 0x01, 0x7f, 0x60, 0x00, 0x01, 0x7f,
-    0x03, 0x05, 0x04, 0x00, 0x00, 0x00, 0x01,
-    0x0a, 0x2f, 0x04,
-    0x07, 0x00, 0x20, 0x00, 0xfb, 0x14, 0x01, 0x0b,
-    0x0a, 0x00, 0x20, 0x00, 0xfb, 0x16, 0x01, 0x1a, 0x41, 0x00, 0x0b,
-    0x15, 0x00, 0x02, 0x64, 0x01, 0x20, 0x00, 0xfb, 0x18, 0x01, 0x00, 0x70, 0x01, 0x1a, 0x41, 0x00, 0x0f, 0x0b, 0x1a, 0x41, 0x01, 0x0b,
-    0x04, 0x00, 0x41, 0x01, 0x0b,
-};
-
-constexpr uint8_t unlistedOperationModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x09, 0x02, 0x60, 0x01, 0x6f, 0x00, 0x60, 0x00, 0x01, 0x7f,
+    0x01, 0x16, 0x02, 0x60, 0x06, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x07, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f,
     0x03, 0x03, 0x02, 0x00, 0x01,
-    0x0a, 0x0e, 0x02, 0x07, 0x00, 0x20, 0x00, 0xfb, 0x1a, 0x1a, 0x0b, 0x04, 0x00, 0x41, 0x01, 0x0b,
+    0x04, 0x04, 0x01, 0x70, 0x00, 0x01,
+    0x07, 0x1d, 0x03, 0x06, 0x63, 0x61, 0x6c, 0x6c, 0x65, 0x65, 0x00, 0x00, 0x08, 0x69, 0x6e, 0x64, 0x69, 0x72, 0x65, 0x63, 0x74, 0x00, 0x01, 0x05, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x01, 0x00,
+    0x09, 0x07, 0x01, 0x00, 0x41, 0x00, 0x0b, 0x01, 0x00,
+    0x0a, 0x1a, 0x02, 0x04, 0x00, 0x20, 0x00, 0x0b, 0x13, 0x00, 0x20, 0x00, 0x20, 0x01, 0x20, 0x02, 0x20, 0x03, 0x20, 0x04, 0x20, 0x05, 0x20, 0x06, 0x11, 0x00, 0x00, 0x0b,
 };
 
-constexpr uint8_t bulkMemoryModule[] = {
+constexpr uint8_t moduleWithoutFunctions[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x07, 0x01, 0x60, 0x03, 0x7f, 0x7f, 0x7f, 0x00,
-    0x03, 0x03, 0x02, 0x00, 0x00,
     0x05, 0x03, 0x01, 0x00, 0x01,
-    0x0a, 0x1a, 0x02,
-    0x0c, 0x00, 0x20, 0x00, 0x20, 0x01, 0x20, 0x02, 0xfc, 0x0a, 0x00, 0x00, 0x0b,
-    0x0b, 0x00, 0x20, 0x00, 0x20, 0x01, 0x20, 0x02, 0xfc, 0x0b, 0x00, 0x0b,
 };
 
-constexpr uint8_t importAndExportModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x09, 0x02, 0x60, 0x00, 0x01, 0x7f, 0x60, 0x00, 0x01, 0x7e,
-    0x02, 0x07, 0x01, 0x01, 0x6d, 0x01, 0x66, 0x00, 0x00,
-    0x03, 0x04, 0x03, 0x00, 0x00, 0x01,
-    0x07, 0x11, 0x04, 0x01, 0x66, 0x00, 0x00, 0x01, 0x61, 0x00, 0x01, 0x01, 0x62, 0x00, 0x02, 0x01, 0x63, 0x00, 0x03,
-    0x0a, 0x10, 0x03, 0x04, 0x00, 0x41, 0x01, 0x0b, 0x04, 0x00, 0x41, 0x02, 0x0b, 0x04, 0x00, 0x42, 0x03, 0x0b,
-};
-
-constexpr uint8_t memoryModule[] = {
+constexpr uint8_t invalidModule[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
     0x03, 0x02, 0x01, 0x00,
-    0x05, 0x03, 0x01, 0x00, 0x01,
-    0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b,
 };
-
-constexpr uint8_t branchTableModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f,
-    0x03, 0x02, 0x01, 0x00,
-    0x0a, 0x46, 0x01, 0x44, 0x00,
-    0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40,
-    0x20, 0x00, 0x0e, 0x08, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x0b, 0x41, 0x07, 0x0f,
-    0x0b, 0x41, 0x29, 0x0f,
-    0x0b, 0x41, 0x03, 0x0f,
-    0x0b, 0x41, 0x1d, 0x0f,
-    0x0b, 0x41, 0x0d, 0x0f,
-    0x0b, 0x41, 0x3b, 0x0f,
-    0x0b, 0x41, 0x11, 0x0f,
-    0x0b, 0x41, 0x25, 0x0f,
-    0x0b, 0x41, 0x17,
-    0x0b,
-};
-
-constexpr double linkedConstant = 0.1;
-
-constexpr uint8_t doubleConstantModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7c,
-    0x03, 0x02, 0x01, 0x00,
-    0x0a, 0x0d, 0x01, 0x0b, 0x00, 0x44, 0x9a, 0x99, 0x99, 0x99, 0x99, 0x99, 0xb9, 0x3f, 0x0b,
-};
-
-#if CPU(X86_64)
-constexpr uint8_t vectorAndScalarModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
-    0x03, 0x03, 0x02, 0x00, 0x00,
-    0x0a, 0x1e, 0x02,
-    0x17, 0x00, 0xfd, 0x0c, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xfd, 0x1b, 0x00, 0x0b,
-    0x04, 0x00, 0x41, 0x01, 0x0b,
-};
-#endif
 
 constexpr ASCIILiteral twoImportersText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="other.js" displayPath="other.js" body=f1
@@ -212,387 +102,296 @@ function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-constexpr uint32_t codeUnitAlignment = 16;
-
 constexpr std::array declineReasons {
     Wasm::ImageDeclineReason::None,
-    Wasm::ImageDeclineReason::UnsupportedCPU,
-    Wasm::ImageDeclineReason::InvalidModule,
-    Wasm::ImageDeclineReason::NoFunctions,
-    Wasm::ImageDeclineReason::HasGCTypes,
-    Wasm::ImageDeclineReason::CodeTooLarge,
-    Wasm::ImageDeclineReason::UsesExceptions,
-    Wasm::ImageDeclineReason::UsesTailCalls,
-    Wasm::ImageDeclineReason::TestsReferenceTypes,
-    Wasm::ImageDeclineReason::CallsUnlistedOperation,
-    Wasm::ImageDeclineReason::NamesTypeOfOtherModule,
-    Wasm::ImageDeclineReason::SavesVectorRegister,
-    Wasm::ImageDeclineReason::SavedRegisterOrder,
-    Wasm::ImageDeclineReason::ProcessAddressInCode,
-    Wasm::ImageDeclineReason::CodeGeneratorFailed,
+#define LIST_DECLINE_REASON(reason) Wasm::ImageDeclineReason::reason,
+    FOR_EACH_WASM_IMAGE_DECLINE_REASON(LIST_DECLINE_REASON)
+#undef LIST_DECLINE_REASON
 };
-static_assert(declineReasons.size() == static_cast<size_t>(Wasm::ImageDeclineReason::CodeGeneratorFailed) + 1);
 
 } // anonymous namespace
 
-static const CodeTemplates& templates()
+static std::unique_ptr<Typed::Program> parseProgramWithTwoImporters(std::span<const uint8_t> moduleOfMain, std::span<const uint8_t> moduleOfOther, BuildContext& context)
 {
-    static NeverDestroyed<CodeTemplates> templates = [] {
-        auto created = CodeTemplates::create(AssemblerPolicy::forImage(CPUFeatureSet::host()), nullptr);
-        AOT_TEST_CHECK(created.has_value());
-        return WTF::move(*created);
-    }();
-    return templates;
-}
-
-static CompiledModule compileModule(std::span<const uint8_t> source, BuildContext& context)
-{
-    TestVM vm;
-    return compileWasmModule(vm.get(), source, templates(), context);
-}
-
-static WebAssemblyImageInputs layOut(Vector<Wasm::ModuleForImage>&& modules)
-{
-    WasmSectionBuilder builder;
-    for (Wasm::ModuleForImage& module : modules)
-        AOT_TEST_CHECK(builder.append(WTF::move(module)));
-    return builder.finish();
-}
-
-static void checkModule(const Wasm::ModuleForImage& module)
-{
-    AOT_TEST_CHECK(module.functionsEnd <= module.code.size());
-
-    uint32_t previousStub = 0;
-    auto checkStub = [&](uint32_t stub) {
-        AOT_TEST_CHECK(!(stub % codeUnitAlignment));
-        AOT_TEST_CHECK(previousStub < stub);
-        previousStub = stub;
-    };
-    for (uint32_t stub : module.importStubs)
-        checkStub(stub);
-    for (const Wasm::JSEntrypointInImage& entrypoint : module.jsEntrypoints)
-        checkStub(entrypoint.code);
-    AOT_TEST_CHECK(previousStub < module.functions[0].entry);
-
-    size_t numberOfInterpretedFunctions = 0;
-    for (size_t index = 0; index < module.functions.size(); ++index) {
-        const Wasm::FunctionInImage& function = module.functions[index];
-        AOT_TEST_CHECK(!(function.entry % codeUnitAlignment));
-        AOT_TEST_CHECK(function.entry < module.functionsEnd);
-        AOT_TEST_CHECK(!index || module.functions[index - 1].entry < function.entry);
-        if (function.hasCode) {
-            AOT_TEST_CHECK(function.savedRegisters < module.savedRegisters.size());
-            continue;
-        }
-        AOT_TEST_CHECK(!function.savedRegisters);
-        ++numberOfInterpretedFunctions;
+    std::unique_ptr<Typed::Program> program = Typed::parseProgram(twoImportersText, context);
+    if (!program) {
+        context.diagnostics().finish(nullptr);
+        Typed::printDiagnostics(context.diagnostics(), WTF::dataFile());
     }
+    AOT_TEST_CHECK(program);
+    AOT_TEST_CHECK(program->webAssemblyModules.size() == 2);
+    program->webAssemblyModules[0].bytes = moduleOfMain;
+    program->webAssemblyModules[1].bytes = moduleOfOther;
+    return program;
+}
 
-    AOT_TEST_CHECK(module.interpretedFunctions.size() == numberOfInterpretedFunctions);
-    for (auto [function, reason] : module.interpretedFunctions) {
-        AOT_TEST_CHECK(!module.functions[function].hasCode);
-        AOT_TEST_CHECK(reason != Wasm::ImageDeclineReason::None);
+static WasmModuleOrDecline compileModule(std::span<const uint8_t> source, BuildContext& context)
+{
+    RefPtr<VM> vm = VM::create(HeapType::Small);
+    JSLockHolder locker(*vm);
+    WasmModuleOrDecline module = compileWasmModule(*vm, source, testTemplates(), context);
+    vm = nullptr;
+    return module;
+}
+
+static Wasm::ModuleForImage compileModuleWithCode(std::span<const uint8_t> source)
+{
+    BuildContext context(makeDefaultCompileOptions());
+    WasmModuleOrDecline module = compileModule(source, context);
+    if (!module) {
+        context.diagnostics().finish(nullptr);
+        Typed::printDiagnostics(context.diagnostics(), WTF::dataFile());
     }
-}
-
-static void checkOnlyInterpretedFunction(const Wasm::ModuleForImage& module, uint32_t function, Wasm::ImageDeclineReason reason)
-{
-    AOT_TEST_CHECK(module.interpretedFunctions.size() == 1);
-    AOT_TEST_CHECK(module.interpretedFunctions[0].first == function);
-    AOT_TEST_CHECK(module.interpretedFunctions[0].second == reason);
-}
-
-static Wasm::ModuleForImage compileValidModule(std::span<const uint8_t> source, BuildContext& context)
-{
-    CompiledModule module = compileModule(source, context);
-    AOT_TEST_CHECK(module.has_value());
-    checkModule(*module);
+    AOT_TEST_CHECK(module);
+    AOT_TEST_CHECK(!context.diagnostics().hasErrors());
     return WTF::move(*module);
 }
 
-static Wasm::ModuleForImage compileValidModule(std::span<const uint8_t> source)
+static void checkFunctionsLieInCode(const Wasm::ModuleForImage& module, const Vector<Wasm::FunctionInImage>& functions)
 {
-    BuildContext context(makeDefaultCompileOptions());
-    return compileValidModule(source, context);
-}
-
-static Wasm::ImageDeclineReason compileDeclinedModule(std::span<const uint8_t> source, BuildContext& context)
-{
-    CompiledModule module = compileModule(source, context);
-    AOT_TEST_CHECK(!module);
-    return module.error();
-}
-
-static Wasm::ImageDeclineReason compileDeclinedModule(std::span<const uint8_t> source)
-{
-    BuildContext context(makeDefaultCompileOptions());
-    return compileDeclinedModule(source, context);
-}
-
-static Wire::CompileOptions optionsWith(ASCIILiteral word)
-{
-    Wire::CompileOptions options = makeDefaultCompileOptions();
-    AOT_TEST_CHECK(!applyOptionWord(options, word));
-    return options;
-}
-
-static uint64_t countOf(BuildContext& context, StatisticID statistic)
-{
-    return context.statistics().values()[static_cast<size_t>(statistic)];
-}
-
-template<typename T>
-static std::span<const T> arrayInDirectory(const WebAssemblyImageInputs& section, uint32_t offset, uint32_t count)
-{
-    return spanReinterpretCast<const T>(section.directory.span().subspan(offset, count * sizeof(T)));
-}
-
-static std::span<const Wasm::ModuleInImage> recordsOf(const WebAssemblyImageInputs& section)
-{
-    uint32_t numberOfModules = reinterpretCastSpanStartTo<Wasm::DirectoryInImage>(section.directory.span()).numberOfModules;
-    return arrayInDirectory<Wasm::ModuleInImage>(section, sizeof(Wasm::DirectoryInImage), numberOfModules);
-}
-
-static std::span<const Wasm::FunctionInImage> functionsOf(const WebAssemblyImageInputs& section, const Wasm::ModuleInImage& record)
-{
-    return arrayInDirectory<Wasm::FunctionInImage>(section, record.functions, record.numberOfFunctions);
-}
-
-static std::span<const uint32_t> importStubsOf(const WebAssemblyImageInputs& section, const Wasm::ModuleInImage& record)
-{
-    return arrayInDirectory<uint32_t>(section, record.importStubs, record.numberOfImportedFunctions);
-}
-
-static std::span<const Wasm::JSEntrypointInImage> jsEntrypointsOf(const WebAssemblyImageInputs& section, const Wasm::ModuleInImage& record)
-{
-    return arrayInDirectory<Wasm::JSEntrypointInImage>(section, record.jsEntrypoints, record.numberOfJSEntrypoints);
-}
-
-static void checkRecord(const WebAssemblyImageInputs& section, const Wasm::ModuleInImage& record, std::span<const uint8_t> source)
-{
-    AOT_TEST_CHECK(record.digest == Wasm::CodeInImage::digestOf(source));
-    AOT_TEST_CHECK(record.sourceSize == source.size());
-
-    for (uint32_t offset : { record.functions, record.importStubs, record.jsEntrypoints, record.savedRegisters }) {
-        AOT_TEST_CHECK(!(offset % 8));
-        AOT_TEST_CHECK(offset <= section.directory.size());
+    for (const Wasm::FunctionInImage& function : functions) {
+        AOT_TEST_CHECK(function.size);
+        AOT_TEST_CHECK(function.entry <= module.code.size() && function.size <= module.code.size() - function.entry);
+        AOT_TEST_CHECK(function.savedRegisters < module.savedRegisters.size());
+        AOT_TEST_CHECK(function.firstHandler <= module.handlers.size() && function.numberOfHandlers <= module.handlers.size() - function.firstHandler);
     }
-
-    auto functions = functionsOf(section, record);
-    for (size_t index = 1; index < functions.size(); ++index)
-        AOT_TEST_CHECK(functions[index - 1].entry < functions[index].entry);
-    AOT_TEST_CHECK(functions.back().entry < record.functionsEnd);
-    AOT_TEST_CHECK(record.functionsEnd <= section.code.size());
-
-    for (uint32_t stub : importStubsOf(section, record))
-        AOT_TEST_CHECK(stub < functions.front().entry);
-    for (const Wasm::JSEntrypointInImage& entrypoint : jsEntrypointsOf(section, record))
-        AOT_TEST_CHECK(entrypoint.code < functions.front().entry);
 }
 
-static void testCallHasCode()
+static Wasm::DirectoryInImage headerOf(const WebAssemblyImageInputs& section)
 {
-    BuildContext context(makeDefaultCompileOptions());
-    Wasm::ModuleForImage module = compileValidModule(callModule, context);
-    AOT_TEST_CHECK(module.functions.size() == 2);
-    AOT_TEST_CHECK(module.functions[0].hasCode);
-    AOT_TEST_CHECK(module.functions[1].hasCode);
-    AOT_TEST_CHECK(module.interpretedFunctions.isEmpty());
-    AOT_TEST_CHECK(module.digest == Wasm::CodeInImage::digestOf(callModule));
-    AOT_TEST_CHECK(module.sourceSize == sizeof(callModule));
-    AOT_TEST_CHECK(!module.isForSignalingMemory);
-    AOT_TEST_CHECK(!module.usesVectors);
-    AOT_TEST_CHECK(module.importStubs.isEmpty());
-    AOT_TEST_CHECK(module.jsEntrypoints.isEmpty());
-    AOT_TEST_CHECK(countOf(context, StatisticID::WasmFunctionsCompiled) == 2);
-    AOT_TEST_CHECK(!countOf(context, StatisticID::WasmFunctionsInterpreted));
-    AOT_TEST_CHECK(!countOf(context, hitsOf(LimitID::WasmImageCodeSize)));
+    AOT_TEST_CHECK(section.directory.size() >= sizeof(Wasm::DirectoryInImage));
+    return reinterpretCastSpanStartTo<Wasm::DirectoryInImage>(section.directory.span());
 }
 
-static void testTailCallIsInterpreted()
+static std::span<const Wasm::ModuleInImage> modulesOf(const WebAssemblyImageInputs& section)
 {
-    if (!Options::useWasmTailCalls())
-        return;
-
-    BuildContext context(makeDefaultCompileOptions());
-    Wasm::ModuleForImage module = compileValidModule(tailCallModule, context);
-    AOT_TEST_CHECK(module.functions.size() == 2);
-    AOT_TEST_CHECK(module.functions[0].hasCode);
-    checkOnlyInterpretedFunction(module, 1, Wasm::ImageDeclineReason::UsesTailCalls);
-    AOT_TEST_CHECK(module.functions[1].entry < module.code.size());
-    AOT_TEST_CHECK(module.functions[1].entry != module.functions[0].entry);
-    AOT_TEST_CHECK(countOf(context, StatisticID::WasmFunctionsCompiled) == 1);
-    AOT_TEST_CHECK(countOf(context, StatisticID::WasmFunctionsInterpreted) == 1);
+    size_t size = headerOf(section).numberOfModules * sizeof(Wasm::ModuleInImage);
+    AOT_TEST_CHECK(section.directory.size() >= sizeof(Wasm::DirectoryInImage) + size);
+    return spanReinterpretCast<const Wasm::ModuleInImage>(section.directory.span().subspan(sizeof(Wasm::DirectoryInImage), size));
 }
 
-static void testThrowIsInterpreted()
+static std::span<const Wasm::DeclinedModuleInImage> declinedModulesOf(const WebAssemblyImageInputs& section)
 {
-    Wasm::ModuleForImage module = compileValidModule(throwModule);
-    AOT_TEST_CHECK(module.functions.size() == 2);
-    checkOnlyInterpretedFunction(module, 0, Wasm::ImageDeclineReason::UsesExceptions);
-    AOT_TEST_CHECK(module.functions[1].hasCode);
+    size_t offset = sizeof(Wasm::DirectoryInImage) + headerOf(section).numberOfModules * sizeof(Wasm::ModuleInImage);
+    size_t size = headerOf(section).numberOfDeclinedModules * sizeof(Wasm::DeclinedModuleInImage);
+    AOT_TEST_CHECK(section.directory.size() >= offset + size);
+    return spanReinterpretCast<const Wasm::DeclinedModuleInImage>(section.directory.span().subspan(offset, size));
 }
 
-static void testReferenceTypeTestIsInterpreted()
+template<typename Record>
+static bool holdsOneRecordOf(std::span<const Record> records, std::span<const uint8_t> source)
 {
-    Wasm::ModuleForImage module = compileValidModule(referenceTypeTestModule);
-    AOT_TEST_CHECK(module.functions.size() == 4);
-    AOT_TEST_CHECK(module.interpretedFunctions.size() == 3);
-    for (uint32_t function = 0; function < 3; ++function) {
-        AOT_TEST_CHECK(module.interpretedFunctions[function].first == function);
-        AOT_TEST_CHECK(module.interpretedFunctions[function].second == Wasm::ImageDeclineReason::TestsReferenceTypes);
-    }
-    AOT_TEST_CHECK(module.functions[3].hasCode);
-}
-
-static void testUnlistedOperationIsInterpreted()
-{
-    Wasm::ModuleForImage module = compileValidModule(unlistedOperationModule);
-    AOT_TEST_CHECK(module.functions.size() == 2);
-    checkOnlyInterpretedFunction(module, 0, Wasm::ImageDeclineReason::CallsUnlistedOperation);
-    AOT_TEST_CHECK(module.functions[1].hasCode);
-}
-
-static void testBulkMemoryHasCode()
-{
-    Wasm::ModuleForImage module = compileValidModule(bulkMemoryModule);
-    AOT_TEST_CHECK(module.functions.size() == 2);
-    AOT_TEST_CHECK(module.interpretedFunctions.isEmpty());
-    AOT_TEST_CHECK(module.isForSignalingMemory);
-}
-
-static void testCallToInterpretedFunction()
-{
-    if (!Options::useWasmTailCalls())
-        return;
-
-    Wasm::ModuleForImage module = compileValidModule(callToInterpretedFunctionModule);
-    AOT_TEST_CHECK(module.functions.size() == 3);
-    checkOnlyInterpretedFunction(module, 0, Wasm::ImageDeclineReason::UsesTailCalls);
-    AOT_TEST_CHECK(module.functions[2].hasCode);
-
-    Wasm::ModuleForImage other = compileValidModule(callToCompiledFunctionModule);
-    AOT_TEST_CHECK(equalSpans(asBytes(module.functions.span()), asBytes(other.functions.span())));
-    AOT_TEST_CHECK(module.code.size() == other.code.size());
-    size_t caller = module.functions[2].entry;
-    AOT_TEST_CHECK(equalSpans(module.code.span().first(caller), other.code.span().first(caller)));
-    AOT_TEST_CHECK(!equalSpans(module.code.span().subspan(caller), other.code.span().subspan(caller)));
-}
-
-static void testModuleWithoutCompiledFunction()
-{
-    if (!Options::useWasmTailCalls())
-        return;
-
-    Wasm::ModuleForImage module = compileValidModule(onlyTailCallModule);
-    AOT_TEST_CHECK(module.functions.size() == 1);
-    checkOnlyInterpretedFunction(module, 0, Wasm::ImageDeclineReason::UsesTailCalls);
-    AOT_TEST_CHECK(module.savedRegisters.isEmpty());
-    AOT_TEST_CHECK(!module.usesVectors);
-}
-
-static void testModuleWithoutFunctions()
-{
-    AOT_TEST_CHECK(compileDeclinedModule(emptyModule) == Wasm::ImageDeclineReason::NoFunctions);
-}
-
-static void testInvalidModule()
-{
-    AOT_TEST_CHECK(compileDeclinedModule(invalidModule) == Wasm::ImageDeclineReason::InvalidModule);
-}
-
-static void testModuleWithStructType()
-{
-    AOT_TEST_CHECK(compileDeclinedModule(structTypeModule) == Wasm::ImageDeclineReason::HasGCTypes);
-}
-
-static void testCodeSizeLimit()
-{
-    BuildContext context(optionsWith("limit=WasmImageCodeSize:16"_s));
-    AOT_TEST_CHECK(compileDeclinedModule(callModule, context) == Wasm::ImageDeclineReason::CodeTooLarge);
-    AOT_TEST_CHECK(!countOf(context, StatisticID::WasmFunctionsCompiled));
-    AOT_TEST_CHECK(countOf(context, StatisticID::WasmFunctionsInterpreted) == 2);
-}
-
-static void testThreadCountDoesNotChangeCode()
-{
-    Wasm::ModuleForImage parallel = compileValidModule(callModule);
-
-    BuildContext context(optionsWith("threads=1"_s));
-    Wasm::ModuleForImage serial = compileValidModule(callModule, context);
-    AOT_TEST_CHECK(serial.code == parallel.code);
-    AOT_TEST_CHECK(equalSpans(asBytes(serial.functions.span()), asBytes(parallel.functions.span())));
-    AOT_TEST_CHECK(serial.savedRegisters == parallel.savedRegisters);
+    auto digest = Wasm::CodeInImage::digestOf(source);
+    return std::ranges::count_if(records, [&](const Record& record) {
+        return record.digest == digest && record.sourceSize == source.size();
+    }) == 1;
 }
 
 static void testSectionWithoutModules()
 {
-    WebAssemblyImageInputs section = layOut({ });
+    BuildContext context(makeDefaultCompileOptions());
+    std::unique_ptr<Typed::Program> program = parseProgramWithTwoImporters(callModule, catchModule, context);
+    program->webAssemblyModules.clear();
+    AOT_TEST_CHECK(!mayHaveWebAssemblyModules(*program));
+
+    WebAssemblyImageInputs section = compileWebAssemblyModules(*program, testTemplates(), context);
     AOT_TEST_CHECK(section.directory.isEmpty());
     AOT_TEST_CHECK(section.code.isEmpty());
     AOT_TEST_CHECK(section.codeAlignment == 1);
     AOT_TEST_CHECK(!section.numberOfModules);
+
+    context.diagnostics().finish(program.get());
+    AOT_TEST_CHECK(context.diagnostics().userDiagnostics().isEmpty());
 }
 
 static void testSectionWithDifferentModules()
 {
-    Wasm::ModuleForImage first = compileValidModule(callModule);
-    Wasm::ModuleForImage second = compileValidModule(throwModule);
-    Vector<uint8_t> firstCode = first.code;
-    Vector<uint8_t> secondCode = second.code;
-    uint32_t entryInSecondModule = second.functions[0].entry;
+    BuildContext context(makeDefaultCompileOptions());
+    std::unique_ptr<Typed::Program> program = parseProgramWithTwoImporters(callModule, catchModule, context);
+    AOT_TEST_CHECK(mayHaveWebAssemblyModules(*program));
 
-    WebAssemblyImageInputs section = layOut(Vector<Wasm::ModuleForImage>::from(WTF::move(first), WTF::move(second)));
-    AOT_TEST_CHECK(section.codeAlignment == WasmSectionBuilder::codeAlignment);
+    WebAssemblyImageInputs section = compileWebAssemblyModules(*program, testTemplates(), context);
     AOT_TEST_CHECK(section.numberOfModules == 2);
-    auto records = recordsOf(section);
-    AOT_TEST_CHECK(records.size() == 2);
-    checkRecord(section, records[0], callModule);
-    checkRecord(section, records[1], throwModule);
-
-    uint32_t entryInSection = functionsOf(section, records[1])[0].entry;
-    AOT_TEST_CHECK(records[0].functionsEnd <= entryInSection);
-    AOT_TEST_CHECK(!functionsOf(section, records[1])[0].hasCode);
-    AOT_TEST_CHECK(functionsOf(section, records[1])[1].hasCode);
-
-    uint32_t base = entryInSection - entryInSecondModule;
-    AOT_TEST_CHECK(!(base % WasmSectionBuilder::codeAlignment));
-    AOT_TEST_CHECK(equalSpans(section.code.span().first(firstCode.size()), firstCode.span()));
-    AOT_TEST_CHECK(equalSpans(section.code.span().subspan(base), secondCode.span()));
-}
-
-static void testImportAndJSEntrypointStubs()
-{
-    if (Gigacage::isEnabled(Gigacage::Primitive)) {
-        AOT_TEST_CHECK(compileDeclinedModule(importAndExportModule) == Wasm::ImageDeclineReason::ProcessAddressInCode);
-        return;
+    AOT_TEST_CHECK(section.codeAlignment == WasmSectionBuilder::codeAlignment);
+    AOT_TEST_CHECK(headerOf(section).numberOfModules == 2 && !headerOf(section).numberOfDeclinedModules);
+    AOT_TEST_CHECK(headerOf(section).catchRunway < section.code.size());
+    Vector<uint64_t> statistics = context.statistics().values();
+    AOT_TEST_CHECK(statistics[static_cast<unsigned>(StatisticID::WasmCodeBytesEmitted)] == section.code.size());
+    AOT_TEST_CHECK(statistics[static_cast<unsigned>(StatisticID::WasmFunctionsCompiled)] == 4);
+    AOT_TEST_CHECK(statistics[static_cast<unsigned>(StatisticID::WasmSecondCopyBytesEmitted)] < section.code.size());
+    AOT_TEST_CHECK(holdsOneRecordOf(modulesOf(section), std::span<const uint8_t>(callModule)));
+    AOT_TEST_CHECK(holdsOneRecordOf(modulesOf(section), std::span<const uint8_t>(catchModule)));
+    for (const Wasm::ModuleInImage& module : modulesOf(section)) {
+        AOT_TEST_CHECK(module.numberOfFunctions == 2);
+        for (uint32_t functions : module.functions)
+            AOT_TEST_CHECK(functions + module.numberOfFunctions * sizeof(Wasm::FunctionInImage) <= section.directory.size());
     }
 
-    Wasm::ModuleForImage module = compileValidModule(importAndExportModule);
-    AOT_TEST_CHECK(module.importStubs.size() == 1);
-    AOT_TEST_CHECK(module.jsEntrypoints.size() == 1);
-    AOT_TEST_CHECK(!module.jsEntrypoints[0].type);
-    uint32_t importStub = module.importStubs[0];
-    uint32_t jsEntrypoint = module.jsEntrypoints[0].code;
-    uint32_t firstFunction = module.functions[0].entry;
+    context.diagnostics().finish(program.get());
+    AOT_TEST_CHECK(context.diagnostics().userDiagnostics().isEmpty());
+}
 
-    WebAssemblyImageInputs section = layOut(Vector<Wasm::ModuleForImage>::from(compileValidModule(callModule), WTF::move(module)));
-    AOT_TEST_CHECK(section.codeAlignment == WasmSectionBuilder::codeAlignment);
-    AOT_TEST_CHECK(section.numberOfModules == 2);
-    auto records = recordsOf(section);
-    AOT_TEST_CHECK(records.size() == 2);
-    checkRecord(section, records[1], importAndExportModule);
+static void testModuleImportedTwiceIsCompiledOnce()
+{
+    BuildContext context(makeDefaultCompileOptions());
+    std::unique_ptr<Typed::Program> program = parseProgramWithTwoImporters(callModule, callModule, context);
 
-    uint32_t base = functionsOf(section, records[1])[0].entry - firstFunction;
-    AOT_TEST_CHECK(base && !(base % WasmSectionBuilder::codeAlignment));
-    auto importStubs = importStubsOf(section, records[1]);
-    AOT_TEST_CHECK(importStubs.size() == 1);
-    AOT_TEST_CHECK(importStubs[0] == importStub + base);
-    auto jsEntrypoints = jsEntrypointsOf(section, records[1]);
-    AOT_TEST_CHECK(jsEntrypoints.size() == 1);
-    AOT_TEST_CHECK(!jsEntrypoints[0].type);
-    AOT_TEST_CHECK(jsEntrypoints[0].code == jsEntrypoint + base);
+    WebAssemblyImageInputs section = compileWebAssemblyModules(*program, testTemplates(), context);
+    AOT_TEST_CHECK(section.numberOfModules == 1);
+    AOT_TEST_CHECK(holdsOneRecordOf(modulesOf(section), std::span<const uint8_t>(callModule)));
+}
+
+static void testEveryFunctionHasCode()
+{
+    Wasm::ModuleForImage module = compileModuleWithCode(callModule);
+    AOT_TEST_CHECK(module.functions[trapping].size() == 2);
+    checkFunctionsLieInCode(module, module.functions[trapping]);
+    AOT_TEST_CHECK(module.functions[trapping][0].entry != module.functions[trapping][1].entry);
+    AOT_TEST_CHECK(module.catchRunway < module.code.size());
+    AOT_TEST_CHECK(module.handlers.isEmpty());
+    AOT_TEST_CHECK(!module.usesVectors);
+}
+
+static void testIndirectCallWithSixArgumentsHasCode()
+{
+    // On x86-64 every register is taken where that call is made: six arguments, the code pointer, the boxed callee, the callee instance
+    // and the function's record. A scratch register more stops the compiler.
+    Wasm::ModuleForImage module = compileModuleWithCode(indirectCallModule);
+    AOT_TEST_CHECK(module.functions[trapping].size() == 2);
+    checkFunctionsLieInCode(module, module.functions[trapping]);
+}
+
+static void testModuleWithoutMemoryHasOneFlavor()
+{
+    Wasm::ModuleForImage module = compileModuleWithCode(callModule);
+    AOT_TEST_CHECK(module.functions[checking].isEmpty());
+}
+
+static void testMemoryModuleHasCopyPerFlavor()
+{
+    Wasm::ModuleForImage module = compileModuleWithCode(memoryModule);
+    AOT_TEST_CHECK(module.functions[trapping].size() == 3 && module.functions[checking].size() == 3);
+    checkFunctionsLieInCode(module, module.functions[trapping]);
+    checkFunctionsLieInCode(module, module.functions[checking]);
+
+    AOT_TEST_CHECK(module.functions[trapping][0].entry != module.functions[checking][0].entry);
+    AOT_TEST_CHECK(module.functions[trapping][0].size < module.functions[checking][0].size);
+    AOT_TEST_CHECK(module.functions[trapping][1].entry != module.functions[checking][1].entry);
+    AOT_TEST_CHECK(module.functions[trapping][2].entry != module.functions[checking][2].entry);
+}
+
+static void testHandlersLieInTheirFunction()
+{
+    Wasm::ModuleForImage module = compileModuleWithCode(catchModule);
+    const Wasm::FunctionInImage& thrower = module.functions[trapping][0];
+    const Wasm::FunctionInImage& catcher = module.functions[trapping][1];
+    AOT_TEST_CHECK(!thrower.numberOfHandlers);
+    AOT_TEST_CHECK(catcher.numberOfHandlers == 1);
+
+    const Wasm::HandlerInImage& handler = module.handlers[catcher.firstHandler];
+    AOT_TEST_CHECK(static_cast<Wasm::HandlerType>(handler.type) == Wasm::HandlerType::Catch);
+    AOT_TEST_CHECK(handler.start < handler.end);
+    AOT_TEST_CHECK(!handler.exceptionIndexOrDelegateTarget);
+    AOT_TEST_CHECK(handler.code > catcher.entry && handler.code < catcher.entry + catcher.size);
+}
+
+static Vector<uint8_t> moduleOfSwitches(uint8_t numberOfFunctions)
+{
+    static constexpr uint8_t body[] = {
+        0x34, 0x00,
+        0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40,
+        0x20, 0x00, 0x0e, 0x0a, 0x00, 0x00, 0x01, 0x01, 0x02, 0x02, 0x03, 0x03, 0x04, 0x04, 0x05,
+        0x0b, 0x41, 0x00, 0x0f, 0x0b, 0x41, 0x01, 0x0f, 0x0b, 0x41, 0x02, 0x0f, 0x0b, 0x41, 0x03, 0x0f, 0x0b, 0x41, 0x04, 0x0f,
+        0x0b, 0x41, 0x05, 0x0b,
+    };
+    static_assert(body[0] == sizeof(body) - 1);
+    size_t sizeOfCodeSection = 1 + numberOfFunctions * sizeof(body);
+    RELEASE_ASSERT(numberOfFunctions < 0x7f && sizeOfCodeSection >= 0x80 && sizeOfCodeSection < 0x4000);
+    Vector<uint8_t> module { 0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f };
+    module.appendList({ static_cast<uint8_t>(0x03), static_cast<uint8_t>(numberOfFunctions + 1), numberOfFunctions });
+    for (uint8_t function = 0; function < numberOfFunctions; ++function)
+        module.append(static_cast<uint8_t>(0x00));
+    module.appendList({ static_cast<uint8_t>(0x0a), static_cast<uint8_t>((sizeOfCodeSection & 0x7f) | 0x80), static_cast<uint8_t>(sizeOfCodeSection >> 7), numberOfFunctions });
+    for (uint8_t function = 0; function < numberOfFunctions; ++function)
+        module.append(std::span<const uint8_t>(body));
+    return module;
+}
+
+static void testSameBytesEachTime()
+{
+    Vector<uint8_t> switchModule = moduleOfSwitches(16);
+    for (std::span<const uint8_t> source : { std::span<const uint8_t>(callModule), std::span<const uint8_t>(memoryModule), std::span<const uint8_t>(catchModule), std::span<const uint8_t>(switchModule.span()) }) {
+        Wasm::ModuleForImage first = compileModuleWithCode(source);
+        Wasm::ModuleForImage second = compileModuleWithCode(source);
+        AOT_TEST_CHECK(first.code == second.code);
+        AOT_TEST_CHECK(equalSpans(asBytes(first.functions[trapping].span()), asBytes(second.functions[trapping].span())));
+        AOT_TEST_CHECK(equalSpans(asBytes(first.functions[checking].span()), asBytes(second.functions[checking].span())));
+        AOT_TEST_CHECK(equalSpans(asBytes(first.handlers.span()), asBytes(second.handlers.span())));
+    }
+}
+
+static RelocatableCode codeThatCalls(std::optional<uint32_t> symbol)
+{
+    BuildContext context(makeDefaultCompileOptions());
+    CCallHelpers jit;
+    RelocationRecorder recorder(jit, context.assemblerPolicy());
+    if (symbol)
+        recorder.call({ SymbolSpace::WebAssembly, *symbol });
+    jit.ret();
+    auto code = recorder.finalize(LinkBuffer::Profile::WasmThunk, &context);
+    AOT_TEST_CHECK(code);
+    return WTF::move(*code);
+}
+
+static WasmModuleCode moduleCodeOfThreeFunctions()
+{
+    WasmModuleCode module;
+    for (RelocatableCode& stub : module.stubs)
+        stub = codeThatCalls(std::nullopt);
+    module.functions = Vector<WasmFunctionCode>(3);
+    module.functionsThatCheck = Vector<WasmFunctionCode>(3);
+    module.savedRegisters.append(Wasm::SavedRegistersInImage { 0, 0, 0 });
+    return module;
+}
+
+static void testCallGoesToCopyOfItsFlavor()
+{
+    WasmModuleCode module = moduleCodeOfThreeFunctions();
+    module.functions[0].code = codeThatCalls(std::nullopt);
+    module.functions[0].dependsOnFlavor = true;
+    module.functionsThatCheck[0].code = codeThatCalls(std::nullopt);
+    module.functions[1].code = codeThatCalls(Wasm::imageSymbolOf(Wasm::FunctionCodeIndex(0)));
+    module.functions[1].directCallees.set(0);
+    module.functions[2].code = codeThatCalls(Wasm::imageSymbolOf(Wasm::ImageStub::ThrowException));
+    size_t sizeOfCaller = module.functions[1].code.bytes.size();
+
+    BuildContext context(makeDefaultCompileOptions());
+    WasmModuleOrDecline linked = linkWasmModule(WTF::move(module), testTemplates(), context);
+    AOT_TEST_CHECK(linked);
+    const auto& whenTrapping = linked->functions[trapping];
+    const auto& whenChecking = linked->functions[checking];
+    AOT_TEST_CHECK(whenTrapping.size() == 3 && whenChecking.size() == 3);
+    AOT_TEST_CHECK(whenTrapping[0].entry != whenChecking[0].entry);
+    AOT_TEST_CHECK(whenTrapping[1].entry != whenChecking[1].entry);
+    AOT_TEST_CHECK(whenTrapping[2].entry == whenChecking[2].entry);
+
+    std::span<const uint8_t> code = linked->code.span();
+    bool callersAreAlike = equalSpans(code.subspan(whenTrapping[1].entry, sizeOfCaller), code.subspan(whenChecking[1].entry, sizeOfCaller));
+    bool distancesAreAlike = static_cast<int64_t>(whenTrapping[0].entry) - whenTrapping[1].entry == static_cast<int64_t>(whenChecking[0].entry) - whenChecking[1].entry;
+    AOT_TEST_CHECK(callersAreAlike == distancesAreAlike);
+}
+
+static void testCallOfUnknownSymbolIsRefused()
+{
+    WasmModuleCode module = moduleCodeOfThreeFunctions();
+    module.functions[0].code = codeThatCalls(Wasm::imageSymbolOf(Wasm::FunctionCodeIndex(3)));
+    module.functions[1].code = codeThatCalls(std::nullopt);
+    module.functions[2].code = codeThatCalls(std::nullopt);
+
+    BuildContext context(makeDefaultCompileOptions());
+    WasmModuleOrDecline linked = linkWasmModule(WTF::move(module), testTemplates(), context);
+    AOT_TEST_CHECK(!linked);
+    AOT_TEST_CHECK(context.diagnostics().hasErrors());
 }
 
 static void testPointerTableSlots()
@@ -604,7 +403,16 @@ static void testPointerTableSlots()
     FOR_EACH_WASM_IMAGE_CODE_OPERATION(APPEND_SLOT)
 #undef APPEND_SLOT
     slots.append(Wasm::ImagePointerTable::genericJSEntrypoint);
-    slots.append(Wasm::ImagePointerTable::interpreterEntrypoint);
+    slots.append(Wasm::ImagePointerTable::defaultJSCall);
+    slots.append(Wasm::ImagePointerTable::wasmToJSCallee);
+    slots.append(Wasm::ImagePointerTable::restoreFrameCallee);
+    slots.append(Wasm::ImagePointerTable::restoreFrameReturnAddress);
+    slots.append(Wasm::ImagePointerTable::throwFromFaultHandler);
+    slots.append(Wasm::ImagePointerTable::structureIDBase);
+#if GIGACAGE_ENABLED
+    slots.append(Wasm::ImagePointerTable::primitiveGigacageDisableRequest);
+    slots.append(Wasm::ImagePointerTable::primitiveGigacageBase);
+#endif
     for (uint32_t function = 0; function < table.numberOfFunctions; ++function)
         slots.append(table.callee(Wasm::FunctionCodeIndex(function)));
     for (uint32_t type = 0; type < table.numberOfTypes; ++type)
@@ -625,30 +433,9 @@ static void testOperationSlots()
     auto slotOfOperation = [](auto* operation) {
         return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(operation)));
     };
-    AOT_TEST_CHECK(slotOfOperation(Wasm::operationThrowExceptionFromOMG) == Wasm::ImagePointerTable::slotOf(Wasm::ImageCodeOperation::operationThrowExceptionFromOMG));
-    AOT_TEST_CHECK(slotOfOperation(Wasm::operationPopcount64) == Wasm::ImagePointerTable::slotOf(Wasm::ImageCodeOperation::operationPopcount64));
+    AOT_TEST_CHECK(slotOfOperation(Wasm::operationWasmToJSException) == Wasm::ImagePointerTable::slotOf(Wasm::ImageCodeOperation::operationWasmToJSException));
+    AOT_TEST_CHECK(slotOfOperation(Wasm::operationIterateResults) == Wasm::ImagePointerTable::slotOf(Wasm::ImageCodeOperation::operationIterateResults));
     AOT_TEST_CHECK(!slotOfOperation(Wasm::operationGetWasmTableSize));
-}
-
-static void testRuntimeFunctionSlots()
-{
-    static_assert(B3::numberOfRuntimeFunctions == 10);
-
-    AOT_TEST_CHECK(Wasm::runtimeFunctionSlot(B3::RuntimeFunction::MemoryMove) == Wasm::ImagePointerTable::slotOf(Wasm::ImageCodeOperation::operationMemoryMove));
-    AOT_TEST_CHECK(Wasm::runtimeFunctionSlot(B3::RuntimeFunction::MemoryFill) == Wasm::ImagePointerTable::slotOf(Wasm::ImageCodeOperation::operationMemoryFill));
-
-    constexpr B3::RuntimeFunction functionsWithoutSlot[] = {
-        B3::RuntimeFunction::GCSafeMemoryMove,
-        B3::RuntimeFunction::FmodDouble,
-        B3::RuntimeFunction::CeilDouble,
-        B3::RuntimeFunction::CeilFloat,
-        B3::RuntimeFunction::FloorDouble,
-        B3::RuntimeFunction::FloorFloat,
-        B3::RuntimeFunction::TruncDouble,
-        B3::RuntimeFunction::TruncFloat,
-    };
-    for (B3::RuntimeFunction function : functionsWithoutSlot)
-        AOT_TEST_CHECK(!Wasm::runtimeFunctionSlot(function));
 }
 
 static void testDiagnosticKinds()
@@ -656,207 +443,30 @@ static void testDiagnosticKinds()
     AOT_TEST_CHECK(diagnosticKindOf(Wasm::ImageDeclineReason::None) == UserDiagnosticKind::Unknown);
     for (size_t first = 0; first < declineReasons.size(); ++first) {
         UserDiagnosticKind kind = diagnosticKindOf(declineReasons[first]);
-        AOT_TEST_CHECK(kind == UserDiagnosticKind::Unknown || severityOf(kind) == DiagnosticSeverity::Warning);
         for (size_t second = first + 1; second < declineReasons.size(); ++second)
             AOT_TEST_CHECK(kind != diagnosticKindOf(declineReasons[second]));
     }
+    AOT_TEST_CHECK(severityOf(diagnosticKindOf(Wasm::ImageDeclineReason::FunctionNotCompiled)) == DiagnosticSeverity::Error);
+    AOT_TEST_CHECK(severityOf(diagnosticKindOf(Wasm::ImageDeclineReason::CodeTooLarge)) == DiagnosticSeverity::Error);
+    AOT_TEST_CHECK(severityOf(diagnosticKindOf(Wasm::ImageDeclineReason::InvalidModule)) == DiagnosticSeverity::Warning);
 }
 
-static void testJumpTableIsLinked()
+static void testModulesWithNothingToRunAreDeclined()
 {
-    Wasm::ModuleForImage module = compileValidModule(branchTableModule);
-    AOT_TEST_CHECK(module.functions.size() == 1 && module.functions[0].hasCode);
-    AOT_TEST_CHECK(module.functionsEnd < module.code.size());
-
-    size_t tableOffset = roundUpToMultipleOf<sizeof(int32_t)>(module.functionsEnd);
-    AOT_TEST_CHECK(!((module.code.size() - tableOffset) % sizeof(int32_t)));
-    auto words = spanReinterpretCast<const int32_t>(module.code.span().subspan(tableOffset));
-    AOT_TEST_CHECK(words.size() >= 8);
-    for (int32_t word : words) {
-        int64_t target = static_cast<int64_t>(tableOffset) + word;
-        AOT_TEST_CHECK(target >= module.functions[0].entry && target < module.functionsEnd);
-    }
-}
-
-static void testConstantIsLinked()
-{
-    Wasm::ModuleForImage module = compileValidModule(doubleConstantModule);
-    AOT_TEST_CHECK(module.functions.size() == 1 && module.functions[0].hasCode);
-    if (module.functionsEnd == module.code.size())
-        return;
-    AOT_TEST_CHECK(!std::ranges::search(module.code.span().subspan(module.functionsEnd), asByteSpan(linkedConstant)).empty());
-}
-
-static void testUnknownSymbolSpace()
-{
-    WasmFunctionCode function;
-    function.code.bytes = Vector<uint8_t>(FillWith { }, 16, 0);
-    function.code.relocations.append(Relocation { 0, RelocationKind::Call, SymbolSpace::Stub, primaryEntry, 0 });
-    WasmModuleCode code;
-    code.throwStub = Vector<uint8_t>(FillWith { }, 4, 0);
-    code.functions.append(WTF::move(function));
-
     BuildContext context(makeDefaultCompileOptions());
-    CompiledModule module = linkWasmModule(WTF::move(code), templates(), context);
-    AOT_TEST_CHECK(!module && module.error() == Wasm::ImageDeclineReason::CodeGeneratorFailed);
-    context.diagnostics().finish(nullptr);
-    AOT_TEST_CHECK(context.diagnostics().internalErrors().size() == 1);
-    AOT_TEST_CHECK(context.diagnostics().internalErrors()[0].kind == InternalErrorKind::RelocationNotApplied);
-}
+    std::unique_ptr<Typed::Program> program = parseProgramWithTwoImporters(invalidModule, moduleWithoutFunctions, context);
 
-static WasmFunctionCode makeFunctionCalling(uint32_t callee, bool usesVectors)
-{
-    WasmFunctionCode function;
-    function.usesVectors = usesVectors;
-    function.callTargets.append({ Wasm::ImageCallTarget::Kind::Function, Wasm::FunctionCodeIndex(callee) });
-    function.callTargets.append({ Wasm::ImageCallTarget::Kind::ThrowStub, Wasm::FunctionCodeIndex(0) });
-    for (uint32_t target = 0; target < function.callTargets.size(); ++target) {
-        function.code.relocations.append(Relocation { static_cast<uint32_t>(function.code.bytes.size()), RelocationKind::Call, SymbolSpace::WebAssembly, primaryEntry, target });
-        function.code.bytes.appendVector(templates().nearCall);
-    }
-    function.code.bytes.appendVector(templates().returnToCaller);
-    return function;
-}
-
-static Wasm::ModuleForImage linkByHand(WasmFunctionCode&& first, WasmFunctionCode&& second)
-{
-    WasmModuleCode code;
-    code.throwStub = templates().returnToCaller;
-    code.savedRegisters.append(Wasm::SavedRegistersInImage { 0, 0, 0 });
-    code.functions.append(WTF::move(first));
-    code.functions.append(WTF::move(second));
-
-    BuildContext context(makeDefaultCompileOptions());
-    CompiledModule module = linkWasmModule(WTF::move(code), templates(), context);
-    AOT_TEST_CHECK(module.has_value());
-    AOT_TEST_CHECK(!context.diagnostics().hasErrors());
-    checkModule(*module);
-    AOT_TEST_CHECK(module->functions.size() == 2);
-    AOT_TEST_CHECK(module->functionsEnd == module->code.size());
-    return WTF::move(*module);
-}
-
-static void testLinkByHand()
-{
-    Wasm::ModuleForImage module = linkByHand(makeFunctionCalling(1, false), makeFunctionCalling(0, true));
-    AOT_TEST_CHECK(module.interpretedFunctions.isEmpty());
-    AOT_TEST_CHECK(module.functions[0].hasCode && module.functions[1].hasCode);
-    AOT_TEST_CHECK(!module.functions[0].usesVectors && module.functions[1].usesVectors && module.usesVectors);
-    AOT_TEST_CHECK(!linkByHand(makeFunctionCalling(1, false), makeFunctionCalling(0, false)).usesVectors);
-
-    Vector<uint8_t> expected(FillWith { }, module.code.size(), 0);
-    templates().fillWithBreakpoints(expected.mutableSpan());
-    memcpySpan(expected.mutableSpan(), templates().returnToCaller.span());
-    for (uint32_t index = 0; index < 2; ++index) {
-        WasmFunctionCode function = makeFunctionCalling(1 - index, false);
-        uint32_t entry = module.functions[index].entry;
-        memcpySpan(expected.mutableSpan().subspan(entry), function.code.bytes.span());
-        AOT_TEST_CHECK(applyRelocation(expected.mutableSpan(), entry, function.code.relocations[0], module.functions[1 - index].entry));
-        AOT_TEST_CHECK(applyRelocation(expected.mutableSpan(), entry, function.code.relocations[1], 0));
-    }
-    AOT_TEST_CHECK(expected == module.code);
-}
-
-static void testLinkByHandWithDeclinedFunction()
-{
-    WasmFunctionCode declined = makeFunctionCalling(0, true);
-    declined.decline(Wasm::ImageDeclineReason::UsesTailCalls);
-    declined.code.bytes = templates().returnToCaller;
-
-    Wasm::ModuleForImage module = linkByHand(makeFunctionCalling(1, false), WTF::move(declined));
-    checkOnlyInterpretedFunction(module, 1, Wasm::ImageDeclineReason::UsesTailCalls);
-    AOT_TEST_CHECK(module.functions[0].hasCode);
-    AOT_TEST_CHECK(!module.functions[1].hasCode && !module.functions[1].savedRegisters);
-    AOT_TEST_CHECK(!module.usesVectors);
-}
-
-static std::unique_ptr<Typed::Program> parseProgramWithTwoImporters(std::span<const uint8_t> module, BuildContext& context)
-{
-    std::unique_ptr<Typed::Program> program = Typed::parseProgram(twoImportersText, Typed::IRForm::AsRead, context);
-    if (!program) {
-        context.diagnostics().finish(nullptr);
-        Typed::printDiagnostics(context.diagnostics(), WTF::dataFile());
-    }
-    AOT_TEST_CHECK(program);
-    AOT_TEST_CHECK(program->webAssemblyModules.size() == 2);
-    for (auto& entry : program->webAssemblyModules)
-        entry.bytes = module;
-    return program;
-}
-
-static void checkProgramReportsDecline(BuildContext& context, uint32_t numberOfModules, UserDiagnosticKind kind, LimitID limit)
-{
-    TestVM vm;
-    std::unique_ptr<Typed::Program> program = parseProgramWithTwoImporters(tailCallModule, context);
-    AOT_TEST_CHECK(compileWebAssemblyModules(vm.get(), *program, templates(), context).numberOfModules == numberOfModules);
-    AOT_TEST_CHECK(countOf(context, hitsOf(LimitID::WasmImageCodeSize)) == (limit == LimitID::WasmImageCodeSize ? 2u : 0u));
+    WebAssemblyImageInputs section = compileWebAssemblyModules(*program, testTemplates(), context);
+    AOT_TEST_CHECK(section.code.isEmpty() && !section.numberOfModules);
+    AOT_TEST_CHECK(declinedModulesOf(section).size() == 2);
+    AOT_TEST_CHECK(holdsOneRecordOf(declinedModulesOf(section), std::span<const uint8_t>(invalidModule)));
+    AOT_TEST_CHECK(holdsOneRecordOf(declinedModulesOf(section), std::span<const uint8_t>(moduleWithoutFunctions)));
 
     context.diagnostics().finish(program.get());
     AOT_TEST_CHECK(!context.diagnostics().hasErrors());
     const Vector<UserDiagnostic>& diagnostics = context.diagnostics().userDiagnostics();
-    AOT_TEST_CHECK(diagnostics.size() == 2);
-    for (const UserDiagnostic& diagnostic : diagnostics)
-        AOT_TEST_CHECK(diagnostic.kind == kind && diagnostic.limit == limit && diagnostic.count == 1 && diagnostic.location.module < 2);
-    AOT_TEST_CHECK(diagnostics[0].location.module != diagnostics[1].location.module);
-}
-
-static void testProgramReportsDeclines()
-{
-    if (!Options::useWasmTailCalls())
-        return;
-
-    BuildContext context(makeDefaultCompileOptions());
-    checkProgramReportsDecline(context, 1, UserDiagnosticKind::WasmUsesTailCalls, LimitID::None);
-
-    BuildContext contextWithLimit(optionsWith("limit=WasmImageCodeSize:16"_s));
-    checkProgramReportsDecline(contextWithLimit, 0, UserDiagnosticKind::WasmCodeTooLarge, LimitID::WasmImageCodeSize);
-}
-
-#if CPU(X86_64)
-static void testVectorsPerFunction()
-{
-    if (!Options::useWasmSIMD())
-        return;
-
-    Wire::CompileOptions options = makeDefaultCompileOptions();
-    options.target.features = 0;
-    BuildContext context(options);
-    AOT_TEST_CHECK(!context.targetFeatures().contains(CPUFeature::AVX));
-
-    Wasm::ModuleForImage module = compileValidModule(vectorAndScalarModule, context);
-    AOT_TEST_CHECK(module.functions.size() == 2);
-    AOT_TEST_CHECK(module.functions[0].hasCode && module.functions[1].hasCode);
-    AOT_TEST_CHECK(module.functions[0].usesVectors && !module.functions[1].usesVectors);
-    AOT_TEST_CHECK(module.usesVectors);
-}
-#endif
-
-static void testInterpreterFallbackIsCountedOnce()
-{
-    if (Wasm::CodeInImage::isInProcess())
-        return;
-
-    Wasm::ModuleForImage moduleForImage = compileValidModule(memoryModule);
-    AOT_TEST_CHECK(moduleForImage.isForSignalingMemory);
-
-    static NeverDestroyed<WebAssemblyImageInputs> section;
-    section.get() = layOut(Vector<Wasm::ModuleForImage>::from(WTF::move(moduleForImage)));
-    Wasm::CodeInImage::addImage(section->directory.span(), section->code.span());
-    AOT_TEST_CHECK(Wasm::CodeInImage::isInProcess());
-
-    TestVM vm;
-    auto validated = Wasm::Module::validateSync(vm.get(), Vector<uint8_t>(std::span<const uint8_t>(memoryModule)));
-    AOT_TEST_CHECK(validated.has_value());
-    Ref<Wasm::Module> module = WTF::move(*validated);
-
-    auto fallbackCount = [] {
-        return Wasm::CodeInImage::interpreterFallbackCount(Wasm::InterpreterFallbackReason::MemoryChecksBounds);
-    };
-    module->compileSync(vm.get(), MemoryMode::Signaling);
-    AOT_TEST_CHECK(!fallbackCount());
-    module->compileSync(vm.get(), MemoryMode::BoundsChecking);
-    module->compileSync(vm.get(), MemoryMode::BoundsChecking);
-    AOT_TEST_CHECK(fallbackCount() == 1);
+    AOT_TEST_CHECK(diagnostics.size() == 1);
+    AOT_TEST_CHECK(diagnostics[0].kind == diagnosticKindOf(Wasm::ImageDeclineReason::InvalidModule) && !diagnostics[0].location.module);
 }
 
 } } // namespace JSC::AOT
@@ -869,36 +479,21 @@ std::span<const NativeTest> webAssemblyImageTests()
 {
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     static constexpr NativeTest tests[] = {
-        { "webassembly-image/call-has-code"_s, testCallHasCode },
-        { "webassembly-image/tail-call-is-interpreted"_s, testTailCallIsInterpreted },
-        { "webassembly-image/throw-is-interpreted"_s, testThrowIsInterpreted },
-        { "webassembly-image/reference-type-test-is-interpreted"_s, testReferenceTypeTestIsInterpreted },
-        { "webassembly-image/unlisted-operation-is-interpreted"_s, testUnlistedOperationIsInterpreted },
-        { "webassembly-image/bulk-memory-has-code"_s, testBulkMemoryHasCode },
-        { "webassembly-image/call-to-interpreted-function"_s, testCallToInterpretedFunction },
-        { "webassembly-image/module-without-compiled-function"_s, testModuleWithoutCompiledFunction },
-        { "webassembly-image/module-without-functions"_s, testModuleWithoutFunctions },
-        { "webassembly-image/invalid-module"_s, testInvalidModule },
-        { "webassembly-image/module-with-struct-type"_s, testModuleWithStructType },
-        { "webassembly-image/code-size-limit"_s, testCodeSizeLimit },
-        { "webassembly-image/thread-count-does-not-change-code"_s, testThreadCountDoesNotChangeCode },
         { "webassembly-image/section-without-modules"_s, testSectionWithoutModules },
         { "webassembly-image/section-with-different-modules"_s, testSectionWithDifferentModules },
-        { "webassembly-image/import-and-js-entrypoint-stubs"_s, testImportAndJSEntrypointStubs },
+        { "webassembly-image/module-imported-twice-is-compiled-once"_s, testModuleImportedTwiceIsCompiledOnce },
+        { "webassembly-image/every-function-has-code"_s, testEveryFunctionHasCode },
+        { "webassembly-image/indirect-call-with-six-arguments-has-code"_s, testIndirectCallWithSixArgumentsHasCode },
+        { "webassembly-image/module-without-memory-has-one-flavor"_s, testModuleWithoutMemoryHasOneFlavor },
+        { "webassembly-image/memory-module-has-copy-per-flavor"_s, testMemoryModuleHasCopyPerFlavor },
+        { "webassembly-image/handlers-lie-in-their-function"_s, testHandlersLieInTheirFunction },
+        { "webassembly-image/same-bytes-each-time"_s, testSameBytesEachTime },
+        { "webassembly-image/call-goes-to-copy-of-its-flavor"_s, testCallGoesToCopyOfItsFlavor },
+        { "webassembly-image/call-of-unknown-symbol-is-refused"_s, testCallOfUnknownSymbolIsRefused },
         { "webassembly-image/pointer-table-slots"_s, testPointerTableSlots },
         { "webassembly-image/operation-slots"_s, testOperationSlots },
-        { "webassembly-image/runtime-function-slots"_s, testRuntimeFunctionSlots },
         { "webassembly-image/diagnostic-kinds"_s, testDiagnosticKinds },
-        { "webassembly-image/jump-table-is-linked"_s, testJumpTableIsLinked },
-        { "webassembly-image/constant-is-linked"_s, testConstantIsLinked },
-        { "webassembly-image/unknown-symbol-space"_s, testUnknownSymbolSpace },
-        { "webassembly-image/link-by-hand"_s, testLinkByHand },
-        { "webassembly-image/link-by-hand-with-declined-function"_s, testLinkByHandWithDeclinedFunction },
-        { "webassembly-image/program-reports-declines"_s, testProgramReportsDeclines },
-#if CPU(X86_64)
-        { "webassembly-image/vectors-per-function"_s, testVectorsPerFunction },
-#endif
-        { "webassembly-image/interpreter-fallback-is-counted-once"_s, testInterpreterFallbackIsCountedOnce },
+        { "webassembly-image/modules-with-nothing-to-run-are-declined"_s, testModulesWithNothingToRunAreDeclined },
     };
     return tests;
 #else

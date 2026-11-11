@@ -1,0 +1,58 @@
+# round a ring of calls in tail position each call has to be a jump, and a unit that returns a raw value cannot leave by a call of a value: the entry by value returns a boxed one.
+# Link lists the call of `byValue` with its one callee, and still nobody knows that it enters the body: that is decided unit by unit, by what the walk knows of the callee there, and a slow version knows nothing. So such a ring returns boxed values.
+# only a call that is written as a direct one is a direct one in every unit: the ring of `direct` returns the raw number.
+# function byValue(n) { return n === 0 ? 0.5 : byValue(n - 1) }  function direct(n) { return n === 0 ? 0.5 : direct(n - 1) }, the call in `direct` written as a CallDirect
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}result=fractional {{*}}ring-by-value
+# CHECK: function f2 {{*}}result=fractional
+# RUN(LISTED): link functions mechanisms=all
+# LISTED-NOT: function f2 {{*}}ring-by-value
+# RUN(PLAN): plan units mechanisms=all
+# PLAN: unit f1:Body ({{*}}) -> (JSValue)
+# PLAN: unit f2:Body ({{*}}) -> (Double)
+
+variable g0 name="byValue" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="direct" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="byValue"
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v3, -, v0 calleeName="direct"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = Call v6, -, v2, v4
+    Return v7
+}
+function f1 name="byValue" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Double number=0.5
+    Return v3
+  b2():
+    v4 = Integer integer=1
+    v5 = Sub v0, v4
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v6, -, v5 calleeName="byValue"
+    ReturnCall v7
+}
+function f2 name="direct" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Double number=0.5
+    Return v3
+  b2():
+    v4 = Integer integer=1
+    v5 = Sub v0, v4
+    v6 = CallDirect v5 function=f2
+    ReturnCall v6
+}

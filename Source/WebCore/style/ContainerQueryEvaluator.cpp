@@ -35,6 +35,7 @@
 #include "MediaList.h"
 #include "NodeDocument.h"
 #include "NodeRenderStyle.h"
+#include "RenderBoxInlines.h"
 #include "RenderView.h"
 #include "StyleBuilderState.h"
 #include "StyleComputedStyle+GettersInlines.h"
@@ -71,7 +72,7 @@ bool ContainerQueryEvaluator::evaluate(const CQ::ContainerQuery& containerQuery)
     return false;
 }
 
-static const Style::ComputedStyle* LEGACY_NODELETE styleForContainer(const Element& container, CQ::ContainerRequirements requirements, const ContainerQueryEvaluationState* evaluationState)
+NODELETE static const Style::ComputedStyle* styleForContainer(const Element& container, CQ::ContainerRequirements requirements, const ContainerQueryEvaluationState* evaluationState)
 {
     // Queries that don't need a size container (style and scroll-state queries) resolve
     // against the container's style, which may not be committed to the render tree yet.
@@ -125,8 +126,7 @@ auto ContainerQueryEvaluator::featureEvaluationContextForCondition(const CQ::Con
 
     // Give the condition an element context, which is what the functions that resolve against the
     // query container need.
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST m_builderState = BuilderState::create(const_cast<ComputedStyle&>(*containerStyle), BuilderContext {
+    m_builderState = BuilderState::create(const_cast<ComputedStyle&>(*containerStyle), BuilderContext {
         .document = document.get(),
         .parentStyle = containerParentStyle.get(),
         .rootElementStyle = rootStyle.get(),
@@ -210,7 +210,9 @@ RefPtr<const Element> ContainerQueryEvaluator::selectContainer(CQ::ContainerRequ
         if (scopeOrdinal >= ScopeOrdinal::FirstSlot && scopeOrdinal <= ScopeOrdinal::SlotLimit)
             return assignedSlotForScopeOrdinal(element, scopeOrdinal);
 
-        if (scopeOrdinal == ScopeOrdinal::Element && element.assignedSlot())
+        // A slotted element, whether queried from its own tree or from its own shadow tree (:host rules),
+        // has the slot's tree as the context for resolving container names.
+        if ((scopeOrdinal == ScopeOrdinal::Element || scopeOrdinal == ScopeOrdinal::Shadow) && element.assignedSlot())
             return element.assignedSlot();
 
         return nullptr;
@@ -241,6 +243,26 @@ RefPtr<const Element> ContainerQueryEvaluator::selectContainer(CQ::ContainerRequ
             return ancestor.ptr();
     }
     return { };
+}
+
+LayoutSize ContainerQueryEvaluator::queryContainerSize(const RenderBox& queryContainer)
+{
+    // Only scrollbars whose space is known up front (overflow: scroll or a stable scrollbar gutter) reduce the
+    // query container size, auto scrollbars that depend on the content don't (https://github.com/w3c/csswg-drafts/issues/10043).
+    // The gutter is reserved in the inline axis only.
+    auto size = queryContainer.contentBoxSize();
+    auto hasGutter = !queryContainer.style().scrollbarGutter().isAuto();
+    if (queryContainer.hasAutoScrollbar(ScrollbarOrientation::Vertical) && !(hasGutter && queryContainer.isHorizontalWritingMode()))
+        size.expand(queryContainer.verticalScrollbarWidth(), 0);
+    if (queryContainer.hasAutoScrollbar(ScrollbarOrientation::Horizontal) && !(hasGutter && !queryContainer.isHorizontalWritingMode()))
+        size.expand(0, queryContainer.horizontalScrollbarHeight());
+    return size;
+}
+
+LayoutSize ContainerQueryEvaluator::queryContainerLogicalSize(const RenderBox& queryContainer)
+{
+    auto size = queryContainerSize(queryContainer);
+    return queryContainer.isHorizontalWritingMode() ? size : size.transposedSize();
 }
 
 }

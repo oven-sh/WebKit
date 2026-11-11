@@ -3,11 +3,15 @@ export function next(value) {
     "use strict";
 
     const step = $stepGenerator(this, $resumeModeNext, value, $generatorStepCheckIsGenerator);
-    const result = $resultAt(step, $stepGeneratorResultValue);
+    let result = $resultAt(step, $stepGeneratorResultValue);
     const status = $resultAt(step, $stepGeneratorResultStatus);
-    if (status === $generatorStepStatusNotStepped)
-        return $resumeGenerator(this, $resumeModeNext, value);
-    return $makeIteratorResult(result, status === $generatorStepStatusCompleted);
+    let done = status === $generatorStepStatusCompleted;
+    if (status === $generatorStepStatusNotStepped) {
+        const answer = $resumeGenerator(this, $resumeModeNext, value);
+        result = answer.value;
+        done = answer.done === true;
+    }
+    return $makeIteratorResult(result, done);
 }
 
 $overriddenName = "return";
@@ -16,11 +20,15 @@ export function return_(value) {
     "use strict";
 
     const step = $stepGenerator(this, $resumeModeReturn, value, $generatorStepCheckIsGenerator);
-    const result = $resultAt(step, $stepGeneratorResultValue);
+    let result = $resultAt(step, $stepGeneratorResultValue);
     const status = $resultAt(step, $stepGeneratorResultStatus);
-    if (status === $generatorStepStatusNotStepped)
-        return $resumeGenerator(this, $resumeModeReturn, value);
-    return $makeIteratorResult(result, status === $generatorStepStatusCompleted);
+    let done = status === $generatorStepStatusCompleted;
+    if (status === $generatorStepStatusNotStepped) {
+        const answer = $resumeGenerator(this, $resumeModeReturn, value);
+        result = answer.value;
+        done = answer.done === true;
+    }
+    return $makeIteratorResult(result, done);
 }
 
 $overriddenName = "throw";
@@ -29,9 +37,13 @@ export function throw_(exception) {
     "use strict";
 
     const step = $stepGenerator(this, $resumeModeThrow, exception, $generatorStepCheckIsGenerator);
-    const result = $resultAt(step, $stepGeneratorResultValue);
+    let result = $resultAt(step, $stepGeneratorResultValue);
     const status = $resultAt(step, $stepGeneratorResultStatus);
-    if (status === $generatorStepStatusNotStepped)
-        return $resumeGenerator(this, $resumeModeThrow, exception);
-    return $makeIteratorResult(result, status === $generatorStepStatusCompleted);
+    let done = status === $generatorStepStatusCompleted;
+    if (status === $generatorStepStatusNotStepped) {
+        const answer = $resumeGenerator(this, $resumeModeThrow, exception);
+        result = answer.value;
+        done = answer.done === true;
+    }
+    return $makeIteratorResult(result, done);
 }

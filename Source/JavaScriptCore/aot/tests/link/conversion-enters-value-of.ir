@@ -1,0 +1,42 @@
+# If an operand that an operator converts counted as only looked at, the `valueOf` of its class, which no call names, would be left out of the executable, and the process would end at `n + 1`
+# class N { valueOf() { return 1; } }  function inc(n) { return n + 1; }  inc(new N());
+# The row of the operator says that it runs the conversion of its operand. Link enters what the layout finds for it, or the object escapes. Either way the method is reached.
+# RUN: link functions mechanisms=all
+# CHECK: function f2
+# CHECK-NOT: unreached
+# CHECK-NOT: one-callee
+# CHECK: function f3 callers-known one-callee
+
+layout L0 kind=Instance name="N" module=m0 constructor=f1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="valueOf"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f3
+    v7 = Call v6, -, v5 calleeName="inc"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="N" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="valueOf" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="inc" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}

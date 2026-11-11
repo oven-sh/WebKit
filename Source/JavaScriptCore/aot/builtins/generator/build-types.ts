@@ -46,12 +46,13 @@ type CallRelativeSpec = SpecOf<
   | "Prototype"
 >;
 
-const functionClassName: ClassName = "Function";
-const arrayClassName: ClassName = "Array";
-const objectClassName: ClassName = "Object";
+export const functionClassName: ClassName = "Function";
+export const arrayClassName: ClassName = "Array";
+export const objectClassName: ClassName = "Object";
 
 const neverType: UninternedType = {
   isAnything: false,
+  isMadeOfListedClasses: false,
   hasAnyObject: false,
   hasAnyFunction: false,
   hasPlainData: false,
@@ -71,6 +72,7 @@ interface InstanceGroup {
 
 class TypeDraft {
   isAnything = false;
+  isOfAnyClass = false;
   hasAnyObject = false;
   hasAnyFunction = false;
   hasPlainData = false;
@@ -140,6 +142,7 @@ function sortUniqueParts(parts: readonly ModelTypePart[]): ModelTypePart[] {
 export function keyOfType(type: UninternedType): string {
   return canonicalTextOf({
     isAnything: type.isAnything,
+    isMadeOfListedClasses: type.isMadeOfListedClasses,
     hasAnyObject: type.hasAnyObject,
     hasAnyFunction: type.hasAnyFunction,
     hasPlainData: type.hasPlainData,
@@ -172,10 +175,15 @@ export class TypeInterner {
     const draft = new TypeDraft();
     this.#add(draft, spec, scope, source);
     const freshness = this.#freshnessOf(draft, spec, source);
-    if (draft.isAnything) return this.#store({ ...neverType, isAnything: true, freshness });
+    if (draft.isAnything && draft.isOfAnyClass) return this.#store({ ...neverType, isAnything: true, freshness });
+    if (draft.isAnything) {
+      const parts = sortUniqueParts(this.#instancePartsOf(draft, scope, source));
+      return this.#store({ ...neverType, isAnything: true, isMadeOfListedClasses: true, freshness, parts });
+    }
     const literals = draft.primitives.has("String") ? [] : [...draft.stringLiterals].sort(compareBytes);
     return this.#store({
       isAnything: false,
+      isMadeOfListedClasses: false,
       hasAnyObject: draft.hasAnyObject,
       hasAnyFunction: draft.hasAnyFunction,
       hasPlainData: draft.hasPlainData,
@@ -224,6 +232,8 @@ export class TypeInterner {
       case "Anything":
         draft.isAnything = true;
         draft.freshnesses.add(spec.freshness ?? "No");
+        if (spec.madeOf === undefined) draft.isOfAnyClass = true;
+        for (const made of spec.madeOf ?? []) this.#addInstance(draft, { type: "Instance", class: made, freshness: spec.freshness }, source);
         return;
       case "Primitive":
         draft.primitives.add(spec.primitive);

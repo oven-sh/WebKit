@@ -1,0 +1,19 @@
+# nobody knows at which positions the elements of a list arrive
+# (1).toLocaleString(...globalThis.input);
+# RUN: locales
+# CHECK: locale unknown NumberPrototypeToLocaleString at f0 v4
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+# NEVER-NOT: efault
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = PropGet v0 key="toLocaleString"
+    v4 = CallList v3, v0, v2 calleeKey="toLocaleString"
+    Return v4
+}

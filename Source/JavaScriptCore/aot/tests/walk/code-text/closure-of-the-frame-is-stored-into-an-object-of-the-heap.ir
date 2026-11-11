@@ -1,0 +1,13 @@
+# an object of the heap outlives the frame: no store lays a closure of the frame in it
+# RUN: verify-code
+# CHECK: OpcodeNotInForm: f4 Body b0 v4 (PropDefine): a cell of the frame is stored into what is no cell of the frame: v3 (NewClosure)
+# PROGRAM-OF: ../closures-lent/loan-of-a-closure-is-written-into-its-record.ir
+# -- code
+# code f4:Body {
+#   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
+#     v2: object @Cell = NewDictionary
+#     v3: f6 @Cell = NewClosure v1 function=f6 storage=Frame closureForm=Slim loan=LeftToStubOfCall
+#     v4 @Void = PropDefine v2, v3 key="publish"
+#     Return v2
+# }
+# -- end of code

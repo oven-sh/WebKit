@@ -248,6 +248,8 @@ private:
 extern "C" EncodedJSValue g_restoreFrameCalleeBoxed;
 extern "C" void wasm_restore_frame_return();
 
+extern "C" EncodedJSValue g_wasmToJSCalleeBoxed;
+
 #if ENABLE(CODE_GENERATION)
 
 class JSToWasmICCallee final : public Callee {
@@ -308,6 +310,8 @@ public:
 
     unsigned computeCodeHashImpl() const;
 
+    void setExceptionHandlersInImage(FixedVector<HandlerInfo>&& handlers) { m_exceptionHandlers = WTF::move(handlers); }
+
 protected:
     OptimizingJITCallee(Wasm::CompilationMode mode, FunctionSpaceIndex index, std::pair<const Name*, RefPtr<NameSection>>&& name, Ref<IPIntCallee>&& profiledCallee)
         : JITCallee(mode, index, WTF::move(name))
@@ -323,6 +327,8 @@ protected:
         linkExceptionHandlers(WTF::move(unlinkedExceptionHandlers), WTF::move(exceptionHandlerLocations));
         JITCallee::setEntrypoint(WTF::move(entrypoint));
     }
+
+    IPIntCallee& profiledCallee() const { return m_profiledCallee.get(); }
 
 private:
     void linkExceptionHandlers(Vector<UnlinkedHandlerInfo>, Vector<CodeLocationLabel<ExceptionHandlerPtrTag>>);
@@ -392,6 +398,7 @@ public:
     {
         return adoptRef(*new OMGCallee(index, WTF::move(name), WTF::move(profiledCallee)));
     }
+    static Ref<OMGCallee> createWithoutSavedRegisters(const OMGCallee&);
 
     using OptimizingJITCallee::setEntrypoint;
 

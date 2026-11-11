@@ -147,7 +147,7 @@ public:
     {
     }
 
-    bool LEGACY_NODELETE hasNonBMPCharacters() const { return m_characterWidths & CharacterClassWidths::HasNonBMPChars; }
+    NODELETE bool hasNonBMPCharacters() const { return m_characterWidths & CharacterClassWidths::HasNonBMPChars; }
 
     bool hasOneCharacterSize() const { return m_characterWidths == CharacterClassWidths::HasBMPChars || m_characterWidths == CharacterClassWidths::HasNonBMPChars; }
     bool hasOnlyNonBMPCharacters() const { return m_characterWidths == CharacterClassWidths::HasNonBMPChars; }
@@ -281,6 +281,7 @@ struct PatternTerm {
             unsigned lastSubpatternId;
             bool isCopy : 1;
             bool isTerminal : 1;
+            bool isTailLoop : 1; // See YarrPatternConstructor::markTailLoops(). Only the JIT looks at it.
             bool isStringList : 1;
             bool isEOLStringList: 1;
         } parentheses;
@@ -341,6 +342,7 @@ struct PatternTerm {
         parentheses.subpatternId = subpatternId;
         parentheses.isCopy = false;
         parentheses.isTerminal = false;
+        parentheses.isTailLoop = false;
         parentheses.isStringList = false;
         parentheses.isEOLStringList = false;
         quantityType = QuantifierType::FixedCount;
@@ -385,7 +387,7 @@ struct PatternTerm {
 
     static PatternTerm NamedBackReference(unsigned subpatternId, OptionSet<Flags> currFlags)
     {
-        PatternTerm LEGACY_NODELETE term(subpatternId, currFlags);
+        NODELETE PatternTerm term(subpatternId, currFlags);
         ASSERT(term.type == Type::NumberedBackReference);
         term.type = Type::NamedBackReference;
         return term;
@@ -432,17 +434,17 @@ struct PatternTerm {
         type = Type::NamedBackReference;
     }
 
-    bool LEGACY_NODELETE invert() const
+    NODELETE bool invert() const
     {
         return m_invert;
     }
 
-    void LEGACY_NODELETE setMatchDirection(MatchDirection matchDirection)
+    NODELETE void setMatchDirection(MatchDirection matchDirection)
     {
         m_matchDirection = matchDirection;
     }
 
-    MatchDirection LEGACY_NODELETE matchDirection() const
+    NODELETE MatchDirection matchDirection() const
     {
         return m_matchDirection;
     }
@@ -457,17 +459,17 @@ struct PatternTerm {
         return m_possessive;
     }
 
-    bool LEGACY_NODELETE ignoreCase() const
+    NODELETE bool ignoreCase() const
     {
         return m_currentFlags.contains(Flags::IgnoreCase);
     }
 
-    bool LEGACY_NODELETE multiline() const
+    NODELETE bool multiline() const
     {
         return m_currentFlags.contains(Flags::Multiline);
     }
 
-    bool LEGACY_NODELETE dotAll() const
+    NODELETE bool dotAll() const
     {
         return m_currentFlags.contains(Flags::DotAll);
     }
@@ -578,6 +580,9 @@ public:
     PatternTermList m_terms;
     PatternDisjunction* m_parent;
     unsigned m_minimumSize;
+    // The frame slots of its terms: [m_firstFrameSlot, m_callFrameSize).
+    unsigned m_firstFrameSlot { 0 };
+    unsigned m_callFrameSize { 0 };
     unsigned m_firstSubpatternId;
     unsigned m_lastSubpatternId;
     // Bounds the next character without saying that one is consumed: (?=a) has { a }.

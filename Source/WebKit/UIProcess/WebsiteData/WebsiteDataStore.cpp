@@ -117,13 +117,13 @@ void WebsiteDataStore::allowWebsiteDataRecordsForAllOrigins()
     allowsWebsiteDataRecordsForAllOrigins = true;
 }
 
-static HashMap<String, PAL::SessionID>& LEGACY_NODELETE activeGeneralStorageDirectories()
+NODELETE static HashMap<String, PAL::SessionID>& activeGeneralStorageDirectories()
 {
     static MainRunLoopNeverDestroyed<HashMap<String, PAL::SessionID>> directoryToSessionMap;
     return directoryToSessionMap;
 }
 
-static HashMap<PAL::SessionID, WeakRef<WebsiteDataStore>>& LEGACY_NODELETE allDataStores()
+NODELETE static HashMap<PAL::SessionID, WeakRef<WebsiteDataStore>>& allDataStores()
 {
     RELEASE_ASSERT(isUIThread());
     static NeverDestroyed<HashMap<PAL::SessionID, WeakRef<WebsiteDataStore>>> map;
@@ -221,19 +221,19 @@ WebsiteDataStore::~WebsiteDataStore()
 }
 
 // FIXME: Remove this when rdar://95786441 is resolved.
-static RefPtr<WebsiteDataStore>& LEGACY_NODELETE protectedGlobalDefaultDataStore()
+NODELETE static RefPtr<WebsiteDataStore>& protectedGlobalDefaultDataStore()
 {
     static NeverDestroyed<RefPtr<WebsiteDataStore>> globalDefaultDataStore;
     return globalDefaultDataStore.get();
 }
 
-static WeakPtr<WebsiteDataStore>& LEGACY_NODELETE globalDefaultDataStore()
+NODELETE static WeakPtr<WebsiteDataStore>& globalDefaultDataStore()
 {
     static NeverDestroyed<WeakPtr<WebsiteDataStore>> globalDefaultDataStore;
     return globalDefaultDataStore.get();
 }
 
-static IsPersistent LEGACY_NODELETE defaultDataStoreIsPersistent()
+NODELETE static IsPersistent defaultDataStoreIsPersistent()
 {
 #if PLATFORM(GTK) || PLATFORM(WPE)
     // GTK and WPE ports require explicit configuration of a WebsiteDataStore. All default storage
@@ -562,7 +562,7 @@ HashSet<WebCore::RegistrableDomain> WebsiteDataStore::platformAdditionalDomainsW
 }
 #endif
 
-static WebsiteDataStore::ProcessAccessType LEGACY_NODELETE computeNetworkProcessAccessTypeForDataFetch(OptionSet<WebsiteDataType> dataTypes, bool isNonPersistentStore)
+NODELETE static WebsiteDataStore::ProcessAccessType computeNetworkProcessAccessTypeForDataFetch(OptionSet<WebsiteDataType> dataTypes, bool isNonPersistentStore)
 {
     for (auto dataType : dataTypes) {
         if (WebsiteData::ownerProcess(dataType) == WebsiteDataProcessType::Network)
@@ -571,7 +571,7 @@ static WebsiteDataStore::ProcessAccessType LEGACY_NODELETE computeNetworkProcess
     return WebsiteDataStore::ProcessAccessType::None;
 }
 
-static WebsiteDataStore::ProcessAccessType LEGACY_NODELETE computeWebProcessAccessTypeForDataFetch(OptionSet<WebsiteDataType> dataTypes, bool /* isNonPersistentStore */)
+NODELETE static WebsiteDataStore::ProcessAccessType computeWebProcessAccessTypeForDataFetch(OptionSet<WebsiteDataType> dataTypes, bool /* isNonPersistentStore */)
 {
     if (dataTypes.contains(WebsiteDataType::MemoryCache))
         return WebsiteDataStore::ProcessAccessType::OnlyIfLaunched;
@@ -619,7 +619,7 @@ void WebsiteDataStore::fetchDataAndApply(OptionSet<WebsiteDataType> dataTypes, O
             });
         }
 
-        const OptionSet<WebsiteDataFetchOption>& LEGACY_NODELETE fetchOptions() const { return m_fetchOptions; }
+        NODELETE const OptionSet<WebsiteDataFetchOption>& fetchOptions() const { return m_fetchOptions; }
 
         void addWebsiteData(WebsiteData&& websiteData)
         {
@@ -841,7 +841,7 @@ void WebsiteDataStore::fetchDataForRegistrableDomains(OptionSet<WebsiteDataType>
     });
 }
 
-static WebsiteDataStore::ProcessAccessType LEGACY_NODELETE computeNetworkProcessAccessTypeForDataRemoval(OptionSet<WebsiteDataType> dataTypes, bool isNonPersistentStore)
+NODELETE static WebsiteDataStore::ProcessAccessType computeNetworkProcessAccessTypeForDataRemoval(OptionSet<WebsiteDataType> dataTypes, bool isNonPersistentStore)
 {
     auto processAccessType = WebsiteDataStore::ProcessAccessType::None;
     for (auto dataType : dataTypes) {
@@ -867,7 +867,7 @@ auto WebsiteDataStore::computeWebProcessAccessTypeForDataRemoval(OptionSet<Websi
     return ProcessAccessType::None;
 }
 
-static WebsiteDataStore::ProcessAccessType LEGACY_NODELETE computeWebProcessAccessTypeForDataRemovalWithRecords(OptionSet<WebsiteDataType> dataTypes)
+NODELETE static WebsiteDataStore::ProcessAccessType computeWebProcessAccessTypeForDataRemovalWithRecords(OptionSet<WebsiteDataType> dataTypes)
 {
     // FIXME: We currently don't remove resource load statistics in web process for origin data removal as TestRunner might dead lock.
     if (dataTypes.contains(WebsiteDataType::MemoryCache))
@@ -1146,6 +1146,11 @@ bool WebsiteDataStore::hasServiceWorkerBackgroundActivityForTesting() const
 void WebsiteDataStore::runningOrTerminatingServiceWorkerCountForTesting(CompletionHandler<void(unsigned)>&& completionHandler)
 {
     protect(networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::RunningOrTerminatingServiceWorkerCountForTesting(sessionID()), WTF::move(completionHandler));
+}
+
+void WebsiteDataStore::loadersAwaitingWebProcessTransferCountForTesting(CompletionHandler<void(uint64_t)>&& completionHandler)
+{
+    protect(networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::LoadersAwaitingWebProcessTransferCountForTesting(sessionID()), WTF::move(completionHandler));
 }
 
 void WebsiteDataStore::setMaxStatisticsEntries(size_t maximumEntryCount, CompletionHandler<void()>&& completionHandler)
@@ -1783,7 +1788,7 @@ void WebsiteDataStore::setResourceLoadStatisticsFirstPartyHostCNAMEDomainForTest
 
 void WebsiteDataStore::setResourceLoadStatisticsThirdPartyCNAMEDomainForTesting(const URL& cnameURL, CompletionHandler<void()>&& completionHandler)
 {
-    if (cnameURL.host() != "testwebkit.org"_s && cnameURL.host() != "3rdpartytestwebkit.org"_s) {
+    if (cnameURL.host() != "testwebkit.org"_s && cnameURL.host() != "3rdpartytestwebkit.org"_s && cnameURL.host() != "google.com"_s) {
         completionHandler();
         return;
     }
@@ -2143,6 +2148,19 @@ void WebsiteDataStore::setUserAgentStringQuirkForTesting(const String& domain, c
 {
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
     StorageAccessUserAgentStringQuirkController::sharedSingleton().setCachedListDataForTesting({ { WebCore::RegistrableDomain::uncheckedCreateFromHost(domain), userAgentString } });
+#endif
+    completionHandler();
+}
+
+void WebsiteDataStore::setLinkDecorationFilteringDataForTesting(Vector<String>&& queryParameters, CompletionHandler<void()>&& completionHandler)
+{
+#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
+    auto filteringData = WTF::map(WTF::move(queryParameters), [](String&& queryParameter) {
+        return WebCore::LinkDecorationFilteringData { WebCore::RegistrableDomain { }, { }, WTF::move(queryParameter) };
+    });
+    LinkDecorationFilteringController::sharedSingleton().setCachedListDataForTesting(WTF::move(filteringData));
+#else
+    UNUSED_PARAM(queryParameters);
 #endif
     completionHandler();
 }
@@ -2939,11 +2957,15 @@ void WebsiteDataStore::download(const DownloadProxy& downloadProxy, const String
     std::optional<NavigatingToAppBoundDomain> isAppBound = NavigatingToAppBoundDomain::No;
     WebCore::ResourceRequest updatedRequest(downloadProxy.request());
     std::optional<WebCore::SecurityOriginData> topOrigin;
+    OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections;
     // Request's firstPartyForCookies will be used as Original URL of the download request.
     // We set the value to top level document's URL.
     if (RefPtr initiatingPage = downloadProxy.originatingPage()) {
 #if ENABLE(APP_BOUND_DOMAINS)
         isAppBound = initiatingPage->isTopFrameNavigatingToAppBoundDomain();
+#endif
+#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
+        advancedPrivacyProtections = initiatingPage->advancedPrivacyProtectionsPolicies();
 #endif
 
         auto& initiatingPageURL = initiatingPage->pageLoadState().url();
@@ -2959,7 +2981,7 @@ void WebsiteDataStore::download(const DownloadProxy& downloadProxy, const String
             updatedRequest.setHTTPUserAgent(WebPageProxy::standardUserAgent());
     }
     updatedRequest.setIsTopSite(false);
-    protect(networkProcess())->send(Messages::NetworkProcess::DownloadRequest(m_sessionID, downloadProxy.downloadID(), updatedRequest, topOrigin, isAppBound, suggestedFilename), 0);
+    protect(networkProcess())->send(Messages::NetworkProcess::DownloadRequest(m_sessionID, downloadProxy.downloadID(), updatedRequest, topOrigin, isAppBound, advancedPrivacyProtections, suggestedFilename), 0);
 }
 
 void WebsiteDataStore::resumeDownload(const DownloadProxy& downloadProxy, const API::Data& resumeData, const String& path, CallDownloadDidStart callDownloadDidStart)
@@ -2980,8 +3002,7 @@ void WebsiteDataStore::resumeDownload(const DownloadProxy& downloadProxy, const 
 
 bool WebsiteDataStore::hasActivePages()
 {
-    // FIXME: Drop SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE once <rdar://150855062> is fixed.
-    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE return std::ranges::any_of(WebProcessPool::allProcessPools(), [&](auto& pool) {
+    return std::ranges::any_of(WebProcessPool::allProcessPools(), [&](auto& pool) {
         return pool->hasPagesUsingWebsiteDataStore(*this);
     });
 }
@@ -3160,6 +3181,16 @@ void WebsiteDataStore::clearStorageAccessForTesting(CompletionHandler<void()>&& 
 void WebsiteDataStore::isStorageSuspendedForTesting(CompletionHandler<void(bool)>&& completionHandler)
 {
     protect(networkProcess())->isStorageSuspendedForTesting(m_sessionID, WTF::move(completionHandler));
+}
+
+void WebsiteDataStore::canPrefetchDNSForTesting(CompletionHandler<void(bool)>&& completionHandler)
+{
+    protect(networkProcess())->canPrefetchDNSForTesting(m_sessionID, WTF::move(completionHandler));
+}
+
+void WebsiteDataStore::prefetchedDNSHostnameCountForTesting(CompletionHandler<void(uint64_t)>&& completionHandler)
+{
+    protect(networkProcess())->prefetchedDNSHostnameCountForTesting(WTF::move(completionHandler));
 }
 
 #if HAVE(WEBCONTENTRESTRICTIONS)

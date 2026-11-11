@@ -25,6 +25,7 @@
 
 #include "config.h"
 
+#include "AirCCallingConvention.h"
 #include "AirCode.h"
 #include "AirFixSpillsAfterTerminals.h"
 #include "AirFoldTrapsIntoAccesses.h"
@@ -33,6 +34,7 @@
 #include "AirSpecial.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3BasicBlockInlines.h"
+#include "B3CCallValue.h"
 #include "B3Const64Value.h"
 #include "B3ConstDoubleValue.h"
 #include "B3MemoryValue.h"
@@ -78,6 +80,7 @@
 #include "AirShrinkWrapFrame.h"
 #include "AirSplitLiveRangesAroundFrame.h"
 #include "AirStackAllocation.h"
+#include "AirReleaseDeadValues.h"
 #include "AirStackColoring.h"
 #include "AirTmpInlines.h"
 #include "AirValidate.h"
@@ -104,7 +107,7 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 // We don't have a NO_RETURN_DUE_TO_EXIT, nor should we. That's ridiculous.
-static bool LEGACY_NODELETE hiddenTruthBecauseNoReturnIsStupid() { return true; }
+NODELETE static bool hiddenTruthBecauseNoReturnIsStupid() { return true; }
 
 static void usage()
 {
@@ -137,6 +140,16 @@ Lock crashLock;
         crashLock.lock();                                               \
         WTFReportAssertionFailure(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, #x); \
         CRASH();                                                        \
+    } while (false)
+
+#define CHECK_EQ(x, y) do { \
+        auto checkEqLeft = (x); \
+        auto checkEqRight = (y); \
+        if (checkEqLeft == checkEqRight) \
+            break; \
+        crashLock.lock(); \
+        WTFReportAssertionFailure(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, toUTF8CString(#x " == " #y, " (" #x " == ", checkEqLeft, ", " #y " == ", checkEqRight, ")").legacyCStringPointer()); \
+        CRASH(); \
     } while (false)
 
 std::unique_ptr<Compilation> compile(B3::Procedure& proc)
@@ -1446,7 +1459,7 @@ void testShuffleShiftMemoryAllRegs64()
     CHECK(memory[1] == 35000000000000ll);
 }
 
-int64_t LEGACY_NODELETE combineHiLo(int64_t high, int64_t low)
+NODELETE int64_t combineHiLo(int64_t high, int64_t low)
 {
     union {
         int64_t value;
@@ -2021,6 +2034,34 @@ void testX86VMULSDBaseIndexNeedRex()
     CHECK(compileAndRun<double>(proc, 2.4, &secondArg - 2, index, PNaN) == 2.4 * 4.2);
 }
 #endif // #if CPU(X86_64)
+
+#if CPU(ARM64)
+void testClearBitFieldPreservesOtherBits()
+{
+    {
+        B3::Procedure proc;
+        Code& code = proc.code();
+        BasicBlock* root = code.addBlock();
+        Tmp tmp = code.newTmp(GP);
+        root->append(Move, nullptr, Arg::bigImm(0x12345678), tmp);
+        root->append(ClearBitField32, nullptr, Arg::imm(4), Arg::imm(8), tmp);
+        root->append(Move, nullptr, tmp, Tmp(GPRInfo::returnValueGPR));
+        root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
+        CHECK_EQ(compileAndRun<uint32_t>(proc), 0x12345008U);
+    }
+    {
+        B3::Procedure proc;
+        Code& code = proc.code();
+        BasicBlock* root = code.addBlock();
+        Tmp tmp = code.newTmp(GP);
+        root->append(Move, nullptr, Arg::bigImm(0x123456789abcdef0), tmp);
+        root->append(ClearBitField64, nullptr, Arg::imm(8), Arg::imm(16), tmp);
+        root->append(Move, nullptr, tmp, Tmp(GPRInfo::returnValueGPR));
+        root->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+        CHECK_EQ(compileAndRun<uint64_t>(proc), 0x123456789a0000f0ULL);
+    }
+}
+#endif // CPU(ARM64)
 
 #if CPU(ARM64)
 void testInvalidateCachedTempRegisters()
@@ -3535,6 +3576,7 @@ void run(const char* filter)
 
 #if CPU(ARM64)
     RUN(testInvalidateCachedTempRegisters());
+    RUN(testClearBitFieldPreservesOtherBits());
 #endif
 
     RUN(testArgumentRegPinned());

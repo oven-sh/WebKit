@@ -37,12 +37,13 @@ class RemoteLayerTreeEventDispatcher;
 
 class RemoteScrollingCoordinatorProxyMac final : public RemoteScrollingCoordinatorProxy {
     WTF_MAKE_TZONE_ALLOCATED(RemoteScrollingCoordinatorProxyMac);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteScrollingCoordinatorProxyMac);
 public:
     explicit RemoteScrollingCoordinatorProxyMac(WebPageProxy&);
     ~RemoteScrollingCoordinatorProxyMac();
 
 private:
+    void invalidate() override;
+
     void cacheWheelEventScrollingAccelerationCurve(const NativeWebWheelEvent&) override;
 
     void handleWheelEvent(Ref<WebWheelEvent>&&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges) override;
@@ -69,6 +70,7 @@ private:
     void windowScreenDidChange(WebCore::PlatformDisplayID, std::optional<WebCore::FramesPerSecond>) override;
 
     void applyScrollingTreeLayerPositionsAfterCommit() override;
+    void flushMainThreadTransactionIfNeeded() override;
 
 #if ENABLE(THREADED_ANIMATIONS)
     void willCommitLayerAndScrollingTrees() override WTF_ACQUIRES_LOCK(m_eventDispatcher->m_animationLock);

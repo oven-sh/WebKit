@@ -343,8 +343,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/identity/DigitalCredentialGetRequest.h
     Modules/identity/DigitalCredentialPresentationProtocol.h
     Modules/identity/DigitalCredentialRequestOptions.h
-    Modules/identity/DigitalCredentialsMobileDocumentRequestData.h
-    Modules/identity/DigitalCredentialsOpenID4VPRequestData.h
     Modules/identity/DigitalCredentialsRequestData.h
     Modules/identity/DigitalCredentialsRequestDataBuilder.h
     Modules/identity/DigitalCredentialsResponseData.h
@@ -431,6 +429,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/indexeddb/shared/IDBTransactionInfo.h
     Modules/indexeddb/shared/IndexKey.h
 
+    Modules/mediasession/CallToActionLabel.h
     Modules/mediasession/MediaImage.h
     Modules/mediasession/MediaMetadata.h
     Modules/mediasession/MediaMetadataInit.h
@@ -439,6 +438,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/mediasession/MediaSessionAction.h
     Modules/mediasession/MediaSessionActionDetails.h
     Modules/mediasession/MediaSessionActionHandler.h
+    Modules/mediasession/MediaSessionActionHandlerOptions.h
     Modules/mediasession/MediaSessionArtworkSizing.h
     Modules/mediasession/MediaSessionCoordinator.h
     Modules/mediasession/MediaSessionCoordinatorPrivate.h
@@ -640,6 +640,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/webauthn/UserVerificationRequirement.h
     Modules/webauthn/WebAuthenticationConstants.h
     Modules/webauthn/WebAuthenticationUtils.h
+    Modules/webauthn/WebAuthnOperationErrorCode.h
     Modules/webauthn/WellKnownOriginList.h
 
     Modules/webauthn/apdu/ApduCommand.h
@@ -1102,11 +1103,13 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/values/grid/CSSGridTrackSize.h
 
     css/values/images/CSSGradient.h
+    css/values/images/CSSGradientColorInterpolationMethod.h
 
     css/values/link-params/CSSLinkParameter.h
 
     css/values/motion/CSSRayFunction.h
 
+    css/values/primitives/CSSCoordinatePair.h
     css/values/primitives/CSSCustomIdent.h
     css/values/primitives/CSSDeclarationValue.h
     css/values/primitives/CSSKeyword.h
@@ -1254,6 +1257,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     dom/FullscreenOptions.h
     dom/GCReachableRef.h
     dom/ImageOverlay.h
+    dom/ImmersiveElement.h
     dom/ImportNodeOptions.h
     dom/InlineStyleSheetOwner.h
     dom/IsSecureContext.h
@@ -1865,6 +1869,27 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     loader/cache/MemoryCache.h
     loader/cache/TrustedFonts.h
 
+    loader/images/Image.h
+    loader/images/ImageAdapter.h
+    loader/images/ImageAnimationTimeline.h
+    loader/images/ImageContentSettings.h
+    loader/images/ImageDrawDescriptor.h
+    loader/images/ImageDrawDescriptorTypes.h
+    loader/images/ImageObserver.h
+    loader/images/ImageRenditionOptions.h
+    loader/images/SizedImage.h
+
+    loader/images/bitmap/BitmapImage.h
+    loader/images/bitmap/ImageSource.h
+
+    loader/images/sizing/ConcreteObjectSize.h
+    loader/images/sizing/DefaultSizing.h
+    loader/images/sizing/ImageSizingContext.h
+    loader/images/sizing/NaturalDimensions.h
+    loader/images/sizing/ObjectSizeNegotiation.h
+
+    loader/images/svg/SVGImage.h
+
     page/ActivityState.h
     page/ActivityStateChangeObserver.h
     page/AdjustViewSize.h
@@ -1880,6 +1905,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/CaptionUserPreferencesMediaAF.h
     page/Chrome.h
     page/ChromeClient.h
+    page/ColorAppearance.h
     page/ClientOrigin.h
     page/ContextMenuClient.h
     page/ContextMenuContext.h
@@ -1905,6 +1931,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/DragActions.h
     page/DragClient.h
     page/DragController.h
+    page/DragItem.h
     page/DummySpeechRecognitionProvider.h
     page/EditorClient.h
     page/ElementTargetingController.h
@@ -1932,6 +1959,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/ImageAnalysisQueue.h
     page/ImmediateActionStage.h
     page/InteractionRegion.h
+    page/InteractiveModelElementHitTestResult.h
     page/IntersectionObserverMarginBox.h
     page/IsLoggedIn.h
     page/LayoutMilestone.h
@@ -1981,6 +2009,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/QuirkBehaviors.h
     page/QuirkMatchPattern.h
     page/QuirkSelectors.h
+    page/QuirkTable.h
     page/Quirks.h
     page/QuirksData.h
     page/RemoteDOMWindow.h
@@ -1990,7 +2019,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/RemoteFrameLayoutInfo.h
     page/RemoteFrameView.h
     page/RemoteUserInputEventData.h
-    page/RuntimeQuirkTable.h
     page/ScreenOrientationLockType.h
     page/ScreenOrientationType.h
     page/ScriptTrackingPrivacyCategory.h
@@ -2134,7 +2162,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/DragData.h
     platform/DragEventTargetData.h
     platform/DragImage.h
-    platform/DragItem.h
     platform/EventTrackingRegions.h
     platform/FileChooser.h
     platform/FileMonitor.h
@@ -2160,6 +2187,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/LowPowerModeNotifier.h
     platform/MIMETypeRegistry.h
     platform/MainThreadSharedTimer.h
+    platform/MediaChannelLayout.h
     platform/MediaDescription.h
     platform/MediaPromiseTypes.h
     platform/MediaSample.h
@@ -2180,6 +2208,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/PODInterval.h
     platform/PODIntervalTree.h
     platform/PODRedBlackTree.h
+    platform/PacedMediaSamplesDecoder.h
     platform/PageIdentifier.h
     platform/Pasteboard.h
     platform/PasteboardContext.h
@@ -2386,7 +2415,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/AudioVideoRenderer.h
     platform/graphics/BezierUtilities.h
     platform/graphics/BifurcatedGraphicsContext.h
-    platform/graphics/BitmapImage.h
     platform/graphics/CachedSubimage.h
     platform/graphics/Color.h
     platform/graphics/ColorBlending.h
@@ -2405,7 +2433,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ColorTypes.h
     platform/graphics/ColorUtilities.h
     platform/graphics/ComplexTextController.h
-    platform/graphics/ConcreteObjectSize.h
     platform/graphics/ContentTypeUtilities.h
     platform/graphics/ContentsFormat.h
     platform/graphics/CopyImageOptions.h
@@ -2414,7 +2441,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/Damage.h
     platform/graphics/DashArray.h
     platform/graphics/DecodingOptions.h
-    platform/graphics/DefaultSizing.h
     platform/graphics/DisplayRefreshMonitor.h
     platform/graphics/DisplayRefreshMonitorClient.h
     platform/graphics/DisplayRefreshMonitorFactory.h
@@ -2503,8 +2529,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/HEVCUtilities.h
     platform/graphics/HostingContext.h
     platform/graphics/Icon.h
-    platform/graphics/Image.h
-    platform/graphics/ImageAdapter.h
     platform/graphics/ImageBackingStore.h
     platform/graphics/ImageBuffer.h
     platform/graphics/ImageBufferAllocator.h
@@ -2516,14 +2540,9 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ImageBufferTransferIdentifier.h
     platform/graphics/ImageDecoder.h
     platform/graphics/ImageDecoderIdentifier.h
-    platform/graphics/ImageDrawingExtras.h
-    platform/graphics/ImageDrawingOptions.h
     platform/graphics/ImageFrame.h
-    platform/graphics/ImageObserver.h
     platform/graphics/ImageOrientation.h
     platform/graphics/ImageResolution.h
-    platform/graphics/ImageSizingContext.h
-    platform/graphics/ImageSource.h
     platform/graphics/ImageTypes.h
     platform/graphics/ImageUtilities.h
     platform/graphics/ImmersiveVideoMetadata.h
@@ -2564,13 +2583,14 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/MediaSourcePrivateClient.h
     platform/graphics/MediaTimeUpdateData.h
     platform/graphics/MediaUsageInfo.h
+    platform/graphics/MeshGradient.h
+    platform/graphics/MeshGradientRenderer.h
+    platform/graphics/MeshGradientRendererCPU.h
     platform/graphics/Model.h
     platform/graphics/ModelContext.h
     platform/graphics/NativeImage.h
-    platform/graphics/NaturalDimensions.h
     platform/graphics/NullGraphicsContext.h
     platform/graphics/NullImageBufferBackend.h
-    platform/graphics/ObjectSizeNegotiation.h
     platform/graphics/Path.h
     platform/graphics/PathElement.h
     platform/graphics/PathImpl.h
@@ -2607,6 +2627,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/PlatformVideoTrackConfiguration.h
     platform/graphics/PlatformVideoTransferCharacteristics.h
     platform/graphics/Polygon4D.h
+    platform/graphics/RasterDrawingOptions.h
     platform/graphics/Region.h
     platform/graphics/RenderingMode.h
     platform/graphics/RenderingResource.h
@@ -2617,7 +2638,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ShareableBitmapHandle.h
 
     platform/graphics/ShouldLocalizeAxisNames.h
-    platform/graphics/SizedImage.h
     platform/graphics/SourceBrush.h
     platform/graphics/SourceBrushLogicalGradient.h
     platform/graphics/SourceBufferPrivate.h
@@ -2680,7 +2700,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/coretext/DrawGlyphsRecorder.h
 
     platform/graphics/cv/CVUtilities.h
-    platform/graphics/cv/GraphicsContextGLCV.h
     platform/graphics/cv/ImageRotationSessionVT.h
     platform/graphics/cv/ImageTransferSessionVT.h
     platform/graphics/cv/PixelBufferConformerCV.h
@@ -3063,7 +3082,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/svg/RenderSVGModelObject.h
     rendering/svg/SVGBoundingBoxComputation.h
     rendering/svg/SVGRenderSupport.h
-    rendering/svg/SVGTextLayoutAttributes.h
     rendering/svg/SVGTextMetrics.h
 
     rendering/svg/legacy/LegacyRenderSVGModelObject.h
@@ -3295,7 +3313,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     style/values/grid/StyleGridTrackSizingDirection.h
 
     style/values/images/StyleGradient.h
-    style/values/images/StyleImageDrawingExtras.h
+    style/values/images/StyleGradientColorInterpolationMethod.h
     style/values/images/StyleImageOrNone.h
     style/values/images/StyleImageOrientation.h
     style/values/images/StyleImageWrapper.h
@@ -3375,6 +3393,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     style/values/primitives/StyleCalcSizeValue+Evaluation.h
     style/values/primitives/StyleCalcSizeValue.h
+    style/values/primitives/StyleCoordinatePair.h
     style/values/primitives/StyleCustomIdent.h
     style/values/primitives/StyleDeclarationValue.h
     style/values/primitives/StyleCoordinatedValueList.h
@@ -3543,9 +3562,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     svg/SVGTests.h
     svg/SVGUnitTypes.h
 
-
-    svg/graphics/SVGImage.h
-
     svg/graphics/filters/SVGFilterExpression.h
     svg/graphics/filters/SVGFilterRenderer.h
 
@@ -3561,6 +3577,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     testing/MockGamepad.h
     testing/MockGamepadProvider.h
     testing/MockParentalControlsURLFilter.h
+    testing/MockPhoneNumberPossessionConfiguration.h
     testing/MockWebAuthenticationConfiguration.h
     testing/js/WebCoreTestSupport.h
 
@@ -3719,7 +3736,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     ${WebCore_DERIVED_SOURCES_DIR}/MathMLNames.h
     ${WebCore_DERIVED_SOURCES_DIR}/Namespace.h
     ${WebCore_DERIVED_SOURCES_DIR}/NodeName.h
-    ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorDefinitions.h
     ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorID.h
     ${WebCore_DERIVED_SOURCES_DIR}/QuirksAccessors.h
     ${WebCore_DERIVED_SOURCES_DIR}/SVGNames.h
@@ -3741,7 +3757,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 # FIXME: Eventually add all non-installed headers to this list, so that the
 # per-directory -I paths can be removed.
 set(WebCore_PROJECT_HEADERS
+    Modules/webauthn/WebAuthnOperationException.h
     loader/cache/CachedCSSStyleSheet.h
-
     platform/graphics/FloatPolygon.h
 )

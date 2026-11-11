@@ -24,7 +24,6 @@ template<> struct InlineCellVisit<CellVisitKind::SlimClosure> {
     ALWAYS_INLINE static bool tryVisit(FastMarkAppender& appender, JSCell* cell, Structure* structure)
     {
         appender.appendStructure(structure);
-        // Not uncheckedDowncast, which asserts the class: the mutator may be reifying this cell right now.
         SUPPRESS_MEMORY_UNSAFE_CAST return AOT::SlimClosure::tryVisitFields(static_cast<AOT::SlimClosure*>(cell), appender);
     }
 };

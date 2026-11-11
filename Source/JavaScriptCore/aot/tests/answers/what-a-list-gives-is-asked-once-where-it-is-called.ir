@@ -1,0 +1,135 @@
+# let count = 0;
+# const list = [];
+# for (let made = 0; made < 3; made++) { const step = made; list.push(() => { count -= step; }); }
+# function other() { count += 1000; }
+# function run() { for (const each of list) each(); return count; }
+# print(run());
+# list.push(id(other));
+# print(run());
+# print("went on");
+# An element of the array has the type `undefined|f3`. The proof check after the read used to test for that, and the call tested again: is it the closure, or is there nothing to call?
+# Now there is one test: the call's own test is a full test. On its failing side the rest of the check (undefined alone) comes before the call that throws.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined. Another function in the array crashes with a named error and is not called as f3.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(FORM): walk f2 mechanisms=all
+# FORM: [[given]]: undefined|f3 @JSValue = GetArrayElement
+# FORM: CheckProof [[given]] checkedType=undefined|f3 {{*}} [isLeftToTestBehind]
+# FORM: TypeTest [[given]] testedType=f3 [asksInFull]
+# FORM: CheckProof [[given]] checkedType=undefined {{*}} source=Contents
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: -3
+# ALL-NEXT: bun: internal AOT error: type check failed
+# ALL-NEXT: found function in
+# ALL-NOT: went on
+# ALL: crashed with
+# RUN(CALLS): run-in-shell mechanisms=-Inlining
+# CALLS: -3
+# CALLS-NEXT: bun: internal AOT error: type check failed
+# CALLS-NEXT: found function in
+# CALLS-NOT: went on
+# CALLS: crashed with
+
+variable g0 name="count" module=m0 declared={type=number|absent flags=[IsExpected]}
+variable g1 name="list" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    PutModuleVariable v5 variable=g0
+    v7 = Data data=d0
+    PutModuleVariable v7 variable=g1
+    v9 = Integer
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v10)
+  b1(v11):
+    LoopHint
+    v13 = Integer integer=3
+    v14 = Less v11, v13
+    Branch v14 -> taken b2(), notTaken b3()
+  b2():
+    v15 = PropGet v7 key="push"
+    v16 = NewClosure v11 function=f3
+    v17 = Call v15, v7, v16 calleeKey="push" calleeName="list.push"
+    v18 = Increment v11
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v19)
+  b3():
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="print" [isFreeName]
+    v22 = Call v3 calleeName="run"
+    v23 = Call v21, -, v22 calleeName="print"
+    v24 = PropGet v7 key="push"
+    v25 = Builtin builtin=GlobalThis
+    v26 = PropGet v25 key="id" [isFreeName]
+    v27 = Call v26, -, v1 calleeName="id"
+    v28 = Call v24, v7, v27 calleeKey="push" calleeName="list.push"
+    v29 = Builtin builtin=GlobalThis
+    v30 = PropGet v29 key="print" [isFreeName]
+    v31 = Call v3 calleeName="run"
+    v32 = Call v30, -, v31 calleeName="print"
+    v33 = Builtin builtin=GlobalThis
+    v34 = PropGet v33 key="print" [isFreeName]
+    v35 = String string="went on"
+    v36 = Call v34, -, v35 calleeName="print"
+    v37 = Undefined
+    Return v37
+}
+function f1 name="other" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="count"
+    v2 = Integer integer=1000
+    v3 = Add v1, v2
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="count"
+    PutModuleVariable v4 variable=g0
+    v8 = Undefined
+    Return v8
+}
+function f2 name="run" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="list"
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g0
+    v8 = CheckInitialized v7 name="count"
+    Return v8
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v9 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
+    v10 = Call v9 calleeName="each"
+    Jump -> next b1()
+  b5() role=IterationCleanup subject=v2:
+    v11 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v11
+}
+function f3 module=m0 kind=Arrow captures=[{type=anything variableName="step"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="count"
+    v3 = Sub v2, v0
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="count"
+    PutModuleVariable v4 variable=g0
+    v8 = Undefined
+    Return v8
+}
+data d0 root=Array{contents=anything} module=m0
+entry module=m0

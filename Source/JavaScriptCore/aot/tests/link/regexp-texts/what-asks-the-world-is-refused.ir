@@ -1,0 +1,71 @@
+# The list follows from the program alone. What asks the world outside it is refused, not answered: the call is not made, and gives what nobody knows.
+# new RegExp("a" + new Date().getFullYear()) . ("b" + Date.now()) . ("c" + Math.random()) . ("d" + process.env.HOME) . ("e" + "x".toLocaleUpperCase()) . ("f" + "x".localeCompare("y")) . ("g" + eval("1")) . ("h" + Function("return 1")())
+# DIAGNOSTIC: RegExpPatternNotConstant
+# RUN: regexp-texts mechanisms=all
+# CHECK: text /z+1/
+# CHECK-NOT: text /
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = Builtin builtin=GlobalThis
+    v2 = Builtin builtin=Date
+    v3 = Construct v2
+    v4 = PropGet v3 key="getFullYear"
+    v5 = Call v4, v3 calleeKey="getFullYear"
+    v6 = String string="a"
+    v7 = Add v6, v5
+    v8 = Construct v0, -, v7
+    v9 = PropGet v2 key="now"
+    v10 = Call v9, v2 calleeKey="now"
+    v11 = String string="b"
+    v12 = Add v11, v10
+    v13 = Construct v0, -, v12
+    v14 = Builtin builtin=Math
+    v15 = PropGet v14 key="random"
+    v16 = Call v15, v14 calleeKey="random"
+    v17 = String string="c"
+    v18 = Add v17, v16
+    v19 = Construct v0, -, v18
+    v20 = PropGet v1 key="process" [isFreeName]
+    v21 = PropGet v20 key="env"
+    v22 = PropGet v21 key="HOME"
+    v23 = String string="d"
+    v24 = Add v23, v22
+    v25 = Construct v0, -, v24
+    v26 = String string="x"
+    v27 = PropGet v26 key="toLocaleUpperCase"
+    v28 = Call v27, v26 calleeKey="toLocaleUpperCase"
+    v29 = String string="e"
+    v30 = Add v29, v28
+    v31 = Construct v0, -, v30
+    v32 = PropGet v26 key="localeCompare"
+    v33 = String string="y"
+    v34 = Call v32, v26, v33 calleeKey="localeCompare"
+    v35 = String string="f"
+    v36 = Add v35, v34
+    v37 = Construct v0, -, v36
+    v38 = PropGet v1 key="eval" [isFreeName]
+    v39 = String string="1"
+    v40 = Call v38, -, v39
+    v41 = String string="g"
+    v42 = Add v41, v40
+    v43 = Construct v0, -, v42
+    v44 = PropGet v1 key="Function" [isFreeName]
+    v45 = String string="return 1"
+    v46 = Call v44, -, v45
+    v47 = Call v46
+    v48 = String string="h"
+    v49 = Add v48, v47
+    v50 = Construct v0, -, v49
+    v51 = PropGet v1 key="String" [isFreeName]
+    v52 = Integer integer=1
+    v53 = Call v51, -, v52
+    v54 = String string="z+"
+    v55 = Add v54, v53
+    v56 = Construct v0, -, v55
+    v57 = NewArray v8, v13, v19, v25, v31, v37, v43, v50, v56 contents=anything
+    Return v57
+}

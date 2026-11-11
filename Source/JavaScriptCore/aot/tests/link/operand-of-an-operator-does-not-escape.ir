@@ -1,0 +1,58 @@
+# If an operand that an operator converts flowed into unseen code, as in the first version, every object that is ever added, compared or joined into a text would lose what is known of its fields
+# class N { constructor() { this.n = "s"; }  valueOf() { return 1; } }  function inc(n) { return n + 1; }  function get(n) { return n.n; }  const n = new N();  inc(n);  get(n);
+# The conversion is a call by name for each key of the protocol, with the objects among the operand for `this`. The class answers to one key, and the object reaches that method and nothing else.
+# RUN: summary f3
+# CHECK: call {{*}} v2 Name "valueOf" this=[[objects]] ()
+# CHECK: edge Parameter 0 -> [[objects]] passes=object
+# RUN(KEPT): summary f3
+# KEPT-NOT: -> Unknown
+# RUN(LINK): link functions fields layouts mechanisms=all
+# LINK: function f2 callers-known
+# LINK-NOT: unreached
+# LINK: parameter 0 {{*}}proven=L0
+# LINK: function f4 callers-known one-callee {{*}}result=string
+# LINK: field L0.0 "n" proven=string writers-known
+# LINK: layout L0 changes=[]
+
+layout L0 kind=Instance name="N" module=m0 constructor=f1 fields=[{key="n" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="valueOf"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f3
+    v7 = Call v6, -, v5 calleeName="inc"
+    v8 = NewClosure function=f4
+    v9 = Call v8, -, v5 calleeName="get"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="N" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = String string="s"
+    PropSet v2, v3 key="n"
+    Return v2
+}
+function f2 name="valueOf" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f3 name="inc" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f4 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="n"
+    Return v1
+}

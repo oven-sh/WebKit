@@ -30,7 +30,6 @@
 
 #import "ColorCocoa.h"
 #import "CommonAtomStrings.h"
-#import "Image.h"
 #import "NSURLUtilities.h"
 #import "Pasteboard.h"
 #import "SharedBuffer.h"
@@ -241,17 +240,20 @@ std::optional<PasteboardItemInfo> PlatformPasteboard::informationForItemAtIndex(
         ASSERT(fileTypes.count == urls.count);
 
         info.pathsForFileUpload.reserveInitialCapacity(urls.count);
-        for (NSURL *url in urls)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSURL *url in urls)
             info.pathsForFileUpload.append(url.path);
 
         info.platformTypesForFileUpload.reserveInitialCapacity(fileTypes.count);
-        for (NSString *fileType in fileTypes)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *fileType in fileTypes)
             info.platformTypesForFileUpload.append(fileType);
     } else {
         NSArray *fileTypes = itemProvider.web_fileUploadContentTypes;
         info.platformTypesForFileUpload.reserveInitialCapacity(fileTypes.count);
         info.pathsForFileUpload.reserveInitialCapacity(fileTypes.count);
-        for (NSString *fileType in fileTypes) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *fileType in fileTypes) {
             info.platformTypesForFileUpload.append(fileType);
             info.pathsForFileUpload.append({ });
         }
@@ -273,7 +275,8 @@ std::optional<PasteboardItemInfo> PlatformPasteboard::informationForItemAtIndex(
     info.suggestedFileName = itemProvider.suggestedName;
     NSArray<NSString *> *registeredTypeIdentifiers = itemProvider.registeredTypeIdentifiers;
     info.platformTypesByFidelity.reserveInitialCapacity(registeredTypeIdentifiers.count);
-    for (NSString *typeIdentifier in registeredTypeIdentifiers) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *typeIdentifier in registeredTypeIdentifiers) {
         info.platformTypesByFidelity.append(typeIdentifier);
         RetainPtr utType = [UTType typeWithIdentifier:typeIdentifier];
         if (![utType isDeclared])
@@ -612,7 +615,8 @@ Vector<String> PlatformPasteboard::typesSafeForDOMToReadAndWrite(const String& o
         if (![customTypes isKindOfClass:NSArray.class])
             continue;
 
-        for (NSString *type in customTypes)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *type in customTypes)
             domPasteboardTypes.add(type);
     }
 #endif // PASTEBOARD_SUPPORTS_PRESENTATION_STYLE_AND_TEAM_DATA
@@ -741,8 +745,7 @@ int PlatformPasteboard::count() const
 Vector<String> PlatformPasteboard::allStringsForType(const String& type) const
 {
     auto numberOfItems = count();
-    Vector<String> strings;
-    strings.reserveInitialCapacity(numberOfItems);
+    Vector<String> strings(ReserveCapacityTag { }, numberOfItems);
     for (int index = 0; index < numberOfItems; ++index) {
         String value = readString(index, type);
         if (!value.isEmpty())
@@ -804,12 +807,12 @@ String PlatformPasteboard::readString(size_t index, const String& type) const
     
     if (type == String(UTTypePlainText.identifier) || type == String(UTTypeHTML.identifier)) {
         ASSERT([value isKindOfClass:[NSString class]]);
-        return [value isKindOfClass:[NSString class]] ? value.get() : nil;
+        return dynamic_objc_cast<NSString>(value.get());
     }
     if (type == String(UTTypeText.identifier)) {
         ASSERT([value isKindOfClass:[NSString class]] || [value isKindOfClass:[NSAttributedString class]]);
         if ([value isKindOfClass:[NSString class]])
-            return value.get();
+            return checked_objc_cast<NSString>(value);
         if ([value isKindOfClass:[NSAttributedString class]])
             return [(NSAttributedString *)value string];
     }

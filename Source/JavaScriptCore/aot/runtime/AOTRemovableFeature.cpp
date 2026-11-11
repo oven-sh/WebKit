@@ -12,11 +12,9 @@
 
 namespace JSC {
 
-// One function stands in for all the host functions of a feature. The function object in the frame has the name under which the program knows the one that it called.
 static NEVER_INLINE EncodedJSValue throwForRemovedCallee(JSGlobalObject* globalObject, CallFrame* callFrame, uint16_t feature)
 {
     String name;
-    // The text of a feature of the host says where the function is found: Bun.color.
     if (CalleeBits callee = callFrame->callee(); feature < firstEmbedderRemovableFeature && callee.isCell()) {
         if (auto* function = dynamicDowncast<JSFunction>(callee.asCell()))
             name = function->name(globalObject->vm());
@@ -92,7 +90,6 @@ static std::optional<RemovableFeature> findFeatureOfRemovedAccessor(VM& vm, JSOb
 
 static void throwForRemovedAccessor(JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName propertyName, AccessorFunction function)
 {
-    // The embedder has a text for an index that no feature has.
     uint16_t index = removableFeatureIndexLimit;
     for (JSObject* object = JSValue::decode(thisValue).getObject(); object; object = object->getPrototypeDirect().getObject()) {
         if (std::optional<RemovableFeature> feature = findFeatureOfRemovedAccessor(globalObject->vm(), object, propertyName, function)) {

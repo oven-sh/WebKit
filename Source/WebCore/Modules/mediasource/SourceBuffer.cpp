@@ -82,7 +82,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SourceBuffer);
 
 class SourceBufferClientImpl final : public SourceBufferPrivateClient {
 public:
-    static Ref<SourceBufferClientImpl> LEGACY_NODELETE create(SourceBuffer& parent) { return adoptRef(*new SourceBufferClientImpl(parent)); }
+    NODELETE static Ref<SourceBufferClientImpl> create(SourceBuffer& parent) { return adoptRef(*new SourceBufferClientImpl(parent)); }
     Ref<MediaPromise> sourceBufferPrivateDidReceiveInitializationSegment(InitializationSegment&& segment) final
     {
         MediaPromise::AutoRejectProducer producer(PlatformMediaError::BufferRemoved);
@@ -1443,8 +1443,7 @@ size_t SourceBuffer::memoryCost() const
 
 WebCoreOpaqueRoot SourceBuffer::opaqueRoot() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return WebCoreOpaqueRoot { const_cast<SourceBuffer*>(this) };
+    return WebCoreOpaqueRoot { const_cast<SourceBuffer*>(this) };
 }
 
 void SourceBuffer::memoryPressure()

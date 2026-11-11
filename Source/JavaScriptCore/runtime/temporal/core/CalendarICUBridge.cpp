@@ -76,15 +76,13 @@ static std::unique_ptr<UCalendar, ICUDeleter<ucal_close>> buildCalendarTemplate(
     auto cal = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucalOpen(u"UTC", 3, locale, UCAL_DEFAULT, &status));
     if (U_FAILURE(status)) [[unlikely]]
         return nullptr;
-    // Set to ExactTime::minValue in ms — the minimum representable Temporal instant — making ICU
-    // use proleptic Gregorian for all valid dates (effectively -infinity for our purposes).
+    // Make ICU use proleptic Gregorian for all valid dates.
     // ucal_setGregorianChange is only supported on the base Gregorian calendar; ICU returns
     // U_UNSUPPORTED_ERROR for derived calendars (Japanese, Buddhist, ROC). Those derived
     // calendars cannot be configured this way, so Gregorian-arithmetic accessors route through
     // the base Gregorian calendar below.
     if (calendarId == gregoryCalendarID() || calendarIsISO(calendarId)) {
-        const double prolepticGregorianChangeMs = -8.64e15; // ExactTime::minValue / nsPerMillisecond
-        ucal_setGregorianChange(cal.get(), prolepticGregorianChangeMs, &status);
+        ucal_setGregorianChange(cal.get(), prolepticGregorianChangeDate, &status);
         if (U_FAILURE(status)) [[unlikely]]
             return nullptr;
     }

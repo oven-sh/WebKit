@@ -29,7 +29,6 @@
 #import "Device.h"
 #import "Instance.h"
 #import <Metal/Metal.h>
-#import <WebGPU/WGPUBufferImpl.h>
 #import <WebGPU/WebGPU.h>
 #import <WebGPU/WebGPUCpp.h>
 #import <optional>
@@ -57,9 +56,10 @@ class CommandBuffer;
 class CommandEncoder;
 class Device;
 class RenderBundle;
+class Queue;
 
 // https://gpuweb.github.io/gpuweb/#gpubuffer
-class Buffer final : public WebGPU::Buffer, public WGPUBufferImpl, public CanBorrow, public TrackedResource {
+class Buffer final : public WebGPU::Buffer, public CanBorrow, public TrackedResource {
     WTF_MAKE_TZONE_ALLOCATED(Buffer);
 public:
     enum class State : uint8_t;
@@ -86,12 +86,15 @@ public:
     // The mapped range as a span, for the C API. The C++ API has getMappedRange() instead,
     // because a proxy cannot return a pointer into the mapping.
     std::span<uint8_t> getMappedRangeSpan(uint64_t offset, std::optional<uint64_t> size);
+    // The mapped range for the C API, which, unlike the JavaScript API, lets the ranges that it hands
+    // out overlap: they are pointers into the mapping, not ArrayBuffers that are detached on unmap.
+    std::span<uint8_t> mappedRangeForCAPI(uint64_t offset, std::optional<uint64_t> size);
     void unmap() final;
     void setLabel(String&&) final;
     void generateAValidationError() final;
     void generateAValidationError(String&&);
 
-    bool LEGACY_NODELETE isValid() const final;
+    NODELETE bool isValid() const final;
 
     // https://gpuweb.github.io/gpuweb/#buffer-state
     enum class State : uint8_t {
@@ -104,7 +107,7 @@ public:
 
     id<MTLBuffer> buffer() const { return m_buffer; }
 
-    uint64_t LEGACY_NODELETE initialSize() const;
+    NODELETE uint64_t initialSize() const;
     uint64_t currentSize() const;
     OptionSet<WebGPU::BufferUsage> usage() const { return m_usage; }
     State state() const { return m_state; }
@@ -117,9 +120,10 @@ public:
     void addResourceHolder(const RenderBundle&) const;
     std::span<uint8_t> getBufferContents() final;
 
-    std::optional<DrawIndexCacheContainerIterator> canSkipDrawIndexedValidation(uint32_t firstIndex, uint32_t indexCount, uint32_t vertexCount, MTLIndexType, uint32_t primitiveOffset, id<MTLIndirectCommandBuffer> = nil) const;
-    void drawIndexedValidated(uint32_t firstIndex, uint32_t indexCount, uint32_t vertexCount, MTLIndexType, uint32_t primitiveOffset, uint64_t validationGeneration, id<MTLIndirectCommandBuffer> = nil);
+    std::optional<DrawIndexCacheContainerIterator> canSkipDrawIndexedValidation(uint32_t firstIndex, uint32_t indexCount, uint32_t vertexCount, int32_t baseVertex, MTLIndexType, uint32_t primitiveOffset, id<MTLIndirectCommandBuffer> = nil) const;
+    void drawIndexedValidated(uint32_t firstIndex, uint32_t indexCount, uint32_t vertexCount, int32_t baseVertex, MTLIndexType, uint32_t primitiveOffset, uint64_t validationGeneration, id<MTLIndirectCommandBuffer> = nil);
     void skippedDrawIndexedValidation(CommandEncoder&, DrawIndexCacheContainerIterator);
+    void skippedBundleIndirectDrawValidation(CommandEncoder&, ReusedIndirectIndexedDraw&&);
 
     bool didReadOOB(id<MTLIndirectCommandBuffer> = nil) const;
     void didReadOOB(uint32_t v, id<MTLIndirectCommandBuffer> = nil);
@@ -143,6 +147,7 @@ public:
     bool mustTakeSlowIndexValidationPath() const { return m_mustTakeSlowIndexValidationPath; }
     void clearMustTakeSlowIndexValidationPath();
     void takeSlowIndexValidationPath(CommandBuffer&, uint32_t firstIndex, uint32_t indexCount, MTLIndexType, uint32_t primitiveOffset, uint32_t vertexCount);
+    void takeSlowBundleIndirectDrawValidationPath(CommandBuffer&, const ReusedIndirectIndexedDraw&);
     bool needsIndexValidation(uint32_t, uint16_t);
 
 private:
@@ -150,11 +155,18 @@ private:
     Buffer(Device&);
 
     bool validateGetMappedRange(size_t offset, size_t rangeSize) const;
+    // validateGetMappedRange() without the check that the range does not overlap a range that has
+    // been handed out.
+    bool validateMappedRangeBounds(size_t offset, size_t rangeSize) const;
     NSString * _Nullable errorValidatingMapAsync(OptionSet<WebGPU::MapMode>, size_t offset, size_t rangeSize) const;
-    bool LEGACY_NODELETE validateUnmap() const;
-    void LEGACY_NODELETE setState(State);
+    NODELETE bool validateUnmap() const;
+    NODELETE void setState(State);
     void incrementBufferMapCount();
     void decrementBufferMapCount();
+    void clearIndexBufferForCommandBuffer(CommandBuffer&);
+    bool hasPendingRecordedIndexWrite() const;
+    id<MTLBuffer> _Nullable snapshotRangeBeforeClear(Queue&, NSUInteger offset, NSUInteger size);
+    void restoreSnapshotAfterCommit(CommandBuffer&, Queue&, id<MTLBuffer> _Nullable snapshot, NSUInteger offset);
 
     id<MTLBuffer> m_buffer { nil };
 
@@ -168,10 +180,10 @@ private:
     using MappedRanges = RangeSet<Range<size_t>>;
     MappedRanges m_mappedRanges;
     OptionSet<WebGPU::MapMode> m_mapMode;
-    uint32_t m_maxUnsignedIndex { 0 };
-    uint16_t m_maxUshortIndex { 0 };
-    uint32_t m_maxValidatedUnsignedIndex { 0 };
-    uint16_t m_maxValidatedUshortIndex { 0 };
+    // The smallest vertex count that any entry currently in m_drawIndexedCache was proven against by
+    // the clamp shader, or 0 if any of them used a negative baseVertex. Only meaningful while
+    // m_drawIndexedCache is non-empty.
+    uint32_t m_minValidatedVertexCount { UINT32_MAX };
 
     DrawIndexCacheContainer m_drawIndexedCache;
 
@@ -180,7 +192,11 @@ private:
     mutable ThreadSafeWeakHashSet<RenderBundle> m_renderBundles;
     mutable HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_gpuResourceMap;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_skippedValidationCommandEncoders;
+    mutable HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_pendingIndexWriteCommandEncoders; // NOLINT
     bool m_mustTakeSlowIndexValidationPath { false };
+    // Identity of the command buffer this buffer was last cleared for, so that several failed validations
+    // sharing one command buffer do not each capture a "prior" copy and queue a restore of it.
+    uintptr_t m_clearedForCommandBuffer { 0 }; // NOLINT
     uint64_t m_contentsGeneration { 0 }; // NOLINT
     uint64_t m_indexContentsGeneration { 0 }; // NOLINT
     uint32_t m_indexValueUpperBoundUint { 0 }; // NOLINT

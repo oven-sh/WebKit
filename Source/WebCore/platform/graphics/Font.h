@@ -57,7 +57,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(Font);
 class Font : public FontBase, public RefCounted<Font>, public CanMakeSingleThreadWeakPtr<Font> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Font, Font);
 public:
-    WEBCORE_EXPORT static Ref<Font> create(const FontPlatformData&, Origin = Origin::Local, IsInterstitial = IsInterstitial::No, Visibility = Visibility::Visible, IsOrientationFallback = IsOrientationFallback::No, std::optional<RenderingResourceIdentifier> = std::nullopt);
+    WEBCORE_EXPORT static Ref<Font> create(const FontPlatformData&, Origin = Origin::Local, IsInterstitial = IsInterstitial::No, Visibility = Visibility::Visible, IsOrientationFallback = IsOrientationFallback::No, IsSmallCapsFace = IsSmallCapsFace::No, std::optional<RenderingResourceIdentifier> = std::nullopt);
     WEBCORE_EXPORT static Ref<Font> create(Ref<SharedBuffer>&& fontFaceData, Font::Origin, float fontSize, bool syntheticBold, bool syntheticItalic, DownloadableBinaryFontTrustedTypes);
     WEBCORE_EXPORT static Ref<Font> create(FontInternalAttributes&&, FontPlatformData&&);
 
@@ -88,8 +88,7 @@ public:
             break;
         }
         ASSERT_NOT_REACHED();
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Font*>(this);
+        return const_cast<Font*>(this);
     }
 
     bool variantCapsSupportedForSynthesis(FontVariantCaps) const;
@@ -147,7 +146,7 @@ public:
     void deref() const final { RefCounted::deref(); }
 
 private:
-    WEBCORE_EXPORT Font(const FontPlatformData&, Origin, IsInterstitial, Visibility, IsOrientationFallback, std::optional<RenderingResourceIdentifier>);
+    WEBCORE_EXPORT Font(const FontPlatformData&, Origin, IsInterstitial, Visibility, IsOrientationFallback, IsSmallCapsFace, std::optional<RenderingResourceIdentifier>);
     Font(IsSystemFallbackFontPlaceholder);
 
     void platformGlyphInit();
@@ -157,7 +156,7 @@ private:
     void initCharWidths();
     void initZeroWidth(Glyph);
 
-    void LEGACY_NODELETE platformDestroy();
+    NODELETE void platformDestroy();
 
     RefPtr<Font> createFontWithoutSynthesizableFeatures() const;
     RefPtr<Font> createScaledFont(const FontDescription&, float scaleFactor) const;

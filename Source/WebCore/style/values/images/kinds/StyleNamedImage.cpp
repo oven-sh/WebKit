@@ -80,7 +80,7 @@ void NamedImage::load(CachedResourceLoader&, const ResourceLoaderOptions&)
 {
 }
 
-static WTF::String LEGACY_NODELETE adjustNamedImage(const RenderElement& renderer, const AtomString& name)
+NODELETE static WTF::String adjustNamedImage(const RenderElement& renderer, const AtomString& name)
 {
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
     return AXCustomColorModeController::adjustNamedImage(renderer, name);
@@ -90,21 +90,21 @@ static WTF::String LEGACY_NODELETE adjustNamedImage(const RenderElement& rendere
 #endif
 }
 
-ImageDrawResult NamedImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options, bool) const
+ImageDrawResult NamedImage::draw(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& source, bool) const
 {
-    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
+    auto size = descriptor.concreteObjectSize.size() * descriptor.concreteObjectSize.zoom();
     if (size.isEmpty())
         return ImageDrawResult::DidNothing;
 
-    return drawIntoDestination(context, destination, source, options, [&](GraphicsContext& context) {
+    return drawIntoDestination(context, descriptor, destination, source, [&](GraphicsContext& context) {
         Theme::singleton().drawNamedImage(adjustNamedImage(renderer, m_name.value), context, destination.size());
         return ImageDrawResult::DidDraw;
     });
 }
 
-ImageDrawResult NamedImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options, bool) const
+ImageDrawResult NamedImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, bool) const
 {
-    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
+    auto size = descriptor.concreteObjectSize.size() * descriptor.concreteObjectSize.zoom();
     if (size.isEmpty() || context.paintingDisabled())
         return ImageDrawResult::DidNothing;
 
@@ -113,7 +113,7 @@ ImageDrawResult NamedImage::drawAsPattern(GraphicsContext& context, const Render
         return ImageDrawResult::DidNothing;
 
     Theme::singleton().drawNamedImage(adjustNamedImage(renderer, m_name.value), imageBuffer->context(), size);
-    context.drawPattern(*imageBuffer, destination, tile, patternTransform, phase, spacing, options);
+    context.drawPattern(*imageBuffer, destination, tile, patternTransform, phase, spacing, descriptor.rasterDrawingOptions());
 
     return ImageDrawResult::DidDraw;
 }

@@ -45,30 +45,29 @@ class CounterNode : public RefCounted<CounterNode>, public CanMakeSingleThreadWe
 public:
     enum class Type : uint8_t { Increment, Reset, Set };
 
-    static Ref<CounterNode> LEGACY_NODELETE create(RenderElement&, OptionSet<Type>, int value);
+    NODELETE static Ref<CounterNode> create(RenderElement&, OptionSet<Type>, int value);
     ~CounterNode();
     bool actsAsReset() const { return hasResetType() || !m_parent; }
     bool hasResetType() const { return m_type.contains(Type::Reset); }
     bool hasSetType() const { return m_type.contains(Type::Set); }
     int value() const { return m_value; }
     int countInParent() const { return m_countInParent; }
-    RenderElement& LEGACY_NODELETE owner() const;
-    void LEGACY_NODELETE addRenderer(RenderCounter&);
-    void LEGACY_NODELETE removeRenderer(RenderCounter&);
+    NODELETE RenderElement& owner() const;
+    NODELETE void addRenderer(RenderCounter&);
+    NODELETE void removeRenderer(RenderCounter&);
 
     // Invalidates the text in the renderers of this counter, if any.
     void resetRenderers();
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    CounterNode* parent() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<CounterNode*>(m_parent.get()); }
-    CounterNode* previousSibling() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<CounterNode*>(m_previousSibling.get()); }
-    CounterNode* nextSibling() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<CounterNode*>(m_nextSibling.get()); }
-    CounterNode* firstChild() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<CounterNode*>(m_firstChild.get()); }
-    CounterNode* lastChild() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<CounterNode*>(m_lastChild.get()); }
-    CounterNode* LEGACY_NODELETE lastDescendant() const;
-    CounterNode* LEGACY_NODELETE previousInPreOrder() const;
-    CounterNode* LEGACY_NODELETE nextInPreOrder(const CounterNode* stayWithin = nullptr) const;
-    CounterNode* LEGACY_NODELETE nextInPreOrderAfterChildren(const CounterNode* stayWithin = nullptr) const;
+    CounterNode* parent() const { return const_cast<CounterNode*>(m_parent.get()); }
+    CounterNode* previousSibling() const { return const_cast<CounterNode*>(m_previousSibling.get()); }
+    CounterNode* nextSibling() const { return const_cast<CounterNode*>(m_nextSibling.get()); }
+    CounterNode* firstChild() const { return const_cast<CounterNode*>(m_firstChild.get()); }
+    CounterNode* lastChild() const { return const_cast<CounterNode*>(m_lastChild.get()); }
+    NODELETE CounterNode* lastDescendant() const;
+    NODELETE CounterNode* previousInPreOrder() const;
+    NODELETE CounterNode* nextInPreOrder(const CounterNode* stayWithin = nullptr) const;
+    NODELETE CounterNode* nextInPreOrderAfterChildren(const CounterNode* stayWithin = nullptr) const;
 
     void insertAfter(CounterNode& newChild, CounterNode* beforeChild, const AtomString& identifier);
     // identifier must match the identifier of this counter.
@@ -76,7 +75,7 @@ public:
 
 private:
     CounterNode(RenderElement&, OptionSet<Type>, int value);
-    int LEGACY_NODELETE computeCountInParent() const;
+    NODELETE int computeCountInParent() const;
     // Invalidates the text in the renderer of this counter, if any,
     // and in the renderers of all descendants of this counter, if any.
     void resetThisAndDescendantsRenderers();

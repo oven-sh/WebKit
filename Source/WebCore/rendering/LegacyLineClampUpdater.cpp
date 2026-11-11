@@ -78,8 +78,7 @@ static CheckedPtr<RenderBlockFlow> blockContainerForLastFormattedLine(RenderBloc
                     return { };
                 }
                 auto blockBox = lineBox.blockLevelBox();
-                // FIXME: Remove suppression once rdar://189998365 is fixed.
-                SUPPRESS_MEMORY_UNSAFE_CAST return blockBox ? dynamicDowncast<RenderBlock>(const_cast<RenderObject&>(blockBox->renderer())) : nullptr;
+                return blockBox ? dynamicDowncast<RenderBlock>(const_cast<RenderObject&>(blockBox->renderer())) : nullptr;
             }
             return { };
         };
@@ -107,7 +106,7 @@ std::optional<LegacyLineClampUpdater::ClampedContent> LegacyLineClampUpdater::cl
 
             // Let line-clamp logic run but make sure no clamping happens (it's needed to make sure certain features are disabled like ellipsis in inline direction).
             layoutState.setLegacyLineClamp(RenderLayoutState::LegacyLineClamp { inlineLayout->lineCount() + 1, { }, { }, { } });
-            lastRoot->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            lastRoot->setChildNeedsLayout(MarkingBehavior::OnlyThis);
             lastRoot->layoutIfNeeded();
 
             layoutState.setLegacyLineClamp(currentLineClamp);

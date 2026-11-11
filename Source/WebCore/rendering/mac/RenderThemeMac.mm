@@ -24,7 +24,6 @@
 #if PLATFORM(MAC)
 
 #import "AttachmentLayout.h"
-#import "BitmapImage.h"
 #import "CSSPropertyNames.h"
 #import "CSSValueKeywords.h"
 #import "CSSValueList.h"
@@ -55,6 +54,7 @@
 #import "LocalFrameView.h"
 #import "LocalizedStrings.h"
 #import "Logging.h"
+#import "NativeImage.h"
 #import "PaintInfo.h"
 #import "PathOperation.h"
 #import "PathUtilities.h"
@@ -830,7 +830,7 @@ bool RenderThemeMac::isControlStyled(const Style::ComputedStyle& style) const
     return RenderTheme::isControlStyled(style);
 }
 
-static FloatRect LEGACY_NODELETE inflateRect(const FloatRect& rect, const IntSize& size, std::span<const int, 4> margins, float zoomLevel)
+NODELETE static FloatRect inflateRect(const FloatRect& rect, const IntSize& size, std::span<const int, 4> margins, float zoomLevel)
 {
     // Only do the inflation if the available width/height are too small. Otherwise try to
     // fit the glow/check space into the available box's width/height.
@@ -901,7 +901,7 @@ static Style::PreferredSizePair sizeFromFont(const FontCascade& font, const Styl
 
 // Popup button
 
-static std::span<const int, 4> LEGACY_NODELETE popupButtonMargins(NSControlSize size)
+NODELETE static std::span<const int, 4> popupButtonMargins(NSControlSize size)
 {
     static constexpr std::array margins {
         std::array { 0, 3, 1, 3 },
@@ -912,7 +912,7 @@ static std::span<const int, 4> LEGACY_NODELETE popupButtonMargins(NSControlSize 
     return margins[size];
 }
 
-static std::span<const IntSize, 4> LEGACY_NODELETE popupButtonSizes()
+NODELETE static std::span<const IntSize, 4> popupButtonSizes()
 {
     static constexpr std::array sizes {
         IntSize { 0, 21 },
@@ -923,7 +923,7 @@ static std::span<const IntSize, 4> LEGACY_NODELETE popupButtonSizes()
     return sizes;
 }
 
-static std::span<const int, 4> LEGACY_NODELETE popupButtonPadding(NSControlSize size)
+NODELETE static std::span<const int, 4> popupButtonPadding(NSControlSize size)
 {
     static constexpr std::array padding {
         std::array { 2, 26, 3, 8 },
@@ -936,7 +936,7 @@ static std::span<const int, 4> LEGACY_NODELETE popupButtonPadding(NSControlSize 
 
 // Checkboxes and radio buttons
 
-static const std::span<const IntSize, 4> LEGACY_NODELETE checkboxSizes()
+NODELETE static const std::span<const IntSize, 4> checkboxSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 14, 14 },
@@ -947,7 +947,7 @@ static const std::span<const IntSize, 4> LEGACY_NODELETE checkboxSizes()
     return sizes;
 }
 
-static std::span<const int, 4> LEGACY_NODELETE checkboxMargins(NSControlSize controlSize)
+NODELETE static std::span<const int, 4> checkboxMargins(NSControlSize controlSize)
 {
     static constexpr std::array margins {
         // top right bottom left
@@ -980,7 +980,7 @@ static const std::span<const IntSize, 4> radioSizes()
     return sizes;
 }
 
-static std::span<const int, 4> LEGACY_NODELETE radioMargins(NSControlSize controlSize)
+NODELETE static std::span<const int, 4> radioMargins(NSControlSize controlSize)
 {
     static constexpr std::array margins {
         // top right bottom left
@@ -1004,7 +1004,7 @@ static Style::PreferredSizePair radioSize(const Style::PreferredSizePair& zoomed
 // Buttons
 
 // Buttons really only constrain height. They respect width.
-static const std::span<const IntSize, 4> LEGACY_NODELETE buttonSizes()
+NODELETE static const std::span<const IntSize, 4> buttonSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 0, 20 },
@@ -1015,7 +1015,7 @@ static const std::span<const IntSize, 4> LEGACY_NODELETE buttonSizes()
     return sizes;
 }
 
-static std::span<const int, 4> LEGACY_NODELETE buttonMargins(NSControlSize controlSize)
+NODELETE static std::span<const int, 4> buttonMargins(NSControlSize controlSize)
 {
     // FIXME: These values may need to be reevaluated. They appear to have been originally chosen
     // to reflect the size of shadows around native form controls on macOS, but as of macOS 10.15,
@@ -1031,7 +1031,7 @@ static std::span<const int, 4> LEGACY_NODELETE buttonMargins(NSControlSize contr
 
 // Stepper
 
-static const std::span<const IntSize, 4> LEGACY_NODELETE stepperSizes()
+NODELETE static const std::span<const IntSize, 4> stepperSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 19, 27 },
@@ -1058,7 +1058,7 @@ static NSControlSize stepperControlSizeForFont(const FontCascade& font)
 
 // Switch
 
-static const std::span<const IntSize, 4> LEGACY_NODELETE switchSizes()
+NODELETE static const std::span<const IntSize, 4> switchSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 38, 22 },
@@ -1069,7 +1069,7 @@ static const std::span<const IntSize, 4> LEGACY_NODELETE switchSizes()
     return sizes;
 }
 
-static std::span<const int, 4> LEGACY_NODELETE visualSwitchMargins(NSControlSize controlSize, bool isVertical)
+NODELETE static std::span<const int, 4> visualSwitchMargins(NSControlSize controlSize, bool isVertical)
 {
     static constexpr std::array switchMarginsNonMini { 2, 2, 1, 2 };
     static constexpr std::array switchMarginsMini { 1, 1, 0, 1 };
@@ -1354,7 +1354,7 @@ const int styledPopupPaddingLeft = 8;
 const int styledPopupPaddingTop = 1;
 const int styledPopupPaddingBottom = 2;
 
-static std::span<const IntSize, 4> LEGACY_NODELETE menuListButtonSizes()
+NODELETE static std::span<const IntSize, 4> menuListButtonSizes()
 {
     static constexpr std::array sizes { IntSize(0, 21), IntSize(0, 18), IntSize(0, 15), IntSize(0, 28) };
     return sizes;
@@ -1394,7 +1394,7 @@ void RenderThemeMac::adjustMenuListStyle(Style::ComputedStyle& style, const Elem
     style.setBoxShadow(CSS::Keyword::None { });
 }
 
-static Style::PaddingEdge LEGACY_NODELETE toTruncatedPaddingEdge(auto value)
+NODELETE static Style::PaddingEdge toTruncatedPaddingEdge(auto value)
 {
     return Style::PaddingEdge::Fixed { static_cast<float>(std::trunc(value)) };
 }
@@ -1916,10 +1916,10 @@ static void paintAttachmentIcon(const RenderAttachment& attachment, GraphicsCont
     if (!icon)
         return;
 
-    context.drawBitmapImage(*icon, layout.iconRect);
+    context.drawNativeImage(*icon, layout.iconRect);
 }
 
-static std::pair<RefPtr<BitmapImage>, float> createAttachmentPlaceholderImage(float deviceScaleFactor, const AttachmentLayout& layout)
+static std::pair<RefPtr<NativeImage>, float> createAttachmentPlaceholderImage(float deviceScaleFactor, const AttachmentLayout& layout)
 {
     RetainPtr configuration = [NSImageSymbolConfiguration configurationWithPointSize:32 weight:NSFontWeightRegular scale:NSImageSymbolScaleMedium];
     RetainPtr image = [[NSImage imageWithSystemSymbolName:@"arrow.down.circle" accessibilityDescription:nil] imageWithSymbolConfiguration:configuration.get()];
@@ -1928,19 +1928,19 @@ static std::pair<RefPtr<BitmapImage>, float> createAttachmentPlaceholderImage(fl
     imageSize.scale(std::min(imageSizeScales.width(), imageSizeScales.height()));
     auto imageRect = NSMakeRect(0, 0, imageSize.width(), imageSize.height());
     RetainPtr cgImage = [image CGImageForProposedRect:&imageRect context:nil hints:nil];
-    return { BitmapImage::create(cgImage.get()), deviceScaleFactor };
+    return { NativeImage::create(WTF::move(cgImage)), deviceScaleFactor };
 }
 
 static void paintAttachmentIconPlaceholder(const RenderAttachment& attachment, GraphicsContext& context, AttachmentLayout& layout)
 {
-    auto [placeholderImage, imageScale] = createAttachmentPlaceholderImage(protect(attachment.document())->deviceScaleFactor(), layout);
+    auto [placeholderImage, imageScale] = createAttachmentPlaceholderImage(attachment.document().deviceScaleFactor(), layout);
 
     // Center the placeholder image where the icon would usually be.
-    FloatRect placeholderRect(0, 0, placeholderImage->width() / imageScale, placeholderImage->height() / imageScale);
+    FloatRect placeholderRect(0, 0, placeholderImage->size().width() / imageScale, placeholderImage->size().height() / imageScale);
     placeholderRect.setX(layout.iconRect.x() + (layout.iconRect.width() - placeholderRect.width()) / 2);
     placeholderRect.setY(layout.iconRect.y() + (layout.iconRect.height() - placeholderRect.height()) / 2);
 
-    context.drawBitmapImage(*placeholderImage, placeholderRect);
+    context.drawNativeImage(*placeholderImage, placeholderRect);
 }
 
 static void paintAttachmentTitleBackground(const RenderAttachment& attachment, GraphicsContext& context, AttachmentLayout& layout)
@@ -1986,7 +1986,7 @@ static void paintAttachmentProgress(const RenderAttachment& attachment, Graphics
 
         FloatRect progressRect = progressBounds;
         progressRect.setWidth(progressRect.width() * progress);
-        progressRect = encloseRectToDevicePixels(progressRect, protect(attachment.document())->deviceScaleFactor());
+        progressRect = encloseRectToDevicePixels(progressRect, attachment.document().deviceScaleFactor());
 
         context.fillRect(progressRect, attachmentProgressBarFillColor);
     }
@@ -2041,7 +2041,7 @@ bool RenderThemeMac::paintAttachment(const RenderElement& renderer, const PaintI
     GraphicsContextStateSaver saver(context);
 
     context.translate(toFloatSize(paintRect.location()));
-    context.translate(floorSizeToDevicePixels({ LayoutUnit((paintRect.width() - attachmentIconBackgroundSize) / 2), 0 }, protect(renderer.document())->deviceScaleFactor()));
+    context.translate(floorSizeToDevicePixels({ LayoutUnit((paintRect.width() - attachmentIconBackgroundSize) / 2), 0 }, renderer.document().deviceScaleFactor()));
 
     bool usePlaceholder = validProgress && !progress;
 

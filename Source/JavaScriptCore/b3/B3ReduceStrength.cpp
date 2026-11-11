@@ -32,6 +32,7 @@
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3BasicBlockUtils.h"
+#include "B3BlockWorklist.h"
 #include "B3BulkMemoryValue.h"
 #include "B3ComputeDivisionMagic.h"
 #include "B3ConstantReplacements.h"
@@ -276,6 +277,8 @@ public:
         m_changed |= eliminateDeadCodeImpl(m_proc);
 
         reduceAllBlocksStrength();
+        mergeTestsOfOneInterval();
+        shareNewPartsOfAddresses();
 
         if (m_proc.optLevel() >= 2 && !m_changed && !m_mayHaveUnfoldedPhis)
             return false;
@@ -317,10 +320,12 @@ public:
             m_enteredFromReachableBlock.clearAll();
             m_enteredFromReachableBlock.ensureSize(m_proc.size());
             m_valueForConstant.clear();
+            m_proc.resetValueOwners(); // Used by Phi folding.
 
             m_dominators = &m_proc.dominators(); // Recompute if necessary.
             m_layeredCSE.clear();
             findValuesUsedForLowWord();
+            m_integersConvertedFromDoubles.clear();
             m_valueOwnersAreCurrent = false;
             if (m_proc.optLevel() >= 1 && m_proc.policy().optimization.redundancyElimination == RedundancyElimination::MemoryNumbering) {
                 m_numbering.emplace(m_proc);
@@ -504,12 +509,16 @@ private:
     {
         if (tryReduceWithRanges())
             return;
+        if (tryCompareSelectOfConstants())
+            return;
         if (tryCompareBeforeConstantReplacement())
             return;
         switch (m_value->opcode()) {
         case Phi: {
             auto upsilons = upsilonsInSnapshot(m_value);
             Value* input = uniquePhiInput(m_value, upsilons);
+            if (!input)
+                input = earlierPhiWithSameInputs(m_value, upsilons);
             if (!input) {
                 // An Upsilon in a block the walk has not reached yet may still reduce to an input
                 // already seen.
@@ -571,9 +580,7 @@ private:
                     // However, we already model adding a constant as if it was free in other places
                     // so let's just roll with it. The alternative would mean having to do good use
                     // counts, which reduceStrength() currently doesn't have.
-                    m_value->child(0) =
-                        m_insertionSet.insert<Value>(
-                            m_index, Add, m_value->origin(), value, otherValue);
+                    m_value->child(0) = insertOrReusePartOfAddress(Add, value, otherValue);
                     m_value->child(1) = constant;
                     m_changed = true;
                     break;
@@ -590,14 +597,17 @@ private:
                 Value* constant = m_value->child(1)->child(1);
                 Value* otherValue = m_value->child(0);
                 // This creates a duplicate add. That's dangerous but probably fine, see above.
-                m_value->child(0) =
-                    m_insertionSet.insert<Value>(
-                        m_index, Add, m_value->origin(), value, otherValue);
+                m_value->child(0) = insertOrReusePartOfAddress(Add, value, otherValue);
                 m_value->child(1) = constant;
                 m_changed = true;
                 break;
             }
             
+            // Turn this: Add(otherValue, ZExt32(Add(value, constant)))
+            // Into this: Add(Add(ZExt32(value), otherValue), constant)
+            if (tryTakeConstantOutOfExtendedSummand())
+                break;
+
             // Turn this: Add(constant1, constant2)
             // Into this: constant1 + constant2
             if (Value* constantAdd = m_value->child(0)->addConstant(m_proc, m_value->child(1))) {
@@ -634,6 +644,17 @@ private:
                 // Into this: Sub(otherValue, value)
                 if (m_value->child(0)->opcode() == Neg) {
                     replaceWithNew<Value>(Sub, m_value->origin(), m_value->child(1), m_value->child(0)->child(0));
+                    break;
+                }
+
+                // Turn this: Integer Add(Sub(value, otherValue), otherValue)
+                // Into this: value
+                if (m_reducesWithRanges && m_value->child(0)->opcode() == Sub && m_value->child(0)->child(1) == m_value->child(1)) {
+                    replaceWithIdentity(m_value->child(0)->child(0));
+                    break;
+                }
+                if (m_reducesWithRanges && m_value->child(1)->opcode() == Sub && m_value->child(1)->child(1) == m_value->child(0)) {
+                    replaceWithIdentity(m_value->child(1)->child(0));
                     break;
                 }
 
@@ -1460,11 +1481,10 @@ private:
 
             // Turn this: BitAnd(SExt32(value), mask) where (mask & 0xffffffff00000000) == 0
             // Into this: BitAnd(ZExt32(value), mask)
-            if (m_value->child(0)->opcode() == SExt32 && m_value->child(1)->hasInt32()
-                && !(m_value->child(1)->asInt32() & 0xffffffff00000000llu)) {
+            if (m_value->child(0)->opcode() == SExt32 && m_value->child(1)->hasInt64()
+                && !(m_value->child(1)->asInt64() & 0xffffffff00000000llu)) {
                 m_value->child(0) = m_insertionSet.insert<Value>(
-                    m_index, ZExt32, m_value->origin(),
-                    m_value->child(0)->child(0), m_value->child(0)->child(1));
+                    m_index, ZExt32, m_value->origin(), m_value->child(0)->child(0));
                 m_changed = true;
                 break;
             }
@@ -1689,6 +1709,29 @@ private:
                 Value* newConst = m_proc.addIntConstant(m_value, - static_cast<int64_t>(1ull << shiftAmount));
                 m_insertionSet.insertValue(m_index, newConst);
                 replaceWithNew<Value>(BitAnd, m_value->origin(), m_value->child(0)->child(0), newConst);
+                break;
+            }
+
+            // Turn this: Shl(Add(value, constant1), constant2)
+            // Into this: Add(Shl(value, constant2), constant1 << constant2)
+            if (m_proc.policy().loops.unrolls
+                && m_value->child(0)->opcode() == Add
+                && m_value->child(0)->child(1)->hasInt()
+                && m_value->child(1)->hasInt32()) {
+                Value* shifted = insertOrReusePartOfAddress(Shl, m_value->child(0)->child(0), m_value->child(1));
+                Value* constant = m_value->child(0)->child(1)->shlConstant(m_proc, m_value->child(1));
+                m_insertionSet.insertValue(m_index, constant);
+                replaceWithNew<Value>(Add, m_value->origin(), shifted, constant);
+                break;
+            }
+
+            // Turn this: Shl(ZExt32(Add(value, constant1)), constant2)
+            // Into this: Add(Shl(ZExt32(value), constant2), constant1 << constant2)
+            if (std::optional<ExtendedSum> sum = sumBehindZeroExtension(m_value->child(0), true); sum && m_value->child(1)->hasInt32()) {
+                Value* shifted = insertOrReusePartOfAddress(Shl, insertOrReuse(ZExt32, sum->value), m_value->child(1));
+                Value* constant = m_insertionSet.insert<Const64Value>(m_index, m_value->origin(), sum->constant)->shlConstant(m_proc, m_value->child(1));
+                m_insertionSet.insertValue(m_index, constant);
+                replaceWithNew<Value>(Add, m_value->origin(), shifted, constant);
                 break;
             }
 
@@ -2363,6 +2406,19 @@ private:
                 break;
             }
 
+            if (m_narrowsIntegers && m_integersConvertedFromDoubles.contains(m_value->child(0))) {
+                Value* wide = m_value->child(0);
+                auto isExtendedFrom32Bits = [](Value* value) {
+                    return value->opcode() == SExt32 || value->opcode() == ZExt32 || value->hasInt64();
+                };
+                if (isExtendedFrom32Bits(wide->child(0)) && isExtendedFrom32Bits(wide->child(1))) {
+                    Value* left = lowWordOf(wide->child(0));
+                    Value* right = lowWordOf(wide->child(1));
+                    replaceWithNew<Value>(wide->opcode(), m_value->origin(), left, right);
+                    break;
+                }
+            }
+
             // Turn this: Trunc(Op(value, constant))
             //     where !(constant & 0xffffffff)
             //       and Op is Add, Sub, BitOr, or BitXor
@@ -2732,6 +2788,12 @@ private:
                 break;
             }
 
+            // Only NaN compares unequal to itself.
+            if (m_reducesWithRanges && m_value->child(0) == m_value->child(1) && magnitudeBound(m_value->child(0))) {
+                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), TriState::True));
+                break;
+            }
+
             // Two distinct freshly-allocated wasm-GC references, or a fresh reference and
             // null, are never the same object.
             if (areDistinctWasmGCReferences(m_value->child(0), m_value->child(1))) {
@@ -2752,6 +2814,11 @@ private:
 
             if (tryFoldSignComparison())
                 break;
+
+            if (m_reducesWithRanges && m_value->child(0) == m_value->child(1) && magnitudeBound(m_value->child(0))) {
+                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), TriState::False));
+                break;
+            }
 
             if (m_value->child(0)->returnsBool()) {
                 // Turn this: NotEqual(bool, 0)
@@ -3195,6 +3262,10 @@ private:
             }
             if (m_numbering && m_value->opcode() == Branch && m_block->taken().block() != m_block->notTaken().block()) {
                 TriState known = m_conditions.isNonZero(m_numbering->representativeOf(m_value->child(0)));
+                if (known == TriState::Indeterminate) {
+                    if (Value* opposite = m_numbering->representativeOfOppositeComparison(m_value->child(0)))
+                        known = invert(m_conditions.isNonZero(opposite));
+                }
                 if (known != TriState::Indeterminate)
                     replaceTerminalWithJump(known == TriState::True ? m_block->taken() : m_block->notTaken());
             }
@@ -3224,6 +3295,9 @@ private:
         case Const128:
         case ConstFloat:
         case ConstDouble: {
+            // A vector that may not be held across a patchpoint stays in the block that asks for it.
+            if (m_value->opcode() == Const128 && m_proc.policy().air.registers.patchpointsKeepOnlyLowerHalvesOfVectors)
+                break;
             ValueKey key = m_value->key();
             auto addResult = m_valueForConstant.add(key, m_value);
             if (!addResult.isNewEntry) {
@@ -3496,6 +3570,11 @@ private:
             // Turn this: VectorDotProduct(v, splatOne16)
             // Into this: VectorExtaddPairwise(v)
             constexpr v128_t splatOne16 = v128_t::fromU16x8(1, 1, 1, 1, 1, 1, 1, 1);
+#if CPU(X86_64)
+            // There it is the same multiplication with the ones made on the spot, in a form that needs AVX.
+            if (!m_proc.policy().targetFeatures.contains(CPUFeature::AVX))
+                break;
+#endif
             if (m_value->child(1)->hasV128() && bitEquals(m_value->child(1)->asV128(), splatOne16)) {
                 // VectorExtaddPairwise uses the input lane type (i16x8), not the output (i32x4).
                 replaceWithNew<SIMDValue>(m_value->origin(), VectorExtaddPairwise, B3::V128, SIMDLane::i16x8, SIMDSignMode::Signed, m_value->child(0));
@@ -3530,28 +3609,10 @@ private:
                     }
                 }
 
-                // DupElement: i64x2 and i32x4 on all platforms
-                if (auto lane = SIMDShuffle::isI64x2DupElement(pattern)) {
-                    replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i64x2, SIMDSignMode::None, lane.value(), inner);
+                if (auto dup = SIMDShuffle::isDupElement(pattern)) {
+                    auto [lane, index] = *dup;
+                    replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, lane, SIMDSignMode::None, index, inner);
                     break;
-                }
-
-                if (auto lane = SIMDShuffle::isI32x4DupElement(pattern)) {
-                    replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i32x4, SIMDSignMode::None, lane.value(), inner);
-                    break;
-                }
-
-                // DupElement: i16x8 and i8x16 — ARM64 only
-                if constexpr (isARM64()) {
-                    if (auto lane = SIMDShuffle::isI16x8DupElement(pattern)) {
-                        replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i16x8, SIMDSignMode::None, lane.value(), inner);
-                        break;
-                    }
-
-                    if (auto lane = SIMDShuffle::isI8x16DupElement(pattern)) {
-                        replaceWithNew<SIMDValue>(m_value->origin(), VectorDupElement, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, lane.value(), inner);
-                        break;
-                    }
                 }
 
                 if (m_pass == ReduceStrengthPass::Final) {
@@ -3658,20 +3719,19 @@ private:
                 if (auto result = SIMDShuffle::isOnlyOneSideMask(pattern)) {
                     auto [child, newPattern] = result.value();
                     switch (child) {
-                    case 0: {
+                    case SIMDShuffleSide::Left: {
                         Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, newPattern);
                         m_insertionSet.insertValue(m_index, newPatternValue);
                         replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, m_value->child(0), newPatternValue);
                         break;
                     }
-                    case 1: {
+                    case SIMDShuffleSide::Right: {
                         Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, newPattern);
                         m_insertionSet.insertValue(m_index, newPatternValue);
                         replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, m_value->child(1), newPatternValue);
                         break;
                     }
-                    case 2: {
-                        // All OOB.
+                    case SIMDShuffleSide::AllOutOfBounds: {
                         replaceWithNewValue(m_proc.addConstant(m_value->origin(), B3::V128, vectorAllZeros()));
                         break;
                     }
@@ -3721,20 +3781,19 @@ private:
                     if (auto result = SIMDShuffle::isOnlyOneSideMask(newPattern)) {
                         auto [child, unaryPattern] = result.value();
                         switch (child) {
-                        case 0: {
+                        case SIMDShuffleSide::Left: {
                             Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, unaryPattern);
                             m_insertionSet.insertValue(m_index, newPatternValue);
                             replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, newChild0, newPatternValue);
                             break;
                         }
-                        case 1: {
+                        case SIMDShuffleSide::Right: {
                             Value* newPatternValue = m_proc.addConstant(m_value->origin(), B3::V128, unaryPattern);
                             m_insertionSet.insertValue(m_index, newPatternValue);
                             replaceWithNew<SIMDValue>(m_value->origin(), VectorSwizzle, B3::V128, SIMDLane::i8x16, SIMDSignMode::None, newChild1, newPatternValue);
                             break;
                         }
-                        case 2: {
-                            // All OOB.
+                        case SIMDShuffleSide::AllOutOfBounds: {
                             replaceWithNewValue(m_proc.addConstant(m_value->origin(), B3::V128, vectorAllZeros()));
                             break;
                         }
@@ -4397,6 +4456,7 @@ private:
         if (!right)
             return false;
         Value* sum = m_insertionSet.insert<Value>(m_index, m_value->opcode(), m_value->origin(), left, right);
+        m_integersConvertedFromDoubles.add(sum);
         replaceWithNew<Value>(IToD, m_value->origin(), sum);
         return true;
     }
@@ -4421,8 +4481,42 @@ private:
         case RangeReduction::Kind::Comparison:
             replaceWithNew<Value>(reduction.opcode, m_value->origin(), reduction.value, reduction.right);
             return true;
+        case RangeReduction::Kind::ComparisonWithConstant:
+            replaceWithNew<Value>(reduction.opcode, m_value->origin(), reduction.value, m_insertionSet.insertIntConstant(m_index, m_value->origin(), Int32, reduction.constant));
+            return true;
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // Turn this: Compare(Select(predicate, a, b), c)
+    // Into this: NotEqual(predicate, 0)
+    //     where Compare(a, c) holds and Compare(b, c) does not. Equal(predicate, 0) the other way round.
+    bool tryCompareSelectOfConstants()
+    {
+        Opcode opcode = m_value->opcode();
+        if (!m_foldsImpliedComparisons || !isIntegerComparison(opcode) || m_value->child(0)->opcode() != Select)
+            return false;
+
+        Value* select = m_value->child(0);
+        Type type = select->type();
+        std::optional<uint64_t> whenTrue = bitsOfConstant(select->child(1));
+        std::optional<uint64_t> whenFalse = bitsOfConstant(select->child(2));
+        std::optional<uint64_t> constant = bitsOfConstant(m_value->child(1));
+        if (!type.isInt() || !whenTrue || !whenFalse || !constant)
+            return false;
+
+        std::optional<bool> holdsWhenTrue = evaluateComparisonOfBits(opcode, type, *whenTrue, *constant);
+        std::optional<bool> holdsWhenFalse = evaluateComparisonOfBits(opcode, type, *whenFalse, *constant);
+        if (!holdsWhenTrue || !holdsWhenFalse)
+            return false;
+        if (*holdsWhenTrue == *holdsWhenFalse) {
+            replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), triState(*holdsWhenTrue)));
+            return true;
+        }
+        Value* predicate = select->child(0);
+        Value* zero = m_insertionSet.insertIntConstant(m_index, m_value->origin(), predicate->type(), 0);
+        replaceWithNew<Value>(*holdsWhenTrue ? NotEqual : Equal, m_value->origin(), predicate, zero);
+        return true;
     }
 
     // Turn this: Compare(Select(Equal(x, a), b, x), c)
@@ -4573,6 +4667,37 @@ private:
     void replaceWithNew(Arguments... arguments)
     {
         replaceWithNewValue(m_proc.add<ValueType>(arguments...));
+    }
+
+    // Returns an upper bound on |value| for a double computed from integers and finite constants with Add, Sub, Mul, Neg and Abs.
+    // The bound stays far below the largest double, so no step overflows to infinity and the value cannot be NaN.
+    std::optional<double> magnitudeBound(Value* value, unsigned depth = 0)
+    {
+        constexpr unsigned maxDepth = 6;
+        constexpr double maxBound = 0x1p1000;
+        if (value->type() != Double || depth > maxDepth)
+            return std::nullopt;
+        switch (value->opcode()) {
+        case ConstDouble:
+            return std::abs(value->asDouble()) <= maxBound ? std::optional(std::abs(value->asDouble())) : std::nullopt;
+        case IToD:
+            return value->child(0)->type() == Int32 ? 0x1p31 : 0x1p63;
+        case Neg:
+        case Abs:
+            return magnitudeBound(value->child(0), depth + 1);
+        case Add:
+        case Sub:
+        case Mul: {
+            std::optional<double> left = magnitudeBound(value->child(0), depth + 1);
+            std::optional<double> right = left ? magnitudeBound(value->child(1), depth + 1) : std::nullopt;
+            if (!right)
+                return std::nullopt;
+            double bound = value->opcode() == Mul ? *left * *right : *left + *right;
+            return bound <= maxBound ? std::optional(bound) : std::nullopt;
+        }
+        default:
+            return std::nullopt;
+        }
     }
 
     bool tryFoldSignComparison()
@@ -4760,6 +4885,199 @@ private:
                 m_mayHaveUnfoldedPhis = true;
             }
         }
+    }
+
+    // The walk looks at a value once, so what a rule puts in front of a value is compared with nothing. The turns of a loop that are written out all get base + (index << shift) that way.
+    // An x86 address holds all of base + (index << shift) + offset, and each access takes its own copy in. Elsewhere the sum is an instruction.
+    Value* insertOrReusePartOfAddress(Opcode opcode, Value* left, Value* right)
+    {
+        Value* inserted = m_insertionSet.insert<Value>(m_index, opcode, m_value->origin(), left, right);
+        if (!m_numbering)
+            return inserted;
+        if (isX86() && inserted->type() != Int32) {
+            m_numbering->numberCopyOfPartOfAddress(inserted);
+            return inserted;
+        }
+        // The walk orders the operands of each sum that it comes to. The same sum further down, as the program's code made it, is found to be this one if this one has that order.
+        if (opcode == Add && shouldSwapBinaryOperands(inserted))
+            std::swap(inserted->child(0), inserted->child(1));
+        Value* representative = inserted;
+        // The first turn has the sum as the program's code made it, which may be the other way round. With two sums the shift has two users and is an instruction of its own.
+        if (opcode == Add) {
+            std::swap(inserted->child(0), inserted->child(1));
+            representative = m_numbering->representativeOf(inserted);
+            std::swap(inserted->child(0), inserted->child(1));
+        }
+        if (representative == inserted)
+            representative = m_numbering->ensureRepresentative(inserted);
+        if (representative != inserted)
+            inserted->replaceWithIdentity(representative);
+        else
+            m_newPartsOfAddresses.append(inserted);
+        return representative;
+    }
+
+    // The turns of a loop that are written out share base + (index << shift) where one turn stands in front of the next. Where each access stands behind a test of its own, none does,
+    // and every turn would make the sum again. It moves up to where all of them come from.
+    void shareNewPartsOfAddresses()
+    {
+        Vector<Value*, 8> newParts = std::exchange(m_newPartsOfAddresses, { });
+        if (newParts.size() < 2)
+            return;
+        m_proc.resetValueOwners();
+        Dominators& dominators = m_proc.dominators();
+        NaturalLoops& loops = m_proc.naturalLoops();
+        // A shift comes before the sums that it is part of.
+        for (Opcode opcode : { Shl, Add }) {
+            UncheckedKeyHashMap<ValueKey, Vector<Value*, 8>> valuesByKey;
+            for (Value* value : newParts) {
+                if (value->opcode() != opcode || !value->owner)
+                    continue;
+                value->performSubstitution();
+                if (opcode == Add && shouldSwapBinaryOperands(value))
+                    std::swap(value->child(0), value->child(1));
+                valuesByKey.add(value->key(), Vector<Value*, 8>()).iterator->value.append(value);
+            }
+            for (auto& values : valuesByKey.values()) {
+                if (values.size() < 2)
+                    continue;
+                BasicBlock* common = values[0]->owner;
+                double frequency = 0;
+                for (Value* value : values) {
+                    frequency += value->owner->frequency();
+                    while (!dominators.dominates(common, value->owner))
+                        common = dominators.idom(common);
+                }
+                bool canStandThere = frequency >= common->frequency() && loops.innerMostLoopOf(common) == loops.innerMostLoopOf(values[0]->owner);
+                for (Value* child : values[0]->children())
+                    canStandThere &= child->owner && dominators.dominates(child->owner, common);
+                for (Value* value : values)
+                    canStandThere &= value->owner != common;
+                if (!canStandThere)
+                    continue;
+                Value* shared = m_proc.add<Value>(opcode, values[0]->origin(), values[0]->child(0), values[0]->child(1));
+                common->appendNonTerminal(shared);
+                shared->owner = common;
+                for (Value* value : values)
+                    value->replaceWithIdentity(shared);
+                m_changed = true;
+            }
+        }
+    }
+
+    // The blocks that nothing leads to any more leave the procedure with all that stands in them. The walk reduces a block of a cycle with two entries before it has seen all that leads there.
+    void forgetNewPartsOfAddressesInBlocksThatLeave()
+    {
+        if (m_newPartsOfAddresses.isEmpty())
+            return;
+        m_proc.resetValueOwners();
+        BlockWorklist staying;
+        staying.push(m_proc.at(0));
+        while (BasicBlock* block = staying.pop()) {
+            for (BasicBlock* successor : block->successorBlocks())
+                staying.push(successor);
+        }
+        m_newPartsOfAddresses.removeAllMatching([&](Value* value) {
+            return !staying.saw(value->owner);
+        });
+    }
+
+    Value* insertOrReuse(Opcode opcode, Value* child)
+    {
+        Value* inserted = m_insertionSet.insert<Value>(m_index, opcode, m_value->origin(), child);
+        if (!m_numbering)
+            return inserted;
+        Value* representative = m_numbering->ensureRepresentative(inserted);
+        if (representative != inserted)
+            inserted->replaceWithIdentity(representative);
+        return representative;
+    }
+
+    struct ExtendedSum {
+        Value* value;
+        int64_t constant;
+    };
+
+    // Whether the sum goes from where it stands when its extensions do. A constant that is added to it is added to its first operand instead, once the walk gets there,
+    // and a user in a block that only unlikely edges lead to takes the sum along when values are sunk.
+    bool isOnlyExtendedOrAddedTo(Value* sum)
+    {
+        if (!m_hasUserThatKeepsSum) {
+            m_hasUserThatKeepsSum.emplace();
+            m_hasUserThatKeepsSum->ensureSize(m_proc.values().size());
+            if (!std::exchange(m_valueOwnersAreCurrent, true))
+                m_proc.resetValueOwners();
+            BitVector isEnteredOnlyOverUnlikelyEdges(m_proc.size());
+            for (BasicBlock* block : m_proc) {
+                bool hasOnlyUnlikelyEdges = block->numPredecessors() && m_proc.policy().optimization.sinksValues;
+                for (BasicBlock* predecessor : block->predecessors()) {
+                    for (FrequentedBlock successor : predecessor->successors())
+                        hasOnlyUnlikelyEdges &= successor.block() != block || successor.frequency() != FrequencyClass::Normal;
+                }
+                if (hasOnlyUnlikelyEdges)
+                    isEnteredOnlyOverUnlikelyEdges.quickSet(block->index());
+            }
+            // A Phi that the walk has not reached yet and that gets one value is that value.
+            auto onlyInputOf = [&](Value* phi) -> Value* {
+                if (phi->opcode() != Phi || phi->index() >= m_phiChildrenValueCount)
+                    return nullptr;
+                return uniquePhiInput(phi, upsilonsInSnapshot(phi));
+            };
+            for (Value* user : m_proc.values()) {
+                if (user->opcode() == Identity || user->opcode() == ZExt32 || (user->opcode() == Add && user->child(1)->hasInt()))
+                    continue;
+                if (user->owner && isEnteredOnlyOverUnlikelyEdges.quickGet(user->owner->index()))
+                    continue;
+                if (auto* upsilon = user->as<UpsilonValue>(); upsilon && onlyInputOf(upsilon->phi()))
+                    continue;
+                for (Value* child : user->children()) {
+                    child = child->foldIdentity();
+                    if (Value* input = onlyInputOf(child))
+                        child = input;
+                    m_hasUserThatKeepsSum->quickSet(child->index());
+                    // An extension goes only into the sums that take its constant out. Whatever else uses it, a comparison with a length for one, keeps it and the sum behind it.
+                    if (child->opcode() == ZExt32 && user->opcode() != Add)
+                        m_hasUserThatKeepsSum->quickSet(child->child(0)->foldIdentity()->index());
+                }
+            }
+        }
+        return sum->index() < m_hasUserThatKeepsSum->size() && !m_hasUserThatKeepsSum->quickGet(sum->index());
+    }
+
+    // ZExt32(Add(value, constant)) is Add(ZExt32(value), constant) where the sum of 32 bits does not wrap around. The turns of a loop that are written out read at index + 1, index + 2 and so on:
+    // with the constant outside, it becomes the offset of the access, and all turns share one index.
+    // An x86 address holds base + (index << shift) + offset. Elsewhere base + index is an instruction, which pays where the sum is one less, and base + (index << shift) is two.
+    std::optional<ExtendedSum> sumBehindZeroExtension(Value* extension, bool isShifted)
+    {
+        if (!m_reducesWithRanges || !m_proc.policy().loops.unrolls || extension->opcode() != ZExt32)
+            return std::nullopt;
+        Value* sum = extension->child(0);
+        if (sum->opcode() != Add || !sum->child(1)->hasInt32())
+            return std::nullopt;
+        if (!isX86() && (isShifted || !isOnlyExtendedOrAddedTo(sum)))
+            return std::nullopt;
+        IntRange range = rangeFor(sum->child(0));
+        int64_t constant = sum->child(1)->asInt32();
+        if (range.min() < 0 || range.min() + constant < 0 || range.max() + constant > std::numeric_limits<uint32_t>::max())
+            return std::nullopt;
+        return ExtendedSum { sum->child(0), constant };
+    }
+
+    bool tryTakeConstantOutOfExtendedSummand()
+    {
+        if (m_value->type() != Int64)
+            return false;
+        for (unsigned index = 0; index < 2; ++index) {
+            std::optional<ExtendedSum> sum = sumBehindZeroExtension(m_value->child(index), false);
+            if (!sum)
+                continue;
+            Value* otherValue = m_value->child(1 - index);
+            m_value->child(0) = insertOrReusePartOfAddress(Add, insertOrReuse(ZExt32, sum->value), otherValue);
+            m_value->child(1) = m_insertionSet.insert<Const64Value>(m_index, m_value->origin(), sum->constant);
+            m_changed = true;
+            return true;
+        }
+        return false;
     }
 
     void replaceIfRedundant()
@@ -5277,6 +5595,7 @@ private:
             m_proc.deleteValue(value);
 
             // Append the full contents of the successor to the predecessor.
+            m_proc.movedLoadLog().willAppendValuesOf(successor, block);
             block->values().appendVector(successor->values());
             block->successors() = successor->successors();
 
@@ -5311,7 +5630,8 @@ private:
                     return candidate != block
                         && candidate->size() == 1
                         && candidate->last()->opcode() == Jump
-                        && candidate->successorBlock(0) != candidate;
+                        && candidate->successorBlock(0) != candidate
+                        && !m_proc.movedLoadLog().holdsDecidedComparisonAtHeadOf(candidate);
                 };
 
                 // Trace the chain of jump-only blocks with a Floyd tortoise/hare walk. The hare
@@ -5399,6 +5719,7 @@ private:
     {
         if (m_changedCFG) {
             m_changedCFG = false;
+            forgetNewPartsOfAddressesInBlocksThatLeave();
             m_proc.resetReachability();
             m_proc.invalidateCFG();
             // Dominators and natural loops are not valid anymore, and we don't need them yet.
@@ -5520,6 +5841,180 @@ private:
         return otherChild;
     }
 
+    // Two Phis of one block that get the same value wherever either gets one are one value. Each may get at most one value a block, so that which Upsilon ran last is the same question for both.
+    Value* earlierPhiWithSameInputs(Value* phi, PhiChildren::UpsilonCollection upsilons)
+    {
+        if (!m_numbering)
+            return nullptr;
+        if (m_blockOfPhisByInputs != m_block) {
+            m_blockOfPhisByInputs = m_block;
+            m_phisByInputs.clear();
+        }
+        if (!std::exchange(m_valueOwnersAreCurrent, true))
+            m_proc.resetValueOwners();
+
+        auto inputOf = [&](Value* upsilon) {
+            Value* child = upsilon->child(0)->foldIdentity();
+            if (child->isConstant()) {
+                if (Value* constInRoot = m_valueForConstant.get(child->key()))
+                    child = constInRoot;
+            }
+            return child;
+        };
+        // A sum, for the Upsilons of two Phis come in any order.
+        unsigned hash = phi->type().hash();
+        for (Value* upsilon : upsilons) {
+            if (upsilon->opcode() == Upsilon)
+                hash += pairIntHash(upsilon->owner->index(), inputOf(upsilon)->index());
+        }
+        auto result = m_phisByInputs.add(hash, phi);
+        if (result.isNewEntry)
+            return nullptr;
+        Value* earlier = result.iterator->value;
+        if (earlier->opcode() != Phi || earlier->type() != phi->type())
+            return nullptr;
+
+        if (m_inputInBlock.size() < m_proc.size())
+            m_inputInBlock.fill(nullptr, m_proc.size());
+        bool isSame = true;
+        unsigned numberOfInputs = 0;
+        auto earlierUpsilons = upsilonsInSnapshot(earlier);
+        for (Value* upsilon : earlierUpsilons) {
+            if (upsilon->opcode() != Upsilon)
+                continue;
+            isSame &= !std::exchange(m_inputInBlock[upsilon->owner->index()], inputOf(upsilon));
+            ++numberOfInputs;
+        }
+        for (Value* upsilon : upsilons) {
+            if (upsilon->opcode() != Upsilon)
+                continue;
+            isSame &= std::exchange(m_inputInBlock[upsilon->owner->index()], nullptr) == inputOf(upsilon);
+            --numberOfInputs;
+        }
+        for (Value* upsilon : earlierUpsilons) {
+            if (upsilon->opcode() == Upsilon)
+                m_inputInBlock[upsilon->owner->index()] = nullptr;
+        }
+        return isSame && !numberOfInputs ? earlier : nullptr;
+    }
+
+    // The edge of a Branch that is taken where an integer lies under or over a constant.
+    struct TestOfBound {
+        Value* tested { nullptr };
+        // The nearest value with which the edge is not taken.
+        int64_t bound { 0 };
+        bool isLowerBound { false };
+        bool isUnsigned { false };
+    };
+
+    static std::optional<TestOfBound> testOfBoundOn(BasicBlock* block, unsigned successorIndex)
+    {
+        DominatingCondition condition = stripNegations(block->last()->child(0));
+        Value* comparison = condition.value;
+        std::optional<Opcode> inverted = invertedRelation(comparison->opcode());
+        if (!inverted || !comparison->child(0)->type().isInt() || !comparison->child(1)->hasInt())
+            return std::nullopt;
+        Opcode relation = !successorIndex == condition.isNonZero ? comparison->opcode() : *inverted;
+        TestOfBound test { comparison->child(0), comparison->child(1)->asInt(), isLessRelation(relation), isUnsignedRelation(relation) };
+        if (relation != LessEqual && relation != BelowEqual && relation != GreaterEqual && relation != AboveEqual)
+            return test;
+        // With the last value of the type on that side the edge is always taken.
+        IntegerInterval full = fullInterval(test.tested->type(), test.isUnsigned ? Signedness::Unsigned : Signedness::Signed);
+        Int128 constant = test.isUnsigned ? Int128 { static_cast<uint64_t>(test.bound) & static_cast<uint64_t>(full.max) } : Int128 { test.bound };
+        if (constant == (test.isLowerBound ? full.max : full.min))
+            return std::nullopt;
+        test.bound += test.isLowerBound ? 1 : -1;
+        return test;
+    }
+
+    static bool doTheSame(BasicBlock* first, BasicBlock* second)
+    {
+        if (first == second)
+            return true;
+        if (first->size() != second->size() || first->numPredecessors() != 1 || second->numPredecessors() != 1)
+            return false;
+        if (first->last()->opcode() != Jump || second->last()->opcode() != Jump || first->successorBlock(0) != second->successorBlock(0))
+            return false;
+        for (unsigned index = 0; index + 1 < first->size(); ++index) {
+            if (first->at(index)->opcode() == Nop && second->at(index)->opcode() == Nop)
+                continue;
+            auto* upsilon = first->at(index)->as<UpsilonValue>();
+            auto* otherUpsilon = second->at(index)->as<UpsilonValue>();
+            if (!upsilon || !otherUpsilon || upsilon->phi() != otherUpsilon->phi() || upsilon->child(0)->foldIdentity() != otherUpsilon->child(0)->foldIdentity())
+                return false;
+        }
+        return true;
+    }
+
+    static bool canRunWhereverOperandsAreKnown(Value* value)
+    {
+        Effects effects = value->effects();
+        return !effects.mustExecute() && !effects.reads && !effects.readsPinned && !effects.readsLocalState && !effects.controlDependent;
+    }
+
+    // Turn this: Branch(LessThan(value, constant1)) to A, else Branch(GreaterThan(value, constant2)) to A, else to B
+    // Into this: Branch(Above(Add(value, -constant1), constant2 - constant1)) to A, else to B
+    void mergeTestsOfOneInterval()
+    {
+        if (!m_foldsImpliedComparisons)
+            return;
+        for (BasicBlock* block : m_proc) {
+            if (block->last()->opcode() != Branch)
+                continue;
+            for (unsigned leavingIndex = 0; leavingIndex < 2; ++leavingIndex) {
+                BasicBlock* next = block->successorBlock(1 - leavingIndex);
+                if (next == block || next->numPredecessors() != 1 || next->last()->opcode() != Branch || next->size() > Limits::maxValuesBesideSecondTestOfInterval + 1)
+                    continue;
+                unsigned nextLeavingIndex = doTheSame(block->successorBlock(leavingIndex), next->successorBlock(0)) ? 0 : 1;
+                if (!doTheSame(block->successorBlock(leavingIndex), next->successorBlock(nextLeavingIndex)) || next->successorBlock(1 - nextLeavingIndex) == next)
+                    continue;
+                std::optional<TestOfBound> first = testOfBoundOn(block, leavingIndex);
+                std::optional<TestOfBound> second = testOfBoundOn(next, nextLeavingIndex);
+                if (!first || !second || first->tested != second->tested || first->isUnsigned != second->isUnsigned || first->isLowerBound == second->isLowerBound)
+                    continue;
+                int64_t least = first->isLowerBound ? first->bound : second->bound;
+                int64_t greatest = first->isLowerBound ? second->bound : first->bound;
+                Type type = first->tested->type();
+                if (type == Int32 && first->isUnsigned) {
+                    least = static_cast<uint32_t>(least);
+                    greatest = static_cast<uint32_t>(greatest);
+                }
+                if (first->isUnsigned ? static_cast<uint64_t>(least) > static_cast<uint64_t>(greatest) : least > greatest)
+                    continue;
+                bool canMove = true;
+                for (unsigned index = 0; index + 1 < next->size(); ++index)
+                    canMove &= canRunWhereverOperandsAreKnown(next->at(index));
+                if (!canMove)
+                    continue;
+
+                Value* branch = block->values().takeLast();
+                Origin origin = branch->origin();
+                FrequentedBlock leaving = block->successor(leavingIndex);
+                FrequentedBlock staying = next->successor(1 - nextLeavingIndex);
+                leaving.frequency() = maxFrequency(leaving.frequency(), rarerOf(block->successor(1 - leavingIndex).frequency(), next->successor(nextLeavingIndex).frequency()));
+                staying.frequency() = rarerOf(block->successor(1 - leavingIndex).frequency(), staying.frequency());
+
+                Value* nextBranch = next->values().takeLast();
+                m_proc.movedLoadLog().willAppendValuesOf(next, block);
+                block->values().appendVector(next->values());
+                next->values().clear();
+                next->values().append(nextBranch);
+                next->successorBlock(nextLeavingIndex)->removePredecessor(next);
+                staying.block()->replacePredecessor(next, block);
+                nextBranch->replaceWithOops(next);
+
+                Value* distance = block->appendNew<Value>(m_proc, Add, origin, first->tested, block->appendIntConstant(m_proc, origin, type, -static_cast<uint64_t>(least)));
+                Value* width = block->appendIntConstant(m_proc, origin, type, static_cast<uint64_t>(greatest) - static_cast<uint64_t>(least));
+                branch->child(0) = block->appendNew<Value>(m_proc, Above, origin, distance, width);
+                block->values().append(branch);
+                block->setSuccessors(leaving, staying);
+                m_changedCFG = true;
+                break;
+            }
+        }
+        handleChangedCFGIfNecessary();
+    }
+
     void replacePhi(Value* phi, Value* input, PhiChildren::UpsilonCollection upsilons)
     {
         m_changed = true;
@@ -5538,6 +6033,11 @@ private:
     Value* m_value { nullptr };
     Dominators* m_dominators { nullptr };
     bool m_valueOwnersAreCurrent { false };
+    BasicBlock* m_blockOfPhisByInputs { nullptr };
+    UncheckedKeyHashMap<unsigned, Value*, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_phisByInputs;
+    Vector<Value*> m_inputInBlock;
+    std::optional<BitVector> m_hasUserThatKeepsSum;
+    Vector<Value*, 8> m_newPartsOfAddresses;
     PhiChildren* m_phiChildren { nullptr };
     unsigned m_phiChildrenValueCount { 0 };
     IndexMap<BasicBlock*, BlockState> m_blockStates;
@@ -5551,6 +6051,7 @@ private:
     const bool m_mergesBlocksAfterForwardingJumps { m_proc.policy().optimization.mergesBlocksAfterForwardingJumps };
     BitVector m_isUsedForLowWord;
     UncheckedKeyHashMap<Value*, Value*> m_lowWords;
+    UncheckedKeyHashSet<Value*> m_integersConvertedFromDoubles;
     std::optional<MemoryNumbering> m_numbering;
     DominatingConditionStack m_conditions;
     const bool m_validatesIRAtEachPhase { shouldValidateIRAtEachPhase(m_proc) };

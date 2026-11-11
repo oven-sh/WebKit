@@ -1,0 +1,9 @@
+# the same functions with escape analysis withheld: nothing is known to be fresh, so every resolution is the operation as written
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK: ResolvePromise
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding
+# NEVER-NOT: FulfillFreshPromise
+# RUN(LOOP): walk f6 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# LOOP-NOT: = IsNotThenable
+# PROGRAM-OF: promise-that-nothing-has-taken-is-fulfilled-by-a-store.ir

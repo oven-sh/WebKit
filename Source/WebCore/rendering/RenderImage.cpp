@@ -51,7 +51,6 @@
 #include "InlineIteratorBoxInlines.h"
 #include "InlineIteratorInlineBox.h"
 #include "InlineIteratorLineBox.h"
-#include "LineSelection.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
 #include "LogicalSelectionOffsetCachesInlines.h"
@@ -77,11 +76,11 @@
 #include "SelectionGeometry.h"
 #include "Settings.h"
 #include "ShareableBitmap.h"
-#include "StyleImageDrawingExtras.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 #include "TextPainter.h"
 #include <wtf/NativePromise.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/StackStats.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -141,9 +140,9 @@ void RenderImage::collectSelectionGeometries(Vector<SelectionGeometry>& geometri
             lineExtentRect.setHeight(containingBlock->borderBoxHeight());
         }
     } else {
-        auto selectionLogicalRect = LineSelection::logicalRect(run->lineBox());
-        int selectionTop = !containingBlock->writingMode().isBlockFlipped() ? selectionLogicalRect.y() - logicalTop() : logicalBottom() - selectionLogicalRect.maxY();
-        int selectionHeight = selectionLogicalRect.height();
+        auto lineRect = run->lineBox().contentLogicalRectAdjustedForAdjacentLineBoxes();
+        int selectionTop = !containingBlock->writingMode().isBlockFlipped() ? lineRect.y() - logicalTop() : logicalBottom() - lineRect.maxY();
+        int selectionHeight = lineRect.height();
         imageRect = IntRect { 0,  selectionTop, logicalWidth(), selectionHeight };
         isFirstOnLine = !run->nextLineLeftwardOnLine();
         isLastOnLine = !run->nextLineRightwardOnLine();
@@ -229,7 +228,7 @@ IntSize RenderImage::imageSizeForError(CachedImage* newImage) const
 
     FloatSize imageSize;
     if (newImage->willPaintBrokenImage()) {
-        auto brokenImageAndImageScaleFactor = CachedImage::brokenImage(protect(document())->deviceScaleFactor());
+        auto brokenImageAndImageScaleFactor = CachedImage::brokenImage(document().deviceScaleFactor());
         imageSize = brokenImageAndImageScaleFactor.first->size();
         imageSize.scale(1 / brokenImageAndImageScaleFactor.second);
     } else if (newImage->hasImage()) {
@@ -315,6 +314,13 @@ bool RenderImage::imageRepresentsNothing() const
     return document().inNoQuirksMode() || (style().logicalWidth().isAuto() && style().logicalHeight().isAuto());
 }
 
+void RenderImage::forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>& function)
+{
+    RenderReplaced::forEachStyleImage(function);
+    if (RefPtr image = imageResource().styleImage())
+        function(*image);
+}
+
 void RenderImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
 {
     if (renderTreeBeingDestroyed())
@@ -349,7 +355,7 @@ void RenderImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
         imageSizeChange = setImageSizeForAltText(protect(cachedImage()));
     }
     repaintOrMarkForLayout(imageSizeChange, rect);
-    if (CheckedPtr cache = protect(document())->existingAXObjectCache())
+    if (CheckedPtr cache = document().existingAXObjectCache())
         cache->deferRecomputeIsIgnoredIfNeeded(protect(element()));
 
     if (RefPtr image = cachedImage(); image && image->currentFrameIsComplete()) {
@@ -416,6 +422,11 @@ ConcreteObjectSize RenderImage::concreteObjectSizeForDragImageOriginalSizeCompar
 }
 
 ConcreteObjectSize RenderImage::concreteObjectSizeForPositionInformation() const
+{
+    return defaultConcreteObjectSize();
+}
+
+ConcreteObjectSize RenderImage::concreteObjectSizeForElementImage() const
 {
     return defaultConcreteObjectSize();
 }
@@ -494,7 +505,7 @@ RefPtr<ShareableBitmap> RenderImage::createShareableBitmap(const CreateShareable
     if (!graphicsContext)
         return { };
 
-    styleImage->draw(*graphicsContext, *this, concreteObjectSize, FloatRect { { }, bitmapSize }, FloatRect { { }, concreteObjectSize.size() }, { imageOrientation() });
+    styleImage->draw(*graphicsContext, *this, ImageDrawDescriptor { concreteObjectSize, imageOrientation() }, FloatRect { { }, bitmapSize }, FloatRect { { }, concreteObjectSize.size() });
     return sharedBitmap;
 }
 
@@ -516,6 +527,16 @@ RefPtr<ShareableBitmap> RenderImage::createShareableBitmapForPositionInformation
 }
 
 RefPtr<ShareableBitmap> RenderImage::createShareableBitmapForImageBitmapRequest() const
+{
+    return createShareableBitmap();
+}
+
+RefPtr<ShareableBitmap> RenderImage::createShareableBitmapForFullScreen() const
+{
+    return createShareableBitmap();
+}
+
+RefPtr<ShareableBitmap> RenderImage::createShareableBitmapForImageServices() const
 {
     return createShareableBitmap();
 }
@@ -545,12 +566,12 @@ void RenderImage::repaintOrMarkForLayout(ImageSizeChangeType imageSizeChange, co
         return;
 
     if (parent()) {
-        auto repaintRect = replacedContentRect();
+        auto repaintRect = contentBoxRect();
         if (RefPtr styleImage = imageResource().styleImage(); styleImage && rect) {
             auto concreteObjectSize = concreteObjectSizeForPainting();
             if (!concreteObjectSize.isEmpty()) {
                 auto changedRect = styleImage->mapChangedRectToSource(*this, concreteObjectSize, *rect);
-                repaintRect.intersect(enclosingIntRect(mapRect(changedRect, FloatRect { { }, concreteObjectSize.size() }, repaintRect)));
+                repaintRect.intersect(enclosingIntRect(mapRect(changedRect, FloatRect { { }, concreteObjectSize.size() }, replacedContentPaintRect())));
             }
         }
         // FIXME: This needs to account for filter outsets: webkit.org/b/293553.
@@ -637,10 +658,10 @@ void RenderImage::paintIncompleteImageOutline(PaintInfo& paintInfo, LayoutPoint 
     context.setStrokeStyle(StrokeStyle::SolidStroke);
     context.setStrokeColor(Color::lightGray);
     context.setFillColor(Color::transparentBlack);
-    context.drawRect(snapRectToDevicePixels(LayoutRect({ paintOffset.x() + borderWidths.left() + padding.left(), paintOffset.y() + borderWidths.top() + padding.top() }, contentSize), protect(document())->deviceScaleFactor()), borderWidth);
+    context.drawRect(snapRectToDevicePixels(LayoutRect({ paintOffset.x() + borderWidths.left() + padding.left(), paintOffset.y() + borderWidths.top() + padding.top() }, contentSize), document().deviceScaleFactor()), borderWidth);
 }
 
-static bool LEGACY_NODELETE isDeferredImage(Element* element)
+NODELETE static bool isDeferredImage(Element* element)
 {
     auto* image = dynamicDowncast<HTMLImageElement>(element);
     return image && image->isDeferred();
@@ -654,7 +675,7 @@ void RenderImage::paintMissingImageState(PaintInfo& paintInfo, const LayoutPoint
     if (paintInfo.phase == PaintPhase::Foreground)
         protect(page())->addRelevantUnpaintedObject(*this, visualOverflowRect());
 
-    float deviceScaleFactor = protect(document())->deviceScaleFactor();
+    float deviceScaleFactor = document().deviceScaleFactor();
     LayoutUnit missingImageBorderWidth(1 / deviceScaleFactor);
 
     paintIncompleteImageOutline(paintInfo, paintOffset, missingImageBorderWidth);
@@ -687,7 +708,7 @@ void RenderImage::paintMissingImageState(PaintInfo& paintInfo, const LayoutPoint
             LayoutUnit centerY { (usableSize.height() - imageSize.height()) / 2 };
             imageOffset = LayoutSize(borderWidths.left() + padding.left() + centerX + missingImageBorderWidth, borderWidths.top() + padding.top() + centerY + missingImageBorderWidth);
 
-            context.drawBitmapImage(*brokenImage, snapRectToDevicePixels(LayoutRect(paintOffset + imageOffset, imageSize), deviceScaleFactor), { imageOrientation() });
+            brokenImage->draw(context, ImageDrawDescriptor { ConcreteObjectSize::fixed(brokenImage->size(imageOrientation())), imageOrientation() }, snapRectToDevicePixels(LayoutRect(paintOffset + imageOffset, imageSize), deviceScaleFactor));
             errorPictureDrawn = true;
         }
     }
@@ -726,7 +747,7 @@ void RenderImage::paintMissingImageState(PaintInfo& paintInfo, const LayoutPoint
             return paintOffset + LayoutPoint { contentHorizontalOffset, contentVerticalOffset };
         };
         auto textOrigin = altTextLocation();
-        textOrigin.setY(roundToDevicePixel(LayoutUnit { textOrigin.y() }, protect(document())->deviceScaleFactor()));
+        textOrigin.setY(roundToDevicePixel(LayoutUnit { textOrigin.y() }, document().deviceScaleFactor()));
         context.drawBidiText(fontCascade, textRun, textOrigin);
     } else {
         // FIXME: TextBoxPainter has this logic already, maybe we should transition to some painter class.
@@ -739,13 +760,13 @@ void RenderImage::paintMissingImageState(PaintInfo& paintInfo, const LayoutPoint
             visualLeft = borderBoxSize().width() - visualRight;
         visualLeft += adjustedPaintOffset.x();
 
-        visualLeft = roundToDevicePixel(visualLeft, protect(document())->deviceScaleFactor());
-        adjustedPaintOffset.setY(roundToDevicePixel(adjustedPaintOffset.y(), protect(document())->deviceScaleFactor()));
+        visualLeft = roundToDevicePixel(visualLeft, document().deviceScaleFactor());
+        adjustedPaintOffset.setY(roundToDevicePixel(adjustedPaintOffset.y(), document().deviceScaleFactor()));
 
         auto rotationRect = LayoutRect { visualLeft, adjustedPaintOffset.y(), textWidth, contentLogicalHeight };
         context.concatCTM(rotation(rotationRect, RotationDirection::Clockwise));
         auto textOrigin = LayoutPoint { visualLeft, adjustedPaintOffset.y() + fontCascade.metricsOfPrimaryFont().ascent() };
-        context.drawBidiText(fontCascade, textRun, roundPointToDevicePixels(textOrigin, protect(document())->deviceScaleFactor()));
+        context.drawBidiText(fontCascade, textRun, roundPointToDevicePixels(textOrigin, document().deviceScaleFactor()));
         context.concatCTM(rotation(rotationRect, RotationDirection::Counterclockwise));
     }
 }
@@ -762,7 +783,7 @@ void RenderImage::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
     }
 
     auto contentBoxRect = this->contentBoxRect();
-    float deviceScaleFactor = protect(document())->deviceScaleFactor();
+    float deviceScaleFactor = document().deviceScaleFactor();
     LayoutUnit missingImageBorderWidth(1 / deviceScaleFactor);
 
     if (isDeferredImage(element()))
@@ -802,7 +823,7 @@ void RenderImage::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
     auto paintRect = replacedContentPaintRect();
     paintRect.moveBy(paintOffset);
 
-    float snappingScaleFactor = protect(document())->pixelSnappingScaleFactor();
+    float snappingScaleFactor = document().pixelSnappingScaleFactor();
     bool clip = !contentBoxRect.contains(paintRect);
     GraphicsContextStateSaver stateSaver(context, clip);
     if (clip)
@@ -842,7 +863,7 @@ void RenderImage::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 
 void RenderImage::paintAreaElementFocusRing(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if (protect(document())->printing() || !frame().selection().isFocusedAndActive())
+    if (document().printing() || !frame().selection().isFocusedAndActive())
         return;
     
     if (paintInfo.context().paintingDisabled() && !paintInfo.context().performingPaintInvalidation())
@@ -898,9 +919,8 @@ RefPtr<NativeImage> RenderImage::createNativeImageAsPainted(float deviceScaleFac
     FloatSize contentBoxSize = contentBoxRect.size();
     auto scaleFactor = deviceScaleFactor * std::min({ 1.0f, maximumSize.width() / contentBoxSize.width(), maximumSize.height() / contentBoxSize.height() });
 
-    Ref frame = this->frame();
-    auto colorSpace = screenColorSpace(protect(protect(frame->mainFrame())->virtualView()).get());
-    RefPtr imageBuffer = ImageBuffer::create(contentBoxRect.size(), RenderingMode::Unaccelerated, RenderingPurpose::Snapshot, scaleFactor, colorSpace, PixelFormat::BGRA8);
+    // FIXME: <https://webkit.org/b/329173> We should not have to hardcode the sRGB colorspace here.
+    RefPtr imageBuffer = ImageBuffer::create(contentBoxRect.size(), RenderingMode::Unaccelerated, RenderingPurpose::Snapshot, scaleFactor, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!imageBuffer)
         return nullptr;
 
@@ -932,13 +952,17 @@ ImageDrawResult RenderImage::paintIntoRect(PaintInfo& paintInfo, const FloatRect
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
     auto invertContent = [&] {
         if (styleImage->drawsSVGImage())
-            return AXCustomColorModeController::shouldInvertSVGImage(*this, *styleImage);
+            return AXCustomColorModeController::shouldInvertSVGImage(*this, *styleImage) ? InvertContent::Yes : InvertContent::No;
 
-        return AXCustomColorModeController::shouldInvertContentImage(*this, rect.size());
+        if (AXCustomColorModeController::shouldForceInvertBitmapImage(*this, *styleImage))
+            return InvertContent::Forced;
+
+        return AXCustomColorModeController::shouldInvertContentImage(*this, rect.size()) ? InvertContent::Yes : InvertContent::No;
     };
 #endif
 
-    ImageDrawingOptions options = {
+    ImageDrawDescriptor descriptor {
+        concreteObjectSize,
         CompositeOperator::SourceOver,
         styleImage->decodingModeForImageDraw(*this, paintInfo),
         imageOrientation(),
@@ -946,7 +970,7 @@ ImageDrawResult RenderImage::paintIntoRect(PaintInfo& paintInfo, const FloatRect
         settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
         settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No,
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-        invertContent() ? InvertContent::Yes : InvertContent::No,
+        invertContent(),
 #endif
 #if USE(SKIA)
         StrictImageClamping::No,
@@ -959,11 +983,11 @@ ImageDrawResult RenderImage::paintIntoRect(PaintInfo& paintInfo, const FloatRect
     auto drawResult = ImageDrawResult::DidNothing;
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
     if (RefPtr cachedImage = this->cachedImage(); cachedImage && isMultiRepresentationHEIC())
-        drawResult = paintInfo.context().drawMultiRepresentationHEIC(*protect(cachedImage->image()), style().fontCascade().primaryFont(), rect, options);
+        drawResult = protect(cachedImage->image())->adapter().drawMultiRepresentationHEIC(paintInfo.context(), style().fontCascade().primaryFont(), rect, descriptor);
 #endif
 
     if (drawResult == ImageDrawResult::DidNothing)
-        drawResult = styleImage->draw(paintInfo.context(), *this, concreteObjectSize, rect, FloatRect { { }, concreteObjectSize.size() }, options);
+        drawResult = styleImage->draw(paintInfo.context(), *this, descriptor, rect, FloatRect { { }, concreteObjectSize.size() });
 
     if (drawResult == ImageDrawResult::DidRequestDecoding)
         protect(imageResource().cachedImage())->addClientWaitingForAsyncDecoding(protect(cachedImageClient()));
@@ -971,7 +995,7 @@ ImageDrawResult RenderImage::paintIntoRect(PaintInfo& paintInfo, const FloatRect
 #if USE(SYSTEM_PREVIEW)
     RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element());
     if (RefPtr cachedImage = this->cachedImage(); cachedImage && imageElement && imageElement->isSystemPreviewImage() && drawResult == ImageDrawResult::DidDraw && imageElement->document().settings().systemPreviewEnabled())
-        theme().paintSystemPreviewBadge(*protect(cachedImage->image()), paintInfo, rect);
+        theme().paintSystemPreviewBadge(protect(cachedImage->image())->nativeImage(ImageDrawDescriptor { concreteObjectSize }), paintInfo, rect);
 #endif
 
     if (drawResult != ImageDrawResult::DidNothing && element() && !paintInfo.context().paintingDisabled())
@@ -1106,7 +1130,7 @@ void RenderImage::layout()
     // https://html.spec.whatwg.org/multipage/images.html#relevant-mutations
     // "If the element allows auto-sizes: ... its concrete object size width changes"
     if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element())) {
-        if (imageElement->hasAutoSizes() && imageElement->isLazyLoadable())
+        if (imageElement->allowsAutoSizes())
             imageElement->scheduleAutoSizesResolution();
     }
 }
@@ -1161,7 +1185,7 @@ RenderReplaced* RenderImage::embeddedSVGRoot() const
 {
     if (RefPtr cachedImage = this->cachedImage()) {
         if (RefPtr image = dynamicDowncast<SVGImage>(cachedImage->image()))
-            return image->embeddedSVGRoot();
+            return image->defaultInstanceEmbeddedSVGRoot();
     }
     return nullptr;
 }

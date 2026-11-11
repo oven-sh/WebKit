@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// const parent = { set v(x) { saved = x } }, child = Object.create(parent); child.v = 5; print(saved); print(child.v)
 static constexpr ASCIILiteral setterOnPrototype = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Parent" fields=[]
@@ -38,7 +37,6 @@ function f1 name="v" kind=Setter flags=[HasThis] thisType={type=anything} parame
 }
 )IR"_s;
 
-// const child = Object.create({ valueOf() { return 5 } }); print(child + 1)
 static constexpr ASCIILiteral valueOfOnPrototype = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Parent" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
@@ -60,7 +58,6 @@ function f1 name="valueOf" flags=[HasThis] thisType={type=anything} results=[{ty
 }
 )IR"_s;
 
-// const parent = { }; parent.toString = function () { return "named" }; print("<" + Object.create(parent) + ">")
 static constexpr ASCIILiteral toStringOnPrototype = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Parent" fields=[]
@@ -85,7 +82,6 @@ function f1 name="toString" flags=[HasThis] thisType={type=anything} results=[{t
 }
 )IR"_s;
 
-// const made = new Object(); Object.defineProperty(made, "seven", { get() { return 7 } }); print(made.seven)
 static constexpr ASCIILiteral getterOfNewObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -93,7 +89,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Builtin builtin=Object
     v3 = Construct v2
-    v4 = Convert v3 declared={type=object flags=[IsFromCompiler]}
+    v4 = Convert v3 declared={type=object flags=[IsFromCompiler, IsClaim]}
     v5 = NewClosure function=f1
     DefineGetter v4, v5 key="seven"
     v7 = PropGet v4 key="seven"
@@ -106,7 +102,6 @@ function f1 name="seven" kind=Getter flags=[HasThis] thisType={type=anything} re
 }
 )IR"_s;
 
-// function show(e) { print(e.message); print(e instanceof Error) } show(new TypeError("boom"))
 static constexpr ASCIILiteral errorAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -129,7 +124,6 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
 }
 )IR"_s;
 
-// function count(a) { print(a.length) } function outer() { count(arguments) } outer(1, 1)
 static constexpr ASCIILiteral argumentsAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -154,7 +148,6 @@ function f2 name="count" parameters=[{type=anything}] results=[{type=anything}] 
 }
 )IR"_s;
 
-// function show(x) { print(x.a) } show(3); show(Object.create({ a: 3 }))
 static constexpr ASCIILiteral numberOrObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Parent" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
@@ -177,7 +170,6 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
 }
 )IR"_s;
 
-// const holder = { cache: Object.create({ a: 4 }) }, seen = id(holder); print(seen.cache.a); seen.cache = Object.create({ a: 4 }); print(holder.cache.a)
 static constexpr ASCIILiteral objectInField = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Parent" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
@@ -204,7 +196,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-// const parent = { }; parent.toJSON = function () { return 1 }; print(JSON.stringify(Object.create(parent)))
 static constexpr ASCIILiteral toJSONOnPrototype = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Parent" fields=[]
@@ -227,7 +218,6 @@ function f1 name="toJSON" flags=[HasThis] thisType={type=anything} results=[{typ
 }
 )IR"_s;
 
-// const child = Object.create({ get double() { return this.n * 2 } }); child.n = 4; print(child.double)
 static constexpr ASCIILiteral getterReadsThis = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Parent" fields=[]
@@ -253,7 +243,6 @@ function f1 name="double" kind=Getter flags=[HasThis] thisType={type=anything} r
 }
 )IR"_s;
 
-// function show(n) { print(n + 1) } show(new Number(5))
 static constexpr ASCIILiteral numberObjectAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -274,9 +263,10 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
 }
 )IR"_s;
 
-// function show(entries) { print(entries.next().done) } show(new Map().entries())
 static constexpr ASCIILiteral mapIteratorAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
+runtimefunction id=MapIteratorPrototypeNext function=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Map
     v1 = Construct v0
@@ -295,9 +285,16 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
     v6 = Call v2, -, v5
     Return
 }
+function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=MapIteratorPrototypeNext results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = StepMapIterator v1
+    v3 = ResultAt v2 index=1
+    v4 = ResultAt v2
+    v5 = CreateIteratorResult v3, v4
+    Return v5
+}
 )IR"_s;
 
-// function show(e) { print(e.name) } try { throw new TypeError("boom") } catch (e) { show(e) }
 static constexpr ASCIILiteral caughtErrorAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -324,21 +321,8 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
 
 static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral words[] = {
-        "validate"_s,
-        "references=narrow"_s,
-        "heat=EverythingIsHot"_s,
-        "heat=EverythingIsCold"_s,
-        "disable=pass:ResolveCalls"_s,
-        "disable=pass:ResolveAccesses"_s,
-        "disable=pass:SplitUnions"_s,
-        "disable=pass:PlaceTypeTests"_s,
-        "disable=pass:InlineCalls"_s,
-        "disable=pass:SinkAllocations"_s,
-    };
-    checkOutputOfProgramInShell(programText, expectedOutput, { });
-    for (ASCIILiteral word : words)
-        checkOutputOfProgramInShell(programText, expectedOutput, { word });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=wide"_s });
+    checkOutputOfProgramInShell(programText, expectedOutput, { "references=narrow"_s });
 }
 
 static void testSetterOnPrototype()

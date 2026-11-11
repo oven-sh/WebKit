@@ -325,8 +325,7 @@ static void cacheBaselineAlignedGridItems(const RenderGrid& grid, GridTrackSizin
         if (gridItem.isOutOfFlowPositioned() || gridItem.isLegend())
             continue;
 
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST callback(const_cast<RenderBox*>(&gridItem));
+        callback(const_cast<RenderBox*>(&gridItem));
 
         // We keep a cache of items with baseline as alignment values so that we only compute the baseline shims for
         // such items. This cache is needed for performance related reasons due to the cost of evaluating the item's
@@ -434,7 +433,7 @@ void RenderGrid::layoutBlock(RelayoutChildren relayoutChildren, LayoutUnit)
     repainter.repaintAfterLayout();
 }
 
-static void LEGACY_NODELETE clearGridItemOverridingSizesBeforeLayout(RenderGrid& renderGrid)
+static void clearGridItemOverridingSizesBeforeLayout(RenderGrid& renderGrid, RenderGridLayoutState& gridLayoutState)
 {
     // Grid's layout logic controls the grid item's override content size, hence we need to
     // clear any override set previously, so it doesn't interfere in current layout
@@ -442,10 +441,26 @@ static void LEGACY_NODELETE clearGridItemOverridingSizesBeforeLayout(RenderGrid&
     for (auto& gridItem : childrenOfType<RenderBox>(renderGrid)) {
         if (gridItem.isOutOfFlowPositioned() || gridItem.isLegend())
             continue;
+        if (gridItem.overridingBorderBoxLogicalHeight())
+            gridLayoutState.setLayoutRequirementForGridItem(gridItem, ItemLayoutRequirement::NeedsLayoutForIntrinsicLogicalHeight);
         gridItem.clearOverridingSize();
     }
 }
 
+
+bool RenderGrid::intrinsicLogicalWidthsDependOnLogicalHeight() const
+{
+    // With auto-fill or auto-fit rows, the height decides how many rows a column-flow grid has, and so how many
+    // columns its items flow into.
+    if (!style().gridAutoFlow().isColumn() || style().gridTemplateRows().autoRepeatSizes.isEmpty())
+        return false;
+    return hasRelativeLogicalHeight() || ((isFlexItem() || isGridItem()) && hasStretchedLogicalHeight());
+}
+
+bool RenderGrid::shouldInvalidateContentWidths() const
+{
+    return RenderBlock::shouldInvalidateContentWidths() || intrinsicLogicalWidthsDependOnLogicalHeight();
+}
 
 bool RenderGrid::hasDefiniteLogicalHeight() const
 {
@@ -471,7 +486,7 @@ void RenderGrid::layoutGrid(RelayoutChildren relayoutChildren)
         RenderGridLayoutState gridLayoutState;
 
         updateIntrinsicLogicalHeightsForRowSizingFirstPassCacheAvailability();
-        clearGridItemOverridingSizesBeforeLayout(*this);
+        clearGridItemOverridingSizesBeforeLayout(*this, gridLayoutState);
         computeLayoutRequirementsForItemsBeforeLayout(gridLayoutState);
 
         preparePaginationBeforeBlockLayout(relayoutChildren);
@@ -650,7 +665,7 @@ void RenderGrid::layoutGridLanes(RelayoutChildren relayoutChildren)
         LayoutStateMaintainer statePusher(*this, locationOffset(), isTransformed() || hasReflection() || writingMode().isBlockFlipped());
         RenderGridLayoutState gridLayoutState;
 
-        clearGridItemOverridingSizesBeforeLayout(*this);
+        clearGridItemOverridingSizesBeforeLayout(*this, gridLayoutState);
 
         // We are committed to a full grid lanes layout; invalidate the resolved track list now so that a
         // stale read asserts if we fail to repopulate it below (see updateResolvedTrackListsAfterLayout).
@@ -872,8 +887,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderGrid::computeIntrinsicLogicalWidths() co
     if (LayoutIntegration::canUseForGridLayout(*this)) {
         // const_cast is safe here: computeIntrinsicWidths() only reads grid properties
         // and does not mutate RenderGrid state, matching the legacy path pattern below.
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST auto gridLayout = LayoutIntegration::GridLayout { const_cast<RenderGrid&>(*this) };
+        auto gridLayout = LayoutIntegration::GridLayout { const_cast<RenderGrid&>(*this) };
         gridLayout.updateFormattingContextGeometries();
         auto [minLogicalWidth, maxLogicalWidth] = gridLayout.computeIntrinsicWidths();
 
@@ -889,8 +903,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderGrid::computeIntrinsicLogicalWidths() co
     GridTrackSizingAlgorithm algorithm(this, grid);
     // placeItemsOnGrid isn't const since it mutates our grid, but it's safe to do
     // so here since we've overridden m_currentGrid with a stack based temporary.
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderGrid&>(*this).placeItemsOnGrid(std::nullopt);
+    const_cast<RenderGrid&>(*this).placeItemsOnGrid(std::nullopt);
 
     performPreLayoutForGridItems(algorithm, ShouldUpdateGridAreaLogicalSize::No);
 
@@ -911,12 +924,10 @@ std::pair<LayoutUnit, LayoutUnit> RenderGrid::computeIntrinsicLogicalWidths() co
         // has to be the one taken before either of them placed anything.
         auto fitTolerance = resolveFitTolerance(*this, Style::GridTrackSizingDirection::Columns);
 
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST auto minContentLayout = GridLanesLayout { const_cast<RenderGrid&>(*this), gridAxisTracksCountBeforeAutoPlacement, Style::GridTrackSizingDirection::Columns };
+        auto minContentLayout = GridLanesLayout { const_cast<RenderGrid&>(*this), gridAxisTracksCountBeforeAutoPlacement, Style::GridTrackSizingDirection::Columns };
         minLogicalWidth = minContentLayout.performGridLanesPlacement(algorithm, fitTolerance, GridLanesLayout::Phase::MinContent).gridContentSize();
 
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST auto maxContentLayout = GridLanesLayout { const_cast<RenderGrid&>(*this), gridAxisTracksCountBeforeAutoPlacement, Style::GridTrackSizingDirection::Columns };
+        auto maxContentLayout = GridLanesLayout { const_cast<RenderGrid&>(*this), gridAxisTracksCountBeforeAutoPlacement, Style::GridTrackSizingDirection::Columns };
         maxLogicalWidth = maxContentLayout.performGridLanesPlacement(algorithm, fitTolerance, GridLanesLayout::Phase::MaxContent).gridContentSize();
     }
 
@@ -1616,13 +1627,13 @@ void RenderGrid::setResolvedTrackSizes(Vector<LayoutUnit>&& columnSizes, Vector<
     m_resolvedTrackList.isValid = true;
 }
 
-static const StyleContentAlignmentData& LEGACY_NODELETE contentAlignmentNormalBehaviorGrid()
+NODELETE static const StyleContentAlignmentData& contentAlignmentNormalBehaviorGrid()
 {
     static const StyleContentAlignmentData normalBehavior = {ContentPosition::Normal, ContentDistribution::Stretch};
     return normalBehavior;
 }
 
-static bool LEGACY_NODELETE overrideSizeChanged(const RenderBox& gridItem, Style::GridTrackSizingDirection direction, std::optional<LayoutUnit> width, std::optional<LayoutUnit> height)
+NODELETE static bool overrideSizeChanged(const RenderBox& gridItem, Style::GridTrackSizingDirection direction, std::optional<LayoutUnit> width, std::optional<LayoutUnit> height)
 {
     if (direction == Style::GridTrackSizingDirection::Columns) {
         if (auto gridAreaContentLogicalWidth = gridItem.gridAreaContentLogicalWidth())
@@ -1634,7 +1645,7 @@ static bool LEGACY_NODELETE overrideSizeChanged(const RenderBox& gridItem, Style
     return true;
 }
 
-static bool LEGACY_NODELETE hasRelativeBlockAxisSize(const RenderGrid& grid, const RenderBox& gridItem)
+NODELETE static bool hasRelativeBlockAxisSize(const RenderGrid& grid, const RenderBox& gridItem)
 {
     return GridLayoutFunctions::isOrthogonalGridItem(grid, gridItem) ? gridItem.hasRelativeLogicalWidth() || gridItem.style().logicalWidth().isAuto() : gridItem.hasRelativeLogicalHeight();
 }
@@ -1668,7 +1679,7 @@ void RenderGrid::updateGridAreaLogicalSize(RenderBox& gridItem, std::optional<La
     bool gridAreaWidthChanged = overrideSizeChanged(gridItem, Style::GridTrackSizingDirection::Columns, width, height);
     bool gridAreaHeightChanged = overrideSizeChanged(gridItem, Style::GridTrackSizingDirection::Rows, width, height);
     if (gridAreaWidthChanged || (gridAreaHeightChanged && hasRelativeBlockAxisSize(*this, gridItem)))
-        gridItem.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        gridItem.setNeedsLayout(MarkingBehavior::OnlyThis);
 
     gridItem.setGridAreaContentLogicalWidth(width);
     gridItem.setGridAreaContentLogicalHeight(height);
@@ -1701,7 +1712,7 @@ void RenderGrid::layoutGridItems(RenderGridLayoutState& gridLayoutState, GridLan
 
         auto* renderGrid = dynamicDowncast<RenderGrid>(gridItem);
         if (renderGrid && (renderGrid->isSubgridColumns() || renderGrid->isSubgridRows()))
-            gridItem.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            gridItem.setNeedsLayout(MarkingBehavior::OnlyThis);
 
         // Setting the definite grid area's sizes. It may imply that the
         // item must perform a layout if its area differs from the one
@@ -1767,7 +1778,7 @@ void RenderGrid::layoutOutOfFlowBox(RenderBox& gridItem, RelayoutChildren relayo
 
     // Mark for layout as we're resetting the position before and we relay in generic layout logic
     // for positioned items in order to get the offsets properly resolved.
-    gridItem.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    gridItem.setChildNeedsLayout(MarkingBehavior::OnlyThis);
 
     RenderBlock::layoutOutOfFlowBox(gridItem, relayoutChildren, fixedPositionObjectsOnly);
 }
@@ -1850,7 +1861,7 @@ void RenderGrid::populateGridPositionsForDirection(const GridTrackSizingAlgorith
     }
 }
 
-static LayoutUnit LEGACY_NODELETE computeOverflowAlignmentOffset(OverflowAlignment overflow, LayoutUnit trackSize, LayoutUnit gridItemSize)
+NODELETE static LayoutUnit computeOverflowAlignmentOffset(OverflowAlignment overflow, LayoutUnit trackSize, LayoutUnit gridItemSize)
 {
     LayoutUnit offset = trackSize - gridItemSize;
     switch (overflow) {
@@ -1912,7 +1923,7 @@ void RenderGrid::stretchBlockSizeForGridItem(RenderBox& gridItem, LayoutUnit ali
     // FIXME: Can avoid laying out here in some cases. See https://webkit.org/b/87905.
     if (itemNeedsRelayoutForStretchAlignment) {
         gridItem.setLogicalHeight(0_lu);
-        gridItem.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        gridItem.setNeedsLayout(MarkingBehavior::OnlyThis);
     }
 }
 
@@ -1922,7 +1933,7 @@ void RenderGrid::stretchInlineSizeForGridItem(RenderBox& gridItem, LayoutUnit al
     auto desiredLogicalWidth = gridItem.constrainLogicalWidthByMinMax(stretchedLogicalWidth, contentBoxWidth(), *this);
     gridItem.setOverridingBorderBoxLogicalWidth(desiredLogicalWidth);
     if (desiredLogicalWidth != gridItem.logicalWidth())
-        gridItem.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        gridItem.setNeedsLayout(MarkingBehavior::OnlyThis);
 }
 
 // FIXME: This logic is shared by RenderFlexibleBox, so it should be moved to RenderBox.
@@ -2398,7 +2409,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderGrid::gridAreaPositionForInFlowGridItem(
     return { start, end };
 }
 
-std::pair<OverflowAlignment, ContentPosition> static LEGACY_NODELETE resolveContentDistributionFallback(ContentDistribution distribution)
+NODELETE std::pair<OverflowAlignment, ContentPosition> static resolveContentDistributionFallback(ContentDistribution distribution)
 {
     switch (distribution) {
     case ContentDistribution::SpaceBetween:

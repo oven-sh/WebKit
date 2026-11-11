@@ -1,0 +1,60 @@
+# function size(view: Uint8Array) { return view.length; }   function sizeOfMarked(view: Uint8Array) { return view.length; }
+# const plain = new Uint8Array(4), marked = new Uint8Array(4); marked.extra = 1; for (..) total += size(plain) + sizeOfMarked(marked);
+# Link knows every caller of both. All that arrives at `size` comes out of a site whose objects have not left the program and on which no reached code lays a name, defines anything by a descriptor or puts another object above:
+# each has the names that its class gives it and no other, for as long as it lives. So there is no closed arm behind the read. The word is held against the view where it is taken: one bit of its cell, and a stop by name where the word is false.
+# A name is laid on what arrives at `sizeOfMarked`: nothing is said of it, and the view is asked when the code runs.
+# Both once asked.
+# RUN: link functions mechanisms=all
+# CHECK: function f1
+# CHECK: parameter 0 {{*}}proven=Uint8Array{{*}} stays-as-made
+# CHECK: function f2
+# CHECK-NOT: stays-as-made
+# RUN(WALK): walk f1 f2 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: = IsPristine {{*}}aspects=[Names, CellAlone]
+# WALK-NEXT: CheckProof {{*}}checkedType=true
+# WALK-NOT: PropGet
+# WALK: = GetTypedArrayLength
+# WALK-LABEL: code f2:Body
+# WALK: = IsPristine {{*}} builtinClass=Uint8Array
+# WALK: = PropGet {{*}}key="length"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=Uint8Array
+    v3 = Integer integer=4
+    v4 = Construct v2, -, v3
+    v5 = Construct v2, -, v3
+    v6 = Integer integer=1
+    PropSet v5, v6 key="extra"
+    v8 = Integer
+    Jump -> next b1(v8, v8)
+  b1(v9: anything, v10: anything):
+    LoopHint
+    v12 = Integer integer=3
+    v13 = Less v10, v12
+    Branch v13 -> taken b2(), notTaken b3()
+  b2():
+    v14 = Call v0, -, v4
+    v15 = Call v1, -, v5
+    v16 = Add v14, v15
+    v17 = Add v9, v16
+    v18 = Increment v10
+    Jump -> next b1(v17, v18)
+  b3():
+    Return v9
+}
+function f1 name="size" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+function f2 name="sizeOfMarked" module=m0 length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}

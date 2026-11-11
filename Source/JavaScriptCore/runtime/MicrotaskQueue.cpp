@@ -178,6 +178,37 @@ void MarkedMicrotaskDeque::visitAggregateImpl(Visitor& visitor)
 }
 DEFINE_VISIT_AGGREGATE(MarkedMicrotaskDeque);
 
+// Kept out of line so drainImpl's frame has no rarely written slots. A stale copy of a pointer left in such a slot keeps its
+// object alive for as long as the drain loop runs.
+static NEVER_INLINE void dequeueWithoutRunning(MarkedMicrotaskDeque& queue, MarkedMicrotaskDeque& toKeep, QueuedTask::Result result)
+{
+    auto task = queue.dequeue();
+    if (result == QueuedTask::Result::Suspended)
+        toKeep.enqueue(WTF::move(task));
+}
+
+static NEVER_INLINE void runThroughDispatcher(MarkedMicrotaskDeque& queue, MarkedMicrotaskDeque& toKeep, JSGlobalObject* globalObject, JSMicrotaskDispatcher* jsMicrotaskDispatcher)
+{
+    EnsureStillAliveScope dispatcherScope(jsMicrotaskDispatcher);
+
+    auto task = queue.dequeue();
+    QueuedTask::Result result;
+    {
+        ScriptProfilingScope profilingScope(globalObject, ProfilingReason::Microtask);
+        result = jsMicrotaskDispatcher->dispatcher()->run(task);
+    }
+
+    switch (result) {
+    case QueuedTask::Result::Executed:
+        break;
+    case QueuedTask::Result::Discard:
+        break;
+    case QueuedTask::Result::Suspended:
+        toKeep.enqueue(WTF::move(task));
+        break;
+    }
+}
+
 template<bool useCallOnEachMicrotask>
 ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGlobalObject* currentGlobalObject, VM& vm, TopExceptionScope& catchScope)
 {
@@ -193,9 +224,7 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
             auto* globalObject = uncheckedDowncast<JSGlobalObject>(front.dispatcher());
             auto result = globalObject->microtaskRunnability();
             if (result != QueuedTask::Result::Executed) [[unlikely]] {
-                auto task = m_queue.dequeue();
-                if (result == QueuedTask::Result::Suspended)
-                    m_toKeep.enqueue(WTF::move(task));
+                dequeueWithoutRunning(m_queue, m_toKeep, result);
                 continue;
             }
 
@@ -215,24 +244,7 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
             if (globalObject != currentGlobalObject) [[unlikely]]
                 return { globalObject, false };
 
-            EnsureStillAliveScope dispatcherScope(jsMicrotaskDispatcher);
-
-            auto task = m_queue.dequeue();
-            QueuedTask::Result result;
-            {
-                ScriptProfilingScope profilingScope(globalObject, ProfilingReason::Microtask);
-                result = jsMicrotaskDispatcher->dispatcher()->run(task);
-            }
-
-            switch (result) {
-            case QueuedTask::Result::Executed:
-                break;
-            case QueuedTask::Result::Discard:
-                break;
-            case QueuedTask::Result::Suspended:
-                m_toKeep.enqueue(WTF::move(task));
-                break;
-            }
+            runThroughDispatcher(m_queue, m_toKeep, globalObject, jsMicrotaskDispatcher);
 
             if (!catchScope.clearExceptionExceptTermination()) [[unlikely]] {
                 clear();
