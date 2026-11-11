@@ -24,12 +24,12 @@
 # code f4:Body {
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
 #     v2: f6 @Cell = NewClosure v1 function=f6 closureForm=Slim traits=[mayCollect, mayTouchMemory]
-#     v3: anything @JSValue = CallDirect v0, v2 function=f1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: anything @JSValue = CallDirect v0, v2 function=f1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v4: f6 @Cell = NewClosure v1 function=f6 closureForm=Slim traits=[mayCollect, mayTouchMemory]
 #     v5: f5 @Cell = NewClosure v4 function=f5 closureForm=Slim traits=[mayCollect, mayTouchMemory]
-#     v6: anything @JSValue = Call v0, -, v5 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v6: anything @JSValue = Call v0, -, v5 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v7: f6 @Cell = NewClosure v1 function=f6 closureForm=Slim traits=[mayCollect, mayTouchMemory]
-#     v8: anything @JSValue = CallDirect v7 function=f3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v8: anything @JSValue = CallDirect v7 function=f3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v9: f6 @Cell = NewClosure v1 function=f6 closureForm=Slim traits=[mayCollect, mayTouchMemory]
 #     Return v9
 # }

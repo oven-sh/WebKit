@@ -747,17 +747,17 @@ ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::create(VM& vm,
     }
     if (JSObject* object = variant.prototype.getObject(); object && !object->structure()->mayBePrototype())
         object->didBecomePrototype(vm);
-    countEvent(vm, RuntimeCounterID::CompiledStructuresMade);
+    countEvent(vm, RuntimeCounterID::CompiledStructuresCreated);
     ++m_numberOfStructuresMade;
     RELEASE_ASSERT(!variant.hasExtraProperties || !layout.extraPropertiesSlot() == !!variant.heldExtraProperties);
     RELEASE_ASSERT(!variant.heldExtraProperties || (variant.hasExtraProperties && !variant.extraPropertiesStructure));
     Variant parameters = variant;
     parameters.realm = realm;
     CompiledStructure* structure = CompiledStructure::createForObject(vm, *templateStructure, parameters);
-    bool hasFieldThatIsBornFixed = variant.hasExtraProperties && std::ranges::any_of(layout.fields(), [](const FieldData& field) {
+    bool hasNonConfigurableField = variant.hasExtraProperties && std::ranges::any_of(layout.fields(), [](const FieldData& field) {
         return field.attributes() & PropertyAttribute::DontDelete;
     });
-    if (variant.hasExtraProperties && !hasFieldThatIsBornFixed)
+    if (variant.hasExtraProperties && !hasNonConfigurableField)
         structure->setHasOnlyConfigurableFields();
     return structure;
 }
@@ -1117,7 +1117,7 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
         .header = kind == AllocatedCellKind::Environment ? Environment::headerFor(structure, allocation.shape) : cellHeaderFor(structure),
         .orderAndShapeWords = orderAndShapeWordsFor(allocation),
         .allocator = allocator ? allocator : &m_allocatorWithoutRoom,
-        .prototype = kind == AllocatedCellKind::Object ? static_cast<uint64_t>(JSValue::encode(structure->storedPrototype())) : 0,
+        .prototype = kind == AllocatedCellKind::Object && !m_tables.layoutForShape(allocation.shape).impossibleMutations().contains(ObjectMutation::ConstructDirectly) ? static_cast<uint64_t>(JSValue::encode(structure->storedPrototype())) : 0,
     };
     m_writtenRecords.record(&record);
     if (kind == AllocatedCellKind::Object && noteWhetherLivesWhilePrototypeLives(m_tables.layoutForShape(allocation.shape)))

@@ -10,6 +10,7 @@
 #include "AOTMachineOrder.h"
 #include "AOTMachineTarget.h"
 #include <array>
+#include <bit>
 #include <cstdlib>
 
 namespace JSC { namespace AOT { namespace Machine {
@@ -29,7 +30,7 @@ enum class ValueFlag : uint16_t {
     WorksInMemory = 1 << 11,
     AddsToWholeWord = 1 << 12,
     IsKeptForCollector = 1 << 13,
-    GoesByOverflow = 1 << 14,
+    UsesOverflowFlag = 1 << 14,
     HintIsOfRareRegion = 1 << 15,
 };
 
@@ -122,7 +123,7 @@ public:
     bool worksInMemory(const Operation* operation) const { return of(operation).has(ValueFlag::WorksInMemory); }
     const Operation* storeBehind(const Operation* branch) const { return m_storesBehindBranches[branch->owner()->index()]; }
 
-    bool goesByOverflow(const Operation* operation) const { return of(operation).has(ValueFlag::GoesByOverflow); }
+    bool usesOverflowFlag(const Operation* operation) const { return of(operation).has(ValueFlag::UsesOverflowFlag); }
 
 private:
     friend class Arena;
@@ -173,11 +174,11 @@ struct MemoryUpdate {
 
 JS_EXPORT_PRIVATE MemoryUpdate memoryUpdateOf(const Liveness&, const Operation* storeOrBranch);
 
-struct SumTestedByOverflow {
+struct OverflowCheckedSum {
     Operation* left() const { return userOfLeft->child(indexOfLeft); }
     Operation* right() const { return userOfRight->child(indexOfRight); }
     bool subtracts() const { return sum->opcode() == Sub; }
-    bool branchReadsSum() const { return leastResult || isWidenedWhereTestFails; }
+    bool branchReadsSum() const { return leastResult || isWidenedOnFailure; }
 
     const Operation* sum { nullptr };
     const Operation* userOfLeft { nullptr };
@@ -186,14 +187,62 @@ struct SumTestedByOverflow {
     unsigned indexOfLeft { 0 };
     unsigned indexOfRight { 0 };
     unsigned indexOfSum { 0 };
-    uint8_t successorThatPasses { 0 };
+    uint8_t passingSuccessor { 0 };
     std::optional<int32_t> leastResult;
     bool registerHoldsWholeSum { false };
     bool mayFallBelowInt32 { false };
-    bool isWidenedWhereTestFails { false };
+    bool isWidenedOnFailure { false };
 };
 
-JS_EXPORT_PRIVATE SumTestedByOverflow sumTestedByOverflowOf(const Liveness&, const Operation* sumOrBranch);
+JS_EXPORT_PRIVATE OverflowCheckedSum overflowCheckedSumOf(const Liveness&, const Operation* sumOrBranch);
+
+inline bool namesWord(const Operation* operation) { return operation->opcode() == ZExt32 && clearsUpperHalf(operation->child(0)); }
+
+inline bool isShiftByConstant(const Operation* operation)
+{
+    Opcode opcode = operation->opcode();
+    return (opcode == Shl || opcode == ZShr || opcode == SShr) && operation->child(1)->hasInt32();
+}
+
+inline unsigned amountOfShift(const Operation* shift)
+{
+    ASSERT(isShiftByConstant(shift));
+    return static_cast<unsigned>(shift->child(1)->asInt32()) & (shift->type() == Int32 ? 31 : 63);
+}
+
+struct BitField {
+    unsigned lowestBit;
+    unsigned numberOfBits;
+    bool extendsSign;
+};
+
+inline std::optional<BitField> bitFieldOf(const Operation* operation)
+{
+    Opcode opcode = operation->opcode();
+    if (opcode != BitAnd && opcode != ZShr && opcode != SShr)
+        return std::nullopt;
+    const Operation* shift = operation->child(0);
+    const Operation* constant = operation->child(1);
+    if (!constant->hasInt() || !isShiftByConstant(shift))
+        return std::nullopt;
+
+    unsigned width = operation->type() == Int32 ? 32 : 64;
+    unsigned amount = amountOfShift(shift);
+    if (opcode == BitAnd) {
+        uint64_t mask = static_cast<uint64_t>(constant->asInt());
+        if (width == 32)
+            mask = static_cast<uint32_t>(mask);
+        unsigned numberOfBits = static_cast<unsigned>(std::popcount(mask));
+        if (shift->opcode() == Shl || !mask || (mask & (mask + 1)) || amount + numberOfBits > width)
+            return std::nullopt;
+        return BitField { amount, numberOfBits, false };
+    }
+
+    unsigned rightShiftAmount = amountOfShift(operation);
+    if (shift->opcode() != Shl || rightShiftAmount < amount)
+        return std::nullopt;
+    return BitField { rightShiftAmount - amount, width - rightShiftAmount, opcode == SShr };
+}
 
 struct WayOutOfBranch {
     bool holds(Position position) const { return begin <= position && position < end; }
@@ -229,8 +278,8 @@ void forEachLeafBelow(const Liveness& liveness, const Operation* operation, cons
         functor(update.userOfOperand, update.indexOfOperand, update.operand());
         return;
     }
-    if (liveness.goesByOverflow(operation)) [[unlikely]] {
-        SumTestedByOverflow test = sumTestedByOverflowOf(liveness, operation);
+    if (liveness.usesOverflowFlag(operation)) [[unlikely]] {
+        OverflowCheckedSum test = overflowCheckedSumOf(liveness, operation);
         if (operation->opcode() != Branch) {
             functor(test.userOfLeft, test.indexOfLeft, test.left());
             functor(test.userOfRight, test.indexOfRight, test.right());
@@ -256,7 +305,7 @@ void forEachLeafBelow(const Liveness& liveness, const Operation* operation, cons
 template<typename FunctorForChild, typename FunctorForRest>
 ALWAYS_INLINE void forEachLeafInParts(const Liveness& liveness, const Operation* operation, const FunctorForChild& functorForChild, const FunctorForRest& functorForRest)
 {
-    constexpr uint16_t hasLeavesOfItsOwn = static_cast<uint16_t>(ValueFlag::WorksInMemory) | static_cast<uint16_t>(ValueFlag::GoesByOverflow);
+    constexpr uint16_t hasLeavesOfItsOwn = static_cast<uint16_t>(ValueFlag::WorksInMemory) | static_cast<uint16_t>(ValueFlag::UsesOverflowFlag);
     const ValueFacts* facts = liveness.valueFacts();
     if (facts[operation->index()].flags & hasLeavesOfItsOwn) [[unlikely]] {
         functorForRest(operation, nullptr);
@@ -280,7 +329,7 @@ ALWAYS_INLINE void forEachLeafInParts(const Liveness& liveness, const Operation*
 {
     const ValueFacts* facts = liveness.valueFacts();
     forEachLeafInParts(liveness, operation, functorForChild, [&](const Operation* below, const Operation* selectAbove) ALWAYS_INLINE_LAMBDA {
-        constexpr uint16_t hasLeavesOfItsOwn = static_cast<uint16_t>(ValueFlag::WorksInMemory) | static_cast<uint16_t>(ValueFlag::GoesByOverflow);
+        constexpr uint16_t hasLeavesOfItsOwn = static_cast<uint16_t>(ValueFlag::WorksInMemory) | static_cast<uint16_t>(ValueFlag::UsesOverflowFlag);
         if (below == operation || selectAbove || (facts[below->index()].flags & hasLeavesOfItsOwn) || below->isUnconditionalJump()) [[unlikely]] {
             functorForRest(below, selectAbove);
             return;
@@ -309,7 +358,7 @@ ALWAYS_INLINE void forEachLeaf(const Liveness& liveness, const Operation* operat
 
 inline bool addsScaledIndex(const Liveness& liveness, const Operation* operation)
 {
-    if (operation->opcode() != Add || liveness.isFused(operation))
+    if (operation->opcode() != Add || operation->type() != Int64 || liveness.isFused(operation))
         return false;
     auto isFusedShift = [&](const Operation* child) {
         return child->opcode() == Shl && liveness.isFused(child);
@@ -337,7 +386,7 @@ inline bool standsInInstruction(const Liveness& liveness, const Operation* user,
 
 constexpr bool changesWidthOfInteger(Opcode opcode) { return opcode == SExt32 || opcode == ZExt32 || opcode == Trunc; }
 
-inline bool isFreeInRegisterOfChild(const Liveness& liveness, const Operation* operation)
+inline bool isFreeWhenCoalesced(const Liveness& liveness, const Operation* operation)
 {
     Opcode opcode = operation->opcode();
     if (!changesWidthOfInteger(opcode))
@@ -347,16 +396,16 @@ inline bool isFreeInRegisterOfChild(const Liveness& liveness, const Operation* o
     if (opcode != ZExt32)
         return false;
     const Operation* child = operation->child(0);
-    if (clearsUpperHalfOfRegister(child))
+    if (clearsUpperHalf(child))
         return true;
-    if (child->opcode() != Trunc || !liveness.goesByOverflow(child->child(0)))
+    if (child->opcode() != Trunc || !liveness.usesOverflowFlag(child->child(0)))
         return false;
     const Operation* sum = child->child(0);
-    SumTestedByOverflow test = sumTestedByOverflowOf(liveness, sum);
-    if (!test.isWidenedWhereTestFails)
+    OverflowCheckedSum test = overflowCheckedSumOf(liveness, sum);
+    if (!test.isWidenedOnFailure || operation->owner()->procedure().traits().shouldAssumeClearUpperHalves)
         return true;
     const Block* block = operation->owner();
-    return block == sum->owner() || block == sum->owner()->successor(test.successorThatPasses).block();
+    return block == sum->owner() || block == sum->owner()->successor(test.passingSuccessor).block();
 }
 
 inline constexpr unsigned maxOperationsBetweenLoadAndUser = 4;

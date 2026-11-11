@@ -290,7 +290,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
         return;
     }
 
-    case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::Check: case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::TypeTest:
+    case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::Check: case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::TypeTest: case Opcode::IsUnlockedInstance:
     case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Boolean: case Opcode::Integer: case Opcode::Double: case Opcode::String: case Opcode::BigInt: case Opcode::Data:
     case Opcode::GetModuleVariable: case Opcode::PutModuleVariable: case Opcode::ScopeHasBinding:
     case Opcode::NewDictionary: case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::NewRegExp: case Opcode::NewTemplateObject:
@@ -305,7 +305,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::Less: case Opcode::LessEq: case Opcode::Greater: case Opcode::GreaterEq: case Opcode::Eq: case Opcode::StrictEq: case Opcode::InstanceOf:
     case Opcode::ToBoolean: case Opcode::LogicalNot: case Opcode::TypeOf: case Opcode::ToString: case Opcode::Strcat: case Opcode::ToPropertyKey: case Opcode::ToObject: case Opcode::ToThis:
     case Opcode::Call: case Opcode::Construct: case Opcode::CallList: case Opcode::ConstructList: case Opcode::ResultAt:
-    case Opcode::LoopHint: case Opcode::ReleaseHint:
+    case Opcode::LoopHint:
     case Opcode::ResolveHeritage: case Opcode::NewClassToken: case Opcode::GetConstructPrototype:
     case Opcode::IteratorOpen: case Opcode::IteratorResume: case Opcode::IteratorClose: case Opcode::ForInOpen: case Opcode::ForInStep: case Opcode::ReadScope:
     case Opcode::ModuleNamespace: case Opcode::ImportModule: case Opcode::RequireModule: case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::IsLinkedBelow: case Opcode::MockSeenBy: case Opcode::NamespaceSeenBy:
@@ -319,7 +319,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::GetOwnContiguousIndex: case Opcode::GetOwnDoubleIndex: case Opcode::GetOwnInt32Index:
     case Opcode::PutOwnContiguousIndex: case Opcode::PutOwnDoubleIndex: case Opcode::PutOwnInt32Index:
     case Opcode::NewContiguousArray: case Opcode::NewArrayLike:
-    case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::TryFillNewArray:
+    case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::SortNumbers: case Opcode::TryFillNewArray:
     case Opcode::TruncateNewArray:
     case Opcode::CollectionTable: case Opcode::CollectionIteratorClosedMark: case Opcode::GetCollectionIteratorTable: case Opcode::PutCollectionIteratorTable:
     case Opcode::IsCollectionIteratorClosedMark: case Opcode::MapNext: case Opcode::SetNext:
@@ -335,14 +335,14 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::TryCopyFields: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: case Opcode::GetCachedGetter: case Opcode::ElemGetOrOwnAccessor: case Opcode::GetGetterOfAccessorOrUndefined: case Opcode::GetValueAtSiteOrAbsent: case Opcode::GetOwnValueUnderKeyOrAbsent:
     case Opcode::GetStaticFieldOrAbsent: case Opcode::PutStaticField: case Opcode::GetPropertyOfHeir: case Opcode::PutPropertyOfHeir:
     case Opcode::ElemGetByKeyParts:
-    case Opcode::ReserveArrayRoom: case Opcode::ConvertToDoubleStorage:
-    case Opcode::GetArrayRoom: case Opcode::ExtendArrayLength: case Opcode::SetArrayLength:
+    case Opcode::ReserveArrayCapacity: case Opcode::ConvertToDoubleStorage:
+    case Opcode::GetArrayCapacity: case Opcode::ExtendArrayLength: case Opcode::SetArrayLength:
     case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::AppendMembers: case Opcode::AppendValuesOfMap:
     case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
     case Opcode::GetEnumeratorIndexedLength: case Opcode::IsElementInStorage: case Opcode::GetElementInStorageOrAbsent: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
     case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest:
     case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
-    case Opcode::CallBuiltin: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ReciprocalOfDivisor: case Opcode::RemainderByReciprocal: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::NewSetFromData: case Opcode::NewMapFromData:
+    case Opcode::CallBuiltin: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ReciprocalOfDivisor: case Opcode::RemainderByReciprocal: case Opcode::WholeDivisor: case Opcode::RemainderByWholeDivisor: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::NewSetFromData: case Opcode::NewMapFromData:
     case Opcode::NewFormatterWithPattern: case Opcode::SetUpFormatterWithOptions: case Opcode::FormatDateWithPattern: case Opcode::FormatNumberWithPattern: case Opcode::NewArgumentList: case Opcode::NewArrayOfGiven:
     case Opcode::SharedRegExpLiteral: case Opcode::GetBuiltinValue: case Opcode::GetWatchedBuiltinValue: case Opcode::GetWatchedBuiltinValueOrAbsent: case Opcode::InitializeBuiltin:
     case Opcode::DestructureIterable: case Opcode::AppendIterable: case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray: case Opcode::RequireLengthFitsList: case Opcode::CreateAsyncFromSyncIterator:
@@ -351,7 +351,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
     case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::GetHeapFrameWord: case Opcode::PutHeapFrameWord: case Opcode::NewHeapWords:
     case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::PromiseAllOfElements:
-    case Opcode::HasInPrototypeChain: case Opcode::FindInPrototypeChainUnlessTrapped: case Opcode::FindsDefaultHasInstanceUnlessTrapped:
+    case Opcode::HasInPrototypeChain: case Opcode::TryFindInPrototypeChain: case Opcode::HasDefaultHasInstance:
     case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::EvaluateRequiredModule: case Opcode::EnterBodyThatRunsOnce:
     case Opcode::NumberOrNaN:
     case Opcode::DefineOwnProperty: case Opcode::DefineAccessors: case Opcode::IntegerBound: case Opcode::FulfillFreshPromise:
@@ -372,7 +372,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::RegExpMatchLiteralInParts: case Opcode::BoundsOfRegExpMatch: case Opcode::NewRegExpMatchArray: case Opcode::SubstringOrUndefined:
     case Opcode::BoundsOfStringSplit: case Opcode::NewStringSplitArray:
     case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
-    case Opcode::Narrowed: case Opcode::EndLifeOfCell: case Opcode::CheckProof: case Opcode::GuessFailsUnasked: case Opcode::AskObjectAgain: case Opcode::BeginsWhatMayRunAgain: case Opcode::TurnBeginsAgain: case Opcode::CopyLeavesForCall: case Opcode::TurnWasQuiet:
+    case Opcode::Narrowed: case Opcode::EndCellLifetime: case Opcode::CheckProof: case Opcode::GuessFailsUnasked: case Opcode::AskObjectAgain: case Opcode::BeginEffectsCheck: case Opcode::CheckIterationRestart: case Opcode::CheckInlineeFallback: case Opcode::CheckReloadBypass:
         RELEASE_ASSERT_NOT_REACHED();
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -515,9 +515,9 @@ void BodyVerifier::verifyCast(const BodyBlock& block, const BodyValue& value)
 
     ASSERT(value.opcode() == Opcode::NarrowByTest);
     auto behindTests = [&](ValueID named) {
-        named = index().valueBehindCasts(named);
+        named = index().stripCasts(named);
         while (ValueID tested = index().valueNarrowedInto(named))
-            named = index().valueBehindCasts(tested);
+            named = index().stripCasts(tested);
         return named;
     };
     ValueID left = value.as<Opcode::NarrowByTest>().leftOperand();
@@ -572,7 +572,7 @@ void BodyVerifier::verifyAllocation(const BodyBlock& block, const BodyValue& val
     for (uint32_t listed : allocation.fields()) {
         if (listed >= fields.size() || !fields[listed].form.contains(FieldForm::IsAccessor))
             continue;
-        fail(InternalErrorKind::SlotOfOtherForm, block.id(), value.id());
+        fail(InternalErrorKind::AccessorSlotMismatch, block.id(), value.id());
         m_errors.last().layout = allocation.layout();
         return;
     }

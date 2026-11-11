@@ -6,14 +6,14 @@
 # CHECK: = FindKeyInMap
 # CHECK-NOT: = FindKeyInMap
 # CHECK: = TryPutValueAtPlaceInMap
-# CHECK-NOT: source=WhatIsRemembered
+# CHECK-NOT: source=RememberedFact
 # RUN(HELD): walk f1 mechanisms=all testing=CheckProofsAtRunTime
 # HELD-LABEL: code f1:Body
 # HELD: [[place]]: {{*}} = FindKeyInMap
 # HELD: [[again]]: {{*}} = FindKeyInMap
 # HELD: = TryPutValueAtPlaceInMap {{*}}, [[place]],
 # HELD: = StrictEq [[again]], [[place]]
-# HELD: source=WhatIsRemembered
+# HELD: source=RememberedFact
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

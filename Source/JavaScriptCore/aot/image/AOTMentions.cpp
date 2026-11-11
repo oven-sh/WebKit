@@ -75,7 +75,7 @@ static ALWAYS_INLINE bool mentionKeyHasNoThreadLocalIDs(NumberSpace space, std::
         return key.size() >= fewestWordsOfSiteCacheKey && !(key.size() % 2) && mentionWordIsNotThreadLocalID(key[key.size() - 2]);
     case NumberSpace::PropertyRun:
         return std::ranges::all_of(key, mentionWordIsNotThreadLocalID);
-    case NumberSpace::RowsOfReads:
+    case NumberSpace::ReadGroupCache:
         return key.size() == 3 && mentionWordIsNotThreadLocalID(key[0]);
     case NumberSpace::CardOfWord:
         return keyOfCardOfWordHasNoThreadLocalIDs(key);
@@ -707,7 +707,7 @@ void forEachUnitBehindSlowCase(const Mention& mention, std::span<const uint32_t>
     case NumberSpace::RegExpLiteralCell:
     case NumberSpace::TemplateObjectCell:
     case NumberSpace::ArrayProfile:
-    case NumberSpace::RowsOfReads:
+    case NumberSpace::ReadGroupCache:
     case NumberSpace::EnvironmentHandedBack:
     case NumberSpace::ClassGuard:
     case NumberSpace::HeirLookedAt:

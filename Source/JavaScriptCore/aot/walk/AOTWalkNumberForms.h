@@ -26,7 +26,7 @@ Reference integerInNumberForms(Walker&, int64_t);
 Reference booleanInNumberForms(Walker&, bool);
 Reference buildOperatorInNumberForms(Walker&, Opcode, Reference left, Reference right, Origin);
 Reference buildInAllowedFormInNumberForms(Walker&, Draft&&);
-void goOnWhereTestPassesInNumberForms(Walker&, Reference passes, BlockID otherwise);
+void continueIfTrue(Walker&, Reference passes, BlockID otherwise);
 Reference buildNarrowedInNumberForms(Walker&, Reference value, Reference test, uint32_t operandIndex, bool isOnTakenEdge, Origin);
 struct WayInNumberForms {
     BlockID end;
@@ -57,6 +57,7 @@ struct BitsOfDividendCompared {
 std::optional<BitsOfDividendCompared> tryCompareBitsOfDividend(Walker&, Origin, const WholeRemainder&, int64_t comparedWith);
 Reference buildComparisonWhereDivisorsAreNotZero(Walker&, Draft&& comparison, std::span<const ValueID> divisorsThatMayBeZero);
 bool buildNumberRemainderWithItsTest(Walker&, const BodyValue& remainder);
+ValueID findTestOfRemainder(Walker&, const BodyValue& remainder);
 
 inline constexpr OpcodeSet opcodesThatBuildNumberFormTakes = allBitwiseOperators | allEqualities | allRelations | OpcodeSet { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow,
     Opcode::LogicalNot, Opcode::ToBoolean };

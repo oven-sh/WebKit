@@ -19,7 +19,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
-static constexpr uint16_t flagsOfOperationWithLeavesOfItsOwn = Allocator::bitOf(ValueFlag::WorksInMemory) | Allocator::bitOf(ValueFlag::GoesByOverflow);
+static constexpr uint16_t flagsOfOperationWithLeavesOfItsOwn = Allocator::bitOf(ValueFlag::WorksInMemory) | Allocator::bitOf(ValueFlag::UsesOverflowFlag);
 
 static constexpr size_t smallestSizeOfStepsTakenApartFromOtherLists = 64 * KB;
 
@@ -399,8 +399,8 @@ void Allocator::letGoOfWorkingLists()
     m_numbersOfListsOfReads.letGo(m_arena);
     m_firstReadsFromHeads.letGo(m_arena);
     m_firstReadsNotKnownOutOfReach.letGo(m_arena);
-    m_allocation.m_numberOfLaterReadsAskedWhetherTheyCount = m_numberOfLaterReadsAskedWhetherTheyCount;
-    m_allocation.m_numberOfBlocksReachedBySearchesForWays = m_numberOfBlocksReachedBySearchesForWays;
+    m_allocation.m_laterUsesScanned = m_laterUsesScanned;
+    m_allocation.m_livenessSearchBlocksVisited = m_livenessSearchBlocksVisited;
     m_lastReadsThatCounted.letGo(m_arena);
     m_knownReadsOutsideRareRegions.letGo(m_arena);
     m_whetherHeadsAroundHold.letGo(m_arena);
@@ -589,62 +589,59 @@ void Allocator::run()
     }
 
     m_rareRegion = noRareRegion;
-    m_isAheadOfFramedPart = false;
+    m_isOutsideFramedPart = false;
     if (m_allocation.usedCalleeSaves())
         noteFrameUse();
-    checkThatNoWayOnReadsWhatHintsReleased();
-    if (m_proc.failure())
-        return;
-    findSpillsThatNoStepReads();
+    findDeadSlots();
     settleFramedPart();
     findGapsAheadOfLandingPads();
 }
 
-bool Allocator::isReadByMoreThanSteps(const SpillFacts& facts) const
+bool Allocator::hasImplicitReader(const SpillFacts& facts) const
 {
     if (facts.isSaveInRareRegion || facts.isPointerBesideNarrowReference || facts.livesAcrossSuspension || facts.isSharedByPhis)
         return true;
     const ValueFacts& factsOfValue = m_valueFacts[facts.value->index()];
     return factsOfValue.has(ValueFlag::LivesIntoLandingPad) || factsOfValue.has(ValueFlag::LivesAcrossSuspension)
-        || (factsOfValue.has(ValueFlag::IsKeptForCollector) && !m_proc.traits().takesValuesKeptForCollectorToBeReadByStepsAlone);
+        || (factsOfValue.has(ValueFlag::IsKeptForCollector) && !m_proc.traits().shouldIgnoreCollectorSpillReads);
 }
 
-static NEVER_INLINE void takeOutStepsThatWriteSpill(Step* steps, uint32_t begin, uint32_t& end, SpillIndex spill)
+static NEVER_INLINE void removeStoresToSpill(Step* steps, uint32_t begin, uint32_t& end, SpillIndex spill)
 {
-    uint32_t endOfStepsThatStay = begin;
+    uint32_t retainedEnd = begin;
     for (uint32_t index = begin; index < end; ++index) {
-        if ((steps[index].kind == StepKind::Save || steps[index].kind == StepKind::ClearSpill) && steps[index].destination == Location::spill(spill))
+        if (steps[index].kind == StepKind::Save && steps[index].destination == Location::spill(spill))
             continue;
-        if (endOfStepsThatStay != index)
-            steps[endOfStepsThatStay] = steps[index];
-        ++endOfStepsThatStay;
+        if (retainedEnd != index)
+            steps[retainedEnd] = steps[index];
+        ++retainedEnd;
     }
-    end = endOfStepsThatStay;
+    end = retainedEnd;
 }
 
-void Allocator::findSpillsThatNoStepReads()
+void Allocator::findDeadSlots()
 {
     ArenaVector<SpillFacts>& spills = m_allocation.m_spills;
     if (spills.isEmpty())
         return;
     for (SpillIndex index = 0; index < spills.size(); ++index) {
         SpillFacts& facts = spills[index];
-        if ((facts.isRead && !m_proc.traits().takesSpillsThatStepsReadToBeReadByNone) || !facts.value)
+        if ((facts.isRead && !m_proc.traits().shouldAssumeSpillSlotsDead) || !facts.value)
             continue;
-        facts.isReadByNoStep = !isReadByMoreThanSteps(facts);
-        if (!facts.isReadByNoStep || facts.value->opcode() != Phi || (m_allocation.registerAtDefinitionOf(facts.value).isSet() && !m_allocation.isWrittenByEdges(facts.value)))
+        facts.isDeadSlot = !hasImplicitReader(facts);
+        if (!facts.isDeadSlot || facts.value->opcode() != Phi || (m_allocation.registerAtDefinitionOf(facts.value).isSet() && !m_allocation.isWrittenByEdges(facts.value)))
             continue;
         for (const Block* predecessor : m_order.of(facts.value->owner()).predecessors) {
             BlockSteps& range = m_allocation.m_blocks[predecessor->index()];
-            takeOutStepsThatWriteSpill(m_allocation.m_steps.begin(), range.beginOfEdgeMoves, range.endOfEdgeMoves, index);
-            takeOutStepsThatWriteSpill(m_allocation.m_steps.begin(), range.begin, range.end, index);
+            removeStoresToSpill(m_allocation.m_steps.begin(), range.beginOfEdgeMoves, range.endOfEdgeMoves, index);
+            removeStoresToSpill(m_allocation.m_steps.begin(), range.begin, range.end, index);
         }
     }
     for (const SpillWrittenInBlock& written : m_spillsWrittenInBlocks) {
-        if (!spills[written.spill].isReadByNoStep)
+        if (!spills[written.spill].isDeadSlot)
             continue;
         BlockSteps& range = m_allocation.m_blocks[written.block->index()];
-        takeOutStepsThatWriteSpill(m_allocation.m_steps.begin(), range.begin, range.end, written.spill);
+        removeStoresToSpill(m_allocation.m_steps.begin(), range.begin, range.end, written.spill);
     }
 }
 
@@ -660,9 +657,9 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Allocator::allocateBlock(Block* block)
     if (allocation.hasFramedPart()) [[unlikely]] {
         standsInFramedPart = allocation.isInFramedPart(block);
         standsAheadOfFramedPart = !standsInFramedPart;
-        m_isAheadOfFramedPart = standsAheadOfFramedPart;
+        m_isOutsideFramedPart = standsAheadOfFramedPart;
     }
-    ASSERT(m_isAheadOfFramedPart == standsAheadOfFramedPart);
+    ASSERT(m_isOutsideFramedPart == standsAheadOfFramedPart);
 
     m_block = block;
     m_position = head;
@@ -788,7 +785,7 @@ NEVER_INLINE void Allocator::allocateArgumentRegister(Operation* operation)
     Reg reg = operation->argumentReg();
     Operation* lastReader = m_valueIn[reg.index()];
     if (!lastReader || !lastReader->isArgumentReg(reg) || m_allocation.registerAtDefinitionOf(lastReader)) {
-        m_proc.fail(FailureKind::RegisterLacksItsValue, operation);
+        m_proc.fail(FailureKind::WrongValueInRegister, operation);
         return;
     }
 
@@ -843,7 +840,7 @@ static NEVER_INLINE void allocateExtractBehindItsPatch(Allocator& allocator, Ope
         return;
     }
     if (!reg || !(allocator.stateOf(operation).registers & maskOf(reg))) {
-        allocator.m_proc.fail(FailureKind::RegisterLacksItsValue, operation);
+        allocator.m_proc.fail(FailureKind::WrongValueInRegister, operation);
         return;
     }
     allocator.passUse(operation->child(0), allocator.m_position);
@@ -898,13 +895,14 @@ static NEVER_INLINE Location placeAllocatedLeafInRegisterOrMemory(Allocator& all
         RegisterMask candidates = allocatable & ~taken.locked;
         if (!leaf->hasNoPosition()) {
             if (!allocator.m_allocation.isSpilled(leaf) && allocator.stateOf(leaf).saveInRareRegion == noSpill) {
-                allocator.m_proc.fail(FailureKind::RegisterLacksItsValue, user);
+                allocator.m_proc.fail(FailureKind::WrongValueInRegister, user);
                 return Location();
             }
             allocator.noteFrameUse();
             if ((allocator.m_valueFacts[leaf->index()].lastUse <= allocator.m_position || !allocator.hasFreeRegister(bank, candidates)) && takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
                 return allocator.memoryLocationOf(leaf);
-        }
+        } else if (comparesConstantInMemory(*user, childIndex, *leaf) && takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
+            return Location::immediate();
         reg = allocator.bringIntoRegister(leaf, candidates, hintIfAmong(allocator.hintOf(leaf), candidates));
         if (!reg) {
             allocator.m_proc.fail(FailureKind::OutOfRegisters, user);
@@ -1206,12 +1204,12 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operatio
     } else {
         const bool firstSourceIsRegister = firstSource.isRegister();
         const RegisterMask registerOfFirstSource = firstSourceIsRegister ? maskOf(firstSource.reg()) : 0;
-        bool isFreeInRegisterOfFirstChild = false;
+        bool canCoalesceFirstChild = false;
         if (firstSourceIsRegister && !(fusedChildren & 1)) {
             overwritesFirstChild = (traits & AllocatedOpcodeOverwritesFirstChild) && !(fusedChildren && addsScaledIndex(m_liveness, operation));
             maySwapChildren = overwritesFirstChild && (traits & AllocatedOpcodeIsCommutative) && !(fusedChildren & 2) && secondSource.isRegister();
-            isFreeInRegisterOfFirstChild = (traits & AllocatedOpcodeChangesWidthOfInteger) && isFreeInRegisterOfChild(m_liveness, operation);
-            if (overwritesFirstChild || isFreeInRegisterOfFirstChild) {
+            canCoalesceFirstChild = (traits & AllocatedOpcodeChangesWidthOfInteger) && isFreeWhenCoalesced(m_liveness, operation);
+            if (overwritesFirstChild || canCoalesceFirstChild) {
                 Operation* first = m_valueIn[firstSource.reg().index()];
                 if (first && factsOfValues[first->index()].has(ValueFlag::IsRematerialized) && !isKeptThroughLoopAround(firstSource.reg(), first, position))
                     unbind(firstSource.reg());
@@ -1223,7 +1221,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operatio
         if (overwritesFirstChild && !maySwapChildren)
             avoided |= operandRegisters & ~registerOfFirstSource;
 
-        if (isFreeInRegisterOfFirstChild)
+        if (canCoalesceFirstChild)
             preferred = registerOfFirstSource & ~bound;
         if (!preferred) {
             if (Reg hint = hintOf(operation))
@@ -1237,7 +1235,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Allocator::defineResultBehindLeaves(Operatio
 
     const RegisterMask allocatable = m_file.allocatableIn(bankOf(type));
     RegisterMask freeRegisters = allocatable & ~avoided & ~bound;
-    if (m_isAheadOfFramedPart || isInRareRegion()) [[unlikely]]
+    if (m_isOutsideFramedPart || isInRareRegion()) [[unlikely]]
         freeRegisters &= ~m_file.calleeSaved | calleeSavesThatMayBeTaken();
     RegisterMask chosen = preferred & freeRegisters;
     if (!chosen) {
@@ -1523,13 +1521,13 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
 
     const ValueFacts* factsOfValues = m_valueFacts;
     const ValueFacts& facts = factsOfValues[operation->index()];
-    bool goesByOverflow = facts.has(ValueFlag::GoesByOverflow);
+    bool usesOverflowFlag = facts.has(ValueFlag::UsesOverflowFlag);
     LeavesOfAllocatedOperation leaves;
     leaves.size = 0;
     leaves.hasFusedLoad = false;
     bool hasMemoryOperand;
     if (facts.flags & flagsOfOperationWithLeavesOfItsOwn) {
-        hasMemoryOperand = isX86_64() && (facts.has(ValueFlag::WorksInMemory) || (goesByOverflow && opcode == Branch) || allocatedOperationHasFusedLoad(m_liveness, operation));
+        hasMemoryOperand = isX86_64() && (facts.has(ValueFlag::WorksInMemory) || (usesOverflowFlag && opcode == Branch) || allocatedOperationHasFusedLoad(m_liveness, operation));
         forEachLeaf(m_liveness, operation, [&](const Operation* user, unsigned childIndex, Operation* leaf) {
             leaves.append(user, childIndex, leaf);
         });
@@ -1574,15 +1572,15 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
         bool overwritesFirstChild = resultPrefersRegisterOfFirstChild() && resultOverwritesFirstChild(opcode)
             && !isFused(operation->child(0)) && sources[0].isRegister() && !addsScaledIndex(m_liveness, operation);
         bool maySwapChildren = overwritesFirstChild && isCommutative(opcode) && !isFused(operation->child(1)) && sources[1].isRegister();
-        bool isFreeInRegisterOfFirstChild = isFreeInRegisterOfChild(m_liveness, operation) && !isFused(operation->child(0)) && sources[0].isRegister();
-        if (overwritesFirstChild || isFreeInRegisterOfFirstChild) {
+        bool canCoalesceFirstChild = isFreeWhenCoalesced(m_liveness, operation) && !isFused(operation->child(0)) && sources[0].isRegister();
+        if (overwritesFirstChild || canCoalesceFirstChild) {
             Operation* first = m_valueIn[sources[0].reg().index()];
             if (first && factsOfValues[first->index()].has(ValueFlag::IsRematerialized) && !isKeptThroughLoopAround(sources[0].reg(), first, m_position))
                 unbind(sources[0].reg());
         }
 
         OperandTakenBack operandTakenBack;
-        if (goesByOverflow) {
+        if (usesOverflowFlag) {
             operandTakenBack = findOperandThatSumMayOverwrite(operation, std::span<const Location>(sources, numberOfLeaves));
             if (operandTakenBack.value)
                 unbind(operandTakenBack.reg);
@@ -1593,7 +1591,7 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
             avoided |= operandRegisters & ~maskOf(sources[0].reg());
 
         Reg preferred = operandTakenBack.reg;
-        if (!preferred && isFreeInRegisterOfFirstChild)
+        if (!preferred && canCoalesceFirstChild)
             preferred = hintIfAmong(sources[0].reg(), ~m_bound);
         if (!preferred)
             preferred = hintIfAmong(hintOf(operation), ~m_bound);
@@ -1612,7 +1610,7 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
                 bind(operandTakenBack.reg, operandTakenBack.value);
         }
 
-        bool hasThreeAddressForm = goesByOverflow || (operation->type().isInt()
+        bool hasThreeAddressForm = usesOverflowFlag || (operation->type().isInt()
             && ((opcode == Add && (maySwapChildren || sources[1].isImmediate())) || (opcode == Mul && sources[1].isImmediate())));
         if (overwritesFirstChild && !hasThreeAddressForm && destination != sources[0] && !(maySwapChildren && destination == sources[1])) {
             Step& move = appendStep(StepKind::Move, operation->child(0));
@@ -1628,7 +1626,7 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
     step.destination = destination;
     std::copy_n(sources, maxLeaves, step.sources);
     step.operation = operation;
-    if (goesByOverflow && opcode == Branch)
+    if (usesOverflowFlag && opcode == Branch)
         step.other = m_operandTakenBackByBranch;
     appendStep(step);
 

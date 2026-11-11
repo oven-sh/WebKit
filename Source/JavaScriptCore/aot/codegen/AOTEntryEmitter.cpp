@@ -574,7 +574,7 @@ void emitEntryWrittenByHand(CCallHelpers& jit, const CodeGenerationInputs& input
         ways[index].misfits.link(&jit);
         if (!frameIsSetUp)
             jit.emitFunctionPrologue();
-        emitStraightThrowSite(jit, records, ThrowSite { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = ProofSource::EntryParameter }, questions[index].value, 0, site);
+        emitStraightThrowSite(jit, records, ThrowSite { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = ProofSource::EntryParameter, .expectedProofType = FalseProofWord::summarize(questions[index].passingPrimitives, questions[index].everyObjectPasses || questions[index].shapeWord || !questions[index].cellTypes.isEmpty()) }, questions[index].value, 0, site);
         jit.breakpoint();
     }
 }

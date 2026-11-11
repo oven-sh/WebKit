@@ -1,8 +1,16 @@
-# BEHIND THE YES OF `$isPlainHeirOf` STANDS A PROMISE ON THE CLASSES BELOW THE CLASS ASKED: on the prototype of none of them lies an accessor under a name that is a field of the object and of the class asked.
-# Under testing=CheckWalkAtRunTime the yes is held to the objects themselves: the net that asks what lies between an object and the first prototype of a class walks on, up to the prototype of the class asked: a prototype of a class on the way is asked for an accessor alone, under the names of the object's own fields that the class asked has too; an object that no class holds, as below the first.
-# IT MUST NOT RING for a right program: a field of an heir over an accessor of the library above (`listening`), a method of an heir under the name of a field, an accessor under another name, AN ACCESSOR OF AN HEIR UNDER A NAME THAT A STORE HAS APPENDED TO THE CLASS ASKED ALONE (`extra`: every group asks `grown`), an object that the class asked itself has made (the line by itself).
-# The lie, testing=GuardsAndFactsAreTakenToHold: the door takes its guards to hold: by itself it says yes in silence (BITES). The objects are made in front of the deed: a store in a constructor behind it has a net of its own (a store by name that is laid into a slot), which would ring first.
-# WHAT THE NET DOES NOT SEE: an accessor that a class declares in its body while its prototype has not yet made its parts: the net holds the guards' half, not the walk's list. The proofs word (--aot-harden=proof-checks) ships in the hardened flavor and does not pay for this walk.
+# A true result of `$isPlainHeirOf` makes a promise about the subclasses of the queried class:
+# none of their prototypes holds an accessor under a name that is a field of both the object and the queried class.
+# With testing=CheckWalkAtRunTime the true result is checked against the objects themselves.
+# The run-time check of what is between an object and the first class prototype continues up to the prototype of the queried class.
+# A class prototype on the way is queried only for an accessor, under the names of the object's own fields that the queried class also has.
+# An object that belongs to no class is queried in the same way as the objects below the first class prototype.
+# The check must not fail for a correct program. The cases: a field of a subclass that shadows an accessor of the library above it (`listening`); a method of a subclass under the name of a field;
+# an accessor under another name; an accessor of a subclass under a name that a store has appended to the queried class alone (`extra`: every group of results queries `grown`);
+# an object that the queried class itself has constructed (the result that is printed on a line by itself).
+# Fault injection, testing=AssumeGuardsAndFacts: the entry check assumes that its guards hold. With that fault alone it silently returns true (BITES).
+# The objects are created before the mutation. A store in a constructor after it has a run-time check of its own (for a store by name that is emitted as a store into a slot), which would fail first.
+# What the check does not see: an accessor that a class declares in its body while its prototype has not reified its members yet. The check verifies the guards' half, not the walk's list.
+# The proof-checks option (--aot-harden=proof-checks) ships in the hardened flavor and does not pay for this traversal.
 # function Base() { this.state = 1; }
 # Base.prototype.end = function () { return 1; };
 # Object.defineProperty(Base.prototype, "listening", { get: function () { return 0; }, configurable: true });
@@ -32,33 +40,36 @@
 # HEARD-NEXT: yes 1
 # HEARD-NEXT: yes 1 | no 1 | no 1 | yes 1
 # HEARD-NEXT: exited with 0
-# RUN(METHODUNDERTHELIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; lay = function (heir, lower, base) { heir.state = function () { }; };
+# RUN(METHODUNDERTHELIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { heir.state = function () { }; };
 # METHODUNDERTHELIE: yes 1 | yes 1 | yes 1 | yes 1
 # METHODUNDERTHELIE-NEXT: yes 1
 # METHODUNDERTHELIE-NEXT: yes 1 | yes 1 | yes 1 | yes 1
 # METHODUNDERTHELIE-NEXT: exited with 0
-# RUN(OTHERNAMEUNDERTHELIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(heir, "other", { get() { return 7; }, set(value) { }, configurable: true }); };
+# RUN(OTHERNAMEUNDERTHELIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(heir, "other", { get() { return 7; }, set(value) { }, configurable: true }); };
 # OTHERNAMEUNDERTHELIE: yes 1 | yes 1 | yes 1 | yes 1
 # OTHERNAMEUNDERTHELIE-NEXT: yes 1
 # OTHERNAMEUNDERTHELIE-NEXT: yes 1 | yes 1 | yes 1 | yes 1
 # OTHERNAMEUNDERTHELIE-NEXT: exited with 0
-# RUN(BITES): run-in-shell mechanisms=all testing=GuardsAndFactsAreTakenToHold keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(heir, "state", { get() { return 7; }, set(value) { }, configurable: true }); };
+# RUN(BITES): run-in-shell mechanisms=all testing=AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(heir, "state", { get() { return 7; }, set(value) { }, configurable: true }); };
 # BITES: yes 1 | yes 1 | yes 1 | yes 1
 # BITES-NEXT: yes 1
 # BITES-NEXT: yes 1 | yes 1 | yes 1 | yes 1
 # BITES-NEXT: exited with 0
-# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(heir, "state", { get() { return 7; }, set(value) { }, configurable: true }); };
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(heir, "state", { get() { return 7; }, set(value) { }, configurable: true }); };
 # ASKEDLIE: yes 1 | yes 1 | yes 1 | yes 1
 # ASKEDLIE-NEXT: yes 1
-# ASKEDLIE-NEXT: AOT: the yes to the question whether an object is a plain instance of its class promises that no accessor lies on the prototype of a class below the class asked under the name of a field of that class, and such a prototype, asked under the name state, answers an accessor. This is a bug in Bun.
-# RUN(ASKEDLIEONELEVELDOWN): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(lower, "state", { get() { return 7; }, set(value) { }, configurable: true }); };
+# ASKEDLIE-NEXT: bun: internal AOT error: property lookup check failed
+# ASKEDLIE-NEXT: the plain instance check passed, but the prototype of a subclass has an accessor for the field 'state'
+# RUN(ASKEDLIEONELEVELDOWN): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { Object.defineProperty(lower, "state", { get() { return 7; }, set(value) { }, configurable: true }); };
 # ASKEDLIEONELEVELDOWN: yes 1 | yes 1 | yes 1 | yes 1
 # ASKEDLIEONELEVELDOWN-NEXT: yes 1
-# ASKEDLIEONELEVELDOWN-NEXT: AOT: the yes to the question whether an object is a plain instance of its class promises that no accessor lies on the prototype of a class below the class asked under the name of a field of that class, and such a prototype, asked under the name state, answers an accessor. This is a bug in Bun.
-# RUN(BETWEENCLASSESUNDERTHELIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold keep = x => x; lay = function (heir, lower, base) { Object.setPrototypeOf(heir, { state: 9, __proto__: base }); };
+# ASKEDLIEONELEVELDOWN-NEXT: bun: internal AOT error: property lookup check failed
+# ASKEDLIEONELEVELDOWN-NEXT: the plain instance check passed, but the prototype of a subclass has an accessor for the field 'state'
+# RUN(BETWEENCLASSESUNDERTHELIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts keep = x => x; lay = function (heir, lower, base) { Object.setPrototypeOf(heir, { state: 9, __proto__: base }); };
 # BETWEENCLASSESUNDERTHELIE: yes 1 | yes 1 | yes 1 | yes 1
 # BETWEENCLASSESUNDERTHELIE-NEXT: yes 1
-# BETWEENCLASSESUNDERTHELIE-NEXT: AOT: the yes to the question whether an object is a plain instance of its class promises that nothing lies between the object and the prototype of its class under the name of a field, and an object between them, asked under the name state, answers a value. This is a bug in Bun.
+# BETWEENCLASSESUNDERTHELIE-NEXT: bun: internal AOT error: property lookup check failed
+# BETWEENCLASSESUNDERTHELIE-NEXT: the plain instance check passed, but an object between the instance and the prototype of its class has a value for the field 'state'
 
 module m0 path="word.js" displayPath="word.js" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

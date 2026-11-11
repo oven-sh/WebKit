@@ -8,9 +8,9 @@ data d0 root=Object{layout=L0} module=m0
 layout L0 module=m0
 layout L1 module=m0 fields=[{key="then" declared={type=anything}}] ownFieldCount=1
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
-module m0 path="/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
-module m1 path="#1" displayPath="lib.cjs" flags=[KeepsError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}]
-module m2 path="/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f3 requests=[{target=m1 completes=true isHoisted=true}, {target=m1 isDynamicStarExport=true completes=true}]
+module m0 path="/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="#1" displayPath="lib.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}]
+module m2 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f3 requests=[{target=m1 completes=true isHoisted=true}, {target=m1 isDynamicStarExport=true completes=true}]
 function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = NewObject layout=L1
@@ -29,7 +29,7 @@ function f1 module=m0 kind=Module flags=[IsHiddenInStackTraces] thisType={type=a
     v1 = Undefined
     Return v1
 }
-function f2 name="then" module=m0 text={start=15 end=52} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
+function f2 name="then" module=m0 sourceRange={start=15 end=52} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: undefined|null|function):
     v1 = Data data=d0
     v2 = Call v0, -, v1 calleeName="settle"

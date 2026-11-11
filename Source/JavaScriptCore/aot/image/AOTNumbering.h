@@ -140,7 +140,7 @@ enum class NumberSpace : uint8_t {
     RegExpLiteralCell,
     TemplateObjectCell,
     ArrayProfile,
-    RowsOfReads,
+    ReadGroupCache,
     EnvironmentHandedBack,
     ClassGuard,
     ClassRank,
@@ -304,7 +304,7 @@ constexpr bool mayHaveUnitsBehind(NumberSpace space)
     case NumberSpace::RegExpLiteralCell:
     case NumberSpace::TemplateObjectCell:
     case NumberSpace::ArrayProfile:
-    case NumberSpace::RowsOfReads:
+    case NumberSpace::ReadGroupCache:
     case NumberSpace::EnvironmentHandedBack:
     case NumberSpace::ClassGuard:
     case NumberSpace::HeirLookedAt:
@@ -343,7 +343,7 @@ public:
     FunctionID firstClosureFunction() const { return FunctionID(m_firstDerived); }
     FunctionID endOfClosureFunctions() const { return FunctionID(m_firstDerived + m_numberOfClosureFunctions); }
     uint32_t closureNumberOf(FunctionID closureEntry) const { return closureEntry.index() - m_firstDerived; }
-    bool closureNumbersRiseAsTestsOfClosuresInCompiledCodeExpect() const
+    bool hasAscendingClosureNumbers() const
     {
         for (uint32_t number = 0; number < m_numberOfClosureFunctions; ++number) {
             if (number && m_unitOfDerived[number - 1] >= m_unitOfDerived[number])
@@ -422,7 +422,7 @@ struct PlacedStatics {
     Vector<uint32_t> templateObjectCellOffsets;
     Vector<uint32_t> arrayProfileOffsets;
     uint32_t distanceFromArrayProfileToLastArray { 0 };
-    Vector<uint32_t> rowsOfReadsOffsets;
+    Vector<uint32_t> readGroupCacheOffsets;
     Vector<ModuleBuiltinCell> moduleBuiltinCells;
     Vector<uint32_t> classGuardBits;
     Vector<PlacedClassGuardOfName> classGuardsOfNames;
@@ -462,6 +462,34 @@ struct NumberedKeys {
     Vector<uint32_t> hashSlots;
 };
 
+class StringNumbers {
+public:
+    StringNumbers() = default;
+    JS_EXPORT_PRIVATE StringNumbers(const BitVector& named, Vector<StringID>&& sortedCodedStrings, size_t numberOfStrings, const IdentifierNumbering* = nullptr);
+
+    uint32_t numberOfWords() const { return m_numberOfWords; }
+    std::span<const StringID> coded() const { return m_coded.span(); }
+    std::optional<uint32_t> numberOf(StringID id) const
+    {
+        if (id.index() >= m_numbers.size() || m_numbers[id.index()] == noNumber)
+            return std::nullopt;
+        return m_numbers[id.index()];
+    }
+    uint32_t requiredNumberOf(StringID id) const
+    {
+        std::optional<uint32_t> number = numberOf(id);
+        RELEASE_ASSERT(number);
+        return *number;
+    }
+
+private:
+    static constexpr uint32_t noNumber = UINT32_MAX;
+
+    Vector<uint32_t> m_numbers;
+    uint32_t m_numberOfWords { 0 };
+    Vector<StringID> m_coded;
+};
+
 class ImageNumbers {
     WTF_MAKE_NONCOPYABLE(ImageNumbers);
 public:
@@ -479,6 +507,7 @@ public:
     InstanceSizes instanceSizes() const { return m_instanceSizes; }
 
     const BitVector& namedStrings() const { return m_namedStrings; }
+    const StringNumbers& stringNumbers() const { return m_stringNumbers; }
     const BitVector& textsOfNames() const { return m_textsOfNames; }
     const BitVector& otherStringsWithText() const { return m_otherStringsWithText; }
     std::span<const StringID> stringsInOrderOfText() const { return m_stringsInOrderOfText.span(); }
@@ -507,7 +536,7 @@ public:
     const NumberedKeys& regExpLiteralCells() const { return m_regExpLiteralCells; }
     const NumberedKeys& templateObjectCells() const { return m_templateObjectCells; }
     const NumberedKeys& arrayProfiles() const { return m_arrayProfiles; }
-    const NumberedKeys& rowsOfReads() const { return m_rowsOfReads; }
+    const NumberedKeys& readGroupCaches() const { return m_readGroupCaches; }
     const NumberedKeys& siteCaches() const { return m_siteCaches; }
     std::span<const uint32_t> numbersOfSites() const { return m_numbersOfSites.span(); }
     static bool isPlaceWithSiteAnswers(std::span<const uint32_t> keyOfSite) { return keyOfSite.back() >= MentionList::firstUseOfSiteAnswers; }
@@ -551,6 +580,7 @@ private:
     PlacedStatics m_statics;
     InstanceSizes m_instanceSizes { };
     BitVector m_namedStrings;
+    StringNumbers m_stringNumbers;
     BitVector m_textsOfNames;
     BitVector m_otherStringsWithText;
     Vector<StringID> m_stringsInOrderOfText;
@@ -578,7 +608,7 @@ private:
     NumberedKeys m_regExpLiteralCells;
     NumberedKeys m_templateObjectCells;
     NumberedKeys m_arrayProfiles;
-    NumberedKeys m_rowsOfReads;
+    NumberedKeys m_readGroupCaches;
     NumberedKeys m_classGuards;
     NumberedKeys m_siteCaches;
     Vector<uint32_t> m_numbersOfSites { 0 };
@@ -655,7 +685,7 @@ constexpr bool hasOneIDAsKey(NumberSpace space)
     case NumberSpace::RegExpLiteralCell:
     case NumberSpace::TemplateObjectCell:
     case NumberSpace::ArrayProfile:
-    case NumberSpace::RowsOfReads:
+    case NumberSpace::ReadGroupCache:
     case NumberSpace::Allocation:
     case NumberSpace::Request:
     case NumberSpace::PropertyRun:
@@ -682,6 +712,7 @@ struct NamesOfTables {
     BitVector textsNamedAsKeys;
     BitVector strings;
     BitVector stringsWithOtherUsesThanShowing;
+    BitVector modulePathStrings;
     BitVector stringConstants;
     BitVector bigInts;
     Vector<uint32_t> allocations;

@@ -63,7 +63,7 @@ ScrollAnchoringController::~ScrollAnchoringController()
     invalidate();
 }
 
-static bool LEGACY_NODELETE hasScrolledFromOriginInBlockDirection(ScrollPosition scrollPosition, WritingMode writingMode)
+NODELETE static bool hasScrolledFromOriginInBlockDirection(ScrollPosition scrollPosition, WritingMode writingMode)
 {
     if (writingMode.isVertical())
         return !!scrollPosition.x();
@@ -71,7 +71,7 @@ static bool LEGACY_NODELETE hasScrolledFromOriginInBlockDirection(ScrollPosition
     return !!scrollPosition.y();
 }
 
-static IntSize LEGACY_NODELETE constrainedToBlockDirection(IntSize scrollDelta, WritingMode writingMode)
+NODELETE static IntSize constrainedToBlockDirection(IntSize scrollDelta, WritingMode writingMode)
 {
     if (writingMode.isVertical())
         return { scrollDelta.width(), 0 };
@@ -79,7 +79,7 @@ static IntSize LEGACY_NODELETE constrainedToBlockDirection(IntSize scrollDelta, 
     return { 0, scrollDelta.height() };
 }
 
-static FloatPoint LEGACY_NODELETE inlineAndBlockStartCorner(FloatRect box, WritingMode writingMode)
+NODELETE static FloatPoint inlineAndBlockStartCorner(FloatRect box, WritingMode writingMode)
 {
     switch (writingMode.blockDirection()) {
     case FlowDirection::TopToBottom:
@@ -301,7 +301,7 @@ void ScrollAnchoringController::notifyChildHadSuppressingStyleChange(RenderEleme
     scrollerBox->setScrollAnchoringSuppressionStyleChanged(true);
 }
 
-static CheckedPtr<RenderElement> LEGACY_NODELETE priorityCandidateForElement(Element* element)
+NODELETE static CheckedPtr<RenderElement> priorityCandidateForElement(Element* element)
 {
     while (element) {
         if (CheckedPtr renderer = element->renderer()) {
@@ -370,7 +370,7 @@ AnchorSearchStatus ScrollAnchoringController::examinePriorityCandidate(RenderEle
     return examineAnchorCandidate(*ancestor);
 }
 
-static bool LEGACY_NODELETE overflowAnchorProhibitsAnchoring(const RenderElement& object, const RenderBox& scrollingAncestor)
+NODELETE static bool overflowAnchorProhibitsAnchoring(const RenderElement& object, const RenderBox& scrollingAncestor)
 {
     for (auto* renderer = &object; renderer; renderer = renderer->parent()) {
         if (renderer->style().overflowAnchor() == OverflowAnchor::None)
@@ -628,6 +628,10 @@ void ScrollAnchoringController::adjustScrollPositionForAnchoring()
 
     // FIXME: Test for running animated scrolls?
     if (m_inScrollEventCount || m_suppressionCount) {
+        // Drop the suppressed update so that the next layout picks a new anchor.
+        // FIXME: Adjustments suppressed during scroll events stay queued, which keeps scroll anchoring off afterwards.
+        if (m_suppressionCount)
+            m_isQueuedForScrollPositionUpdate = false;
         m_anchoringSuppressedByStyleChange = false;
         clearAnchor();
         return;

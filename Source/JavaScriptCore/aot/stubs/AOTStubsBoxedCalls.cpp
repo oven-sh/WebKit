@@ -83,10 +83,11 @@ void emitBoxedCallDispatch(StubAssembler& jit, const CallRegisters& registers, u
     RELEASE_ASSERT(noOverlap(executable, registers.word, entry, instanceGPR, calleeGPR, thisGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3)));
     constexpr unsigned numberOfForms = descriptorOf(StubFamily::CallBoxedBuiltin).numberOfForms;
 
-    jit.load8(Address(executable, NativeExecutable::offsetOfIndexOfBoxedCall()), entry);
-    Jump isNotLookedUp = jit.branchTest32(CCallHelpers::Zero, entry);
+    const Address indexOfBoxedCall(executable, NativeExecutable::offsetOfIndexOfBoxedCall());
     Label isLookedUp = jit.label();
-    hasNoBoxedCall.append(jit.branch32(CCallHelpers::Equal, entry, TrustedImm32(hasNoBoxedCallEntry)));
+    hasNoBoxedCall.append(jit.branch8(CCallHelpers::Equal, indexOfBoxedCall, TrustedImm32(hasNoBoxedCallEntry)));
+    jit.load8(indexOfBoxedCall, entry);
+    Jump isNotLookedUp = jit.branchTest32(CCallHelpers::Zero, entry);
     std::array<StubKey, numberOfForms> handlers;
     for (unsigned form = 0; form < numberOfForms; ++form)
         handlers[form] = callBoxedBuiltin(static_cast<BoxedCallForm>(form), count);
@@ -1003,7 +1004,7 @@ static void emitArraySplice(StubAssembler& jit, GPRReg scratch, JumpList& callsH
     for (unsigned i = count; i--;)
         jit.move(argumentGPR(i), jit.reuseScratch(operands[i + 1]));
     jit.move(thisGPR, jit.reuseScratch(operands[0]));
-    jit.jumpToCallOfOperation(count == 3 ? Entry::operationAOTArraySpliceItemIntoAnyList : Entry::operationAOTArraySpliceOfAnyList);
+    jit.jumpToCallOfOperation(count == 3 ? Entry::operationAOTArraySpliceItemGeneric : Entry::operationAOTArraySpliceGeneric);
 }
 
 static void emitFunctionBind(StubAssembler& jit, GPRReg allocator, JumpList& callsHostFunction)
@@ -1164,14 +1165,17 @@ static void emitArrayShift(StubAssembler& jit, GPRReg scratch, JumpList& callsHo
     jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), last);
     Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, last);
     jit.sub32(TrustedImm32(1), last);
-    isLeftToOperation.append(jit.branch32(CCallHelpers::Above, last, TrustedImm32(mostValuesMovedByShiftInStub)));
+    Jump isLong = jit.branch32(CCallHelpers::Above, last, TrustedImm32(mostValuesMovedByShiftInStub));
     jit.load64(Address(butterfly), element);
     isLeftToOperation.append(jit.branchTest64(CCallHelpers::Zero, element));
     Jump isAlone = jit.branchTest32(CCallHelpers::Zero, last);
-    isLeftToOperation.append(branchIfNotPristine(jit, thisGPR));
-    Jump holdsIntegers = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(Int32Shape));
-    isLeftToOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))));
-    holdsIntegers.link(&jit);
+    auto leaveToOperationUnlessValuesMayMove = [&] {
+        isLeftToOperation.append(branchIfNotPristine(jit, thisGPR));
+        Jump holdsIntegers = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(Int32Shape));
+        isLeftToOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))));
+        holdsIntegers.link(&jit);
+    };
+    leaveToOperationUnlessValuesMayMove();
 
     jit.move(TrustedImm32(0), index);
     Label moveNext = jit.label();
@@ -1184,6 +1188,24 @@ static void emitArrayShift(StubAssembler& jit, GPRReg scratch, JumpList& callsHo
     jit.store64(TrustedImm32(0), BaseIndex(butterfly, last, CCallHelpers::TimesEight));
     jit.store32(last, Address(butterfly, Butterfly::offsetOfPublicLength()));
     jit.move(element, jit.result());
+    jit.returnToCaller();
+
+    isLong.link(&jit);
+    isLeftToOperation.append(jit.branch32(CCallHelpers::AboveOrEqual, last, TrustedImm32(JSArray::shiftThreshold)));
+    jit.load64(Address(butterfly), element);
+    isLeftToOperation.append(jit.branchTest64(CCallHelpers::Zero, element));
+    leaveToOperationUnlessValuesMayMove();
+    const GPRReg target = jit.reuseScratch(StubRegister::A0);
+    RELEASE_ASSERT(target == leafArgumentGPR(0) && butterfly == leafArgumentGPR(1) && last == leafArgumentGPR(2));
+    jit.store32(last, Address(butterfly, Butterfly::offsetOfPublicLength()));
+    jit.getEffectiveAddress(BaseIndex(butterfly, last, CCallHelpers::TimesEight), moved);
+    jit.pushPair(element, moved);
+    jit.move(butterfly, target);
+    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), butterfly);
+    jit.lshift64(TrustedImm32(CCallHelpers::TimesEight), last);
+    jit.callLeaf(Entry::operationAOTMoveBytes, 2 * sizeof(CPURegister));
+    jit.popPair(jit.result(), moved);
+    jit.store64(TrustedImm32(0), Address(moved));
     jit.returnToCaller();
 
     isEmpty.link(&jit);
@@ -1236,11 +1258,11 @@ static constexpr auto aFunction = ArgumentGuard::IsFunction;
 static constexpr auto aPattern = ArgumentGuard::IsUntouchedRegExp;
 static constexpr CallWithoutHostFunction arrayJoinCalls[] = { { { anything, anything }, Entry::operationAOTArrayJoinOfAnyReceiver, { }, std::nullopt, true } };
 static constexpr CallWithoutHostFunction arrayToStringCalls[] = { { { anything, anything }, Entry::operationAOTArrayToStringOfAnyReceiver, { }, std::nullopt, true } };
-static constexpr CallWithoutHostFunction arrayPopCalls[] = { { { anything, anything }, Entry::operationAOTArrayPopOfAnyList } };
-static constexpr CallWithoutHostFunction arrayShiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayShiftOfAnyList } };
-static constexpr CallWithoutHostFunction arrayUnshiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayUnshiftOfAnyList } };
-static constexpr CallWithoutHostFunction mapClearCalls[] = { { { anything, anything }, Entry::operationAOTMapClearOfAnyMap } };
-static constexpr CallWithoutHostFunction setClearCalls[] = { { { anything, anything }, Entry::operationAOTSetClearOfAnySet } };
+static constexpr CallWithoutHostFunction arrayPopCalls[] = { { { anything, anything }, Entry::operationAOTArrayPopGeneric } };
+static constexpr CallWithoutHostFunction arrayShiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayShiftGeneric } };
+static constexpr CallWithoutHostFunction arrayUnshiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayUnshiftGeneric } };
+static constexpr CallWithoutHostFunction mapClearCalls[] = { { { anything, anything }, Entry::operationAOTMapClearGeneric } };
+static constexpr CallWithoutHostFunction setClearCalls[] = { { { anything, anything }, Entry::operationAOTSetClearGeneric } };
 static constexpr CallWithoutHostFunction regExpExecCalls[] = { { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::Array) } };
 static constexpr CallWithoutHostFunction regExpTestCalls[] = { { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::BoxedBoolean) } };
 static constexpr CallWithoutHostFunction stringEndsWithCalls[] = { { { aText, anything }, Entry::operationAOTStringEndsWith } };
@@ -1697,7 +1719,7 @@ static bool isKnownAsMadeByOneCompare(const StubAssembler& jit, const BoxedCallH
     return flagsOfReceiverAsItsClassMakesIt(handler) && !jit.options().methodsOfBuiltinsMayBeReplaced && jit.options().hasOneInstance;
 }
 
-static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCallHandler& handler, MethodIsRead methodIsRead, GPRReg scratch, JumpList& looksUp, std::optional<StubKey> entryForProvenClass = std::nullopt, GPRReg receiver = thisGPR, LooksBehindFirstLook* looksBehind = nullptr)
+static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCallHandler& handler, MethodIsRead methodIsRead, GPRReg scratch, JumpList& looksUp, std::optional<StubKey> entryForProvenClass = std::nullopt, GPRReg receiver = thisGPR, LooksBehindFirstLook* looksBehind = nullptr, std::optional<StubKey> stubOfMethod = std::nullopt)
 {
     JumpList isOfClassAndAsMade;
     if (handler.receiverTypes) {
@@ -1740,6 +1762,11 @@ static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCall
     jit.and32(TrustedImm32(PropertyCacheWords::numberOfStructuresBelowBuiltinClasses - 1), scratch);
     jit.load32(BaseIndex(instanceGPR, scratch, CCallHelpers::TimesFour, AOT_INSTANCE_OFFSET(propertyCaches.structuresBelowBuiltinClasses)), scratch);
     looksUp.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(receiver, JSCell::structureIDOffset())));
+    if (stubOfMethod && !jit.options().checksWalk) {
+        jit.linkToStub(isAsMade, *stubOfMethod);
+        jit.linkToStub(isOfClassAndAsMade, *stubOfMethod);
+        return;
+    }
     isAsMade.link(&jit);
     isOfClassAndAsMade.link(&jit);
     askAgainWhatReceiverFinds(jit, handler.form, methodIsRead, receiver);
@@ -2018,13 +2045,18 @@ void generateCallMethodOfTable(StubAssembler& jit)
     const BoxedCallHandler& handler = boxedCallHandlers[static_cast<unsigned>(boxedCallFormOf(method))];
     const unsigned count = method == TableMethod::MapSet ? 2 : 1;
     const GPRReg name = gprOf(stubImmediateRegister);
-    const HashTableRegisters registers = HashTableRegisters::take(jit);
-    const GPRReg receiver = registers.owner;
+    const GPRReg receiver = jit.operand(0);
+    const GPRReg scratch = jit.allocateScratch(hashTableRegisterPlan.hash);
+    const StubKey stubOfMethod = stubOfTableMethod(method, keyComparisonOf(jit.key()));
     RELEASE_ASSERT(handler.receiverTypes && handler.emit == emitJumpToTarget && handler.firstArgument == ArgumentGuard::None && servesCallsByName(handler.form, count));
-    RELEASE_ASSERT(noOverlap(receiver, name, registers.hash, argumentGPR(0), argumentGPR(1), instanceGPR));
+    RELEASE_ASSERT(noOverlap(receiver, name, scratch, argumentGPR(0), argumentGPR(1), instanceGPR));
+    if (method == TableMethod::MapSet)
+        checkStubOperands(stubOfMethod, { receiver, argumentGPR(0), argumentGPR(1) });
+    else
+        checkStubOperands(stubOfMethod, { receiver, argumentGPR(0) });
 
     JumpList looksUp;
-    branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::AtTheCall, registers.hash, looksUp, jit.key().withFamily(StubFamily::CallMethodOfProvenTable), receiver);
+    branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::AtTheCall, scratch, looksUp, jit.key().withFamily(StubFamily::CallMethodOfProvenTable), receiver, nullptr, stubOfMethod);
     jit.addOutOfLinePart([=](StubAssembler& jit) {
         looksUp.link(&jit);
         jit.move(receiver, thisGPR);
@@ -2032,7 +2064,7 @@ void generateCallMethodOfTable(StubAssembler& jit)
             jit.move(TrustedImm32(static_cast<int32_t>(*number)), name);
         jit.jumpToStub(callMethodById(count));
     });
-    emitMethodOfTable(jit, method, registers);
+    jit.jumpToStub(stubOfMethod);
 }
 
 void generateCallMethodOfBuiltinClass(StubAssembler& jit)

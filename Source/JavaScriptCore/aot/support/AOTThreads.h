@@ -40,8 +40,8 @@ public:
     explicit BytesSharedByThreads(size_t size) { m_bytes.fill(0, size); }
 
     size_t size() const { return m_bytes.size(); }
-    uint8_t at(size_t index) const { return WTF::atomicLoad(&m_bytes[index], std::memory_order_relaxed); }
-    void set(size_t index, uint8_t value) { WTF::atomicStore(&m_bytes[index], value, std::memory_order_relaxed); }
+    uint8_t at(size_t index) const { return WTF::atomicLoad<MemoryOrder::Relaxed>(&m_bytes[index]); }
+    void set(size_t index, uint8_t value) { WTF::atomicStore<MemoryOrder::Relaxed>(&m_bytes[index], value); }
 
 private:
     mutable Vector<uint8_t> m_bytes;
@@ -137,8 +137,10 @@ Vector<Vector<T>> collectChunksInParallel(const ParallelLoops& loops, unsigned c
     ChunksOfIndices division = divideIntoChunks(count);
     Vector<Vector<T>> chunks(division.size());
     forEachIndexInParallel(loops, division.size(), [&](unsigned chunk) {
-        for (unsigned index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index)
-            collect(index, chunks[chunk]);
+        Vector<T>& collected = chunks[chunk];
+        unsigned end = division.firstIndexOf[chunk + 1];
+        for (unsigned index = division.firstIndexOf[chunk]; index < end; ++index)
+            collect(index, collected);
     });
     return chunks;
 }

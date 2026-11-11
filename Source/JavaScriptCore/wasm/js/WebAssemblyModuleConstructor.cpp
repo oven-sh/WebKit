@@ -295,6 +295,43 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyModuleExports, (JSGlobalObject* globalObject
 /**
  * See https://webassembly.github.io/js-string-builtins/js-api/#dom-module-module
  */
+static bool hasUnsharedBytes(JSValue value)
+{
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
+        return !view->isShared();
+    if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value))
+        return !buffer->isShared();
+    return false;
+}
+
+template<typename Source>
+static JSWebAssemblyModule* createModuleFrom(JSGlobalObject* globalObject, CallFrame* callFrame, Source&& source, std::optional<WebAssemblyCompileOptions>& options)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, webAssemblyModuleStructure, newTarget, callFrame->jsCallee());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    auto result = Wasm::Module::validateSync(vm, std::forward<Source>(source));
+    if (!result.has_value()) [[unlikely]] {
+        throwException(globalObject, scope, createJSWebAssemblyCompileError(globalObject, vm, result.error()));
+        return nullptr;
+    }
+
+    if (options) {
+        auto errorMessage = options->validateBuiltinsAndImportedStrings(result.value());
+        if (errorMessage.has_value()) {
+            throwException(globalObject, scope, createJSWebAssemblyCompileError(globalObject, vm, errorMessage.value()));
+            return nullptr;
+        }
+        result.value()->applyCompileOptions(options.value());
+    }
+
+    RELEASE_AND_RETURN(scope, JSWebAssemblyModule::create(vm, structure, WTF::move(result.value())));
+}
+
 JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -302,6 +339,15 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyModule, (JSGlobalObject* globalOb
 
     if (!globalObject->webAssemblyEnabled()) [[unlikely]]
         return JSValue::encode(throwException(globalObject, scope, createJSWebAssemblyCompileError(globalObject, vm, globalObject->webAssemblyDisabledErrorMessage())));
+
+    // The bytes are copied because getters of the program may run before they are parsed.
+    if (callFrame->argument(1).isUndefined() && callFrame->newTarget() == JSValue(callFrame->jsCallee()) && hasUnsharedBytes(callFrame->argument(0)) && !Options::enableWasmDebugger()) {
+        SourceProviderBufferGuard bufferGuard(nullptr);
+        std::span<const uint8_t> bytes = getWasmBufferFromValue(globalObject, callFrame->argument(0), bufferGuard);
+        RETURN_IF_EXCEPTION(scope, { });
+        std::optional<WebAssemblyCompileOptions> noOptions;
+        RELEASE_AND_RETURN(scope, JSValue::encode(createModuleFrom(globalObject, callFrame, bytes, noOptions)));
+    }
 
     Vector<uint8_t> source = createSourceBufferFromValue(vm, globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
@@ -330,29 +376,7 @@ JSC_DEFINE_HOST_FUNCTION(callJSWebAssemblyModule, (JSGlobalObject* globalObject,
 
 JSWebAssemblyModule* WebAssemblyModuleConstructor::createModule(JSGlobalObject* globalObject, CallFrame* callFrame, Vector<uint8_t>&& buffer, std::optional<WebAssemblyCompileOptions>& options)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSObject* newTarget = asObject(callFrame->newTarget());
-    Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, webAssemblyModuleStructure, newTarget, callFrame->jsCallee());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    auto result = Wasm::Module::validateSync(vm, WTF::move(buffer));
-    if (!result.has_value()) [[unlikely]] {
-        throwException(globalObject, scope, createJSWebAssemblyCompileError(globalObject, vm, result.error()));
-        return nullptr;
-    }
-
-    if (options) {
-        auto errorMessage = options->validateBuiltinsAndImportedStrings(result.value());
-        if (errorMessage.has_value()) {
-            throwException(globalObject, scope, createJSWebAssemblyCompileError(globalObject, vm, errorMessage.value()));
-            return nullptr;
-        }
-        result.value()->applyCompileOptions(options.value());
-    }
-
-    RELEASE_AND_RETURN(scope, JSWebAssemblyModule::create(vm, structure, WTF::move(result.value())));
+    return createModuleFrom(globalObject, callFrame, WTF::move(buffer), options);
 }
 
 WebAssemblyModuleConstructor* WebAssemblyModuleConstructor::create(VM& vm, Structure* structure, WebAssemblyModulePrototype* thisPrototype)

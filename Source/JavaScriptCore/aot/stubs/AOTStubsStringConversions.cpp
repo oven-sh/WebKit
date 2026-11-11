@@ -35,7 +35,8 @@ StubSignature signatureOfConcatenateKeyOfPair(StubKey)
 void locateKeysOfPair(StubAssembler& jit, GPRReg first, GPRReg second, GPRReg set, GPRReg scratch)
 {
     RELEASE_ASSERT(noOverlap(first, second, set, scratch));
-    jit.getEffectiveAddress(BaseIndex(first, second, CCallHelpers::TimesEight), set);
+    jit.mul32(TrustedImm32(static_cast<int32_t>(StringKeyCache::keyOfPairMultiplierOfSecond)), second, set);
+    jit.add32(first, set);
     jit.mul32(TrustedImm32(static_cast<int32_t>(StringKeyCache::keyOfPairMultiplier)), set, set);
     jit.urshift32(TrustedImm32(StringKeyCache::keyOfPairHashShift), set);
 #if CPU(X86_64)
@@ -46,6 +47,35 @@ void locateKeysOfPair(StubAssembler& jit, GPRReg first, GPRReg second, GPRReg se
     jit.and64(scratch, set);
 #endif
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keysOfPairs)), set);
+}
+
+static void joinLongTextAsAnyOther(StubAssembler& jit, GPRReg first, GPRReg second, GPRReg scratch)
+{
+    JumpList isNoLongText;
+    const StubKey joinOfTwo = concatenate(2);
+#if CPU(ARM64)
+    const GPRReg firstOfJoin = jit.allocateScratch(StubRegister::T11);
+    const GPRReg secondOfJoin = jit.reuseScratch(StubRegister::T12);
+#else
+    const GPRReg firstOfJoin = scratch;
+    const GPRReg secondOfJoin = second;
+#endif
+    RELEASE_ASSERT(signatureOf(joinOfTwo).operands[0] == firstOfJoin && signatureOf(joinOfTwo).operands[1] == secondOfJoin);
+    isNoLongText.append(jit.branchIfNotCell(first));
+    isNoLongText.append(jit.branchIfNotType(first, StringType));
+    isNoLongText.append(jit.branchIfNotCell(second));
+    isNoLongText.append(jit.branchIfNotType(second, StringType));
+    jit.loadPtr(Address(first, JSString::offsetOfValue()), scratch);
+    Jump isRope = jit.branchIfRopeStringImpl(scratch);
+    isNoLongText.append(jit.branch32(CCallHelpers::BelowOrEqual, Address(scratch, StringImpl::lengthMemoryOffset()), TrustedImm32(StringKeyCache::maxCachedKeyLength)));
+    Jump isLong = jit.jump();
+    isRope.link(&jit);
+    isNoLongText.append(jit.branch32(CCallHelpers::BelowOrEqual, Address(first, JSRopeString::offsetOfLength()), TrustedImm32(StringKeyCache::maxCachedKeyLength)));
+    isLong.link(&jit);
+    jit.move(second, secondOfJoin);
+    jit.move(first, firstOfJoin);
+    jit.jumpToStub(joinOfTwo);
+    isNoLongText.link(&jit);
 }
 
 void generateConcatenateKeyOfPair(StubAssembler& jit)
@@ -108,6 +138,7 @@ void generateConcatenateKeyOfPair(StubAssembler& jit)
         returnResult(jit, second);
         isNoTextBehindNothing.link(&jit);
     }
+    joinLongTextAsAnyOther(jit, first, second, set);
     isTextOfInteger.link(&jit);
     auto use = static_cast<ConcatenatedKeyForm>(jit.key().form()) == ConcatenatedKeyForm::Name ? UseOfJoinedText::LikelyName : UseOfJoinedText::LikelyKey;
     jit.callOperationAndReturn(Entry::operationAOTConcatenatePair, {

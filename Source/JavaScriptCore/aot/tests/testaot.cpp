@@ -360,13 +360,13 @@ static void listRowsOfEffects(PrintStream& out)
         printParts(row, !effects.mayRunOtherCode(), !effects.mayThrowByRule(), !!Typed::lanesNotWrittenInEffectsNet(effects), !effects.mayCollect);
     };
     for (Typed::Opcode opcode : allMembersOf<Typed::Opcode>)
-        printEffects(Typed::firstRowOfOperationsInEffectsNet + static_cast<unsigned>(opcode), Typed::declaredBoundOf(opcode));
+        printEffects(Typed::firstOperationRowInEffectsNet + static_cast<unsigned>(opcode), Typed::declaredBoundOf(opcode));
     for (unsigned entry = 0; entry < numberOfEntries; ++entry) {
         if (runtimeOperationOf(static_cast<AOT::Entry>(entry)))
-            printEffects(Typed::firstRowOfRuntimeOperationsInEffectsNet + entry, effectsOf(static_cast<AOT::Entry>(entry)));
+            printEffects(Typed::firstRuntimeOperationRowInEffectsNet + entry, effectsOf(static_cast<AOT::Entry>(entry)));
     }
     for (unsigned family = 0; family < numberOfStubFamilies; ++family)
-        print("any"_s, Typed::firstRowOfStubsInEffectsNet + family);
+        print("any"_s, Typed::firstStubRowInEffectsNet + family);
     const BuiltinTable& table = BuiltinTable::singleton();
     for (unsigned builtin = 1; builtin < table.builtinCount(); ++builtin) {
         bool runsNoOtherCode = false;
@@ -382,7 +382,7 @@ static void listRowsOfEffects(PrintStream& out)
             throwsNothing |= !overload.throws();
             doesNotCollect |= overload.effects.capability == BuiltinCapability::None;
         }
-        printParts(Typed::firstRowOfBuiltinsInEffectsNet + builtin, runsNoOtherCode, throwsNothing, leavesHeapsAlone, doesNotCollect);
+        printParts(Typed::firstBuiltinRowInEffectsNet + builtin, runsNoOtherCode, throwsNothing, leavesHeapsAlone, doesNotCollect);
     }
 }
 
@@ -463,7 +463,7 @@ int main(int argc, char** argv)
         if (!parsedCommandLine)
             return exitCodeForInvalidCommandLine;
         if (JSC::Options::aotImagePath()) {
-            JSC::Options::useSharedArrayBuffer() = true;
+            JSC::Options::alwaysUseSharedArrayBuffer() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             for (const String& option : parsedCommandLine->jscOptions)

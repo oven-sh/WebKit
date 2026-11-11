@@ -52,8 +52,8 @@ bool InternalFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyN
     if (slot.thisValue() == JSValue(function) && rejectsNewProperty(vm, function, propertyName)) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         // Function.prototype[Symbol.hasInstance] is read-only, so the specification already rejects that store, silently in sloppy mode.
-        bool isTold = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
-        return typeError(globalObject, scope, isTold, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+        bool shouldThrow = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
+        return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
     }
     return Base::put(cell, globalObject, propertyName, value, slot);
 }
@@ -62,6 +62,11 @@ bool InternalFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globa
 {
     VM& vm = globalObject->vm();
     if (rejectsNewProperty(vm, uncheckedDowncast<InternalFunction>(object), propertyName)) [[unlikely]] {
+        if (AOT::RuntimeHooks::acceptsHasInstanceOfHost(uncheckedDowncast<InternalFunction>(object), propertyName, descriptor.value())) {
+            AllowLazyMaterializationOfImmutableProperties allowDefinition(vm);
+            object->putDirect(vm, propertyName, descriptor.value(), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+            return true;
+        }
         auto scope = DECLARE_THROW_SCOPE(vm);
         return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
     }
@@ -200,6 +205,8 @@ static ALWAYS_INLINE bool retainsInternalFunctionAllocationStructure(JSFunction*
     if (!function->isCompiledClosure())
         return false;
 #if ENABLE(AOT)
+    if (FunctionRareData* rareData = function->rareData(); rareData && rareData->internalFunctionAllocationStructure())
+        return true;
     switch (AOT::CompiledCallee::kind(function)) {
     case AOT::CompiledCallee::FunctionKind::Class:
     case AOT::CompiledCallee::FunctionKind::Generator:

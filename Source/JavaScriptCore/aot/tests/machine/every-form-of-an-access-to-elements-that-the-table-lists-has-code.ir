@@ -1,7 +1,7 @@
 # The walk writes a test for the storage of a list, a test for an element and a read of an element with a kind of storage and two flags; the emitters have code for some of the combinations. Twice in two hours a
 # hand of the walk wrote one that has none, and a right, everyday program did not build ("OpcodeWithoutCode"): only a user's program could tell.
 # One table says which forms have code: accessToElementsHasCode() (walk/AOTArrayStorageForms.h). The emitters go by it; a note on a list is shown to reads only where it says yes; and where the walk builds an
-# operation in a form that has none, a test answers no and a read is widened to the form that takes nothing for granted: the program builds and is right, and AccessesToElementsWrittenInFormsWithoutCode counts it.
+# operation in a form that has none, a test answers no and a read is widened to the form that takes nothing for granted: the program builds and is right, and UnsupportedElementAccessesDemoted counts it.
 # This test takes EVERY row of the table through the emitters: the row is laid into the Code below and emitted. A row that the table lists and that has no code says so here, or stops at the emitter's own assertion.
 # A row more or less is a line more or less.
 # RUN: emit-forms-of-accesses-to-elements
@@ -16,11 +16,11 @@
 # CHECK-NEXT: HasArrayStorage arrayStorage=Double: code
 # CHECK-NEXT: HasArrayStorage arrayStorage=Double [admitsInt32Storage]: code
 # CHECK-NEXT: HasArrayStorage arrayStorage=Double [isWritable]: code
-# CHECK-NEXT: HasArrayStorage arrayStorage=Double [isWritable, admitsInt32Storage]: no code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Double [isWritable, admitsInt32Storage]: code
 # CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous: code
 # CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous [admitsInt32Storage]: code
 # CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous [isWritable]: code
-# CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous [isWritable, admitsInt32Storage]: no code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous [isWritable, admitsInt32Storage]: code
 # CHECK-NEXT: IsElementPresent: code
 # CHECK-NEXT: IsElementPresent [admitsInt32Storage]: no code
 # CHECK-NEXT: IsElementPresent arrayStorage=Int32: code
@@ -28,7 +28,7 @@
 # CHECK-NEXT: IsElementPresent arrayStorage=Double: code
 # CHECK-NEXT: IsElementPresent arrayStorage=Double [admitsInt32Storage]: code
 # CHECK-NEXT: IsElementPresent arrayStorage=Contiguous: code
-# CHECK-NEXT: IsElementPresent arrayStorage=Contiguous [admitsInt32Storage]: no code
+# CHECK-NEXT: IsElementPresent arrayStorage=Contiguous [admitsInt32Storage]: code
 # CHECK-NEXT: GetArrayElement: code
 # CHECK-NEXT: GetArrayElement [admitsInt32Storage]: no code
 # CHECK-NEXT: GetArrayElement arrayStorage=Int32: code
@@ -36,7 +36,7 @@
 # CHECK-NEXT: GetArrayElement arrayStorage=Double: code
 # CHECK-NEXT: GetArrayElement arrayStorage=Double [admitsInt32Storage]: code
 # CHECK-NEXT: GetArrayElement arrayStorage=Contiguous: code
-# CHECK-NEXT: GetArrayElement arrayStorage=Contiguous [admitsInt32Storage]: no code
+# CHECK-NEXT: GetArrayElement arrayStorage=Contiguous [admitsInt32Storage]: code
 # -- code
 # code f1:Body {
 #   b0(v0: Array @JSValue, v1: int[0, 100] @JSValue) entry=0:

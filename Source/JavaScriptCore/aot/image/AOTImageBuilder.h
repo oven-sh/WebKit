@@ -12,6 +12,7 @@
 #include "AOTConstantPool.h"
 #include "AOTFFIStubs.h"
 #include "AOTImageFormat.h"
+#include "AOTPrefixCode.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTNumbering.h"
 #include "AOTRegExpCompiler.h"
@@ -32,7 +33,7 @@ class StubCatalog;
 struct SideTables {
     Vector<uint8_t> bytes;
     Vector<uint32_t> offsets;
-    Vector<OptionSet<ImageFunctionFlag>> flags;
+    Vector<uint32_t> sizes;
     Vector<uint8_t> positions;
     Vector<uint32_t> frameMapWords;
     Vector<ImageFrame> frames;
@@ -43,6 +44,11 @@ struct WebAssemblyImageInputs {
     size_t codeAlignment { 1 };
     Vector<uint8_t> directory;
     uint32_t numberOfModules { 0 };
+};
+
+class EarlyWasmModules {
+public:
+    virtual ~EarlyWasmModules() = default;
 };
 
 struct ImageContents {
@@ -60,6 +66,7 @@ struct ImageInputs {
     LinkedFunctions functions;
     BodyFactsForTables bodyFacts;
     WTF::BitSet<numberOfEntries> entriesUsedByFunctions;
+    std::unique_ptr<EarlyWasmModules> earlyWasmModules { };
 };
 
 struct BuiltImage {
@@ -80,7 +87,7 @@ void reportLinkFailure(LinkFailure, FunctionID, BuildContext&);
 OptionSet<ImageFlag> imageFlagsAdmittedBy(Wire::UnseenCodeCause);
 OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts&, const CompileOptions&);
 ResolvedCallees resolveCallees(const LinkedFunctions&, const Typed::Plan&, BuildContext&);
-SideTables encodeSideTables(const LinkedFunctions&, std::span<const Vector<uint8_t>> callSites, BuildContext&);
+SideTables encodeSideTables(const LinkedFunctions&, std::span<const Vector<PrefixSymbol>> callSites, BuildContext&);
 struct CalledSharedCode {
     Vector<StubKey> stubKeys;
     Vector<StubKey> stubKeysOfArgumentMoves;
@@ -93,7 +100,8 @@ SharedCode generateSharedCode(CalledSharedCode&&, const StubCatalog&, const WTF:
 SharedCode selectSharedCode(const LinkedFunctions&, const StubCatalog&, const WTF::BitSet<numberOfEntries>& entriesUsedByFunctions, BuildContext&);
 void applyNumbersToFunctions(LinkedFunctions&, const ImageNumbers&, BuildContext&);
 void checkUncheckedStackUsage(const LinkedFunctions&, const ResolvedCallees&, BuildContext&);
-JS_EXPORT_PRIVATE WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program&, const CodeTemplates&, BuildContext&, const BitVector* stringsInImage = nullptr);
+JS_EXPORT_PRIVATE WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program&, const CodeTemplates&, BuildContext&, const BitVector* stringsInImage = nullptr, std::unique_ptr<EarlyWasmModules> = nullptr, const LinkedFunctions* = nullptr);
+JS_EXPORT_PRIVATE std::unique_ptr<EarlyWasmModules> compileWebAssemblyFiles(const Typed::Program&, BuildContext&);
 Vector<uint8_t> encodeSymbols(const Typed::Program&, const BuiltImage&, BuildContext&);
 void writeMapFile(const UTF8CString& path, const Typed::Program&, const BuiltImage&, BuildContext&);
 Vector<uint8_t> encodeRowsOfMapFile(const Typed::Program&, const BuiltImage&);

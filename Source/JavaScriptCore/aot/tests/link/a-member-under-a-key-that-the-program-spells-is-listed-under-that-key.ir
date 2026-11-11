@@ -83,8 +83,8 @@ variable g4 name="pair" module=m1 declared={type=anything|absent} flags=[IsImmut
 variable g5 name="Gauge" module=m1 declared={type=absent|f4 flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g6 module=m1 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
 variable g7 module=m1 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
-module m0 path="/$bunfs/root/keys.js" displayPath="keys.js" flags=[KeepsError] body=f0 positions={lineStarts=[0, 34, 62, 98, 155] quotedTexts=[{position=19 end=13}, {position=81 start=13 end=28}] textOfQuotes="Symbol(\x22far\x22)Symbol(\x22loose\x22)"} functionText="export const far = Symbol(\x22far\x22);\x0aexport const word = \x22word\x22;\x0aexport let loose = Symbol(\x22loose\x22);\x0aexport function loosen() { loose = Symbol(\x22loosened\x22); }\x0a" namespaceLayout=L(m0)
-module m1 path="/$bunfs/root/main.js" displayPath="main.js" flags=[KeepsError] body=f2 requests=[{target=m0 completes=true}] positions={lineStarts=[0, 46, 75, 104, 141, 155, 168, 209, 252, 292, 320, 358, 396, 428, 430, 444, 470, 472, 489, 519, 550, 602, 604, 625, 642, 684, 711, 732, 824, 828, 844, 846, 899, 961, 1041] quotedTexts=[{position=59 end=14}, {position=88 start=14 end=28}, {position=126 start=28 end=48}, {position=190 start=379 end=389}, {position=233 start=394 end=404}, {position=273 start=409 end=419}, {position=344 start=424 end=434}, {position=377 start=434 end=449}, {position=534 start=48 end=62}, {position=552 start=62 end=71}, {position=664 start=260 end=271}, {position=702 start=271 end=278}, {position=715 start=278 end=293}, {position=745 start=302 end=313}, {position=751 start=302 end=316}, {position=762 start=319 end=329}, {position=768 start=319 end=332}, {position=778 start=335 end=346}, {position=784 start=335 end=349}, {position=795 start=352 end=363}, {position=809 start=366 end=377}, {position=815 start=366 end=379}, {position=846 start=73 end=118}, {position=852 start=79 end=117}, {position=861 start=84 end=93}, {position=874 start=95 end=104}, {position=887 start=106 end=115}, {position=899 start=118 end=178}, {position=905 start=124 end=135}, {position=927 start=138 end=170}, {position=935 start=154 end=169}, {position=950 start=138 end=177}, {position=961 start=178 end=256}, {position=975 start=184 end=248}, {position=1030 start=184 end=255}] textOfQuotes="Symbol(\x22near\x22)Symbol(\x22pair\x22)Symbol.for(\x22shared\x22)Symbol(\x22turn\x22)made.push()print(sum([new Gauge, new Gauge, new Gauge]))print(made.length + Reflect.ownKeys(Slack.prototype).length)print(Reflect.ownKeys({ [near]: 1, [pair]: 2, [far]: 3, [shared]: 4 }).length)i < list.lengthlist[i]gauge[pair] = itotal += gauge[near](i) + gauge[far](i) + gauge[word](i) + gauge[pair] + Gauge[near]()this.level + bythis.level - bythis.level * bythis.levelthis.level = to"} functionText="import { far, word, loose } from \x22./keys.js\x22;\x0aconst near = Symbol(\x22near\x22);\x0aconst pair = Symbol(\x22pair\x22);\x0aconst shared = Symbol.for(\x22shared\x22);\x0aclass Gauge {\x0a  level = 1;\x0a  [near](by) { return this.level + by; }\x0a  [shared](by) { return this.level - by; }\x0a  [far](by) { return this.level * by; }\x0a  [word](by) { return by; }\x0a  get [pair]() { return this.level; }\x0a  set [pair](to) { this.level = to; }\x0a  static [near]() { return 7; }\x0a}\x0aclass Slack {\x0a  [loose]() { return 0; }\x0a}\x0aconst made = [];\x0afor (let i = 0; i < 2; i++) {\x0a  const turn = Symbol(\x22turn\x22);\x0a  made.push(class Turn { [turn]() { return i; } });\x0a}\x0afunction sum(list) {\x0a  let total = 0;\x0a  for (let i = 0; i < list.length; i++) {\x0a    const gauge = list[i];\x0a    gauge[pair] = i;\x0a    total += gauge[near](i) + gauge[far](i) + gauge[word](i) + gauge[pair] + Gauge[near]();\x0a  }\x0a  return total;\x0a}\x0aprint(sum([new Gauge(), new Gauge(), new Gauge()]));\x0aprint(made.length + Reflect.ownKeys(Slack.prototype).length);\x0aprint(Reflect.ownKeys({ [near]: 1, [pair]: 2, [far]: 3, [shared]: 4 }).length);\x0a" namespaceLayout=L(m1)
+module m0 path="/$bunfs/root/keys.js" displayPath="keys.js" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 34, 62, 98, 155] quotedSources=[{position=19 end=13}, {position=81 start=13 end=28}] quotedSourceText="Symbol(\x22far\x22)Symbol(\x22loose\x22)"} functionSource="export const far = Symbol(\x22far\x22);\x0aexport const word = \x22word\x22;\x0aexport let loose = Symbol(\x22loose\x22);\x0aexport function loosen() { loose = Symbol(\x22loosened\x22); }\x0a" namespaceLayout=L(m0)
+module m1 path="/$bunfs/root/main.js" displayPath="main.js" flags=[CachesEvaluationError] body=f2 requests=[{target=m0 completes=true}] positions={lineStarts=[0, 46, 75, 104, 141, 155, 168, 209, 252, 292, 320, 358, 396, 428, 430, 444, 470, 472, 489, 519, 550, 602, 604, 625, 642, 684, 711, 732, 824, 828, 844, 846, 899, 961, 1041] quotedSources=[{position=59 end=14}, {position=88 start=14 end=28}, {position=126 start=28 end=48}, {position=190 start=379 end=389}, {position=233 start=394 end=404}, {position=273 start=409 end=419}, {position=344 start=424 end=434}, {position=377 start=434 end=449}, {position=534 start=48 end=62}, {position=552 start=62 end=71}, {position=664 start=260 end=271}, {position=702 start=271 end=278}, {position=715 start=278 end=293}, {position=745 start=302 end=313}, {position=751 start=302 end=316}, {position=762 start=319 end=329}, {position=768 start=319 end=332}, {position=778 start=335 end=346}, {position=784 start=335 end=349}, {position=795 start=352 end=363}, {position=809 start=366 end=377}, {position=815 start=366 end=379}, {position=846 start=73 end=118}, {position=852 start=79 end=117}, {position=861 start=84 end=93}, {position=874 start=95 end=104}, {position=887 start=106 end=115}, {position=899 start=118 end=178}, {position=905 start=124 end=135}, {position=927 start=138 end=170}, {position=935 start=154 end=169}, {position=950 start=138 end=177}, {position=961 start=178 end=256}, {position=975 start=184 end=248}, {position=1030 start=184 end=255}] quotedSourceText="Symbol(\x22near\x22)Symbol(\x22pair\x22)Symbol.for(\x22shared\x22)Symbol(\x22turn\x22)made.push()print(sum([new Gauge, new Gauge, new Gauge]))print(made.length + Reflect.ownKeys(Slack.prototype).length)print(Reflect.ownKeys({ [near]: 1, [pair]: 2, [far]: 3, [shared]: 4 }).length)i < list.lengthlist[i]gauge[pair] = itotal += gauge[near](i) + gauge[far](i) + gauge[word](i) + gauge[pair] + Gauge[near]()this.level + bythis.level - bythis.level * bythis.levelthis.level = to"} functionSource="import { far, word, loose } from \x22./keys.js\x22;\x0aconst near = Symbol(\x22near\x22);\x0aconst pair = Symbol(\x22pair\x22);\x0aconst shared = Symbol.for(\x22shared\x22);\x0aclass Gauge {\x0a  level = 1;\x0a  [near](by) { return this.level + by; }\x0a  [shared](by) { return this.level - by; }\x0a  [far](by) { return this.level * by; }\x0a  [word](by) { return by; }\x0a  get [pair]() { return this.level; }\x0a  set [pair](to) { this.level = to; }\x0a  static [near]() { return 7; }\x0a}\x0aclass Slack {\x0a  [loose]() { return 0; }\x0a}\x0aconst made = [];\x0afor (let i = 0; i < 2; i++) {\x0a  const turn = Symbol(\x22turn\x22);\x0a  made.push(class Turn { [turn]() { return i; } });\x0a}\x0afunction sum(list) {\x0a  let total = 0;\x0a  for (let i = 0; i < list.length; i++) {\x0a    const gauge = list[i];\x0a    gauge[pair] = i;\x0a    total += gauge[near](i) + gauge[far](i) + gauge[word](i) + gauge[pair] + Gauge[near]();\x0a  }\x0a  return total;\x0a}\x0aprint(sum([new Gauge(), new Gauge(), new Gauge()]));\x0aprint(made.length + Reflect.ownKeys(Slack.prototype).length);\x0aprint(Reflect.ownKeys({ [near]: 1, [pair]: 2, [far]: 3, [shared]: 4 }).length);\x0a" namespaceLayout=L(m1)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -103,9 +103,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v13 = Undefined @98
     Return v13 @98
 }
-function f1 name="loosen" module=m0 position=98 text={start=105 end=154} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="loosen" module=m0 position=98 sourceRange={start=105 end=154} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    v0 = NewRuntimeError runtimeError=LeftOutOfExecutable name="loosen" @98
+    v0 = NewRuntimeError runtimeError=OmittedFromExecutable name="loosen" @98
     Throw v0 @98
 }
 function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -246,7 +246,7 @@ function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anythi
     v128 = Undefined @961
     Return v128 @961
 }
-function f3 name="sum" module=m1 position=604 text={start=604 end=845} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="sum" module=m1 position=604 sourceRange={start=604 end=845} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|L0>):
     v1 = Integer @639
     v2 = Convert v1 declared={type=number flags=[IsExpected]} @639
@@ -296,7 +296,7 @@ function f3 name="sum" module=m1 position=604 text={start=604 end=845} flags=[Ha
   b3():
     Return v5 @837
 }
-function f4 name="Gauge" module=m1 position=147 text={start=141 end=429} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+function f4 name="Gauge" module=m1 position=147 sourceRange={start=141 end=429} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0 @147
     v2 = NewObject v1 layout=L0 @147
@@ -304,64 +304,64 @@ function f4 name="Gauge" module=m1 position=147 text={start=141 end=429} kind=Ba
     v4 = CallDirect v3 function=f16 @147
     Return v3 @147
 }
-function f5 module=m1 position=170 text={start=170 end=208} kind=Method flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f5 module=m1 position=170 sourceRange={start=170 end=208} kind=Method flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0, v1: anything):
     v2 = PropGet v0 key="level" @190
     v3 = Add v2, v1 @203
     Return v3 @203
 }
-function f6 module=m1 position=211 text={start=211 end=251} kind=Method flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f6 module=m1 position=211 sourceRange={start=211 end=251} kind=Method flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0, v1: anything):
     v2 = PropGet v0 key="level" @233
     v3 = Sub v2, v1 @246
     Return v3 @246
 }
-function f7 module=m1 position=254 text={start=254 end=291} kind=Method flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f7 module=m1 position=254 sourceRange={start=254 end=291} kind=Method flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0, v1: anything):
     v2 = PropGet v0 key="level" @273
     v3 = Mul v2, v1 @286
     Return v3 @286
 }
-function f8 module=m1 position=294 text={start=294 end=319} kind=Method length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f8 module=m1 position=294 sourceRange={start=294 end=319} kind=Method length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Return v0 @314
 }
-function f9 module=m1 position=322 text={start=322 end=357} kind=Getter flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f9 module=m1 position=322 sourceRange={start=322 end=357} kind=Getter flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0):
     v1 = PropGet v0 key="level" @344
     Return v1 @344
 }
-function f10 module=m1 position=360 text={start=360 end=395} kind=Setter flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f10 module=m1 position=360 sourceRange={start=360 end=395} kind=Setter flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0, v1: number):
     PropSet v0, v1 key="level" @377
     v3 = Undefined @377
     Return v3 @377
 }
-function f11 module=m1 position=398 text={start=405 end=427} kind=Method thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f11 module=m1 position=398 sourceRange={start=405 end=427} kind=Method thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Integer integer=7 @423
     Return v0 @423
 }
-function f12 name="Slack" module=m1 position=436 text={start=430 end=471} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+function f12 name="Slack" module=m1 position=436 sourceRange={start=430 end=471} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
   b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1 @436
     v2 = NewObject v1 layout=L1 @436
     v3 = Convert v2 declared={type=L1} @436
     Return v3 @436
 }
-function f13 module=m1 position=446 text={start=446 end=469} kind=Method thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f13 module=m1 position=446 sourceRange={start=446 end=469} kind=Method thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = Integer @465
     Return v0 @465
 }
-function f14 name="Turn" module=m1 position=568 text={start=562 end=599} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+function f14 name="Turn" module=m1 position=568 sourceRange={start=562 end=599} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
   b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2 @568
     v2 = NewObject v1 layout=L2 @568
     v3 = Convert v2 declared={type=L2} @568
     Return v3 @568
 }
-function f15 module=m1 position=575 text={start=575 end=597} kind=Method captures=[{type=number flags=[IsExpected] variableName="i"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f15 module=m1 position=575 sourceRange={start=575 end=597} kind=Method captures=[{type=number flags=[IsExpected] variableName="i"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number):
     Return v0 @593
 }

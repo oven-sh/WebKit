@@ -65,16 +65,16 @@ void OperatorEmitter::generateHasInPrototypeChain(const ValueContext& value)
     });
 }
 
-void OperatorEmitter::generateFindInPrototypeChainUnlessTrapped(const ValueContext& value)
+void OperatorEmitter::generateTryFindInPrototypeChain(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->valueOperand());
     CellPointer prototype = in<CellPointer>(value->prototypeOperand());
-    define(value, Word32(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::PrototypeUnlessTrapped), { object.value(), boxCell(prototype).value() }).first)));
+    define(value, Word32(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::PrototypeWithoutTraps), { object.value(), boxCell(prototype).value() }).first)));
 }
 
-void OperatorEmitter::generateFindsDefaultHasInstanceUnlessTrapped(const ValueContext& value)
+void OperatorEmitter::generateHasDefaultHasInstance(const ValueContext& value)
 {
-    defineTest(value, callLeaf<Condition>(RuntimeOperation::FindsDefaultHasInstance, { in<Boxed>(value->constructorOperand()) }));
+    defineTest(value, callLeaf<Condition>(RuntimeOperation::HasDefaultHasInstance, { in<Boxed>(value->constructorOperand()) }));
 }
 
 } } } // namespace JSC::AOT::Typed

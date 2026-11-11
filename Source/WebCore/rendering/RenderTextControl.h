@@ -36,7 +36,7 @@ class RenderTextControl : public RenderBlockFlow {
 public:
     virtual ~RenderTextControl();
 
-    WEBCORE_EXPORT HTMLTextFormControlElement& LEGACY_NODELETE textFormControlElement() const;
+    NODELETE WEBCORE_EXPORT HTMLTextFormControlElement& textFormControlElement() const;
 
 #if PLATFORM(IOS_FAMILY)
     bool canScroll() const;
@@ -69,7 +69,7 @@ private:
 
     ASCIILiteral renderName() const override { return "RenderTextControl"_s; }
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
     bool canHaveGeneratedChildren() const override { return false; }
     bool canBeProgramaticallyScrolled() const override { return true; }
 };

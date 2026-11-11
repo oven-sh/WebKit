@@ -77,16 +77,16 @@ constexpr Mechanisms withoutMechanismsMissingDependencies(Mechanisms mechanisms)
     return result == mechanisms ? result : withoutMechanismsMissingDependencies(result);
 }
 
-enum class WayOfWalking : uint8_t { AsBuilt, NothingCarried, Closed };
+enum class WalkMode : uint8_t { AsBuilt, NothingCarried, Closed };
 
-constexpr Mechanisms mechanismsOfWay(WayOfWalking way, Mechanisms ofBuild)
+constexpr Mechanisms mechanismsOfWay(WalkMode way, Mechanisms ofBuild)
 {
     switch (way) {
-    case WayOfWalking::AsBuilt:
+    case WalkMode::AsBuilt:
         return ofBuild;
-    case WayOfWalking::NothingCarried:
+    case WalkMode::NothingCarried:
         return withoutMechanismsMissingDependencies(ofBuild - Mechanisms { Mechanism::LoopInvariants, Mechanism::EscapeAnalysis, Mechanism::Inlining, Mechanism::Handlers });
-    case WayOfWalking::Closed:
+    case WalkMode::Closed:
         return ofBuild & Mechanisms { Mechanism::Folding, Mechanism::DirectCalls, Mechanism::Arrivals };
     }
     return ofBuild;

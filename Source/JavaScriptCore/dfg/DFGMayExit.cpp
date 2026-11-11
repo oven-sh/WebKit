@@ -187,6 +187,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case Call:
     case Construct:
     case CallVarargs:
+    case CallVarargsWithSpread:
     case CallDirectEval:
     case ConstructVarargs:
     case CallForwardVarargs:
@@ -210,6 +211,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case NewSet:
     case NewWeakMap:
     case NewWeakSet:
+    case NewProxyObject:
     case NewArray:
     case NewArrayWithButterfly:
     case NewButterflyWithSize:

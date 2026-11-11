@@ -1151,7 +1151,7 @@ bool WireTypeReader::computeDeclaredMembers()
         });
         if (holdsOneNeverAllocated)
             members = sets.differenceOf(members, allNeverAllocated);
-        if (has(layouts[index], LayoutFlags::IsNeverAllocated) && std::ranges::any_of(wireFieldsOf(conversions.checkedSections, layouts[index]), [](const Wire::Field& field) { return has(field, FieldFlags::IsRequiredAndReadThoughNeverWritten); }))
+        if (has(layouts[index], LayoutFlags::IsNeverAllocated) && std::ranges::any_of(wireFieldsOf(conversions.checkedSections, layouts[index]), [](const Wire::Field& field) { return has(field, FieldFlags::WasRequiredAndRead); }))
             members = { };
         if (!members) {
             isViewWithoutLayouts[index] = 1;

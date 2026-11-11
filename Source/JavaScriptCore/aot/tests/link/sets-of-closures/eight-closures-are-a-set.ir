@@ -1,0 +1,71 @@
+# Eight is the most that a set holds: if the eighth took the set apart, a table of eight handlers would be an unknown function, and the eight would be lost.
+# take(first);  take(second);  take(third);  take(fourth);  take(<one of four more>);
+# RUN: link held functions mechanisms=all
+# CHECK: function f1
+# CHECK-NEXT: parameter 0 {{*}}proven=f2|f3|f4|f5|f6|f7|f8|f9
+# RUN(KNOWN): link functions mechanisms=all
+# KNOWN: function f5 callers-known
+# KNOWN-NEXT: parameter 0 {{*}}proven=int[0, 2147483647]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = NewClosure function=f7
+    v7 = NewClosure function=f8
+    v8 = NewClosure function=f9
+    v9 = Call v0, -, v1 calleeName="take"
+    v10 = Call v0, -, v2 calleeName="take"
+    v11 = Call v0, -, v3 calleeName="take"
+    v12 = Call v0, -, v4 calleeName="take"
+    v13 = Call v0, -, v5 calleeName="take"
+    v14 = Call v0, -, v6 calleeName="take"
+    v15 = Call v0, -, v7 calleeName="take"
+    v16 = Call v0, -, v8 calleeName="take"
+    v17 = Undefined
+    Return v17
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1 calleeName="f"
+    Return v2
+}
+function f2 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="second" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="third" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="fourth" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="more6" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 name="more7" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f8 name="more8" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f9 name="more9" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

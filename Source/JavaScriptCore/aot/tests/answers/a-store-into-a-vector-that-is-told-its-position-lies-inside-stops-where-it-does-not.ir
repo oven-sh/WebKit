@@ -1,8 +1,8 @@
-# `var result = $newArrayLike(length); for (; i < bound && $hasContiguousIndex(array, i); i++) if (!$tryPutByValDirect(result, i, { held: $getOwnContiguousIndex(array, i) })) break;` fills a list born with a length.
-# The turns run no other code and write the storage of no list. So the kind of the list that is filled is asked once in front of the typed copy, its storage is read once there, and where the position lies below the length that the
-# list was born with the store is PutContiguousIndex and its answer is true: what stands behind a no is not built (f1: the bound is that length).
-# The lie, testing=PositionsAreTakenToLieInside: every position from zero up counts as found inside (f2: the bound is a parameter). As built the loop would store behind the end of the vector.
-# Under testing=TestsEveryPosition the same record is built, and what the walk vouches for is held against the list: the process stops by name.
+# `var result = $newArrayLike(length); for (; i < bound && $hasContiguousIndex(array, i); i++) if (!$tryPutByValDirect(result, i, { held: $getOwnContiguousIndex(array, i) })) break;` fills an array that was allocated with a length.
+# The iterations run no other code and write no array's storage. So the indexing type of the array that is filled is checked once before the specialized version, and its storage is read once there.
+# Where the index is below the length that the array was allocated with, the store is PutContiguousIndex and its result is true, so the code for a false result is not built (f1: the bound is that length).
+# Fault injection, testing=AssumeIndexesInBounds: every index from zero up counts as in bounds (f2: the bound is a parameter). In a default build the loop would store past the end of the vector.
+# With testing=CheckBoundsAtRunTime the same operation is built, and what the walk vouches for is checked against the array: the process crashes with a named error.
 # RUN(EVENT): walk f1 mechanisms=all
 # EVENT: = HasArrayStorage [[list]] arrayStorage=Contiguous [isWritable]
 # EVENT: isLoopHead=true
@@ -12,13 +12,14 @@
 # RUN(RIGHT): run-in-shell mechanisms=all globalThis.after = () => print(JSON.stringify(copy.call(["a", {}, "c"], null, 0)), JSON.stringify(upTo.call(["a", {}, "c"], null, 2)), JSON.stringify(upTo.call(["a", {}, "c"], null, 1000)));
 # RIGHT: [{"held":"a"},{"held":{}},{"held":"c"}] [{"held":"a"},{"held":{}},null] [{"held":"a"},{"held":{}},{"held":"c"}]
 # RIGHT-NEXT: exited with 0
-# RUN(HARDENED): run-in-shell mechanisms=all testing=TestsEveryPosition,CheckProofsAtRunTime globalThis.after = () => print(JSON.stringify(copy.call(["a", {}, "c"], null, 0)), JSON.stringify(upTo.call(["a", {}, "c"], null, 1000)));
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,CheckProofsAtRunTime globalThis.after = () => print(JSON.stringify(copy.call(["a", {}, "c"], null, 0)), JSON.stringify(upTo.call(["a", {}, "c"], null, 1000)));
 # HARDENED: [{"held":"a"},{"held":{}},{"held":"c"}] [{"held":"a"},{"held":{}},{"held":"c"}]
 # HARDENED-NEXT: exited with 0
-# RUN(LIE): walk f2 mechanisms=all testing=TestsEveryPosition,PositionsAreTakenToLieInside
+# RUN(LIE): walk f2 mechanisms=all testing=CheckBoundsAtRunTime,AssumeIndexesInBounds
 # LIE: = PutContiguousIndex
-# RUN(POSITIONS): run-in-shell mechanisms=all testing=TestsEveryPosition,PositionsAreTakenToLieInside globalThis.after = () => print(JSON.stringify(shorter.call(["a", {}, "c", "d", "e", "f", "g", "h", "i"], null, 1000)));
-# POSITIONS: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# RUN(POSITIONS): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,AssumeIndexesInBounds globalThis.after = () => print(JSON.stringify(shorter.call(["a", {}, "c", "d", "e", "f", "g", "h", "i"], null, 1000)));
+# POSITIONS: bun: internal AOT error: redundancy elimination check failed
+# POSITIONS-NEXT: a load or check that the compiler removed as redundant gives a different result here
 # POSITIONS: crashed with
 
 layout L0 module=m1 position=10 fields=[{key="held" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1

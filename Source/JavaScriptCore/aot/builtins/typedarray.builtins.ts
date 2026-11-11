@@ -167,6 +167,37 @@ const fold = (name: string) => [
   },
 ] satisfies b.FunctionField[];
 
+const sortingWithComparator = (returns: b.TableType, receiverUses: readonly b.UseSpec[]) =>
+  ({
+    ...operandCodeEffects,
+    args: { comparator: b.callable },
+    returns,
+    uses: {
+      this: receiverUses,
+      comparator: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [elementOfReceiver, elementOfReceiver], result: convertedByNativeCode })],
+    },
+    implementation: b.hostCall,
+  }) satisfies b.FunctionField;
+
+const typedArrayOfNumbers = b.union(
+  b.instance("Int8Array"),
+  b.instance("Uint8Array"),
+  b.instance("Uint8ClampedArray"),
+  b.instance("Int16Array"),
+  b.instance("Uint16Array"),
+  b.instance("Int32Array"),
+  b.instance("Uint32Array"),
+  b.instance("Float16Array"),
+  b.instance("Float32Array"),
+  b.instance("Float64Array"),
+);
+
+const sortingOfNumbers = {
+  ...sortingWithComparator(self, changesElements),
+  this: typedArrayOfNumbers,
+  implementation: b.compiled("prelude/array-sort", "sortTypedArray"),
+} satisfies b.FunctionField;
+
 const sorting = (nativeSymbol: string, returns: b.TableType, receiverUses: readonly b.UseSpec[]) =>
   [
     {
@@ -179,18 +210,7 @@ const sorting = (nativeSymbol: string, returns: b.TableType, receiverUses: reado
       nativeSymbols: [nativeSymbol],
       implementation: b.hostCall,
     },
-    {
-      args: { comparator: b.callable },
-      returns,
-      capability: "js",
-      throws: true,
-      runsOnlyOperandCode: true,
-      uses: {
-        this: receiverUses,
-        comparator: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [elementOfReceiver, elementOfReceiver], result: convertedByNativeCode })],
-      },
-      implementation: b.hostCall,
-    },
+    sortingWithComparator(returns, receiverUses),
   ] satisfies b.FunctionField[];
 
 const copyOfRange = {
@@ -372,6 +392,14 @@ export default b.declarations(
           implementation: b.inline("TypedArraySet", { otherwise: b.hostCall }),
         },
         {
+          args: { source: b.notPassed },
+          returns: b.never,
+          capability: "heap",
+          throws: true,
+          uses: { this: b.inspected },
+          implementation: b.hostCall,
+        },
+        {
           ...operandCodeEffects,
           args: { source: b.any, offset: relativeIndex.optional },
           readsStateBeforeConversions: true,
@@ -395,7 +423,7 @@ export default b.declarations(
           writes: [elements],
         },
       ],
-      sort: sorting("typedArrayViewProtoFuncSort", self, changesElements),
+      sort: [sortingOfNumbers, ...sorting("typedArrayViewProtoFuncSort", self, changesElements)],
       subarray: [
         {
           ...viewOfRange,

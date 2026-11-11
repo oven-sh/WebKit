@@ -32,7 +32,11 @@ public:
     static constexpr uint32_t maxRetainedCapacity = 262144;
     static constexpr uint32_t minLengthAppendedByReference = 65536;
     static constexpr uint32_t minLengthAdoptedByFinish = 4096;
+    static constexpr uint32_t minLengthShared = minCapacity / 2;
     static constexpr uint32_t maxSegments = 1024;
+    static constexpr uint32_t maxLengthOfWideStringCopied = 64;
+    static constexpr uint32_t maxUnits = 1 << 20;
+    static constexpr uint32_t maxRetainedUnits = 4096;
     static constexpr uint32_t maxPooledBuilders = 8;
 
     static void destroy(JSCell*);
@@ -107,11 +111,15 @@ private:
     struct Segment {
         uint32_t offsetInBuffer;
         uint32_t length;
+        uint32_t startOfUnits;
         WriteBarrier<JSString> string;
     };
 
     struct Piece {
+        bool is8Bit() const { return !units && (!string || string->is8Bit()); }
+
         JSString* string { nullptr };
+        const char16_t* units { nullptr };
         uint32_t start { 0 };
         uint32_t length { 0 };
     };
@@ -142,6 +150,8 @@ private:
 
     AppendResult appendCharactersOf(JSGlobalObject*, JSString*);
     AppendResult addSegment(JSGlobalObject*, JSString*);
+    template<typename CopyUnits> AppendResult addUnits(JSGlobalObject*, uint32_t length, const CopyUnits&);
+    bool hasRoomForUnits(uint32_t length) const { return length <= maxLengthOfWideStringCopied && m_units.size() + length <= maxUnits; }
     bool collapseSegments(JSGlobalObject*);
     void joinPiecesInto(VM&, JSString* all);
 
@@ -169,6 +179,7 @@ private:
     static_assert(maxPooledBuilders <= std::numeric_limits<uint8_t>::max());
     RefPtr<StringImpl> m_buffer;
     Vector<Segment> m_segments;
+    Vector<char16_t> m_units;
 };
 
 static_assert(StringBuilderStorage::offsetOfCharacters() == sizeof(JSCell), "bytes 12 to 15 of the cell are the upper half of a user-space pointer, so the compiled-object bit of the shape word is clear");

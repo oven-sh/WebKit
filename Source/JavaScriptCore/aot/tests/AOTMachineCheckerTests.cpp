@@ -345,7 +345,7 @@ static void checkerRefusesChangedSourceRegister()
     Step& step = findExecuteStepForCheckerTest(test, difference);
     AOT_CHECKER_TEST_CHECK(test, step.sources[0].isRegister() && step.sources[1].isRegister() && step.sources[0] != step.sources[1]);
     step.sources[0] = step.sources[1];
-    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { difference });
+    expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInRegister, { difference });
     AOT_CHECKER_TEST_CHECK(test, test.procedure().failure()->origin == Origin(7));
 }
 
@@ -360,7 +360,7 @@ static void checkerRefusesDroppedReload()
     const Operation* reader = readerAfterStepForCheckerTest(test, block, reload);
     AOT_CHECKER_TEST_CHECK(test, std::ranges::any_of(reader->children(), [&](const Operation* child) { return child == reloaded; }));
     dropStepForCheckerTest(test, block, reload);
-    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { reader });
+    expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInRegister, { reader });
 }
 
 static void checkerRefusesDroppedEdgeMove()
@@ -370,7 +370,7 @@ static void checkerRefusesDroppedEdgeMove()
     prepareForCheckerTest(test);
 
     dropStepForCheckerTest(test, diamond.right, findStepForCheckerTest(test, diamond.right, StepKind::Move));
-    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { diamond.phi });
+    expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInRegister, { diamond.phi });
 }
 
 static void expectCheckerToRefuseSlotThatOneOfTwoEdgesDoesNotWrite(SpillIndex slotsInFront)
@@ -420,7 +420,7 @@ static void expectCheckerToRefuseSlotThatOneOfTwoEdgesDoesNotWrite(SpillIndex sl
     }
     AOT_CHECKER_TEST_CHECK(test, leftOut);
     dropStepForCheckerTest(test, right, save);
-    expectCheckerRefusal(test, checkAllocation, FailureKind::SpillSlotLacksItsValue, { leftOut });
+    expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInSpillSlot, { leftOut });
 }
 
 static void checkerRefusesSlotBeyondFirstThirtyTwoThatOneOfTwoEdgesDoesNotWrite()
@@ -449,7 +449,7 @@ static void expectCheckerToMissValueOfSlot(TestProcedure& test)
 {
     AOT_CHECKER_TEST_CHECK(test, !checkAllocation(test.procedure()));
     const std::optional<Failure>& failure = test.procedure().failure();
-    AOT_CHECKER_TEST_CHECK(test, failure && (failure->kind == FailureKind::RegisterLacksItsValue || failure->kind == FailureKind::SpillSlotLacksItsValue));
+    AOT_CHECKER_TEST_CHECK(test, failure && (failure->kind == FailureKind::WrongValueInRegister || failure->kind == FailureKind::WrongValueInSpillSlot));
 }
 
 static void checkerRefusesSlotBeyondFirstThirtyTwoWhoseGapLiesOverRareBlock()
@@ -589,7 +589,7 @@ static void checkerRefusesExchangedMovesOfCycle()
         ++second;
     AOT_CHECKER_TEST_CHECK(test, second < end);
     std::swap(steps[first], steps[second]);
-    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { phis[0], phis[1], phis[2] });
+    expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInRegister, { phis[0], phis[1], phis[2] });
 }
 
 static void checkerRefusesValueLeftInClobberedRegister()
@@ -609,7 +609,7 @@ static void checkerRefusesValueLeftInClobberedRegister()
     Step& step = findExecuteStepForCheckerTest(test, difference);
     AOT_CHECKER_TEST_CHECK(test, step.sources[1].isRegister() && step.sources[1].reg() != clobbered);
     step.sources[1] = Location::reg(clobbered);
-    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { difference });
+    expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInRegister, { difference });
 }
 
 static void checkerRefusesLandingPadThatReadsCallerSavedRegister()
@@ -640,7 +640,7 @@ static void checkerRefusesLandingPadThatReadsCallerSavedRegister()
     AOT_CHECKER_TEST_CHECK(test, landingPad->isLandingPad() && reload.operation == kept && (callerSaved & maskOf(kept->argumentReg())));
     reload.kind = StepKind::Move;
     reload.sources[0] = Location::reg(kept->argumentReg());
-    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { landingPad->last() });
+    expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInRegister, { landingPad->last() });
 }
 
 static void checkerRefusesRareRegionThatDoesNotRestore()
@@ -653,7 +653,7 @@ static void checkerRefusesRareRegionThatDoesNotRestore()
     const Operation* restored = test.procedure().allocation().step(reload).operation;
     AOT_CHECKER_TEST_CHECK(test, test.procedure().order().of(arm.slow).isRare() && arm.values.contains(restored));
     dropStepForCheckerTest(test, arm.slow, reload);
-    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { restored });
+    expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInRegister, { restored });
 }
 
 static void checkerRefusesRareRegionThatDoesNotSave()
@@ -663,7 +663,7 @@ static void checkerRefusesRareRegionThatDoesNotSave()
     prepareForCheckerTest(test);
 
     dropStepForCheckerTest(test, arm.slow, findStepForCheckerTest(test, arm.slow, StepKind::Save, arm.values[0]));
-    expectCheckerRefusal(test, checkAllocation, FailureKind::SpillSlotLacksItsValue, { arm.coldReader });
+    expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInSpillSlot, { arm.coldReader });
 }
 
 static void checkerRefusesHeadOfFramedPartThatDoesNotSaveWhatIsReadBehindMeetingOfHeads()
@@ -713,7 +713,7 @@ static void checkerRefusesHeadOfFramedPartThatDoesNotSaveWhatIsReadBehindMeeting
         }
         AOT_CHECKER_TEST_CHECK(test, hasLied);
         AOT_CHECKER_TEST_CHECK(test, !checkAllocation(test.procedure()));
-        AOT_CHECKER_TEST_CHECK(test, test.procedure().failure() && (test.procedure().failure()->kind == FailureKind::RegisterLacksItsValue || test.procedure().failure()->kind == FailureKind::SpillSlotLacksItsValue));
+        AOT_CHECKER_TEST_CHECK(test, test.procedure().failure() && (test.procedure().failure()->kind == FailureKind::WrongValueInRegister || test.procedure().failure()->kind == FailureKind::WrongValueInSpillSlot));
     }
 }
 
@@ -809,28 +809,7 @@ static void checkerOfSavesAtHeadsRefusesHeadEnteredOutOfOtherPartsThatDoesNotSav
     }
     AOT_CHECKER_TEST_CHECK(test, hasLied);
     AOT_CHECKER_TEST_CHECK(test, !checkSavesAtHeads(test.procedure()));
-    AOT_CHECKER_TEST_CHECK(test, test.procedure().failure() && test.procedure().failure()->kind == FailureKind::SpillSlotLacksItsValue);
-}
-
-static void checkerOfSavesAtHeadsPassesSlotThatWasEmptiedAndIsMovedOn()
-{
-    TestProcedure test;
-    std::optional<CheckerTestThreeHeads> heads = buildHeadEnteredOutOfOtherPartsForCheckerTest(test);
-    if (!heads)
-        return;
-
-    Allocation& allocation = test.procedure().allocationForTesting();
-    Location slot = allocation.step(heads->saveAtThirdOfWhatOthersSave).destination;
-    const BlockSteps& range = allocation.stepsOf(heads->third);
-    bool isReloadedBehindFirstStep = false;
-    for (uint32_t index = range.begin + 1; index < range.end; ++index)
-        isReloadedBehindFirstStep |= allocation.step(index).kind == StepKind::Reload && allocation.step(index).sources[0] == slot;
-    AOT_CHECKER_TEST_CHECK(test, isReloadedBehindFirstStep);
-    Step empties { StepKind::ClearSpill };
-    empties.destination = slot;
-    empties.operation = allocation.step(heads->saveAtThirdOfWhatOthersSave).operation;
-    allocation.stepsForTesting()[range.begin] = empties;
-    AOT_CHECKER_TEST_CHECK(test, checkSavesAtHeads(test.procedure()) && !test.procedure().failure());
+    AOT_CHECKER_TEST_CHECK(test, test.procedure().failure() && test.procedure().failure()->kind == FailureKind::WrongValueInSpillSlot);
 }
 
 static void checkerRefusesTwoLiveSpillsInOneSlot()
@@ -845,7 +824,7 @@ static void checkerRefusesTwoLiveSpillsInOneSlot()
     Frame& frame = procedure.frameForTesting();
     AOT_CHECKER_TEST_CHECK(test, frame.offsetFromFPOf(0) != frame.offsetFromFPOf(1));
     frame.setOffsetFromFPForTesting(1, frame.offsetFromFPOf(0));
-    expectCheckerRefusal(test, checkFrame, FailureKind::SpillSlotLacksItsValue, { spills[0].value, spills[1].value });
+    expectCheckerRefusal(test, checkFrame, FailureKind::WrongValueInSpillSlot, { spills[0].value, spills[1].value });
 }
 
 static void checkerRefusesPatchWithoutTheFrameItNeeds()
@@ -860,7 +839,7 @@ static void checkerRefusesPatchWithoutTheFrameItNeeds()
     AOT_CHECKER_TEST_CHECK(test, !test.procedure().frame().hasFrame());
 
     patch->setRunsWithoutFrame(false);
-    expectCheckerRefusal(test, checkFrame, FailureKind::NeedsFrameWhereNoneIsSetUp, { patch });
+    expectCheckerRefusal(test, checkFrame, FailureKind::MissingFrameSetup, { patch });
 }
 
 static void checkerFindsOwnerOfStorageThatLandingPadReads()
@@ -1071,7 +1050,7 @@ static SumTestedByOverflowForCheckerTest buildSumTestedByOverflowForCheckerTest(
     out.appendTo(fails);
     out.ret(out.zeroExtPtr(left));
     prepareForCheckerTest(test);
-    AOT_CHECKER_TEST_CHECK(test, test.procedure().liveness().goesByOverflow(tests->last()) && test.procedure().liveness().goesByOverflow(sum));
+    AOT_CHECKER_TEST_CHECK(test, test.procedure().liveness().usesOverflowFlag(tests->last()) && test.procedure().liveness().usesOverflowFlag(sum));
     return { left, lowHalf, tests->last(), constant };
 }
 
@@ -1082,7 +1061,7 @@ static void checkerRefusesOperandThatIsNotTakenBack()
     Step& branch = findExecuteStepForCheckerTest(test, built.branch);
     AOT_CHECKER_TEST_CHECK(test, branch.other == built.left);
     branch.other = nullptr;
-    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { built.left });
+    expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInRegister, { built.left });
 }
 
 static void checkerRefusesStepThatMayWriteFlagsAheadOfBranchOnOverflow()
@@ -1092,7 +1071,7 @@ static void checkerRefusesStepThatMayWriteFlagsAheadOfBranchOnOverflow()
     Step& betweenSumAndBranch = findExecuteStepForCheckerTest(test, built.lowHalf);
     betweenSumAndBranch.kind = StepKind::Materialize;
     betweenSumAndBranch.operation = built.constant;
-    expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { built.constant });
+    expectCheckerRefusal(test, checkAllocation, FailureKind::WrongValueInRegister, { built.constant });
 }
 
 #undef AOT_CHECKER_TEST_CHECK
@@ -1123,7 +1102,6 @@ std::span<const NativeTest> machineCheckerTests()
         { "machine-checker/rare-region-does-not-save"_s, Machine::checkerRefusesRareRegionThatDoesNotSave },
         { "machine-checker/a-head-of-the-framed-part-does-not-save-what-is-read-behind-the-meeting-of-heads"_s, Machine::checkerRefusesHeadOfFramedPartThatDoesNotSaveWhatIsReadBehindMeetingOfHeads },
         { "machine-checker/a-head-entered-out-of-other-parts-that-does-not-save-is-refused-where-saves-at-heads-alone-are-checked"_s, Machine::checkerOfSavesAtHeadsRefusesHeadEnteredOutOfOtherPartsThatDoesNotSave },
-        { "machine-checker/a-slot-that-was-emptied-and-is-moved-on-passes-where-saves-at-heads-alone-are-checked"_s, Machine::checkerOfSavesAtHeadsPassesSlotThatWasEmptiedAndIsMovedOn },
         { "machine-checker/two-live-spills-in-one-slot"_s, Machine::checkerRefusesTwoLiveSpillsInOneSlot },
         { "machine-checker/patch-without-the-frame-it-needs"_s, Machine::checkerRefusesPatchWithoutTheFrameItNeeds },
         { "machine-checker/owner-of-storage-that-a-landing-pad-reads"_s, Machine::checkerFindsOwnerOfStorageThatLandingPadReads },

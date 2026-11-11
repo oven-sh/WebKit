@@ -1,6 +1,6 @@
 # The program of constants-between-operations-that-lean-on-one-guess.ir. Every block counts as usual and nothing is expected of any value: no guess is opened on `n`, and the answers stay.
 # OPTIONS: testing=IgnoreBranchHints,IgnoreExpectedTypes
-# STATISTIC: ExpectedTypesTakenOtherwise >= 1
+# STATISTIC: SpeculatedTypesOverridden >= 1
 # PROGRAM-OF: constants-between-operations-that-lean-on-one-guess.ir
 # RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = row => { const show = n => { const all = row(n); let line = ""; for (let i = 0; i < all.length; i++) line += " " + String(all[i]); print(all.length + line); }; show(3); show("5"); show(2n); };
 # SHELL: 7 9 undefined null 4 q true 27

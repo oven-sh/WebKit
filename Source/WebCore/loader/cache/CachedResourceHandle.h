@@ -35,13 +35,13 @@ class CachedResourceHandleBase {
 public:
     WEBCORE_EXPORT ~CachedResourceHandleBase();
 
-    WEBCORE_EXPORT CachedResource* LEGACY_NODELETE get() const;
+    NODELETE WEBCORE_EXPORT CachedResource* get() const;
     
     bool operator!() const { return !m_resource; }
     operator bool() const { return !!m_resource; }
 
 protected:
-    WEBCORE_EXPORT CachedResourceHandleBase();
+    NODELETE WEBCORE_EXPORT CachedResourceHandleBase();
     WEBCORE_EXPORT explicit CachedResourceHandleBase(RefPtr<CachedResource>&&);
     WEBCORE_EXPORT explicit CachedResourceHandleBase(Ref<CachedResource>&&);
     WEBCORE_EXPORT CachedResourceHandleBase(const CachedResourceHandleBase&);

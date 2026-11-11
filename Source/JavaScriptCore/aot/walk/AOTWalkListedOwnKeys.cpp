@@ -16,6 +16,7 @@
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
 #include "AOTWalkCopies.h"
+#include "AOTWalkKnown.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -182,7 +183,7 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
     BodyBlock block = index.block(index.blockOf(call));
     uint32_t place = call.index() - block.firstValue().index();
 
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     BlockID asWritten = walker.addBlock(BlockFrequency::Unlikely);
     BlockID meeting = walker.addBlock();
 
@@ -190,7 +191,7 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
     for (size_t number = 0; number < plan.orders.size() && !walker.isUnreachable(); ++number) {
         BlockID whereTestFails = number + 1 == plan.orders.size() ? asWritten : walker.addBlock();
         Reference object = source;
-        if (goOnWhereObjectHasOwnKeys(walker, object, plan.orders[number], plan.layoutsAreProven, asked.origin, whereTestFails))
+        if (continueIfOwnKeys(walker, object, plan.orders[number], plan.layoutsAreProven, asked.origin, whereTestFails))
             tested.append({ walker.currentBlock(), object, number });
         if (walker.hasFailed())
             return true;
@@ -221,11 +222,24 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
             return true;
     }
 
-    if (!walker.letArmsMeet(stretch, ends, meeting))
+    if (!walker.joinArms(stretch, ends, meeting))
         return true;
     if (Reference met = end == place + 1 ? walker.referenceBoundTo(call) : Reference(); met && walker.program().builtins().mayHavePristineInstances(BuiltinClasses::Array))
         noteListMadeByCaller(walker, met);
     return true;
+}
+
+void noteListedOwnKeys(Walker& walker, ValueID id)
+{
+    BodyValue call = walker.currentBodyIndex().value(id);
+    if (call.opcode() != Opcode::Call || listAskedForInListedOwnKeys(walker, call) != OwnKeyList::Keys)
+        return;
+    Reference list = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.id());
+    Reference object = walker.referenceOf(call.argumentsOperands()[0]);
+    if (!list || !list.isValue() || !object || !object.isValue())
+        return;
+    static constexpr AbstractHeapSet heapsThatTellOwnKeys { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
+    noteKnown(walker, KnownNote::ListedOwnKeys, object, list, 0, LocationMasks(heapsThatTellOwnKeys), 1, true);
 }
 
 bool buildOwnKeyListOfItsOpcodes(Walker& walker, const BodyValue& value)
@@ -247,6 +261,8 @@ bool buildOwnKeyListOfItsOpcodes(Walker& walker, const BodyValue& value)
     if (!buildListOfObjectInSightInListedOwnKeys(walker, asked, source) && !buildListBehindTestsInListedOwnKeys(walker, asked, written, source))
         return false;
     walker.count(StatisticID::OwnKeyWalksExpanded);
+    if (*list == OwnKeyList::Keys)
+        noteListedOwnKeys(walker, value.id());
     return true;
 }
 

@@ -46,6 +46,7 @@ struct SpacingState;
 
 struct GlyphOverflow;
 class FontCascade;
+class RenderText;
 class TextRun;
 
 namespace Layout {
@@ -90,28 +91,33 @@ public:
     };
     static WordBreakLeft breakWord(const InlineTextBox&, size_t start, size_t length, InlineLayoutUnit width, InlineLayoutUnit availableWidth, InlineLayoutUnit contentLogicalLeft, const FontCascade&);
     static WordBreakLeft breakWord(const InlineTextItem&, const FontCascade&, InlineLayoutUnit textWidth, InlineLayoutUnit availableWidth, InlineLayoutUnit contentLogicalLeft);
+    // For text that is not inline content, e.g. the block ellipsis.
+    static WordBreakLeft breakWord(StringView, InlineLayoutUnit textWidth, InlineLayoutUnit availableWidth, const FontCascade&);
 
     static bool mayBreakInBetween(const InlineTextItem& previousInlineItem, const InlineTextItem& nextInlineItem);
-    // FIXME: Remove when computeInlineIntrinsicLogicalWidths is all IFC.
-    static bool mayBreakInBetween(String previousContent, const Style::ComputedStyle& previousContentStyle, String nextContent, const Style::ComputedStyle& nextContentStyle);
     static unsigned findNextBreakablePosition(CachedLineBreakIteratorFactory&, unsigned startPosition, const Style::ComputedStyle&);
-    static TextBreakIterator::LineMode::Behavior LEGACY_NODELETE lineBreakIteratorMode(LineBreak);
-    static TextBreakIterator::ContentAnalysis LEGACY_NODELETE contentAnalysis(WordBreak);
+    NODELETE static TextBreakIterator::LineMode::Behavior lineBreakIteratorMode(LineBreak);
+    NODELETE static TextBreakIterator::ContentAnalysis contentAnalysis(WordBreak);
 
-    static bool LEGACY_NODELETE shouldPreserveSpacesAndTabs(const Box&);
-    static bool LEGACY_NODELETE shouldPreserveNewline(const Box&);
-    static bool LEGACY_NODELETE isWrappingAllowed(const Style::ComputedStyle&);
-    static bool LEGACY_NODELETE shouldTrailingWhitespaceHang(const Style::ComputedStyle&);
+    NODELETE static bool shouldPreserveSpacesAndTabs(const Box&);
+    NODELETE static bool shouldPreserveNewline(const Box&);
+    NODELETE static bool isWrappingAllowed(const Style::ComputedStyle&);
+    NODELETE static bool shouldTrailingWhitespaceHang(const Style::ComputedStyle&);
 
     static bool isStrongDirectionalityCharacter(char32_t);
     static bool containsStrongDirectionalityText(StringView);
 
-    static AtomString ellipsisTextInInlineDirection(bool isHorizontal = true);
+    static std::optional<TextDirection> overridingDirection(const InlineTextBox&);
+    static std::optional<TextDirection> overridingDirection(const RenderText&);
+
+    static AtomString ellipsisText();
 
     static InlineLayoutUnit hyphenWidth(const Style::ComputedStyle&);
 
     static size_t firstUserPerceivedCharacterLength(const InlineTextItem&);
     static size_t firstUserPerceivedCharacterLength(const InlineTextBox&, size_t startPosition, size_t length);
+    static size_t firstUserPerceivedCharacterLength(StringView);
+    static size_t lastUserPerceivedCharacterLength(StringView);
     static TextDirection directionForTextContent(StringView);
 
     static bool hasHangablePunctuationStart(const InlineTextItem&, const Style::ComputedStyle&);
@@ -127,7 +133,7 @@ public:
     static bool canUseSimplifiedTextMeasuring(StringView, const FontCascade&, bool whitespaceIsCollapsed, const Style::ComputedStyle* firstLineStyle);
     static bool hasPositionDependentContentWidth(StringView);
 
-    static char32_t LEGACY_NODELETE lastBaseCharacterFromText(StringView);
+    NODELETE static char32_t lastBaseCharacterFromText(StringView);
 };
 
 } // namespace Layout

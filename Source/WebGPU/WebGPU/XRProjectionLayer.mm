@@ -29,10 +29,13 @@
 #import "APIConversions.h"
 #import "Device.h"
 #import "MetalSPI.h"
+#import "XRSubImage.h"
+#import <algorithm>
+#import <tuple>
 #import <wtf/CheckedArithmetic.h>
 #import <wtf/StdLibExtras.h>
 
-#if USE(APPLE_INTERNAL_SDK) && PLATFORM(VISION)
+#if USE(APPLE_INTERNAL_SDK) && HAVE(COMPOSITOR_SERVICES)
 #import <CompositorServices/CompositorServices_Private.h>
 #import <Metal/MTLRasterizationRate_Private.h>
 #import <wtf/SoftLinking.h>
@@ -142,6 +145,22 @@ void XRProjectionLayer::clearDepthTexture()
     queue->commitMTLCommandBuffer(commandBuffer);
 }
 
+void XRProjectionLayer::destroy()
+{
+    [m_colorTextures removeAllObjects];
+    [m_depthTextures removeAllObjects];
+    m_colorTexture = nil;
+    m_depthTexture = nil;
+    m_sharedEvent = std::make_pair(nil, 0);
+    m_rasterizationMapLeft = nil;
+    m_rasterizationMapRight = nil;
+
+    // The device keeps one XR subimage, which wraps the textures of the last layer it was updated
+    // from. Those wrappers retain the same compositor textures; update() rewraps them on demand.
+    if (RefPtr subImage = m_device->getXRViewSubImage())
+        subImage->releaseTextures();
+}
+
 void XRProjectionLayer::setLabel(String&&)
 {
 }
@@ -173,7 +192,7 @@ size_t XRProjectionLayer::reusableTextureIndex() const
 
 void XRProjectionLayer::startFrame(size_t frameIndex, WTF::MachSendRight&& colorBuffer, WTF::MachSendRight&& depthBuffer, WTF::MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples)
 {
-#if USE(APPLE_INTERNAL_SDK) && PLATFORM(VISION) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#if USE(APPLE_INTERNAL_SDK) && HAVE(COMPOSITOR_SERVICES) && !PLATFORM(IOS_FAMILY_SIMULATOR)
     id<MTLDevice> device = m_device->device();
     m_reusableTextureIndex = reusableTextureIndex;
     NSNumber* textureKey = @(reusableTextureIndex);

@@ -12,6 +12,7 @@
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
 #include "AOTFunctionTables.h"
+#include "AOTImageFormat.h"
 #include "AOTInstance.h"
 #include "AOTProgramTables.h"
 #include "AOTStubAssembler.h"
@@ -22,13 +23,11 @@
 #include "AOTStubsClosures.h"
 #include "AOTStubsExceptions.h"
 #include "CallFrame.h"
-#include "EntryFrame.h"
 #include "JSGlobalObject.h"
 #include "MicrotaskQueue.h"
 #include "StackAlignment.h"
 #include "StackManager.h"
 #include "VM.h"
-#include "VMEntryRecord.h"
 #include <limits>
 
 namespace JSC { namespace AOT {
@@ -103,30 +102,7 @@ static void emitSaveRegistersInAdapter(StubAssembler& jit, GPRReg instance)
 #endif
 }
 
-static void emitFillFrameOfEntryFromNativeCode(StubAssembler& jit, GPRReg vm, AdapterCaller caller)
-{
-    const ptrdiff_t begin = EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, calleeSaveRegistersBuffer);
-    RELEASE_ASSERT(begin < 0 && !(begin % static_cast<ptrdiff_t>(stackAlignmentBytes())));
-    Jump isCalledByInterpreter;
-    if (caller == AdapterCaller::NativeCodeOrInterpreter)
-        isCalledByInterpreter = jit.branchPtr(CCallHelpers::NotEqual, Address(vm, VM::topEntryFrameOffset()), fp);
-#if CPU(ARM64)
-    for (ptrdiff_t offset = begin; offset < 0; offset += 2 * sizeof(CPURegister))
-        jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, fp, TrustedImm32(static_cast<int32_t>(offset)));
-#else
-    for (ptrdiff_t offset = begin; offset < 0; offset += sizeof(CPURegister))
-        jit.store64(TrustedImm32(0), Address(fp, static_cast<int32_t>(offset)));
-    if (caller == AdapterCaller::NativeCodeOrInterpreter) {
-        Jump argumentsFillFrame = jit.branchTest32(CCallHelpers::NonZero, incomingFrameSlot(CallFrameSlot::argumentCountIncludingThis), TrustedImm32(1));
-        jit.store64(TrustedImm32(JSValue::ValueUndefined), Address(fp, static_cast<int32_t>(EntryFrame::vmEntryRecordOffset() - sizeof(Register))));
-        argumentsFillFrame.link(&jit);
-    }
-#endif
-    if (isCalledByInterpreter.isSet())
-        isCalledByInterpreter.link(&jit);
-}
-
-void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBytes)
+void emitEnterAdapter(StubAssembler& jit, unsigned extraBytes)
 {
     const GPRReg instance = jit.reuseScratch(StubRegister::EntryT12);
     const GPRReg scratch = jit.reuseScratch(StubRegister::T9);
@@ -147,16 +123,14 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
         jit.add64(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfStructureIDBase()), instance);
         jit.loadPtr(Address(instance, Structure::realmOffset()), instance);
         jit.loadPtr(Address(instance, JSGlobalObject::offsetOfAOTInstance()), instance);
+        jit.store8(TrustedImm32(1), Address(instance, AOT_INSTANCE_OFFSET(propertyCaches.hasRunSinceClear)));
         jit.jump().linkTo(hasInstance, &jit);
     });
 
-    emitFillFrameOfEntryFromNativeCode(jit, scratch, caller);
     jit.emitFunctionPrologue();
     static_assert(!(AdapterFrame::saveAreaSize % stackAlignmentBytes()));
     jit.subPtr(TrustedImm32(AdapterFrame::saveAreaSize + extraBytes), sp);
     emitSaveRegistersInAdapter(jit, instance);
-    if constexpr (-AdapterFrame::offsetOfNewTarget < static_cast<ptrdiff_t>(AdapterFrame::saveAreaSize))
-        jit.store64(TrustedImm32(0), Address(fp, AdapterFrame::offsetOfNewTarget - static_cast<ptrdiff_t>(sizeof(CPURegister))));
     jit.move(instance, instanceGPR);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(cellCageBase)), cellCageBaseGPR);
 #if !CPU(X86_64)
@@ -381,12 +355,12 @@ void generateEnterClosure(StubAssembler& jit)
 {
     const GPRReg word = jit.reuseScratch(StubRegister::T11);
     JumpList hasWord;
-    emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter);
+    emitEnterAdapter(jit);
     jit.load64(Address(calleeGPR, offsetOfClosureEntry), word);
     hasWord.append(jit.jump());
 
     jit.bindEntry(enterModuleBody());
-    emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter);
+    emitEnterAdapter(jit);
     jit.load32(Address(fp, offsetOfFirstArgument), word);
     jit.lshift64(TrustedImm32(3), word);
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
@@ -394,7 +368,7 @@ void generateEnterClosure(StubAssembler& jit)
     hasWord.append(jit.jump());
 
     jit.bindEntry(enterSlimClosure());
-    emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter);
+    emitEnterAdapter(jit);
     loadSlimClosureWord(jit, calleeGPR, word);
 
     hasWord.link(&jit);
@@ -501,15 +475,27 @@ void generateStartModule(StubAssembler& jit)
     Jump hasTarget = jit.jump();
 
     callsBody.link(&jit);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.functionStarts)), target);
-    jit.load32(BaseIndex(target, operand, CCallHelpers::TimesFour), target);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.functionStartGroups)), table);
+    jit.urshift32(operand, TrustedImm32(FunctionStarts::groupShift), step);
+    jit.load32(BaseIndex(table, step, CCallHelpers::TimesFour), target);
+    Jump isInNarrowGroup = jit.branch32(CCallHelpers::GreaterThanOrEqual, target, TrustedImm32(0));
+    jit.and32(TrustedImm32(static_cast<int32_t>(~FunctionStarts::wideGroup)), target);
+    jit.and32(TrustedImm32(FunctionStarts::functionsInGroup - 1), operand, step);
+    jit.add32(step, target);
+    jit.load32(BaseIndex(table, target, CCallHelpers::TimesFour), target);
+    Jump hasStart = jit.jump();
+    isInNarrowGroup.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.functionSteps)), table);
+    jit.load16(BaseIndex(table, operand, CCallHelpers::TimesTwo), step);
+    jit.add32(step, target);
+    hasStart.link(&jit);
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), target);
     jit.move(TrustedImm64(JSValue::ValueUndefined), directArgumentGPR(0));
 
     hasTarget.link(&jit);
     jit.storePtr(nextStep, nextStepInFrame);
     jit.call(target, JSEntryPtrTag);
-    Label behindCall = jit.bindReturnLabel(StubFrameKind::ModuleStart);
+    Label afterCall = jit.bindReturnLabel(StubFrameKind::ModuleStart);
     jit.addPtr(TrustedImm32(-static_cast<int32_t>(ModuleStartFrame::size)), fp, sp);
     jit.loadPtr(nextStepInFrame, nextStep);
     jit.branchTestPtr(CCallHelpers::NonZero, nextStep).linkTo(takesNextStep, &jit);
@@ -581,7 +567,7 @@ void generateStartModule(StubAssembler& jit)
     jit.returnToCaller();
 
     hasThrown.link(&jit);
-    emitThrowFromAdapter(jit, behindCall, handleException(false));
+    emitThrowFromAdapter(jit, afterCall, handleException(false));
 }
 
 Address emitLocateRememberedConstructWord(StubAssembler& jit, GPRReg wordOfCall, GPRReg entry)
@@ -605,6 +591,14 @@ static void emitFindConstructWord(StubAssembler& jit, GPRReg word, Jump isNeeded
     JumpList isNotListed;
 
     isNeeded.link(&jit);
+    Address rememberedEntry = emitLocateRememberedConstructWord(jit, word, half);
+    jit.move(bitMask(ClosureWord::isNotCallableBit), candidate);
+    jit.or64(word, candidate);
+    Jump isNotRemembered = jit.branch64(CCallHelpers::NotEqual, rememberedEntry.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfCall)), candidate);
+    jit.load64(rememberedEntry.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfConstruct)), word);
+    jit.jump().linkTo(continuation, &jit);
+
+    isNotRemembered.link(&jit);
     extractBits(jit, word, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, function);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
     jit.load32(programTableCount(tables, ProgramTableIndex::constructEntrypoints), count);
@@ -628,9 +622,14 @@ static void emitFindConstructWord(StubAssembler& jit, GPRReg word, Jump isNeeded
     jit.load32(Address(first, OBJECT_OFFSETOF(ConstructEntrypointData, constructEntrypointAndFlag)), function);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), first);
     Jump allocatesThis = jit.branchTest32(CCallHelpers::NonZero, function, TrustedImm32(static_cast<int32_t>(ConstructEntrypointData::allocatesThis)));
-    jit.load64(BaseIndex(first, function, CCallHelpers::TimesEight), word);
-    jit.branchTest64(CCallHelpers::NonZero, word).linkTo(continuation, &jit);
-    isNotListed.append(jit.jump());
+    jit.load64(BaseIndex(first, function, CCallHelpers::TimesEight), candidate);
+    isNotListed.append(jit.branchTest64(CCallHelpers::Zero, candidate));
+    Address entryTakingThis = emitLocateRememberedConstructWord(jit, word, half);
+    jit.or64(bitMask(ClosureWord::isNotCallableBit), word);
+    jit.store64(word, entryTakingThis.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfCall)));
+    jit.store64(candidate, entryTakingThis.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfConstruct)));
+    jit.move(candidate, word);
+    jit.jump().linkTo(continuation, &jit);
 
     allocatesThis.link(&jit);
     Jump hasOtherNewTarget = jit.branch64(CCallHelpers::NotEqual, newTarget, calleeGPR);
@@ -644,6 +643,14 @@ static void emitFindConstructWord(StubAssembler& jit, GPRReg word, Jump isNeeded
     jit.jump().linkTo(continuation, &jit);
 
     hasOtherNewTarget.link(&jit);
+    const GPRReg wordOfConstruct = candidate;
+    jit.and32(TrustedImm32(static_cast<int32_t>(~ConstructEntrypointData::allocatesThis)), function);
+    Address place = emitLocateRememberedConstructWord(jit, word, half);
+    jit.load64(BaseIndex(first, function, CCallHelpers::TimesEight), wordOfConstruct);
+    Jump isNotMadeYet = jit.branchTest64(CCallHelpers::Zero, wordOfConstruct);
+    jit.store64(word, place.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfCall)));
+    jit.store64(wordOfConstruct, place.withOffset(OBJECT_OFFSETOF(ConstructWordCache::Entry, wordOfConstruct)));
+    isNotMadeYet.link(&jit);
     jit.and64(TrustedImm64(static_cast<int64_t>(~(1ULL << ClosureWord::takesNewTargetBit))), word);
     jit.jump().linkTo(continuation, &jit);
 
@@ -682,7 +689,7 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
 {
     const GPRReg word = jit.reuseScratch(StubRegister::T11);
     const GPRReg base = jit.reuseScratch(constructArgumentBaseRegister);
-    emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter, constructSlotsSize);
+    emitEnterAdapter(jit, constructSlotsSize);
     jit.load64(CCallHelpers::addressFor(CallFrameSlot::thisArgument), base);
     jit.store64(base, Address(fp, AdapterFrame::offsetOfNewTarget));
 

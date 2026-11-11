@@ -82,6 +82,10 @@ public:
 
     RefPtr<WebCore::MediaPlayer> mediaPlayer(std::optional<WebCore::MediaPlayerIdentifier>);
 
+#if PLATFORM(COCOA)
+    std::optional<WebCore::FloatRect> hostedVideoLayerBoundsForTesting(WebCore::MediaPlayerClientIdentifier) const;
+#endif
+
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 private:
     explicit RemoteMediaPlayerManagerProxy(GPUConnectionToWebProcess&);
@@ -102,7 +106,7 @@ private:
 
 #if !RELEASE_LOG_DISABLED
     ASCIILiteral logClassName() const { return "RemoteMediaPlayerManagerProxy"; }
-    WTFLogChannel& LEGACY_NODELETE logChannel() const;
+    NODELETE WTFLogChannel& logChannel() const;
     uint64_t logIdentifier() const { return m_logIdentifier; }
 #endif
 

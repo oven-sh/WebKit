@@ -64,9 +64,7 @@ if (BUN_ICU_ZSTD_SOURCE_DIR)
     list(APPEND jsc_PRIVATE_INCLUDE_DIRECTORIES ${BUN_ICU_ZSTD_SOURCE_DIR})
 endif ()
 
-# mya analyzes process corpses through Mach task APIs, so it only builds on
-# Apple platforms. Its sources do not compile elsewhere.
-if (APPLE)
+if (ENABLE_JAVASCRIPTCORE_TOOLS)
     set(mya_SOURCES ../mya/mya.cpp ${aotProgramSources})
     set(mya_FRAMEWORKS
         JavaScriptCore
@@ -78,8 +76,10 @@ if (APPLE)
         $<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>
     )
 
-    # The corpse support mya uses lives in the tools static library.
-    set(mya_LIBRARIES JavaScriptCoreTools edit)
+    set(mya_LIBRARIES JavaScriptCoreTools)
+    if (APPLE)
+        list(APPEND mya_LIBRARIES edit)
+    endif ()
 endif ()
 
 WEBKIT_EXECUTABLE_DECLARE(jsc)
@@ -160,7 +160,7 @@ if (APPLE AND ENABLE_SANITIZERS)
     endforeach ()
 endif ()
 
-if (APPLE)
+if (ENABLE_JAVASCRIPTCORE_TOOLS)
     WEBKIT_EXECUTABLE_DECLARE(mya)
 endif ()
 
@@ -270,8 +270,7 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
     set(testdfg_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testdfg_FRAMEWORKS ${jsc_FRAMEWORKS})
 
-    # The tools library and its tests are only relevant for Apple platforms.
-    if (APPLE)
+    if (ENABLE_JAVASCRIPTCORE_TOOLS)
         set(testLibJSCTools_SOURCES
             ../corpse/tests/CorpseAddressTest.cpp
             ../corpse/tests/CorpseByteParserTest.cpp
@@ -329,7 +328,7 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
     WEBKIT_EXECUTABLE_DECLARE(testdfg)
     WEBKIT_EXECUTABLE_DECLARE(testwasmdebugger)
 
-    if (APPLE)
+    if (ENABLE_JAVASCRIPTCORE_TOOLS)
         WEBKIT_EXECUTABLE_DECLARE(testLibJSCTools)
     endif ()
 
@@ -337,6 +336,17 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
         WEBKIT_ADD_TARGET_CXX_FLAGS(testb3 -Wno-array-bounds)
         WEBKIT_ADD_TARGET_CXX_FLAGS(testair -Wno-array-bounds)
         WEBKIT_ADD_TARGET_CXX_FLAGS(testb3 -Wno-error=stack-exhausted)
+    endif ()
+endif ()
+
+add_custom_target(jsc-all DEPENDS jsc)
+if (ENABLE_JAVASCRIPTCORE_TOOLS)
+    add_dependencies(jsc-all mya)
+endif ()
+if (DEVELOPER_MODE)
+    add_dependencies(jsc-all testapi testRegExp testmasm testb3 testair testdfg testwasmdebugger)
+    if (ENABLE_JAVASCRIPTCORE_TOOLS)
+        add_dependencies(jsc-all testLibJSCTools)
     endif ()
 endif ()
 
@@ -355,7 +365,7 @@ if (SHOULD_INSTALL_JS_SHELL)
     install(TARGETS jsc DESTINATION "${LIBEXEC_INSTALL_DIR}")
 endif ()
 
-if (APPLE)
+if (ENABLE_JAVASCRIPTCORE_TOOLS)
     WEBKIT_EXECUTABLE(mya)
 
     if (SHOULD_INSTALL_JS_SHELL)
@@ -372,7 +382,7 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
     WEBKIT_EXECUTABLE(testdfg)
     WEBKIT_EXECUTABLE(testwasmdebugger)
 
-    if (APPLE)
+    if (ENABLE_JAVASCRIPTCORE_TOOLS)
         WEBKIT_EXECUTABLE(testLibJSCTools)
     endif ()
 

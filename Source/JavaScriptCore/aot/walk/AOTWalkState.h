@@ -50,7 +50,7 @@ public:
     void keepMembersOf(const SharedSetOfNumbers& other)
     {
         if (m_size)
-            keepMembersOfWhereSomeAreHeld(other);
+            keepMembersOfSlowCase(other);
     }
     void clear()
     {
@@ -78,7 +78,7 @@ public:
 private:
     static constexpr uint32_t bitsOfWord = 64;
 
-    void keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers&);
+    void keepMembersOfSlowCase(const SharedSetOfNumbers&);
 
     SharedArray<uint64_t, 2> m_words;
     uint32_t m_size { 0 };
@@ -177,7 +177,7 @@ private:
     bool m_remembersPlaces { true };
 };
 
-enum class FactOfCell : uint16_t {
+enum class CellFact : uint16_t {
     NotFrozen = 1 << 0,
     NoFieldOutsideSlot = 1 << 1,
     HasLayoutPrototype = 1 << 2,
@@ -186,12 +186,12 @@ enum class FactOfCell : uint16_t {
     IsLikelyAsConstructed = 1 << 5,
     NoExtraProperties = 1 << 6,
     BearsNoMark = 1 << 7,
-    KeysAreAsEnumeratorFoundThem = 1 << 8,
+    EnumeratorIsCurrent = 1 << 8,
 };
-inline constexpr uint32_t numberOfFactsOfCell = 9;
-static_assert(static_cast<uint32_t>(FactOfCell::KeysAreAsEnumeratorFoundThem) == 1u << (numberOfFactsOfCell - 1));
+inline constexpr uint32_t numberOfCellFacts = 9;
+static_assert(static_cast<uint32_t>(CellFact::EnumeratorIsCurrent) == 1u << (numberOfCellFacts - 1));
 
-OptionSet<FactOfCell> factsOfCellEndedBy(const LocationMasks& writes);
+OptionSet<CellFact> cellFactsInvalidatedBy(const LocationMasks& writes);
 
 class WalkState {
 public:
@@ -304,7 +304,7 @@ public:
                 functor(m_held->m_holders[holder].object);
         }
     }
-    void forEachEnvironmentFieldNotSharedWithAll(std::span<const WalkState* const> ways, NOESCAPE const Invocable<void(Reference environment, FieldReference, Reference value)> auto& functor) const
+    void forEachFieldNotSharedWithAll(std::span<const WalkState* const> ways, NOESCAPE const Invocable<void(Reference holder, FieldReference, Reference value, bool isSlot)> auto& functor) const
     {
         if (!mayHold(Kinds::places) || !m_held->m_numberOfPlaces)
             return;
@@ -317,7 +317,7 @@ public:
             m_held->m_places.forEachStretchNotSharedWith(way->m_held->m_places, [&](uint32_t begin, uint32_t end) {
                 for (uint32_t position = begin; position < end; ++position) {
                     const Place& place = m_held->m_places[position];
-                    if (place.value && place.kind == PlaceKind::EnvironmentField)
+                    if (place.value && (place.kind == PlaceKind::EnvironmentField || place.kind == PlaceKind::Slot))
                         positions.append(position);
                 }
             });
@@ -330,7 +330,7 @@ public:
             const Place& place = m_held->m_places[position];
             const Holder& holder = m_held->m_holders[place.holder];
             if (!holder.hasEnded && holder.object)
-                functor(holder.object, FieldReference { LayoutID(place.first), place.second }, place.value);
+                functor(holder.object, FieldReference { LayoutID(place.first), place.second }, place.value, place.kind == PlaceKind::Slot);
         }
     }
     void forEachBeliefOfFreshHolderLackingIn(const WalkState& arriving, NOESCAPE const Invocable<void(Reference holder, std::optional<FieldReference> fieldOfScope, Reference believed)> auto& functor) const
@@ -345,7 +345,7 @@ public:
                 if (!isFreshHolder(m_held->m_holders[number]))
                     continue;
                 Reference object = m_held->m_holders[number].object;
-                if (!arriving.isFresh(object) || (shapeOf(object) && shapeOf(object) != arriving.shapeOf(object)) || !arriving.factsOfCell(object).containsAll(factsOfCell(object)) || (factsOfCell(object).contains(FactOfCell::OrderWordIsKnown) && orderWordOf(object) != arriving.orderWordOf(object)))
+                if (!arriving.isFresh(object) || (shapeOf(object) && shapeOf(object) != arriving.shapeOf(object)) || !arriving.cellFacts(object).containsAll(cellFacts(object)) || (cellFacts(object).contains(CellFact::OrderWordIsKnown) && orderWordOf(object) != arriving.orderWordOf(object)))
                     functor(object, std::nullopt, Reference());
             }
         };
@@ -478,28 +478,28 @@ public:
         return number && m_held->m_builtinsRead.contains(*number);
     }
 
-    void noteFactsOfCell(Reference object, OptionSet<FactOfCell> facts)
+    void recordCellFacts(Reference object, OptionSet<CellFact> facts)
     {
-        if (writesInPlace() || !factsOfCell(object).containsAll(facts)) {
-            heldToWrite().noteFactsOfCell(object, facts);
-            m_marks.kinds |= Kinds::factsOfCells;
+        if (writesInPlace() || !cellFacts(object).containsAll(facts)) {
+            heldToWrite().recordCellFacts(object, facts);
+            m_marks.kinds |= Kinds::cellFacts;
         }
     }
-    OptionSet<FactOfCell> factsOfCell(Reference object) const { return mayHold(Kinds::factsOfCells) && m_held->mayHaveRecordOf(object) ? m_held->factsOfCellOfHolderOf(object) : OptionSet<FactOfCell>(); }
-    void endFactsOfCell(Reference object, OptionSet<FactOfCell> facts)
+    OptionSet<CellFact> cellFacts(Reference object) const { return mayHold(Kinds::cellFacts) && m_held->mayHaveRecordOf(object) ? m_held->cellFactsOfHolder(object) : OptionSet<CellFact>(); }
+    void invalidateCellFacts(Reference object, OptionSet<CellFact> facts)
     {
-        if (factsOfCell(object).containsAny(facts))
-            heldToWrite().endFactsOfCellOfHolderOf(object, facts);
+        if (cellFacts(object).containsAny(facts))
+            heldToWrite().invalidateCellFactsOfHolder(object, facts);
     }
     void noteOrderWord(Reference object, std::optional<uint32_t> orderWord)
     {
-        bool isNoted = orderWord ? orderWordOf(object) == orderWord && factsOfCell(object).containsAll({ FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot }) : !factsOfCell(object).contains(FactOfCell::OrderWordIsKnown);
+        bool isNoted = orderWord ? orderWordOf(object) == orderWord && cellFacts(object).containsAll({ CellFact::NotFrozen, CellFact::NoFieldOutsideSlot }) : !cellFacts(object).contains(CellFact::OrderWordIsKnown);
         if (!isNoted) {
             heldToWrite().noteOrderWord(object, orderWord);
-            m_marks.kinds |= Kinds::factsOfCells;
+            m_marks.kinds |= Kinds::cellFacts;
         }
     }
-    std::optional<uint32_t> orderWordOf(Reference object) const { return mayHold(Kinds::factsOfCells) && m_held->mayHaveRecordOf(object) ? m_held->orderWordOf(object) : std::nullopt; }
+    std::optional<uint32_t> orderWordOf(Reference object) const { return mayHold(Kinds::cellFacts) && m_held->mayHaveRecordOf(object) ? m_held->orderWordOf(object) : std::nullopt; }
 
     enum class AskerOfGuardOfReads : uint8_t { EveryRead, ReadBehindLookAtObject };
     static uint32_t numberOfGuardedSide(LayoutID classLayout, ClassSide side, AskerOfGuardOfReads asker = AskerOfGuardOfReads::EveryRead) { return classLayout.index() << 2 | static_cast<uint32_t>(asker) << 1 | static_cast<uint32_t>(side); }
@@ -611,43 +611,43 @@ public:
             heldToWrite().invalidateAliasedSlots(m_program, object, field, mayBeSameObject, isOfLayoutAlone);
     }
 
-    static constexpr uint32_t placesWereWrittenInTurn = 1u << 31;
-    bool nothingWasDoneInTurn(uint32_t numberOfTurn) const { return numberOfTurn && m_marks.turnInWhichNothingWasDone == numberOfTurn; }
-    static constexpr uint32_t storesOfTurnCanBePutBack = 1u << 30;
-    static constexpr uint32_t turnOfMark(uint32_t mark) { return mark & ~(placesWereWrittenInTurn | storesOfTurnCanBePutBack); }
-    bool noOtherCodeRanInTurn(uint32_t numberOfTurn) const { return numberOfTurn && turnOfMark(m_marks.turnInWhichNothingWasDone) == numberOfTurn; }
-    bool allThatWasDoneInTurnCanBePutBack(uint32_t numberOfTurn) const { return noOtherCodeRanInTurn(numberOfTurn) && !(m_marks.turnInWhichNothingWasDone & placesWereWrittenInTurn); }
-    uint32_t newestStoreToPutBack() const { return m_marks.turnInWhichNothingWasDone & storesOfTurnCanBePutBack ? (m_marks.kinds & placeOfNewestStoreToPutBack) >> shiftOfPlaceOfNewestStoreToPutBack : 0; }
-    void noteStoreToPutBack(uint32_t numberOfTurn, uint32_t store)
+    static constexpr uint32_t irreversibleWritesBit = 1u << 31;
+    bool isEffectFreeSince(uint32_t restartPoint) const { return restartPoint && m_marks.restartMark == restartPoint; }
+    static constexpr uint32_t undoableStoresBit = 1u << 30;
+    static constexpr uint32_t restartPointOf(uint32_t mark) { return mark & ~(irreversibleWritesBit | undoableStoresBit); }
+    bool hasOnlyKnownEffectsSince(uint32_t restartPoint) const { return restartPoint && restartPointOf(m_marks.restartMark) == restartPoint; }
+    bool canRestartFrom(uint32_t restartPoint) const { return hasOnlyKnownEffectsSince(restartPoint) && !(m_marks.restartMark & irreversibleWritesBit); }
+    uint32_t newestUndoableStore() const { return m_marks.restartMark & undoableStoresBit ? (m_marks.kinds & newestUndoableStoreMask) >> newestUndoableStoreShift : 0; }
+    void recordUndoableStore(uint32_t restartPoint, uint32_t store)
     {
-        RELEASE_ASSERT(numberOfTurn < storesOfTurnCanBePutBack && store <= placeOfNewestStoreToPutBack >> shiftOfPlaceOfNewestStoreToPutBack);
-        m_marks.turnInWhichNothingWasDone = storesOfTurnCanBePutBack | numberOfTurn;
-        m_marks.kinds = (m_marks.kinds & ~placeOfNewestStoreToPutBack) | store << shiftOfPlaceOfNewestStoreToPutBack;
+        RELEASE_ASSERT(restartPoint < undoableStoresBit && store <= newestUndoableStoreMask >> newestUndoableStoreShift);
+        m_marks.restartMark = undoableStoresBit | restartPoint;
+        m_marks.kinds = (m_marks.kinds & ~newestUndoableStoreMask) | store << newestUndoableStoreShift;
     }
-    void noteHeadOfTurn(uint32_t numberOfTurn) { m_marks.turnInWhichNothingWasDone = numberOfTurn; }
-    void noteSomethingWasDoneInTurn() { m_marks.turnInWhichNothingWasDone = 0; }
-    uint32_t markOfTurn() const { return m_marks.turnInWhichNothingWasDone; }
-    void layMarkOfTurnFalsely(uint32_t mark) { m_marks.turnInWhichNothingWasDone = mark; }
-    bool nothingWasDoneSinceCopyBegan(uint32_t numberOfCopy) const { return m_marks.turnInWhichNothingWasDone && m_marks.turnInWhichNothingWasDone <= numberOfCopy; }
-    void noteCopyBegins(uint32_t numberOfCopy)
+    void setRestartPoint(uint32_t restartPoint) { m_marks.restartMark = restartPoint; }
+    void clearRestartMark() { m_marks.restartMark = 0; }
+    uint32_t restartMark() const { return m_marks.restartMark; }
+    void setRestartMarkForTesting(uint32_t mark) { m_marks.restartMark = mark; }
+    bool isInlineeEffectFree(uint32_t inlineeRestartPoint) const { return m_marks.restartMark && m_marks.restartMark <= inlineeRestartPoint; }
+    void setInlineeRestartPoint(uint32_t inlineeRestartPoint)
     {
-        if (!m_marks.turnInWhichNothingWasDone || (m_marks.turnInWhichNothingWasDone & placesWereWrittenInTurn))
-            m_marks.turnInWhichNothingWasDone = numberOfCopy;
+        if (!m_marks.restartMark || (m_marks.restartMark & irreversibleWritesBit))
+            m_marks.restartMark = inlineeRestartPoint;
     }
-    void giveMarkOfTurnBackBehindCopy(uint32_t numberOfCopy, uint32_t markInFrontOfCopy)
+    void restoreDisplacedRestartMark(uint32_t inlineeRestartPoint, uint32_t displacedMark)
     {
-        if (!(m_marks.turnInWhichNothingWasDone & storesOfTurnCanBePutBack) && (m_marks.turnInWhichNothingWasDone & ~placesWereWrittenInTurn) == numberOfCopy)
-            m_marks.turnInWhichNothingWasDone = markInFrontOfCopy;
+        if (!(m_marks.restartMark & undoableStoresBit) && (m_marks.restartMark & ~irreversibleWritesBit) == inlineeRestartPoint)
+            m_marks.restartMark = displacedMark;
     }
-    void noteWhatOperationDoes(const Effects& effects)
+    void updateRestartMark(const Effects& effects)
     {
-        if (m_marks.turnInWhichNothingWasDone && !effects.mayBeRunAgainUnseen())
-            m_marks.turnInWhichNothingWasDone = effects.mayRunOtherCode() ? 0 : turnOfMark(m_marks.turnInWhichNothingWasDone) | placesWereWrittenInTurn;
+        if (m_marks.restartMark && !effects.mayBeRunAgainUnseen())
+            m_marks.restartMark = effects.mayRunOtherCode() ? 0 : restartPointOf(m_marks.restartMark) | irreversibleWritesBit;
     }
 
     ALWAYS_INLINE void invalidate(const Effects& effects, const MemoryLocation* writtenAlone = nullptr)
     {
-        noteWhatOperationDoes(effects);
+        updateRestartMark(effects);
         if (!effects.writes.isEmpty() || effects.mayRunOtherCode()) {
             if (!holdsNoRecord())
                 endWhatIsWritten(effects, writtenAlone);
@@ -667,7 +667,7 @@ public:
     void invalidate(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone = nullptr, const WriterOfOneObject* = nullptr);
     void invalidateHeap()
     {
-        m_marks.turnInWhichNothingWasDone = 0;
+        clearRestartMark();
         if (!holdsNoRecord())
             endWhatIsNotFresh();
         m_answers.endWhatIsNotFresh(*this);
@@ -691,7 +691,7 @@ public:
             clear();
             return;
         }
-        m_marks.turnInWhichNothingWasDone = 0;
+        clearRestartMark();
         endWhatIsNotFresh();
         Held& held = heldToWrite();
         held.m_checkedNames.clear();
@@ -704,7 +704,7 @@ public:
     struct RecordsLastMet;
     void meetWith(const WalkState& other, RecordsLastMet* = nullptr);
 
-    bool isEmpty() const { return !m_marks.turnInWhichNothingWasDone && (!m_held || m_held->isEmpty()) && m_answers.isEmpty(); }
+    bool isEmpty() const { return !m_marks.restartMark && (!m_held || m_held->isEmpty()) && m_answers.isEmpty(); }
 
 private:
     static constexpr uint32_t none = UINT32_MAX;
@@ -719,13 +719,13 @@ private:
         static constexpr uint32_t shapes = 1u << 1;
         static constexpr uint32_t freshObjects = 1u << 2;
         static constexpr uint32_t places = 1u << 3;
-        static constexpr uint32_t factsOfCells = 1u << 4;
-        static constexpr uint32_t records = shapes | freshObjects | places | factsOfCells;
+        static constexpr uint32_t cellFacts = 1u << 4;
+        static constexpr uint32_t records = shapes | freshObjects | places | cellFacts;
     };
     static constexpr uint32_t programIsWhole = 1u << 31;
-    static constexpr uint32_t shiftOfPlaceOfNewestStoreToPutBack = 8;
-    static constexpr uint32_t placeOfNewestStoreToPutBack = (programIsWhole - 1) & ~((1u << shiftOfPlaceOfNewestStoreToPutBack) - 1);
-    static constexpr uint32_t keptWhereNothingIsHeld = programIsWhole | placeOfNewestStoreToPutBack;
+    static constexpr uint32_t newestUndoableStoreShift = 8;
+    static constexpr uint32_t newestUndoableStoreMask = (programIsWhole - 1) & ~((1u << newestUndoableStoreShift) - 1);
+    static constexpr uint32_t keptWhereNothingIsHeld = programIsWhole | newestUndoableStoreMask;
     static constexpr uint64_t programIsWholeAmongMarks = static_cast<uint64_t>(programIsWhole) << 32;
 
     enum class PlaceKind : uint8_t { Slot, Variable, EnvironmentField, Element, GuardOfStores, GuardOfReads };
@@ -745,7 +745,7 @@ private:
         uint64_t maskOfPlaces { 0 };
         uint8_t kindsOfPlaces { 0 };
         LayoutsOfSlots layoutsOfSlots { LayoutsOfSlots::None };
-        OptionSet<FactOfCell> factsOfCell;
+        OptionSet<CellFact> cellFacts;
         bool isFresh { false };
         bool hasEnded { false };
         bool isListedAsFreshWithElements { false };
@@ -822,8 +822,8 @@ private:
 
         void noteShape(Reference object, TypeID proven);
         void noteFresh(Reference object);
-        void noteFactsOfCell(Reference object, OptionSet<FactOfCell>);
-        void endFactsOfCellOfHolderOf(Reference object, OptionSet<FactOfCell>);
+        void recordCellFacts(Reference object, OptionSet<CellFact>);
+        void invalidateCellFactsOfHolder(Reference object, OptionSet<CellFact>);
         void noteOrderWord(Reference object, std::optional<uint32_t>);
         std::optional<uint32_t> orderWordOf(Reference object) const;
         void noteStoresPassAbove(LayoutID classLayout, PropertyKeyID, Reference test);
@@ -842,7 +842,7 @@ private:
 
         bool mayHaveRecordOf(Reference object) const { return m_filterOfHolders & bitInFilterOfHolders(object); }
         TypeID shapeOfHolderOf(Reference) const;
-        OptionSet<FactOfCell> factsOfCellOfHolderOf(Reference) const;
+        OptionSet<CellFact> cellFactsOfHolder(Reference) const;
         bool holderIsFresh(Reference) const;
         bool letLeaveIfFresh(Reference);
         bool restsOnHeapsAmong(const LocationMasks& writes) const;
@@ -867,7 +867,7 @@ private:
         void endPlacesOf(uint32_t holder, ListOfPlaces, NOESCAPE const Invocable<bool(const Place&)> auto& ends);
         void endSlotsUnderOtherLayouts(uint32_t holder, uint32_t layout);
         void endShape(uint32_t holder);
-        void endFactsOfCell(uint32_t holder, OptionSet<FactOfCell>);
+        void invalidateCellFacts(uint32_t holder, OptionSet<CellFact>);
         void endHolder(uint32_t holder);
         void letLeave(uint32_t holder);
         void listAsReachedByEffects(uint32_t holder);
@@ -885,7 +885,7 @@ private:
             bool shapes { false };
             bool elements { false };
             bool sparesElementsOutsideViews { false };
-            OptionSet<FactOfCell> facts;
+            OptionSet<CellFact> facts;
             uint64_t slots { 0 };
             uint64_t variables { 0 };
             uint64_t environmentFields { 0 };
@@ -951,7 +951,7 @@ private:
 
         bool holdsNoRecord() const { return m_holders.isEmpty(); }
         bool holdsNothingThatNoEffectEnds() const { return m_checkedNames.isEmpty() && m_bindingsPastDeadZone.isEmpty() && m_builtinsRead.isEmpty(); }
-        bool isEmpty() const { return !m_numberOfShapes && !m_numberOfPlaces && !m_numberOfFreshHolders && !m_numberOfHoldersWithFactsOfCell && holdsNothingThatNoEffectEnds(); }
+        bool isEmpty() const { return !m_numberOfShapes && !m_numberOfPlaces && !m_numberOfFreshHolders && !m_numberOfFactHolders && holdsNothingThatNoEffectEnds(); }
 
         static uint64_t bitInFilterOfHolders(Reference object) { return uint64_t { 1 } << (object.bits() & 63); }
 
@@ -962,13 +962,13 @@ private:
         uint32_t m_numberOfHolders { 0 };
         uint32_t m_numberOfPlaces { 0 };
         uint32_t m_numberOfShapes { 0 };
-        uint32_t m_numberOfHoldersWithFactsOfCell { 0 };
+        uint32_t m_numberOfFactHolders { 0 };
         uint32_t m_numberOfFreshHolders { 0 };
         uint32_t m_numberOfShapesReachedByEffects { 0 };
-        uint32_t m_numberOfHoldersWithFactsOfCellReachedByEffects { 0 };
+        uint32_t m_reachedFactHolderCount { 0 };
         uint32_t m_numberOfPlacesReachedByEffects { 0 };
         uint32_t m_numberOfElementsReachedByEffects { 0 };
-        OptionSet<FactOfCell> m_factsOfCellReachedByEffects;
+        OptionSet<CellFact> m_cellFactsReachedByEffects;
         uint16_t m_kindsOfPlacesReachedByEffects { 0 };
         uint64_t m_maskOfPlacesReachedByEffects { 0 };
         uint64_t m_filterOfHolders { 0 };
@@ -1033,7 +1033,7 @@ private:
             && (m_marks.kinds & Kinds::shapes || !m_held->m_numberOfShapes)
             && (m_marks.kinds & Kinds::freshObjects || !m_held->m_numberOfFreshHolders)
             && (m_marks.kinds & Kinds::places || !m_held->m_numberOfPlaces)
-            && (m_marks.kinds & Kinds::factsOfCells || !m_held->m_numberOfHoldersWithFactsOfCell);
+            && (m_marks.kinds & Kinds::cellFacts || !m_held->m_numberOfFactHolders);
     }
     void noteKindsOfRecordsLeft()
     {
@@ -1045,8 +1045,8 @@ private:
                 kinds |= Kinds::freshObjects;
             if (m_held->m_numberOfPlaces)
                 kinds |= Kinds::places;
-            if (m_held->m_numberOfHoldersWithFactsOfCell)
-                kinds |= Kinds::factsOfCells;
+            if (m_held->m_numberOfFactHolders)
+                kinds |= Kinds::cellFacts;
         }
         m_marks.kinds = kinds;
     }
@@ -1060,7 +1060,7 @@ private:
     void takeMarksOfStateWithoutWholeProgram(WalkState&);
 
     struct Marks {
-        uint32_t turnInWhichNothingWasDone { 0 };
+        uint32_t restartMark { 0 };
         uint32_t kinds { 0 };
     };
 

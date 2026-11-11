@@ -46,6 +46,7 @@ public:
     float logicalBottom() const;
     float logicalHeight() const { return logicalBottom() - logicalTop(); }
     float logicalWidth() const;
+    float logicalBaseline() const;
 
     float contentLogicalTop() const;
     float contentLogicalBottom() const;
@@ -54,8 +55,14 @@ public:
     float contentLogicalWidth() const;
     float contentLogicalHeight() const;
 
+    // The content extended to the adjacent line's content, used by the caret and hit-testing.
     float contentLogicalTopAdjustedForPrecedingLineBox() const;
     float contentLogicalBottomAdjustedForFollowingLineBox() const;
+    FloatRect contentLogicalRectAdjustedForAdjacentLineBoxes() const;
+
+    // The line box grown to fit overflowing content. Adjacent lines share their boundary so that selection has no gaps or overlaps.
+    float selectionLogicalTop() const;
+    float selectionLogicalBottom() const;
 
     float inkOverflowLogicalTop() const;
     float inkOverflowLogicalBottom() const;
@@ -79,12 +86,12 @@ public:
     bool isFirstAfterPageBreak() const;
 
     bool hasBlockContent() const;
-    LeafBoxIterator LEGACY_NODELETE blockLevelBox() const;
+    NODELETE LeafBoxIterator blockLevelBox() const;
     inline bool hasContentfulInFlowBox() const;
 
     // Text-relative left/right
-    LeafBoxIterator LEGACY_NODELETE lineLeftmostLeafBox() const;
-    LeafBoxIterator LEGACY_NODELETE lineRightmostLeafBox() const;
+    NODELETE LeafBoxIterator lineLeftmostLeafBox() const;
+    NODELETE LeafBoxIterator lineRightmostLeafBox() const;
     // Coordinate-relative left/right
     inline LeafBoxIterator logicalLeftmostLeafBox() const;
     inline LeafBoxIterator logicalRightmostLeafBox() const;
@@ -92,8 +99,8 @@ public:
     // Leaf boxes from line-left to line-right.
     LeafBoxRange leafBoxes() const;
 
-    LineBoxIterator LEGACY_NODELETE next() const;
-    LineBoxIterator LEGACY_NODELETE previous() const;
+    NODELETE LineBoxIterator next() const;
+    NODELETE LineBoxIterator previous() const;
 
     size_t lineIndex() const { return m_lineIndex; }
 
@@ -111,6 +118,9 @@ private:
     const InlineDisplay::Lines& lines() const LIFETIME_BOUND { return m_inlineContent->displayContent().lines; }
     const InlineDisplay::Line& line() const LIFETIME_BOUND { return lines()[m_lineIndex]; }
     InlineDisplay::Line::Ellipsis lineEllipsis() const;
+
+    std::optional<LineBox> precedingLineBoxForSelection() const;
+    std::optional<LineBox> followingLineBoxForSelection() const;
 
     SingleThreadWeakPtr<const LayoutIntegration::InlineContent> m_inlineContent;
     size_t m_lineIndex { 0 };
@@ -212,7 +222,7 @@ WEBCORE_EXPORT LineBoxIterator firstLineBoxFor(const RenderBlockFlow&);
 LineBoxIterator lastLineBoxFor(const RenderBlockFlow&);
 
 inline LineBoxRange lineBoxesFor(const RenderBlockFlow&);
-LineBox LEGACY_NODELETE lineBoxFor(const LayoutIntegration::InlineContent&, size_t lineIndex);
+NODELETE LineBox lineBoxFor(const LayoutIntegration::InlineContent&, size_t lineIndex);
 
 LeafBoxIterator closestBoxForHorizontalPosition(const LineBox&, float horizontalPosition, bool editableOnly = false);
 
@@ -243,10 +253,10 @@ inline float LineBox::contentLogicalBottom() const
     return line().enclosingContentLogicalBottom();
 }
 
-inline float LineBox::contentLogicalTopAdjustedForPrecedingLineBox() const
+inline std::optional<LineBox> LineBox::precedingLineBoxForSelection() const
 {
     if (formattingContextRoot().writingMode().isLineInverted() || !m_lineIndex)
-        return contentLogicalTop();
+        return { };
     for (auto precedingLineIndex = m_lineIndex; precedingLineIndex--;) {
         auto precedingLineBox = LineBox { *m_inlineContent, precedingLineIndex };
         if (!precedingLineBox.hasContentfulInFlowBox())
@@ -255,19 +265,52 @@ inline float LineBox::contentLogicalTopAdjustedForPrecedingLineBox() const
             break;
         if (precedingLineBox.logicalBottom() < logicalTop())
             break;
-        return precedingLineBox.contentLogicalBottom();
+        return precedingLineBox;
     }
+    return { };
+}
+
+inline std::optional<LineBox> LineBox::followingLineBoxForSelection() const
+{
+    if (!formattingContextRoot().writingMode().isLineInverted() || m_lineIndex == lines().size() - 1)
+        return { };
+    auto followingLineBox = LineBox { *m_inlineContent, m_lineIndex + 1 };
+    if (followingLineBox.hasBlockContent())
+        return { };
+    return followingLineBox;
+}
+
+inline float LineBox::contentLogicalTopAdjustedForPrecedingLineBox() const
+{
+    if (auto precedingLineBox = precedingLineBoxForSelection())
+        return precedingLineBox->contentLogicalBottom();
     return contentLogicalTop();
 }
 
 inline float LineBox::contentLogicalBottomAdjustedForFollowingLineBox() const
 {
-    if (!formattingContextRoot().writingMode().isLineInverted() || m_lineIndex == lines().size() - 1)
-        return contentLogicalBottom();
-    auto followingLineBox = LineBox { *m_inlineContent, m_lineIndex + 1 };
-    if (followingLineBox.hasBlockContent())
-        return contentLogicalBottom();
-    return followingLineBox.contentLogicalTop();
+    if (auto followingLineBox = followingLineBoxForSelection())
+        return followingLineBox->contentLogicalTop();
+    return contentLogicalBottom();
+}
+
+inline FloatRect LineBox::contentLogicalRectAdjustedForAdjacentLineBoxes() const
+{
+    return { FloatPoint { contentLogicalLeft(), contentLogicalTopAdjustedForPrecedingLineBox() }, FloatPoint { contentLogicalRight(), contentLogicalBottomAdjustedForFollowingLineBox() } };
+}
+
+inline float LineBox::selectionLogicalTop() const
+{
+    if (auto precedingLineBox = precedingLineBoxForSelection())
+        return std::max(precedingLineBox->contentLogicalBottom(), precedingLineBox->logicalBottom());
+    return std::min(contentLogicalTop(), logicalTop());
+}
+
+inline float LineBox::selectionLogicalBottom() const
+{
+    if (auto followingLineBox = followingLineBoxForSelection())
+        return std::min(followingLineBox->contentLogicalTop(), followingLineBox->logicalTop());
+    return std::max(contentLogicalBottom(), logicalBottom());
 }
 
 inline float LineBox::logicalTop() const
@@ -283,6 +326,13 @@ inline float LineBox::logicalBottom() const
 inline float LineBox::logicalWidth() const
 {
     return line().lineBoxLogicalRect().width();
+}
+
+inline float LineBox::logicalBaseline() const
+{
+    if (formattingContextRoot().writingMode().isLineInverted())
+        return logicalBottom() - line().baseline();
+    return logicalTop() + line().baseline();
 }
 
 inline float LineBox::inkOverflowLogicalTop() const
@@ -321,8 +371,8 @@ inline FloatRect LineBox::ellipsisVisualRect(AdjustedForSelection adjustedForSel
         formattingContextRoot().flipForWritingMode(visualRect);
         return visualRect;
     }
-    auto selectionTop = formattingContextRoot().adjustEnclosingTopForPrecedingBlock(LayoutUnit { contentLogicalTopAdjustedForPrecedingLineBox() });
-    auto selectionBottom = contentLogicalBottomAdjustedForFollowingLineBox();
+    auto selectionTop = formattingContextRoot().adjustEnclosingTopForPrecedingBlock(LayoutUnit { selectionLogicalTop() });
+    auto selectionBottom = selectionLogicalBottom();
 
     visualRect.setY(selectionTop);
     visualRect.setHeight(selectionBottom - selectionTop);

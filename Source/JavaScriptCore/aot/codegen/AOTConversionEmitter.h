@@ -42,11 +42,16 @@ public:
     Integer toInteger(Number, Range, bool standsInLoop);
     Word32 int32OrElse(Number, LBasicBlock isNoInt32);
     Word32 int32OrElse(Integer, Range, LBasicBlock isNoInt32);
-#if CPU(ARM64)
-    Integer toNearestInteger(Number);
-#endif
+    Integer truncateUnchecked(Number);
+    Word32 truncateToWord(Number value) { return low32(truncateUnchecked(value)); }
     std::optional<Integer> exactIntegerBehind(Number);
     void noteIntegerBehind(Number number, LValue integer) { m_integersNotedBehindNumbers.add(number.value(), integer); }
+    void noteIndexBehind(Number number, Integer index) { m_indexesBehindNumbers.add(number.value(), index.value()); }
+    std::optional<Integer> indexBehind(Number number) const
+    {
+        LValue index = m_indexesBehindNumbers.get(number.value());
+        return index ? std::optional(Integer(index)) : std::nullopt;
+    }
     void noteInt32ElementBehindNumberOrNaN(Number number, Boxed element)
     {
         if (number.value()->opcode() == Machine::Select)
@@ -59,6 +64,7 @@ public:
     enum class BitsOfInt32 : uint8_t { All, Lowest };
     static constexpr unsigned numberOfLowestBits = numberOfLowestBitsOfInt32;
     Word32 toInt32(Number, BitsOfInt32 = BitsOfInt32::All);
+    Word32 truncateNullableNumber(Boxed);
     Word32 toInt32OfBoxedNumber(Boxed);
     Number purified(Number);
     Number withoutPayload(Number);
@@ -70,6 +76,7 @@ public:
     Operand fromBits(Integer, Representation);
     static uint64_t markerBits(uint16_t primitive, Representation);
     Condition isMarker(Operand);
+    Condition isNullOrAbsent(OptionalNumber);
     Condition isMarker(Operand operand, uint64_t marker)
     {
         if (std::optional<Word32> narrow = operand.is<OptionalInteger>() ? narrowWordBehind(operand.as<OptionalInteger>()) : std::nullopt)
@@ -101,6 +108,11 @@ private:
     bool comesRoundToIntegerBehind(LValue number);
     std::optional<IntegerBehindNumber> describeIntegerBehind(LValue number, bool mayTestWhatWasRead, const IntegersBehindNumbers& operands);
     ExactInteger computeIntegerBehind(LValue number, const IntegerBehindNumber&, bool inWords, const ExactIntegers& operands);
+    std::optional<Integer> findTruncation(Number);
+#if CPU(ARM64)
+    bool convertsWithJavaScriptSemantics();
+    Integer exactInt32OrAllOnes(Number);
+#endif
     Word32 toInt32OfAnyNumber(Number, BitsOfInt32);
     Operand convertMarkers(Operand source, const Type&, Representation to, std::optional<Operand> unmarked = std::nullopt);
     Integer integerPartOf(Operand, const Type&);
@@ -116,6 +128,7 @@ private:
     bool m_boxesNumbersByStub { false };
     Place m_placeThatBoxesByStub { Place::Anywhere };
     UncheckedKeyHashMap<LValue, LValue> m_integersNotedBehindNumbers;
+    UncheckedKeyHashMap<LValue, LValue> m_indexesBehindNumbers;
     UncheckedKeyHashMap<LValue, LValue> m_int32ElementsBehindNumbersOrNaN;
     UncheckedKeyHashSet<LValue> m_numbersOfInt32Elements;
     std::array<IntegersBehindNumbers, 2> m_integersBehindNumbers;

@@ -376,6 +376,9 @@ void RemoteLayerTreeDrawingArea::updateRendering()
     auto transactionID = takeNextTransactionID();
     send(Messages::RemoteLayerTreeDrawingAreaProxy::NotifyPendingCommitLayerTree(transactionID, webPage->identifier()));
 
+    bool samplesFixedContainerEdges = webPage->samplesFixedContainerEdges();
+    Vector<WebCore::FrameIdentifier> rootsWithLayerChanges;
+
     auto transactions = WTF::map(m_rootLayers, [&](RootLayerInfo& rootLayer) -> RemoteLayerTreeCommitBundle::RootFrameData {
         backingStoreCollection->willBuildTransaction();
         rootLayer.layer->flushCompositingStateForThisLayerOnly();
@@ -386,6 +389,9 @@ void RemoteLayerTreeDrawingArea::updateRendering()
         m_remoteLayerTreeContext->buildTransaction(layerTransaction, *layer, rootLayer.frameID);
 
         webPage->willCommitLayerTree(layerTransaction, rootLayer.frameID);
+
+        if (samplesFixedContainerEdges && layerTransaction.hasAnyLayerChanges())
+            rootsWithLayerChanges.append(rootLayer.frameID);
 
         m_waitingForBackingStoreSwap = true;
 
@@ -417,6 +423,9 @@ void RemoteLayerTreeDrawingArea::updateRendering()
     }
 
     bundle.editorState = webPage->editorStateIfUpdateNeeded();
+
+    if (samplesFixedContainerEdges)
+        bundle.fixedContainerEdges = webPage->sampleFixedContainerEdges(rootsWithLayerChanges);
 
     bundle.startTime = *std::exchange(m_updateStartTime, std::nullopt);
 
@@ -471,12 +480,6 @@ void RemoteLayerTreeDrawingArea::displayDidRefresh(MonotonicTime start)
     // the callers of that function are not strictly paired.
 
     auto wasWaitingForBackingStoreSwap = std::exchange(m_waitingForBackingStoreSwap, false);
-
-    if (!WebProcess::singleton().shouldUseRemoteRenderingFor(WebCore::RenderingPurpose::DOM)) {
-        // This empty transaction serves to trigger CA's garbage collection of IOSurfaces. See <rdar://problem/16110687>
-        [CATransaction begin];
-        [CATransaction commit];
-    }
 
     if (m_deferredRenderingUpdateWhileWaitingForBackingStoreSwap || (m_isScheduled && !m_scheduleRenderingTimer.isActive())) {
         m_updateStartTime = start;

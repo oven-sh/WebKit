@@ -260,7 +260,7 @@ function formatSlot(slot: ModelSlot): string {
     ["heap", formatHeap(slot.heap)],
     ["holds", formatId("BuiltinTypeID", slot.holds)],
     ["internalField", slot.internalField === null ? null : String(slot.internalField)],
-    ["holdsWhatStepsHandOut", formatUnlessFalse(slot.holdsWhatStepsHandOut)],
+    ["holdsStepValues", formatUnlessFalse(slot.holdsStepValues)],
     ["holdsWhatIsThrown", formatUnlessFalse(slot.holdsWhatIsThrown)],
     ["wordOfCell", formatUnlessDefault("BuiltinWordOfCell", slot.wordOfCell, "None")],
   ]);
@@ -318,10 +318,10 @@ function formatModule(
       ),
     ],
     [
-      "exportsOfWhichMembersAloneAreKept",
+      "memberOnlyExports",
       exportsReadByNativeCode.add(
         [...(nativeReads?.names.values() ?? [])]
-          .filter(name => !nativeReads!.readsEveryExport && !nativeReads!.namesWithAnotherUseThanKeepingMembers.has(name.number))
+          .filter(name => !nativeReads!.readsEveryExport && !nativeReads!.namesWithOtherUses.has(name.number))
           .sort((left, right) => left.number - right.number)
           .map(name => formatName(name)),
       ),

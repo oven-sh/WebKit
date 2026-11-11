@@ -45,8 +45,9 @@ struct AdapterEntry {
     JSCell* outerAsyncGenerator { nullptr };
     JSCell* outerPromiseOfHandler { nullptr };
     uintptr_t outerAsyncContextIsPutBack { false };
+    const uint64_t* outerFrameThatMayContinue { nullptr };
 };
-static_assert(sizeof(AdapterEntry) == 4 * sizeof(void*));
+static_assert(sizeof(AdapterEntry) == 5 * sizeof(void*));
 struct AsyncGeneratorBodyEntry {
     Instance* instance { nullptr };
     AdapterEntry adapterEntry;
@@ -62,7 +63,7 @@ ALWAYS_INLINE bool canRunJobHandler(JSGlobalObject* globalObject, VM& vm, JSValu
     return promiseOrCapability.isCell() && promiseOrCapability.asCell()->structureID() == globalObject->promiseStructure()->id() && canEnterJobFunction(globalObject, vm, handler);
 }
 JS_EXPORT_PRIVATE JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejected);
-JS_EXPORT_PRIVATE bool takesBareSteps(JSValue settlementTarget);
+JS_EXPORT_PRIVATE bool acceptsBareSteps(JSValue settlementTarget);
 JS_EXPORT_PRIVATE JSValue driverResumeContext(JSValue settlementTarget);
 JS_EXPORT_PRIVATE void deliverBareStepToDriver(JSObject* driver, bool isDone);
 
@@ -70,6 +71,7 @@ JSValue enterSavedFrame(VM&, Instance&, SavedFrame*, Typed::ResumeMode, JSValue 
 void resumeSavedAsyncFunction(JSGlobalObject*, VM&, Instance&, SavedFrame*, Typed::ResumeMode, JSValue resolution);
 void settlePromiseOfHandler(VM&, JSCell* promise, JSValue returned, JSValue error);
 void takeAwayRightToContinue(Instance&);
+const uint64_t* frameWithAwaitingCallers(const Instance&);
 
 JS_EXPORT_PRIVATE bool isSuspendedAsyncFunction(JSCell*);
 JS_EXPORT_PRIVATE bool isSuspendedModuleBody(VM&, JSValue coroutine);

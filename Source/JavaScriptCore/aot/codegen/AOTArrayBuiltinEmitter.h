@@ -73,6 +73,7 @@ private:
 
     void removeElementAtEnd(const InlineCall&, bool removesFirst);
     Operand removeFirstElement(const InlineCall&, const ArrayStorageForm&, const ArrayElements&, LBasicBlock isAbsent);
+    Operand shiftLongArray(const InlineCall&, const ArrayStorageForm&, const ArrayElements&, Integer length);
 
     bool resultGetsNamedProperties(const InlineCall&);
     bool resultIsExpectedToHoldDoubles(const InlineCall&);

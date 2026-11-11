@@ -16,22 +16,22 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean
 # -- code
 # code f0:Body {
 #   b0(v0: anything @Cell, v1: anything @JSValue, v2: boolean @Boolean) entry=0:
-#     v3 @Void = SetMappedArgument v0, v1 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v3 @Void = SetMappedArgument v0, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
 #     Branch v2 -> taken b1(), notTaken b2()
 #   b1():
 #     Return
 #   b2():
-#     v4 @Void = SetMappedArgument v0, v1 index=1 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v4 @Void = SetMappedArgument v0, v1 index=1 traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b3()
 #   b3():
 #     v5 @Void = LoopHint traits=[mayThrow, mayCollect, mayBeTerminated, mayTouchMemory]
-#     v6 @Void = SetMappedArgument v0, v1 index=2 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v6 @Void = SetMappedArgument v0, v1 index=2 traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b4()
 #   b4() isInLoop=true isLoopHead=true:
 #     v7: anything @Cell = GetMappedArgument v0 index=0 traits=[mayTouchMemory]
 #     Jump -> next b5()
 #   b5() isInLoop=true:
-#     v8 @Void = SetMappedArgument v7, v1 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
+#     v8 @Void = SetMappedArgument v7, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
 #     Jump -> next b4()
 # }
 # -- end of code

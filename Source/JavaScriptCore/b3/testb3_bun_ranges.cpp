@@ -653,7 +653,7 @@ static void checkComparisonOfExtensions(B3::Opcode opcode, ExtendedOperand left,
     }
 }
 
-static void testComparisonOfExtensionsIsNarrow()
+static void testNarrowExtensionComparison()
 {
     for (B3::Opcode opcode : { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Below, BelowEqual, Above, AboveEqual }) {
         for (B3::Opcode leftExtension : { SExt32, ZExt32 }) {
@@ -663,6 +663,51 @@ static void testComparisonOfExtensionsIsNarrow()
                         for (bool reducesWithRanges : { true, false })
                             checkComparisonOfExtensions(opcode, { leftExtension, isLeftNonNegative }, { rightExtension, isRightNonNegative }, reducesWithRanges);
                     }
+                }
+            }
+        }
+    }
+}
+
+static void checkExtensionConstantComparison(B3::Opcode opcode, ExtendedOperand left, int64_t constant, bool reducesWithRanges)
+{
+    constexpr int32_t maxInt32 = std::numeric_limits<int32_t>::max();
+    constexpr int32_t minInt32 = std::numeric_limits<int32_t>::min();
+    Procedure proc(rangeReductionPolicy(reducesWithRanges));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    Value* pointer = cCallArgumentValues<int32_t*>(proc, root)[0];
+    Value* word = graph.load(root, Int32, pointer, 0, firstHeap);
+    if (left.isKnownNonNegative)
+        proc.setKnownRange(word, IntRange(0, maxInt32));
+    Value* comparison = graph.make(root, opcode, graph.make(root, left.extension, word), graph.int64(root, constant));
+    graph.ret(root, graph.make(root, ZExt32, comparison));
+
+    reduceStrengthOnce(proc);
+    bool isExtendedWord = constant == extendWord(left, static_cast<int32_t>(constant));
+    if (reducesWithRanges && isExtendedWord) {
+        CHECK_EQ(numberOfValues(proc, [](Value* value) {
+            return isIntegerComparison(value->opcode()) && value->child(0)->type() == Int64;
+        }), 0u);
+    }
+
+    auto code = compileProc(proc);
+    for (int32_t input : { 0, 1, 7, 128, maxInt32, -1, -7, -128, minInt32 }) {
+        if (left.isKnownNonNegative && input < 0)
+            continue;
+        int32_t memory[1] = { input };
+        CHECK_EQ(invoke<int64_t>(*code, memory), static_cast<int64_t>(holds(opcode, extendWord(left, input), constant)));
+    }
+}
+
+static void testNarrowExtensionConstantComparison()
+{
+    for (B3::Opcode opcode : { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Below, BelowEqual, Above, AboveEqual }) {
+        for (B3::Opcode extension : { SExt32, ZExt32 }) {
+            for (bool isNonNegative : { false, true }) {
+                for (int64_t constant : { 0ll, 1ll, 7ll, 128ll, 0x7fffffffll, 0x80000000ll, 0xfffffff9ll, 0xffffffffll, 0x100000000ll, 0x100000007ll, -1ll, -7ll, -128ll, -0x80000000ll, -0x80000001ll, std::numeric_limits<long long>::max(), std::numeric_limits<long long>::min() }) {
+                    for (bool reducesWithRanges : { true, false })
+                        checkExtensionConstantComparison(opcode, { extension, isNonNegative }, constant, reducesWithRanges);
                 }
             }
         }
@@ -866,7 +911,8 @@ void addBunRangeTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testExtensionOfTruncationFoldsByRange());
     RUN(testSumOfIntegersBehindDoublesIsAddedInIntegers());
     RUN(testSignExtensionOfNonNegativeIsZeroExtension());
-    RUN(testComparisonOfExtensionsIsNarrow());
+    RUN(testNarrowExtensionComparison());
+    RUN(testNarrowExtensionConstantComparison());
     RUN(testMaskFoldsByRange());
     RUN(testVariableShiftRanges());
     RUN(testTruncOfVariableShiftLeftAndBack());

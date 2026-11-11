@@ -9,12 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTAccessEmitter.h"
-#include "AOTCellAllocationEmitter.h"
 #include "AOTCodeRecords.h"
 #include "AOTCodeSites.h"
 #include "AOTCompileUnit.h"
 #include "AOTConstantEmitter.h"
-#include "AOTConvention.h"
 #include "AOTConversionEmitter.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTInstance.h"
@@ -28,8 +26,6 @@
 #include "AllowMacroScratchRegisterUsage.h"
 #include "LinkBuffer.h"
 #include "StackManager.h"
-#include <algorithm>
-#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -74,63 +70,14 @@ static void emitCompareAndCall(CCallHelpers& jit, const Machine::PatchParameters
     });
 }
 
-static std::optional<size_t> findEntryParameterNamedByHint(const Code& code, ValueID definition)
-{
-    if (code.at(definition).opcode != Opcode::Parameter)
-        return std::nullopt;
-    std::span<const ValueID> parameters = code.at(code.entries()[primaryEntry].block).parameters();
-    auto found = std::ranges::find(parameters, definition);
-    if (found == parameters.end())
-        return std::nullopt;
-    return static_cast<size_t>(found - parameters.begin());
-}
-
 void HintEmitter::generateLoopHint(const ValueContext& value)
 {
     emitPoll(value);
 }
 
-void HintEmitter::generateReleaseHint(const ValueContext& value)
+void HintEmitter::generateEndCellLifetime(const ValueContext& value)
 {
-    if (m_code.marksOf(value.id()).contains(SweepMark::ReleasesOperand))
-        release(value->valueOperand());
-}
-
-void HintEmitter::release(ValueID operand)
-{
-    if (isDeferredClosure(operand))
-        return;
-    Operand released = get(operand);
-    if (!released.value || released.value->type() != Machine::Int64 || released.value->hasInt64())
-        return;
-    ValueID definition = definitionOf(operand);
-    const Operation& named = operationAt(definition);
-    if (Operation::opcodesWithStorage.contains(named.opcode) && named.storage() != AllocationStorage::Heap)
-        return;
-    if (conventions().entryConventionOf(m_unit) == EntryConvention::Direct && !functionSuspends()) {
-        if (std::optional<size_t> parameter = findEntryParameterNamedByHint(m_code, definition)) {
-            ArgumentLocation location = conventions().locationsOf(m_program, m_unit).parameters[*parameter];
-            if (location.kind == ArgumentLocation::Kind::Stack)
-                m_out.store64(m_out.constInt64(0), m_out.address(m_heaps.argumentBuffer, m_out.framePointer(), offsetOfStackWordFromFrame(location.stackIndex)));
-        }
-    }
-    Machine::PatchOperation* patchpoint = m_out.patchpoint(Machine::Void);
-    patchpoint->append(released.value, Machine::ValueRep::ColdAny);
-    patchpoint->effects = Machine::Effects::none();
-    patchpoint->effects.writesLocalState = true;
-    patchpoint->setReleasesDeadValues(true);
-    patchpoint->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
-        RegisterSet registers = params.value()->registersToRelease();
-        registers.exclude(params.usedRegisters());
-        registers.forEach([&](Reg reg) {
-            jit.move(CCallHelpers::TrustedImm32(0), reg.gpr());
-        });
-    });
-}
-
-void HintEmitter::generateEndLifeOfCell(const ValueContext& value)
-{
-    endLifeOf(value, value->cellOperand());
+    emitLifetimeEnd(value, value->cellOperand());
 }
 
 void HintEmitter::generateAskObjectAgain(const ValueContext& value)
@@ -164,9 +111,9 @@ void HintEmitter::generateAskObjectAgain(const ValueContext& value)
 
 void HintEmitter::generateGuessFailsUnasked(const ValueContext& value)
 {
-    uint32_t period = build().options().periodOfGuessesThatFail;
+    uint32_t period = build().options().speculationFailurePeriod;
     RELEASE_ASSERT(period);
-    int32_t step = static_cast<int32_t>(drawBySeed(build().options().seedOfShuffles, DrawnFor::StepOfGuessesThatFail, 0, 0) | 1);
+    int32_t step = static_cast<int32_t>(drawBySeed(build().options().shuffleSeed, DrawnFor::StepOfGuessesThatFail, 0, 0) | 1);
     Machine::PatchOperation* drawn = m_out.patchpoint(Machine::Int64);
     drawn->effects = Machine::Effects::none();
     drawn->effects.writesLocalState = true;
@@ -182,37 +129,37 @@ void HintEmitter::generateGuessFailsUnasked(const ValueContext& value)
     defineTest(value, belowOrEqual(Integer(drawn), integer(UINT32_MAX / period)));
 }
 
-void HintEmitter::generateBeginsWhatMayRunAgain(const ValueContext& value)
+void HintEmitter::generateBeginEffectsCheck(const ValueContext& value)
 {
     emitter<RuntimeCallEmitter>().beginWatchOfWhatMayRunAgain(value);
     defineTest(value, belowOrEqual(integer(1), integer(0)));
 }
 
-void HintEmitter::generateTurnBeginsAgain(const ValueContext& value)
+void HintEmitter::generateCheckIterationRestart(const ValueContext& value)
 {
     emitter<RuntimeCallEmitter>().endWatchOfWhatRunsAgain(value, definitionOf(value->beginningOperand()));
 }
 
-void HintEmitter::generateCopyLeavesForCall(const ValueContext& value)
+void HintEmitter::generateCheckInlineeFallback(const ValueContext& value)
 {
     emitter<RuntimeCallEmitter>().endWatchOfWhatRunsAgain(value, definitionOf(value->beginningOperand()));
 }
 
-void HintEmitter::generateTurnWasQuiet(const ValueContext& value)
+void HintEmitter::generateCheckReloadBypass(const ValueContext& value)
 {
     emitter<RuntimeCallEmitter>().endWatchOfWhatRunsAgain(value, definitionOf(value->beginningOperand()));
 }
 
-bool HintEmitter::endsLivesAtRunTime()
+bool HintEmitter::shouldEmitLifetimeEnds()
 {
     return sourcesOfProofsCheckedUnder(build().options().testing) & bitOfSourceOfProofs(ProofSource::Lifetime);
 }
 
-void HintEmitter::endLifeOf(const OperationContext& context, ValueID cell)
+void HintEmitter::emitLifetimeEnd(const OperationContext& context, ValueID cell)
 {
     const Operation& made = operationAt(definitionOf(cell));
     if ((made.opcode == Opcode::NewObject && made.storage() == AllocationStorage::Frame) || emitter<ConstantEmitter>().closureLentLiesInFrame(definitionOf(cell)))
-        return emitter<CellAllocationEmitter>().clearWhatCellLentHolds(definitionOf(cell));
+        return;
     FunctionID madeIn = generator().code().inlineFrames()[made.inlineFrame].callee;
     m_out.suspendDeclaredAccesses();
     callVoidOperation(context, RuntimeOperation::PoisonCell, { in<CellPointer>(cell), word32(static_cast<int32_t>(madeIn.index())), word32(static_cast<int32_t>(made.position)) });
@@ -227,12 +174,12 @@ void HintEmitter::noteThatCellIsLent(const ValueContext& made, CellPointer cell)
     m_out.resumeDeclaredAccesses();
 }
 
-void HintEmitter::stopWhereLifeHasEnded(const OperationContext& context, CellPointer cell)
+void HintEmitter::crashIfLifetimeEnded(const OperationContext& context, CellPointer cell)
 {
-    if (!endsLivesAtRunTime())
+    if (!shouldEmitLifetimeEnds())
         return;
     Word32 type(m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, cell.value(), JSCell::typeInfoTypeOffset())));
-    emitter<ThrowEmitter>().requireOrStopAtFalseProof(context, notEqual(type, word32(ObjectType)), boxCell(cell), ProofSource::Lifetime);
+    emitter<ThrowEmitter>().requireOrCrash(context, notEqual(type, word32(ObjectType)), boxCell(cell), ProofSource::Lifetime);
 }
 
 void HintEmitter::pollWhereNoFrameIsSetUp(const OperationContext& context)

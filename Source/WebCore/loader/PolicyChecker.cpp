@@ -63,6 +63,7 @@
 #include "Page.h"
 #include "PlatformStrategies.h"
 #include "ResourceLoadInfo.h"
+#include "SecurityPolicy.h"
 #include "Settings.h"
 #include "ThreadableBlobRegistry.h"
 #include "URLKeepingBlobAlive.h"
@@ -84,7 +85,7 @@
 
 namespace WebCore {
 
-static bool isAllowedByContentSecurityPolicy(const URL& url, const Element* ownerElement, bool didReceiveRedirectResponse)
+static bool isAllowedByContentSecurityPolicy(const URL& url, const Element* ownerElement, bool didReceiveRedirectResponse, const URL& originalRequestURL)
 {
     if (!ownerElement)
         return true;
@@ -97,7 +98,7 @@ static bool isAllowedByContentSecurityPolicy(const URL& url, const Element* owne
     Ref ownerElementDocument = ownerElement->document();
     ASSERT(ownerElementDocument->contentSecurityPolicy());
     if (is<HTMLPlugInElement>(ownerElement))
-        return protect(ownerElementDocument->contentSecurityPolicy())->allowObjectFromSource(url, ownerElementDocument->currentParserSourcePosition(), redirectResponseReceived);
+        return protect(ownerElementDocument->contentSecurityPolicy())->allowObjectFromSource(url, ownerElementDocument->currentParserSourcePosition(), redirectResponseReceived, originalRequestURL);
     return protect(ownerElementDocument->contentSecurityPolicy())->allowChildFrameFromSource(url, ownerElementDocument->currentParserSourcePosition(), redirectResponseReceived);
 }
 
@@ -181,9 +182,11 @@ void PolicyChecker::checkNavigationPolicy(ResourceRequest&& request, const Resou
     }
 
     RefPtr frameOwnerElement = frame->ownerElement();
+    // The original request URL regardless of number of redirect hops.
+    URL originalRequestURL = loader->originalRequest().url();
     // Only cross-document navigations are subject to the navigation CSP check; same-document (fragment) navigations aren't fetched.
     if (isSameDocumentNavigation == IsSameDocumentNavigation::No
-        && !isAllowedByContentSecurityPolicy(request.url(), frameOwnerElement.get(), !redirectResponse.isNull())) {
+        && !isAllowedByContentSecurityPolicy(request.url(), frameOwnerElement.get(), !redirectResponse.isNull(), originalRequestURL)) {
         if (frameOwnerElement) {
             // Fire a load event (even though we were blocked by CSP) as timing attacks would otherwise
             // reveal that the frame was blocked. This way, it looks like any other cross-origin page load.
@@ -194,7 +197,7 @@ void PolicyChecker::checkNavigationPolicy(ResourceRequest&& request, const Resou
         return;
     }
 
-    if (RefPtr page = frame->page()) {
+    if (RefPtr page = frame->page(); page && !request.didFilterLinkDecoration()) {
         auto [filteredURL, didFilter] = page->chrome().client().applyLinkDecorationFilteringWithResult(request.url(), LinkDecorationFilteringTrigger::Navigation);
         request.setURL(WTF::move(filteredURL), didFilter == DidFilterLinkDecoration::Yes);
     }
@@ -235,7 +238,7 @@ void PolicyChecker::checkNavigationPolicy(ResourceRequest&& request, const Resou
     RefPtr formState = formSubmission ? protect(formSubmission->state()): nullptr;
     auto blobURLLifetimeExtension = extendBlobURLLifetimeIfNecessary(request, *protect(frame->document()), policyDecisionMode);
     bool requestIsJavaScriptURL = request.url().protocolIsJavaScript();
-    bool isInitialEmptyDocumentLoad = !frameLoader->stateMachine().committedFirstRealDocumentLoad() && request.url().protocolIsAbout() && !substituteData.isValid();
+    bool isInitialEmptyDocumentLoad = !frameLoader->stateMachine().committedFirstRealDocumentLoad() && SecurityPolicy::shouldInheritSecurityOriginFromOwner(request.url()) && !substituteData.isValid();
     m_delegateIsDecidingNavigationPolicy = true;
     String suggestedFilename = action.downloadAttribute().isEmpty() ? nullAtom() : action.downloadAttribute();
     FromDownloadAttribute fromDownloadAttribute = action.downloadAttribute().isNull() ? FromDownloadAttribute::No : FromDownloadAttribute::Yes;

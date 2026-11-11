@@ -24,6 +24,11 @@ namespace AOT {
 class RelocationRecorder;
 }
 
+namespace B3 {
+class CompilationScratch;
+struct Policy;
+}
+
 namespace Wasm {
 
 class RTT;
@@ -122,9 +127,16 @@ enum class ImageStub : uint32_t {
     ThrowException,
     ThrowStackOverflow,
     CatchRunway,
+    FaultWithoutFrame,
 };
-static constexpr uint32_t numberOfImageStubs = 3;
-static_assert(static_cast<uint32_t>(ImageStub::CatchRunway) + 1 == numberOfImageStubs);
+static constexpr uint32_t numberOfImageStubs = 4;
+static_assert(static_cast<uint32_t>(ImageStub::FaultWithoutFrame) + 1 == numberOfImageStubs);
+
+enum class ImageEntry : uint16_t {
+    Primary,
+    Direct,
+    DirectWithZero,
+};
 
 constexpr uint32_t imageSymbolOf(ImageStub stub) { return static_cast<uint32_t>(stub); }
 inline uint32_t imageSymbolOf(FunctionCodeIndex function) { return numberOfImageStubs + static_cast<uint32_t>(function.rawIndex()); }
@@ -133,9 +145,17 @@ struct DirectoryInImage {
     uint32_t numberOfModules;
     uint32_t numberOfDeclinedModules;
     uint32_t catchRunway;
-    uint32_t unused;
+    uint32_t faultWithoutFrame;
 };
 static_assert(sizeof(DirectoryInImage) == 16);
+
+struct FramelessRangeInImage {
+    friend constexpr auto operator<=>(const FramelessRangeInImage&, const FramelessRangeInImage&) = default;
+
+    uint32_t begin;
+    uint32_t end;
+};
+static_assert(sizeof(FramelessRangeInImage) == 8);
 
 struct FunctionInImage {
     uint32_t entry;
@@ -171,9 +191,11 @@ struct ModuleInImage {
     uint32_t numberOfJSEntrypoints;
     uint32_t jsEntrypoints;
     uint32_t usesVectors;
+    uint32_t framelessRanges;
+    uint32_t numberOfFramelessRanges;
     uint32_t unused;
 };
-static_assert(sizeof(ModuleInImage) == 72);
+static_assert(sizeof(ModuleInImage) == 80);
 
 struct DeclinedModuleInImage {
     std::array<uint8_t, 20> digest;
@@ -204,12 +226,13 @@ struct ImagePointerTable {
     static constexpr uint32_t restoreFrameCallee = numberOfOperations + 3;
     static constexpr uint32_t restoreFrameReturnAddress = numberOfOperations + 4;
     static constexpr uint32_t structureIDBase = numberOfOperations + 5;
+    static constexpr uint32_t throwFromFaultHandler = numberOfOperations + 6;
 #if GIGACAGE_ENABLED
-    static constexpr uint32_t primitiveGigacageDisableRequest = numberOfOperations + 6;
-    static constexpr uint32_t primitiveGigacageBase = numberOfOperations + 7;
-    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 8;
+    static constexpr uint32_t primitiveGigacageDisableRequest = numberOfOperations + 7;
+    static constexpr uint32_t primitiveGigacageBase = numberOfOperations + 8;
+    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 9;
 #else
-    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 6;
+    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 7;
 #endif
 
     static constexpr uint32_t slotOf(ImageCodeOperation operation) { return static_cast<uint32_t>(operation); }
@@ -237,7 +260,9 @@ struct ModuleForImage {
     Vector<uint32_t> javaScriptImportStubs;
     Vector<JSEntrypointInImage> jsEntrypoints;
     WTF::Vector<SavedRegistersInImage> savedRegisters;
+    WTF::Vector<FramelessRangeInImage> framelessRanges;
     uint32_t catchRunway { 0 };
+    uint32_t faultWithoutFrame { 0 };
 };
 
 struct StructLayoutInImage {
@@ -254,6 +279,13 @@ struct CodeForImage {
 
     bool dependsOnFlavor { false };
     ImageCodeFailure failure { ImageCodeFailure::None };
+    const B3::Policy* policy { nullptr };
+    B3::CompilationScratch* scratch { nullptr };
+    uint32_t pointerSpace { 0 };
+    unsigned threadedJumps { 0 };
+    unsigned firstStateTests { 0 };
+    static constexpr GPRReg passedGlobalGPR = GPRInfo::wasmScratchGPR0;
+    std::optional<uint32_t> passedGlobal { };
 };
 
 } } // namespace JSC::Wasm

@@ -7,7 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTHostFunctionTexts.h"
+#include "AOTHostFunctionSources.h"
 #include "AOTVector.h"
 #include <JavaScriptCore/AOTRecordTypes.h>
 #include <JavaScriptCore/ArgList.h>
@@ -63,7 +63,7 @@ enum class RequireOverride : uint8_t {
 
 enum class PendingFactoryRequester : uint8_t { ImportCall, ImportCallAfterSource, DetachedLoad, Loader, Require, RejectedRequire };
 
-enum class PluginResolveResult : uint8_t { Declined, Answered, Thrown };
+enum class PluginResolveResult : uint8_t { Declined, Resolved, Threw };
 
 struct ModuleHost {
     void (*createModuleObject)(JSGlobalObject*, JSString* path, ModuleID, OptionSet<ModuleObjectTrait>, ModuleObjects&);
@@ -101,13 +101,13 @@ struct ModuleHost {
     JSPromise* (*nextPendingFactory)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isInGraph, PendingFactoryRequester, JSValue& state);
     std::optional<bool> (*isInPreload)(JSGlobalObject*);
     bool (*reinstallMocks)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isReached);
-    void (*scheduleFetchFulfillment)(JSGlobalObject*);
+    uint64_t (*scheduleFetchFulfillment)(JSGlobalObject*);
     void (*didStartImport)(JSGlobalObject*, JSPromise*, const String& path, const ScopedLambda<bool(ModuleID)>& isReached);
     bool (*hasProgramSources)(JSGlobalObject*);
     bool (*isRequestedByPendingFactory)(JSGlobalObject*, ModuleID);
     bool (*hasSourceCache)(JSGlobalObject*);
     void (*crashWithReason)(std::span<const char> reason);
-    DecompressTextFunction decompressText;
+    DecompressSourceFunction decompressSource;
     uint64_t (*pendingFactoryCallID)(JSGlobalObject*, ModuleID, bool& shouldRejectEveryRequire);
     JSPromise* (*evaluateOriginalBeforeFactory)(JSGlobalObject*, ModuleID, bool& hasFactory);
     bool (*isLoadingUnderVitest)(JSGlobalObject*);
@@ -118,6 +118,8 @@ struct ModuleHost {
     uint32_t (*willLoad)(JSGlobalObject*, ModuleID callerModuleIfKnown, ModuleID asked, LoadKind);
     bool (*isInPendingFactoryChain)(JSGlobalObject*, ModuleID file, ModuleID mocked);
     bool (*isRequiredByOwnFactory)(JSGlobalObject*, ModuleID required, ModuleID requirer);
+    bool (*isFactoryCallPending)(JSGlobalObject*, uint64_t call);
+    bool (*isAwaitingOriginalBody)(JSGlobalObject*, ModuleID);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -133,13 +135,15 @@ JS_EXPORT_PRIVATE bool isExternalSpecifier(StringView specifier, StringView impo
 JS_EXPORT_PRIVATE String pathBesideFile(StringView file, StringView written);
 JS_EXPORT_PRIVATE String modulePath(ModuleID);
 String moduleFilePath(ModuleID);
+#define AOT_BUILD_FOLDER_PREFIX "./"
+String moduleDisplayPath(ModuleID);
 String sourceProviderURL(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool isESModule(ModuleID);
 JS_EXPORT_PRIVATE bool isSynchronousESModule(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isDataFile(ModuleID);
 JS_EXPORT_PRIVATE bool hasModuleBody(ModuleID);
-std::optional<bool> findsBuiltinsReadOnly(ModuleID);
+std::optional<bool> hasReadOnlyBuiltins(ModuleID);
 class FetcherOfTextHandedIn : public ScriptFetcher {
 public:
     bool isMadeByFileOfProduct() const { return m_isMadeByFileOfProduct; }
@@ -152,7 +156,7 @@ private:
 };
 enum class ModuleAliasKind : uint8_t { WithoutExtension, WithOtherExtension, AsDirectory };
 JS_EXPORT_PRIVATE bool isImportedByAlias(ModuleID, ModuleAliasKind);
-JS_EXPORT_PRIVATE bool isHeldForImport(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool hasBeenImported(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isNativeModule(ModuleID);
 JS_EXPORT_PRIVATE bool isOfLibrary(ModuleID);
 JS_EXPORT_PRIVATE bool mayHoldEntryOfProgramInRequireCache(ModuleID);
@@ -176,6 +180,7 @@ JS_EXPORT_PRIVATE void setModuleExports(JSGlobalObject*, ModuleID, JSValue);
 JS_EXPORT_PRIVATE JSObject* mainModuleObject(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willSetMainModulePath(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSObject* parentModuleObject(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE JSObject* childModuleObject(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool canExposeModuleObject(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool forEachNewChild(JSGlobalObject*, ModuleID, const ScopedLambda<void(JSObject*)>&);
 JS_EXPORT_PRIVATE void clearNewChildren(JSGlobalObject*, ModuleID);
@@ -198,8 +203,9 @@ JS_EXPORT_PRIVATE bool isMockedForImportCall(JSGlobalObject*, ModuleID mocked, M
 JS_EXPORT_PRIVATE void retainRecordForInFlightLoads(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isRetainedByInFlightLoads(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isInLoadGraph(JSGlobalObject*, ModuleID root, ModuleID);
-enum class LoadGraphMode : uint8_t { RespectMocks, Original, IgnoreMocks };
+enum class LoadGraphMode : uint8_t { RespectMocks, OriginalRoot, IgnoreMocks };
 JS_EXPORT_PRIVATE BitVector modulesInLoadGraph(JSGlobalObject*, ModuleID root, LoadGraphMode = LoadGraphMode::RespectMocks);
+JS_EXPORT_PRIVATE BitVector unfinishedModulesInLoadGraph(JSGlobalObject*, ModuleID root, LoadGraphMode, const BitVector& unsettledMocks);
 JS_EXPORT_PRIVATE bool isCurrentImportTargetAfterWait(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSValue currentImportWaitState(JSGlobalObject*);
 using MissingExportListener = void (*)(const String& name, const String& exporter, const String& importer);
@@ -214,7 +220,7 @@ public:
 
 private:
     Modules* m_modules;
-    const String* m_outer;
+    const String* m_previousRequester;
 };
 JS_EXPORT_PRIVATE const String& compiledCodeRequester();
 JS_EXPORT_PRIVATE bool hasUncompiledRequester(JSGlobalObject*);
@@ -228,7 +234,8 @@ JS_EXPORT_PRIVATE JSPromise* importModule(JSGlobalObject*, ModuleID, std::option
 JS_EXPORT_PRIVATE void evaluateModuleSynchronously(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* moduleNamespace(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool mayExport(JSGlobalObject*, ModuleID, UniquedStringImpl* name);
-JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID, std::optional<ModuleID> referrer = std::nullopt);
+enum class ReadsExports : bool { No, Yes };
+JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID, std::optional<ModuleID> referrer = std::nullopt, ReadsExports = ReadsExports::Yes);
 JS_EXPORT_PRIVATE bool hasCommonJSEvaluationStarted(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSValue evaluateForDefaultLoader(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void throwCompileOverrideError(JSGlobalObject*, ModuleID);
@@ -245,6 +252,7 @@ JS_EXPORT_PRIVATE void willSetBuiltinCacheEntry(JSGlobalObject*, ModuleID, const
 JS_EXPORT_PRIVATE void didDeleteRequireCacheEntry(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didDeleteDisplacedModuleEntry(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didDeletePendingMockEntry(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void didFailMockImportRoot(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willRunPreloads(JSGlobalObject*);
 JS_EXPORT_PRIVATE void didRunPreloads(JSGlobalObject*);
 JS_EXPORT_PRIVATE void snapshotEvaluatedModules(JSGlobalObject*);
@@ -266,6 +274,7 @@ JS_EXPORT_PRIVATE bool hasPendingMock(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE JSObject* requireCacheEntry(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachRequireCacheKey(JSGlobalObject*, const WTF::Function<void(const String&)>&);
 JS_EXPORT_PRIVATE void forEachEvaluatingAsyncModule(JSGlobalObject*, const WTF::Function<void(const String&)>&);
+JS_EXPORT_PRIVATE void resetModulesAfterEvaluation(JSGlobalObject*, const WTF::Function<bool(const String&)>& isKept);
 JS_EXPORT_PRIVATE void forEachModuleWithProgramEntry(JSGlobalObject*, const WTF::Function<void(const String&)>&);
 JS_EXPORT_PRIVATE void forEachTLASuspendedModule(JSGlobalObject*, const WTF::Function<void(int64_t turn, const String& key)>&);
 JS_EXPORT_PRIVATE void forEachLibraryModuleInRequireCache(JSGlobalObject*, const WTF::Function<void(const String&)>&);
@@ -280,7 +289,7 @@ JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE String mockModuleErrorMessage(JSGlobalObject*, const String& path, const String& uncompiledCaller);
 JS_EXPORT_PRIVATE bool hasStartedLoading(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasOnlyBeenLinked(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE bool hasImportStartedLoading(JSGlobalObject*, ModuleID fileOrFace);
+JS_EXPORT_PRIVATE bool hasImportStartedLoading(JSGlobalObject*, ModuleID moduleOrFacade);
 JS_EXPORT_PRIVATE bool wasLoadedByImport(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachEvaluatingModuleOnStack(VM&, CallFrame*, const ScopedLambda<void(ModuleID)>&);
 JS_EXPORT_PRIVATE bool isBeingEvaluated(JSGlobalObject*, ModuleID);
@@ -288,11 +297,14 @@ JS_EXPORT_PRIVATE bool wasDisplacedDuringEvaluation(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasRegisteredByFailedLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLinkedByFailedGraph(JSGlobalObject*, ModuleID, bool byEarlierTestFile = false);
 JS_EXPORT_PRIVATE bool wasLinkedBeforeLinkFailure(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE bool isFailedImportRoot(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool isLinkedForPendingImporter(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);
+JS_EXPORT_PRIVATE bool isFailedLoadRoot(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasDisplacedAfterFailure(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLoadedBeforeTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void clearLoadedBeforeTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void markEntryOwnedByTestFile(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool hasFailedESModule(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void releaseFailedESModule(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didRemoveEntryForMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void markFetchOrphaned(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasOrphanedFetch(JSGlobalObject*, ModuleID);
@@ -306,18 +318,21 @@ JS_EXPORT_PRIVATE void didRestoreEntryForPreload(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isEntryOwnedByTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE std::optional<ModuleID> findVariantToMock(JSGlobalObject*, StringView path, std::optional<ModuleID> file);
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> importAttributeVariants(JSGlobalObject*, StringView path);
-enum class FactoryFailurePolicy : bool { KeepsError, RetryFactory };
-JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID, FactoryFailurePolicy = FactoryFailurePolicy::KeepsError);
+enum class FactoryFailurePolicy : bool { CacheError, RetryFactory };
+JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID, FactoryFailurePolicy = FactoryFailurePolicy::CacheError);
 JS_EXPORT_PRIVATE void didFailImportOriginalFactory(JSGlobalObject*, ModuleID, JSValue error);
 JS_EXPORT_PRIVATE bool hasMockImportsAwaitingSource(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasInFlightOriginalRequest(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didFinishTests(JSGlobalObject*);
+JS_EXPORT_PRIVATE bool hasDeferredFetchToEvict(JSGlobalObject*);
 JS_EXPORT_PRIVATE void markFactoryAbandoned(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void markMockPassthrough(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void deferMockAfterAsyncFailure(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void retainFactoryLoadedImporters(JSGlobalObject*, ModuleID mocked);
 JS_EXPORT_PRIVATE void clearMockLoadErrors(JSGlobalObject*);
 JS_EXPORT_PRIVATE void discardDetachedLoadErrors(JSGlobalObject*);
-enum class RetainedOriginalPolicy : uint8_t { DiscardWithMock, Stays };
+JS_EXPORT_PRIVATE void finishLoadsAwaitingLoader(JSGlobalObject*);
+enum class RetainedOriginalPolicy : uint8_t { DiscardWithMock, Keep };
 JS_EXPORT_PRIVATE void didRemoveMock(JSGlobalObject*, ModuleID, RetainedOriginalPolicy = RetainedOriginalPolicy::DiscardWithMock, bool wasInstalledOnPreloadMock = true, bool restoresDisplacedModule = true);
 JS_EXPORT_PRIVATE void markMockLingering(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isMockLingering(JSGlobalObject*, ModuleID);
@@ -325,6 +340,7 @@ JS_EXPORT_PRIVATE bool hasDelayedImport(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isRequestedByDetachedLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void retryMockInDetachedLoads(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool needsRetryInDetachedLoad(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE uint64_t factoryCallOfResumedLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void removeUnusedLingeringMocks(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool importsStatically(JSGlobalObject*, ModuleID importer, ModuleID imported);
 JS_EXPORT_PRIVATE void setNeedsMockReinstall(JSGlobalObject*, ModuleID, bool waits = true);
@@ -334,6 +350,8 @@ JS_EXPORT_PRIVATE JSPromise* pendingEvaluationInGraph(JSGlobalObject*, ModuleID 
 JS_EXPORT_PRIVATE void countMockCall(JSGlobalObject*, std::optional<ModuleID>, ASCIILiteral otherwise, ASCIILiteral call, ASCIILiteral factory);
 JS_EXPORT_PRIVATE void evaluateCommonJSModuleBeforeMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool tryEvaluateESModuleBeforeMock(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool startDetachedOriginalLoad(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool wasOriginalEvaluated(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* evaluateOriginalUnderMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSPromise* pendingFactoryInGraph(JSGlobalObject*, ModuleID, JSValue& state);
 JS_EXPORT_PRIVATE bool didMockFailForImportStatement(JSGlobalObject*, ModuleID);
@@ -342,7 +360,7 @@ JS_EXPORT_PRIVATE void didResumeFetchAfterFactory(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool wasReleasedByLoader(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool willReloadAfterMockRemoval(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void releaseRemovedMocks(JSGlobalObject*);
-JS_EXPORT_PRIVATE void fulfillDeferredFetches(VM&);
+JS_EXPORT_PRIVATE bool fulfillDeferredFetches(VM&, uint64_t completedDiskReads = UINT64_MAX);
 JS_EXPORT_PRIVATE void didDrainDeferredFetchJobs(VM&);
 JS_EXPORT_PRIVATE bool shouldDeferFetchFulfillment(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void deferFetchFulfillment(JSGlobalObject*, ModuleID, JSPromise* fetched, AbstractModuleRecord*);
@@ -382,7 +400,7 @@ JS_EXPORT_PRIVATE AbstractModuleRecord* originalModuleRecord(JSGlobalObject*, Mo
 JS_EXPORT_PRIVATE void didBeginTestFile(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasActiveMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasUnevaluatedActiveMockImporter(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);
-JS_EXPORT_PRIVATE bool tryKeepActiveMock(JSGlobalObject*, ModuleID, bool staysTheOriginal, bool keepsCurrentTestFileLoads);
+JS_EXPORT_PRIVATE bool tryKeepActiveMock(JSGlobalObject*, ModuleID, bool remainsOriginal, bool keepsCurrentTestFileLoads);
 struct ActiveMockExports {
     JSObject* namespaceObject { nullptr };
     JSValue requiredValue;
@@ -392,7 +410,7 @@ JS_EXPORT_PRIVATE bool wasRequiredUnderActiveMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasRequiredUnderPreloadMock(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE JSObject* activeMockForNamespace(JSCell* moduleNamespace);
 JS_EXPORT_PRIVATE bool hasMockSlot(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSValue requireReturnValue, bool hasCommonJSExports = false);
+JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSValue requireReturnValue, bool hasCommonJSExports = false, bool hasFactory = true);
 JS_EXPORT_PRIVATE void didMockModule(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didStopInstallingMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void mockExport(JSGlobalObject*, ModuleID, UniquedStringImpl* name, JSValue);

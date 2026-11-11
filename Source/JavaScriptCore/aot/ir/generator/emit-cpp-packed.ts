@@ -60,7 +60,7 @@ function conditionText({ field, column, isNegated }: PackedCondition, owner: str
   return isNegated ? `!${text}` : text;
 }
 
-function saysNothingText({ name, kind }: PackedField): string {
+function emptyConditionText({ name, kind }: PackedField): string {
   switch (kind.tag) {
     case "List":
       return `${name}.isEmpty()`;
@@ -104,13 +104,13 @@ function checksOf(word: PackedWord): string[] {
     ...narrow.map(field => `RELEASE_ASSERT(!(${rawBitsOf(field)} >> ${field.width}));`),
     ...(condition === null ? [] : word.fields).map(field => {
       const isWritten = conditionText(condition!, "");
-      return `RELEASE_ASSERT(${isWritten} ${mayBeWrittenEmpty(field) ? "||" : "!="} ${saysNothingText(field)});`;
+      return `RELEASE_ASSERT(${isWritten} ${mayBeWrittenEmpty(field) ? "||" : "!="} ${emptyConditionText(field)});`;
     }),
     ...(word.arms?.whenTrue ?? []).map(
-      field => `RELEASE_ASSERT(${word.arms!.condition.name} || ${saysNothingText(field)});`,
+      field => `RELEASE_ASSERT(${word.arms!.condition.name} || ${emptyConditionText(field)});`,
     ),
     ...(word.arms?.whenFalse ?? []).map(
-      field => `RELEASE_ASSERT(!${word.arms!.condition.name} || ${saysNothingText(field)});`,
+      field => `RELEASE_ASSERT(!${word.arms!.condition.name} || ${emptyConditionText(field)});`,
     ),
   ];
 }
@@ -248,7 +248,7 @@ function structLines(record: PackedRecord): string[] {
       "}",
     ],
     [
-      `static ${name} read(const uint8_t*& cursor)`,
+      `static ${name} read(auto& cursor)`,
       "{",
       ...indent([`${name} result;`, ...guardedLines(words, "result.", readLinesOf), "return result;"]),
       "}",

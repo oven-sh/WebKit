@@ -243,6 +243,12 @@ static TypeID refinedTypeOfOperation(const TypingContext& context, const Operati
         return refinedTypeOfWholeRemainder(types, operands[OperandIndex::RemainderOfIntegers::dividend], operands[OperandIndex::RemainderOfIntegers::divisor], upperBound);
     case Opcode::RemainderByReciprocal:
         return refinedTypeOfWholeRemainder(types, operands[OperandIndex::RemainderByReciprocal::dividend], operands[OperandIndex::RemainderByReciprocal::divisor], upperBound);
+    case Opcode::WholeDivisor:
+        return types.integer(Range { 0, maxExactInteger });
+    case Opcode::RemainderByWholeDivisor: {
+        TypeID number = numberResultOf(types, Opcode::Mod, operands);
+        return number ? number : upperBound;
+    }
     case Opcode::IntegerBound:
         return refinedTypeOfIntegerBound(types, operands[OperandIndex::IntegerBound::number], upperBound);
     case Opcode::GetStringLength:

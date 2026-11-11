@@ -21,6 +21,7 @@
         RUN(testFirstFitSizes()); \
         RUN(testNoEmptyInstAfterStackAllocation()); \
         RUN(testValuesSurviveRandomClobbers()); \
+        RUN(testValuesSurviveRareClobbers()); \
         RUN(testValuesLiveAcross32And33Calls()); \
         RUN(testValueReadByRareClobberStaysInRegisterInLoop()); \
         RUN(testCursorsOfRareLoopTakeRegistersOfWordsThatPassThrough()); \
@@ -917,6 +918,85 @@ void testValuesSurviveRandomClobbers()
     for (bool enablesAllocatorFields : { false, true }) {
         for (unsigned seed = 1; seed <= 100; ++seed)
             checkValuesSurviveClobbers(enablesAllocatorFields, seed);
+    }
+}
+
+static void checkValuesSurviveRareClobbers(bool splitsEarly, unsigned seed)
+{
+    constexpr unsigned argumentCount = 6;
+    WeakRandom random(seed);
+    B3::Policy policy;
+    policy.air.splitting.splitsAroundClobbersEarly = splitsEarly;
+    policy.air.registers.chargesForCalleeSaves = splitsEarly;
+    B3::Procedure proc(policy);
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+    B3::Air::Special* special = patchpointSpecialOf(code);
+    BasicBlock* root = code.addBlock();
+    BasicBlock* head = code.addBlock(8);
+    BasicBlock* rare = code.addBlock(0.05);
+    BasicBlock* tail = code.addBlock(8);
+    BasicBlock* exit = code.addBlock();
+
+    Vector<Tmp> values;
+    Vector<uint64_t> model;
+    unsigned valueCount = 6 + random.getUint32(20);
+    for (unsigned i = 0; i < valueCount; ++i) {
+        uint64_t argument = 1000003ull * (i % argumentCount + 1);
+        values.append(code.newTmp(GP));
+        model.append(argument + i);
+        root->append(Move, nullptr, argumentTmp(i % argumentCount), values[i]);
+        root->append(Add64, nullptr, Arg::imm(i), values[i]);
+    }
+    Tmp counter = code.newTmp(GP);
+    Tmp sum = code.newTmp(GP);
+    root->append(Move, nullptr, Arg::imm(3), counter);
+    root->append(Move, nullptr, Arg::imm(0), sum);
+    root->append(Jump, nullptr);
+    root->setSuccessors(FrequentedBlock(head));
+
+    Vector<unsigned> readInHead;
+    for (unsigned i = random.getUint32(valueCount); i--;) {
+        readInHead.append(random.getUint32(valueCount));
+        head->append(Add64, nullptr, values[readInHead.last()], sum);
+    }
+    head->append(Branch32, nullptr, Arg::relCond(MacroAssembler::Equal), counter, Arg::imm(2));
+    head->setSuccessors(FrequentedBlock(rare, B3::FrequencyClass::Rare), FrequentedBlock(tail));
+
+    for (unsigned i = 1 + random.getUint32(3); i--;) {
+        B3::PatchpointValue* patchpoint = addClobberingPatchpoint(proc, B3::Void, chooseRandomCallClobbers(random));
+        patchpoint->clobberEarly(chooseRandomCallClobbers(random));
+        rare->append(Patch, patchpoint, Arg::special(special));
+        rare->append(Add64, nullptr, values[random.getUint32(valueCount)], counter);
+        rare->append(Move, nullptr, Arg::imm(2), counter);
+    }
+    rare->append(Jump, nullptr);
+    rare->setSuccessors(FrequentedBlock(tail));
+
+    tail->append(Add64, nullptr, Arg::imm(-1), counter);
+    tail->append(Branch32, nullptr, Arg::relCond(MacroAssembler::NotEqual), counter, Arg::imm(0));
+    tail->setSuccessors(FrequentedBlock(head), FrequentedBlock(exit));
+
+    uint64_t expected = 0;
+    for (unsigned index : readInHead)
+        expected += 3 * model[index];
+    for (unsigned i = 0; i < valueCount; ++i) {
+        exit->append(Add64, nullptr, values[i], sum);
+        expected += model[i];
+    }
+    exit->append(Move, nullptr, sum, returnTmp());
+    appendReturn(exit);
+
+    auto compilation = compile(proc);
+    int64_t actual = invoke<int64_t>(*compilation, 1000003ll, 2000006ll, 3000009ll, 4000012ll, 5000015ll, 6000018ll);
+    CHECK(static_cast<uint64_t>(actual) == expected);
+}
+
+void testValuesSurviveRareClobbers()
+{
+    for (bool splitsEarly : { false, true }) {
+        for (unsigned seed = 1; seed <= 300; ++seed)
+            checkValuesSurviveRareClobbers(splitsEarly, seed);
     }
 }
 

@@ -17,7 +17,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-inline bool prototypeOfConstructorFunctionIsLeftToGuards(const AccessContext& context, LayoutID classLayout)
+inline bool isConstructorPrototypeGuarded(const AccessContext& context, LayoutID classLayout)
 {
     const Layout& layout = context.program.at(classLayout);
     if (!layout.has(LayoutFlags::IsConstructorFunction) || !layout.constructor || !(*context.facts).isEvaluatedAtMostOnce(classLayout))

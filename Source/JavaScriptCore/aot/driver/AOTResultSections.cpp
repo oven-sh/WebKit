@@ -170,8 +170,6 @@ static void writeWorkerSections(const Typed::Program& program, const Typed::Fact
     for (const Typed::WorkerEntry& entry : facts.workerEntries()) {
         entries.append(Wire::WorkerEntryRecord {
             .path = entry.path ? output.appendText(program.string(entry.path)) : Wire::TextRange { },
-            .isGuess = entry.isGuess,
-            .hasOptions = entry.hasOptions,
             .witness = entry.witness,
         });
     }
@@ -182,38 +180,30 @@ static void writeWorkerSections(const Typed::Program& program, const Typed::Fact
         startsWithoutName.append(Wire::WorkerStartRecord { .witness = start });
     setRecordsOfResultSection(output, Wire::ResultSection::WorkerStartsWithoutName, startsWithoutName);
 
-    const Vector<Wire::Witness>& urlsThatStartWorkers = facts.tables().program.urlsThatStartWorkers;
-    Vector<Wire::WorkerURLRecord> urls;
-    urls.reserveInitialCapacity(urlsThatStartWorkers.size());
-    for (const Wire::Witness& witness : urlsThatStartWorkers)
-        urls.append(Wire::WorkerURLRecord { .witness = witness });
-    setRecordsOfResultSection(output, Wire::ResultSection::URLsThatStartWorkers, urls);
+    Vector<Wire::WorkerURLStartRecord> startsFromURLs;
+    for (const Wire::Witness& start : facts.tables().program.workerStartsFromURLs)
+        startsFromURLs.append(Wire::WorkerURLStartRecord { .witness = start });
+    setRecordsOfResultSection(output, Wire::ResultSection::WorkerStartsFromURLs, startsFromURLs);
 }
 
 static void writeLackedFunctionSection(const Typed::Facts& facts, CompileOutput& output)
 {
-    Vector<Wire::LackedFunctionRecord> records;
-    records.reserveInitialCapacity(facts.libraryFunctionsLacked().size());
-    for (auto function : facts.libraryFunctionsLacked())
-        records.append(Wire::LackedFunctionRecord { .function = function.index() });
-    setRecordsOfResultSection(output, Wire::ResultSection::LibraryFunctionsLacked, records);
+    Vector<Wire::MissingFunctionRecord> records;
+    records.reserveInitialCapacity(facts.missingLibraryFunctions().size());
+    for (auto function : facts.missingLibraryFunctions())
+        records.append(Wire::MissingFunctionRecord { .function = function.index() });
+    setRecordsOfResultSection(output, Wire::ResultSection::MissingLibraryFunctions, records);
 }
 
-static void writeLackedModuleSections(const Typed::Facts& facts, CompileOutput& output)
+static void writeLackedModuleSection(const Typed::Facts& facts, CompileOutput& output)
 {
     const Typed::ProgramFactTables& tables = facts.tables().program;
 
-    Vector<Wire::LackedModuleRecord> modules;
-    modules.reserveInitialCapacity(tables.libraryModulesLacked.size());
-    for (auto module : tables.libraryModulesLacked)
-        modules.append(Wire::LackedModuleRecord { .module = module.index() });
-    setRecordsOfResultSection(output, Wire::ResultSection::LibraryModulesLacked, modules);
-
-    Vector<Wire::LackedRuntimeModuleRecord> modulesWithoutRecord;
-    modulesWithoutRecord.reserveInitialCapacity(tables.libraryModulesWithoutRecord.size());
-    for (auto module : tables.libraryModulesWithoutRecord)
-        modulesWithoutRecord.append(Wire::LackedRuntimeModuleRecord { .module = module.index() });
-    setRecordsOfResultSection(output, Wire::ResultSection::LibraryModulesWithoutRecord, modulesWithoutRecord);
+    Vector<Wire::MissingModuleRecord> modules;
+    modules.reserveInitialCapacity(tables.missingLibraryModules.size());
+    for (auto module : tables.missingLibraryModules)
+        modules.append(Wire::MissingModuleRecord { .module = module.index() });
+    setRecordsOfResultSection(output, Wire::ResultSection::MissingLibraryModules, modules);
 }
 
 void writeFactSections(const Typed::Program& program, const Typed::Facts& facts, CompileOutput& output)
@@ -224,7 +214,7 @@ void writeFactSections(const Typed::Program& program, const Typed::Facts& facts,
     writeLocaleUseSection(program, facts, output);
     writeWorkerSections(program, facts, output);
     writeLackedFunctionSection(facts, output);
-    writeLackedModuleSections(facts, output);
+    writeLackedModuleSection(facts, output);
 }
 
 void writeFeatureSection(const Typed::Facts& facts, const BuiltImage* image, CompileOutput& output)

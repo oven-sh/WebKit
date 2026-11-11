@@ -7,8 +7,8 @@ runtime GetByIdAndCache : EncodedJSValue (EncodedJSValue base, uint32_t key, Sit
 runtime PutByIdAndCache : void (EncodedJSValue base, EncodedJSValue value, uint32_t key, SiteCache cache, uint32_t putMode) ; unknownCode
 runtime FillSiteCache : void (JSCell* base, uint32_t key, SiteCache cache, uint32_t access) ; reads(all) writes(RuntimeState)
 runtime FillSiteAnswers : void (JSCell* base, uint32_t key, uint32_t distanceOfSite, uint32_t use) ; reads(all) writes(RuntimeState)
-runtime ClaimRowOfReads : size_t (EncodedJSValue base, EncodedJSValue* group) ; reads(all) writes(RuntimeState)
-runtime FindPlaceInRowOfReads : void (JSCell* base, uint32_t key, EncodedJSValue* row, uint32_t index) ; reads(all) writes(RuntimeState)
+runtime ClaimReadGroupRow : size_t (EncodedJSValue base, EncodedJSValue* group) ; reads(all) writes(RuntimeState)
+runtime FillReadGroupOffset : void (JSCell* base, uint32_t key, EncodedJSValue* row, uint32_t index) ; reads(all) writes(RuntimeState)
 runtime ReadRunningNoCode : EncodedJSValue (JSCell* base, uint32_t key) ; reads(all) writes(RuntimeState)
 runtime StopAtStaleAnswer : void (EncodedJSValue receiver, EncodedJSValue answer, uint32_t key, uint32_t kindAndStub) ; reads(all) writes(RuntimeState)
 runtime StopAtStaleMemberOfBuiltinClass : void (EncodedJSValue receiver, EncodedJSValue readInFront, uint32_t form) ; reads(all) writes(RuntimeState)
@@ -21,7 +21,7 @@ runtime SetGlobalBinding, SetGlobalBindingSloppy, SetGlobalObjectBinding, SetGlo
 
 runtime GetByVal, GetByValAndCache : EncodedJSValue (EncodedJSValue base, EncodedJSValue property) ; unknownCode
 runtime OwnValueUnderKeyOrEmpty : EncodedJSValue (EncodedJSValue base, EncodedJSValue property) ; reads(ShapeWords, NamedProperties) ; leaf
-runtime FindsDefaultHasInstance : size_t (EncodedJSValue constructor) ; reads(NamedProperties, PrototypeLinks) ; leaf
+runtime HasDefaultHasInstance : size_t (EncodedJSValue constructor) ; reads(NamedProperties, PrototypeLinks) ; leaf
 runtime PutByVal : void (EncodedJSValue base, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict) ; unknownCode
 runtime PutByValAndCache, PutByValAndCacheSloppy : void (EncodedJSValue base, EncodedJSValue property, EncodedJSValue value) ; unknownCode
 runtime InByValAndCache, HasOwnByValAndCache, DeleteByVal, DeleteByValSloppy : size_t (EncodedJSValue base, EncodedJSValue property) ; unknownCode

@@ -112,9 +112,9 @@ const TypeTestPlan& TypeTestEmitter::planFor(TypeID from, Representation represe
     return *m_plans[static_cast<size_t>(representation)].ensure(key, compute).iterator->value;
 }
 
-void TypeTestEmitter::emitBranchAskingEachFunctionByItself(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
+void TypeTestEmitter::emitPerFunctionBranch(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
 {
-    SetForScope eachByItself(m_asksEachFunctionByItself, true);
+    SetForScope isEmittingPerFunctionBranch(m_isEmittingPerFunctionBranch, true);
     emitBranch(operand, plan, targets);
 }
 
@@ -524,6 +524,8 @@ Condition TypeTestEmitter::passesByMarker(Operand operand, const TypeTestPlan& p
     Condition disagrees;
     if (!agreeing)
         disagrees = isMarker(operand);
+    else if (operand.representation == Representation::OptionalDouble && agreeing == Primitive::Undefined && disagreeing == (testedMarkerPrimitives & ~Primitive::Undefined))
+        disagrees = emitter<ConversionEmitter>().isNullOrAbsent(operand.as<OptionalNumber>());
     else {
         for (uint16_t primitive : testedMarkerKinds) {
             if (disagreeing & primitive)
@@ -556,7 +558,7 @@ Condition TypeTestEmitter::doublePasses(Number number, const TypeTestPlan& plan)
     Condition otherNumberPasses = boolean(true);
     if (failing & Primitive::Double)
         otherNumberPasses = passing & Primitive::FractionalNumber ? isFractional(m_out, number) : logicalNot(isFractional(m_out, number));
-    Integer truncated = emitter<ConversionEmitter>().toInteger(number);
+    Integer truncated = emitter<ConversionEmitter>().truncateUnchecked(number);
     Condition isInteger = isExactIntegerIn(number, truncated, Range::full());
     return select(isInteger, integerPasses(truncated, plan), otherNumberPasses);
 }
@@ -591,6 +593,7 @@ Condition TypeTestEmitter::isInRange(Integer value, Range range)
 
 Condition TypeTestEmitter::isExactIntegerIn(Number number, Integer truncated, Range range)
 {
+    ASSERT(range.isSubsetOf(Range::full()));
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     if (range == Range::int32()) {
         Integer bitsOfLowHalf = conversions.bitsOf(toNumber(low32(truncated)));
@@ -617,10 +620,10 @@ Condition TypeTestEmitter::isIntegerIn(Number number, Range range)
         Condition isExactInt32(patchpoint);
         if (Range::int32().isSubsetOf(range))
             return isExactInt32;
-        return logicalAnd(isExactInt32, isInRange(conversions.toInteger(number), range));
+        return logicalAnd(isExactInt32, isInRange(conversions.truncateUnchecked(number), range));
     }
 #endif
-    return isExactIntegerIn(number, conversions.toInteger(number), range);
+    return isExactIntegerIn(number, conversions.truncateUnchecked(number), range);
 }
 
 } } } // namespace JSC::AOT::Typed

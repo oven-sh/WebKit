@@ -413,19 +413,12 @@ std::span<const LayoutID> Program::viewsAbove(LayoutID id) const
     return m_derivedTables.viewsAbove.subspan(first[id.index()], first[id.index() + 1] - first[id.index()]);
 }
 
-std::span<const Program::FieldWrittenAbove> Program::fieldsWrittenAbove(LayoutID id, PropertyKeyID key) const
+std::span<const Program::FieldOfView> Program::fieldsOfViews(PropertyKeyID key) const
 {
-    const Vector<uint32_t>& rows = m_derivedTables.rowOfFieldsWrittenAbove;
-    if (!id || id.index() >= rows.size() || rows[id.index()] == UINT32_MAX)
+    const Vector<uint32_t>& first = m_derivedTables.firstFieldsByKey;
+    if (!key || key.index() + 1 >= first.size())
         return { };
-    const Vector<uint32_t>& first = m_derivedTables.firstFieldWrittenAbove;
-    uint32_t row = rows[id.index()];
-    std::span<const FieldWrittenAbove> ofLayout = m_derivedTables.fieldsWrittenAbove.subspan(first[row], first[row + 1] - first[row]);
-    auto found = std::ranges::lower_bound(ofLayout, key, { }, &FieldWrittenAbove::key);
-    auto behindFound = found;
-    while (behindFound != ofLayout.end() && behindFound->key == key)
-        ++behindFound;
-    return ofLayout.subspan(found - ofLayout.begin(), behindFound - found);
+    return m_derivedTables.fieldsOfViewsByKey.subspan(first[key.index()], first[key.index() + 1] - first[key.index()]);
 }
 
 void Program::indexViews(const ParallelLoops& loops)
@@ -494,59 +487,53 @@ void Program::indexViews(const ParallelLoops& loops)
         return entry.view;
     });
 
-    Vector<uint32_t> layoutsWithRows;
+    BitVector isIndexedByKey(numberOfLayouts);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        if (viewsAbove(LayoutID(index)).size() >= fewestViewsIndexedByKey)
-            layoutsWithRows.append(index);
+        std::span<const LayoutID> views = viewsAbove(LayoutID(index));
+        if (views.size() < fewestViewsIndexedByKey)
+            continue;
+        for (LayoutID view : views)
+            isIndexedByKey.quickSet(view.index());
     }
-    AOT::stableSort(layoutsWithRows, [&](uint32_t a, uint32_t b) {
-        return std::ranges::lexicographical_compare(viewsAbove(LayoutID(a)), viewsAbove(LayoutID(b)));
-    });
-    Vector<uint32_t>& rowOf = m_derivedTables.rowOfFieldsWrittenAbove;
-    rowOf.fill(UINT32_MAX, numberOfLayouts);
-    Vector<uint32_t> firstLayoutOfRow;
-    for (uint32_t index : layoutsWithRows) {
-        if (firstLayoutOfRow.isEmpty() || !std::ranges::equal(viewsAbove(LayoutID(firstLayoutOfRow.last())), viewsAbove(LayoutID(index))))
-            firstLayoutOfRow.append(index);
-        rowOf[index] = static_cast<uint32_t>(firstLayoutOfRow.size() - 1);
-    }
-    auto numberOfRows = static_cast<uint32_t>(firstLayoutOfRow.size());
-    Vector<uint32_t>& firstField = m_derivedTables.firstFieldWrittenAbove;
-    firstField.fill(0, numberOfRows + 1);
-    ChunksOfIndices division = divideIntoChunks(numberOfRows);
-    Vector<Vector<FieldWrittenAbove>> chunks(division.size());
-    forEachIndexInParallel(loops, division.size(), [&](unsigned chunk) {
-        Vector<FieldWrittenAbove>& found = chunks[chunk];
-        size_t mostFields = 0;
-        for (unsigned row = division.firstIndexOf[chunk]; row < division.firstIndexOf[chunk + 1]; ++row) {
-            for (LayoutID view : viewsAbove(LayoutID(firstLayoutOfRow[row])))
-                mostFields += layouts[view.index()].fields.size();
-        }
-        found.reserveInitialCapacity(mostFields);
-        for (unsigned row = division.firstIndexOf[chunk]; row < division.firstIndexOf[chunk + 1]; ++row) {
-            std::span<const LayoutID> views = viewsAbove(LayoutID(firstLayoutOfRow[row]));
-            size_t firstOfLayout = found.size();
-            for (LayoutID view : views) {
-                const Vector<Field>& fields = layouts[view.index()].fields;
-                for (uint32_t field = 0; field < fields.size(); ++field) {
-                    if (fields[field].key && !fields[field].flags.contains(FieldFlags::IsInherited))
-                        found.append({ fields[field].key, view, field });
-                }
-            }
-            std::span<FieldWrittenAbove> ofLayout = found.mutableSpan().subspan(firstOfLayout);
-            AOT::stableSort(ofLayout, { }, [](const FieldWrittenAbove& entry) {
-                return entry.key;
-            });
-            auto repeated = std::ranges::unique(ofLayout, [](const FieldWrittenAbove& a, const FieldWrittenAbove& b) {
-                return a.key == b.key && a.view == b.view;
-            });
-            found.shrink(firstOfLayout + (repeated.begin() - ofLayout.begin()));
-            firstField[row + 1] = static_cast<uint32_t>(found.size() - firstOfLayout);
+    struct FieldUnderKey {
+        PropertyKeyID key;
+        FieldOfView field;
+    };
+    Vector<FieldUnderKey> fieldsUnderKeys = collectInParallel<FieldUnderKey>(loops, numberOfLayouts, [&](unsigned index, Vector<FieldUnderKey>& found) {
+        if (!isIndexedByKey.quickGet(index))
+            return;
+        const Vector<Field>& fields = layouts[index].fields;
+        for (uint32_t field = 0; field < fields.size(); ++field) {
+            if (fields[field].key && !fields[field].flags.contains(FieldFlags::IsInherited))
+                found.append({ fields[field].key, { LayoutID(index), field } });
         }
     });
-    for (uint32_t row = 0; row < numberOfRows; ++row)
-        firstField[row + 1] += firstField[row];
-    m_derivedTables.fieldsWrittenAbove = joinChunks<FieldWrittenAbove>(loops, WTF::move(chunks));
+    uint32_t numberOfKeys = 0;
+    for (const FieldUnderKey& entry : fieldsUnderKeys)
+        numberOfKeys = std::max(numberOfKeys, entry.key.index() + 1);
+    Vector<uint32_t>& firstField = m_derivedTables.firstFieldsByKey;
+    firstField.fill(0, numberOfKeys + 1);
+    for (const FieldUnderKey& entry : fieldsUnderKeys)
+        ++firstField[entry.key.index() + 1];
+    for (uint32_t key = 0; key < numberOfKeys; ++key)
+        firstField[key + 1] += firstField[key];
+    Vector<FieldOfView> fieldsByKey;
+    fieldsByKey.grow(fieldsUnderKeys.size());
+    Vector<uint32_t> nextField(firstField);
+    for (const FieldUnderKey& entry : fieldsUnderKeys)
+        fieldsByKey[nextField[entry.key.index()]++] = entry.field;
+
+    uint32_t numberKept = 0;
+    for (uint32_t key = 0; key < numberOfKeys; ++key) {
+        uint32_t firstOfKey = std::exchange(firstField[key], numberKept);
+        for (uint32_t place = firstOfKey; place < firstField[key + 1]; ++place) {
+            if (place == firstOfKey || fieldsByKey[place].view != fieldsByKey[numberKept - 1].view)
+                fieldsByKey[numberKept++] = fieldsByKey[place];
+        }
+    }
+    firstField[numberOfKeys] = numberKept;
+    fieldsByKey.shrink(numberKept);
+    m_derivedTables.fieldsOfViewsByKey = WTF::move(fieldsByKey);
 }
 
 void Program::internBuiltinNameKeys()
@@ -737,13 +724,13 @@ void Program::appendNamespaceLayouts(const ParallelLoops& loops)
         appendFieldsOfNamespaceLayout(*this, modules[holders[holder]].namespaceLayout, keys.subspan(first, count), typesOfExportedNamespaces.subspan(first, count));
     });
     if (MocksOfProgram mocks = findMocksOfProgram(*this); mocks.isAnyModuleMocked) {
-        DeclaredType claimsNothing;
-        claimsNothing.establish(Proven::byPosition(TypeTable::anything));
+        DeclaredType declaredAnything;
+        declaredAnything.establish(Proven::byPosition(TypeTable::anything));
         for (uint32_t holder : holders) {
             Layout& layout = at(modules[holder].namespaceLayout);
             for (uint32_t index = 0; index < layout.fields.size(); ++index) {
                 if (mayComeThroughMock(*this, mocks, ModuleID(holder), index))
-                    layout.fields[index].declared = claimsNothing;
+                    layout.fields[index].declared = declaredAnything;
             }
         }
     }
@@ -782,7 +769,7 @@ LayoutID Program::layoutOfWholeNamespace(ModuleID id) const
 
 LayoutID Program::layoutOfNamespaceThatListsNoName(ModuleID id) const
 {
-    constexpr OptionSet<ModuleFlags> flagsOfModulesWithSeveralNamespaces { ModuleFlags::RunsAgain, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted };
+    constexpr OptionSet<ModuleFlags> flagsOfModulesWithSeveralNamespaces { ModuleFlags::MayBeReevaluated, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted };
     const Module& module = at(id);
     if (module.kind != ModuleKind::RuntimeSource || (module.flags.containsAny(flagsOfModulesWithSeveralNamespaces)) || !objectOfLibraryFileIsResultOfBody(*this, id))
         return { };
@@ -1098,11 +1085,11 @@ ModuleID compiledModuleWithObject(const Program& program, BuiltinID builtin)
     return program.compiledModuleOfNamespaceObject(builtin);
 }
 
-ModuleID commonJsModuleCapturedBy(const Program& program, const Module& face)
+ModuleID commonJsModuleCapturedBy(const Program& program, const Module& facade)
 {
-    if (face.kind != ModuleKind::SourceText || face.exportRule == SyntheticExportRule::None || face.requests.isEmpty())
+    if (facade.kind != ModuleKind::SourceText || facade.exportRule == SyntheticExportRule::None || facade.requests.isEmpty())
         return { };
-    const ModuleRequest& first = face.requests[0];
+    const ModuleRequest& first = facade.requests[0];
     if (first.kind != ModuleRequestKind::Require)
         return { };
     const Module& file = program.at(first.target);
@@ -1136,7 +1123,7 @@ Vector<ModuleID, 2> formsInImage(const Program& program, ModuleID named)
 
 bool loaderEntersBodyAtMostOnce(const Module& module)
 {
-    if (!isEvaluatedAtMostOnceOf(module.kind) || module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeMocked }))
+    if (!isEvaluatedAtMostOnceOf(module.kind) || module.flags.containsAny({ ModuleFlags::MayBeReevaluated, ModuleFlags::MayBeMocked }))
         return false;
     if (!module.flags.contains(ModuleFlags::MayBeEvicted))
         return true;
@@ -1190,7 +1177,7 @@ bool loaderFillsVariablesOffValueOf(const Module& module)
     return module.kind == ModuleKind::RuntimeSource && module.body && module.exportRule == SyntheticExportRule::RuntimeModule && module.requireResult == RequireResult::DefaultExport;
 }
 
-BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
+BuiltinID hostRequireFunctionFor(const Module& module)
 {
     switch (module.kind) {
     case ModuleKind::CommonJs:
@@ -1207,10 +1194,10 @@ BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool namesWaysToModuleObjects(const Program& program)
+bool reachesModuleObjects(const Program& program)
 {
     return std::ranges::any_of(program.modules, [](const Module& module) {
-        return module.flags.contains(ModuleFlags::NamesWayToModuleObjects);
+        return module.flags.contains(ModuleFlags::ReachesModuleObjects);
     });
 }
 
@@ -1231,7 +1218,7 @@ bool parsersCouldMakeRecordsOf(const Program& program, LayoutID id)
     });
 }
 
-bool isFaceOfCommonJSFile(const Program& program, const Module& module)
+bool isCommonJSFacade(const Program& program, const Module& module)
 {
     if (module.kind != ModuleKind::SourceText || module.requests.isEmpty() || module.requests[0].kind != ModuleRequestKind::Require)
         return false;

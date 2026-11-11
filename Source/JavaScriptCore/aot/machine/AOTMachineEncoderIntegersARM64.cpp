@@ -96,6 +96,154 @@ static void encodeARM64ScaledSum(Encoder& encoder, const Step& step)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static const Operation* fusedOperandOf(const Encoder& encoder, const Operation* operation)
+{
+    for (const Operation* child : operation->children()) {
+        if (encoder.isFused(child) && child->opcode() != Trunc && !namesWord(child))
+            return child;
+    }
+    return nullptr;
+}
+
+static GPRReg takeIntegerRegister(LeafCursor& leaves)
+{
+    Location location = leaves.take();
+    RELEASE_ASSERT(location.isRegister() && location.reg().isGPR());
+    return location.gpr();
+}
+
+template<int width>
+static void emitWithShiftedOperandARM64(ARM64Assembler& assembler, Opcode opcode, GPRReg destination, GPRReg left, GPRReg right, ARM64Assembler::ShiftType shift, unsigned amount)
+{
+    switch (opcode) {
+    case Add:
+        assembler.add<width>(destination, left, right, shift, amount);
+        return;
+    case Sub:
+        assembler.sub<width>(destination, left, right, shift, amount);
+        return;
+    case BitAnd:
+        assembler.and_<width>(destination, left, right, shift, amount);
+        return;
+    case BitOr:
+        assembler.orr<width>(destination, left, right, shift, amount);
+        return;
+    case BitXor:
+        assembler.eor<width>(destination, left, right, shift, amount);
+        return;
+    default:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static void encodeWithShiftedOperandARM64(Encoder& encoder, const Step& step, const Operation* shift)
+{
+    const Operation* operation = step.operation;
+    ASSERT(acceptsShiftedOperand(operation->opcode()));
+    bool shiftIsFirst = operation->child(0) == shift;
+    RELEASE_ASSERT(isShiftByConstant(shift) && (!shiftIsFirst || isCommutative(operation->opcode())));
+
+    LeafCursor leaves(step);
+    GPRReg other = shiftIsFirst ? InvalidGPRReg : takeIntegerRegister(leaves);
+    GPRReg shifted = takeIntegerRegister(leaves);
+    leaves.take();
+    if (shiftIsFirst)
+        other = takeIntegerRegister(leaves);
+
+    ARM64Assembler::ShiftType type = shift->opcode() == Shl ? ARM64Assembler::LSL : shift->opcode() == ZShr ? ARM64Assembler::LSR : ARM64Assembler::ASR;
+    if (operation->type() == Int32)
+        emitWithShiftedOperandARM64<32>(encoder.m_jit.m_assembler, operation->opcode(), step.destination.gpr(), other, shifted, type, amountOfShift(shift));
+    else
+        emitWithShiftedOperandARM64<64>(encoder.m_jit.m_assembler, operation->opcode(), step.destination.gpr(), other, shifted, type, amountOfShift(shift));
+}
+
+static void encodeBitFieldARM64(Encoder& encoder, const Step& step, BitField field)
+{
+    LeafCursor leaves(step);
+    GPRReg source = takeIntegerRegister(leaves);
+    GPRReg destination = step.destination.gpr();
+    ARM64Assembler& assembler = encoder.m_jit.m_assembler;
+    if (step.operation->type() == Int32) {
+        if (field.extendsSign)
+            assembler.sbfx<32>(destination, source, field.lowestBit, field.numberOfBits);
+        else
+            assembler.ubfx<32>(destination, source, field.lowestBit, field.numberOfBits);
+        return;
+    }
+    if (field.extendsSign)
+        assembler.sbfx<64>(destination, source, field.lowestBit, field.numberOfBits);
+    else
+        assembler.ubfx<64>(destination, source, field.lowestBit, field.numberOfBits);
+}
+
+static void encodeWithExtendedOperandARM64(Encoder& encoder, const Step& step, const Operation* extension)
+{
+    const Operation* sum = step.operation;
+    RELEASE_ASSERT(sum->type() == Int64 && (sum->opcode() == Add || (sum->opcode() == Sub && sum->child(1) == extension)));
+    bool extensionIsFirst = sum->child(0) == extension;
+
+    LeafCursor leaves(step);
+    GPRReg other = extensionIsFirst ? InvalidGPRReg : takeIntegerRegister(leaves);
+    GPRReg word = takeIntegerRegister(leaves);
+    if (extensionIsFirst)
+        other = takeIntegerRegister(leaves);
+
+    GPRReg destination = step.destination.gpr();
+    ARM64Assembler& assembler = encoder.m_jit.m_assembler;
+    bool subtracts = sum->opcode() == Sub;
+    ARM64Assembler::ExtendType type = extension->opcode() == ZExt32 ? ARM64Assembler::UXTW : ARM64Assembler::SXTW;
+    if (subtracts)
+        assembler.sub<64>(destination, other, word, type, 0);
+    else
+        assembler.add<64>(destination, other, word, type, 0);
+}
+
+static void encodeSumWithProductARM64(Encoder& encoder, const Step& step, const Operation* product)
+{
+    const Operation* sum = step.operation;
+    RELEASE_ASSERT(sum->opcode() == Add || (sum->opcode() == Sub && sum->child(1) == product));
+    bool productIsFirst = sum->child(0) == product;
+
+    LeafCursor leaves(step);
+    GPRReg addend = productIsFirst ? InvalidGPRReg : takeIntegerRegister(leaves);
+    GPRReg left = takeIntegerRegister(leaves);
+    GPRReg right = takeIntegerRegister(leaves);
+    if (productIsFirst)
+        addend = takeIntegerRegister(leaves);
+
+    GPRReg destination = step.destination.gpr();
+    ARM64Assembler& assembler = encoder.m_jit.m_assembler;
+    bool subtracts = sum->opcode() == Sub;
+    if (sum->type() == Int32) {
+        if (subtracts)
+            assembler.msub<32>(destination, left, right, addend);
+        else
+            assembler.madd<32>(destination, left, right, addend);
+        return;
+    }
+    if (subtracts)
+        assembler.msub<64>(destination, left, right, addend);
+    else
+        assembler.madd<64>(destination, left, right, addend);
+}
+
+static bool tryEncodeFusedOperandARM64(Encoder& encoder, const Step& step)
+{
+    const Operation* fused = fusedOperandOf(encoder, step.operation);
+    if (!fused)
+        return false;
+    if (fused->opcode() == Mul)
+        encodeSumWithProductARM64(encoder, step, fused);
+    else if (fused->opcode() == SExt32 || fused->opcode() == ZExt32)
+        encodeWithExtendedOperandARM64(encoder, step, fused);
+    else if (std::optional<BitField> field = bitFieldOf(step.operation))
+        encodeBitFieldARM64(encoder, step, *field);
+    else
+        encodeWithShiftedOperandARM64(encoder, step, fused);
+    return true;
+}
+
 bool Encoder::tryEncodeSumAndConstant(const Step&, const Step&)
 {
     return false;
@@ -103,7 +251,7 @@ bool Encoder::tryEncodeSumAndConstant(const Step&, const Step&)
 
 void Encoder::encodeSumThatSetsFlags(const Step& step)
 {
-    SumTestedByOverflow test = sumTestedByOverflowOf(m_liveness, step.operation);
+    OverflowCheckedSum test = overflowCheckedSumOf(m_liveness, step.operation);
     RELEASE_ASSERT(step.destination.isRegister() && step.sources[0].isRegister());
     GPRReg destination = step.destination.gpr();
     GPRReg left = step.sources[0].gpr();
@@ -148,7 +296,7 @@ void Encoder::encodeInteger(const Step& step)
     ASSERT(operation->type().isInt());
 #if ASSERT_ENABLED
     for (const Operation* child : operation->children())
-        ASSERT(!m_liveness.isFused(child) || child->opcode() == Trunc || addsScaledIndex(m_liveness, operation));
+        ASSERT(!m_liveness.isFused(child) || child->opcode() == Trunc || child->opcode() == Mul || child->opcode() == SExt32 || child->opcode() == ZExt32 || isShiftByConstant(child));
 #endif
 
     RELEASE_ASSERT(step.destination.isRegister());
@@ -170,7 +318,7 @@ void Encoder::encodeInteger(const Step& step)
     }
 
     case Add: {
-        if (m_liveness.goesByOverflow(operation)) {
+        if (m_liveness.usesOverflowFlag(operation)) {
             encodeSumThatSetsFlags(step);
             return;
         }
@@ -178,6 +326,8 @@ void Encoder::encodeInteger(const Step& step)
             encodeARM64ScaledSum(*this, step);
             return;
         }
+        if (tryEncodeFusedOperandARM64(*this, step))
+            return;
         IntegerSources sources = integerSourcesOrConstant(*this, step);
         if (sources.constant && is32)
             m_jit.add32(integerConstant32Of(sources.constant), sources.left, destination);
@@ -191,10 +341,12 @@ void Encoder::encodeInteger(const Step& step)
     }
 
     case Sub: {
-        if (m_liveness.goesByOverflow(operation)) {
+        if (m_liveness.usesOverflowFlag(operation)) {
             encodeSumThatSetsFlags(step);
             return;
         }
+        if (tryEncodeFusedOperandARM64(*this, step))
+            return;
         IntegerSources sources = integerSourcesOrConstant(*this, step);
         if (sources.constant && is32)
             m_jit.sub32(sources.left, integerConstant32Of(sources.constant), destination);
@@ -262,6 +414,8 @@ void Encoder::encodeInteger(const Step& step)
     }
 
     case BitAnd: {
+        if (tryEncodeFusedOperandARM64(*this, step))
+            return;
         IntegerSources sources = integerSourcesOrConstant(*this, step);
         if (sources.constant && is32)
             m_jit.and32(integerConstant32Of(sources.constant), sources.left, destination);
@@ -275,6 +429,8 @@ void Encoder::encodeInteger(const Step& step)
     }
 
     case BitOr: {
+        if (tryEncodeFusedOperandARM64(*this, step))
+            return;
         IntegerSources sources = integerSourcesOrConstant(*this, step);
         if (sources.constant && is32)
             m_jit.or32(integerConstant32Of(sources.constant), sources.left, destination);
@@ -288,6 +444,8 @@ void Encoder::encodeInteger(const Step& step)
     }
 
     case BitXor: {
+        if (tryEncodeFusedOperandARM64(*this, step))
+            return;
         IntegerSources sources = integerSourcesOrConstant(*this, step);
         if (sources.constant && is32)
             m_jit.xor32(integerConstant32Of(sources.constant), sources.left, destination);
@@ -314,6 +472,8 @@ void Encoder::encodeInteger(const Step& step)
     }
 
     case SShr: {
+        if (tryEncodeFusedOperandARM64(*this, step))
+            return;
         IntegerSources sources = integerSourcesOrConstant(*this, step);
         if (sources.constant && is32)
             m_jit.rshift32(sources.left, integerConstant32Of(sources.constant), destination);
@@ -327,6 +487,8 @@ void Encoder::encodeInteger(const Step& step)
     }
 
     case ZShr: {
+        if (tryEncodeFusedOperandARM64(*this, step))
+            return;
         IntegerSources sources = integerSourcesOrConstant(*this, step);
         if (sources.constant && is32)
             m_jit.urshift32(sources.left, integerConstant32Of(sources.constant), destination);
@@ -388,7 +550,7 @@ void Encoder::encodeInteger(const Step& step)
     case SExt32: {
         ASSERT(operation->type() == Int64 && operation->child(0)->type() == Int32);
         GPRReg source = integerSourceInRegister(*this, step);
-        if (source != destination || !isFreeInRegisterOfChild(m_liveness, operation))
+        if (source != destination || !isFreeWhenCoalesced(m_liveness, operation))
             m_jit.signExtend32To64(source, destination);
         return;
     }
@@ -396,7 +558,7 @@ void Encoder::encodeInteger(const Step& step)
     case ZExt32: {
         ASSERT(operation->type() == Int64 && operation->child(0)->type() == Int32);
         GPRReg source = integerSourceInRegister(*this, step);
-        if (source != destination || !isFreeInRegisterOfChild(m_liveness, operation))
+        if (source != destination || !isFreeWhenCoalesced(m_liveness, operation))
             m_jit.zeroExtend32ToWord(source, destination);
         return;
     }

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDs.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTIRProgram.h"
@@ -19,6 +20,7 @@
 #include <optional>
 #include <span>
 #include <utility>
+#include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -27,6 +29,7 @@ static constexpr uint32_t frontOperandInTextBuilderWebs = 0;
 static_assert(OperandIndex::Add::left == frontOperandInTextBuilderWebs);
 static_assert(OperandIndex::Strcat::parts == frontOperandInTextBuilderWebs);
 
+static constexpr OpcodeSet readersOfCharactersInTextBuilderWebs { Opcode::Call, Opcode::CallList, Opcode::Construct, Opcode::ElemGet, Opcode::ElemHas, Opcode::IteratorOpen };
 static constexpr OpcodeSet castsInTextBuilderWebs = opcodesThatStateTypes | OpcodeSet { Opcode::CheckInitialized, Opcode::RequireObjectCoercible };
 
 static bool passesOperandThroughInTextBuilderWebs(const BodyValue& operation, uint32_t operandIndex)
@@ -83,6 +86,9 @@ struct CandidateInTextBuilderWeb {
     bool isOnlyConcatenated { true };
     bool beginsAnewOnSomeEdge { false };
     Vector<ValueID, 2> parametersThatReadText;
+    bool hasReadersOfCharacters { false };
+    Vector<LoopID, 4> loopsOfAppends;
+    Vector<BlockID, 2> blocksOfStores;
 };
 
 class TextBuilderWebScan {
@@ -126,6 +132,10 @@ private:
     void refuseTextNamedBy(ValueID);
     bool makesTextThatIsOnlyRead(const BodyValue& join);
     void noteThatStateIsSeen(const NameInTextBuilderWeb& name) { m_candidates[name.text].isOnlyConcatenated &= !m_index.isParameter(name.version); }
+    bool storesOrPassesOperand(const BodyValue&, ValueID operand) const;
+    bool runsInEveryIteration(BlockID) const;
+    bool coverEveryIteration(std::span<const BlockID>, LoopID) const;
+    bool isCheaperAsRope(const CandidateInTextBuilderWeb&) const;
 
     Walker& m_walker;
     const BodyIndex& m_index;
@@ -271,7 +281,7 @@ void TextBuilderWebScan::findCandidates()
         TypeID written = m_head.parameterType(parameterIndex);
         isWrittenWithoutText[parameterIndex] = written && holdsOnlyPrimitives(written) && !(primitivesInID(written) & Primitive::String);
         TypeID inRow = typeInLooks(m_head.parameter(parameterIndex));
-        cannotGrow[parameterIndex] = isNameOfTextInStringBuilder(m_walker, m_head.parameter(parameterIndex)) || (inRow && !m_walker.types().overlap(inRow, TypeTable::string));
+        cannotGrow[parameterIndex] = isBoundToStringInBuilder(m_walker, m_head.parameter(parameterIndex)) || (inRow && !m_walker.types().overlap(inRow, TypeTable::string));
     }
     if (!cannotGrow.contains(false))
         return;
@@ -287,7 +297,7 @@ void TextBuilderWebScan::findCandidates()
                 cannotGrow[parameterIndex] = true;
                 continue;
             }
-            ValueID root = m_index.valueBehindCasts(arguments[parameterIndex]);
+            ValueID root = m_index.stripCasts(arguments[parameterIndex]);
             if (root == m_head.parameter(parameterIndex))
                 continue;
             bool isMadeInLoop = root.index() >= m_head.firstValue().index();
@@ -339,12 +349,78 @@ void TextBuilderWebScan::findParametersThatComeRound()
                 uint32_t text = arguments[argumentIndex] ? textThatComesRoundIn(entered.parameter(argumentIndex)) : none;
                 if (text == none)
                     continue;
-                ValueID root = m_index.valueBehindCasts(arguments[argumentIndex]);
+                ValueID root = m_index.stripCasts(arguments[argumentIndex]);
                 if (m_index.isParameter(root) && root.index() >= m_head.firstValue().index() && textThatComesRoundIn(root) == none)
                     m_textsThatComeRoundInValues[root.index() - m_firstValue] = text;
             }
         }
     }
+}
+
+bool TextBuilderWebScan::storesOrPassesOperand(const BodyValue& operation, ValueID operand) const
+{
+    switch (operation.opcode()) {
+    case Opcode::PropSet:
+    case Opcode::PropDefine:
+    case Opcode::ElemSet:
+    case Opcode::PutModuleVariable:
+    case Opcode::PutEnvironmentField:
+        return operation.valueOperand() == operand;
+    case Opcode::Call:
+    case Opcode::Construct:
+        return std::ranges::contains(operation.argumentsOperands(), operand);
+    default:
+        return false;
+    }
+}
+
+bool TextBuilderWebScan::runsInEveryIteration(BlockID block) const
+{
+    LoopID loop = m_index.loopOf(block);
+    return std::ranges::all_of(m_walker.incomingEdgesOf(m_index, m_index.loop(loop).head), [&](const BodyIncomingEdge& edge) {
+        return !m_index.isInLoop(edge.from, loop) || m_index.dominates(block, edge.from);
+    });
+}
+
+bool TextBuilderWebScan::coverEveryIteration(std::span<const BlockID> blocks, LoopID loop) const
+{
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> covered;
+    Vector<BlockID, 4> pending;
+    auto cover = [&](BlockID block) {
+        if (m_index.loopOf(block) == loop && covered.add(block.index()).isNewEntry)
+            pending.append(block);
+    };
+    auto isCovered = [&](BodyTarget target) {
+        return !m_index.isInLoop(target.block(), loop) || covered.contains(target.block().index());
+    };
+    for (BlockID block : blocks)
+        cover(block);
+    for (size_t place = 0; place < pending.size(); ++place) {
+        if (runsInEveryIteration(pending[place]))
+            return true;
+        for (const BodyIncomingEdge& edge : m_walker.incomingEdgesOf(m_index, pending[place])) {
+            BodyBlock from = m_index.block(edge.from);
+            if (std::ranges::all_of(from.terminator().targets(), isCovered) && (!from.hasHandler() || isCovered(from.handler())))
+                cover(edge.from);
+        }
+    }
+    return false;
+}
+
+bool TextBuilderWebScan::isCheaperAsRope(const CandidateInTextBuilderWeb& candidate) const
+{
+    static constexpr unsigned maxRopesPerStore = 4;
+    return !candidate.hasReadersOfCharacters && std::ranges::any_of(candidate.blocksOfStores, [&](BlockID block) {
+        LoopID loop = m_index.loopOf(block);
+        unsigned appends = 0;
+        for (LoopID loopOfAppend : candidate.loopsOfAppends) {
+            if (loopOfAppend == loop)
+                ++appends;
+            else if (m_index.isInLoop(m_index.loop(loopOfAppend).head, loop))
+                return false;
+        }
+        return appends && appends <= maxRopesPerStore && coverEveryIteration(candidate.blocksOfStores.span(), loop);
+    });
 }
 
 bool TextBuilderWebScan::makesTextThatIsOnlyRead(const BodyValue& join)
@@ -376,9 +452,6 @@ bool TextBuilderWebScan::makesTextThatIsOnlyRead(const BodyValue& join)
 void TextBuilderWebScan::scanOperation(const BodyValue& operation)
 {
     Opcode opcode = operation.opcode();
-    if (opcode == Opcode::ReleaseHint)
-        return;
-
     bool joinsTexts = operationsThatJoinTexts.contains(opcode);
     uint32_t textInFront = none;
     uint32_t textPassedThrough = none;
@@ -390,13 +463,19 @@ void TextBuilderWebScan::scanOperation(const BodyValue& operation)
             textInFront = name->text;
         else if (passesOperandThroughInTextBuilderWebs(operation, operandIndex) || opcode == Opcode::ToString) {
             textPassedThrough = name->text;
-            if (opcode == Opcode::Convert || opcode == Opcode::ToString || checksThatHandOnOrThrow.contains(opcode))
+            if (opcode == Opcode::Convert || opcode == Opcode::ToString || passThroughChecks.contains(opcode))
                 noteThatStateIsSeen(*name);
         }
         else if (textInFront == name->text)
             refuse(name->text);
-        else
+        else {
             noteThatStateIsSeen(*name);
+            CandidateInTextBuilderWeb& candidate = m_candidates[name->text];
+            if (!storesOrPassesOperand(operation, operand))
+                candidate.hasReadersOfCharacters |= readersOfCharactersInTextBuilderWebs.contains(opcode);
+            else
+                candidate.blocksOfStores.append(m_index.blockOf(operation.id()));
+        }
     });
 
     if (textPassedThrough != none && isOpen(textPassedThrough))
@@ -418,6 +497,7 @@ void TextBuilderWebScan::scanOperation(const BodyValue& operation)
     m_versions.set(textInFront, operation.id());
     m_textsGrownSinceSomethingMayHaveThrown.append(textInFront);
     candidate.grows = true;
+    candidate.loopsOfAppends.append(m_index.loopOf(m_index.blockOf(operation.id())));
 }
 
 void TextBuilderWebScan::arriveAt(BlockID block, uint32_t text, uint32_t parameterIndex, bool beginsAnew)
@@ -501,11 +581,11 @@ bool TextBuilderWebScan::someEdgeHandsOverWhatNamesNoText(BlockID block, uint32_
         ValueID handed = parameterIndex < arguments.size() ? arguments[parameterIndex] : ValueID();
         if (!handed || !isInLoop(edge.from))
             continue;
-        ValueID root = m_index.valueBehindCasts(handed);
+        ValueID root = m_index.stripCasts(handed);
         if (m_index.isParameter(root) || isOneOfWrittenTexts(root))
             continue;
         Opcode opcode = m_index.opcodeOf(root);
-        if (!operationsThatJoinTexts.contains(opcode) && !castsInTextBuilderWebs.contains(opcode) && !checksThatHandOnOrThrow.contains(opcode) && opcode != Opcode::ToString)
+        if (!operationsThatJoinTexts.contains(opcode) && !castsInTextBuilderWebs.contains(opcode) && !passThroughChecks.contains(opcode) && opcode != Opcode::ToString)
             return true;
     }
     return false;
@@ -723,7 +803,7 @@ void TextBuilderWebScan::run(Vector<GrowingText, 2>& texts)
     }
     for (uint32_t text = 0; text < m_candidates.size(); ++text) {
         const CandidateInTextBuilderWeb& candidate = m_candidates[text];
-        if (candidate.isRefused || !candidate.grows || (candidate.beginsAnewOnSomeEdge && m_standsUnderHandlers))
+        if (candidate.isRefused || !candidate.grows || (candidate.beginsAnewOnSomeEdge && m_standsUnderHandlers) || isCheaperAsRope(candidate))
             continue;
         GrowingText grown;
         grown.beginsAnewOnSomeEdge = candidate.beginsAnewOnSomeEdge;

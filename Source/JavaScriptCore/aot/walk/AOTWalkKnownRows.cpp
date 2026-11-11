@@ -11,6 +11,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTBuiltinTypes.h"
+#include "AOTByteLiterals.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTFamilies.h"
@@ -31,7 +32,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
+OperatorForm operatorFormFor(Walker&, const Draft&);
 
 Effects effectsOfLibraryFunctionBehindRow(const Walker& walker, const BuiltinOverload& row)
 {
@@ -55,15 +56,14 @@ Effects effectsOfLibraryFunctionBehindRow(const Walker& walker, const BuiltinOve
 
 std::optional<Effects> effectsOfSearchForWhatIsNoString(const TypeArena& types, InlineBuiltin builtin, TypeID searchedOrNotPassed)
 {
-    bool isLookupInTable = builtin == InlineBuiltin::MapGet || builtin == InlineBuiltin::MapHas || builtin == InlineBuiltin::SetHas;
-    if (!isLookupInTable && builtin != InlineBuiltin::ArrayIndexOf && builtin != InlineBuiltin::ArrayIncludes)
+    if (!isLookupInTable(builtin) && builtin != InlineBuiltin::ArrayIndexOf && builtin != InlineBuiltin::ArrayIncludes)
         return std::nullopt;
     if (!searchedOrNotPassed)
         return std::nullopt;
     Type searched = types.at(searchedOrNotPassed);
     if (!searched.isJavaScriptValue() || (searched.primitives & Primitive::AnyString))
         return std::nullopt;
-    if (isLookupInTable)
+    if (isLookupInTable(builtin))
         return searched.primitives & Primitive::BigInt ? std::nullopt : std::optional<Effects>(declaredBoundOf(InlineBuiltin::WeakMapGet));
     return declaredBoundOf(InlineBuiltin::ArrayAt);
 }
@@ -79,7 +79,7 @@ static BuiltinID findBuiltinCalledForKnownRows(Walker& walker, const BodyValue& 
     BuiltinID named = type.isObject() ? singleBuiltinOf(types, type) : BuiltinID();
     if (!named) {
         const BodyIndex& index = walker.currentBodyIndex();
-        ValueID read = index.valueBehindCasts(call.calleeOperand());
+        ValueID read = index.stripCasts(call.calleeOperand());
         bool isReadByName = read && !index.isParameter(read) && index.opcodeOf(read) == Opcode::PropGet && !index.value(read).isFreeName();
         if (isReadByName)
             named = findConstantMemberReadOff(walker, walker.referenceOf(index.value(read).objectOperand()), index.value(read).key());
@@ -131,7 +131,7 @@ static bool buildToStringOfPrimitiveForKnownRows(Walker& walker, const BodyValue
     Draft conversion(Opcode::ToString, origin);
     conversion.setValueOperand(receiver);
     walker.chooseConservativeFields(conversion);
-    conversion.setForm(formAllowedForTypedOperator(walker, conversion));
+    conversion.setForm(operatorFormFor(walker, conversion));
     conversion.inputValueGiven = call.id();
     if (Reference text = walker.build(WTF::move(conversion)))
         walker.bind(call.id(), text);
@@ -167,10 +167,10 @@ static BuiltinID sortForComparatorThatIsDifferenceForKnownRows(const Walker& wal
         difference = value.id();
     }
     ValueID returned = entry.terminator().operand(0);
-    if (!difference || !returned || index->valueBehindCasts(returned) != difference)
+    if (!difference || !returned || index->stripCasts(returned) != difference)
         return { };
-    ValueID left = index->valueBehindCasts(index->value(difference).operand(0));
-    ValueID right = index->valueBehindCasts(index->value(difference).operand(1));
+    ValueID left = index->stripCasts(index->value(difference).operand(0));
+    ValueID right = index->stripCasts(index->value(difference).operand(1));
     if (left == entry.parameter(firstParameter) && right == entry.parameter(firstParameter + 1))
         return Builtins::CompilerHelpersSortByDifference;
     if (left == entry.parameter(firstParameter + 1) && right == entry.parameter(firstParameter))
@@ -201,11 +201,11 @@ static FunctionID findSortThatCallsNoComparatorForKnownRows(Walker& walker, cons
     return { };
 }
 
-bool isBuiltinCalledWithoutReceiver(const Walker& walker, TypeID handedOver)
+bool isBuiltinCalledWithoutReceiver(const Walker& walker, TypeID argumentType)
 {
-    if (!handedOver || !walker.has(Mechanism::BuiltinCalls))
+    if (!argumentType || !walker.has(Mechanism::BuiltinCalls))
         return false;
-    Type type = walker.types().at(handedOver);
+    Type type = walker.types().at(argumentType);
     BuiltinID builtin = type.isObject() && type.isJavaScriptValue() ? singleBuiltinOf(walker.types(), type) : BuiltinID();
     if (!builtin)
         return false;
@@ -221,15 +221,22 @@ bool isBuiltinCalledWithoutReceiver(const Walker& walker, TypeID handedOver)
     return hasRow;
 }
 
-bool isLeafHandedToMethodOfLists(const Walker& walker, TypeID handedOver)
+bool isLeafHandedToMethodOfLists(const Walker& walker, TypeID argumentType)
 {
-    if (!handedOver)
+    if (!argumentType)
         return false;
-    if (isBuiltinCalledWithoutReceiver(walker, handedOver))
+    if (isBuiltinCalledWithoutReceiver(walker, argumentType))
         return true;
-    Type type = walker.types().at(handedOver);
+    Type type = walker.types().at(argumentType);
     FunctionID only = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
     return only && walker.facts().linked().function(only).weightAsLeaf != LinkedFunction::notLeaf;
+}
+
+static bool handsOverOwnClosureForKnownRows(Walker& walker, const BodyValue& call)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID handed = index.stripCasts(call.argumentsOperands()[0]);
+    return handed && !index.isParameter(handed) && index.opcodeOf(handed) == Opcode::NewClosure && index.hasOneUse(handed);
 }
 
 static bool loopReadsOffResultFirstForKnownRows(Walker& walker, ValueID value)
@@ -255,7 +262,7 @@ static bool numbersAreSeenToArriveAtFunctionHandedForKnownRows(Walker& walker, c
 {
     const BodyIndex& index = walker.currentBodyIndex();
     auto arguments = call.as<Opcode::Call>().argumentsOperands();
-    ValueID handed = arguments.empty() ? ValueID() : index.valueBehindCasts(arguments[0]);
+    ValueID handed = arguments.empty() ? ValueID() : index.stripCasts(arguments[0]);
     if (!handed || index.isParameter(handed) || index.opcodeOf(handed) != Opcode::NewClosure)
         return false;
     TypeArena& types = walker.types();
@@ -308,9 +315,72 @@ static void holdResultToRowsForKnownRows(Walker& walker, const BodyValue& call, 
     if (!held)
         return;
     walker.bind(call.id(), held);
-    walker.count(StatisticID::ResultsOfLibraryFunctionsHeldToRows);
+    walker.count(StatisticID::LibraryResultsCheckedAgainstSignatures);
 }
 
+static std::optional<ByteLiteralKind> byteLiteralKindOf(const BuiltinTable& table, BuiltinID callee)
+{
+    auto isCallee = [&](BuiltinID named) {
+        return table.contains(named) && table.canonicalID(named) == callee;
+    };
+    if (isCallee(Builtins::BufferFrom))
+        return ByteLiteralKind::BufferFrom;
+    if (isCallee(Builtins::Uint8ArrayFromBase64))
+        return ByteLiteralKind::Uint8ArrayFromBase64;
+    if (isCallee(Builtins::Uint8ArrayFromHex))
+        return ByteLiteralKind::Uint8ArrayFromHex;
+    return std::nullopt;
+}
+
+bool buildByteLiteralOfItsOpcodes(Walker& walker, const BodyValue& call)
+{
+    if (call.isDoneInPlace() || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::Folding))
+        return false;
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    if (arguments.empty() || arguments.size() > 2)
+        return false;
+    BuiltinID callee = findBuiltinCalledForKnownRows(walker, call);
+    std::optional<ByteLiteralKind> kind = callee ? byteLiteralKindOf(walker.program().builtins(), callee) : std::nullopt;
+    bool hasEncoding = arguments.size() == 2;
+    if (!kind || (hasEncoding && *kind != ByteLiteralKind::BufferFrom))
+        return false;
+    StringID string = textKnownForStrings(walker, walker.referenceOf(arguments[0]));
+    StringID encoding = hasEncoding ? textKnownForStrings(walker, walker.referenceOf(arguments[1])) : StringID();
+    if (!string || (hasEncoding && !encoding))
+        return false;
+    const HostStringEncoders* host = walker.stringEncoders();
+    if (!encodeByteLiteral(walker.types(), host ? *host : HostStringEncoders { }, *kind, string, encoding))
+        return false;
+    BuiltinOverloadID signature = findMatchingOverload(walker, call);
+    if (!signature)
+        return false;
+
+    Draft written = walker.draftOf(call);
+    if (walker.hasFailed())
+        return false;
+    Origin origin = written.origin();
+    origin.isTailCall = false;
+    Vector<Reference, 2> strings { walker.constant(PrimitiveKnownToFolding::text(string)) };
+    if (hasEncoding)
+        strings.append(walker.constant(PrimitiveKnownToFolding::text(encoding)));
+    uint32_t parameters[] { static_cast<uint32_t>(*kind) };
+    Draft literal(Opcode::CallInline, origin);
+    walker.chooseConservativeFields(literal);
+    literal.setInlineBuiltin(InlineBuiltin::ByteLiteral);
+    literal.setInlineParameters(parameters);
+    literal.setOverload(signature);
+    literal.setArgumentsOperands(strings.span());
+    literal.expected = written.expected;
+    literal.inputValueGiven = call.id();
+    Effects effects = declaredBoundOf(NamedEffectSet::Allocates);
+    effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
+    Reference array = walker.build(WTF::move(literal), &effects);
+    if (!array)
+        return false;
+    walker.bind(call.id(), array);
+    walker.count(StatisticID::ByteLiteralsEncoded);
+    return true;
+}
 bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::BuiltinCalls))
@@ -331,10 +401,12 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
                 return true;
             function = behind.enteredByValue;
             enteredByValue = true;
-            Reference handedOver = call.argumentsOperands().empty() ? Reference() : walker.referenceOf(call.argumentsOperands()[0]);
+            Reference firstArgument = call.argumentsOperands().empty() ? Reference() : walker.referenceOf(call.argumentsOperands()[0]);
             Reference receiver = call.thisValueOperand() ? walker.referenceOf(call.thisValueOperand()) : Reference();
-            bool isListAsItWasMade = receiver && (isListAsMade(walker, receiver) || receiverStaysAsMadeByLink(walker, call));
-            mayCopy = ((walker.isInLoop() || walker.bodyAtWorkCallsItself()) ? isListAsItWasMade || walker.walksOwnBodyOfUnit() : isListAsItWasMade && isReadOutOfVariableOfFileThatStays(walker, call.thisValueOperand())) && handedOver && isLeafHandedToMethodOfLists(walker, walker.typeOf(handedOver)) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
+            bool isListAsItWasMade = receiver && (isKnownPristine(walker, receiver) || receiverStaysAsMadeByLink(walker, call));
+            mayCopy = ((walker.isInLoop() || walker.isCurrentFrameRecursive()) ? isListAsItWasMade || walker.walksOwnBodyOfUnit() : isListAsItWasMade && isReadOutOfVariableOfFileThatStays(walker, call.thisValueOperand())) && firstArgument && (isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument)) || (walker.isInLoop() && handsOverOwnClosureForKnownRows(walker, call))) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
+            if (mayCopy == MayCopyFunctionCalledDirectly::Yes && !isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument)))
+                walker.count(StatisticID::ListCallbacksCopiedWithCalls);
         } else if (!behind.named.isEmpty())
             function = findLibraryFunctionOfRowsReachedBy(walker, call);
         isFoundByRowsReached = function && function != behind.enteredByValue;
@@ -347,8 +419,8 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     if (FunctionID withoutCalls = isFoundByRowsReached ? findSortThatCallsNoComparatorForKnownRows(walker, call, findBuiltinCalledForKnownRows(walker, call)) : FunctionID()) {
         Reference listAndComparator[] { written.thisValueOperand(), written.argumentsOperands()[0] };
         if (callFunctionDirectly(walker, call, withoutCalls, Reference(), listAndComparator)) {
-            walker.count(StatisticID::LibraryFunctionsEnteredBehindRows);
-            walker.count(StatisticID::SortsThatCallNoComparator);
+            walker.count(StatisticID::LibraryFunctionsCalledDirectly);
+            walker.count(StatisticID::SortComparatorCallsElided);
             return true;
         }
     }
@@ -362,7 +434,7 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     bool isBuilt = callFunctionDirectly(walker, call, function, written.thisValueOperand(), written.argumentsOperands(), mayCopy, calledWhereNoCopyIsMade);
     walker.noteThatCopyMakesNewList({ }, { });
     if (isBuilt) {
-        walker.count(StatisticID::LibraryFunctionsEnteredBehindRows);
+        walker.count(StatisticID::LibraryFunctionsCalledDirectly);
         holdResultToRowsForKnownRows(walker, call, resultByRows);
     }
     return isBuilt;

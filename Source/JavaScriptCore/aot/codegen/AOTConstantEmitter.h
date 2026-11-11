@@ -45,6 +45,7 @@ public:
     void generateEmptyArgumentList(const ValueContext& value) { defineCell(value, CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.emptyArgumentList)).value())); }
 
     CellPointer stringConstant(const OperationContext&, StringID);
+    bool loadsStringConstantByStub(const OperationContext&, StringID);
     CellPointer keyConstant(const OperationContext&, PropertyKeyID);
     CellPointer bigIntConstant(const OperationContext&, StringID digits);
     CellPointer builtinCell(const OperationContext& context, BuiltinID id) { return builtinCell(context, BuiltinCellKey::object(id)); }
@@ -94,7 +95,6 @@ private:
     CellPointer newCopyOnWriteArrayByStub(const ValueContext&);
 
     CellPointer closureCreatedBy(const ValueContext&);
-    void noteWhatClosureLentHolds(ValueID closure);
     bool canUseClosureStub(const NewClosureRequest&) const;
     CellPointer newFullClosure(const ValueContext&, const NewClosureRequest&);
     CellPointer newSlimClosure(const ValueContext&, const NewClosureRequest&);

@@ -10,6 +10,8 @@
 #include "AOTRecordTypes.h"
 #include "AOTVarint.h"
 #include "CodeType.h"
+#include "JSExportMacros.h"
+#include <bit>
 #include <optional>
 #include <span>
 #include <utility>
@@ -82,13 +84,13 @@ struct FunctionRecordData {
 };
 static_assert(sizeof(FunctionRecordData) == 4 && isImageRecord<FunctionRecordData>);
 
-static constexpr uint8_t functionRecordIsListedByFunction = 0xff;
+static constexpr uint8_t unsharedFunctionRecord = 0xff;
 
-struct FunctionRecordByFunctionData {
+struct UnsharedFunctionRecordData {
     uint32_t function;
     FunctionRecordData record;
 };
-static_assert(sizeof(FunctionRecordByFunctionData) == 8 && isImageRecord<FunctionRecordByFunctionData>);
+static_assert(sizeof(UnsharedFunctionRecordData) == 8 && isImageRecord<UnsharedFunctionRecordData>);
 
 struct FunctionTraceRecord : FunctionTraceData {
     uint32_t sourceFunctionIndex;
@@ -133,32 +135,99 @@ struct ClosureFunctionRangeData {
 };
 static_assert(sizeof(ClosureFunctionRangeData) == 12 && isImageRecord<ClosureFunctionRangeData>);
 
-struct FunctionTexts {
+struct NumberGroup {
+    static constexpr unsigned size = 32;
+    static constexpr unsigned numberOfWords = 2;
+    static constexpr uint32_t isListedFlag = 1u << 31;
+    static constexpr size_t numberOfGroupWords(size_t numberOfEntries) { return (numberOfEntries + size - 1) / size * numberOfWords; }
+};
+
+class SparseNumberTable {
+public:
+    explicit SparseNumberTable(std::span<const uint32_t> words)
+        : m_words(words)
+    {
+    }
+
+    uint32_t at(uint32_t entry) const
+    {
+        std::span group = m_words.subspan(entry / NumberGroup::size * NumberGroup::numberOfWords, NumberGroup::numberOfWords);
+        uint32_t bit = 1u << entry % NumberGroup::size;
+        if (!(group[0] & bit))
+            return 0;
+        uint32_t rank = std::popcount(group[0] & (bit - 1));
+        return group[1] & NumberGroup::isListedFlag ? m_words[(group[1] & ~NumberGroup::isListedFlag) + rank] : group[1] + rank;
+    }
+
+    JS_EXPORT_PRIVATE static Vector<uint32_t> create(std::span<const uint32_t> numbers);
+
+private:
+    std::span<const uint32_t> m_words;
+};
+
+class AscendingNumberTable {
+public:
+    static constexpr uint32_t maxSpan = 512;
+
+    explicit AscendingNumberTable(std::span<const uint32_t> words)
+        : m_words(words)
+    {
+    }
+
+    uint32_t at(uint32_t index) const
+    {
+        std::span group = m_words.subspan(index / NumberGroup::size * NumberGroup::numberOfWords, NumberGroup::numberOfWords);
+        uint32_t entry = index % NumberGroup::size;
+        uint32_t place = group[1];
+        if (place & NumberGroup::isListedFlag)
+            return m_words[(place & ~NumberGroup::isListedFlag) + entry];
+        if (!entry)
+            return group[0];
+        uint32_t word = place / 32;
+        uint32_t bits = m_words[word] & ~0u << place % 32;
+        uint32_t onesLeft = entry;
+        while (static_cast<uint32_t>(std::popcount(bits)) < onesLeft) {
+            onesLeft -= std::popcount(bits);
+            bits = m_words[++word];
+        }
+        while (--onesLeft)
+            bits &= bits - 1;
+        uint32_t placeOfOne = word * 32 + std::countr_zero(bits);
+        return group[0] + (placeOfOne - place) - (entry - 1);
+    }
+
+    JS_EXPORT_PRIVATE static Vector<uint32_t> create(std::span<const uint32_t> numbers);
+
+private:
+    std::span<const uint32_t> m_words;
+};
+
+struct FunctionSources {
     uint32_t numberOfEntries;
     uint32_t entriesOffset;
-    uint32_t textOffset;
+    uint32_t sourceOffset;
     uint32_t numberOfBlocks;
-    uint32_t endsOfBlocksOffset;
-    uint32_t sizeOfText;
+    uint32_t blockEndsOffset;
+    uint32_t sourceSize;
 };
-static_assert(sizeof(FunctionTexts) == 24 && isImageRecord<FunctionTexts>);
-static constexpr uint32_t sizeOfBlockOfText = 64 * 1024;
+static_assert(sizeof(FunctionSources) == 24 && isImageRecord<FunctionSources>);
+static constexpr uint32_t sourceBlockSize = 64 * 1024;
 
-struct FunctionTextEntry {
+struct FunctionSourceEntry {
     Number24 function;
     Number32 start;
     Number32 end;
 };
-static_assert(sizeof(FunctionTextEntry) == 11 && isImageRecord<FunctionTextEntry>);
+static_assert(sizeof(FunctionSourceEntry) == 11 && isImageRecord<FunctionSourceEntry>);
 
-struct QuotedTextGroupData {
+struct QuotedSourceGroupData {
     uint32_t module;
     uint32_t line;
     uint32_t column;
     uint32_t offsetOfRows;
 };
-static_assert(sizeof(QuotedTextGroupData) == 16 && isImageRecord<QuotedTextGroupData>);
-static constexpr unsigned rowsInGroupOfQuotedTexts = 32;
+static_assert(sizeof(QuotedSourceGroupData) == 16 && isImageRecord<QuotedSourceGroupData>);
+static constexpr unsigned quotedSourceGroupSize = 32;
 
 static constexpr uint8_t countsAreListed = UINT8_MAX;
 
@@ -345,20 +414,20 @@ bool forEachNamedCapture(std::span<const uint8_t> bytes, const auto& visit)
     v(functionNameGroups, uint32_t) \
     v(functionRecordNumbers, uint8_t) \
     v(functionRecords, FunctionRecordData) \
-    v(functionRecordsByFunction, FunctionRecordByFunctionData) \
-    v(functionSources, Number24) \
+    v(unsharedFunctionRecords, UnsharedFunctionRecordData) \
+    v(sourceFunctions, uint32_t) \
     v(implementedBuiltins, ImplementedBuiltinData) \
     v(closureFunctionKinds, FunctionKindData) \
     v(functionLengths, uint8_t) \
     v(closureCaptureCounts, uint8_t) \
     v(functionsWithLargeCounts, FunctionWithLargeCountsData) \
-    v(closureCellNumbers, Number24) \
+    v(closureCells, uint32_t) \
     v(namedCaptures, uint8_t) \
-    v(functionTexts, FunctionTexts) \
-    v(quotedTextGroups, QuotedTextGroupData) \
-    v(quotedTextRows, uint8_t) \
-    v(textOfQuotes, uint8_t) \
-    v(blocksOfTextOfQuotes, uint32_t) \
+    v(functionSources, FunctionSources) \
+    v(quotedSourceGroups, QuotedSourceGroupData) \
+    v(quotedSourceRows, uint8_t) \
+    v(quotedSourceText, uint8_t) \
+    v(quotedSourceBlocks, uint32_t) \
     v(constructors, ConstructorData) \
     v(constructEntrypoints, ConstructEntrypointData)
 

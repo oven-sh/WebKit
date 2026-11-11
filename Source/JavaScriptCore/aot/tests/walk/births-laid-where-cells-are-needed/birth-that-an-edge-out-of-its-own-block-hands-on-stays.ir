@@ -18,7 +18,7 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean
 #     v3: Array @Cell = NewArray v0 contents=anything traits=[mayCollect, mayTouchMemory]
 #     Branch v2 -> taken b1(v3), notTaken b2(v3)
 #   b1(v4: Array @Cell):
-#     v5: anything @JSValue = Call v1, -, v0 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything @JSValue = Call v1, -, v0 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b2(v4)
 #   b2(v6: Array @Cell):
 #     v7: Array @JSValue = Box v6

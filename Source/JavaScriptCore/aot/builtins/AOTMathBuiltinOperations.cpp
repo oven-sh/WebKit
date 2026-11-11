@@ -81,13 +81,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMathF16Round, double, (double x))
     return Float16 { x };
 }
 
+static NEVER_INLINE double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES parseInt8Slow(const Latin1Character* characters, uint32_t length, int32_t radix)
+{
+    return parseInt(unsafeMakeSpan(characters, length), radix);
+}
+
 extern "C" double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTParseInt8(const Latin1Character* characters, uint32_t length, int32_t radix)
 {
     if (!radix || radix == 10) {
         if (std::optional<double> value = valueOfFewDigits(unsafeMakeSpan(characters, length)))
             return *value;
     }
-    return parseInt(unsafeMakeSpan(characters, length), radix);
+    [[clang::musttail]] return parseInt8Slow(characters, length, radix);
 }
 
 extern "C" double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTParseInt16(const char16_t* characters, uint32_t length, int32_t radix)
@@ -95,11 +100,16 @@ extern "C" double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTParseInt16(const
     return parseInt(unsafeMakeSpan(characters, length), radix);
 }
 
+static NEVER_INLINE double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES stringToNumber8Slow(const Latin1Character* characters, uint32_t length)
+{
+    return jsToNumber(StringView { unsafeMakeSpan(characters, length) });
+}
+
 extern "C" double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringToNumber8(const Latin1Character* characters, uint32_t length)
 {
     if (std::optional<double> value = valueOfFewDigits(unsafeMakeSpan(characters, length)))
         return *value;
-    return jsToNumber(StringView { unsafeMakeSpan(characters, length) });
+    [[clang::musttail]] return stringToNumber8Slow(characters, length);
 }
 
 extern "C" double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringToNumber16(const char16_t* characters, uint32_t length)

@@ -175,7 +175,7 @@ bool StackVisitor::WithCompiledFrames::tryEnterCompiledFrames(CallFrame* callFra
         callFrame = record->callerFrame;
         returnPC = record->returnPC;
     }
-    auto frames = AOT::CompiledFrameIterator::tryCreate(m_vm, callFrame, removeCodePtrTag(returnPC), m_frame.m_entryFrame, operationState, calleeFrame ? AOT::stackPointerOfCaller(calleeFrame) : nullptr);
+    auto frames = AOT::CompiledFrameIterator::tryCreate(m_vm, callFrame, removeCodePtrTag(returnPC), m_frame.m_entryFrame, operationState, calleeFrame ? AOT::callerStackPointer(calleeFrame) : nullptr);
     RELEASE_ASSERT(frames || !isPublished);
     if (!frames)
         return false;
@@ -183,7 +183,7 @@ bool StackVisitor::WithCompiledFrames::tryEnterCompiledFrames(CallFrame* callFra
     ASSERT(!m_frame.m_compiledFrames);
     m_frame.m_compiledFrames = new (NotNull, m_compiledFramesStorage) AOT::CompiledFrameIterator(WTF::move(*frames));
     if (m_compiledFrameVisit == CompiledFrameVisit::ShownFramesAndCalledBuiltins)
-        m_frame.m_compiledFrames->listConstructedFunctionsThatLeft();
+        m_frame.m_compiledFrames->collectElidedConstructorFrame();
     setCompiledFrame(callFrame, nullptr);
     return true;
 }
@@ -196,21 +196,21 @@ bool StackVisitor::WithCompiledFrames::showFirstCompiledFrame()
 bool StackVisitor::WithCompiledFrames::showNextCompiledFrame()
 {
     auto& frames = *m_frame.m_compiledFrames;
-    bool showsCalledBuiltin = m_compiledFrameVisit == CompiledFrameVisit::ShownFramesAndCalledBuiltins && !std::exchange(m_frame.m_isInlinedBuiltinFrame, false);
-    m_frame.m_isOfConstructedFunctionThatLeft = false;
-    for (; !frames.isAtEnd(); frames.advance(), showsCalledBuiltin = m_compiledFrameVisit == CompiledFrameVisit::ShownFramesAndCalledBuiltins) {
+    bool includesCalledBuiltin = m_compiledFrameVisit == CompiledFrameVisit::ShownFramesAndCalledBuiltins && !std::exchange(m_frame.m_isInlinedBuiltinFrame, false);
+    m_frame.m_isElidedConstructorFrame = false;
+    for (; !frames.isAtEnd(); frames.advance(), includesCalledBuiltin = m_compiledFrameVisit == CompiledFrameVisit::ShownFramesAndCalledBuiltins) {
         auto& frame = frames.frame();
-        if (frames.constructedFunctionThatLeft()) [[unlikely]] {
-            m_frame.m_isOfConstructedFunctionThatLeft = m_shownFrameFilter.shows(AOT::TraceVisibility::Visible, false);
+        if (frames.elidedConstructorFrame()) [[unlikely]] {
+            m_frame.m_isElidedConstructorFrame = m_shownFrameFilter.shows(AOT::TraceVisibility::Visible, false);
             setCompiledFrame(frame.callFrame, frame.returnAddress);
             return true;
         }
-        if (showsCalledBuiltin && frame.calledBuiltin) {
+        if (includesCalledBuiltin && frame.calledBuiltin) {
             m_frame.m_isInlinedBuiltinFrame = m_shownFrameFilter.shows(AOT::TraceVisibility::Visible, false);
             setCompiledFrame(frame.callFrame, frame.returnAddress);
             return true;
         }
-        // A function that is constructed waits for what its last call returns.
+        // A constructor still needs the result of its last call, so its frame is never tail-deleted.
         bool isTailDeleted = frame.isTailDeleted && !(frame.visibility == AOT::TraceVisibility::Visible && frames.isConstructCall());
         if (m_shownFrameFilter.shows(frame.visibility, isTailDeleted)) {
             setCompiledFrame(frame.callFrame, frame.returnAddress);
@@ -513,7 +513,7 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
 }
 
 #if ENABLE(DFG_JIT)
-static int LEGACY_NODELETE inlinedFrameOffset(CodeOrigin* codeOrigin)
+NODELETE static int inlinedFrameOffset(CodeOrigin* codeOrigin)
 {
     InlineCallFrame* inlineCallFrame = codeOrigin->inlineCallFrame();
     int frameOffset = inlineCallFrame ? inlineCallFrame->stackOffset : 0;
@@ -825,8 +825,8 @@ bool StackVisitor::Frame::isFrameOf(JSCell* function) const
     if (callee().isNativeCallee())
         return false;
 #if ENABLE(AOT)
-    if (isOfConstructedFunctionThatLeft())
-        return AOT::isClosureOf(function, m_compiledFrames->constructedFunctionThatLeft()->function);
+    if (isElidedConstructorFrame())
+        return AOT::isClosureOf(function, m_compiledFrames->elidedConstructorFrame()->function);
     if (isInlinedBuiltinFrame())
         return AOT::isClosureOf(function, AOT::functionInFramesOf(compiledFrame().calledBuiltin));
     if (isCompiledFrame())
@@ -857,7 +857,7 @@ bool StackVisitor::Frame::isImplementationVisibilityPrivate() const
                     return ImplementationVisibility::Public;
                 }
 #if ENABLE(AOT)
-                // A native frame under a function object of compiled code only enters that code, whatever form the function object has.
+                // A native frame whose callee is a compiled function object only enters compiled code.
                 if (callee->vm().hasCompiledCode() && AOT::CompiledCallee::isCompiledCallee(callee))
                     return ImplementationVisibility::Private;
 #endif

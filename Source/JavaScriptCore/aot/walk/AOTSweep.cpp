@@ -26,10 +26,10 @@ static constexpr uint8_t leavesOwedErrorMarkOfSweep = static_cast<uint8_t>(Sweep
 static constexpr uint8_t pollsForNothingMarkOfSweep = static_cast<uint8_t>(SweepMark::PollsForNothing);
 static_assert(!OptionSet<SweepMark> { SweepMark::IsNeeded, SweepMark::ReleasesOperand, SweepMark::LaterBarrierCovers, SweepMark::LeavesOwedError, SweepMark::PollsForNothing, SweepMark::LaterFenceCovers, SweepMark::OwnerIsYoung }.containsAny(OptionSet<SweepMark>::fromRaw(passedByMarkOfSweep)));
 
-static constexpr OpcodeSet operationsThatSweepNeverDrops { Opcode::LoopHint, Opcode::CountExecution, Opcode::CheckProof, Opcode::EndLifeOfCell, Opcode::AskObjectAgain, Opcode::EnterBodyThatRunsOnce, Opcode::CallBuiltin };
+static constexpr OpcodeSet operationsThatSweepNeverDrops { Opcode::LoopHint, Opcode::CountExecution, Opcode::CheckProof, Opcode::EndCellLifetime, Opcode::AskObjectAgain, Opcode::EnterBodyThatRunsOnce, Opcode::CallBuiltin };
 
-static constexpr OpcodeSet operationsThatSweepKeepsForTheirOperand { Opcode::ReleaseHint, Opcode::MarkEnvironmentEscaped, Opcode::ReleaseEnvironment };
-static_assert(OperandIndex::ReleaseHint::value == OperandIndex::MarkEnvironmentEscaped::environment && OperandIndex::ReleaseHint::value == OperandIndex::ReleaseEnvironment::environment);
+static constexpr OpcodeSet operationsThatSweepKeepsForTheirOperand { Opcode::MarkEnvironmentEscaped, Opcode::ReleaseEnvironment };
+static_assert(OperandIndex::MarkEnvironmentEscaped::environment == OperandIndex::ReleaseEnvironment::environment);
 
 static constexpr uint8_t isKeptForOperandInRowOfSweep = 1 << 0;
 static constexpr uint8_t isNeverDroppedInRowOfSweep = 1 << 1;
@@ -112,10 +112,6 @@ Sweep::Sweep(RoomsOfSweep& rooms)
     , m_environmentsFollowed(rooms.roomOfEnvironmentsFollowed.take())
     , m_blocksThatSuspend(rooms.roomOfBlocksThatSuspend.take())
     , m_blocksWithHints(rooms.roomOfBlocksWithHints.take())
-    , m_lastSuspensions(rooms.roomOfLastSuspensions.take())
-    , m_valuesLetGo(rooms.roomOfValuesLetGo.take())
-    , m_valuesHeldByCopiedBodies(rooms.roomOfValuesHeldByCopiedBodies.take())
-    , m_otherNames(rooms.roomOfOtherNames.take())
     , m_lastReads(rooms.roomOfLastReads.take())
     , m_reads(rooms.roomOfReads.take())
     , m_lastReadersInOwnBlocks(rooms.roomOfLastReadersInOwnBlocks.take())
@@ -157,8 +153,8 @@ SweepTotals Sweep::run(const SweepInputs& inputs, Code& code)
     sweepBackward();
     if (m_hasMovedBirths)
         return sweepAgainBehindMovedBirths(inputs, code);
-    if (inputs.letsGoEdgeThatIsTaken) [[unlikely]]
-        letGoEdgeThatIsTaken();
+    if (inputs.shouldDropEdge) [[unlikely]]
+        dropTakenEdge();
     settlePollsThatLeaveUnlessRecordsAreKept();
     return m_totals;
 }
@@ -598,7 +594,7 @@ void Sweep::turnBranchesThatDecideNothingIntoJumps()
     }
 }
 
-void Sweep::turnBranchThatDecidesIntoJump()
+void Sweep::misfoldBranch()
 {
     Code& code = *m_code;
     for (BlockID id : m_reachedInPostorder) {
@@ -620,7 +616,7 @@ void Sweep::turnBranchThatDecidesIntoJump()
     }
 }
 
-void Sweep::letGoEdgeThatIsTaken()
+void Sweep::dropTakenEdge()
 {
     Code& code = *m_code;
     for (BlockID id : m_reachedInPostorder) {
@@ -711,6 +707,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
             if (hasOwnerBarrier || !m_storesThatAwaitBirth.isEmpty())
                 lookForBirthOfOwner(value, operation);
         }
+        if (opcode == Opcode::CreateUnmappedArguments && m_looksForBirthsToMove)
+            noteIfBirthMayMove(value, operation);
         if (looksForCoveredFences && (m_laterFenceCovers || (row & isAllocationWithFenceInRowOfSweep)))
             lookForCoveredFence(value, operation);
     }
@@ -785,8 +783,8 @@ void Sweep::sweepBackward()
         putOperationsNeededLateInOrder();
     if (!m_branchesThatDecideNothing.isEmpty())
         turnBranchesThatDecideNothingIntoJumps();
-    if (m_inputs->turnsBranchThatDecidesIntoJump) [[unlikely]]
-        turnBranchThatDecidesIntoJump();
+    if (m_inputs->shouldMisfoldBranch) [[unlikely]]
+        misfoldBranch();
     m_totals.operationsDropped -= m_numberOfOperationsInOrder;
     code.m_numberOfOperationsInOrder = m_numberOfOperationsInOrder;
     countUsesAtEndsOfBlocks();
@@ -842,22 +840,16 @@ bool Sweep::mayBeKeptForItsOperand(const Operation& operation) const
 {
     if (!operationsThatSweepKeepsForTheirOperand.contains(operation.opcode))
         return false;
-    ValueID operand = operation.operand(OperandIndex::ReleaseHint::value);
+    ValueID operand = operation.operand(OperandIndex::ReleaseEnvironment::environment);
     return !m_code->isConstant(operand) && holdsCells(m_code->at(operand).representation);
 }
 
 bool Sweep::noteOperationKeptForItsOperand(BlockID block, ValueID id, const Operation& operation)
 {
-    bool mayBeKept = mayBeKeptForItsOperand(operation);
-    bool isHint = operation.opcode == Opcode::ReleaseHint;
-    if (!mayBeKept && !isHint)
+    if (!mayBeKeptForItsOperand(operation))
         return false;
-    ValueID operand = operation.operand(OperandIndex::ReleaseHint::value);
-    bool isBehindCopiedBody = isHint && operation.isBehindCopiedBody();
-    m_operationsKeptForOperands.append({ block, id, operand, operation.opcode, mayBeKept, isBehindCopiedBody });
-    if (mayBeKept && isBehindCopiedBody)
-        noteValueHeldByCopiedBody(operand);
-    return mayBeKept;
+    m_operationsKeptForOperands.append({ block, id, operation.operand(OperandIndex::ReleaseEnvironment::environment), operation.opcode });
+    return true;
 }
 
 void Sweep::settleOperationsKeptForTheirOperands()
@@ -865,12 +857,12 @@ void Sweep::settleOperationsKeptForTheirOperands()
     Code& code = *m_code;
     Vector<BlockID, 8> blocksWithGaps;
     for (const OperationKeptForOperand& kept : m_operationsKeptForOperands) {
-        if (!kept.standsInOrder || code.isNeeded(kept.operation))
+        if (code.isNeeded(kept.operation))
             continue;
         if (code.isNeeded(kept.operand)) {
             code.m_marks[kept.operation.index()] |= neededMarkOfSweep;
             countUse(kept.operand, kept.operation);
-            if (m_followsLiveness && kept.opcode != Opcode::ReleaseHint && kept.opcode != Opcode::ReleaseEnvironment) {
+            if (m_followsLiveness && kept.opcode != Opcode::ReleaseEnvironment) {
                 ++m_totals.operationsSwept;
                 noteNeededOperationForLiveness(kept.operation, code.at(kept.operation));
             }

@@ -17,7 +17,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v6 = Undefined
     Return v6
 }
-function f1 name="keep" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] length=20 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="keep" module=m0 flags=[IsAsync, IsChecked, HasExplicitName] length=20 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything, v12: anything, v13: anything, v14: anything, v15: anything, v16: anything, v17: anything, v18: anything, v19: anything):
     v20 = Null
     v21 = Await v20, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19

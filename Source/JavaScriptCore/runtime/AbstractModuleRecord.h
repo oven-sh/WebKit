@@ -97,9 +97,9 @@ public:
             Namespace,
         };
 
-        static ExportEntry LEGACY_NODELETE createLocal(const Identifier& exportName, const Identifier& localName);
-        static ExportEntry LEGACY_NODELETE createIndirect(const Identifier& exportName, const Identifier& importName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
-        static ExportEntry LEGACY_NODELETE createNamespace(const Identifier& exportName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
+        NODELETE static ExportEntry createLocal(const Identifier& exportName, const Identifier& localName);
+        NODELETE static ExportEntry createIndirect(const Identifier& exportName, const Identifier& importName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
+        NODELETE static ExportEntry createNamespace(const Identifier& exportName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
 
         Type type;
         ScriptFetchParameters::Type moduleRequestType { ScriptFetchParameters::Type::JavaScript };
@@ -259,9 +259,9 @@ public:
         }
 #endif
 
-        static Resolution LEGACY_NODELETE notFound();
-        static Resolution LEGACY_NODELETE error();
-        static Resolution LEGACY_NODELETE ambiguous();
+        NODELETE static Resolution notFound();
+        NODELETE static Resolution error();
+        NODELETE static Resolution ambiguous();
 
         JS_EXPORT_PRIVATE bool isSameBinding(const Resolution& other) const;
         bool isEquivalentTo(const Resolution& other) const { return type == other.type && (type != Type::Resolved || isSameBinding(other)); }
@@ -274,8 +274,8 @@ public:
         Type type;
 #if ENABLE(AOT)
         // In the padding before the pointer.
-        bool isOfEndedMock { false };
-        bool cameThroughEntryFromStar { false };
+        bool isFromRemovedMock { false };
+        bool cameFromStarExportEntry { false };
         Markable<unsigned> compiledExportIndex;
 #endif
         AbstractModuleRecord* moduleRecord;
@@ -285,7 +285,7 @@ public:
     Resolution resolveExport(JSGlobalObject*, const Identifier& exportName);
 #if ENABLE(AOT)
     static_assert(sizeof(Resolution) == 3 * sizeof(void*));
-    Resolution resolveExportLedBy(JSGlobalObject*, const Identifier& exportName, AOT::ModuleRecord* leader);
+    Resolution resolveExportViaReexporter(JSGlobalObject*, const Identifier& exportName, AOT::ModuleRecord* reexporter);
 #endif
     // requestedModule is set to the module the import names. For a re-export, that isn't the resolution's moduleRecord.
     Resolution resolveImport(JSGlobalObject*, const Identifier& localName, AbstractModuleRecord** requestedModule = nullptr);
@@ -406,17 +406,17 @@ protected:
 #endif
 #if ENABLE(AOT)
     void forgetCachedResolutions() { m_resolutionCache.clear(); }
-    void keepImportAsLinked(UniquedStringImpl* localName, const Resolution&);
+    void recordLinkedImport(UniquedStringImpl* localName, const Resolution&);
 #endif
 
 private:
     struct ResolveQuery;
 #if ENABLE(AOT)
-    static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&, AOT::ModuleRecord* leader = nullptr);
+    static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&, AOT::ModuleRecord* reexporter = nullptr);
 #else
     static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&);
 #endif
-    std::optional<Resolution> LEGACY_NODELETE tryGetCachedResolution(UniquedStringImpl* exportName);
+    NODELETE std::optional<Resolution> tryGetCachedResolution(UniquedStringImpl* exportName);
     void cacheResolution(UniquedStringImpl* exportName, const Resolution&);
 #if USE(BUN_JSC_ADDITIONS)
     void ensurePrelinkedEntriesMaterialized() const
@@ -464,7 +464,7 @@ private:
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Resolution, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> Resolutions;
     Resolutions m_resolutionCache;
 #if ENABLE(AOT)
-    Resolutions m_importsAsLinked;
+    Resolutions m_linkedImports;
 #endif
 
 protected:

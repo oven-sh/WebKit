@@ -1,12 +1,12 @@
 # The function of constants-between-operations-that-lean-on-one-guess.ir, twenty-four times, under every word that draws by a seed: the frequencies of blocks, what is expected of values, the choices of cost, what Link is given,
 # and a guess that fails one time in two. Each may only change what the code costs. Link is held against itself on the way: what it says of the program given more it must say of the program as it is.
 # Twenty-four functions, so that no seed leaves a word without a draw: each statistic below says that its word has done something in this run.
-# OPTIONS: testing=ShuffleBlockFrequencies:8,ShuffleExpectedTypes:8,ShuffleChoices:8,GiveLinkMore:8,FailGuesses:2:8 check=FlowFindsNoLessFromMore
+# OPTIONS: testing=ShuffleBlockFrequencies:8,ShuffleExpectedTypes:8,ShuffleChoices:8,WidenFlowNodes:8,FailSpeculations:2:8 check=FlowMonotonicity
 # STATISTIC: BlocksPlacedOtherwise >= 1
-# STATISTIC: ExpectedTypesTakenOtherwise >= 1
+# STATISTIC: SpeculatedTypesOverridden >= 1
 # STATISTIC: ChoicesOfCostDrawn >= 1
-# STATISTIC: FactNodesGivenMore >= 1
-# STATISTIC: PlacesWhereGuessesFailUnasked >= 1
+# STATISTIC: FactNodesWidened >= 1
+# STATISTIC: SpeculationFailuresInjected >= 1
 # RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = row => { const show = n => { const all = row(n); let line = ""; for (let i = 0; i < all.length; i++) line += " " + String(all[i]); print(all.length + line); }; show(3); show("5"); show(2n); show(3); show(4); };
 # REPEAT: i = 1..24
 # SHELL: 7 9 undefined null 4 q true 27

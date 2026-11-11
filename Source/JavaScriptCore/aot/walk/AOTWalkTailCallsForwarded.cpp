@@ -22,13 +22,13 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
+OperatorForm operatorFormFor(Walker&, const Draft&);
 
 static constexpr uint32_t mostArgumentsPassedOnByCount = 4;
 
 static ValueID rootOfOperandOfForwardedTailCall(const Code& code, Reference operand)
 {
-    return operand && operand.isValue() ? rootOfCellInSweptCode(code, operand.id()) : ValueID();
+    return operand && operand.isValue() ? underlyingCellOf(code, operand.id()) : ValueID();
 }
 
 bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draft& written, Reference callee, Reference thisValueOrNull, Reference arguments)
@@ -43,7 +43,7 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
         return false;
     const Code& code = walker.code();
     ValueID object = rootOfOperandOfForwardedTailCall(code, arguments);
-    if (!object || code.at(object).opcode != Opcode::CreateUnmappedArguments || !isListAsMade(walker, arguments))
+    if (!object || code.at(object).opcode != Opcode::CreateUnmappedArguments || !isKnownPristine(walker, arguments))
         return false;
     bool readsArgumentsOfEntry = walker.walksBodyBehindEntry() && !code.at(object).origin().inlineFrame;
     if (!behind->firstPosition && !readsArgumentsOfEntry)
@@ -71,11 +71,11 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
         walker.leaveAnythingAt(listed);
 
     bool returnsAtOnce = walker.unitReturnsAtOnce(written);
-    BlockID behindCall;
-    Reference resultBehindCall;
+    BlockID continuationBlock;
+    Reference mergedResult;
     if (!returnsAtOnce) {
-        behindCall = walker.addBlock();
-        resultBehindCall = walker.addParameter(behindCall, { }, Representation::JSValue);
+        continuationBlock = walker.addBlock();
+        mergedResult = walker.addParameter(continuationBlock, { }, Representation::JSValue);
     }
     auto buildCallAndEndArm = [&](Draft&& forwarded) {
         forwarded.setCalleeOperand(callee);
@@ -98,7 +98,7 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
         if (returnsAtOnce)
             walker.returnAtOnce(result);
         else
-            walker.jumpTo(behindCall, singleElementSpan(result));
+            walker.jumpTo(continuationBlock, singleElementSpan(result));
     };
 
     Type typeOfCount = walker.types().at(walker.typeOf(count));
@@ -112,7 +112,7 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
         test.setLeftOperand(count);
         test.setRightOperand(walker.constant(WTF::move(number)));
         if (walker.has(Mechanism::TypedOperations))
-            test.setForm(formAllowedForTypedOperator(walker, test));
+            test.setForm(operatorFormFor(walker, test));
         Reference isNumberPassed = walker.build(WTF::move(test));
         if (!isNumberPassed)
             return true;
@@ -134,7 +134,7 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
         all.standsForNoValueOfInput = true;
         all.setContents(TypeTable::anything);
         all.setVariadicOperands(parameters.span().first(behind->firstPosition));
-        Reference listBehindParameters = readsArgumentsOfEntry ? walker.makeHiddenListOfEntryAgain() : behind->list;
+        Reference listBehindParameters = readsArgumentsOfEntry ? walker.rematerializeHiddenRestArray() : behind->list;
         if (!listBehindParameters) {
             walker.fail("the list of arguments of an entry cannot be made again"_s);
             return true;
@@ -159,9 +159,9 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
 
     if (returnsAtOnce)
         return true;
-    walker.continueIn(behindCall);
+    walker.continueIn(continuationBlock);
     if (!walker.isUnreachable())
-        walker.bind(call.id(), resultBehindCall);
+        walker.bind(call.id(), mergedResult);
     return true;
 }
 

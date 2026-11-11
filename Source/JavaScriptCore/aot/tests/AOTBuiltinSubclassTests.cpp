@@ -631,14 +631,14 @@ static void checkWhichStructuresTellHeirs(LoadedProgram& program)
     realm->putDirect(vm, Identifier::fromString(vm, "registry"_s), registry);
     evaluateModuleSynchronously(realm, ModuleID { 0u });
     AOT_TEST_CHECK(!scope.exception());
-    auto handedOver = [&](ASCIILiteral name) {
+    auto registeredObject = [&](ASCIILiteral name) {
         JSValue value = registry->getDirect(vm, Identifier::fromString(vm, name));
         AOT_TEST_CHECK(value && value.isObject());
         return asObject(value);
     };
 
     ClassTable& classes = program.state().objects->classes;
-    const LayoutData* classLayout = classes.classConstructedBy(classes.functionOfOwnClosure(*uncheckedDowncast<Closure>(handedOver("Registry"_s))));
+    const LayoutData* classLayout = classes.classConstructedBy(classes.functionOfOwnClosure(*uncheckedDowncast<Closure>(registeredObject("Registry"_s))));
     AOT_TEST_CHECK(classLayout && classLayout->classData().propertiesOfHeirsOffset);
     DeferGC deferGC(vm);
     constexpr int32_t displacementOfFirstProperty = static_cast<int32_t>(offsetInButterfly(firstOutOfLineOffset) * static_cast<intptr_t>(sizeof(EncodedJSValue)));
@@ -650,60 +650,60 @@ static void checkWhichStructuresTellHeirs(LoadedProgram& program)
         return !classes.structureTellsInstancesOf(*classLayout, cell, displacements) && displacements == before;
     };
 
-    JSObject* lacksField = handedOver("fifth"_s);
+    JSObject* lacksField = registeredObject("fifth"_s);
     AOT_TEST_CHECK(JSCell::deleteProperty(lacksField, realm, Identifier::fromString(vm, "hits"_s)) && !scope.exception());
     AOT_TEST_CHECK(isRefused(lacksField));
 
-    JSObject* asConstructed = handedOver("first"_s);
+    JSObject* asConstructed = registeredObject("first"_s);
     AOT_TEST_CHECK(classes.structureTellsInstancesOf(*classLayout, asConstructed, displacements) && displacements == asConstructorStores);
-    AOT_TEST_CHECK(handedOver("second"_s)->structureID() == asConstructed->structureID());
+    AOT_TEST_CHECK(registeredObject("second"_s)->structureID() == asConstructed->structureID());
     AOT_TEST_CHECK(isRefused(lacksField));
 
-    JSObject* hidesMethod = handedOver("second"_s);
+    JSObject* hidesMethod = registeredObject("second"_s);
     hidesMethod->putDirect(vm, Identifier::fromString(vm, "lookup"_s), jsNumber(9));
     AOT_TEST_CHECK(isRefused(hidesMethod));
 
-    JSObject* liesBelowOtherPrototype = handedOver("third"_s);
+    JSObject* liesBelowOtherPrototype = registeredObject("third"_s);
     liesBelowOtherPrototype->setPrototypeDirect(vm, realm->objectPrototype());
     AOT_TEST_CHECK(isRefused(liesBelowOtherPrototype));
 
-    JSObject* dictionary = handedOver("fourth"_s);
+    JSObject* dictionary = registeredObject("fourth"_s);
     dictionary->convertToDictionary(vm);
     AOT_TEST_CHECK(isRefused(dictionary));
 
     AOT_TEST_CHECK(isRefused(registry));
 
-    JSObject* bornAsPlainMap = handedOver("sixth"_s);
+    JSObject* bornAsPlainMap = registeredObject("sixth"_s);
     AOT_TEST_CHECK(isRefused(bornAsPlainMap));
     std::array<int32_t, 2> nothingLearned { };
     AOT_TEST_CHECK(!classes.structureTellsInstancesOf(*classLayout, bornAsPlainMap, nothingLearned) && !nothingLearned[0] && !nothingLearned[1]);
     AOT_TEST_CHECK(classes.structureTellsInstancesOf(*classLayout, asConstructed, displacements) && displacements == asConstructorStores);
 
-    JSObject* holdsReadOnlyField = handedOver("seventh"_s);
+    JSObject* holdsReadOnlyField = registeredObject("seventh"_s);
     holdsReadOnlyField->putDirect(vm, Identifier::fromString(vm, "name"_s), jsNumber(1), static_cast<unsigned>(PropertyAttribute::ReadOnly));
     AOT_TEST_CHECK(isRefused(holdsReadOnlyField));
 
-    JSObject* frozen = handedOver("eighth"_s);
+    JSObject* frozen = registeredObject("eighth"_s);
     AOT_TEST_CHECK(objectConstructorFreeze(realm, frozen) && !scope.exception());
     AOT_TEST_CHECK(isRefused(frozen));
 
-    JSObject* becamePrototype = handedOver("ninth"_s);
+    JSObject* becamePrototype = registeredObject("ninth"_s);
     becamePrototype->didBecomePrototype(vm);
     AOT_TEST_CHECK(isRefused(becamePrototype));
 
-    JSObject* refusesEveryWrite = handedOver("tenth"_s);
+    JSObject* refusesEveryWrite = registeredObject("tenth"_s);
     AOT_TEST_CHECK(refusesEveryWrite->makePropertiesImmutable(vm));
     AOT_TEST_CHECK(isRefused(refusesEveryWrite));
 
-    JSObject* hidesMemberOfBase = handedOver("eleventh"_s);
+    JSObject* hidesMemberOfBase = registeredObject("eleventh"_s);
     hidesMemberOfBase->putDirect(vm, Identifier::fromString(vm, "get"_s), jsNumber(1));
     AOT_TEST_CHECK(isRefused(hidesMemberOfBase));
 
-    JSObject* hidesMemberAboveBase = handedOver("twelfth"_s);
+    JSObject* hidesMemberAboveBase = registeredObject("twelfth"_s);
     hidesMemberAboveBase->putDirect(vm, vm.propertyNames->toString, jsNumber(1));
     AOT_TEST_CHECK(isRefused(hidesMemberAboveBase));
 
-    JSObject* hidesNoMember = handedOver("thirteenth"_s);
+    JSObject* hidesNoMember = registeredObject("thirteenth"_s);
     hidesNoMember->putDirect(vm, Identifier::fromString(vm, "extra"_s), jsNumber(1));
     AOT_TEST_CHECK(hidesNoMember->structureID() != asConstructed->structureID());
     AOT_TEST_CHECK(classes.structureTellsInstancesOf(*classLayout, hidesNoMember, displacements) && displacements == asConstructorStores);

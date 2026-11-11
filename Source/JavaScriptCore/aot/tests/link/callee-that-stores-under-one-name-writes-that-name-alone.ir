@@ -10,7 +10,7 @@
 # SUMMARY: summary f1 {{*}}MayThrow
 # SUMMARY: access {{*}}Store Parameter 0 "n"
 # RUN(OWN): summary f1
-# OWN-NOT: summary f1 {{*}}mayWriteWhatIsSeen
+# OWN-NOT: summary f1 {{*}}mayWriteObservableState
 
 layout L0 module=m0 fields=[{key="n" declared={type=anything} flags=[IsRequired]}, {key="m" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
 module m0 path="main.js" displayPath="main.js" body=f0

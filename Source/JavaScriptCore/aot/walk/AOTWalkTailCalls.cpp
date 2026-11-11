@@ -17,6 +17,7 @@
 #include "AOTSweep.h"
 #include "AOTTailCallPlan.h"
 #include "AOTThinSummary.h"
+#include <algorithm>
 #include <bit>
 #include <span>
 
@@ -26,7 +27,7 @@ static FunctionID functionOfClosureInTailCalls(const Code& code, ValueID value)
 {
     if (!value)
         return { };
-    const Operation& made = code.at(rootOfCellInSweptCode(code, value));
+    const Operation& made = code.at(underlyingCellOf(code, value));
     return made.opcode == Opcode::NewClosure ? made.function() : FunctionID();
 }
 
@@ -59,6 +60,13 @@ TailCallRequirement requirementOfTailCall(const Walker& walker, Reference call)
     if (!call || !call.isValue())
         return TailCallRequirement::Required;
     const Operation& record = walker.code().at(call.id());
+    if (record.opcode == Opcode::CallTable) {
+        const CallingConventions& conventions = walker.plan().conventions();
+        bool everyMethodEnds = std::ranges::all_of(conventions.familyOf(conventions.methodSelector(record.selector())).methods, [&](FunctionID method) {
+            return walker.plan().endsItsTailCalls(method);
+        });
+        return everyMethodEnds ? TailCallRequirement::Allowed : TailCallRequirement::Required;
+    }
     if (record.opcode != Opcode::CallDirect)
         return TailCallRequirement::Required;
     std::span<const ValueID> arguments;

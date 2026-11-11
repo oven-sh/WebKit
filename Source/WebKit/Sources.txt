@@ -330,7 +330,6 @@ Shared/Extensions/WebExtensionRegisteredScriptsSQLiteStore.cpp
 Shared/Gamepad/GamepadData.cpp
 
 Shared/graphics/DisplayListData.cpp
-Shared/graphics/ImageBufferSet.cpp
 
 Shared/WebGPU/WebGPUBindGroupDescriptor.cpp
 Shared/WebGPU/WebGPUBindGroupEntry.cpp
@@ -588,6 +587,7 @@ UIProcess/Extensions/WebExtensionStorageSQLiteStore.cpp
 
 UIProcess/Extensions/API/WebExtensionContextAPIAlarms.cpp
 UIProcess/Extensions/API/WebExtensionContextAPIDeclarativeNetRequest.cpp
+UIProcess/Extensions/API/WebExtensionContextAPIEvent.cpp
 UIProcess/Extensions/API/WebExtensionContextAPIStorage.cpp @cost:3
 
 UIProcess/Gamepad/UIGamepad.cpp
@@ -632,6 +632,8 @@ UIProcess/Notifications/WebNotification.cpp
 UIProcess/Notifications/WebNotificationManagerMessageHandler.cpp
 UIProcess/Notifications/WebNotificationManagerProxy.cpp
 UIProcess/Notifications/WebNotificationProvider.cpp
+
+UIProcess/PhoneNumberPossession/WebPhoneNumberPossessionCoordinatorProxy.cpp
 
 UIProcess/UserContent/WebScriptMessageHandler.cpp
 UIProcess/UserContent/WebUserContentControllerProxy.cpp @cost:3
@@ -684,6 +686,7 @@ WebProcess/Extensions/WebExtensionContextProxy.cpp
 WebProcess/Extensions/WebExtensionControllerProxy.cpp
 
 WebProcess/Extensions/API/WebExtensionAPIAlarms.cpp
+WebProcess/Extensions/API/WebExtensionAPIEvent.cpp
 WebProcess/Extensions/API/WebExtensionAPIRuntime.cpp
 WebProcess/Extensions/API/WebExtensionAPINamespace.cpp
 WebProcess/Extensions/API/WebExtensionAPIStorage.cpp
@@ -798,7 +801,6 @@ WebProcess/GPU/graphics/WebGPU/RemoteXRSubImageProxy.cpp
 WebProcess/GPU/graphics/WebGPU/RemoteXRViewProxy.cpp
 WebProcess/GPU/graphics/WebGPU/WebGPUDowncastConvertToBackingContext.cpp
 WebProcess/GPU/graphics/ImageBufferRemoteDisplayListBackend.cpp
-WebProcess/GPU/graphics/ImageBufferRemotePDFDocumentBackend.cpp
 WebProcess/GPU/graphics/ImageBufferShareableBitmapBackend.cpp
 WebProcess/GPU/graphics/PrepareBackingStoreBuffersData.cpp
 WebProcess/GPU/graphics/RemoteDisplayListRecorderProxy.cpp
@@ -864,6 +866,8 @@ WebProcess/Network/webrtc/WebRTCResolver.cpp
 
 WebProcess/Notifications/NotificationPermissionRequestManager.cpp
 WebProcess/Notifications/WebNotificationManager.cpp
+
+WebProcess/PhoneNumberPossession/WebPhoneNumberPossessionCoordinator.cpp
 
 WebProcess/Plugins/PluginView.cpp @cost:6
 WebProcess/Plugins/WebPluginInfoProvider.cpp

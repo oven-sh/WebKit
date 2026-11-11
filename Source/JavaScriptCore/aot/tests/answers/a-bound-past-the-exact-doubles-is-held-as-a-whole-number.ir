@@ -1,14 +1,16 @@
 # function take(value) { return value; }  print(typeof id(take)(given)); print("went on");
-# THE LIE, BY HAND: f1's parameter is said to hold undefined, a text or a whole number from 0 to 2^53 + 3. 2^53 + 4 lies outside.
+# The fault is written by hand in the IR: the type of f1's parameter claims undefined, a string or an integer from 0 to 2^53 + 3. 2^53 + 4 is outside that range.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(INSIDE): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 9007199254740994;
 # INSIDE: number
 # INSIDE-NEXT: went on
 # RUN(OUTSIDE): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 9007199254740996;
-# OUTSIDE: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# OUTSIDE: bun: internal AOT error: type check failed
+# OUTSIDE-NEXT: found double in
 # OUTSIDE-NOT: went on
 # RUN(FARTHER): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 9007199254740998;
-# FARTHER: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# FARTHER: bun: internal AOT error: type check failed
+# FARTHER-NEXT: found double in
 
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {

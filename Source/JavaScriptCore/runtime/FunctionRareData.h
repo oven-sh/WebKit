@@ -74,7 +74,7 @@ public:
     static constexpr ptrdiff_t offsetOfInternalFunctionAllocationProfile() { return OBJECT_OFFSETOF(FunctionRareData, m_internalFunctionAllocationProfile); }
     static constexpr ptrdiff_t offsetOfExecutable() { return OBJECT_OFFSETOF(FunctionRareData, m_executable); }
 #if ENABLE(AOT)
-    // What AOT::ClassTable::createThis() allocated with this function as new.target, and a number that stands for the compiled function it was constructing.
+    // The Structure that AOT::ClassTable::createThis() last used with this new.target, and the constructed function.
     static constexpr uint32_t maxCompiledAllocationConstructor = (1u << 24) - 1;
     Structure* compiledAllocationStructure() const { return m_compiledAllocationStructureID.get(); }
     uint32_t compiledAllocationConstructor() const { return static_cast<uint32_t>(m_compiledAllocationConstructorHighBits) << 16 | m_compiledAllocationConstructorLowBits; }

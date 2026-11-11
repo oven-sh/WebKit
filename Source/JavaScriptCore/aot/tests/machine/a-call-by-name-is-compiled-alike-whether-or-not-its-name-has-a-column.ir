@@ -5,8 +5,8 @@
 # CHECK: Call Stub CallMethodAtSite
 # CHECK-NOT: UnderNameWithColumn
 # The image lays the call on the sibling under a name with a column, which loads the sixteen bits of the site's name behind a miss and asks nothing: `m` has one.
-# RUN(LAID): compile StubKeysLaidOnSiblingsUnderNamesWithColumn NamesWithoutColumn
-# LAID: StubKeysLaidOnSiblingsUnderNamesWithColumn 1
+# RUN(LAID): compile ColumnStubVariantsSelected NamesWithoutColumn
+# LAID: ColumnStubVariantsSelected 1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

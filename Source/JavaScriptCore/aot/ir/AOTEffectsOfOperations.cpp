@@ -156,7 +156,7 @@ constexpr auto effectsOfEveryOperationWithRoomForAll = [] {
             continue;
         Effects effects = withDeclaredKindOfThrow(opcode, builder.effects());
         if (opcode == Opcode::PutDoubleIndex || opcode == Opcode::PutOwnDoubleIndex) {
-            uint64_t written = effects.writes.maskOf(AbstractHeap::Elements) & ~markOfElementsOfArraysNotStoredAsRawDoubles;
+            uint64_t written = effects.writes.maskOf(AbstractHeap::Elements) & ~markOfElementsThatMayHoldCells;
             effects.writes.remove(AbstractHeapSet { AbstractHeap::Elements });
             effects.writes.add(AbstractHeap::Elements, written);
         }
@@ -193,7 +193,7 @@ static_assert(effectsOfEveryOperation.opcodesNamingOnlyEntireHeaps.contains(Opco
 static_assert([] {
     bool rawStoresLackMarkAlone = true;
     for (Opcode opcode : { Opcode::PutDoubleIndex, Opcode::PutOwnDoubleIndex })
-        rawStoresLackMarkAlone &= effectsOfEveryOperationWith(opcode).writes.maskOf(AbstractHeap::Elements) == (locationMaskOfElementBase(ElementBase::Array) & ~markOfElementsOfArraysNotStoredAsRawDoubles);
+        rawStoresLackMarkAlone &= effectsOfEveryOperationWith(opcode).writes.maskOf(AbstractHeap::Elements) == (locationMaskOfElementBase(ElementBase::Array) & ~markOfElementsThatMayHoldCells);
     for (Opcode opcode : { Opcode::PutContiguousIndex, Opcode::PutOwnContiguousIndex, Opcode::PutOwnInt32Index })
         rawStoresLackMarkAlone &= effectsOfEveryOperationWith(opcode).writes.maskOf(AbstractHeap::Elements) == locationMaskOfElementBase(ElementBase::Array);
     return rawStoresLackMarkAlone && std::popcount(locationMaskOfElementBase(ElementBase::Array)) == 2;
@@ -261,6 +261,8 @@ static constexpr OpcodeSet opcodesWithEffectsFittedToOperands = [] {
         opcodes.add(Opcode::NewArrayLike);
     if (effectRuleOf(Opcode::PutArrayElement) == EffectRule::Declared)
         opcodes.add(Opcode::PutArrayElement);
+    opcodes.add(Opcode::PutContiguousIndex);
+    opcodes.add(Opcode::ModuleNamespace);
     return opcodes;
 }();
 
@@ -719,6 +721,8 @@ static ALWAYS_INLINE Effects declaredEffectsBuiltInPlace(const Program& program,
     Effects effects = Effects::none();
     EffectsBuilderInPlace builder(program, effects);
     forEachDeclaredEffect(operation, builder);
+    if (lookAtCellHasNoFlagThatReads(opcode, operation))
+        effects.reads.remove(heapsThatOnlyFlagsOfLooksAtCellRead);
     if (effects.mayThrow && opcodesThrowingOnlyForLackOfMemory.contains(opcode))
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
     return effects;
@@ -754,9 +758,25 @@ static bool definesElementOfListForEffects(const TypingContext& context, Operand
     return onlyClass && onlyClass->builtinClass == BuiltinClasses::Array;
 }
 
+template<typename Operation>
+bool namespaceReadRunsNoCode(const Program& program, const Operation& read)
+{
+    constexpr OptionSet<ModuleFlags> excludedFlags { ModuleFlags::MayBeReevaluated, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted, ModuleFlags::IsLoadedByLoader };
+    if (read.ofModuleItself() || read.asksAnew() || read.phase() != ImportPhase::Evaluation)
+        return false;
+    const Module& module = program.at(read.module());
+    if (module.kind != ModuleKind::SourceText || module.exportRule != SyntheticExportRule::None || module.flags.containsAny(excludedFlags))
+        return false;
+    return std::ranges::none_of(module.requests, [](const ModuleRequest& request) {
+        return request.isDynamicStarExport;
+    });
+}
+
 template<typename Holder>
 static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode opcode, const Holder& operation, OperandTypes operandTypes, TypeID result)
 {
+    if (opcode == Opcode::ModuleNamespace && namespaceReadRunsNoCode(context.program, operation))
+        return Effects::ofReadByNameThatRunsNoCode();
     if (opcode == Opcode::ElemDefine && definesElementOfListForEffects(context, operandTypes)) {
         Effects effects = declaredBoundOf(Opcode::PutArrayElement);
         effects.writes.add(perObjectHeaps);
@@ -771,6 +791,11 @@ static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode 
     }
     if (opcode == Opcode::NewArrayLike && effects.mayThrow && lengthIsThatOfListForEffects(context, operandTypes))
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
+    if (opcode == Opcode::PutContiguousIndex && operation.hasNumericStorage()) {
+        uint64_t written = effects.writes.maskOf(AbstractHeap::Elements) & ~markOfElementsThatMayHoldCells;
+        effects.writes.remove(AbstractHeapSet { AbstractHeap::Elements });
+        effects.writes.add(AbstractHeap::Elements, written);
+    }
     if (opcode == Opcode::PutArrayElement && effects.mayThrow && operation.fillsPlaceOfListMadeHere())
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
     if (opcode == Opcode::Strcat && effects.mayThrow && joinsTextsThatFitForEffects(context, operation, operandTypes))
@@ -831,6 +856,7 @@ Effects effectsOfTerminator(const TypingContext& context, const Terminator& term
     return effects;
 }
 
+template bool namespaceReadRunsNoCode<BodyValue>(const Program&, const BodyValue&);
 template Effects effectsOf<Draft>(const TypingContext&, const Draft&, OperandTypes, TypeID, const Effects*);
 template Effects effectsOf<Operation>(const TypingContext&, const Operation&, OperandTypes, TypeID, const Effects*);
 template Effects effectsOf<BodyValue>(const TypingContext&, const BodyValue&, OperandTypes, TypeID, const Effects*);

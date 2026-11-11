@@ -70,7 +70,7 @@ function f1 name="numbersGetText" module=m0 flags=[IsChecked, HasExplicitName] l
     Branch v30 -> taken b7(), notTaken b9()
   b7():
     v31 = ElemGet v2, v27
-    v32 = Convert v31 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v32 = Convert v31 declared={type=number} illTypedCause=FromLooseType
     v33 = TypeOf v32
     v34 = String string=","
     v35 = Add v33, v34

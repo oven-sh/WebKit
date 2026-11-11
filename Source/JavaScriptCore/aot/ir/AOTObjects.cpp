@@ -504,7 +504,7 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
     carryObjectRecordsOver(m_records.span(), records.mutableSpan(), loops);
     m_records = WTF::move(records);
 
-    constexpr OptionSet<ModuleFlags> flagsOfModulesWithSeveralNamespaces { ModuleFlags::RunsAgain, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted };
+    constexpr OptionSet<ModuleFlags> flagsOfModulesWithSeveralNamespaces { ModuleFlags::MayBeReevaluated, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted };
     begin(ObjectKind::Namespace);
     for (uint32_t index = 0; index < numberOfModules; ++index) {
         ObjectRecord record = objectRecordOfKind(ObjectKind::Namespace, index, { ObjectTrait::HasNoShape, ObjectTrait::IsOtherObject });

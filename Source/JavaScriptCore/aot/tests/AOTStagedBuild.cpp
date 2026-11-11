@@ -239,22 +239,22 @@ static InternalErrorKind errorKindOfStagedMachineFailure(Machine::FailureKind ki
     switch (kind) {
     case Machine::FailureKind::MalformedProcedure:
     case Machine::FailureKind::OutOfRegisters:
-    case Machine::FailureKind::NeedsFrameWhereNoneIsSetUp:
+    case Machine::FailureKind::MissingFrameSetup:
         return InternalErrorKind::Unknown;
     case Machine::FailureKind::AccessOutsideDeclaredEffects:
         return InternalErrorKind::StoreOutsideDeclaredEffects;
-    case Machine::FailureKind::RegisterLacksItsValue:
-        return InternalErrorKind::RegisterLacksItsValue;
-    case Machine::FailureKind::SpillSlotLacksItsValue:
-        return InternalErrorKind::SpillSlotLacksItsValue;
+    case Machine::FailureKind::WrongValueInRegister:
+        return InternalErrorKind::WrongValueInRegister;
+    case Machine::FailureKind::WrongValueInSpillSlot:
+        return InternalErrorKind::WrongValueInSpillSlot;
     case Machine::FailureKind::FrameAddressAcrossSuspension:
         return InternalErrorKind::FrameAddressAcrossSuspension;
     case Machine::FailureKind::NarrowReferenceWithoutPointer:
         return InternalErrorKind::NarrowReferenceWithoutPointer;
     case Machine::FailureKind::InnerPointerWithoutOwner:
         return InternalErrorKind::InnerPointerWithoutOwner;
-    case Machine::FailureKind::ReleasedValueIsReadOnWayOn:
-        return InternalErrorKind::ReleasedValueIsReadOnWayOn;
+    case Machine::FailureKind::UpperHalfIsNotClear:
+        return InternalErrorKind::UpperHalfNotClear;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

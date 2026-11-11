@@ -25,7 +25,8 @@ FunctionID functionDeclaredInScopeSlot(const Program& program, LayoutID layout, 
     Type type = program.at(written);
     if (!type.isJavaScriptValue() || type.primitives)
         return { };
-    return singleFunctionOf(program, type);
+    FunctionID function = singleFunctionOf(program, type);
+    return function && isClassConstructorOf(program.at(function).kind) ? FunctionID() : function;
 }
 
 LayoutID scopeThatCaptureTakes(const Program& program, FunctionID function, uint32_t capture)
@@ -44,16 +45,16 @@ bool storeKeepsDeclaredFunctionOverItsOwnScope(const Program& program, const Bod
     FunctionID function = functionDeclaredInScopeSlot(program, put.layout(), put.field());
     if (!function)
         return true;
-    ValueID stored = index.valueBehindCasts(put.valueOperand());
+    ValueID stored = index.stripCasts(put.valueOperand());
     if (index.isParameter(stored) || index.opcodeOf(stored) != Opcode::NewClosure)
         return false;
     auto made = index.value(stored).as<Opcode::NewClosure>();
     uint32_t numberOfCaptures = static_cast<uint32_t>(program.at(function).captures.size());
     if (made.function() != function || made.capturesOperands().size() != numberOfCaptures)
         return false;
-    ValueID holder = index.valueBehindCasts(put.environmentOperand());
+    ValueID holder = index.stripCasts(put.environmentOperand());
     for (uint32_t capture = 0; capture < numberOfCaptures; ++capture) {
-        if (scopeThatCaptureTakes(program, function, capture) == put.layout() && index.valueBehindCasts(made.capturesOperands()[capture]) != holder)
+        if (scopeThatCaptureTakes(program, function, capture) == put.layout() && index.stripCasts(made.capturesOperands()[capture]) != holder)
             return false;
     }
     return true;

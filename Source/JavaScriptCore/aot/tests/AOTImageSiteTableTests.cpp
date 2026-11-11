@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImageSiteTestBodies.h"
+#include "AOTPositionEncoder.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPolls.h"
 #include "AOTVector.h"
@@ -259,13 +260,42 @@ static void testCallSitesPrologueCheckElsewhere()
     AOT_TEST_CHECK(!table.prologueCheckAt(table.code().data()));
 }
 
-static void checkPositions(const Image& image, uint32_t imageFunction, const uint8_t* stream, OwnPosition ofFunctionInFront, const Vector<SitePosition>& positions)
+namespace {
+
+class CodedPositions {
+public:
+    CodedPositions(const SiteDescription& sites, OwnPosition ofFunctionInFront)
+        : m_ofFunctionInFront(ofFunctionInFront)
+    {
+        PositionEncoder encoder;
+        encoder.encode(sites, ofFunctionInFront);
+        PositionCodes codes(encoder.counts());
+        m_section = codes.bytes();
+        m_place = m_section.size();
+        encoder.appendNextCoded(m_section, codes);
+    }
+
+    std::optional<SourcePosition> at(const Image& image, uint32_t function, uint32_t site) const
+    {
+        const uint8_t* section = m_section.span().data();
+        return decodePosition(image, function, section, section + m_place, m_ofFunctionInFront, CallSiteIndex(site));
+    }
+
+private:
+    OwnPosition m_ofFunctionInFront;
+    Vector<uint8_t> m_section;
+    size_t m_place;
+};
+
+} // anonymous namespace
+
+static void checkPositions(const Image& image, uint32_t imageFunction, const CodedPositions& coded, const Vector<SitePosition>& positions)
 {
     uint32_t count = static_cast<uint32_t>(positions.size());
     for (uint32_t k = 0; k < count; ++k)
-        AOT_TEST_CHECK(decodePosition(image, imageFunction, stream, ofFunctionInFront, CallSiteIndex(k)) == sourcePositionOf(positions[k]));
-    AOT_TEST_CHECK(!decodePosition(image, imageFunction, stream, ofFunctionInFront, CallSiteIndex(count)));
-    AOT_TEST_CHECK(!decodePosition(image, imageFunction, stream, ofFunctionInFront, CallSiteIndex(std::numeric_limits<uint32_t>::max())));
+        AOT_TEST_CHECK(coded.at(image, imageFunction, k) == sourcePositionOf(positions[k]));
+    AOT_TEST_CHECK(!coded.at(image, imageFunction, count));
+    AOT_TEST_CHECK(!coded.at(image, imageFunction, std::numeric_limits<uint32_t>::max()));
 }
 
 static void checkEncodedPositions(std::initializer_list<Vector<SitePosition>> tables)
@@ -275,9 +305,7 @@ static void checkEncodedPositions(std::initializer_list<Vector<SitePosition>> ta
         SiteDescription sites;
         sites.positions = positions;
         for (OwnPosition ofFunctionInFront : { OwnPosition { }, OwnPosition::of(sites), OwnPosition { 0xffffffff, OwnPosition::of(sites).source }, OwnPosition { 7, 0xffffffff }, OwnPosition { 0, 1 } }) {
-            Vector<uint8_t> stream;
-            encodePositions(stream, sites, nullptr, ofFunctionInFront);
-            checkPositions(any.table(), 0, stream.span().data(), ofFunctionInFront, positions);
+            checkPositions(any.table(), 0, CodedPositions(sites, ofFunctionInFront), positions);
         }
     }
 }
@@ -313,10 +341,9 @@ static void testPositionsWithConstructionStarts()
         SiteConstructionStart { 4, 12, 9, true },
         SiteConstructionStart { 5, 14, 3, false, true },
     };
-    Vector<uint8_t> stream;
-    encodePositions(stream, sites, nullptr, OwnPosition { });
+    CodedPositions coded(sites, OwnPosition { });
     auto decoded = [&](uint32_t site) {
-        return decodePosition(any.table(), 0, stream.span().data(), OwnPosition { }, CallSiteIndex(site));
+        return coded.at(any.table(), 0, site);
     };
     ModuleID module(0u);
     AOT_TEST_CHECK(decoded(0) == SourcePosition({ { 1, 1 }, module }));
@@ -327,6 +354,87 @@ static void testPositionsWithConstructionStarts()
     AOT_TEST_CHECK(decoded(5) == SourcePosition({ { 13, 2 }, module, { 14, 3 }, false, true }));
     AOT_TEST_CHECK(decoded(6) == SourcePosition({ { 13, 8 }, module }));
     AOT_TEST_CHECK(!decoded(7));
+}
+
+static Vector<SitePosition> positionsOnOneLine(uint32_t count)
+{
+    Vector<SitePosition> positions;
+    for (uint32_t k = 0; k < count; ++k)
+        positions.append(positionAt(3, 5 + k));
+    return positions;
+}
+
+static void checkPrefixCode(const PrefixCode::Counts& counts, unsigned mostBitsOfShortWords)
+{
+    PrefixCode code(counts);
+    Vector<uint8_t> bytesOfCode;
+    unsigned bitsOfShortWords = code.bitsOfShortWords(mostBitsOfShortWords);
+    code.append(bytesOfCode, bitsOfShortWords);
+    size_t numberOfBytes = std::ranges::count_if(counts, [](uint32_t count) { return count; });
+    AOT_TEST_CHECK(bitsOfShortWords && bitsOfShortWords <= std::min<size_t>(mostBitsOfShortWords, std::max<size_t>(numberOfBytes, 1)));
+    AOT_TEST_CHECK(bytesOfCode.size() == PrefixCode::sizeOfShortWords(bitsOfShortWords) + PrefixCode::maxLength + numberOfBytes);
+    PrefixCodeView view(bytesOfCode.span().data(), 64 - bitsOfShortWords);
+    Vector<uint8_t> written;
+    WeakRandom random(1);
+    for (unsigned byte = 0; byte < counts.size(); ++byte) {
+        for (unsigned k = 0; counts[byte] && k < 3; ++k)
+            written.insert(random.getUint32(written.size() + 1), static_cast<uint8_t>(byte));
+    }
+    for (size_t size = 0; size <= written.size(); ++size) {
+        Vector<uint8_t> stream(FillWith { }, 2 * size + 1, 0);
+        PrefixCodeWriter writer(stream.mutableSpan().data());
+        for (size_t k = 0; k < size; ++k)
+            writer.append(code.word(written[k]));
+        PrefixCodeReader reader(stream.span().data(), writer.finish());
+        for (size_t k = 0; k < size; ++k)
+            AOT_TEST_CHECK(reader.read(view) == written[k]);
+        AOT_TEST_CHECK(reader.read(view) == PrefixCode::endOfStream);
+    }
+}
+
+static void checkPrefixCode(const PrefixCode::Counts& counts)
+{
+    for (unsigned mostBitsOfShortWords : { 1u, PrefixCode::bitsOfShortWord, 10u })
+        checkPrefixCode(counts, mostBitsOfShortWords);
+}
+
+static void testPrefixCodes()
+{
+    PrefixCode::Counts counts { };
+    checkPrefixCode(counts);
+    counts[7] = 1;
+    checkPrefixCode(counts);
+    counts[200] = std::numeric_limits<uint32_t>::max();
+    checkPrefixCode(counts);
+    counts.fill(1);
+    checkPrefixCode(counts);
+    uint32_t last = 1;
+    uint32_t next = 1;
+    for (unsigned byte = 0; byte < 40; ++byte) {
+        counts[byte * 5] = next;
+        next += std::exchange(last, next);
+    }
+    checkPrefixCode(counts);
+}
+
+static void checkVarintBytes(std::span<const uint8_t> bytes, size_t maxSize)
+{
+    Vector<uint8_t> coded = encodeVarintBytes(bytes);
+    AOT_TEST_CHECK(coded.size() <= maxSize);
+    AOT_TEST_CHECK(equalSpans(std::span<const uint8_t>(decodeVarintBytes(coded.span()).span()), bytes));
+}
+
+static void testVarintBytes()
+{
+    checkVarintBytes({ }, 0);
+    checkVarintBytes(std::array<uint8_t, 3> { 1, 2, 3 }, 7);
+    Vector<uint8_t> bytes;
+    WeakRandom random(1);
+    for (unsigned count = 0; count < 100000; ++count)
+        appendVarint(bytes, random.getUint32(random.getUint32(8) ? 20 : 100000));
+    size_t size = bytes.size();
+    checkVarintBytes(bytes.span(), size);
+    AOT_TEST_CHECK(encodeVarintBytes(bytes.span()).size() < size);
 }
 
 static void testPositionsObfuscated()
@@ -368,6 +476,9 @@ std::span<const NativeTest> siteTableTests()
         { "image/call-sites/two-prologue-checks"_s, testCallSitesTwoPrologueChecks },
         { "image/call-sites/prologue-check-elsewhere"_s, testCallSitesPrologueCheckElsewhere },
         { "image/positions/random"_s, [] { checkEncodedPositions({ randomPositions(2000) }); } },
+        { "image/positions/of-one-kind"_s, [] { checkEncodedPositions({ positionsOnOneLine(1), positionsOnOneLine(2), positionsOnOneLine(9), positionsOnOneLine(1025) }); } },
+        { "image/positions/prefix-codes"_s, testPrefixCodes },
+        { "image/positions/varint-bytes"_s, testVarintBytes },
         { "image/positions/construction-starts"_s, testPositionsWithConstructionStarts },
         { "image/positions/obfuscated"_s, testPositionsObfuscated },
         { "image/positions/function-names-kept-without-positions"_s, testFunctionNamesKeptWithoutPositions },

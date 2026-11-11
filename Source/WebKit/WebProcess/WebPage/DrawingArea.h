@@ -82,16 +82,9 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    virtual DrawingAreaType type() const = 0;
-#endif
     DrawingAreaIdentifier identifier() const { return m_identifier; }
 
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    static bool LEGACY_NODELETE supportsGPUProcessRendering(DrawingAreaType);
-#else
     static bool supportsGPUProcessRendering();
-#endif
 
     virtual void setNeedsDisplay() = 0;
     virtual void setNeedsDisplayInRect(const WebCore::IntRect&) = 0;
@@ -140,6 +133,9 @@ public:
     virtual void triggerRenderingUpdate() = 0;
     virtual bool scheduleRenderingUpdate() { return false; }
     virtual void renderingUpdateFramesPerSecondChanged() { }
+    // Whether rendering updates may be deferred until the GPU process has caught up with earlier ones
+    // (see WebPage::shouldTriggerRenderingUpdate()), which requires acknowledging each rendering update.
+    virtual bool usesRenderingUpdateBackpressure() const { return true; }
 
     virtual void willStartRenderingUpdateDisplay();
     virtual void didCompleteRenderingUpdateDisplay();
@@ -257,19 +253,8 @@ private:
 
 } // namespace WebKit
 
-#if ENABLE(TILED_CA_DRAWING_AREA)
-
-#define SPECIALIZE_TYPE_TRAITS_DRAWING_AREA(ToValueTypeName, AreaType) \
-SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::ToValueTypeName) \
-    static bool isType(const WebKit::DrawingArea& area) { return area.type() == WebKit::AreaType; } \
-SPECIALIZE_TYPE_TRAITS_END()
-
-#else
-
 // There is only one type of DrawingArea.
 #define SPECIALIZE_TYPE_TRAITS_DRAWING_AREA(ToValueTypeName, AreaType) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::ToValueTypeName) \
     static bool isType(const WebKit::DrawingArea&) { return true; } \
 SPECIALIZE_TYPE_TRAITS_END()
-
-#endif

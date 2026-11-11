@@ -10,10 +10,10 @@
 #     v2: L0 @Cell = NewObject -, v0, v0 layout=L0 fields=[0, 1] traits=[mayCollect, mayTouchMemory]
 #     v3: L0 @Cell = NewObject v2, v0, v0 layout=L0 fields=[0, 1] traits=[mayCollect, mayTouchMemory]
 #     v4: L0 @JSValue = Box v3
-#     v5: anything @JSValue = CallDirect v4 function=f1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything @JSValue = CallDirect v4 function=f1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v6: L0 @Cell = NewObject -, v0, v0 layout=L0 fields=[0, 1] traits=[mayCollect, mayTouchMemory]
 #     v7: L0 @JSValue = Box v6
-#     v8: anything @JSValue = CallDirect v7 function=f1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v8: anything @JSValue = CallDirect v7 function=f1 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v8
 # }
 # -- end of code

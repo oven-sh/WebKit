@@ -19,6 +19,7 @@ struct ExpectationOfNumber {
 ExpectationOfNumber numbersExpectedOf(Walker&, ValueID input, ExpectationOfNumber found);
 TypeID typeHeldAtPositionOf(Walker&, ValueID input);
 bool usesSpeakForInt32(Walker&, ValueID input);
+ExpectationOfNumber numberExpectedOfAddendOfPosition(Walker&, const BodyValue& operation, ValueID operand, ExpectationOfNumber found);
 ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker&, ValueID input, ExpectationOfNumber found);
 
 struct TestOfNumber {
@@ -30,7 +31,7 @@ uint32_t limitOfStretchOfNumbers(const Walker&, const BodyBlock&);
 std::optional<uint32_t> findPlaceBehindUpdateOfElement(Walker&, const BodyValue& read);
 Reference buildTestOfNumber(Walker&, Reference value, TypeID tested, Origin);
 Reference buildProofOfNumber(Walker&, Reference value, Reference test, Origin);
-bool holdOperandBesideNumberToNumberOrBeginTurnAgain(Walker&, Draft&, ValueID written);
+bool tryGuardNumericOperand(Walker&, Draft&, ValueID written);
 
 inline constexpr OpcodeSet opcodesThatBuildArmsInFrontOfTypedFormsTakes = allSums | allBitwiseOperators | allRelations | OpcodeSet { Opcode::Mul, Opcode::Negate, Opcode::StrictEq };
 AOT_LINK_OF_WALK(buildArmsInFrontOfTypedForms, opcodesThatBuildArmsInFrontOfTypedFormsTakes)

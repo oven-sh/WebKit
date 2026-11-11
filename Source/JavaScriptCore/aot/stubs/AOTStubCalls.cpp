@@ -112,6 +112,7 @@ StubCalls::StubCalls(const StubCatalog& catalog, RelocationRecorder& relocations
     , m_relocations(relocations)
     , m_ownRememberedKeys(rememberedKeys ? nullptr : std::make_unique<RememberedStubKeys>())
     , m_rememberedKeys(rememberedKeys ? *rememberedKeys : *m_ownRememberedKeys)
+    , m_unit(++m_rememberedKeys.unit)
 {
 }
 
@@ -145,7 +146,18 @@ CodeSymbol StubCalls::prepare(StubKey key, NumberedImmediate immediate)
     GPRReg destination = immediateGPROfStub(m_rememberedKeys, m_catalog, finalKey);
     RELEASE_ASSERT(!m_registerFilledInFrontOfNextCall || (destination != GPRInfo::returnValueGPR && Reg(destination) != m_registerFilledInFrontOfNextCall));
     moveNumberedImmediate(m_relocations, immediate, destination);
-    return { SymbolSpace::Stub, indexOf(finalKey, siblingUnderNameWithColumn(finalKey) ? std::optional<uint32_t>(immediate.mention) : std::nullopt) };
+    if (siblingUnderNameWithColumn(finalKey))
+        return { SymbolSpace::Stub, indexOf(finalKey, immediate.mention) };
+    return { SymbolSpace::Stub, indexOf(finalKey) };
+}
+
+ALWAYS_INLINE uint32_t StubCalls::indexOf(StubKey key)
+{
+    constexpr uint64_t multiplier = 0x9e3779b97f4a7c15ull;
+    CachedStubIndex& cached = m_rememberedKeys.indexCache[(key.bits() * multiplier) >> (64 - RememberedStubKeys::logOfNumberOfKeys)];
+    if (cached.unit != m_unit || cached.bits != key.bits())
+        cached = { key.bits(), m_unit, indexOf(key, std::nullopt) };
+    return cached.index;
 }
 
 uint32_t StubCalls::indexOf(StubKey key, std::optional<uint32_t> mentionOfImmediate)
@@ -326,6 +338,17 @@ void StubCalls::moveAddressOfFunction(Typed::CodeUnit callee, uint16_t entry, GP
 void StubCalls::moveAddressOfStub(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate, GPRReg destination)
 {
     m_relocations.moveAddress({ SymbolSpace::Stub, indexOf(prepare(jit, key, immediate)) }, destination, PCRelativeReach::Far);
+}
+
+void StubCalls::routeTransfersThroughEnd()
+{
+    if (!m_relocations.exceedsBranchReach()) [[likely]]
+        return;
+    for (RecordedCall& call : m_calls) {
+        if (!call.returnAddress)
+            call.returnAddress = m_relocations.returnAddressOf(call.relocation);
+    }
+    m_relocations.routeTransfersThroughEnd();
 }
 
 void StubCalls::describeCalls(std::span<const Relocation> relocations, CodeBody& body, LinkBuffer* linkBuffer)

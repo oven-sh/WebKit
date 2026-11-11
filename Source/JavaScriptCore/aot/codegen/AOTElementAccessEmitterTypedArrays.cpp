@@ -68,7 +68,7 @@ TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(ValueID id, LBasic
 TypedArrayElements ElementAccessEmitter::typedArrayElementsInsideView(const ValueContext& value, CellPointer view)
 {
     std::optional<Pointer> vector = inOptional<Pointer>(value->vectorOperand());
-    if (!testsEveryPosition())
+    if (!checksBounds())
         return { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), vector ? *vector : loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
     CellPointer asked = askedAnew(view);
     Pointer inCell = loadField<Pointer>(asked, m_heaps.JSArrayBufferView_vector);
@@ -82,7 +82,7 @@ std::optional<TypedArrayElements> ElementAccessEmitter::typedArrayElementsNamedB
     if (value->lengthOperands().empty())
         return std::nullopt;
     TypedArrayElements named { view, integerOf(value->lengthOperands()[0]), in<Pointer>(value->vectorOperand()) };
-    if (testsEveryPosition()) {
+    if (checksBounds()) {
         CellPointer asked = askedAnew(view);
         stopUnlessInside(value, equal(named.vector, loadField<Pointer>(asked, m_heaps.JSArrayBufferView_vector)));
         stopUnlessInside(value, belowOrEqual(named.length, TypedArraySupport(generator()).lengthOf(asked)));
@@ -100,12 +100,12 @@ void ElementAccessEmitter::askViewWherePositionIsNotBelowNamedLength(LBasicBlock
 
 bool ElementAccessEmitter::becomesIndexWithoutTest(const ValueContext& access)
 {
-    return get(access->positionOperand()).representation != Representation::Double || (access->keyIsIntegral() && isX86_64());
+    return representationOf(access->positionOperand()) != Representation::Double || (access->keyIsIntegral() && isX86_64());
 }
 
 void ElementAccessEmitter::holdPositionInsideView(const ValueContext& access, Integer index, const TypedArrayElements& elements)
 {
-    if (testsEveryPosition()) {
+    if (checksBounds()) {
         if (Operand position = get(access->positionOperand()); position.is<Number>())
             stopUnlessInside(access, equal(position.as<Number>(), position.as<Number>()));
         stopUnlessInside(access, below(index, elements.length));
@@ -146,7 +146,7 @@ void ElementAccessEmitter::forEachKindOfView(const ValueContext& value, CellPoin
         targets.append(SwitchTarget { static_cast<int64_t>(typeForTypedArrayType(static_cast<TypedArrayType>(kind))), normalEdge(arms.last().first) });
     }
     Word32 type = loadByte(view, m_heaps.JSCell_typeInfoType);
-    LBasicBlock isOfNoListedKind = testsEveryPosition() ? newBlock() : nullptr;
+    LBasicBlock isOfNoListedKind = checksBounds() ? newBlock() : nullptr;
     size_t lastAsked = isOfNoListedKind ? 0 : 1;
     for (size_t index = targets.size(); index-- > lastAsked;) {
         LBasicBlock narrower = index > lastAsked ? newBlock() : nullptr;
@@ -156,7 +156,7 @@ void ElementAccessEmitter::forEachKindOfView(const ValueContext& value, CellPoin
     }
     if (isOfNoListedKind) {
         m_out.appendTo(isOfNoListedKind);
-        emitter<ThrowEmitter>().stopAtFalseProof(value, std::nullopt, ProofSource::OtherOperation);
+        emitter<ThrowEmitter>().crashOnFalseProof(value, std::nullopt, ProofSource::OtherOperation);
     }
     for (auto [arm, kind] : arms) {
         m_out.appendTo(arm);
@@ -302,11 +302,11 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
     LBasicBlock isNotBelowNamedLength = named ? newBlock() : nullptr;
     TypedArrayElements elements = named ? *named : typedArrayElementsOf(value->viewOperand(), otherwise);
     branchUnless(isBelowLengthOfView(index, elements.length, type), named ? isNotBelowNamedLength : outside);
-    if (nothingIsNaN)
+    if (nothingIsNaN && isFloat(type))
         join.add(loadBytesOfTypedArrayElement(elements, indexFoundBelowLength(index), type));
     else {
         Operand element = loadElement(elements, indexFoundBelowLength(index));
-        join.add(TypedArraySupport(generator()).inRepresentation(value, representation, element, elementType));
+        join.add(TypedArraySupport(generator()).inRepresentation(value, nothingIsNaN ? Representation::Double : representation, element, elementType));
     }
 
     if (named)
@@ -345,7 +345,8 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
     auto storeElement = [&](const TypedArrayElements& elements, Integer index) {
         Operand element = elementToStore();
         if (!isOfSeveralKinds) {
-            storeTypedArrayElement(elements, index, type, element);
+            bool isByte = isClamped(type) && typeOf(storedValue).isInteger() && typeOf(storedValue).integers.isSubsetOf(Range { 0, UINT8_MAX }) && !element.is<Number>();
+            storeTypedArrayElement(elements, index, isByte ? TypeUint8 : type, element);
             return;
         }
         if (std::optional<TypedArrayType> found = kindOfViewFoundInFrontOfTurns(value, value->viewOperand())) {

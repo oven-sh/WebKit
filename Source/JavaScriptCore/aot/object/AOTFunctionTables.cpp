@@ -25,6 +25,7 @@
 #include "AOTProgramStrings.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
+#include "AOTVMState.h"
 #include "FunctionRareData.h"
 #include "JSCInlines.h"
 #include "NativeExecutable.h"
@@ -230,6 +231,35 @@ String functionName(const FunctionDescription& description, NameForm form)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static JSString* shareComputedName(VM& vm, FunctionID function, const String& name)
+{
+    VMState::ComputedFunctionName ownName { .hash = name.hash(), .length = name.length() };
+    VMState::ComputedFunctionName& shared = vm.aotState().computedFunctionNames.add(sourceFunctionOf(function).index(), WTF::move(ownName)).iterator->value;
+    if (shared.hash != name.hash() || shared.length != name.length())
+        shared.isOneOfSeveral = true;
+    if (JSString* string = shared.name.get(); string && !shared.isOneOfSeveral) {
+        if (string->tryGetValue().data == name)
+            return string;
+        shared.isOneOfSeveral = true;
+    }
+    JSString* string = jsString(vm, name);
+    shared.name = shared.isOneOfSeveral ? Weak<JSString>() : Weak<JSString>(string);
+    return string;
+}
+
+String computedNameInFrames(VM& vm, const FunctionDescription& description)
+{
+    if (runsInBodyWithoutName(description))
+        return emptyString();
+    FunctionID source = sourceFunctionOf(description.function());
+    if (functionKindData(source).isGenerator)
+        return emptyString();
+    const auto& names = vm.aotState().computedFunctionNames;
+    auto found = names.find(source.index());
+    JSString* name = found == names.end() ? nullptr : found->value.name.get();
+    return name ? String(name->tryGetValueWithoutGC().data) : emptyString();
+}
+
 static String computedFunctionName(JSGlobalObject* globalObject, const Identifier& key, MethodKind kind)
 {
     VM& vm = globalObject->vm();
@@ -260,10 +290,12 @@ void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, M
     auto scope = DECLARE_THROW_SCOPE(vm);
     String name = computedFunctionName(closure->realm(), key, kind);
     RETURN_IF_EXCEPTION(scope, void());
-    if (std::optional<FunctionID> function = functionOf(closure); function && !closure->getDirect(vm, vm.propertyNames->name) && initialNameProperty(sourceFunctionOf(*function)) == name)
+    std::optional<FunctionID> function = functionOf(closure);
+    if (function && !closure->getDirect(vm, vm.propertyNames->name) && initialNameProperty(sourceFunctionOf(*function)) == name)
         return;
+    JSString* nameString = function ? shareComputedName(vm, *function, name) : jsString(vm, name);
     CompiledCallee::reifyProperties(vm, closure);
-    closure->putDirect(vm, vm.propertyNames->name, jsString(vm, name), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+    closure->putDirect(vm, vm.propertyNames->name, nameString, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     if (isCompiledClosure(closure)) {
         FunctionRareData* rareData = uncheckedDowncast<Closure>(closure)->ensureRareData(vm);
         rareData->setHasReifiedName();
@@ -271,77 +303,77 @@ void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, M
     }
 }
 
-static std::span<const FunctionTextEntry> functionTextEntriesOfSource(const ProgramTables& tables, uint32_t source)
+static std::span<const FunctionSourceEntry> findFunctionSourceEntries(const ProgramTables& tables, uint32_t source)
 {
-    auto texts = tables.functionTexts();
-    if (texts.empty())
+    auto sources = tables.functionSources();
+    if (sources.empty())
         return { };
-    std::span entries { tables.at<FunctionTextEntry>(texts[0].entriesOffset), texts[0].numberOfEntries };
-    auto found = std::ranges::equal_range(entries, source, { }, [&](const FunctionTextEntry& entry) { return tables.sourceFunctionOf(entry.function); });
+    std::span entries { tables.at<FunctionSourceEntry>(sources[0].entriesOffset), sources[0].numberOfEntries };
+    auto found = std::ranges::equal_range(entries, source, { }, [&](const FunctionSourceEntry& entry) { return tables.sourceFunctionOf(entry.function); });
     return { found.begin(), found.end() };
 }
 
-static std::optional<std::span<const Latin1Character>> openBlocksOfText(Image::OpenedBlocksOfText& openedText, DecompressTextFunction open, const uint8_t* compressed, std::span<const uint32_t> ends, uint32_t sizeOfText, uint32_t start, uint32_t end)
+static std::optional<std::span<const Latin1Character>> decompressSourceBlocks(Image::DecompressedSourceBlocks& decompressedSource, DecompressSourceFunction decompress, const uint8_t* compressed, std::span<const uint32_t> ends, uint32_t sourceSize, uint32_t start, uint32_t end)
 {
-    RELEASE_ASSERT(start <= end && end <= sizeOfText);
-    RELEASE_ASSERT(sizeOfText <= static_cast<uint64_t>(ends.size()) * sizeOfBlockOfText);
-    if (!open)
+    RELEASE_ASSERT(start <= end && end <= sourceSize);
+    RELEASE_ASSERT(sourceSize <= static_cast<uint64_t>(ends.size()) * sourceBlockSize);
+    if (!decompress)
         return std::nullopt;
-    Locker locker { openedText.lock };
-    if (!openedText.text) {
-        size_t sizeReserved = roundUpToMultipleOf(WTF::pageSize(), std::max<size_t>(sizeOfText, 1));
+    Locker locker { decompressedSource.lock };
+    if (!decompressedSource.bytes) {
+        size_t sizeReserved = roundUpToMultipleOf(WTF::pageSize(), std::max<size_t>(sourceSize, 1));
         void* text = OSAllocator::tryReserveUncommitted(sizeReserved);
-        void* isOpened = nullptr;
+        void* isDecompressed = nullptr;
         if (!text)
             return std::nullopt;
-        if (!tryFastZeroedMalloc(ends.size()).getValue(isOpened)) {
+        if (!tryFastZeroedMalloc(ends.size()).getValue(isDecompressed)) {
             OSAllocator::releaseDecommitted(text, sizeReserved, 0);
             return std::nullopt;
         }
-        openedText.text = static_cast<uint8_t*>(text);
-        openedText.isOpened = static_cast<uint8_t*>(isOpened);
+        decompressedSource.bytes = static_cast<uint8_t*>(text);
+        decompressedSource.isDecompressed = static_cast<uint8_t*>(isDecompressed);
     }
-    uint8_t* opened = openedText.text;
-    uint8_t* isOpened = openedText.isOpened;
-    for (uint32_t block = start / sizeOfBlockOfText; static_cast<uint64_t>(block) * sizeOfBlockOfText < end; ++block) {
-        if (isOpened[block])
+    uint8_t* decompressed = decompressedSource.bytes;
+    uint8_t* isDecompressed = decompressedSource.isDecompressed;
+    for (uint32_t block = start / sourceBlockSize; static_cast<uint64_t>(block) * sourceBlockSize < end; ++block) {
+        if (isDecompressed[block])
             continue;
         uint32_t first = block ? ends[block - 1] : 0;
-        size_t offset = static_cast<size_t>(block) * sizeOfBlockOfText;
-        size_t sizeOfBlock = std::min<size_t>(sizeOfBlockOfText, sizeOfText - offset);
-        OSAllocator::commit(opened + offset, roundUpToMultipleOf(WTF::pageSize(), sizeOfBlock), true, false);
-        if (!open({ opened + offset, sizeOfBlock }, { compressed + first, ends[block] - first }))
+        size_t offset = static_cast<size_t>(block) * sourceBlockSize;
+        size_t sizeOfBlock = std::min<size_t>(sourceBlockSize, sourceSize - offset);
+        OSAllocator::commit(decompressed + offset, roundUpToMultipleOf(WTF::pageSize(), sizeOfBlock), true, false);
+        if (!decompress({ decompressed + offset, sizeOfBlock }, { compressed + first, ends[block] - first }))
             return std::nullopt;
-        isOpened[block] = 1;
+        isDecompressed[block] = 1;
     }
-    return std::span { byteCast<Latin1Character>(opened) + start, end - start };
+    return std::span { byteCast<Latin1Character>(decompressed) + start, end - start };
 }
 
-static std::optional<std::span<const Latin1Character>> bytesOf(const Image& image, const FunctionTextEntry& entry)
+static std::optional<std::span<const Latin1Character>> bytesOf(const Image& image, const FunctionSourceEntry& entry)
 {
     const ProgramTables& tables = image.programTables();
-    const FunctionTexts& texts = tables.functionTexts()[0];
-    if (texts.numberOfBlocks)
-        return openBlocksOfText(image.openedTextOfFunctions(), image.decompressText(), tables.at<uint8_t>(texts.textOffset), { tables.at<uint32_t>(texts.endsOfBlocksOffset), texts.numberOfBlocks }, texts.sizeOfText, entry.start, entry.end);
-    return std::span { tables.at<Latin1Character>(texts.textOffset) + entry.start, entry.end - entry.start };
+    const FunctionSources& sources = tables.functionSources()[0];
+    if (sources.numberOfBlocks)
+        return decompressSourceBlocks(image.decompressedFunctionSources(), image.decompressSource(), tables.at<uint8_t>(sources.sourceOffset), { tables.at<uint32_t>(sources.blockEndsOffset), sources.numberOfBlocks }, sources.sourceSize, entry.start, entry.end);
+    return std::span { tables.at<Latin1Character>(sources.sourceOffset) + entry.start, entry.end - entry.start };
 }
 
-std::optional<std::span<const Latin1Character>> quotedTextBytes(uint32_t start, uint32_t length)
+std::optional<std::span<const Latin1Character>> quotedSourceBytes(uint32_t start, uint32_t length)
 {
     const Image& image = *Image::current();
-    std::span<const uint8_t> text = image.programTables().textOfQuotes();
-    std::span<const uint32_t> blocks = image.programTables().blocksOfTextOfQuotes();
+    std::span<const uint8_t> text = image.programTables().quotedSourceText();
+    std::span<const uint32_t> blocks = image.programTables().quotedSourceBlocks();
     if (blocks.empty())
         return byteCast<Latin1Character>(text.subspan(start, length));
-    return openBlocksOfText(image.openedTextOfQuotes(), image.decompressText(), text.data(), blocks.subspan(1), blocks[0], start, start + length);
+    return decompressSourceBlocks(image.decompressedQuotedSources(), image.decompressSource(), text.data(), blocks.subspan(1), blocks[0], start, start + length);
 }
 
 std::optional<std::span<const Latin1Character>> functionSourceBytes(FunctionID function)
 {
     const Image& image = *Image::current();
     const ProgramTables& tables = image.programTables();
-    std::span entries = functionTextEntriesOfSource(tables, tables.sourceFunctionOf(function.index()));
-    auto entry = std::ranges::find(entries, function.index(), [](const FunctionTextEntry& entry) -> uint32_t { return entry.function; });
+    std::span entries = findFunctionSourceEntries(tables, tables.sourceFunctionOf(function.index()));
+    auto entry = std::ranges::find(entries, function.index(), [](const FunctionSourceEntry& entry) -> uint32_t { return entry.function; });
     if (entry == entries.end())
         return std::span<const Latin1Character> { };
     return bytesOf(image, *entry);
@@ -350,18 +382,18 @@ std::optional<std::span<const Latin1Character>> functionSourceBytes(FunctionID f
 JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
 {
     VM& vm = globalObject->vm();
-    FunctionTables::TextsByFunction& answered = FunctionTables::of(vm).sourceTexts;
+    FunctionTables::SourceTextMap& answered = FunctionTables::of(vm).sourceTexts;
     if (auto found = answered.find(function); found != answered.end()) {
         if (JSString* text = found->value.get())
             return text;
     }
-    std::optional opened = functionSourceBytes(function);
-    if (!opened) {
+    std::optional decompressed = functionSourceBytes(function);
+    if (!decompressed) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
-    std::span bytes = *opened;
+    std::span bytes = *decompressed;
     if (!bytes.data())
         return nullptr;
     JSString* text = charactersAreAllASCII(bytes) ? jsOwnedString(vm, StringImpl::createWithoutCopying(bytes)) : jsString(vm, String::fromUTF8ReplacingInvalidSequences(bytes));
@@ -463,7 +495,7 @@ JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
     FunctionID function = checkedFunctionOf(callee);
     if (functionKindData(function).isInRuntimeModule)
         return nullptr;
-    const FunctionTables::TextsByFunction& answered = FunctionTables::of(vm).sourceTexts;
+    const FunctionTables::SourceTextMap& answered = FunctionTables::of(vm).sourceTexts;
     auto found = answered.find(function);
     return found == answered.end() ? nullptr : found->value.get();
 }
@@ -577,17 +609,17 @@ bool hasOwnAwait(JSCell* cell)
 bool mayImportOwnOriginal(JSCell* cell)
 {
     std::optional<FunctionID> function = functionOf(cell);
-    return !function || std::ranges::binary_search(programTables().functionsThatMayAskForOwnOriginal(), sourceFunctionOf(*function).index());
+    return !function || std::ranges::binary_search(programTables().functionsImportingOwnOriginal(), sourceFunctionOf(*function).index());
 }
 
-Vector<String> originalsAskedFor(JSCell* cell)
+Vector<String> requestedOriginals(JSCell* cell)
 {
     Vector<String> specifiers;
     std::optional<FunctionID> function = functionOf(cell);
     if (!function)
         return specifiers;
     const Image& image = *Image::current();
-    for (const OriginalAskedForData& asked : std::ranges::equal_range(programTables().originalsAskedFor(), sourceFunctionOf(*function).index(), { }, &OriginalAskedForData::function))
+    for (const RequestedOriginalData& asked : std::ranges::equal_range(programTables().requestedOriginals(), sourceFunctionOf(*function).index(), { }, &RequestedOriginalData::function))
         specifiers.append(image.text().createString(StringID(asked.specifier)));
     return specifiers;
 }

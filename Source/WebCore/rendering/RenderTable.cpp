@@ -93,7 +93,7 @@ RenderTable::RenderTable(Type type, Document& document, Style::ComputedStyle&& s
 
 RenderTable::~RenderTable() = default;
 
-RenderTableSection* LEGACY_NODELETE RenderTable::topSection() const
+NODELETE RenderTableSection* RenderTable::topSection() const
 {
     ASSERT(!needsSectionRecalc());
     if (m_head)
@@ -342,7 +342,7 @@ void RenderTable::updateLogicalWidth()
 
 // This method takes a Style::ComputedStyle's logical width, min-width, or max-width length and computes its actual value.
 
-template<typename SizeType> LayoutUnit RenderTable::convertStyleLogicalWidthToComputedWidth(const SizeType& styleLogicalWidth, LayoutUnit availableWidth)
+template<typename SizeType> LayoutUnit RenderTable::convertStyleLogicalWidthToComputedWidth(const SizeType& styleLogicalWidth, LayoutUnit availableWidth) const
 {
     if (styleLogicalWidth.isIntrinsicOrStretch())
         return computeSizingKeywordLogicalWidthUsing(styleLogicalWidth, availableWidth, bordersPaddingAndSpacingInRowDirection());
@@ -548,7 +548,7 @@ void RenderTable::layout()
         updateLogicalWidth();
         if (logicalWidth() != oldLogicalWidth) {
             for (auto& caption : m_captions)
-                caption->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+                caption->setNeedsLayout(MarkingBehavior::OnlyThis);
         }
         resetLogicalHeightBeforeLayoutIfNeeded();
         // FIXME: The optimisation below doesn't work since the internal table
@@ -571,7 +571,7 @@ void RenderTable::layout()
         for (auto& child : childrenOfType<RenderElement>(*this)) {
             if (CheckedPtr section = dynamicDowncast<RenderTableSection>(child)) {
                 if (m_columnLogicalWidthChanged)
-                    section->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+                    section->setChildNeedsLayout(MarkingBehavior::OnlyThis);
                 section->layoutIfNeeded();
                 totalSectionLogicalHeight += section->calcRowLogicalHeight();
                 if (collapsing)
@@ -608,7 +608,10 @@ void RenderTable::layout()
         }
 
         auto& logicalHeightLength = style().logicalHeight();
-        if (!isOutOfFlowPositioned() && (logicalHeightLength.isIntrinsicOrStretch() || (logicalHeightLength.isSpecified() && logicalHeightLength.isPossiblyPositive())))
+        if (!isOutOfFlowPositioned() && shouldComputeLogicalHeightFromAspectRatio()) {
+            auto borderBoxLogicalHeight = blockSizeFromAspectRatio(horizontalBorderAndPaddingExtent(), verticalBorderAndPaddingExtent(), style().logicalAspectRatio(), style().boxSizingForAspectRatio(), logicalWidth(), style().aspectRatio(), false);
+            computedLogicalHeight = borderBoxLogicalHeight - (borderAndPaddingBefore + borderAndPaddingAfter);
+        } else if (!isOutOfFlowPositioned() && (logicalHeightLength.isIntrinsicOrStretch() || (logicalHeightLength.isSpecified() && logicalHeightLength.isPossiblyPositive())))
             computedLogicalHeight = convertStyleLogicalHeightToComputedHeight(logicalHeightLength);
 
         if (auto overridingLogicalHeight = this->overridingBorderBoxLogicalHeight())
@@ -1021,51 +1024,54 @@ std::pair<LayoutUnit, LayoutUnit> RenderTable::computeIntrinsicKeywordLogicalWid
     return computeIntrinsicLogicalWidths(TableIntrinsics::ForKeyword);
 }
 
-void RenderTable::computeIntrinsicLogicalWidthContributions()
+void RenderTable::constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const
+{
+    // A table is never narrower than its min-content width, so max-width only clamps the max-content contribution, and not below that.
+    auto& styleToUse = style();
+    // FIXME: This should probably be checking for isSpecified since you should be able to use percentage or calc values for min-width.
+    if (auto fixedLogicalMinWidth = styleToUse.logicalMinWidth().tryFixed(); fixedLogicalMinWidth && fixedLogicalMinWidth->isPositive()) {
+        auto minLogicalWidth = convertStyleLogicalWidthToComputedWidth(styleToUse.logicalMinWidth(), { });
+        maxContentLogicalWidthContribution = std::max(maxContentLogicalWidthContribution, minLogicalWidth);
+        minContentLogicalWidthContribution = std::max(minContentLogicalWidthContribution, minLogicalWidth);
+    }
+
+    // FIXME: This should probably be checking for isSpecified since you should be able to use percentage or calc values for maxWidth.
+    if (styleToUse.logicalMaxWidth().isFixed()) {
+        maxContentLogicalWidthContribution = std::min(maxContentLogicalWidthContribution, convertStyleLogicalWidthToComputedWidth(styleToUse.logicalMaxWidth(), { }));
+        maxContentLogicalWidthContribution = std::max(maxContentLogicalWidthContribution, minContentLogicalWidthContribution);
+    }
+}
+
+std::pair<LayoutUnit, LayoutUnit> RenderTable::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
-    std::tie(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution) = computeIntrinsicLogicalWidths();
+    // The table layout's widths include border, padding and cell spacing, and so do the adjustments below. Border and padding
+    // are taken back out at the end, as computeIntrinsicLogicalWidthContributionsIfNeeded() adds them to the content box.
+    auto [minContentLogicalWidth, maxContentLogicalWidth] = computeIntrinsicLogicalWidths();
 
     LayoutUnit bordersPaddingAndSpacing = bordersPaddingAndSpacingInRowDirection();
-    m_minContentLogicalWidthContribution += bordersPaddingAndSpacing;
-    m_maxContentLogicalWidthContribution += bordersPaddingAndSpacing;
+    minContentLogicalWidth += bordersPaddingAndSpacing;
+    maxContentLogicalWidth += bordersPaddingAndSpacing;
 
-    m_tableLayout->applyContentLogicalWidthQuirks(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
+    m_tableLayout->applyContentLogicalWidthQuirks(minContentLogicalWidth, maxContentLogicalWidth);
 
+    auto borderAndPadding = borderAndPaddingLogicalWidth();
     if (auto& styleLogicalWidth = style().logicalWidth(); styleLogicalWidth.isCalcSize() && (styleLogicalWidth.isMinContent() || styleLogicalWidth.isMaxContent())) {
         // A calc-size() contributes the result of its calculation, not the size of its basis.
         // Cell spacing is part of the table's used width under the basis keyword, so `size` keeps it.
-        auto keywordLogicalWidth = styleLogicalWidth.isMaxContent() ? m_maxContentLogicalWidthContribution : m_minContentLogicalWidthContribution;
-        auto borderAndPadding = borderAndPaddingLogicalWidth();
-        m_minContentLogicalWidthContribution = resolveCalcSizeLogicalWidth(styleLogicalWidth.calcSize(), std::max(0_lu, keywordLogicalWidth - borderAndPadding), 0_lu) + borderAndPadding;
-        m_maxContentLogicalWidthContribution = m_minContentLogicalWidthContribution;
+        auto keywordLogicalWidth = styleLogicalWidth.isMaxContent() ? maxContentLogicalWidth : minContentLogicalWidth;
+        minContentLogicalWidth = resolveCalcSizeLogicalWidth(styleLogicalWidth.calcSize(), std::max(0_lu, keywordLogicalWidth - borderAndPadding), 0_lu) + borderAndPadding;
+        maxContentLogicalWidth = minContentLogicalWidth;
     }
 
     for (auto& caption : m_captions) {
         LayoutUnit captionMinWidth = caption->minContentLogicalWidthContribution();
         captionMinWidth += marginIntrinsicLogicalWidthForChild(*caption);
 
-        m_minContentLogicalWidthContribution = std::max(m_minContentLogicalWidthContribution, captionMinWidth);
+        minContentLogicalWidth = std::max(minContentLogicalWidth, captionMinWidth);
     }
-    m_maxContentLogicalWidthContribution = std::max(m_maxContentLogicalWidthContribution, m_minContentLogicalWidthContribution);
-
-    auto& styleToUse = style();
-    // FIXME: This should probably be checking for isSpecified since you should be able to use percentage or calc values for min-width.
-    if (auto fixedLogicalMinWidth = styleToUse.logicalMinWidth().tryFixed(); fixedLogicalMinWidth && fixedLogicalMinWidth->isPositive()) {
-        m_maxContentLogicalWidthContribution = std::max(m_maxContentLogicalWidthContribution, adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalMinWidth));
-        m_minContentLogicalWidthContribution = std::max(m_minContentLogicalWidthContribution, adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalMinWidth));
-    }
-
-    // FIXME: This should probably be checking for isSpecified since you should be able to use percentage or calc values for maxWidth.
-    if (auto fixedLogicalMaxWidth = styleToUse.logicalMaxWidth().tryFixed()) {
-        m_maxContentLogicalWidthContribution = std::min(m_maxContentLogicalWidthContribution, adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalMaxWidth));
-        m_maxContentLogicalWidthContribution = std::max(m_maxContentLogicalWidthContribution, m_minContentLogicalWidthContribution);
-    }
-
-    // FIXME: We should be adding borderAndPaddingLogicalWidth here, but m_tableLayout->computeIntrinsicLogicalWidthContributions already does,
-    // so a bunch of tests break doing this naively.
-    clearContentLogicalWidthsInvalidation();
+    maxContentLogicalWidth = std::max(maxContentLogicalWidth, minContentLogicalWidth);
 
     // Row widths are set by the section, not computed from preferred widths,
     // so their dirty bit is never cleared by the normal preferred width
@@ -1076,6 +1082,8 @@ void RenderTable::computeIntrinsicLogicalWidthContributions()
         for (CheckedPtr row = section->firstRow(); row; row = row->nextRow())
             row->clearContentLogicalWidthsInvalidation();
     }
+
+    return { minContentLogicalWidth - borderAndPadding, maxContentLogicalWidth - borderAndPadding };
 }
 
 RenderTableSection* RenderTable::topNonEmptySection() const
@@ -1819,10 +1827,10 @@ void RenderTable::markForPaginationRelayoutIfNeeded()
         return;
     
     // When a table moves, we have to dirty all of the sections too.
-    setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    setChildNeedsLayout(MarkingBehavior::OnlyThis);
     for (auto& child : childrenOfType<RenderTableSection>(*this)) {
         if (!child.needsLayout())
-            child.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            child.setChildNeedsLayout(MarkingBehavior::OnlyThis);
     }
 }
 

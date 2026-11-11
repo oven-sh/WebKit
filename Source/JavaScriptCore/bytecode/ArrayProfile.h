@@ -246,12 +246,12 @@ public:
     void observeStructureID(StructureID structureID) { m_lastSeenStructureID = structureID; }
     void observeStructure(Structure* structure) { m_lastSeenStructureID = structure->id(); }
 
-    void LEGACY_NODELETE computeUpdatedPrediction(CodeBlock*);
+    NODELETE void computeUpdatedPrediction(CodeBlock*);
     void computeUpdatedPrediction(CodeBlock*, Structure* lastSeenStructure);
     
     void observeArrayMode(ArrayModes mode) { m_observedArrayModes |= mode; }
     void removeObservedArrayModes(ArrayModes modes) { m_observedArrayModes &= ~modes; }
-    void LEGACY_NODELETE observeIndexedRead(JSCell*, unsigned index);
+    NODELETE void observeIndexedRead(JSCell*, unsigned index);
 
     ArrayModes observedArrayModes() const { return m_observedArrayModes; }
     bool mayInterceptIndexedAccesses() const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayInterceptIndexedAccesses); }

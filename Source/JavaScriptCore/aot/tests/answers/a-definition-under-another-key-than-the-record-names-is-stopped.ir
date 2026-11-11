@@ -8,10 +8,12 @@
 #   print(typeof keep + Reflect.ownKeys({ [first]: 1, [second]: 2 }).length);
 #   print(ask(new Held()));
 #   print("went on");
-# THE DOOR AT THE DEFINITION. The record of a class names the key of a member that is written under a computed key where the program spells the key. Link proves by that record, and guards hold by it.
-# So the run time holds each definition by value to the name in the record: operationAOTDefineMethod, ClassTable::holdDefinitionToNameInRecord().
-# THE LIE, which no source can tell: the store of `spare` goes into the variable of `first` here, a constant, so the class is defined under `second` while its record says `first`.
-# Without the door it printed "found under first" and went on.
+# This tests the entry check at a member's definition. Where the program spells out the key of a member that is defined under a computed key, the class's record names that key.
+# Link's proofs and the guards rely on that record.
+# So the runtime checks each definition whose key is a run-time value against the name in the record: operationAOTDefineMethod, ClassTable::holdDefinitionToNameInRecord().
+# The injected fault is one that no source program can express: the store to `spare` goes into the variable of `first` here, which is a constant.
+# So the class is defined under `second` while its record says `first`.
+# Without the entry check the program printed "found under first" and continued.
 # RUN(MEMBERS): link members mechanisms=all
 # MEMBERS: member L0 Prototype 0 Method symbol("first")@m0:0
 # RUN(ALL): run-in-shell mechanisms=all
@@ -28,7 +30,7 @@ layout L1 module=m0 position=313 fields=[{key=symbol("first")@m0:0 declared={typ
 # layout L133 kind=Closure
 variable g0 name="first" module=m0 declared={type=anything|absent} flags=[IsImmutable]
 variable g1 name="spare" module=m0 declared={type=anything|absent} flags=[IsImmutable]
-module m0 path="/$bunfs/root/main.js" displayPath="main.js" flags=[KeepsError] body=f0 positions={lineStarts=[0, 31, 64, 88, 122, 209, 254, 277, 351, 375, 393] quotedTexts=[{position=14 end=15}, {position=46 start=15 end=31}, {position=76 start=31 end=41}, {position=237 start=157 end=168}, {position=242 start=157 end=170}, {position=267 start=41 end=49}, {position=277 start=49 end=121}, {position=305 start=69 end=113}, {position=340 start=69 end=120}, {position=351 start=121 end=141}, {position=357 start=127 end=140}, {position=365 start=131 end=139}, {position=375 start=141 end=157}] textOfQuotes="Symbol(\x22first\x22)Symbol(\x22second\x22)id(second)define()print(typeof keep + Reflect.ownKeys({ [first]: 1, [second]: 2 }).length)print(ask(new Held))print(\x22went on\x22)held[first]()"} functionText="const first = Symbol(\x22first\x22);\x0aconst second = Symbol(\x22second\x22);\x0alet spare = id(second);\x0afunction keep() { return spare; }\x0afunction define() { return class Held { [first]() { return \x22found under first\x22; } }; }\x0afunction ask(held) { return held[first](); }\x0aconst Held = define();\x0aprint(typeof keep + Reflect.ownKeys({ [first]: 1, [second]: 2 }).length);\x0aprint(ask(new Held()));\x0aprint(\x22went on\x22);\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/main.js" displayPath="main.js" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 31, 64, 88, 122, 209, 254, 277, 351, 375, 393] quotedSources=[{position=14 end=15}, {position=46 start=15 end=31}, {position=76 start=31 end=41}, {position=237 start=157 end=168}, {position=242 start=157 end=170}, {position=267 start=41 end=49}, {position=277 start=49 end=121}, {position=305 start=69 end=113}, {position=340 start=69 end=120}, {position=351 start=121 end=141}, {position=357 start=127 end=140}, {position=365 start=131 end=139}, {position=375 start=141 end=157}] quotedSourceText="Symbol(\x22first\x22)Symbol(\x22second\x22)id(second)define()print(typeof keep + Reflect.ownKeys({ [first]: 1, [second]: 2 }).length)print(ask(new Held))print(\x22went on\x22)held[first]()"} functionSource="const first = Symbol(\x22first\x22);\x0aconst second = Symbol(\x22second\x22);\x0alet spare = id(second);\x0afunction keep() { return spare; }\x0afunction define() { return class Held { [first]() { return \x22found under first\x22; } }; }\x0afunction ask(held) { return held[first](); }\x0aconst Held = define();\x0aprint(typeof keep + Reflect.ownKeys({ [first]: 1, [second]: 2 }).length);\x0aprint(ask(new Held()));\x0aprint(\x22went on\x22);\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -78,13 +80,13 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v44 = Undefined @375
     Return v44 @375
 }
-function f1 name="keep" module=m0 position=88 text={start=88 end=121} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="keep" module=m0 position=88 sourceRange={start=88 end=121} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = GetModuleVariable variable=g1 @113
     v1 = CheckInitialized v0 name="spare" @113
     Return v1 @113
 }
-function f2 name="define" module=m0 position=122 text={start=122 end=208} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="define" module=m0 position=122 sourceRange={start=122 end=208} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f4 @149
     v1 = NewClass v0 layout=L0 @149
@@ -98,7 +100,7 @@ function f2 name="define" module=m0 position=122 text={start=122 end=208} flags=
     v9 = Convert v8 declared={type=f4 flags=[IsFromCompiler]} @149
     Return v8 @149
 }
-function f3 name="ask" module=m0 position=209 text={start=209 end=253} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="ask" module=m0 position=209 sourceRange={start=209 end=253} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
     v1 = GetModuleVariable variable=g0 @242
     v2 = CheckInitialized v1 name="first" @242
@@ -106,14 +108,14 @@ function f3 name="ask" module=m0 position=209 text={start=209 end=253} flags=[Ha
     v4 = Call v3, v0 calleeName="held[first]" @242
     ReturnCall v4 @242
 }
-function f4 name="Held" module=m0 position=155 text={start=149 end=205} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+function f4 name="Held" module=m0 position=155 sourceRange={start=149 end=205} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0 @155
     v2 = NewObject v1 layout=L0 @155
     v3 = Convert v2 declared={type=L0} @155
     Return v3 @155
 }
-function f5 module=m0 position=162 text={start=162 end=203} kind=Method thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f5 module=m0 position=162 sourceRange={start=162 end=203} kind=Method thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = String string="found under first" @181
     Return v0 @181

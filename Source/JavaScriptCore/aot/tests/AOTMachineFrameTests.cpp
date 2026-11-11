@@ -195,7 +195,7 @@ static bool scanRefusesPatchThatMayCollectWithoutFrame(EndOfFrameTestPatch end, 
     if (test.prepare())
         return false;
     const std::optional<Failure>& failure = test.procedure().failure();
-    AOT_TEST_CHECK(failure && failure->kind == FailureKind::NeedsFrameWhereNoneIsSetUp && failure->operation == patch->index());
+    AOT_TEST_CHECK(failure && failure->kind == FailureKind::MissingFrameSetup && failure->operation == patch->index());
     return true;
 }
 
@@ -648,82 +648,7 @@ static RegisterMask registersLostAtFrameTestSuspension(TestProcedure& test)
     return lost;
 }
 
-static constexpr uint64_t leftoverInFrameTest = 0x1ef701ef701ef701ull;
-
-static unsigned lowestFrameTestWordKept(const Frame& frame)
-{
-    return frame.bytesBelowFrameRecord() / bytesOfFrameTestWord - SavedFrame::numberOfWordsSkippedFor(frame.bytesDeadAtSuspensions() / bytesOfFrameTestWord);
-}
-
-static bool isFrameTestWordKeptClean(const Procedure& proc, unsigned location)
-{
-    const Frame& frame = proc.frame();
-    if (location <= frame.numberOfCalleeSaves() || location > lowestFrameTestWordKept(frame))
-        return false;
-    for (const StackSlot* slot : proc.stackSlots()) {
-        if (!slot->isDeadAtSuspensions() && frameTestWordHolds(location, slot->offsetFromFP(), slot->byteSize()))
-            return false;
-    }
-    return true;
-}
-
-static PatchOperation* appendFrameTestLeftovers(Output& out)
-{
-    PatchOperation* patch = out.patch(Void);
-    patch->effects = Effects::none();
-    patch->effects.writesLocalState = true;
-    patch->numGPScratchRegisters = 1;
-    patch->setGenerator([](CCallHelpers& jit, const PatchParameters& params) {
-        AllowMacroScratchRegisterUsage allowScratch(jit);
-        const Frame& frame = params.frame();
-        AOT_TEST_CHECK(params.frameIsSetUp());
-        jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(leftoverInFrameTest)), params.gpScratch(0));
-        for (unsigned location = 1; location <= lowestFrameTestWordKept(frame); ++location) {
-            int32_t offset = -bytesOfFrameTestWord * static_cast<int32_t>(location);
-            bool isClearedAtSetup = offset >= frame.beginOfWordsClearedAtSetup() && offset < frame.endOfWordsClearedAtSetup();
-            if (isFrameTestWordKeptClean(params.proc(), location) && !isClearedAtSetup)
-                jit.store64(params.gpScratch(0), CCallHelpers::Address(CCallHelpers::framePointerRegister, offset));
-        }
-    });
-    return patch;
-}
-
-static void emitFrameTestCountOfLeftovers(CCallHelpers& jit, const Procedure& proc, uint64_t leftover, GPRReg count, GPRReg word, GPRReg pattern)
-{
-    jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(leftover)), pattern);
-    for (unsigned location = 1; location <= lowestFrameTestWordKept(proc.frame()); ++location) {
-        if (!isFrameTestWordKeptClean(proc, location))
-            continue;
-        jit.load64(CCallHelpers::Address(CCallHelpers::framePointerRegister, -bytesOfFrameTestWord * static_cast<int32_t>(location)), word);
-        CCallHelpers::Jump isNoLeftover = jit.branch64(CCallHelpers::NotEqual, word, pattern);
-        jit.add64(CCallHelpers::TrustedImm32(1), count);
-        isNoLeftover.link(&jit);
-    }
-}
-
-static bool isFrameTestWordClearedAt(const Frame& frame, const PatchOperation* suspension, unsigned location)
-{
-    unsigned lowestWordKept = lowestFrameTestWordKept(frame);
-    return suspension->frameWordsClearedInFrontOfSuspension().get(location)
-        || (location <= lowestWordKept && location + suspension->numberOfFrameWordsToClearAtFirstSuspension() > lowestWordKept);
-}
-
-static unsigned numberOfFrameTestWordsClearedInFrontOf(const PatchOperation* suspension)
-{
-    const BitSpan& words = suspension->frameWordsClearedInFrontOfSuspension();
-    unsigned count = 0;
-    for (size_t word = 0; word < words.size(); ++word)
-        count += words.get(word);
-    return count;
-}
-
-enum class FrameTestSuspension : uint8_t {
-    GoesOn,
-    IsFirst,
-    IsLater,
-};
-
-static PatchOperation* appendFrameTestSuspension(TestProcedure& test, Operation* sumOfRoots, std::span<Operation* const> roots, FrameTestSuspension kind = FrameTestSuspension::IsLater, uint64_t leftover = leftoverInFrameTest)
+static PatchOperation* appendFrameTestSuspension(TestProcedure& test, Operation* sumOfRoots, std::span<Operation* const> roots)
 {
     RegisterMask lost = registersLostAtFrameTestSuspension(test);
     PatchOperation* suspension = test.out().patch(Void);
@@ -732,12 +657,11 @@ static PatchOperation* appendFrameTestSuspension(TestProcedure& test, Operation*
         suspension->append(root, ValueRep::LateColdAny);
     suspension->clobberLate(lost);
     suspension->setIsSuspension(true);
-    suspension->setGenerator([lost, kind, leftover](CCallHelpers& jit, const PatchParameters& params) {
+    suspension->setGenerator([lost](CCallHelpers& jit, const PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         constexpr GPRReg address = GPRInfo::argumentGPR0;
         constexpr GPRReg word = GPRInfo::argumentGPR1;
         constexpr GPRReg sum = GPRInfo::argumentGPR2;
-        constexpr GPRReg pattern = GPRInfo::argumentGPR3;
         const Frame& frame = params.frame();
         const std::optional<BitSpan>& deadWords = params.value()->frameWordsDeadAcrossSuspension();
         AOT_TEST_CHECK(params.frameIsSetUp() && deadWords);
@@ -754,23 +678,8 @@ static PatchOperation* appendFrameTestSuspension(TestProcedure& test, Operation*
                 AOT_TEST_CHECK(!frameTestWordHolds(location, rep.offsetFromFP(), numberOfBytes) || (location <= numberOfWordsKept && !deadWords->get(location)));
         }
 
-        if (kind == FrameTestSuspension::IsFirst) {
-            unsigned lowestWordKept = lowestFrameTestWordKept(frame);
-            unsigned numberOfWordsToClear = params.value()->numberOfFrameWordsToClearAtFirstSuspension();
-            AOT_TEST_CHECK(numberOfWordsToClear <= SavedFrame::maxClearedWords && frame.numberOfCalleeSaves() + numberOfWordsToClear <= lowestWordKept);
-            params[0].emitRestore(jit, address);
-            jit.move(CCallHelpers::TrustedImm32(0), sum);
-            emitFrameTestCountOfLeftovers(jit, params.proc(), leftover, sum, word, pattern);
-            jit.store64(sum, CCallHelpers::Address(address, 2 * bytesOfFrameTestWord));
-            jit.move(CCallHelpers::TrustedImm32(0), sum);
-            for (unsigned location = lowestWordKept; location + numberOfWordsToClear > lowestWordKept; --location)
-                jit.store64(sum, CCallHelpers::Address(CCallHelpers::framePointerRegister, -bytesOfFrameTestWord * static_cast<int32_t>(location)));
-            emitFrameTestCountOfLeftovers(jit, params.proc(), leftover, sum, word, pattern);
-            jit.store64(sum, CCallHelpers::Address(address, bytesOfFrameTestWord));
-        }
-
         emitFrameTestPoison(jit, lost);
-        for (unsigned location = 1; location <= numberOfWords && kind != FrameTestSuspension::GoesOn; ++location) {
+        for (unsigned location = 1; location <= numberOfWords; ++location) {
             if (location > numberOfWordsKept || deadWords->get(location))
                 jit.store64(word, CCallHelpers::Address(CCallHelpers::framePointerRegister, -bytesOfFrameTestWord * static_cast<int32_t>(location)));
         }
@@ -833,7 +742,7 @@ static void checkFrameTestPartsOfSavedFrame(TestProcedure& test)
     AOT_FRAME_TEST_CHECK(test, frame.beginOfWordsClearedAtSetup() == frame.endOfWordsClearedAtSetup() && !test.printedFrame().contains("wordsClearedAtSetup"_s));
 }
 
-static unsigned checkFrameTestDeadWords(TestProcedure& test, const Operation* valueNotDefinedOnEveryPath = nullptr)
+static unsigned checkFrameTestDeadWords(TestProcedure& test)
 {
     Procedure& proc = test.procedure();
     const Frame& frame = proc.frame();
@@ -846,53 +755,45 @@ static unsigned checkFrameTestDeadWords(TestProcedure& test, const Operation* va
     std::span<PatchOperation* const> suspensions = proc.allocation().suspensions();
     for (uint32_t indexOfSuspension = 0; indexOfSuspension < suspensions.size(); ++indexOfSuspension) {
         const PatchOperation* suspension = suspensions[indexOfSuspension];
-        const BitSpan& spillsHeld = proc.allocation().spillsHeldAt(indexOfSuspension);
+        const BitSpan& liveSpills = proc.allocation().liveSpillsAt(indexOfSuspension);
         const std::optional<BitSpan>& deadWords = suspension->frameWordsDeadAcrossSuspension();
         Position early = proc.order().earlyPositionOf(suspension);
         Position late = proc.order().latePositionOf(suspension);
-        auto isCleared = [&](unsigned location) {
-            return isFrameTestWordClearedAt(frame, suspension, location);
-        };
-        AOT_FRAME_TEST_CHECK(test, deadWords && suspension->numberOfFrameWordsToClearAtFirstSuspension() <= SavedFrame::maxClearedWords);
+        AOT_FRAME_TEST_CHECK(test, deadWords);
         AOT_FRAME_TEST_CHECK(test, text.contains(makeString("suspension @"_s, suspension->index(), ": dead words ["_s)));
         for (unsigned location = 1; location <= numberOfSaves; ++location)
-            AOT_FRAME_TEST_CHECK(test, !deadWords->get(location) && !isCleared(location));
+            AOT_FRAME_TEST_CHECK(test, !deadWords->get(location));
         AOT_FRAME_TEST_CHECK(test, !(numberOfSaves % 2) || deadWords->get(numberOfSaves + 1));
 
         for (unsigned location = roundUpToMultipleOf<2>(numberOfSaves) + 1; location <= numberOfWordsKept; ++location) {
             bool isHeld = false;
             bool mayBeHeld = false;
-            bool isHeldInFront = false;
             for (SpillIndex index = 0; index < spills.size(); ++index) {
                 const SpillFacts& spill = spills[index];
-                bool isHeldHere = spillsHeld.get(index);
+                bool isHeldHere = liveSpills.get(index);
                 AOT_FRAME_TEST_CHECK(test, !isHeldHere || (spill.livesAcrossSuspension && spill.begin <= late && spill.end >= early));
                 if (!frameTestWordHolds(location, frame.offsetFromFPOf(index), bytesForWidth(spill.width)))
                     continue;
                 isHeld |= isHeldHere;
                 mayBeHeld |= spill.begin <= late && spill.end >= early;
-                isHeldInFront |= isHeldHere && spill.value != valueNotDefinedOnEveryPath && spill.begin < late;
             }
             for (const StackSlot* slot : proc.stackSlots()) {
                 if (frameTestWordHolds(location, slot->offsetFromFP(), slot->byteSize()))
-                    isHeld = mayBeHeld = isHeldInFront = true;
+                    isHeld = mayBeHeld = true;
             }
             AOT_FRAME_TEST_CHECK(test, !isHeld || !deadWords->get(location));
             AOT_FRAME_TEST_CHECK(test, mayBeHeld || deadWords->get(location));
-            AOT_FRAME_TEST_CHECK(test, !isHeldInFront || !isCleared(location));
             numberOfDeadWords += deadWords->get(location);
         }
     }
     return numberOfDeadWords;
 }
 
-static void runFrameTestOfFunctionThatSavesItsFrame(unsigned numberAcrossCall, unsigned numberAcrossSecond, bool firstSuspensionGoesOn)
+static void runFrameTestOfFunctionThatSavesItsFrame(unsigned numberAcrossCall, unsigned numberAcrossSecond)
 {
     constexpr uint64_t a = 5000;
     constexpr unsigned numberAcrossBoth = 2;
     constexpr unsigned numberAcrossFirst = 4;
-    constexpr unsigned mostPlacesFreeBehindFirst = numberAcrossFirst + 2;
-    AOT_TEST_CHECK(numberAcrossSecond > mostPlacesFreeBehindFirst);
     ProcedureTraits traits;
     traits.savesFrameOnSuspend = true;
     TestProcedure test(traits);
@@ -906,7 +807,6 @@ static void runFrameTestOfFunctionThatSavesItsFrame(unsigned numberAcrossCall, u
 
     Operation* seed = test.argumentGPR(0);
     Operation* argumentWithSums = test.argumentGPR(1);
-    appendFrameTestLeftovers(out);
     Operation* sums = out.opaque(argumentWithSums);
     Vector<Operation*> acrossBoth = defineFrameTestValues(out, seed, numberAcrossBoth);
     Vector<Operation*> acrossFirst = defineFrameTestValues(out, out.add(seed, 100), numberAcrossFirst);
@@ -922,14 +822,14 @@ static void runFrameTestOfFunctionThatSavesItsFrame(unsigned numberAcrossCall, u
     rootsOfFirst.appendVector(acrossFirst);
     rootsOfFirst.append(rootThatDies);
     rootsOfFirst.append(halfWordRoot);
-    PatchOperation* first = appendFrameTestSuspension(test, sums, rootsOfFirst.span(), firstSuspensionGoesOn ? FrameTestSuspension::GoesOn : FrameTestSuspension::IsFirst);
+    PatchOperation* first = appendFrameTestSuspension(test, sums, rootsOfFirst.span());
     Operation* seedOfSecond = addUpFrameTestValues(out, sumAcrossCall, acrossFirst.span());
     Vector<Operation*> acrossSecond = defineFrameTestValues(out, seedOfSecond, numberAcrossSecond);
 
     Vector<Operation*> rootsOfSecond = acrossBoth;
     rootsOfSecond.appendVector(acrossSecond);
     rootsOfSecond.append(halfWordRoot);
-    PatchOperation* second = appendFrameTestSuspension(test, sums, rootsOfSecond.span(), firstSuspensionGoesOn ? FrameTestSuspension::IsFirst : FrameTestSuspension::IsLater);
+    PatchOperation* second = appendFrameTestSuspension(test, sums, rootsOfSecond.span());
     Operation* result = out.load64(out.address(frameSlots, out.slotBase(keptSlot), sizeof(uint64_t)));
     result = addUpFrameTestValues(out, result, acrossBoth.span());
     result = addUpFrameTestValues(out, result, acrossSecond.span());
@@ -944,13 +844,6 @@ static void runFrameTestOfFunctionThatSavesItsFrame(unsigned numberAcrossCall, u
     checkFrameTestPartsOfSavedFrame(test);
     AOT_FRAME_TEST_CHECK(test, checkFrameTestDeadWords(test));
 
-    unsigned fewestNewWords = numberAcrossSecond - mostPlacesFreeBehindFirst;
-    unsigned numberOfWordsToClear = first->numberOfFrameWordsToClearAtFirstSuspension();
-    AOT_FRAME_TEST_CHECK(test, numberOfWordsToClear >= std::min<unsigned>(fewestNewWords, SavedFrame::maxClearedWords));
-    AOT_FRAME_TEST_CHECK(test, numberOfWordsToClear + numberOfFrameTestWordsClearedInFrontOf(first) >= fewestNewWords);
-    AOT_FRAME_TEST_CHECK(test, test.printedFrame().contains(makeString("], lowest words cleared at first suspension = "_s, numberOfWordsToClear)));
-    AOT_FRAME_TEST_CHECK(test, (numberOfFrameTestWordsClearedInFrontOf(first) + numberOfFrameTestWordsClearedInFrontOf(second) > 0) == test.printedFrame().contains("words cleared in front = ["_s));
-
     unsigned numberOfSpillsKept = 0;
     for (const SpillFacts& spill : allocation.spills())
         numberOfSpillsKept += spill.livesAcrossSuspension;
@@ -963,115 +856,15 @@ static void runFrameTestOfFunctionThatSavesItsFrame(unsigned numberAcrossCall, u
     uint64_t expectedSumOfRoots = sumOfFrameTestValues(a, numberAcrossBoth) + sumOfFrameTestValues(a + 100, numberAcrossFirst) + a + 500 + halfWord + livingToTheEnd;
     std::array<uint64_t, 3> words { 0, poison, poison };
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data()) == a + 7 + livingToTheEnd);
-    AOT_FRAME_TEST_CHECK(test, words[0] == expectedSumOfRoots && !words[1]);
-    AOT_FRAME_TEST_CHECK(test, firstSuspensionGoesOn || words[2] >= std::min<unsigned>(fewestNewWords, SavedFrame::maxClearedWords) - 1);
+    AOT_FRAME_TEST_CHECK(test, words[0] == expectedSumOfRoots);
 }
 
 static void testMachineFrameOfFunctionThatSavesItsFrame()
 {
     for (unsigned numberAcrossCall = 0; numberAcrossCall <= numberOfCalleeSavedGPRsInFrameTests() + 2; ++numberAcrossCall) {
-        for (unsigned numberAcrossSecond : { 12u, 30u }) {
-            runFrameTestOfFunctionThatSavesItsFrame(numberAcrossCall, numberAcrossSecond, false);
-            runFrameTestOfFunctionThatSavesItsFrame(numberAcrossCall, numberAcrossSecond, true);
-        }
+        for (unsigned numberAcrossSecond : { 12u, 30u })
+            runFrameTestOfFunctionThatSavesItsFrame(numberAcrossCall, numberAcrossSecond);
     }
-}
-
-static void runFrameTestOfWordsStoredOnOnePath(bool takesArm)
-{
-    constexpr uint64_t a = 7000;
-    constexpr unsigned numberInArm = 3;
-    ProcedureTraits traits;
-    traits.savesFrameOnSuspend = true;
-    TestProcedure test(traits);
-    Output& out = test.out();
-    Operation* argumentWithSeed = test.argumentGPR(0);
-    Operation* argumentWithSums = test.argumentGPR(1);
-    Operation* choice = test.argumentGPR(2);
-    appendFrameTestLeftovers(out);
-    Operation* seed = out.opaque(argumentWithSeed);
-    Operation* sums = out.opaque(argumentWithSums);
-    Block* arm = out.newBlock();
-    Block* join = out.newBlock();
-    ValueFromBlock fromEntry = out.anchor(out.int64Zero);
-    out.branch(out.testNonZero64(choice, 1), normalEdge(arm), normalEdge(join));
-
-    out.appendTo(arm);
-    Vector<Operation*> inArm = defineFrameTestValues(out, seed, numberInArm);
-    appendFrameTestSuspension(test, sums, inArm.span(), takesArm ? FrameTestSuspension::IsFirst : FrameTestSuspension::IsLater);
-    ValueFromBlock fromArm = out.anchor(addUpFrameTestValues(out, out.int64Zero, inArm.span()));
-    out.jump(join);
-
-    out.appendTo(join);
-    Operation* sumOfArm = out.phi(Int64, fromEntry, fromArm);
-    Operation* behindJoin = out.opaque(out.add(seed, 50));
-    appendFrameTestSuspension(test, sums, singleElementSpan(behindJoin), takesArm ? FrameTestSuspension::IsLater : FrameTestSuspension::IsFirst);
-    out.ret(out.add(out.add(sumOfArm, behindJoin), seed));
-
-    compileOrFail(test);
-    AOT_FRAME_TEST_CHECK(test, test.procedure().allocation().suspensions().size() == 2);
-    checkFrameTestLayout(test);
-    checkFrameTestDeadWords(test);
-
-    uint64_t expectedSumOfArm = takesArm ? sumOfFrameTestValues(a, numberInArm) : 0;
-    std::array<uint64_t, 3> words { 0, poison, poison };
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), uint64_t { takesArm }) == expectedSumOfArm + a + 50 + a);
-    AOT_FRAME_TEST_CHECK(test, words[0] == expectedSumOfArm + a + 50 && !words[1]);
-}
-
-static void testMachineFrameClearsWordsStoredOnOnePath()
-{
-    runFrameTestOfWordsStoredOnOnePath(false);
-    runFrameTestOfWordsStoredOnOnePath(true);
-}
-
-static void testMachineFrameKeepsNoLeftoverInWordHeldByRangeAlone()
-{
-    constexpr uint64_t a = 9000;
-    ProcedureTraits traits;
-    traits.savesFrameOnSuspend = true;
-    TestProcedure test(traits);
-    Output& out = test.out();
-    Operation* choice = test.argumentGPR(2);
-    Operation* seed = out.opaque(test.argumentGPR(0));
-    Operation* sums = out.opaque(test.argumentGPR(1));
-    Block* defining = out.newBlock();
-    Block* shared = out.newBlock();
-    Block* reading = out.newBlock();
-    out.branch(out.testNonZero64(choice, 1), normalEdge(defining), normalEdge(shared));
-
-    out.appendTo(defining);
-    Operation* value = out.opaque(out.add(seed, 1));
-    out.branch(out.testNonZero64(choice, 2), unlikelyEdge(reading), normalEdge(shared));
-
-    out.appendTo(shared);
-    PatchOperation* suspensionInShared = appendFrameTestSuspension(test, sums, { }, FrameTestSuspension::IsFirst, a + 1);
-    out.ret(seed);
-
-    out.appendTo(reading);
-    PatchOperation* suspensionInReading = appendFrameTestSuspension(test, sums, singleElementSpan(value), FrameTestSuspension::IsFirst, a + 1);
-    out.ret(value);
-
-    compileOrFail(test);
-    const Order& order = test.procedure().order();
-    const Allocation& allocation = test.procedure().allocation();
-    const Frame& frame = test.procedure().frame();
-    AOT_FRAME_TEST_CHECK(test, allocation.suspensions().size() == 2);
-    checkFrameTestLayout(test);
-    checkFrameTestPartsOfSavedFrame(test);
-    checkFrameTestDeadWords(test, value);
-
-    AOT_FRAME_TEST_CHECK(test, allocation.isSpilled(value));
-    const SpillFacts& spill = allocation.spills()[allocation.spillOf(value)];
-    unsigned location = static_cast<unsigned>(-frame.offsetFromFPOf(allocation.spillOf(value)) / bytesOfFrameTestWord);
-    bool rangeReachesOverShared = spill.begin < order.latePositionOf(suspensionInShared) && spill.end >= order.earlyPositionOf(suspensionInShared);
-    AOT_FRAME_TEST_CHECK(test, !isFrameTestWordClearedAt(frame, suspensionInReading, location));
-    AOT_FRAME_TEST_CHECK(test, !rangeReachesOverShared || isFrameTestWordClearedAt(frame, suspensionInShared, location));
-
-    std::array<uint64_t, 3> words { 0, poison, poison };
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), uint64_t { 3 }) == a + 1 && words[0] == a + 1);
-    words = { 0, poison, poison };
-    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), uint64_t { 0 }) == a && !words[0] && !words[1]);
 }
 
 static void testMachineFrameKeepsNoSpillThatNoPathReadsBehindSuspension()
@@ -1108,7 +901,7 @@ static void testMachineFrameKeepsNoSpillThatNoPathReadsBehindSuspension()
     AOT_FRAME_TEST_CHECK(test, allocation.isSpilled(value));
     const SpillFacts& spill = allocation.spills()[allocation.spillOf(value)];
     AOT_FRAME_TEST_CHECK(test, spill.begin < order.earlyPositionOf(suspension) && spill.end > order.latePositionOf(suspension));
-    AOT_FRAME_TEST_CHECK(test, !spill.livesAcrossSuspension && !allocation.spillsHeldAt(0).get(allocation.spillOf(value)));
+    AOT_FRAME_TEST_CHECK(test, !spill.livesAcrossSuspension && !allocation.liveSpillsAt(0).get(allocation.spillOf(value)));
 
     std::array<uint64_t, 3> words { 0, poison, poison };
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), uint64_t { 1 }) == a + 1 && !words[0]);
@@ -1154,9 +947,9 @@ static void testMachineFrameKeepsManySpillsThatLiveThroughBlockOfSuspension()
     checkFrameTestDeadWords(test);
     AOT_FRAME_TEST_CHECK(test, allocation.spills().size() > 64);
     for (Operation* value : readBehindJoin)
-        AOT_FRAME_TEST_CHECK(test, allocation.isSpilled(value) && allocation.spillsHeldAt(0).get(allocation.spillOf(value)) && allocation.spills()[allocation.spillOf(value)].livesAcrossSuspension);
+        AOT_FRAME_TEST_CHECK(test, allocation.isSpilled(value) && allocation.liveSpillsAt(0).get(allocation.spillOf(value)) && allocation.spills()[allocation.spillOf(value)].livesAcrossSuspension);
     for (Operation* value : readOnOtherWay)
-        AOT_FRAME_TEST_CHECK(test, !allocation.isSpilled(value) || !allocation.spillsHeldAt(0).get(allocation.spillOf(value)));
+        AOT_FRAME_TEST_CHECK(test, !allocation.isSpilled(value) || !allocation.liveSpillsAt(0).get(allocation.spillOf(value)));
 
     std::array<uint64_t, 3> words { 0, poison, poison };
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), uint64_t { 0 }) == sumOfFrameTestValues(a, numberOfEach));
@@ -1224,14 +1017,14 @@ static void testMachineFrameKeepsManySpillsThatLiveRoundLoopWithSuspension()
     unsigned numberKeptOutsideSpills = 0;
     for (const Vector<Operation*>& values : { readInLoop, readBehindLoop }) {
         for (Operation* value : values) {
-            bool isHeld = allocation.isSpilled(value) && allocation.spillsHeldAt(0).get(allocation.spillOf(value));
+            bool isHeld = allocation.isSpilled(value) && allocation.liveSpillsAt(0).get(allocation.spillOf(value));
             AOT_FRAME_TEST_CHECK(test, !isHeld || allocation.spills()[allocation.spillOf(value)].livesAcrossSuspension);
             numberKeptOutsideSpills += !isHeld;
         }
     }
     AOT_FRAME_TEST_CHECK(test, numberKeptOutsideSpills <= 1);
     for (Operation* value : readInFrontOfLoop)
-        AOT_FRAME_TEST_CHECK(test, !allocation.isSpilled(value) || !allocation.spillsHeldAt(0).get(allocation.spillOf(value)));
+        AOT_FRAME_TEST_CHECK(test, !allocation.isSpilled(value) || !allocation.liveSpillsAt(0).get(allocation.spillOf(value)));
 }
 
 static bool oneByteReachesFrameTestSpill(TestProcedure& test, const Operation* value)
@@ -1266,7 +1059,6 @@ static void testMachineFrameThatIsSavedMovesStackSlotsAndHalfWordsWhole()
 
     Operation* argumentWithSeed = test.argumentGPR(0);
     Operation* argumentWithSums = test.argumentGPR(1);
-    appendFrameTestLeftovers(out);
     Operation* seed = out.opaque(argumentWithSeed);
     Operation* sums = out.opaque(argumentWithSums);
     out.store64(out.add(seed, 7), wordOfKeptSlot());
@@ -1286,7 +1078,7 @@ static void testMachineFrameThatIsSavedMovesStackSlotsAndHalfWordsWhole()
 
     Vector<Operation*> roots = kept;
     roots.appendVector(halfWords);
-    PatchOperation* first = appendFrameTestSuspension(test, sums, roots.span(), FrameTestSuspension::IsFirst);
+    PatchOperation* first = appendFrameTestSuspension(test, sums, roots.span());
     sum = addUpFrameTestValues(out, out.add(sum, out.load64(wordOfKeptSlot())), readOnceMore);
     for (unsigned read = 0; read < numberOfReads; ++read) {
         appendFrameTestCall(test);
@@ -1341,7 +1133,7 @@ static void testMachineFrameThatIsSavedMovesStackSlotsAndHalfWordsWhole()
         + numberOfReads * static_cast<uint32_t>(a + 600 + busyHalfWord) + sumOfKept + sumOfHalfWords;
     std::array<uint64_t, 3> words { 0, poison, poison };
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data()) == expected);
-    AOT_FRAME_TEST_CHECK(test, words[0] == 2 * (sumOfKept + sumOfHalfWords) && !words[1]);
+    AOT_FRAME_TEST_CHECK(test, words[0] == 2 * (sumOfKept + sumOfHalfWords));
 }
 
 static void testMachineFrameWordThatSuspensionNamesByNumberComesFirst()
@@ -1407,7 +1199,6 @@ static void testMachineFrameClearsAtSetupWordsThatSavesWrite()
     Operation* argumentWithSeed = test.argumentGPR(0);
     Operation* argumentWithSums = test.argumentGPR(1);
     Operation* choice = test.argumentGPR(2);
-    appendFrameTestLeftovers(out);
     Operation* value = out.opaque(out.add(argumentWithSeed, 1));
     Operation* sums = out.opaque(argumentWithSums);
     out.store64(value, out.address(test.heaps().argumentBuffer, sums, 3 * sizeof(uint64_t)));
@@ -1416,7 +1207,7 @@ static void testMachineFrameClearsAtSetupWordsThatSavesWrite()
     out.branch(out.testNonZero64(choice, 1), rareEdge(rare), normalEdge(end));
 
     out.appendTo(rare);
-    appendFrameTestSuspension(test, sums, singleElementSpan(value), FrameTestSuspension::IsFirst);
+    appendFrameTestSuspension(test, sums, singleElementSpan(value));
     out.jump(end);
 
     out.appendTo(end);
@@ -1439,10 +1230,10 @@ static void testMachineFrameClearsAtSetupWordsThatSavesWrite()
 
     std::array<uint64_t, 4> words { 0, poison, poison, 0 };
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), uint64_t { 1 }) == answer);
-    AOT_FRAME_TEST_CHECK(test, words[0] == a + 1 && !words[1] && words[3] == a + 1);
+    AOT_FRAME_TEST_CHECK(test, words[0] == a + 1 && words[3] == a + 1);
     words = { 0, poison, poison, 0 };
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), uint64_t { 0 }) == answer);
-    AOT_FRAME_TEST_CHECK(test, !words[0] && words[1] == poison && words[3] == a + 1);
+    AOT_FRAME_TEST_CHECK(test, !words[0] && words[3] == a + 1);
 }
 
 static SpillIndex findFrameTestPointerBeside(const Allocation& allocation, const Operation* reference)
@@ -3980,8 +3771,6 @@ std::span<const NativeTest> machineFrameTests()
         { "machine/frame/handlers-rejection-and-suspension-set-it-up-at-entry"_s, Machine::testMachineFrameIsSetUpAtEntryWhereTraitsAskForIt },
         { "machine/frame/callee-saves-ascend-below-the-record-and-come-back"_s, Machine::testMachineFrameCalleeSavesAscendBelowRecord },
         { "machine/frame/function-that-saves-its-frame"_s, Machine::testMachineFrameOfFunctionThatSavesItsFrame },
-        { "machine/frame/words-stored-on-one-path-are-cleared-at-the-suspension"_s, Machine::testMachineFrameClearsWordsStoredOnOnePath },
-        { "machine/frame/word-held-by-its-range-alone-keeps-no-leftover"_s, Machine::testMachineFrameKeepsNoLeftoverInWordHeldByRangeAlone },
         { "machine/frame/spill-that-no-path-reads-behind-a-suspension-is-not-kept"_s, Machine::testMachineFrameKeepsNoSpillThatNoPathReadsBehindSuspension },
         { "machine/frame/many-spills-that-live-through-the-block-of-a-suspension-are-kept"_s, Machine::testMachineFrameKeepsManySpillsThatLiveThroughBlockOfSuspension },
         { "machine/frame/many-spills-that-live-round-a-loop-with-a-suspension-are-kept"_s, Machine::testMachineFrameKeepsManySpillsThatLiveRoundLoopWithSuspension },

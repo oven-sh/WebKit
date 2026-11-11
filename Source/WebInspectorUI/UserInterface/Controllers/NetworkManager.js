@@ -267,6 +267,10 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             // ProxyingPageAgent is live.
             this._requestAggregatedResourceTree();
 
+            // Replay the Page setting overrides to the ProxyingPageAgent, which fans them out to every process.
+            WI.layerTreeManager?.initializeBackendTargetForSiteIsolation(WI.backendTarget);
+            WI.deviceSettingsManager?.initializeBackendTargetForSiteIsolation(WI.backendTarget);
+
             if (this._bootstrapScript && this._bootstrapScriptEnabledSetting.value && WI.backendTarget?.hasCommand("Page.setBootstrapScript"))
                 WI.backendTarget.PageAgent.setBootstrapScript(this._bootstrapScript.content);
         }
@@ -288,8 +292,18 @@ WI.NetworkManager = class NetworkManager extends WI.Object
     get mainFrame() { return this._mainFrame; }
     get localResourceOverrides() { return this._localResourceOverrides; }
     get bootstrapScript() { return this._bootstrapScript; }
-    get enabledNetworkForSiteIsolation() { return this._enabledNetworkForSiteIsolation; }
     get enabledPageForSiteIsolation() { return this._enabledPageForSiteIsolation; }
+
+    get pageAgentTargets()
+    {
+        let targets = WI.targets;
+
+        // `WI.targets` excludes the WebPage target, whose ProxyingPageAgent forwards Page commands to cross-origin frames' processes under Site Isolation.
+        if (this._enabledPageForSiteIsolation && WI.backendTarget && !targets.includes(WI.backendTarget))
+            targets = [...targets, WI.backendTarget];
+
+        return targets;
+    }
 
     get frames()
     {
@@ -358,6 +372,15 @@ WI.NetworkManager = class NetworkManager extends WI.Object
     resourceForRequestIdentifier(requestIdentifier)
     {
         return this._resourceRequestIdentifierMap.get(requestIdentifier) || null;
+    }
+
+    networkTargetForCommand(target, command)
+    {
+        // Under Site Isolation, ProxyingNetworkAgent on the backend target routes the command to the owning process.
+        // hasCommand() alone can't tell: the protocol declares these commands on the backend target either way.
+        if (this._enabledNetworkForSiteIsolation && WI.backendTarget?.hasCommand(command))
+            return WI.backendTarget;
+        return target;
     }
 
     downloadSourceMap(sourceMapURL, baseURL, originalSourceCode)
@@ -1747,7 +1770,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         if (!WI.settings.experimentalEnableNetworkEmulatedCondition.value)
             return;
 
-        // COMPATIBILITY (macOS X.Y, iOS X.Y): Network.setEmulatedConditions did not exist.
+        // COMPATIBILITY (macOS 27.0, iOS 27.0): The latency paratemeter of Network.setEmulatedConditions did not exist.
         if (!target.hasCommand("Network.setEmulatedConditions"))
             return;
 
@@ -1806,15 +1829,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             return;
         }
 
-        let target = WI.assumingMainTarget();
-
-        // Under Site Isolation, ProxyingNetworkAgent implements Network.loadResource on the backend
-        // (web-page) target, fanning the load out to the frame's owning process. Route there when
-        // Network is enabled on the backend target; otherwise the main target handles it. Mirrors
-        // Resource.requestContentFromBackend.
-        if (this._networkEnabledOnBackendTarget && WI.backendTarget && WI.backendTarget !== target && WI.backendTarget.hasCommand("Network.loadResource"))
-            target = WI.backendTarget;
-
+        let target = this.networkTargetForCommand(WI.assumingMainTarget(), "Network.loadResource");
         if (!target.hasCommand("Network.loadResource")) {
             this._sourceMapLoadFailed(sourceMapURL);
             return;
@@ -1936,13 +1951,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
 
     _setBootstrapScriptSource(source)
     {
-        let targets = WI.targets;
-
-        // `WI.targets` excludes the WebPage target, whose ProxyingPageAgent forwards the script to cross-origin frames' processes under Site Isolation.
-        if (this._enabledPageForSiteIsolation && WI.backendTarget && !targets.includes(WI.backendTarget))
-            targets = [...targets, WI.backendTarget];
-
-        for (let target of targets) {
+        for (let target of this.pageAgentTargets) {
             // COMPATIBILITY (iOS 13.0): Page.setBootstrapScript did not exist yet.
             if (target.hasCommand("Page.setBootstrapScript"))
                 target.PageAgent.setBootstrapScript(source);

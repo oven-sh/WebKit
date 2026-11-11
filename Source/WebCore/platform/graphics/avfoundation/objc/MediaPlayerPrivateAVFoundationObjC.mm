@@ -146,7 +146,7 @@
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/AVPlayerAdditions.mm>)
 #import <WebKitAdditions/AVPlayerAdditions.mm>
 #else
-static void LEGACY_NODELETE setPlayerScreenReserved(AVPlayer *, bool) { }
+NODELETE static void setPlayerScreenReserved(AVPlayer *, bool) { }
 #endif
 #endif
 
@@ -936,7 +936,7 @@ void MediaPlayerPrivateAVFoundationObjC::createAVAssetForURL(const URL& url, Ret
 
     if (!type.isEmpty() && !player->contentMIMETypeWasInferredFromExtension()) {
         // FIXME: Remove that check once AVFoundation allows it (rdar://163119790). This should also not be restricted to blobs.
-        if (type == "application/ogg"_s && url.protocolIsBlob())
+        if (type == "application/ogg"_s)
             type = "audio/ogg"_s;
 
         auto codecs = player->contentTypeCodecs();
@@ -3458,7 +3458,8 @@ static RetainPtr<NSString> externalDeviceDisplayNameForPlayer(AVPlayer *player)
         return nil;
 
     RetainPtr<NSString> displayName = nil;
-    for (NSDictionary *pickableRoute in (__bridge NSArray *)pickableRoutes.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSDictionary *pickableRoute in (__bridge NSArray *)pickableRoutes.get()) {
         if (![pickableRoute[AVController_RouteDescriptionKey_RouteCurrentlyPicked] boolValue])
             continue;
 
@@ -3473,7 +3474,8 @@ static RetainPtr<NSString> externalDeviceDisplayNameForPlayer(AVPlayer *player)
 
         // In cases where a route with that name already exists, prefix the name with the model.
         BOOL includeLocalizedDeviceModelName = NO;
-        for (NSDictionary *otherRoute in (__bridge NSArray *)pickableRoutes.get()) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSDictionary *otherRoute in (__bridge NSArray *)pickableRoutes.get()) {
             if (otherRoute == pickableRoute)
                 continue;
 

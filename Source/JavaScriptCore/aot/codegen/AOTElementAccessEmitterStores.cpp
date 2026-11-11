@@ -116,6 +116,14 @@ bool ElementAccessEmitter::goesByKindOfListOfNumbers(ValueID list, ValueID store
     return type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull) && isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(list));
 }
 
+const ArrayStorageForm& ElementAccessEmitter::expectedFormOf(ValueID array)
+{
+    ArrayStorage declared = arrayStorageDeclaredBy(m_program, types(), typeIDOf(array)).predicted();
+    if (hasArrayStorageForm(declared))
+        return arrayStorageFormOf(declared);
+    return arrayStorageFormOf(isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(array)) ? ArrayStorage::Int32 : ArrayStorage::Contiguous);
+}
+
 ArrayStorageFormList ElementAccessEmitter::formsThatMayHold(ValueID list, ValueID stored)
 {
     return goesByKindOfListOfNumbers(list, stored) ? formsOfListOfNumbersFor(stored, true) : candidateFormsFor(stored, ArrayStorage::Other);
@@ -123,7 +131,8 @@ ArrayStorageFormList ElementAccessEmitter::formsThatMayHold(ValueID list, ValueI
 
 ArrayStorageFormList ElementAccessEmitter::formExpectedToHold(ValueID list, ValueID stored)
 {
-    if (goesByKindOfListOfNumbers(list, stored))
+    bool isTestedForNumber = representationOf(stored) == Representation::JSValue && typeOf(stored).primitives & Primitive::Number && isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(list));
+    if (isTestedForNumber || goesByKindOfListOfNumbers(list, stored))
         return formsOfListOfNumbersFor(stored, false);
     ArrayStorageFormList forms = candidateFormsFor(stored, storageExpectedToHold(representationOf(stored)));
     if (forms.size() > 1)
@@ -137,7 +146,7 @@ ValueID ElementAccessEmitter::int32ThatArmOfValuesStoresInEitherKind(ValueID sto
         return { };
     if (representationOf(stored) != Representation::JSValue && representationOf(stored) != Representation::Int32)
         return { };
-    build().statistics().count(StatisticID::StoresOfInt32ThatAdmitTwoKindsOfStorage);
+    build().statistics().count(StatisticID::Int32StoresSharingBoxedPath);
     return stored;
 }
 
@@ -179,7 +188,7 @@ std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorag
     const Type& type = typeOf(stored);
     Operand operand = get(stored);
     auto numberToStore = [&](Number number) -> Operand {
-        if (!canStoreWithoutConversion(types(), form.kind, typeIDOf(stored)) && !AOT::hasFlag(build().options().testing, Wire::TestingSwitch::NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN))
+        if (!canStoreWithoutConversion(types(), form.kind, typeIDOf(stored)) && !AOT::hasFlag(build().options().testing, Wire::TestingSwitch::AssumeNoNaNStores))
             branchUnless(equal(number, number), doesNotFit);
         return number;
     };
@@ -354,15 +363,15 @@ void ElementAccessEmitter::storeInProvenList(const ValueContext& value, const Ar
         }
         LengthTest test = testLength(index, elements);
         if (!value->isInBounds() && generator().takesFormOfLoops(value)) {
-            LBasicBlock liesInside = newBlock();
-            LBasicBlock liesBehind = newBlock();
-            m_out.branch(test.isInside.value(), normalEdge(liesInside), normalEdge(liesBehind));
-            m_out.appendTo(liesBehind);
+            LBasicBlock inBounds = newBlock();
+            LBasicBlock pastEnd = newBlock();
+            m_out.branch(test.isInside.value(), normalEdge(inBounds), normalEdge(pastEnd));
+            m_out.appendTo(pastEnd);
             branchUnless(equal(test.indexInside, publicLength(elements)), outOfLine);
             branchUnless(below(test.indexInside, vectorLength(elements)), outOfLine);
             setPublicLength(elements, add(test.indexInside, integer(1)));
-            m_out.jump(liesInside);
-            m_out.appendTo(liesInside);
+            m_out.jump(inBounds);
+            m_out.appendTo(inBounds);
         } else if (!value->isInBounds())
             branchUnless(test.isInside, outOfLine);
         stopWhereHoleWouldBeStored(value, form, *rawElement);
@@ -406,7 +415,7 @@ void ElementAccessEmitter::storeOutOfLine(const ValueContext& value, CellPointer
 
     bool isWholeNumberOfAnySize = storedType.isNumberLike() && !storedType.isInt32() && !(storedType.primitives & Primitive::FractionalNumber);
     if (isWholeNumberOfAnySize)
-        build().statistics().count(StatisticID::WholeNumbersStoredOutOfLineAsTheyAre);
+        build().statistics().count(StatisticID::IntegralStoresWithoutDoubleConversion);
     bool mayConvertToDouble = storedType.isNumberLike() && !storedType.isInt32() && !isWholeNumberOfAnySize;
     ArrayStoredValue storedValue = mayConvertToDouble ? ArrayStoredValue::Number : ArrayStoredValue::Value;
     if (key.is<Number>()) {
@@ -517,7 +526,7 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
     Join<Condition> join(m_out);
     Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
     ArrayElements elements = elementsOf(array);
-    forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, candidateFormsFor(stored, storageExpectedToHold(representationOf(stored))), otherwise, [&](const ArrayStorageForm& form) {
+    forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, candidateFormsFor(stored, typeOf(stored).isInt32() ? ArrayStorage::Int32 : storageExpectedToHold(representationOf(stored))), otherwise, [&](const ArrayStorageForm& form) {
         Operand rawElement = *rawElementToStore(form, stored, otherwise);
         if (leavesStorageAsItIs) {
             LengthTest test = testLength(index, elements);

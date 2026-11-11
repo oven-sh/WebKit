@@ -60,7 +60,7 @@ static RegisterMask registersOfFixedPatchResults(const PatchOperation* patch)
     return registers;
 }
 
-static Position earlyPositionOfAllocatedPatch(const Allocator& allocator, const PatchOperation* patch)
+[[maybe_unused]] static Position earlyPositionOfAllocatedPatch(const Allocator& allocator, const PatchOperation* patch)
 {
     if (allocator.m_liveness.isSunk(patch))
         return allocator.position();
@@ -109,7 +109,7 @@ static ALWAYS_INLINE void appendMoveForPatchAllocation(Allocator& allocator, Ste
 
 static ALWAYS_INLINE bool spillHoldsValueWherePatchStands(const Allocator& allocator, const Operation* value)
 {
-    bool holdsValue = allocator.m_allocation.isSpilled(value) && (!allocator.m_isAheadOfFramedPart || allocator.spillHoldsValueIn(allocator.m_block, value));
+    bool holdsValue = allocator.m_allocation.isSpilled(value) && (!allocator.m_isOutsideFramedPart || allocator.spillHoldsValueIn(allocator.m_block, value));
     ASSERT(holdsValue == allocator.spillHoldsValueIn(allocator.m_block, value));
     return holdsValue;
 }
@@ -890,7 +890,7 @@ static NEVER_INLINE bool childrenKeptAliveArePlacedAsConstrained(const PatchOper
 
 void Allocator::allocatePatch(PatchOperation* patch)
 {
-    if (m_isAheadOfFramedPart && isInRareRegion() && patch->effects.mayCollect) [[unlikely]]
+    if (m_isOutsideFramedPart && isInRareRegion() && patch->effects.mayCollect) [[unlikely]]
         keepPointersThatWait(endOfWhatWaysLeadToFromSafepointsOfRareRegion());
 
     auto allocatePlainPatch = [&]<bool patchEndsBlock, bool someOperandMayBeBrought>() ALWAYS_INLINE_LAMBDA -> bool {
@@ -899,8 +899,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
         const Type type = patch->type();
         const unsigned numberOfResults = patch->resultConstraints.size();
         if (patch->opcode() != Patch || type.isTuple() || numberOfResults != (type.kind() == Void ? 0u : 1u)
-            || (bits & (PatchOperation::IsSuspension | PatchOperation::ReleasesDeadValues))
-            || !patch->m_childrenLetGoByCallee.isEmpty()) [[unlikely]]
+            || (bits & PatchOperation::IsSuspension)) [[unlikely]]
             return false;
         if (patch->onlyKeepsChildrenAlive && !childrenKeptAliveArePlacedAsConstrained(patch)) [[unlikely]]
             return false;
@@ -1528,20 +1527,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
         }
     }
 
-    bool releasesItsChild = false;
-    if ((bits & PatchOperation::ReleasesDeadValues) && !endsBlock && !numberOfResults && numberOfChildren == firstChild + 1) {
-        Operation* child = children[firstChild];
-        bool isReadBehindByPosition = isLiveBehind(child, late) || m_liveness.of(child).lastUse > early;
-        if (!child->hasNoPosition() && (!isReadBehindByPosition || (!isReadOnSomeWayOn(child, early + 1) && !isHeldAtHeadThatWayLeadsBackTo(child)))) {
-            releasesItsChild = true;
-            if (isReadBehindByPosition)
-                m_releasesByWaysOn.append(m_arena, ReleaseByWaysOn { child, patch, static_cast<uint32_t>(m_allocation.m_steps.size()) });
-            patch->m_registersToRelease = stateOf(child).registers & m_file.allocatableIn(Bank::GP);
-        }
-    }
-    if (!patch->m_childrenLetGoByCallee.isEmpty())
-        releaseChildrenLetGoByCallee(patch, locationsOfOperands, early, locked);
-
     if (numberOfChildren)
         passUsesOf(patch, early);
 
@@ -1588,8 +1573,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
     }
 
     appendStepsBehindPatchResults(*this, patch, locationsOfResults);
-    if (releasesItsChild)
-        releaseDeadValue(patch);
 }
 
 void Allocator::placeFixedOperands(PatchOperation* patch, std::span<Location> locationsOfOperands, RegisterMask& locked)
@@ -1731,222 +1714,11 @@ RegisterMask Allocator::takeScratchRegisters(Bank bank, unsigned count, Register
     return takeScratchRegistersInLine(*this, bank, count, locked);
 }
 
-static void clearMemoryOfReleasedValue(Allocator& allocator, Operation* value)
-{
-    auto clear = [&](SpillIndex spill) {
-        if (spill == noSpill)
-            return;
-        Step& step = allocator.appendStep(StepKind::ClearSpill, value);
-        step.width = allocator.m_allocation.spills()[spill].width;
-        step.destination = Location::spill(spill);
-        allocator.m_spillsWrittenInBlocks.append(allocator.m_arena, Allocator::SpillWrittenInBlock { spill, allocator.m_block });
-        allocator.noteFrameUse();
-    };
-    clear(allocator.m_allocation.spillOf(value));
-    clear(allocator.stateOf(value).saveInRareRegion);
-}
-
-RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Position position, const PatchOperation* releasing)
-{
-    if (released->opcode() != Phi)
-        return 0;
-
-    std::span<PatchOperation* const> suspensions = m_allocation.suspensions();
-    const Position lastSuspension = suspensions.empty() ? 0 : m_order.latePositionOf(suspensions.back());
-
-    RegisterMask freed = 0;
-    ArenaVector<Operation*> phis;
-    phis.append(m_arena, released);
-    if (m_phiSourceStates.isEmpty())
-        m_phiSourceStates.fill(m_arena, m_proc.numberOfOperations(), PhiSourceState { });
-    const uint32_t visit = ++m_phiSourceVisits;
-    m_phiSourceStates[released->index()].lastVisit = visit;
-    bool hasUnsettledSource = false;
-    bool hasClearedSlot = false;
-    for (uint32_t index = 0; index < phis.size(); ++index) {
-        for (const Block* predecessor : m_order.of(phis[index]->owner()).predecessors) {
-            for (Operation* upsilon : predecessor->upsilons()) {
-                Operation* handedOn = upsilon->child(0);
-                if (upsilon->phi() != phis[index] || handedOn->hasNoPosition())
-                    continue;
-                const ValueFacts& facts = m_liveness.of(handedOn);
-                if (facts.definition == noPosition || facts.lastUse == noPosition)
-                    continue;
-                if (facts.definition >= position) {
-                    hasUnsettledSource = true;
-                    continue;
-                }
-                const PhiSourceState& state = m_phiSourceStates[handedOn->index()];
-                if (state.isInert)
-                    continue;
-                if (state.settledIn && dominates(state.settledIn, m_block)) {
-                    hasClearedSlot = true;
-                    continue;
-                }
-                SpillIndex spill = m_allocation.spillOf(handedOn);
-                bool isReadFurtherOn = facts.lastUse >= position;
-                if (isReadFurtherOn) {
-                    hasUnsettledSource = true;
-                    RegisterMask held = stateOf(handedOn).registers & m_file.allocatableIn(Bank::GP);
-                    if ((spill == noSpill && !held) || isReadOnSomeWayOn(handedOn, position))
-                        continue;
-                    m_releasesByWaysOn.append(m_arena, ReleaseByWaysOn { handedOn, releasing, static_cast<uint32_t>(m_allocation.m_steps.size()) });
-                    if (held && !isHeldAtHeadThatWayLeadsBackTo(handedOn)) {
-                        unbindAll(handedOn);
-                        freed |= held;
-                    }
-                }
-                if (handedOn->opcode() == Phi && std::exchange(m_phiSourceStates[handedOn->index()].lastVisit, visit) != visit)
-                    phis.append(m_arena, handedOn);
-
-                if (spill == noSpill)
-                    continue;
-                SpillFacts& place = m_allocation.m_spills[spill];
-                if (place.isSharedByPhis)
-                    continue;
-                if (place.end < lastSuspension)
-                    continue;
-                hasClearedSlot = true;
-                if (!isReadFurtherOn) {
-                    if (place.end >= position) {
-                        hasUnsettledSource |= place.end > position;
-                        continue;
-                    }
-                    place.end = position;
-                }
-                Step& step = appendStep(StepKind::ClearSpill, handedOn);
-                step.width = place.width;
-                step.destination = Location::spill(spill);
-                m_spillsWrittenInBlocks.append(m_arena, SpillWrittenInBlock { spill, m_block });
-                noteFrameUse();
-            }
-        }
-    }
-    if (!hasUnsettledSource) {
-        for (uint32_t index = 1; index < phis.size(); ++index) {
-            PhiSourceState& state = m_phiSourceStates[phis[index]->index()];
-            if (hasClearedSlot)
-                state.settledIn = m_block;
-            else
-                state.isInert = true;
-        }
-    }
-    return freed;
-}
-
-bool Allocator::isHeldAtHeadThatWayLeadsBackTo(const Operation* value) const
-{
-    ASSERT(m_valueOfLastSearchForWays == value);
-    std::span<const Loop> loops = m_order.loops();
-    for (uint32_t loop = m_order.of(m_block).loop; loop != noLoop && m_liveness.of(value).definition < loops[loop].begin; loop = loops[loop].parent) {
-        const Block* head = m_order.blocksInOrder()[loops[loop].firstBlock];
-        if (m_lastSearchThatReachedBlock[head->index()] == m_numberOfSearchesForWays)
-            continue;
-        for (const RegisterBinding& binding : m_heads[head->index()].bindings()) {
-            if (binding.value == value)
-                return true;
-        }
-    }
-    return false;
-}
-
-bool Allocator::isReadOnSomeWayOn(const Operation* value, Position position)
-{
-    if (m_order.of(m_block).isRare() || m_liveness.of(value).has(ValueFlag::IsKeptForCollector))
-        return true;
-    const bool takesWaysOnToReadNothing = m_proc.traits().takesWaysOnToReadNothing;
-    uint32_t nextRead = findReadFromInList(value, position);
-    if (!takesWaysOnToReadNothing && nextRead && m_liveness.use(nextRead).position < m_order.endOf(m_block))
-        return true;
-
-    findBlocksThatLeadToReadsOf(value, firstBlockOnWaysFrom(m_block, value));
-    return !takesWaysOnToReadNothing && std::ranges::any_of(m_block->successors(), [&](const Edge& successor) {
-        return m_lastSearchThatReachedBlock[successor.block()->index()] == m_numberOfSearchesForWays;
-    });
-}
-
-void Allocator::checkThatNoWayOnReadsWhatHintsReleased()
-{
-    if (m_releasesByWaysOn.isEmpty() || m_proc.traits().skipsReleaseCheck)
-        return;
-    std::sort(m_releasesByWaysOn.begin(), m_releasesByWaysOn.end(), [](const ReleaseByWaysOn& left, const ReleaseByWaysOn& right) {
-        return left.value->index() < right.value->index();
-    });
-
-    const Step* const steps = m_allocation.m_steps.begin();
-    ArenaVector<uint32_t> lastWalkThatEnteredBlock;
-    lastWalkThatEnteredBlock.fill(m_arena, m_order.mostBlocks(), 0);
-    ArenaVector<const Block*> entered;
-    uint32_t walk = 0;
-    for (uint32_t next = 0; next < m_releasesByWaysOn.size();) {
-        const Operation* value = m_releasesByWaysOn[next].value;
-        const Position lastReadByPosition = m_liveness.of(value).lastUse;
-        ++walk;
-        entered.clear();
-
-        auto reads = [&](const Step& step, const PatchOperation* hintOfValue) {
-            if (step.kind == StepKind::KeepPointer)
-                return step.operation == value;
-            if (step.kind != StepKind::Execute || step.operation == hintOfValue)
-                return false;
-            bool isAmongLeaves = false;
-            forEachLeaf(m_liveness, step.operation, [&](const Operation*, unsigned, const Operation* leaf) {
-                isAmongLeaves |= leaf == value;
-            });
-            return isAmongLeaves;
-        };
-        auto someStepReadsFrom = [&](const Block* block, uint32_t first, const PatchOperation* hintOfValue) {
-            const BlockSteps& range = m_allocation.stepsOf(block);
-            for (uint32_t index = first; index < range.end; ++index) {
-                if (reads(steps[index], hintOfValue))
-                    return true;
-            }
-            for (const Operation* upsilon : block->upsilons()) {
-                const Operation* phi = upsilon->phi();
-                if (upsilon->child(0) != value || !phi || m_valueFacts[phi->index()].has(ValueFlag::IsDropped))
-                    continue;
-                for (const Edge& successor : block->successors()) {
-                    if (successor.block() == phi->owner())
-                        return true;
-                }
-            }
-            return range.terminator != UINT32_MAX && range.terminator >= first && reads(steps[range.terminator], hintOfValue);
-        };
-        auto enterSuccessorsOf = [&](const Block* block) {
-            for (const Edge& successor : block->successors()) {
-                const Block* target = successor.block();
-                uint32_t& last = lastWalkThatEnteredBlock[target->index()];
-                if (target == value->owner() || last == walk || m_order.headOf(target) > lastReadByPosition)
-                    continue;
-                last = walk;
-                entered.append(m_arena, target);
-            }
-        };
-
-        bool isRead = false;
-        for (; next < m_releasesByWaysOn.size() && m_releasesByWaysOn[next].value == value; ++next) {
-            const PatchOperation* releasing = m_releasesByWaysOn[next].releasing;
-            const Block* block = releasing->owner();
-            const bool isHintOfValue = releasing->releasesDeadValues() && releasing->child(firstPlacedChildOfPatch(releasing)) == value;
-            isRead |= someStepReadsFrom(block, m_releasesByWaysOn[next].firstStepBehind, isHintOfValue ? releasing : nullptr);
-            enterSuccessorsOf(block);
-        }
-        for (uint32_t index = 0; index < entered.size() && !isRead; ++index) {
-            isRead = someStepReadsFrom(entered[index], m_allocation.stepsOf(entered[index]).begin, nullptr);
-            enterSuccessorsOf(entered[index]);
-        }
-        if (isRead) {
-            m_proc.fail(FailureKind::ReleasedValueIsReadOnWayOn, value);
-            return;
-        }
-    }
-}
-
 bool Allocator::isReadOnSomeWayFromHeadOf(const Operation* value, const Block* block)
 {
     if (m_liveness.of(value).has(ValueFlag::IsKeptForCollector))
         return true;
-    bool numberingCostsNoMoreThanSearchesHave = !m_numbersOfDominatedBlocks.isEmpty() || m_numberOfBlocksReachedBySearchesForWays >= m_order.blocksInOrder().size();
+    bool numberingCostsNoMoreThanSearchesHave = !m_numbersOfDominatedBlocks.isEmpty() || m_livenessSearchBlocksVisited >= m_order.blocksInOrder().size();
     if (numberingCostsNoMoreThanSearchesHave && m_valueOfLastSearchForWays != value && dominatesSomeReadBelowDefinitionOf(block, value))
         return true;
     findBlocksThatLeadToReadsOf(value, firstBlockOnWaysFrom(block, value));
@@ -2017,62 +1789,8 @@ void Allocator::findBlocksThatLeadToReadsOf(const Operation* value, uint32_t fir
             for (const Block* predecessor : m_order.of(reached[index]).predecessors)
                 reach(predecessor);
         }
-        m_numberOfBlocksReachedBySearchesForWays += reached.size();
+        m_livenessSearchBlocksVisited += reached.size();
     }
-}
-
-void Allocator::releaseDeadValue(PatchOperation* patch)
-{
-    Operation* released = patch->child(firstPlacedChildOfPatch(patch));
-    RegisterMask freed = stateOf(released).registers & m_file.allocatableIn(Bank::GP);
-    if (freed)
-        unbindAll(released);
-    patch->m_registersToRelease |= registersWhereReleasedValueMayHaveWaited();
-    patch->m_registersToRelease &= ~m_bound;
-    clearMemoryOfReleasedValue(*this, released);
-    freed |= clearPlacesOfValuesHandedTo(released, earlyPositionOfAllocatedPatch(*this, patch) + 1, patch);
-    patch->m_registersToRelease |= freed;
-    m_allocation.m_patchAssignments.last().usedRegisters &= ~freed;
-}
-
-void Allocator::releaseChildrenLetGoByCallee(PatchOperation* patch, std::span<const Location> locationsOfOperands, Position early, RegisterMask locked)
-{
-    ASSERT(patch->opcode() == Patch);
-
-    ArenaVector<const Operation*> readFromMemory;
-    for (unsigned child = 0; child < patch->numChildren(); ++child) {
-        if (locationsOfOperands[child].kind() == Location::Spill)
-            readFromMemory.append(m_arena, patch->child(child));
-    }
-
-    auto isHandedOnByEdge = [&](const Operation* value) {
-        if (!patch->endsBlock())
-            return false;
-        for (const Operation* upsilon : patch->owner()->upsilons()) {
-            if (upsilon->child(0) == value)
-                return true;
-        }
-        return false;
-    };
-
-    for (unsigned child : patch->childrenLetGoByCallee()) {
-        Operation* value = patch->child(child);
-        if (value->hasNoPosition() || isLiveBehind(value, early + 1) || m_liveness.of(value).lastUse > early || isHandedOnByEdge(value))
-            continue;
-        patch->m_registersToRelease |= stateOf(value).registers & m_file.allocatableIn(Bank::GP) & ~locked;
-        if (std::ranges::find(readFromMemory.span(), value) == readFromMemory.span().end())
-            clearMemoryOfReleasedValue(*this, value);
-        patch->m_registersToRelease |= clearPlacesOfValuesHandedTo(value, early, patch) & ~locked;
-        patch->m_registersToRelease |= registersWhereReleasedValueMayHaveWaited() & ~m_bound & ~locked;
-    }
-}
-
-RegisterMask Allocator::registersWhereReleasedValueMayHaveWaited() const
-{
-    RegisterMask keptByNativeCalleesAlone = maskOf(RegisterSet::calleeSaveRegisters()) & ~m_file.calleeSaved;
-    if (m_isAheadOfFramedPart)
-        return keptByNativeCalleesAlone & m_file.allocatableIn(Bank::GP);
-    return (m_allocation.usedCalleeSaves() | keptByNativeCalleesAlone) & m_file.allocatableIn(Bank::GP);
 }
 
 } } } // namespace JSC::AOT::Machine

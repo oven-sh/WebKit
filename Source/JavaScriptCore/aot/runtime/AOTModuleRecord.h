@@ -115,6 +115,7 @@ public:
     bool isRequestedByWalkedModule() const { return m_isRequestedByWalkedModule; }
     void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
     void setHasUnresolvableRequest() { m_hasUnresolvableRequest = true; }
+    bool hasUnresolvableRequest() const { return m_hasUnresolvableRequest; }
     uint8_t willLoadImportedModule(const Identifier& key);
     static BitVector willRefetchFromHost(JSGlobalObject*);
     static void didRefetchFromHost(JSGlobalObject*, const BitVector& savedHostRequests);
@@ -134,11 +135,11 @@ public:
     struct Statement {
         AbstractModuleRecord* target { nullptr };
         Identifier importName;
-        ModuleRecord* leader { nullptr };
-        bool standsInEntryFromStar { false };
+        ModuleRecord* reexporter { nullptr };
+        bool isStarExportEntry { false };
         bool claimsWhatStarsFind { false };
     };
-    Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&, ModuleRecord* leader, Statement&);
+    Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&, ModuleRecord* reexporter, Statement&);
     Resolution claimAsOwn(const Identifier& exportName);
     struct Asker {
         ModuleRecord* record;
@@ -147,13 +148,13 @@ public:
     bool originalShows(JSGlobalObject*, const Identifier& exportName, std::span<const Asker>);
     bool originalShows(JSGlobalObject*, const Identifier& exportName, std::span<ModuleRecord* const> askersOfSameName);
     bool isNamedByEndedMockInFrontOfItsStar(JSGlobalObject*, const Identifier& exportName, unsigned index);
-    bool answersByWhoLedToIt() const;
-    bool keepsEndedMock() const;
-    bool someMockStandsInPlace() const;
+    bool resolvesPerReexporter() const;
+    bool hasRemovedMockInUse() const;
+    bool hasAnyActiveMock() const;
     bool mayOutlive(AbstractModuleRecord*) const;
-    const Resolution* resolutionKept(UniquedStringImpl* exportName);
-    void keepResolution(UniquedStringImpl* exportName, const Resolution&);
-    bool standsForMock() const;
+    const Resolution* storedResolution(UniquedStringImpl* exportName);
+    void storeResolution(UniquedStringImpl* exportName, const Resolution&);
+    bool isReplacedByMock() const;
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);
@@ -167,6 +168,7 @@ private:
     ModuleRecord(Instance&, Structure*, JSModuleLoader*, const Identifier& moduleKey, ModuleID);
     Modules& modules() const;
     void appendDynamicStarTargets(StarExportTargets&);
+    void appendDynamicStarTargets(const Identifier& exportName, StarExportTargets&);
     bool appendStarsThatMayProvide(const Identifier& exportName, unsigned index, StarExportTargets&);
     AbstractModuleRecord* recordBehindStar(ModuleID);
 

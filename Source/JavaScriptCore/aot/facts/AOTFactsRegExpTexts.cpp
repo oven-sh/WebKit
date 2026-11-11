@@ -1013,13 +1013,19 @@ JSValue RehearsalOfRegExpTexts::namespaceOf(ModuleID id)
     JSObject* made = constructEmptyObject(m_realm.get());
     uint64_t numberOfExports = module.exports.size() + module.syntheticExports.size();
     payForPlacesMadeOutOfCharacters(numberOfExports, numberOfExports);
+    auto define = [&](StringID name, VariableID exported) {
+        JSValue value = variable(exported);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        made->putDirectMayBeIndex(m_realm.get(), Identifier::fromString(vm, charactersOf(name)), value);
+        return !hasThrown(scope);
+    };
     for (const ModuleExport& exported : module.exports) {
-        if (exported.kind == ModuleExportKind::Variable && exported.variable)
-            made->putDirect(vm, Identifier::fromString(vm, charactersOf(exported.name)), variable(exported.variable));
+        if (exported.kind == ModuleExportKind::Variable && exported.variable && !define(exported.name, exported.variable))
+            return unknown();
     }
     for (const SyntheticExport& synthetic : module.syntheticExports) {
-        if (synthetic.variable)
-            made->putDirect(vm, Identifier::fromString(vm, charactersOf(synthetic.name)), variable(synthetic.variable));
+        if (synthetic.variable && !define(synthetic.name, synthetic.variable))
+            return unknown();
     }
     if (m_statesOfModules[id.index()] == StateOfModule::HasRun)
         m_namespaces[id.index()] = made;
@@ -2030,7 +2036,6 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         return held == JSValue(m_absent.get()) ? unknown() : held;
     }
     case Opcode::LoopHint:
-    case Opcode::ReleaseHint:
     case Opcode::RecordRequire:
     case Opcode::SetFunctionName:
     case Opcode::DefineSetter:
@@ -3313,7 +3318,7 @@ static Vector<FunctionID> functionsThatCallRegExpWithTextsToWorkOut(const Progra
         if (!index || isLibraryCode(program, program.at(function)))
             continue;
         auto isWrittenAs = [&](ValueID operand, Opcode opcode) {
-            ValueID behindCasts = index->valueBehindCasts(operand);
+            ValueID behindCasts = index->stripCasts(operand);
             return !index->isParameter(behindCasts) && index->opcodeOf(behindCasts) == opcode;
         };
         auto namesRegExp = [&](BodyValue written) {
@@ -3323,11 +3328,11 @@ static Vector<FunctionID> functionsThatCallRegExpWithTextsToWorkOut(const Progra
                     callee = operand;
             });
             auto builtinWrittenAt = [&](ValueID operand) {
-                return operand && isWrittenAs(operand, Opcode::Builtin) ? index->value(index->valueBehindCasts(operand)).as<Opcode::Builtin>().builtin() : BuiltinID();
+                return operand && isWrittenAs(operand, Opcode::Builtin) ? index->value(index->stripCasts(operand)).as<Opcode::Builtin>().builtin() : BuiltinID();
             };
             BuiltinID named = builtinWrittenAt(callee);
             if (callee && isWrittenAs(callee, Opcode::PropGet)) {
-                auto read = index->value(index->valueBehindCasts(callee)).as<Opcode::PropGet>();
+                auto read = index->value(index->stripCasts(callee)).as<Opcode::PropGet>();
                 if (BuiltinID holder = builtinWrittenAt(read.objectOperand()); holder && read.key())
                     named = findOwnMember(program, table.canonicalID(holder), read.key());
             }

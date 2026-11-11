@@ -6,7 +6,7 @@
 #   constants:
 #     v2: 1 @JSValue = Integer integer=1
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
-#     v3: int[0, 1] @Int32 = BitAnd v1, v2 form=Generic traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: int[0, 1] @Int32 = BitAnd v1, v2 form=Generic traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v4: number @Double = Div v3, v3 form=CheckedIntegers
 #     v5: Array @Cell = NewArray v4, v4 contents=anything arrayStorage=Double traits=[mayCollect, mayTouchMemory]
 #     v6: undefined|number @JSValue = GetArrayElement v5, v3 arrayStorage=Double level=Proven [keyIsIntegral] traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]

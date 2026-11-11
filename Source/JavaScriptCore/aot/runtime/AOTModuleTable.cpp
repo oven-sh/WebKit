@@ -56,6 +56,285 @@ const CyclesOfImports::Member* CyclesOfImports::find(ModuleID module) const
     return found != membersByModule.end() && found->module == module.index() ? &*found : nullptr;
 }
 
+ImportersOfModules::ImportersOfModules(const ModuleTable& table)
+    : namedByListsAlone(table.size())
+{
+    auto forEachRequest = [&](auto&& functor) {
+        for (uint32_t importer = 0; importer < table.size(); ++importer) {
+            for (const ModuleRequestData& request : table.requests(ModuleID(importer))) {
+                if (!request.isHoisted)
+                    functor(importer, request.target());
+            }
+        }
+    };
+    firstImporterOf.fill(0, table.size() + 1);
+    forEachRequest([&](uint32_t, uint32_t imported) {
+        ++firstImporterOf[imported];
+    });
+    for (uint32_t module = 0; module < table.size(); ++module)
+        firstImporterOf[module + 1] += firstImporterOf[module];
+    importers.fill(0, firstImporterOf[table.size()]);
+    forEachRequest([&](uint32_t importer, uint32_t imported) {
+        importers[--firstImporterOf[imported]] = importer;
+    });
+
+    BitVector isAskedFor(table.size());
+    for (const ModuleRequestData& request : table.allRequests()) {
+        if (!request.isHoisted || table.data(request.targetModule()).kind == ModuleKind::SourceText)
+            isAskedFor.quickSet(request.target());
+    }
+    for (uint32_t module = 0; module < table.size(); ++module)
+        namedByListsAlone.quickSet(module, !isAskedFor.quickGet(module));
+}
+
+void ImportersOfModules::addModulesAbove(Vector<ModuleID, 32>&& modules, BitVector& found) const
+{
+    while (!modules.isEmpty()) {
+        uint32_t module = modules.takeLast().index();
+        if (found.quickSet(module))
+            continue;
+        for (uint32_t position = firstImporterOf[module]; position < firstImporterOf[module + 1]; ++position)
+            modules.append(ModuleID(importers[position]));
+    }
+}
+
+ReexportedNames::ReexportedNames(const ModuleTable& table)
+    : m_answers(table.programTables().requiredNames().size())
+    , m_seen(table.size())
+    , m_modulesWithNamesInTables(table.size())
+    , m_modulesWithOtherNames(table.size())
+{
+    Vector<std::pair<uint32_t, uint32_t>> edges;
+    for (uint32_t index = 0; index < table.size(); ++index) {
+        ModuleID reexporter(index);
+        bool hasExportOfOtherModule = table.data(reexporter).hasDynamicStarExport();
+        for (const ModuleExportData& entry : table.exports(reexporter)) {
+            hasExportOfOtherModule |= entry.isFromStarExport;
+            switch (entry.kind()) {
+            case ModuleExportKind::Variable:
+                break;
+            case ModuleExportKind::Namespace:
+                edges.append({ entry.targetModule().index(), index });
+                break;
+            case ModuleExportKind::Indirect:
+                edges.append({ table.indirectExport(entry).targetModule().index(), index });
+                break;
+            }
+        }
+        for (const RequiredNameData& requiredName : table.requiredNames(reexporter)) {
+            if (table.findExportStatement(requiredName))
+                edges.append({ requiredName.exporterModule().index(), index });
+        }
+        for (const StarAsWrittenData& star : table.starsAsWritten(reexporter))
+            edges.append({ star.target, index });
+        if (!hasExportOfOtherModule)
+            continue;
+        for (const ModuleRequestData& request : table.requests(reexporter)) {
+            if (!request.isRequire)
+                edges.append({ request.target(), index });
+        }
+    }
+    std::ranges::sort(edges);
+    edges.shrink(std::ranges::unique(edges).begin() - edges.begin());
+    m_reexporters = edges.map([](auto& edge) { return edge.second; });
+    size_t next = 0;
+    for (uint32_t index = 0; index <= table.size(); ++index) {
+        while (next < edges.size() && edges[next].first < index)
+            ++next;
+        m_firstReexporterOf.append(next);
+    }
+}
+
+BitVector ReexportedNames::transitiveReexportersOf(Vector<ModuleID, 16>&& modules) const
+{
+    BitVector found(m_firstReexporterOf.size() - 1);
+    while (!modules.isEmpty()) {
+        uint32_t index = modules.takeLast().index();
+        if (found.quickSet(index))
+            continue;
+        for (uint32_t place = m_firstReexporterOf[index]; place < m_firstReexporterOf[index + 1]; ++place)
+            modules.append(ModuleID(m_reexporters[place]));
+    }
+    return found;
+}
+
+static bool hasNamesInTables(const ModuleData& data)
+{
+    return data.hasExportTable() && !data.capturesExports() && !data.isUncompiledCode();
+}
+
+bool ReexportedNames::areNamesBehindStarsInTables(const ModuleTable& table, ModuleID module)
+{
+    if (m_modulesWithNamesInTables.quickGet(module.index()))
+        return true;
+    if (m_modulesWithOtherNames.quickGet(module.index()))
+        return false;
+    BitVector seen(table.size());
+    Vector<ModuleID, 8> toVisit { module };
+    while (!toVisit.isEmpty()) {
+        ModuleID visited = toVisit.takeLast();
+        if (seen.quickSet(visited.index()) || m_modulesWithNamesInTables.quickGet(visited.index()))
+            continue;
+        if (!hasNamesInTables(table.data(visited)) || m_modulesWithOtherNames.quickGet(visited.index())) {
+            m_modulesWithOtherNames.quickSet(module.index());
+            return false;
+        }
+        for (ModuleRequestData request : table.dynamicStars(visited))
+            toVisit.append(request.targetModule());
+    }
+    m_modulesWithNamesInTables.merge(seen);
+    return true;
+}
+
+static bool haveSameBinding(const ModuleExportData& a, const ModuleExportData& b)
+{
+    if (a.kind() != b.kind())
+        return false;
+    switch (a.kind()) {
+    case ModuleExportKind::Variable:
+        return a.variable == b.variable;
+    case ModuleExportKind::Namespace:
+        return a.module == b.module && a.isDeferred == b.isDeferred;
+    case ModuleExportKind::Indirect:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static uint64_t keyOf(ModuleID exporter, uint32_t name)
+{
+    return static_cast<uint64_t>(exporter.index()) << 32 | name;
+}
+
+static bool hasDynamicStars(const ModuleTable& table, ModuleID module)
+{
+    for ([[maybe_unused]] ModuleRequestData request : table.dynamicStars(module))
+        return true;
+    return false;
+}
+
+static bool isAmbiguousName(const ModuleTable& table, ModuleID exporter, uint32_t name)
+{
+    return table.isAmbiguousExport(exporter, ProgramStrings::viewInImage(table.programTables(), ProgramStrings::identifierString(table.programTables(), name)));
+}
+
+auto ReexportedNames::starsOf(const ModuleTable& table, ModuleID exporter) -> const Stars&
+{
+    std::unique_ptr<Stars>& stars = m_stars.add(exporter.index(), nullptr).iterator->value;
+    if (stars)
+        return *stars;
+    stars = makeUnique<Stars>();
+    for (ModuleRequestData request : table.dynamicStars(exporter)) {
+        ModuleID target = request.targetModule();
+        if (hasDynamicStars(table, target)) {
+            stars->reexporters.append(target);
+            continue;
+        }
+        stars->listsEveryName &= table.ambiguousExports(target).empty();
+        for (const ModuleExportData& entry : table.exports(target)) {
+            bool isBinding = entry.kind() != ModuleExportKind::Indirect && !entry.isHiddenUntilInitialized;
+            auto added = stars->bindings.add(entry.name, isBinding ? &entry : nullptr);
+            if (added.isNewEntry)
+                continue;
+            const ModuleExportData*& binding = added.iterator->value;
+            if (binding && !(isBinding && haveSameBinding(*binding, entry)))
+                binding = nullptr;
+        }
+    }
+    return *stars;
+}
+
+auto ReexportedNames::resolveHere(const ModuleTable& table, ModuleID exporter, uint32_t name, const Stars& stars) -> Resolution
+{
+    const ModuleExportData* found = nullptr;
+    if (std::optional<unsigned> index = table.findExport(exporter, name)) {
+        const ModuleExportData& entry = table.exports(exporter)[*index];
+        if (entry.isHiddenUntilInitialized)
+            return { };
+        if (entry.kind() == ModuleExportKind::Indirect) {
+            const IndirectExportData& binding = table.indirectExport(entry);
+            if (binding.importName != name || !areNamesBehindStarsInTables(table, binding.targetModule()))
+                return { };
+            Resolution resolution = resolve(table, binding.targetModule(), name);
+            return resolution.answer == Answer::Found ? resolution : Resolution { };
+        }
+        found = &entry;
+        if (!entry.isFromStarExport)
+            return { Answer::Found, found };
+    } else if (isAmbiguousName(table, exporter, name))
+        return { };
+
+    auto add = [&](Resolution resolution) {
+        if (resolution.answer == Answer::Unknown || (found && resolution.binding && !haveSameBinding(*found, *resolution.binding)))
+            return false;
+        if (resolution.binding)
+            found = resolution.binding;
+        return true;
+    };
+    auto binding = stars.bindings.find(name);
+    bool isInBindings = binding != stars.bindings.end();
+    if (stars.listsEveryName && (!isInBindings || binding->value)) {
+        if (isInBindings && !add({ Answer::Found, binding->value }))
+            return { };
+    } else {
+        for (ModuleRequestData request : table.dynamicStars(exporter)) {
+            if (ModuleID target = request.targetModule(); !hasDynamicStars(table, target) && !add(resolve(table, target, name)))
+                return { };
+        }
+    }
+    for (ModuleID reexporter : stars.reexporters) {
+        if (!add(resolve(table, reexporter, name)))
+            return { };
+    }
+    return { found ? Answer::Found : Answer::NotFound, found };
+}
+
+auto ReexportedNames::resolve(const ModuleTable& table, ModuleID exporter, uint32_t name) -> Resolution
+{
+    Vector<ModuleID, 8> modulesWithSameAnswer;
+    Resolution resolution;
+    while (true) {
+        if (auto known = m_resolutions.find(keyOf(exporter, name)); known != m_resolutions.end()) {
+            resolution = known->value;
+            break;
+        }
+        if (m_seen.quickSet(exporter.index())) {
+            m_isOnCycle = true;
+            return { Answer::NotFound, nullptr };
+        }
+        m_visited.append(exporter);
+        modulesWithSameAnswer.append(exporter);
+        const Stars& stars = starsOf(table, exporter);
+        bool hasAnswerOfReexporter = stars.reexporters.size() == 1 && stars.listsEveryName && !stars.bindings.contains(name)
+            && !table.findExport(exporter, name) && !isAmbiguousName(table, exporter, name);
+        if (!hasAnswerOfReexporter) {
+            resolution = resolveHere(table, exporter, name, stars);
+            break;
+        }
+        exporter = stars.reexporters[0];
+    }
+    if (!m_isOnCycle) {
+        for (ModuleID module : modulesWithSameAnswer)
+            m_resolutions.add(keyOf(module, name), resolution);
+    }
+    return resolution;
+}
+
+auto ReexportedNames::resolve(const ModuleTable& table, const RequiredNameData& requiredName) -> Answer
+{
+    std::optional<Answer>& answer = m_answers[&requiredName - table.programTables().requiredNames().data()];
+    if (answer)
+        return *answer;
+    answer = Answer::Unknown;
+    if (ModuleID exporter = requiredName.exporterModule(); areNamesBehindStarsInTables(table, exporter)) {
+        m_isOnCycle = false;
+        answer = resolve(table, exporter, requiredName.name).answer;
+        for (ModuleID visited : std::exchange(m_visited, { }))
+            m_seen.quickClear(visited.index());
+    }
+    return *answer;
+}
+
 static std::strong_ordering compareCodePoints(StringView first, StringView second)
 {
     if (first.is8Bit() || second.is8Bit())
@@ -168,7 +447,7 @@ bool ModuleTable::hasAttributeVariant(StringView publicPath) const
     size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
         return comparePath(ModuleID(byPath[candidate]), start) < 0;
     }) - places.begin());
-    return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
+    return place < byPath.size() && fullPath(ModuleID(byPath[place])).startsWith(start);
 }
 
 Vector<ModuleID, 2> ModuleTable::importAttributeVariants(StringView publicPath) const
@@ -180,7 +459,7 @@ Vector<ModuleID, 2> ModuleTable::importAttributeVariants(StringView publicPath) 
         return comparePath(ModuleID(byPath[candidate]), start) < 0;
     }) - places.begin());
     Vector<ModuleID, 2> forms;
-    for (; place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start); ++place)
+    for (; place < byPath.size() && fullPath(ModuleID(byPath[place])).startsWith(start); ++place)
         forms.append(ModuleID(byPath[place]));
     return forms;
 }
@@ -192,7 +471,7 @@ bool ModuleTable::containsPathWithPrefix(StringView start) const
     size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
         return comparePath(ModuleID(byPath[candidate]), start) < 0;
     }) - places.begin());
-    return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
+    return place < byPath.size() && fullPath(ModuleID(byPath[place])).startsWith(start);
 }
 
 bool ModuleTable::mayContainPathWithPrefix(StringView start) const
@@ -248,14 +527,21 @@ bool ModuleTable::recordOfRuntimeSourceIsHandedOutFrozen(uint32_t registryID) co
 
 std::optional<unsigned> ModuleTable::findExport(ModuleID module, UniquedStringImpl* name) const
 {
-    if (name->isSymbol())
-        return std::nullopt;
+    return name->isSymbol() ? std::nullopt : findExport(module, StringView { *name });
+}
+
+std::optional<unsigned> ModuleTable::findExport(ModuleID module, uint32_t identifier) const
+{
+    return findExport(module, ProgramStrings::viewInImage(*m_tables, ProgramStrings::identifierString(*m_tables, identifier)));
+}
+
+std::optional<unsigned> ModuleTable::findExport(ModuleID module, StringView name) const
+{
     std::span<const ModuleExportData> entries = exports(module);
-    StringView nameView { *name };
     auto compare = [&](const ModuleExportData& entry) {
         StringID string = ProgramStrings::identifierString(*m_tables, entry.name);
         ASSERT(string);
-        return codePointCompare(ProgramStrings::viewInImage(*m_tables, string), nameView);
+        return codePointCompare(ProgramStrings::viewInImage(*m_tables, string), name);
     };
     unsigned from = 0;
     unsigned to = static_cast<unsigned>(entries.size());
@@ -272,13 +558,13 @@ std::optional<unsigned> ModuleTable::findExport(ModuleID module, UniquedStringIm
     return std::nullopt;
 }
 
-std::optional<ModuleID> ModuleTable::faceOfFile(ModuleID file) const
+std::optional<ModuleID> ModuleTable::facadeOf(ModuleID file) const
 {
-    if (!data(file).hasFace())
+    if (!data(file).hasFacade())
         return std::nullopt;
     for (unsigned distance = 1; distance < size(); ++distance) {
         ModuleID module((file.index() + distance) % size());
-        if (fileBehindFace(module) == file)
+        if (moduleBehindFacade(module) == file)
             return module;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -342,7 +628,7 @@ ModuleTable::PathInUTF8 ModuleTable::pathInUTF8(ModuleID module) const
     return path;
 }
 
-String ModuleTable::pathText(ModuleID module) const
+String ModuleTable::fullPath(ModuleID module) const
 {
     if (data(module).directory == Number24::max)
         return ProgramStrings::text(*m_tables, StringID(data(module).publicPathOrName));
@@ -357,6 +643,24 @@ String ModuleTable::pathText(ModuleID module) const
     return path.toString();
 }
 
+bool ModuleTable::hasQueryInDirectory() const
+{
+    return std::ranges::any_of(m_tables->moduleDirectories(), [&](const ModuleDirectoryData& directory) {
+        return ProgramStrings::viewInImage(*m_tables, StringID(directory.name)).contains('?');
+    });
+}
+
+bool ModuleTable::pathWithoutQueryEndsWith(ModuleID module, StringView end, bool hasQueryInDirectory) const
+{
+    StringView name = ProgramStrings::viewInImage(*m_tables, StringID(data(module).publicPathOrName));
+    size_t query = name.reverseFind('?');
+    StringView nameWithoutQuery = name.left(query);
+    if (nameWithoutQuery.length() >= end.length() && (query != notFound || !hasQueryInDirectory))
+        return nameWithoutQuery.endsWith(end);
+    String path = fullPath(module);
+    return StringView(path).left(path.reverseFind('?')).endsWith(end);
+}
+
 String ModuleTable::displayPathText(ModuleID module) const
 {
     uint8_t charactersInFront = data(module).charactersInFrontOfDisplayPath;
@@ -366,7 +670,7 @@ String ModuleTable::displayPathText(ModuleID module) const
         auto listed = std::ranges::lower_bound(m_tables->moduleDisplayPaths(), module.index(), { }, [](const ModuleDisplayPathData& entry) -> uint32_t { return entry.module; });
         return ProgramStrings::text(*m_tables, StringID(listed->path));
     }
-    String path = pathText(module);
+    String path = fullPath(module);
     return charactersInFront ? path.substring(charactersInFront) : path;
 }
 
@@ -379,7 +683,7 @@ String ModuleTable::typeAttribute(ModuleID module) const
 
 String ModuleTable::pathTextForLineColumns(ModuleID module) const
 {
-    return data(module).hasInstalledPositions ? pathText(module) : displayPathText(module);
+    return data(module).hasInstalledPositions ? fullPath(module) : displayPathText(module);
 }
 
 IterationStatus ModuleTable::forEachFilePathWithPrefix(StringView start, const ScopedLambda<IterationStatus(const String&)>& functor) const
@@ -391,7 +695,7 @@ IterationStatus ModuleTable::forEachFilePathWithPrefix(StringView start, const S
     }) - places.begin());
     for (; place < byPath.size(); ++place) {
         ModuleID module(byPath[place]);
-        String path = pathText(module);
+        String path = fullPath(module);
         if (!path.startsWith(start))
             break;
         bool isCode = data(module).kind == ModuleKind::SourceText || data(module).kind == ModuleKind::CommonJs;

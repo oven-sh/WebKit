@@ -796,7 +796,7 @@ NEVER_INLINE void HashedSlotTable::forgetPlacesCopiedFromSlotForStores(const Slo
         return;
     for (Instance* instance : m_vm.aotState().instances) {
         PropertyCacheWords& words = instance->propertyCaches;
-        if (std::exchange(words.placesHoldCopiesOfSlots, 0))
+        if (std::exchange(words.hasCachedSlotValues, 0))
             zeroSpan(instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>());
     }
 }
@@ -1031,13 +1031,20 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
         m_front.clear();
         m_hashedTable.clear();
         for (Instance* earlier : m_vm.aotState().instances) {
+            if (!earlier->propertyCaches.hasRunSinceClear)
+                continue;
             zeroSpan(earlier->keyedValuePlaces());
+            zeroSpan(earlier->acceptedKindsOfValues());
+            earlier->propertyCaches.hasCachedSlotValues = 0;
             earlier->propertyCaches.accessTable.forgetEverything();
             if (StringKeyCache* keys = earlier->state ? earlier->state->stringKeys.getIfCreated() : nullptr)
                 keys->forgetPlacesOfPairs();
+            bool isRetired = earlier->globalObject && earlier->globalObject->microtaskRunnability() == QueuedTaskResult::Discard;
+            earlier->propertyCaches.hasRunSinceClear = !isRetired || m_vm.entryScope || m_vm.topEntryFrame;
         }
     }
     m_hasInstance = true;
+    instance.propertyCaches.hasRunSinceClear = true;
     if (instance.globalObject) {
         m_filteredObjects.add(instance.globalObject->objectPrototype());
         didChangeObjectPrototype(instance.globalObject->objectPrototype(), nullptr);
@@ -1202,7 +1209,7 @@ static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
         if (field && object->isInSlot(*field))
             return object->attributesOf(*field) & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue || field->slot.representation() == SlotRepresentation::DeferredClosure;
         isField = field;
-        JSObject* extra = extraPropertiesIfMade(*object);
+        JSObject* extra = extraPropertiesIfCreated(*object);
         if (!extra)
             return true;
         structure = extra->structure();
@@ -1807,7 +1814,7 @@ size_t FirstAdditions::removeDeadEntries(VM& vm, CollectionScope)
 
 static void askAgainWhatSlotAnswers(Instance& instance, JSCell* base, UniquedStringImpl* name, const Slot& slot)
 {
-    constexpr ASCIILiteral table = "the table of slots"_s;
+    constexpr ASCIILiteral table = "the slot table"_s;
     switch (slot.kind) {
     case Slot::Kind::Value: {
         JSCell* holder = slot.has(Slot::isOwn) ? base : slot.holder;
@@ -2172,7 +2179,7 @@ SiteAnswers* AnswersAtSites::ensureAnswersOf(uint32_t place, SiteUse use)
     } else
         return nullptr;
     ASSERT(m_answers[number].isEmpty());
-    countEvent(*m_state.instance.vm, RuntimeCounterID::AnswersGivenToSites);
+    countEvent(*m_state.instance.vm, RuntimeCounterID::SiteCacheEntriesAllocated);
     m_answers[number].first = SiteAnswers::withoutKey(use, true);
     m_places[number] = place;
     m_indices[place] = static_cast<uint16_t>(number * wordsInAnswers);
@@ -2327,7 +2334,7 @@ void AnswersAtSites::fill(uint32_t place, SiteUse use, const AnswerByStructure& 
         other = SiteAnswers::withoutKey(use, otherIsFirst);
     newest = isRead(use) ? asNewestAtRead(use, filled.answer) : filled.answer;
     if (isRoad(use, filled.answer))
-        countEvent(*m_state.instance.vm, RuntimeCounterID::RoadsFiledAtSites);
+        countEvent(*m_state.instance.vm, RuntimeCounterID::SiteCacheRoutingEntriesStored);
     ASSERT(use != SiteUse::Call || !answers->second.isByStructure() || SiteAnswers::formOf(use, answers->second.key) != SiteAnswers::Form::GetterInStorageOfHolder);
     m_wasWrittenSinceLastSweep = true;
     if (!changeableObjects.empty())
@@ -2756,7 +2763,7 @@ void StructuresBelowBuiltinClasses::keep(Structure* structure, std::span<JSObjec
 {
     m_state.chainDependents->add(changeableObjects, { nullptr, structure->id().bits(), m_ownerID });
     m_state.instance.propertyCaches.placeOfStructureBelowBuiltinClass(structure->id().bits()) = structure->id().bits();
-    countEvent(*m_state.instance.vm, RuntimeCounterID::StructuresKeptBelowBuiltinClasses);
+    countEvent(*m_state.instance.vm, RuntimeCounterID::StructuresInheritingBuiltinMethods);
 }
 
 void PropertyCaches::keepIfBelowBuiltinClass(Structure* structure)
@@ -2793,55 +2800,55 @@ void PropertyCaches::keepIfBelowBuiltinClass(Structure* structure)
     m_structuresBelowBuiltinClasses.keep(structure, changeableObjects.span());
 }
 
-RowsOfReads::Row* PropertyCaches::claimRowOfReads(JSValue base, RowsOfReads& group)
+ReadGroupCache::Row* PropertyCaches::claimReadGroupRow(JSValue base, ReadGroupCache& group)
 {
     JSObject* object = base.getObject();
     Structure* structure = object ? WTF::opaque(object->structure()) : nullptr;
     bool isAnsweredByStubAlone = !structure || structure->isDictionary() || structure->isCompiledStructure() || structure->typeInfo().overridesGetOwnPropertySlot() || TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags());
     uint32_t id = isAnsweredByStubAlone ? 0 : structure->id().bits();
-    RELEASE_ASSERT(!(id & RowsOfReads::markOfHiddenRow));
+    RELEASE_ASSERT(!(id & ReadGroupCache::markOfHiddenRow));
 
     if (group.samplesLeft) {
-        RowsOfReads::Row* hidden = nullptr;
-        for (unsigned index = 0; index < RowsOfReads::numberOfRows; ++index) {
-            if (id && group.rows[index].structure == (id | RowsOfReads::markOfHiddenRow)) {
+        ReadGroupCache::Row* hidden = nullptr;
+        for (unsigned index = 0; index < ReadGroupCache::numberOfRows; ++index) {
+            if (id && group.rows[index].structure == (id | ReadGroupCache::markOfHiddenRow)) {
                 hidden = &group.rows[index];
                 ++group.cameInLastSample[index];
             }
         }
-        for (unsigned index = 0; id && !hidden && index < RowsOfReads::numberOfRows; ++index) {
+        for (unsigned index = 0; id && !hidden && index < ReadGroupCache::numberOfRows; ++index) {
             if (group.rows[index].structure)
                 continue;
             hidden = &group.rows[index];
-            hidden->structure = id | RowsOfReads::markOfHiddenRow;
-            std::ranges::fill(hidden->places, RowsOfReads::placeIsNotKnown);
+            hidden->structure = id | ReadGroupCache::markOfHiddenRow;
+            std::ranges::fill(hidden->places, ReadGroupCache::placeIsNotKnown);
             ++group.cameInLastSample[index];
         }
         group.samplesThatHadRow += !!hidden;
         if (!--group.samplesLeft) {
-            for (unsigned index = 0; index < RowsOfReads::numberOfRows; ++index)
-                group.rows[index].structure &= ~RowsOfReads::markOfHiddenRow;
-            if (group.samplesThatHadRow * 3 < RowsOfReads::numberOfSamples)
+            for (unsigned index = 0; index < ReadGroupCache::numberOfRows; ++index)
+                group.rows[index].structure &= ~ReadGroupCache::markOfHiddenRow;
+            if (group.samplesThatHadRow * 3 < ReadGroupCache::numberOfSamples)
                 group.hasGivenUp = 1;
-            group.missesLeft = RowsOfReads::firstWait << group.doublings;
-            if (group.doublings < RowsOfReads::maxDoublings)
+            group.missesLeft = ReadGroupCache::firstWait << group.doublings;
+            if (group.doublings < ReadGroupCache::maxDoublings)
                 ++group.doublings;
         }
         return hidden;
     }
 
     static constexpr uint8_t waitsWhileNothingIsClaimed = 3;
-    if (!id && std::ranges::none_of(group.rows, [](const RowsOfReads::Row& row) { return !!row.structure; })) {
+    if (!id && std::ranges::none_of(group.rows, [](const ReadGroupCache::Row& row) { return !!row.structure; })) {
         if (group.doublings >= waitsWhileNothingIsClaimed)
             group.hasGivenUp = 1;
         else
-            group.missesLeft = RowsOfReads::firstWait << group.doublings++;
+            group.missesLeft = ReadGroupCache::firstWait << group.doublings++;
         return nullptr;
     }
 
-    RowsOfReads::Row* claimed = nullptr;
+    ReadGroupCache::Row* claimed = nullptr;
     if (id) {
-        for (RowsOfReads::Row& row : group.rows) {
+        for (ReadGroupCache::Row& row : group.rows) {
             if (row.structure == id)
                 return &row;
             if (!row.structure && !claimed)
@@ -2850,8 +2857,8 @@ RowsOfReads::Row* PropertyCaches::claimRowOfReads(JSValue base, RowsOfReads& gro
     }
     bool putsOutRow = id && !claimed;
     if (putsOutRow) {
-        unsigned fewest = RowsOfReads::numberOfRows - 1;
-        for (unsigned index = RowsOfReads::numberOfRows - 1; index--;) {
+        unsigned fewest = ReadGroupCache::numberOfRows - 1;
+        for (unsigned index = ReadGroupCache::numberOfRows - 1; index--;) {
             if (group.cameInLastSample[index] < group.cameInLastSample[fewest])
                 fewest = index;
         }
@@ -2859,28 +2866,28 @@ RowsOfReads::Row* PropertyCaches::claimRowOfReads(JSValue base, RowsOfReads& gro
     }
     if (claimed) {
         claimed->structure = id;
-        std::ranges::fill(claimed->places, RowsOfReads::placeIsNotKnown);
+        std::ranges::fill(claimed->places, ReadGroupCache::placeIsNotKnown);
     }
     if (!id || putsOutRow) {
-        for (RowsOfReads::Row& row : group.rows) {
+        for (ReadGroupCache::Row& row : group.rows) {
             if (row.structure)
-                row.structure |= RowsOfReads::markOfHiddenRow;
+                row.structure |= ReadGroupCache::markOfHiddenRow;
         }
-        group.samplesLeft = RowsOfReads::numberOfSamples;
+        group.samplesLeft = ReadGroupCache::numberOfSamples;
         group.samplesThatHadRow = 0;
         std::ranges::fill(group.cameInLastSample, 0);
     }
     return claimed;
 }
 
-void PropertyCaches::findPlaceInRowOfReads(JSCell* base, uint32_t identifierNumber, RowsOfReads::Row& row, uint32_t index)
+void PropertyCaches::fillReadGroupOffset(JSCell* base, uint32_t identifierNumber, ReadGroupCache::Row& row, uint32_t index)
 {
     Structure* structure = WTF::opaque(base->structure());
-    RELEASE_ASSERT(index < RowsOfReads::numberOfPlaces);
-    if ((row.structure & ~RowsOfReads::markOfHiddenRow) != structure->id().bits())
+    RELEASE_ASSERT(index < ReadGroupCache::numberOfPlaces);
+    if ((row.structure & ~ReadGroupCache::markOfHiddenRow) != structure->id().bits())
         return;
     int16_t& place = row.places[index];
-    place = RowsOfReads::placeIsAskedOfStub;
+    place = ReadGroupCache::placeIsAskedOfStub;
     unsigned attributes;
     std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(nameOf(identifierNumber).uid, attributes);
     if (!offset || !isValidOffset(*offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
@@ -2918,7 +2925,7 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     StructureID id = structure->id();
     CachedName name = nameOf(identifierNumber);
     if (compiledObjectStructureOrNull(structure))
-        holdExtraPropertiesToStructureThatIsNamed(m_state.instance.globalObject, *uncheckedDowncast<Object>(base), "an answer is filed at a place"_s);
+        holdExtraPropertiesToStructureThatIsNamed(m_state.instance.globalObject, *uncheckedDowncast<Object>(base), "caching a lookup at a site"_s);
     if (use == SiteUse::AbsenceAmongExtraProperties) {
         const CompiledStructure* compiled = compiledObjectStructureOrNull(structure);
         unsigned attributes = 0;

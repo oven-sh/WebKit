@@ -42,21 +42,21 @@ JSArrayBuffer::JSArrayBuffer(VM& vm, Structure* structure, RefPtr<ArrayBuffer>&&
 {
 }
 
-void JSArrayBuffer::finishCreation(VM& vm, JSGlobalObject* globalObject)
+void JSArrayBuffer::finishCreation(VM& vm, JSGlobalObject* globalObject, size_t bytesAlreadyReported)
 {
     Base::finishCreation(vm);
     // This probably causes GCs in the various VMs to overcount the impact of the array buffer.
-    vm.heap.addReference(this, impl());
+    vm.heap.addReference(this, impl(), bytesAlreadyReported);
     vm.m_typedArrayController->registerWrapper(globalObject, *impl(), *this);
 }
 
 JSArrayBuffer* JSArrayBuffer::create(
-    VM& vm, Structure* structure, RefPtr<ArrayBuffer>&& buffer)
+    VM& vm, Structure* structure, RefPtr<ArrayBuffer>&& buffer, size_t bytesAlreadyReported)
 {
     JSArrayBuffer* result =
         new (NotNull, allocateCell<JSArrayBuffer>(vm))
         JSArrayBuffer(vm, structure, WTF::move(buffer));
-    result->finishCreation(vm, structure->realm());
+    result->finishCreation(vm, structure->realm(), bytesAlreadyReported);
     return result;
 }
 

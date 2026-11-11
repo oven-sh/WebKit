@@ -47,6 +47,7 @@
 #include "CaptionDisplaySettingsClient.h"
 #include "Chrome.h"
 #include "ChromeClient.h"
+#include "ColorAppearance.h"
 #include "CommonAtomStrings.h"
 #include "CommonVM.h"
 #include "ContainerNodeInlines.h"
@@ -59,6 +60,7 @@
 #include "DOMRect.h"
 #include "DOMRectList.h"
 #include "DOMTimer.h"
+#include "DataURLDecoder.h"
 #include "DatabaseProvider.h"
 #include "DebugOverlayRegions.h"
 #include "DebugPageOverlays.h"
@@ -112,6 +114,7 @@
 #include "HistoryItem.h"
 #include "IDBConnectionToServer.h"
 #include "ImageAnalysisQueue.h"
+#include "ImageAnimationTimeline.h"
 #include "ImageOverlay.h"
 #include "ImageOverlayController.h"
 #include "InspectorBackendClient.h"
@@ -239,7 +242,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/Base64.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/TextStream.h>
@@ -294,7 +296,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Page);
 
-static HashSet<WeakRef<Page>>& LEGACY_NODELETE allPages()
+NODELETE static HashSet<WeakRef<Page>>& allPages()
 {
     static NeverDestroyed<HashSet<WeakRef<Page>>> set;
     return set;
@@ -307,7 +309,7 @@ static inline bool isUtilityPageChromeClient(ChromeClient& chromeClient)
     return chromeClient.isEmptyChromeClient() || chromeClient.isSVGImageChromeClient();
 }
 
-unsigned LEGACY_NODELETE Page::nonUtilityPageCount()
+NODELETE unsigned Page::nonUtilityPageCount()
 {
     return gNonUtilityPageCount;
 }
@@ -440,6 +442,7 @@ Page::Page(PageConfiguration&& pageConfiguration)
 #if PLATFORM(IOS_FAMILY)
     , m_canShowWhileLocked(pageConfiguration.canShowWhileLocked)
 #endif
+    , m_imageAnimationTimeline(ImageAnimationTimeline::normal())
     , m_domTimerAlignmentInterval(DOMTimer::defaultAlignmentInterval())
     , m_domTimerAlignmentIntervalIncreaseTimer(*this, &Page::domTimerAlignmentIntervalIncreaseTimerFired)
     , m_activityState(pageInitialActivityState())
@@ -829,7 +832,7 @@ void Page::setConsoleMessageListenerForTesting(RefPtr<StringCallback>&& listener
     m_consoleMessageListenerForTesting = listener;
 }
 
-RefPtr<StringCallback> LEGACY_NODELETE Page::consoleMessageListenerForTesting() const
+NODELETE RefPtr<StringCallback> Page::consoleMessageListenerForTesting() const
 {
     return m_consoleMessageListenerForTesting;
 }
@@ -1124,7 +1127,7 @@ bool Page::openedByDOM() const
     return m_openedByDOM;
 }
 
-void LEGACY_NODELETE Page::setOpenedByDOM()
+NODELETE void Page::setOpenedByDOM()
 {
     m_openedByDOM = true;
 }
@@ -1267,7 +1270,7 @@ void Page::setCanStartMedia(bool canStartMedia)
     }
 }
 
-static Frame* LEGACY_NODELETE incrementFrame(Frame* current, bool forward, CanWrap canWrap, DidWrap* didWrap = nullptr)
+NODELETE static Frame* incrementFrame(Frame* current, bool forward, CanWrap canWrap, DidWrap* didWrap = nullptr)
 {
     return forward
         ? current->tree().traverseNext(canWrap, didWrap)
@@ -1752,12 +1755,12 @@ void Page::clearUndoRedoOperations()
     m_editorClient->clearUndoRedoOperations();
 }
 
-bool LEGACY_NODELETE Page::inLowQualityImageInterpolationMode() const
+NODELETE bool Page::inLowQualityImageInterpolationMode() const
 {
     return m_inLowQualityInterpolationMode;
 }
 
-void LEGACY_NODELETE Page::setInLowQualityImageInterpolationMode(bool mode)
+NODELETE void Page::setInLowQualityImageInterpolationMode(bool mode)
 {
     m_inLowQualityInterpolationMode = mode;
 }
@@ -2373,13 +2376,13 @@ void Page::triggerRenderingUpdateForTesting()
     chrome().client().triggerRenderingUpdate();
 }
 
-void LEGACY_NODELETE Page::startTrackingRenderingUpdates()
+NODELETE void Page::startTrackingRenderingUpdates()
 {
     m_isTrackingRenderingUpdates = true;
     m_renderingUpdateCount = 0;
 }
 
-unsigned LEGACY_NODELETE Page::renderingUpdateCount() const
+NODELETE unsigned Page::renderingUpdateCount() const
 {
     return m_renderingUpdateCount;
 }
@@ -2613,10 +2616,7 @@ void Page::updateRendering()
     });
 
     runProcessingStep(RenderingUpdateStep::Images, [] (Document& document) {
-        for (auto& image : protect(document.cachedResourceLoader())->allCachedSVGImages()) {
-            if (RefPtr page = image->internalPage())
-                page->isolatedUpdateRendering();
-        }
+        protect(document.cachedResourceLoader())->updateRenderingOfImages();
     });
 
     runProcessingStep(RenderingUpdateStep::UpdateValidationMessagePositions, [] (Document& document) {
@@ -2974,12 +2974,20 @@ bool Page::shouldUpdateAccessibilityRegions() const
 }
 #endif
 
+bool Page::imageAnimationEnabled() const
+{
+    return m_imageAnimationTimeline->allowsAnimation();
+}
+
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 void Page::setImageAnimationEnabled(bool enabled)
 {
     // This method overrides any individually set animation play-states (so we need to do work even if `enabled` is
-    // already equal to `m_imageAnimationEnabled` because there may be individually playing or paused images).
-    m_imageAnimationEnabled = enabled;
+    // already equal to `imageAnimationEnabled()` because there may be individually playing or paused images).
+    if (enabled)
+        m_imageAnimationTimeline = ImageAnimationTimeline::normal();
+    else if (imageAnimationEnabled())
+        m_imageAnimationTimeline = ImageAnimationTimeline::createPaused();
     updatePlayStateForAllAnimations();
     chrome().client().isAnyAnimationAllowedToPlayDidChange(enabled);
 }
@@ -3144,14 +3152,14 @@ void Page::userStyleSheetLocationChanged()
     m_userStyleSheet = String();
     m_userStyleSheetModificationTime = std::nullopt;
 
-    // Data URLs with base64-encoded UTF-8 style sheets are common. We can process them
-    // synchronously and avoid using a loader. 
-    if (url.protocolIsData() && url.string().startsWith("data:text/css;charset=utf-8;base64,"_s)) {
+    if (url.protocolIsData()) {
         m_didLoadUserStyleSheet = true;
 
-        String styleSheetAsBase64 = base64DecodeToString(PAL::decodeURLEscapeSequences(StringView(url.string()).substring(35)), { Base64DecodeOption::ValidatePadding, Base64DecodeOption::IgnoreWhitespace });
-        if (!styleSheetAsBase64.isNull())
-            m_userStyleSheet = styleSheetAsBase64;
+        if (auto result = DataURLDecoder::decode(url)) {
+            Ref decoder = TextResourceDecoder::create(TextResourceDecoder::ContentType::CSS, PAL::UTF8Encoding());
+            decoder->setEncoding(result->charset, TextResourceDecoder::EncodingSource::HTTPHeader);
+            m_userStyleSheet = decoder->decodeAndFlush(result->data.span());
+        }
     }
 
     forEachDocument([] (Document& document) {
@@ -3762,7 +3770,7 @@ void Page::stopKeyboardScrollAnimation()
     }
 }
 
-bool LEGACY_NODELETE Page::isVisibleAndActive() const
+NODELETE bool Page::isVisibleAndActive() const
 {
     return m_activityState.contains(ActivityState::IsVisible) && m_activityState.contains(ActivityState::WindowIsActive);
 }
@@ -3862,7 +3870,7 @@ void Page::setIsPrerender()
     updateDOMTimerAlignmentInterval();
 }
 
-VisibilityState LEGACY_NODELETE Page::visibilityState() const
+NODELETE VisibilityState Page::visibilityState() const
 {
     if (isVisible())
         return VisibilityState::Visible;
@@ -3930,13 +3938,13 @@ OptionSet<AdvancedPrivacyProtections> Page::advancedPrivacyProtections() const
     return protect(mainFrame())->advancedPrivacyProtections();
 }
 
-void LEGACY_NODELETE Page::addLayoutMilestones(OptionSet<LayoutMilestone> milestones)
+NODELETE void Page::addLayoutMilestones(OptionSet<LayoutMilestone> milestones)
 {
     // In the future, we may want a function that replaces m_layoutMilestones instead of just adding to it.
     m_requestedLayoutMilestones.add(milestones);
 }
 
-void LEGACY_NODELETE Page::removeLayoutMilestones(OptionSet<LayoutMilestone> milestones)
+NODELETE void Page::removeLayoutMilestones(OptionSet<LayoutMilestone> milestones)
 {
     m_requestedLayoutMilestones.remove(milestones);
 }
@@ -3993,12 +4001,12 @@ void Page::invalidateColorsSampledFromPaintedContent()
 #endif
 
 #if HAVE(APP_ACCENT_COLORS) && PLATFORM(MAC)
-void LEGACY_NODELETE Page::setAppUsesCustomAccentColor(bool appUsesCustomAccentColor)
+NODELETE void Page::setAppUsesCustomAccentColor(bool appUsesCustomAccentColor)
 {
     m_appUsesCustomAccentColor = appUsesCustomAccentColor;
 }
 
-bool LEGACY_NODELETE Page::appUsesCustomAccentColor() const
+NODELETE bool Page::appUsesCustomAccentColor() const
 {
     return m_appUsesCustomAccentColor;
 }
@@ -4165,7 +4173,7 @@ void Page::resumeActiveDOMObjectsAndAnimations()
     resumeAnimatingImages();
 }
 
-bool LEGACY_NODELETE Page::hasSeenAnyPlugin() const
+NODELETE bool Page::hasSeenAnyPlugin() const
 {
     return !m_seenPlugins.isEmpty();
 }
@@ -4365,7 +4373,7 @@ std::optional<uint64_t> Page::noiseInjectionHashSaltForDomain(const RegistrableD
     }).iterator->value;
 }
 
-PAL::SessionID LEGACY_NODELETE Page::sessionID() const
+NODELETE PAL::SessionID Page::sessionID() const
 {
     return m_sessionID;
 }
@@ -4479,7 +4487,7 @@ void Page::playbackTargetPickerWasDismissed(PlaybackTargetClientContextIdentifie
 
 #endif
 
-RefPtr<WheelEventTestMonitor> LEGACY_NODELETE Page::wheelEventTestMonitor() const
+NODELETE RefPtr<WheelEventTestMonitor> Page::wheelEventTestMonitor() const
 {
     return m_wheelEventTestMonitor;
 }
@@ -4492,7 +4500,7 @@ void Page::clearWheelEventTestMonitor()
     m_wheelEventTestMonitor = nullptr;
 }
 
-bool LEGACY_NODELETE Page::isMonitoringWheelEvents() const
+NODELETE bool Page::isMonitoringWheelEvents() const
 {
     return !!m_wheelEventTestMonitor;
 }
@@ -4668,14 +4676,16 @@ void Page::useSystemAppearanceChanged()
     });
 }
 
-void Page::setUseColorAppearance(bool useDarkAppearance, bool useElevatedUserInterfaceLevel)
+void Page::setUseColorAppearance(UseDarkAppearance useDarkAppearance, UseElevatedUserInterfaceLevel useElevatedUserInterfaceLevel)
 {
+    bool useElevated = useElevatedUserInterfaceLevel == UseElevatedUserInterfaceLevel::Yes;
 #if ENABLE(DARK_MODE_CSS)
-    if (m_useDarkAppearance == useDarkAppearance && m_useElevatedUserInterfaceLevel == useElevatedUserInterfaceLevel)
+    bool useDark = useDarkAppearance == UseDarkAppearance::Yes;
+    if (m_useDarkAppearance == useDark && m_useElevatedUserInterfaceLevel == useElevated)
         return;
 
-    m_useDarkAppearance = useDarkAppearance;
-    m_useElevatedUserInterfaceLevel = useElevatedUserInterfaceLevel;
+    m_useDarkAppearance = useDark;
+    m_useElevatedUserInterfaceLevel = useElevated;
 
     InspectorInstrumentation::defaultAppearanceDidChange(*this);
 
@@ -4683,20 +4693,13 @@ void Page::setUseColorAppearance(bool useDarkAppearance, bool useElevatedUserInt
 #else
     UNUSED_PARAM(useDarkAppearance);
 
-    if (m_useElevatedUserInterfaceLevel == useElevatedUserInterfaceLevel)
+    if (m_useElevatedUserInterfaceLevel == useElevated)
         return;
 
-    m_useElevatedUserInterfaceLevel = useElevatedUserInterfaceLevel;
+    m_useElevatedUserInterfaceLevel = useElevated;
 
     appearanceDidChange();
 #endif
-
-    forEachRenderableDocument([useDarkAppearance, useElevatedUserInterfaceLevel] (Document& document) {
-        for (auto& image : protect(document.cachedResourceLoader())->allCachedSVGImages()) {
-            if (RefPtr page = image->internalPage())
-                page->setUseColorAppearance(useDarkAppearance, useElevatedUserInterfaceLevel);
-        }
-    });
 }
 
 bool Page::useDarkAppearance() const
@@ -4859,7 +4862,7 @@ void Page::didChangeMainDocument(Document* newDocument)
     clearSampledPageTopColor();
 
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-    resetAXCustomColorModeState();
+    resetAXCustomColorModeState(newDocument);
 #endif
 
 #if ENABLE(DEVICE_ORIENTATION)
@@ -5038,7 +5041,7 @@ void Page::applicationWillResignActive()
 #endif
 }
 
-void LEGACY_NODELETE Page::applicationDidEnterBackground()
+void Page::applicationDidEnterBackground()
 {
 #if ENABLE(WEBXR)
     if (auto session = this->activeImmersiveXRSession())
@@ -5046,7 +5049,7 @@ void LEGACY_NODELETE Page::applicationDidEnterBackground()
 #endif
 }
 
-void LEGACY_NODELETE Page::applicationWillEnterForeground()
+void Page::applicationWillEnterForeground()
 {
 #if ENABLE(WEBXR)
     if (auto session = this->activeImmersiveXRSession())
@@ -5483,7 +5486,7 @@ void Page::updateElementsWithTextRecognitionResults()
     }
 }
 
-bool LEGACY_NODELETE Page::hasCachedTextRecognitionResult(const HTMLElement& element) const
+NODELETE bool Page::hasCachedTextRecognitionResult(const HTMLElement& element) const
 {
     return m_textRecognitionResults.contains(element);
 }
@@ -5622,7 +5625,7 @@ void Page::addIndividuallyPlayingAnimationElement(HTMLImageElement& element)
     m_individuallyPlayingAnimationElements.add(element);
 
     // If there were no individually playing animations prior to this addition, then the effective state of isAnyAnimationAllowedToPlay has changed.
-    if (wasEmpty && !m_imageAnimationEnabled)
+    if (wasEmpty && !imageAnimationEnabled())
         chrome().client().isAnyAnimationAllowedToPlayDidChange(true);
 }
 
@@ -5632,7 +5635,7 @@ void Page::removeIndividuallyPlayingAnimationElement(HTMLImageElement& element)
 
     // If removing this animation caused there to be no remaining individually playing animations,
     // then the effective state of isAnyAnimationAllowedToPlay has changed.
-    if (!m_individuallyPlayingAnimationElements.computeSize() && !m_imageAnimationEnabled)
+    if (!m_individuallyPlayingAnimationElements.computeSize() && !imageAnimationEnabled())
         chrome().client().isAnyAnimationAllowedToPlayDidChange(false);
 }
 #endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
@@ -5802,6 +5805,19 @@ void Page::setObscuredInsets(const FloatBoxExtent& insets)
 }
 #endif
 
+bool Page::canSampleTopFixedContainerEdge() const
+{
+    RefPtr mainFrame = localMainFrame();
+    RefPtr document = mainFrame ? mainFrame->document() : nullptr;
+    RefPtr frameView = mainFrame ? mainFrame->view() : nullptr;
+    if (!document || !frameView)
+        return true;
+
+    return settings().topContentInsetBackgroundCanChangeAfterScrolling()
+        || (!frameView->wasEverScrolledExplicitlyByUserBelowTopEdge() && !m_userHasInteractedSinceLastPageLoadExcludingForcedUserGestures)
+        || document->parsing();
+}
+
 void Page::updateFixedContainerEdges(BoxSideSet sides)
 {
     RefPtr mainFrame = localMainFrame();
@@ -5822,9 +5838,7 @@ void Page::updateFixedContainerEdges(BoxSideSet sides)
         auto minimumOffset = frameView->minimumScrollOffset();
         auto maximumOffset = frameView->maximumScrollOffset();
 
-        bool canSampleTopEdge = settings().topContentInsetBackgroundCanChangeAfterScrolling()
-            || (!frameView->wasEverScrolledExplicitlyByUserBelowTopEdge() && !m_userHasInteractedSinceLastPageLoadExcludingForcedUserGestures)
-            || document->parsing();
+        bool canSampleTopEdge = canSampleTopFixedContainerEdge();
 
         if (scrollOffset.y() < minimumOffset.y() || !canSampleTopEdge)
             sidesToSample.remove(BoxSide::Top);
@@ -5842,7 +5856,7 @@ void Page::updateFixedContainerEdges(BoxSideSet sides)
     }());
 
     for (auto side : sides) {
-        if (!edges.hasFixedEdge(side) || (!edges.predominantColor(side).isVisible() && fixedContainerEdges().predominantColor(side).isVisible())) {
+        if (!edges.hasFixedEdge(side) || (!edges.predominantColor(side).isVisible() && !std::holds_alternative<FrameIdentifier>(edges.colors.at(side)) && fixedContainerEdges().predominantColor(side).isVisible())) {
             WeakPtr lastElement = m_fixedContainerEdgesAndElements.second.at(side);
             if (!lastElement)
                 continue;
@@ -5878,7 +5892,7 @@ Element* Page::lastFixedContainer(BoxSide side) const
     return m_fixedContainerEdgesAndElements.second.at(side).get();
 }
 
-void LEGACY_NODELETE Page::setPortsForUpgradingInsecureSchemeForTesting(uint16_t upgradeFromInsecurePort, uint16_t upgradeToSecurePort)
+NODELETE void Page::setPortsForUpgradingInsecureSchemeForTesting(uint16_t upgradeFromInsecurePort, uint16_t upgradeToSecurePort)
 {
     m_portsForUpgradingInsecureSchemeForTesting = { upgradeFromInsecurePort, upgradeToSecurePort };
 }
@@ -5957,7 +5971,7 @@ RefPtr<WebXRSession> Page::activeImmersiveXRSession() const
         if (!navigator)
             continue;
 
-        if (auto xrSystem = NavigatorWebXR::xrIfExists(*navigator))
+        if (RefPtr xrSystem = NavigatorWebXR::xrIfExists(*navigator))
             return xrSystem->activeImmersiveSession();
     }
 
@@ -6180,13 +6194,13 @@ void Page::setLastAuthentication(LoginStatus::AuthenticationType authType)
 }
 
 #if ENABLE(FULLSCREEN_API)
-bool LEGACY_NODELETE Page::isDocumentFullscreenEnabled() const
+NODELETE bool Page::isDocumentFullscreenEnabled() const
 {
     return m_settings->fullScreenEnabled() || m_settings->videoFullscreenRequiresElementFullscreen();
 }
 #endif
 
-void LEGACY_NODELETE Page::startDeferringResizeEvents()
+NODELETE void Page::startDeferringResizeEvents()
 {
     m_shouldDeferResizeEvents = true;
 }
@@ -6199,7 +6213,7 @@ void Page::flushDeferredResizeEvents()
     });
 }
 
-void LEGACY_NODELETE Page::startDeferringScrollEvents()
+NODELETE void Page::startDeferringScrollEvents()
 {
     m_shouldDeferScrollEvents = true;
 }
@@ -6212,7 +6226,7 @@ void Page::flushDeferredScrollEvents()
     });
 }
 
-void LEGACY_NODELETE Page::startDeferringIntersectionObservations()
+NODELETE void Page::startDeferringIntersectionObservations()
 {
     m_shouldDeferIntersectionObservations = true;
 }
@@ -6306,7 +6320,7 @@ void Page::applyWindowFeatures(const WindowFeatures& features)
 #endif
 }
 
-bool LEGACY_NODELETE Page::isAlwaysOnLoggingAllowed() const
+NODELETE bool Page::isAlwaysOnLoggingAllowed() const
 {
     return m_sessionID.isAlwaysOnLoggingAllowed() || settings().allowPrivacySensitiveOperationsInNonPersistentDataStores();
 }
@@ -6327,7 +6341,7 @@ const std::optional<audit_token_t>& Page::presentingApplicationAuditToken() cons
     return m_presentingApplicationAuditToken;
 }
 
-void LEGACY_NODELETE Page::setPresentingApplicationAuditToken(std::optional<audit_token_t> presentingApplicationAuditToken)
+NODELETE void Page::setPresentingApplicationAuditToken(std::optional<audit_token_t> presentingApplicationAuditToken)
 {
     m_presentingApplicationAuditToken = WTF::move(presentingApplicationAuditToken);
 }
@@ -6349,7 +6363,7 @@ bool Page::requiresUserGestureForVideoPlayback() const
     return m_settings->requiresUserGestureForVideoPlayback();
 }
 
-static RefPtr<PlatformMediaSessionManager>& LEGACY_NODELETE mediaSessionManagerSingleton()
+NODELETE static RefPtr<PlatformMediaSessionManager>& mediaSessionManagerSingleton()
 {
     static NeverDestroyed<RefPtr<PlatformMediaSessionManager>> manager;
     return manager.get();

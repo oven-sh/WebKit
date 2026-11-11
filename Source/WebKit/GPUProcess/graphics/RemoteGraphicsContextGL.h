@@ -132,10 +132,11 @@ protected:
     void getErrors(CompletionHandler<void(GCGLErrorCodeSet)>&&);
     void copyNativeImage(WebCore::GraphicsContextGL::SurfaceBuffer, RemoteNativeImageReference);
 #if ENABLE(MEDIA_STREAM) || ENABLE(WEB_CODECS)
-    void surfaceBufferToVideoFrame(WebCore::GraphicsContextGL::SurfaceBuffer, CompletionHandler<void(std::optional<WebKit::RemoteVideoFrameProxy::Properties>&&)>&&);
+    void surfaceBufferToVideoFrame(WebCore::GraphicsContextGL::SurfaceBuffer, WebKit::RemoteVideoFrameReference, CompletionHandler<void(std::optional<WebKit::RemoteVideoFrameProxy::Properties>&&)>&&);
 #endif
 #if ENABLE(VIDEO) && PLATFORM(COCOA)
-    void copyTextureFromVideoFrame(SharedVideoFrame&&, PlatformGLObject texture, uint32_t target, int32_t level, uint32_t internalFormat, uint32_t format, uint32_t type, bool premultiplyAlpha, bool flipY, CompletionHandler<void(bool)>&&);
+    void copyTextureFromVideoFrame(SharedVideoFrame&&, PlatformGLObject texture, uint32_t target, int32_t level, uint32_t internalFormat, uint32_t type, bool unpackFlipY, bool unpackPremultiplyAlpha, CompletionHandler<void(bool)>&&);
+    void getLastVideoUploadForTesting(CompletionHandler<void(WebCore::GraphicsContextGLVideoUploadRecord)>&&);
     void setSharedVideoFrameSemaphore(IPC::Semaphore&&);
     void setSharedVideoFrameMemory(WebCore::SharedMemory::Handle&&);
 #endif

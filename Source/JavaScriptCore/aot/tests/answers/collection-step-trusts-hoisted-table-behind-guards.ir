@@ -52,7 +52,7 @@ function f1 name="sum" module=m0 flags=[IsChecked] parameters=[{type=number}] re
     v12 = ResultAt v10 index=1
     Branch v11 -> taken b4(), notTaken b2()
   b2() handler=b3():
-    v13 = Convert v12 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v13 = Convert v12 declared={type=number} illTypedCause=FromLooseType
     v14 = Add v8, v13
     v15 = Convert v14 declared={type=number}
     Jump -> next b1(v15)

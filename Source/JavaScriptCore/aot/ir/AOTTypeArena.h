@@ -21,32 +21,30 @@ namespace JSC { namespace AOT { namespace Typed {
 enum class DeclaredParts : uint8_t { FromEither, FromSecond };
 
 enum class AnswerKeptInArena : uint8_t {
-    FirstOfWalk = 0,
-    CellsOfFieldArm = 57,
-    ObjectSetOfList = 61,
-    NumberOfLayoutList = 62,
-    LayoutSetOfList = 63,
-    FirstOfAppliedReads = 64,
-    FirstOfAppliedWrites = 72,
-    TypeInCells = 78,
-    TypeFound = 79,
-    ReadOrAssignmentRunsNoCodeOnLayouts = 80,
-    LayoutsAreFoundByShapeTest = 81,
-    ReadRunsNoCodeOnLayoutsOfObjects = 82,
-    NumberOfObjectList = 84,
-    FieldsOfSlotRead = 85,
-    TypeInFilledSlot = 101,
-    TestOfGuess = 102,
-    ShapesOfLayouts = 105,
-    PartWhoseClassesHaveGuards = 106,
-    PartOfWrittenSetThatFactoriesFill = 107,
-    PartThatHasNameAsked = 108,
-    ConstantMemberOfBuiltin = 109,
-    RecordsThatFileWrites = 110,
-    UnitMayMentionFunctions = 111,
-    LiteralsWithoutNames = 112,
-    ReadFindsFieldWithoutWrittenType = 113,
-    LayoutsThatStayWithCompiledCode = 114,
+    FirstOfWalk,
+    LastOfWalk = FirstOfWalk + 54,
+    ObjectSetOfList,
+    NumberOfLayoutList,
+    LayoutSetOfList,
+    NumberOfObjectList,
+    TypeInFilledSlot,
+    TestOfGuess,
+    LayoutsOfGuessTest,
+    ShapesOfLayouts,
+    PartWhoseClassesHaveGuards,
+    PartWithNamedMembersAbove,
+    PartOfWrittenSetThatFactoriesFill,
+    PartThatHasNameAsked,
+    ConstantMemberOfBuiltin,
+    RecordsThatFileWrites,
+    WrittenRecordCoverage,
+    UnitMayMentionFunctions,
+    LiteralsWithoutNames,
+    ReadFindsFieldWithoutWrittenType,
+    LayoutsThatStayWithCompiledCode,
+    FieldOfLayoutsIsStable,
+    DeclaredFieldOfLayoutsIsStable,
+    NumberOfAnswers,
 };
 
 enum class MakerOfType : uint8_t {
@@ -68,6 +66,7 @@ enum class MakerOfType : uint8_t {
 
 inline constexpr uint32_t bitsOfOperationInTypeMemo = 8;
 inline constexpr uint8_t firstQuestionFromOutsideInTypeMemo = 128;
+static_assert(static_cast<unsigned>(AnswerKeptInArena::NumberOfAnswers) <= firstQuestionFromOutsideInTypeMemo);
 
 constexpr bool wordOfTypeMemoLiesInThread(uint32_t bits)
 {
@@ -114,7 +113,7 @@ public:
     }
 
     Type at(TypeID) const;
-    bool saysNothing(TypeID) const;
+    bool isUninformative(TypeID) const;
     const Type& recordOf(TypeID) const LIFETIME_BOUND;
     SetView<LayoutID, LayoutSetID> at(LayoutSetID set) const { return m_layoutSets.at(set); }
     std::span<const LayoutID> listOf(LayoutSetID set) const { return const_cast<TypeArena&>(*this).m_layoutSets.listOf(set); }
@@ -366,7 +365,7 @@ ALWAYS_INLINE Type TypeArena::at(TypeID id) const
     return recordOf(id);
 }
 
-ALWAYS_INLINE bool TypeArena::saysNothing(TypeID id) const
+ALWAYS_INLINE bool TypeArena::isUninformative(TypeID id) const
 {
     if (!id || isNeverType(id))
         return true;

@@ -9,10 +9,12 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTCode.h"
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 class Walker;
+struct LinkedCall;
 
 inline constexpr OpcodeSet opcodesOfGeneratorsInLoops { Opcode::Call, Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::AppendSpread, Opcode::InitialYield, Opcode::Yield };
 
@@ -25,8 +27,10 @@ struct GeneratorTakenByConsumer {
     uint32_t numberOfYields { 0 };
     uint32_t callPosition { 0 };
     uint64_t numberOfOperationsOfRegion { 0 };
+    ValueID call;
+    uint32_t frameOfCall { 0 };
     bool regionHoldsIterations { false };
-    bool comesRound { false };
+    bool hasBackEdge { false };
     bool takerCallsMethodItself { false };
     Reference state;
     Vector<Reference, 8> entryArguments;
@@ -40,6 +44,8 @@ struct GeneratorWalkedInConsumer {
     uint32_t frameOfGenerator { 0 };
     uint32_t frameOfTurn { UINT32_MAX };
     uint32_t numberOfLoopsAroundTurn { 0 };
+    ValueID call;
+    uint32_t frameOfCall { 0 };
     BlockID inputHead;
     ValueID step;
     Reference state;
@@ -53,15 +59,16 @@ struct GeneratorWalkedInConsumer {
     Vector<BlockID, 2> inputHeadsThatCarryValues;
     Vector<Vector<Reference, 4>, 2> carriedAtReturns;
     uint32_t namesAtHead { 0 };
-    Vector<std::pair<ValueID, Reference>, 8> namesInFrontOfLoop;
+    Vector<std::pair<ValueID, Reference>, 8> bindingsBeforeLoop;
     ValueID yieldStoodAt;
 };
 
-bool callMayEnterCopyOfBody(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> handedOver);
-Vector<Reference, 8> buildEntryArgumentsOfCopy(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> handedOver);
+bool callMayEnterCopyOfBody(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> passedOperands);
+Vector<Reference, 8> buildEntryArgumentsOfCopy(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> passedOperands);
 bool operationsFitWindowOfCallWrittenInLoop(const Walker&, uint64_t numberOfOperations);
 bool calleeIsCopiedInLoopsAlone(const Walker&, FunctionID callee, size_t numberOfOperands);
 bool nobodyLooksAboveGeneratorsOf(const Walker&, FunctionID generatorFunction, uint32_t* numberOfListedCalls);
+bool nobodyLooksAboveGeneratorsOf(const Walker&, FunctionID generatorFunction, uint32_t* numberOfListedCalls, const ScopedLambda<bool(const BodyIndex&, const LinkedCall&, FunctionID caller)>& passesForIteration);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -79,13 +79,13 @@ static Reference keyOfNameInResultsInParts(Walker& walker, BuiltinName name)
 
 static bool isWrittenNullishInResultsInParts(const BodyIndex& index, ValueID value)
 {
-    ValueID written = index.valueBehindCasts(value);
+    ValueID written = index.stripCasts(value);
     return written && !index.isParameter(written) && (index.opcodeOf(written) == Opcode::Null || index.opcodeOf(written) == Opcode::Undefined);
 }
 
 static std::optional<uint32_t> placeWrittenInResultsInParts(const BodyIndex& index, ValueID key)
 {
-    ValueID written = index.valueBehindCasts(key);
+    ValueID written = index.stripCasts(key);
     if (!written || index.isParameter(written) || index.opcodeOf(written) != Opcode::Integer)
         return std::nullopt;
     int64_t place = index.value(written).as<Opcode::Integer>().integer();
@@ -134,7 +134,7 @@ static void lookAtResultsOfBody(Walker& walker, LooksAtResultsInParts::ByNumber<
         refuse(block.subject());
         for (BodyValue user : block.values()) {
             Opcode opcode = user.opcode();
-            if (inputOperationsThatHandOn.contains(opcode))
+            if (inputPassThroughOpcodes.contains(opcode))
                 callsBehindNames[user.id().index()] = callBehind(user.operand(0));
             else if (opcode == Opcode::ToBoolean) {
             } else if (opcode == Opcode::TypeTest && walker.types().isSubset(user.as<Opcode::TypeTest>().testedType(), TypeTable::nullish)) {
@@ -225,7 +225,7 @@ static bool endOfBlockAsksWhetherThereIsResult(Walker& walker, const BodyValue& 
 
     BodyValue asked = index.value(test);
     auto namesResult = [&](ValueID operand) {
-        return index.valueBehindCasts(operand) == call.id();
+        return index.stripCasts(operand) == call.id();
     };
     if (asked.opcode() == Opcode::ToBoolean)
         return namesResult(asked.operand(0));
@@ -269,20 +269,20 @@ static bool buildMatchOnTwoWaysInResultsInParts(Walker& walker, const BodyValue&
     TypeID widest = walker.isInLoop() ? widestTypeOfOperation(walker, call) : TypeID();
     if (!typeOfWhole || (widest && !types.isSubset(types.withPrimitives(typeOfWhole, Primitive::Null), widest)))
         return false;
-    if (!endOfBlockAsksWhetherThereIsResult(walker, call) || !walker.armsMayEndWithBranchBehind(call))
+    if (!endOfBlockAsksWhetherThereIsResult(walker, call) || !walker.canThreadBranchAfter(call))
         return false;
 
     Reference isFound = walker.build(WTF::move(match));
     if (!isFound || walker.isUnreachable())
         return true;
-    walker.count(StatisticID::MatchesTakenInParts);
+    walker.count(StatisticID::RegExpMatchAllocationsElided);
     BlockID present = walker.addBlock();
     BlockID absent = walker.addBlock();
     walker.branch(isFound, present, absent);
 
     walker.continueIn(absent);
     walker.bind(call.id(), walker.constant(PrimitiveKnownToFolding::null()));
-    if (!walker.endArmWithBranchBehind(call)) {
+    if (!walker.threadBranchAfter(call)) {
         walker.fail("the way of a match that finds nothing does not walk the end of its block"_s);
         return true;
     }
@@ -305,12 +305,12 @@ static bool buildMatchOnTwoWaysInResultsInParts(Walker& walker, const BodyValue&
     notes.append({ keyOfNameInResultsInParts(walker, BuiltinNames::length), integerForStrings(walker, asked.length) });
     if (!array || !array.isValue() || walker.isUnreachable())
         return true;
-    Reference cell = Reference::value(rootOfCellInSweptCode(walker.code(), array.id()));
+    Reference cell = Reference::value(underlyingCellOf(walker.code(), array.id()));
     for (auto& [key, value] : notes)
         walker.state().noteElement(cell, key, value);
     walker.state().noteFresh(cell);
     walker.bind(call.id(), array);
-    if (!walker.endArmWithBranchBehind(call))
+    if (!walker.threadBranchAfter(call))
         walker.fail("the way of a match that finds something does not walk the end of its block"_s);
     return true;
 }
@@ -397,7 +397,7 @@ bool buildSplitInParts(Walker& walker, const CallByOneRow& call)
     Reference results = walker.build(WTF::move(bounds));
     if (!results || walker.isUnreachable())
         return true;
-    walker.count(StatisticID::SplitsTakenInParts);
+    walker.count(StatisticID::StringSplitAllocationsElided);
     Reference array = walker.build(WTF::move(whole));
     NotesOfResultInParts notes;
     appendPiecesReadInResultsInParts(walker, notes, results, call.receiver, mentions->placesRead, 1, origin);
@@ -407,7 +407,7 @@ bool buildSplitInParts(Walker& walker, const CallByOneRow& call)
     }
     if (!array || !array.isValue() || walker.isUnreachable())
         return true;
-    Reference cell = Reference::value(rootOfCellInSweptCode(walker.code(), array.id()));
+    Reference cell = Reference::value(underlyingCellOf(walker.code(), array.id()));
     for (auto& [key, value] : notes)
         walker.state().noteElement(cell, key, value);
     walker.state().noteFresh(cell);
@@ -432,7 +432,7 @@ static ALWAYS_INLINE const NotesOfResultInParts* partsOfListThatIsOnlyTakenApart
     if (lists.isEmpty())
         return nullptr;
     const Code& code = walker.code();
-    ValueID cell = rootOfCellInSweptCode(code, name.id());
+    ValueID cell = underlyingCellOf(code, name.id());
     if (code.isConstant(cell) || code.at(cell).opcode != Opcode::NewStringSplitArray)
         return nullptr;
     auto found = lists.find(cell.index());
@@ -456,7 +456,7 @@ static ALWAYS_INLINE Reference wholeBesidePartsNamedBy(Walker& walker, Reference
     if (!name || !name.isValue() || !walker.state().holdsFreshObjects())
         return { };
     const Code& code = walker.code();
-    ValueID cell = rootOfCellInSweptCode(code, name.id());
+    ValueID cell = underlyingCellOf(code, name.id());
     if (code.isConstant(cell) || !walker.state().isFresh(Reference::value(cell)))
         return { };
     return code.at(cell).opcode == Opcode::NewRegExpMatchArray || code.at(cell).opcode == Opcode::NewStringSplitArray ? Reference::value(cell) : Reference();

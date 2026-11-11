@@ -303,6 +303,23 @@ static void testSectionSizeNotWholeRecords()
     }
 }
 
+static void testFunctionStartsInGroups()
+{
+    for (size_t count : { 0u, 1u, 31u, 32u, 33u, 200u }) {
+        for (uint32_t distance : { 1u, 2000u, 3000u, 70000u, 0x1000000u }) {
+            Vector<uint32_t> starts;
+            for (size_t index = 0; index < count; ++index)
+                starts.append(static_cast<uint32_t>(16 + index * distance + (index % 7 == 5 ? distance / 2 : 0)));
+            Vector<uint8_t> bytes = FunctionStarts::encode(starts.span());
+            AOT_TEST_CHECK(!(bytes.size() % sizeof(uint32_t)) && bytes.size() / sizeof(uint32_t) >= FunctionStarts::numberOfWordsWithoutLists(count));
+            FunctionStarts decoded(reinterpret_cast<const uint32_t*>(bytes.span().data()), count);
+            for (size_t index = 0; index < count; ++index)
+                AOT_TEST_CHECK(decoded[index] == starts[index]);
+            AOT_TEST_CHECK(decoded[count] == std::numeric_limits<uint32_t>::max());
+        }
+    }
+}
+
 static void testFunctionCount()
 {
     checkHeaderChange(Verdict::MalformedTables, [](ImageHeader& header) { header.counts.functions += 1; });
@@ -501,7 +518,7 @@ static void testRuntimeFactsNameWhatEmittedCodeTakes()
     std::span<const ASCIILiteral> names = namesOfRuntimeFacts();
     for (ASCIILiteral name : {
         "the names of the entries in the table of the run time in the order of their numbers"_s,
-        "runsOnlyCodeOfImage"_s,
+        "isHardenedBuild"_s,
         "sizeOfLoopPoll"_s,
         "sizeof(InlineAllocationData)"_s,
         "sizeof(BuiltinDirectFunctionBinding)"_s,
@@ -881,6 +898,7 @@ std::span<const NativeTest> imageTableTests()
         { "image/check/section-offset-unaligned"_s, testSectionOffsetUnaligned },
         { "image/check/section-size-not-whole-records"_s, testSectionSizeNotWholeRecords },
         { "image/check/function-count"_s, testFunctionCount },
+        { "image/check/function-starts-in-groups"_s, testFunctionStartsInGroups },
         { "image/check/functions-past-code"_s, testFunctionsPastCode },
         { "image/check/too-few-granules"_s, testTooFewGranules },
         { "image/check/shared-code-ends-past-functions"_s, testSharedCodeEndsPastFunctions },

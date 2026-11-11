@@ -282,18 +282,41 @@ StubSignature signatureOfClosureOfTable(StubKey)
 
 static void loadNumberOfClosureCell(StubAssembler& jit, GPRReg function, GPRReg number, GPRReg scratch)
 {
-    static_assert(sizeof(Number24) == 3 && std::endian::native == std::endian::little);
+    static_assert(NumberGroup::size == 32 && NumberGroup::numberOfWords * sizeof(uint32_t) == sizeof(uint64_t) && NumberGroup::isListedFlag == 1u << 31 && std::endian::native == std::endian::little);
     ASSERT(noOverlap(function, number, scratch));
-    const GPRReg tables = scratch;
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    jit.getEffectiveAddress(BaseIndex(function, function, CCallHelpers::TimesTwo), number);
-    jit.add32(Address(tables, offsetOfProgramTableRange(ProgramTableIndex::closureCellNumbers) + OBJECT_OFFSETOF(TableRange, offset)), number);
-    jit.addPtr(tables, number);
-    const GPRReg lowBytes = scratch;
-    jit.load16(Address(number), lowBytes);
-    jit.load8(Address(number, 2), number);
-    jit.lshift32(TrustedImm32(16), number);
-    jit.or32(lowBytes, number);
+    auto loadTable = [&](GPRReg table, GPRReg offset) {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), table);
+        jit.load32(Address(table, offsetOfProgramTableRange(ProgramTableIndex::closureCells) + OBJECT_OFFSETOF(TableRange, offset)), offset);
+        jit.addPtr(offset, table);
+    };
+    const GPRReg group = number;
+    loadTable(scratch, group);
+    jit.urshift32(function, TrustedImm32(std::countr_zero(NumberGroup::size)), group);
+    jit.load64(BaseIndex(scratch, group, CCallHelpers::TimesEight), group);
+    const GPRReg bit = scratch;
+    jit.move(TrustedImm32(1), bit);
+    jit.lshift32(function, bit);
+    Jump hasCell = jit.branchTest32(CCallHelpers::NonZero, group, bit);
+    jit.move(TrustedImm32(0), number);
+    Jump hasNoCell = jit.jump();
+
+    hasCell.link(&jit);
+    const GPRReg rank = scratch;
+    jit.sub32(TrustedImm32(1), bit);
+    jit.and32(group, rank);
+    jit.countPopulation64(rank, rank, CCallHelpers::fpTempRegister);
+    jit.urshift64(TrustedImm32(32), group);
+    jit.add32(rank, number);
+    Jump follows = jit.branchTest32(CCallHelpers::PositiveOrZero, number, number);
+
+    jit.and32(TrustedImm32(~NumberGroup::isListedFlag), number);
+    jit.lshift32(TrustedImm32(std::countr_zero(sizeof(uint32_t))), number);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), scratch);
+    jit.add32(Address(scratch, offsetOfProgramTableRange(ProgramTableIndex::closureCells) + OBJECT_OFFSETOF(TableRange, offset)), number);
+    jit.load32(BaseIndex(scratch, number, CCallHelpers::TimesOne), number);
+
+    follows.link(&jit);
+    hasNoCell.link(&jit);
 }
 
 static void emitCreateSlimClosureOfTable(StubAssembler& jit, const ClosureRegisters& registers, GPRReg number, JumpList& slow, JumpList& isCreated)

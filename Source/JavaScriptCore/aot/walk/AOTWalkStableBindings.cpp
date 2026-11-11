@@ -29,7 +29,7 @@ Reference findCaptureAtHand(Walker& walker, FunctionID callee, uint32_t capture,
         return { };
 
     const Code& code = walker.code();
-    const Operation& read = code.at(rootOfCellInSweptCode(code, closure.id()));
+    const Operation& read = code.at(underlyingCellOf(code, closure.id()));
     if (read.opcode != Opcode::GetEnvironmentField || read.layout() != scope)
         return { };
     if (functionDeclaredInScopeSlot(program, scope, read.field()) != callee)
@@ -58,6 +58,54 @@ static bool variableStaysAsFilled(const Walker& walker, VariableID id, Definitio
     return !!plan.deferredDefinitions().findDeferred(id) == (definition == DefinitionOfStableVariable::IsPutOff);
 }
 
+bool Walker::framesKeepFields() const
+{
+    const Frame& last = m_frames.last();
+    if (!last.keepsFields) {
+        last.keepsFields = std::ranges::none_of(m_frames, [&](const Frame& frame) {
+            const Function& function = program().at(frame.function);
+            return function.isCoroutine() || function.constructedClass || function.kind == FunctionKind::Initializer;
+        });
+    }
+    return *last.keepsFields;
+}
+
+bool Walker::isStableFieldOf(LayoutSetID receivers, PropertyKeyID key, bool holdsDeclaredType) const
+{
+    auto isStableIn = [&](LayoutID member) {
+        std::optional<FieldIndex> field = plan().slots().findField(program(), member, key);
+        if (!field)
+            return false;
+        const PlacedSlot& slot = plan().slots().slot(member, *field);
+        return holdsDeclaredType ? slot.isStableWithoutNullish : slot.isStable;
+    };
+    std::span<const LayoutID> members = membersOf(m_types, receivers);
+    if (members.size() <= 1)
+        return !members.empty() && isStableIn(members.front());
+    if (m_types.keeps() != ArenaKeeps::UntilReset)
+        return std::ranges::all_of(members, isStableIn);
+    uint8_t question = static_cast<uint8_t>(holdsDeclaredType ? AnswerKeptInArena::DeclaredFieldOfLayoutsIsStable : AnswerKeptInArena::FieldOfLayoutsIsStable);
+    TypeArena::SetOfRound round = m_types.setOfRound(receivers);
+    if (std::optional<TypeArena::WordsOfRound> kept = m_types.rememberedRound(question, 1, round, key.bits()))
+        return (*kept)[0];
+    bool isStable = std::ranges::all_of(members, isStableIn);
+    m_types.rememberRound(question, 1, 0, round, key.bits(), { isStable });
+    return isStable;
+}
+
+bool Walker::readsStableField(const Draft& read) const
+{
+    if (read.level() != KnowledgeLevel::Proven || read.receiverMayBeInBirth() || !isStableFieldOf(read.receivers(), read.key(), read.holdsDeclaredType()) || testsItsOwnGuess(read))
+        return false;
+    Reference object = read.objectOperand();
+    if (!object || !object.isValue() || !framesKeepFields())
+        return false;
+    const Operation& holder = m_code.at(underlyingCellOf(m_code, object.id()));
+    if (resultRuleOf(holder.opcode) == ResultRule::Allocation || interpretedOf(holder.opcode) == Interpretation::Allocation)
+        return false;
+    return holder.opcode != Opcode::Parameter || (holder.block() && m_code.at(holder.block()).isEntry);
+}
+
 bool numberReadOutOfVariableStays(const Walker& walker, VariableID variable)
 {
     return variableStaysAsFilled(walker, variable);
@@ -74,11 +122,26 @@ static bool keepsNotesOfStableBindings(const Walker& walker)
     return walker.has(Mechanism::Folding) && walker.state().remembersPlaces();
 }
 
+Reference Walker::valueOfStableField(const Draft& read, TypeID proven) const
+{
+    if (!keepsNotesOfStableBindings(*this))
+        return { };
+    std::optional<uint64_t> noted = findKnown(*this, KnownNote::ValueKeptByPlace, Reference::value(underlyingCellOf(m_code, read.objectOperand().id())), { }, read.key().index());
+    Reference kept = noted ? Reference::fromBits(static_cast<uint32_t>(*noted)) : Reference();
+    return kept && m_types.isSubset(typeOf(kept), proven) ? kept : Reference();
+}
+
+void Walker::noteStableField(const Draft& read, Reference value)
+{
+    if (keepsNotesOfStableBindings(*this))
+        noteKnown(*this, KnownNote::ValueKeptByPlace, Reference::value(underlyingCellOf(m_code, read.objectOperand().id())), { }, read.key().index(), LocationMasks(), value.bits(), true);
+}
+
 static ALWAYS_INLINE bool isValueOfFilledBinding(Walker& walker, Reference value, bool hasDeadZone)
 {
     TypeID type = value ? walker.typeOf(value) : TypeID();
-    uint16_t saysNothing = Primitive::Absent | Primitive::Unspecified | (hasDeadZone ? 0 : Primitive::Undefined);
-    return type && !(walker.types().at(type).primitives & saysNothing);
+    uint16_t unfilledPrimitives = Primitive::Absent | Primitive::Unspecified | (hasDeadZone ? 0 : Primitive::Undefined);
+    return type && !(walker.types().at(type).primitives & unfilledPrimitives);
 }
 
 static bool hasDeadZone(const Walker& walker, VariableID variable)

@@ -650,7 +650,7 @@ TypeID typeOfEdgeResult(const TypingContext& context, const Test& test, OperandT
     case Proof::Shape:
     case Proof::ExactFunction:
         if constexpr (!isCursorOverInput<Test>) {
-            if (opcode == Opcode::ShapeTest && side == EdgeSide::NotTaken && test.refusesMarkedObjects())
+            if (side == EdgeSide::NotTaken && canFailForMarkedObject(test))
                 return source;
             if ((opcode == Opcode::IsPlainInstanceOf || opcode == Opcode::FindsDeclaredMember) && (side == EdgeSide::NotTaken || !test.receivers()))
                 return source;

@@ -491,7 +491,7 @@ private:
 };
 
 template<typename D>
-static std::span<D> LEGACY_NODELETE normalize(std::span<D> x)
+NODELETE static std::span<D> normalize(std::span<D> x)
 {
     while (!x.empty() && !x.back())
         x = x.first(x.size() - 1);
@@ -2869,7 +2869,7 @@ public:
     }
 
 private:
-    static ALWAYS_INLINE Digit LEGACY_NODELETE calculateInverse(Digit d)
+    NODELETE static ALWAYS_INLINE Digit calculateInverse(Digit d)
     {
         ASSERT(d & (1ULL << (digitBits - 1))); // d is already normalized.
         TwoDigit limit = ~static_cast<TwoDigit>(0);
@@ -7616,7 +7616,7 @@ std::optional<int64_t> JSBigInt::tryToBigInt64(JSValue bigInt)
     return static_cast<int64_t>(toBigUInt64Heap(heapBigInt));
 }
 
-static ALWAYS_INLINE unsigned LEGACY_NODELETE computeHash(JSBigInt::Digit* digits, unsigned length, bool sign)
+NODELETE static ALWAYS_INLINE unsigned computeHash(JSBigInt::Digit* digits, unsigned length, bool sign)
 {
     Hasher hasher;
     WTF::add(hasher, sign);

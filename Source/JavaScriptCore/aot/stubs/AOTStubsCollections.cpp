@@ -469,20 +469,7 @@ static void emitDelete(StubAssembler& jit, const HashTableRegisters& taken, Comp
     });
 }
 
-void emitMethodOfTable(StubAssembler& jit, TableMethod method, const HashTableRegisters& registers)
-{
-    switch (method) {
-    case TableMethod::MapDelete: return emitDelete(jit, registers, CompactTableOwner::Map);
-    case TableMethod::MapGet: return emitGet(jit, registers);
-    case TableMethod::MapHas:
-    case TableMethod::SetHas: return emitHas(jit, registers, Entry::operationAOTMapHas);
-    case TableMethod::MapSet: return emitInsert(jit, registers, CompactTableOwner::Map);
-    case TableMethod::SetAdd: return emitInsert(jit, registers, CompactTableOwner::Set);
-    case TableMethod::SetDelete: return emitDelete(jit, registers, CompactTableOwner::Set);
-    }
-}
-
-void generateMapGet(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::MapGet, HashTableRegisters::take(jit)); }
+void generateMapGet(StubAssembler& jit) { emitGet(jit, HashTableRegisters::take(jit)); }
 static void emitReturnPlaceOfEntry(StubAssembler& jit, const HashTableRegisters& registers, JumpList& hasNoValues)
 {
     const GPRReg values = registers.keys;
@@ -549,11 +536,11 @@ void generateFindCharactersInMap(StubAssembler& jit)
     jit.returnToCaller();
 }
 
-void generateMapHas(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::MapHas, HashTableRegisters::take(jit)); }
-void generateMapSet(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::MapSet, HashTableRegisters::take(jit)); }
-void generateSetAdd(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::SetAdd, HashTableRegisters::take(jit)); }
-void generateMapDelete(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::MapDelete, HashTableRegisters::take(jit)); }
-void generateSetDelete(StubAssembler& jit) { emitMethodOfTable(jit, TableMethod::SetDelete, HashTableRegisters::take(jit)); }
+void generateMapHas(StubAssembler& jit) { emitHas(jit, HashTableRegisters::take(jit), Entry::operationAOTMapHas); }
+void generateMapSet(StubAssembler& jit) { emitInsert(jit, HashTableRegisters::take(jit), CompactTableOwner::Map); }
+void generateSetAdd(StubAssembler& jit) { emitInsert(jit, HashTableRegisters::take(jit), CompactTableOwner::Set); }
+void generateMapDelete(StubAssembler& jit) { emitDelete(jit, HashTableRegisters::take(jit), CompactTableOwner::Map); }
+void generateSetDelete(StubAssembler& jit) { emitDelete(jit, HashTableRegisters::take(jit), CompactTableOwner::Set); }
 
 void generateWeakMapGet(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapGet); }
 void generateWeakMapHas(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapHas); }

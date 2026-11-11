@@ -5,10 +5,12 @@
 # rows.push(id("text"));
 # print(total(rows, 3));
 # print("went on");
-# `const { a, b } = list[at]`: behind the read stood the check (a cell? of the layout? or undefined?) and then the pattern's test for nullish, in front of its branch.
-# One test in full of the side that is not nullish asks both: the check is left to it; on its other side the value is held to the other side's type, and a misfit stops by name. Each side ends with the branch, whose answer it knows: nothing is walked twice.
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# `const { a, b } = list[at]`: the read used to be followed by the proof check (is it a cell? of the layout? or undefined?) and then by the pattern's test for nullish, before its branch.
+# Now one full test for the side that is not nullish does both jobs, and the check is left to that test.
+# On the test's other side the value is checked against the other side's type, and a mismatch crashes with a named error.
+# Each side ends with the branch, whose outcome it knows, so nothing is visited twice.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f1 mechanisms=all
 # FORM: CheckProof [[given]] checkedType=undefined|L0 {{*}} source=Contents [isLeftToTestBehind]
 # FORM-NEXT: TypeTest [[given]] testedType=L0 [asksInFull]
@@ -17,13 +19,15 @@
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 14
 # ALL-NEXT: true
-# ALL-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ALL-NEXT: bun: internal AOT error: type check failed
+# ALL-NEXT: found string in
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS: 14
 # CALLS-NEXT: true
-# CALLS-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# CALLS-NEXT: bun: internal AOT error: type check failed
+# CALLS-NEXT: found string in
 # CALLS-NOT: went on
 # CALLS: crashed with
 

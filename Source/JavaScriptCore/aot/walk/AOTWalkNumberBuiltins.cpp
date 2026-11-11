@@ -71,7 +71,7 @@ static Reference buildCodeInLineInNumberBuiltins(Walker& walker, const CallByOne
 
 static ValueID recordBehindNamesInNumberBuiltins(const Code& code, ValueID record)
 {
-    while (opcodesThatGiveSameValue.contains(code.at(record).opcode))
+    while (valuePreservingOpcodes.contains(code.at(record).opcode))
         record = code.at(record).operand(0);
     return record;
 }
@@ -403,13 +403,13 @@ static Reference buildParsedIntegerOfFractionInNumberBuiltins(Walker& walker, co
     walker.continueIn(aroundZero);
     walker.branch(holds(Opcode::StrictEq, number, written(0)), truncating, parsing);
 
-    Vector<Walker::ArmThatMeets, 2> arms;
+    Vector<Walker::JoinArm, 2> arms;
     walker.continueIn(truncating);
     Draft truncation(Opcode::ToIntegerOrInfinity, call.origin);
     walker.chooseConservativeFields(truncation);
     truncation.setValueOperand(number);
     if (Reference truncated = walker.build(WTF::move(truncation)))
-        arms.append(Walker::ArmThatMeets { walker.currentBlock(), { truncated } });
+        arms.append(Walker::JoinArm { walker.currentBlock(), { truncated } });
     walker.continueIn(parsing);
     {
         Walker::ClosedArm closedArm(walker);
@@ -417,10 +417,10 @@ static Reference buildParsedIntegerOfFractionInNumberBuiltins(Walker& walker, co
         if (walker.hasFailed())
             return { };
         if (!walker.isUnreachable())
-            arms.append(Walker::ArmThatMeets { walker.currentBlock(), { walker.referenceOf(call.call.id()) } });
+            arms.append(Walker::JoinArm { walker.currentBlock(), { walker.referenceOf(call.call.id()) } });
     }
     std::array<Reference, 1> met;
-    return !arms.isEmpty() && walker.letArmsMeet(arms.span(), walker.addBlock(), met) ? met[0] : Reference();
+    return !arms.isEmpty() && walker.joinArms(arms.span(), walker.addBlock(), met) ? met[0] : Reference();
 }
 
 static Reference buildParseOfNumberInNumberBuiltins(Walker& walker, const CallByOneRow& call)

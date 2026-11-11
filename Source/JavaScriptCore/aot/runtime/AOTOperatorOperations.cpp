@@ -70,6 +70,17 @@ static ALWAYS_INLINE double numberOfValueThatIsNoCell(JSValue value)
         OPERATION_RETURN(scope, JSValue::encode(function(globalObject, left, right))); \
     }
 
+#define AOT_DEFINE_BITWISE_OPERATION(name, function, bigIntFunction) \
+    JSC_DEFINE_JIT_OPERATION(name, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
+    { \
+        AOT_OPERATION_BEGIN(instance, Entry::name); \
+        JSValue left = JSValue::decode(encodedLeft); \
+        JSValue right = JSValue::decode(encodedRight); \
+        if (left.isHeapBigInt() && right.isHeapBigInt()) \
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::bigIntFunction(globalObject, left.asHeapBigInt(), right.asHeapBigInt()))); \
+        OPERATION_RETURN(scope, JSValue::encode(function(globalObject, left, right))); \
+    }
+
 #define AOT_DEFINE_COMPARISON_OPERATION(name, ofHeapBigInts, relation, result) \
     JSC_DEFINE_JIT_OPERATION(name, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
     { \
@@ -114,11 +125,11 @@ AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueMul, jsMul, multiply, x * y
 AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueDiv, jsDiv, divide, x / y)
 AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueMod, jsRemainder, remainder, Math::fmodDouble(x, y))
 AOT_DEFINE_BINARY_OPERATION(operationAOTValuePow, EncodedJSValue, JSValue::encode(jsPow(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueBitAnd, EncodedJSValue, JSValue::encode(jsBitwiseAnd(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueBitOr, EncodedJSValue, JSValue::encode(jsBitwiseOr(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueBitXor, EncodedJSValue, JSValue::encode(jsBitwiseXor(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueLShift, EncodedJSValue, JSValue::encode(jsLShift(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueRShift, EncodedJSValue, JSValue::encode(jsRShift(globalObject, left, right)))
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueBitAnd, jsBitwiseAnd, bitwiseAnd)
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueBitOr, jsBitwiseOr, bitwiseOr)
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueBitXor, jsBitwiseXor, bitwiseXor)
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueLShift, jsLShift, leftShift)
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueRShift, jsRShift, signedRightShift)
 AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLess, == JSBigInt::ComparisonResult::LessThan, <, jsLess<true>(globalObject, left, right))
 AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLessEq, != JSBigInt::ComparisonResult::GreaterThan, <=, jsLessEq<true>(globalObject, left, right))
 AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareGreater, == JSBigInt::ComparisonResult::GreaterThan, >, jsLess<false>(globalObject, right, left))

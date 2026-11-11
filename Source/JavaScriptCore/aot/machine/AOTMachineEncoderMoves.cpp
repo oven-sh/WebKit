@@ -86,6 +86,9 @@ static bool tryMaterializeBitsBesidePinnedRegister(CCallHelpers& jit, uint64_t b
 
 static void materializeBitsInGPR(CCallHelpers& jit, uint64_t bits, Width width, GPRReg destination)
 {
+    bool hasOnlyLowHalf = !encodedMoveIsWide(width) || isRepresentableAs<uint32_t>(static_cast<size_t>(bits));
+    if (bits && hasOnlyLowHalf && tryMoveSmallConstant(jit, static_cast<int32_t>(static_cast<uint32_t>(bits)), destination))
+        return;
     if (!encodedMoveIsWide(width)) {
         jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(static_cast<uint32_t>(bits))), destination);
         return;
@@ -105,6 +108,18 @@ static void materializeBitsInGPR(CCallHelpers& jit, uint64_t bits, Width width, 
     jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(bits)), destination);
 }
 
+#if CPU(X86_64)
+static bool isLoadedIntoGPR(uint64_t bits)
+{
+    if (isRepresentableAs<uint32_t>(static_cast<size_t>(bits)) || isRepresentableAs<int32_t>(static_cast<int64_t>(bits)))
+        return false;
+    constexpr unsigned shiftOfTag = 48;
+    constexpr uint64_t lowBytesOfLongDouble = (1ull << 40) - 1;
+    bool isBoxedInteger = bits >> shiftOfTag == static_cast<uint64_t>(JSValue::NumberTag) >> shiftOfTag;
+    return (isBoxedInteger || !(bits >> shiftOfTag) || !(bits & lowBytesOfLongDouble)) && !findPinnedConstant(bits);
+}
+#endif
+
 static bool bitsAreCheapestFromImmediates(uint64_t bits)
 {
 #if CPU(ARM64)
@@ -117,9 +132,9 @@ static bool bitsAreCheapestFromImmediates(uint64_t bits)
 #endif
 }
 
-static void materializeBitsInFPR(Encoder& encoder, uint64_t bits, Width width, FPRReg destination)
+void Encoder::materializeBitsInFPR(uint64_t bits, Width width, FPRReg destination)
 {
-    CCallHelpers& jit = encoder.m_jit;
+    CCallHelpers& jit = m_jit;
     if (!encodedMoveIsWide(width)) {
         jit.move32ToFloat(CCallHelpers::TrustedImm32(static_cast<int32_t>(static_cast<uint32_t>(bits))), destination);
         return;
@@ -142,10 +157,14 @@ static void materializeBitsInFPR(Encoder& encoder, uint64_t bits, Width width, F
     }
 
     std::array<uint8_t, sizeof(uint64_t)> bytes = std::bit_cast<std::array<uint8_t, sizeof(uint64_t)>>(bits);
-    uint32_t index = encoder.m_proc.addConstantData(std::span<const uint8_t>(bytes), sizeof(uint64_t), ConstantKind::Number);
+    uint32_t index = m_proc.addConstantData(std::span<const uint8_t>(bytes), sizeof(uint64_t), ConstantKind::Number);
+#if CPU(X86_64)
+    m_relocations.loadDouble(CodeSymbol { SymbolSpace::Constant, index }, destination);
+#else
     GPRReg address = jit.scratchRegister();
-    encoder.m_relocations.moveAddress(CodeSymbol { SymbolSpace::Constant, index }, address, PCRelativeReach::Far);
+    m_relocations.moveAddress(CodeSymbol { SymbolSpace::Constant, index }, address, PCRelativeReach::Far);
     jit.loadDouble(MacroAssembler::Address(address), destination);
+#endif
 }
 
 static ALWAYS_INLINE void materializeInGPR(Encoder& encoder, const Operation* operation, GPRReg destination)
@@ -199,20 +218,6 @@ void Encoder::encodeSwap(const Step& step)
     m_jit.swapDouble(first.fpr(), second.fpr());
 }
 
-void Encoder::encodeClearSpill(const Step& step)
-{
-    ASSERT(step.kind == StepKind::ClearSpill);
-    RELEASE_ASSERT(step.destination.isSpill() && m_frameIsSetUp);
-    Width width = m_allocation.spills()[step.destination.spillIndex()].width;
-    MacroAssembler::Address address = addressOf(step.destination, MemoryOfEncodedMove::IsWritten);
-
-    AllowMacroScratchRegisterUsage allowScratch(m_jit);
-    if (encodedMoveIsWide(width))
-        m_jit.store64(CCallHelpers::TrustedImm32(0), address);
-    else
-        m_jit.store32(CCallHelpers::TrustedImm32(0), address);
-}
-
 void Encoder::encodeKeepPointer(const Step& step)
 {
     ASSERT(step.kind == StepKind::KeepPointer);
@@ -246,10 +251,18 @@ void Encoder::encodeMaterialize(const Operation* operation, Reg destination)
         uint64_t bits = static_cast<uint64_t>(operation->constantBits());
         if (width == Width32)
             bits = static_cast<uint32_t>(bits);
+#if CPU(X86_64)
+        if (destination.isGPR() && encodedMoveIsWide(width) && isLoadedIntoGPR(bits)) {
+            auto bytes = std::bit_cast<std::array<uint8_t, sizeof(uint64_t)>>(bits);
+            uint32_t index = m_proc.addConstantData(std::span<const uint8_t>(bytes), sizeof(uint64_t), ConstantKind::Number);
+            m_relocations.load64(CodeSymbol { SymbolSpace::Constant, index }, destination.gpr());
+            return;
+        }
+#endif
         if (destination.isGPR())
             materializeBitsInGPR(m_jit, bits, width, destination.gpr());
         else
-            materializeBitsInFPR(*this, bits, width, destination.fpr());
+            materializeBitsInFPR(bits, width, destination.fpr());
         return;
     }
 

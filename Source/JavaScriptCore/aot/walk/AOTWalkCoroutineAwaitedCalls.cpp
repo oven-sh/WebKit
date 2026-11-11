@@ -63,7 +63,7 @@ bool walkUpToAwaitOfCall(Walker& walker, const BodyIndex& index, BodyBlock block
     ValueID call(firstValue + wait.placeOfCall);
     for (uint32_t place = wait.placeOfCall + 1; place < wait.endOfWait; ++place) {
         ValueID between(firstValue + place);
-        if (opcodesThatStateTypes.contains(index.opcodeOf(between)) && index.valueBehindCasts(between) == call)
+        if (opcodesThatStateTypes.contains(index.opcodeOf(between)) && index.stripCasts(between) == call)
             continue;
         walker.walkStretch(block.id(), place, place + 1);
         if (walker.isUnreachable() || walker.hasFailed())
@@ -110,6 +110,11 @@ static bool bodyMayThrowInAwaitedCalls(const Walker& walker, FunctionID callee)
 {
     const LinkedFunction& linked = walker.facts().linked().function(callee);
     return linked.effectsOnReturn().mayThrowOtherThanStackOverflow() || linked.effectsOnThrow().mayThrowOtherThanStackOverflow();
+}
+
+static bool resultHasNoThenInAwaitedCalls(const Walker& walker, FunctionID callee)
+{
+    return hasNoThen(walker, walker.plan().typeHeldOfResult(walker.program(), walker.facts().linked(), CodeUnit { callee, CodeRole::CoroutineBody }));
 }
 
 static std::optional<bool> constantBooleanInAwaitedCalls(const Walker& walker, Reference reference)
@@ -213,7 +218,7 @@ static void noteAwaitForCopyInAwaitedCalls(Walker& walker, const BodyIndex& inde
     uint32_t firstValue = block.firstValue().index();
     for (uint32_t place = wait.placeOfCall + 1; place < wait.endOfWait; ++place) {
         ValueID between(firstValue + place);
-        if (!opcodesThatStateTypes.contains(index.opcodeOf(between)) || index.valueBehindCasts(between) != call.id())
+        if (!opcodesThatStateTypes.contains(index.opcodeOf(between)) || index.stripCasts(between) != call.id())
             return;
     }
 
@@ -306,7 +311,8 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
     bool neverSuspends = walker.plan().conventions().of(callee).coroutineNeverSuspends;
     if (!neverSuspends && body->kind != CoroutineKind::AsyncFunction)
         return false;
-    if (neverSuspends && !walker.isInLoop() && bodyMayThrowInAwaitedCalls(walker, callee))
+    bool rejectsInStub = neverSuspends && !walker.isInLoop() && bodyMayThrowInAwaitedCalls(walker, callee);
+    if (rejectsInStub && (body->kind != CoroutineKind::AsyncFunction || walker.program().at(walker.unit().function).isModuleBody() || !resultHasNoThenInAwaitedCalls(walker, callee)))
         return false;
 
     std::optional<Vector<Reference, 8>> operands = layOutEntryOperandsOfCall(walker, call, callee, { callee, CodeRole::CoroutineBody });
@@ -318,7 +324,7 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
     Vector<Reference, 4> held;
     if (!walkUpToAwaitOfCall(walker, index, block, *wait, held))
         return true;
-    Reference given = neverSuspends
+    Reference given = neverSuspends && !rejectsInStub
         ? buildAwaitOfPlainBodyInAwaitedCalls(walker, call, callee, body->kind, operands->span(), held.span(), walker.originOf(index.value(wait->await)))
         : buildAwaitCallInAwaitedCalls(walker, call, callee, operands->span(), body->driver, held.span(), wait->await);
     if (given)

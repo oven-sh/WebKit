@@ -465,16 +465,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteAnswers, void, (Instance* 
     caches.fillSiteAnswers(place, base, key, static_cast<SiteUse>(use & ~(stubOfSiteFollowsFurtherAnswers | stubJumpsToArmOfAnswer)), use & stubOfSiteFollowsFurtherAnswers, use & stubJumpsToArmOfAnswer);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTClaimRowOfReads, size_t, (Instance* instance, EncodedJSValue base, EncodedJSValue* group))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTClaimReadGroupRow, size_t, (Instance* instance, EncodedJSValue base, EncodedJSValue* group))
 {
     LeafOperationScope leaf(*instance->vm);
-    return std::bit_cast<size_t>(PropertyCaches::claimRowOfReads(JSValue::decode(base), *std::bit_cast<RowsOfReads*>(group)));
+    return std::bit_cast<size_t>(PropertyCaches::claimReadGroupRow(JSValue::decode(base), *std::bit_cast<ReadGroupCache*>(group)));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindPlaceInRowOfReads, void, (Instance* instance, JSCell* base, uint32_t key, EncodedJSValue* row, uint32_t index))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillReadGroupOffset, void, (Instance* instance, JSCell* base, uint32_t key, EncodedJSValue* row, uint32_t index))
 {
     LeafOperationScope leaf(*instance->vm);
-    instance->state->propertyCaches->findPlaceInRowOfReads(base, key, *std::bit_cast<RowsOfReads::Row*>(row), index);
+    instance->state->propertyCaches->fillReadGroupOffset(base, key, *std::bit_cast<ReadGroupCache::Row*>(row), index);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedConstructor))
@@ -483,10 +483,29 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* inst
     OPERATION_RETURN(scope, instanceOfAndCache(instance, JSValue::decode(encodedValue), JSValue::decode(encodedConstructor)));
 }
 
+static bool isAcceptedBinaryData(Instance* instance, JSValue value, JSValue prototype)
+{
+    if (!instance->state->acceptsForeignBinaryData || !value.isCell() || !prototype.isObject())
+        return false;
+    JSGlobalObject* realm = instance->globalObject;
+    JSType type = value.asCell()->type();
+    JSObject* constructor = nullptr;
+    if (isTypedArrayType(type))
+        constructor = realm->typedArrayConstructor(typedArrayType(type));
+    else if (type == ArrayBufferType && !uncheckedDowncast<JSArrayBuffer>(value.asCell())->isShared())
+        constructor = realm->arrayBufferConstructor(ArrayBufferSharingMode::Default);
+    VM& vm = *instance->vm;
+    return constructor && constructor->getDirect(vm, vm.propertyNames->prototype) == prototype && constructor->getDirect(vm, vm.propertyNames->hasInstanceSymbol);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTDefaultHasInstance, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedPrototype))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDefaultHasInstance);
-    OPERATION_RETURN(scope, JSObject::defaultHasInstance(globalObject, JSValue::decode(encodedValue), JSValue::decode(encodedPrototype)));
+    JSValue value = JSValue::decode(encodedValue);
+    JSValue prototype = JSValue::decode(encodedPrototype);
+    bool isInstance = JSObject::defaultHasInstance(globalObject, value, prototype);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    OPERATION_RETURN(scope, isInstance || isAcceptedBinaryData(instance, value, prototype));
 }
 
 static bool isPlainObjectBelowNoIndexedProperties(Structure* structure)
@@ -556,7 +575,7 @@ static bool isTrapResultAllowed(VM& vm, JSObject* target, JSCell* key, JSValue a
         auto* object = uncheckedDowncast<Object>(target);
         if (object->isFrozen() || object->isSealed() || !object->compiledStructure().hasOnlyConfigurableFields())
             return false;
-        holder = extraPropertiesIfMade(*object);
+        holder = extraPropertiesIfCreated(*object);
         if (!holder)
             return !object->hasExtraProperties();
     }
@@ -670,7 +689,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnValueUnderKeyOrEmpty, EncodedJS
     return JSValue::encode(asObject(base)->getDirect(offset));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindsDefaultHasInstance, size_t, (EncodedJSValue encodedConstructor))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTHasDefaultHasInstance, size_t, (EncodedJSValue encodedConstructor))
 {
     JSValue constructor = JSValue::decode(encodedConstructor);
     if (!constructor.isObject())
@@ -863,6 +882,10 @@ static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& 
     bool shouldFile = (isIn || object->type() != ProxyObjectType) && caches.shouldFile(object->structureID(), name.uid, SlotAccess::Read);
     bool starsWait = hasStarsThatWait(object);
     shouldFile &= !starsWait;
+    if (shouldFile) {
+        std::optional<Slot> known = caches.tables().find(object->structureID(), name, SlotAccess::Read);
+        shouldFile = !known || known->kind != Slot::Kind::Uncacheable;
+    }
     if (shouldFile) {
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
         createClassObjectsOnChain(vm, object);

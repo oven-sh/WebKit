@@ -471,7 +471,7 @@ void CollectorOfKeyOrders::addOrdersOfMembersMadeByTag(const LinkTables& link, c
         if (index.isParameter(run.firstStore) || (index.opcodeOf(run.firstStore) != Opcode::PropSet && index.opcodeOf(run.firstStore) != Opcode::PropDefine))
             continue;
         TypeID written;
-        for (ValueID name = index.value(run.firstStore).objectOperand(); name && !written && !index.isParameter(name) && inputOperationsThatHandOn.contains(index.opcodeOf(name)); name = index.value(name).operand(0)) {
+        for (ValueID name = index.value(run.firstStore).objectOperand(); name && !written && !index.isParameter(name) && inputPassThroughOpcodes.contains(index.opcodeOf(name)); name = index.value(name).operand(0)) {
             if (index.opcodeOf(name) == Opcode::Convert)
                 written = index.value(name).as<Opcode::Convert>().declared().written();
         }

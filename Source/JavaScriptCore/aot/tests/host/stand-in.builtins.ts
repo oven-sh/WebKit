@@ -21,7 +21,7 @@ export default b.declarations(
     },
   }),
   b.frontEndFunctions("prelude/array-search", "includes", "indexOf"),
-  b.frontEndFunctions("prelude/array-sort", "sort", "toSorted"),
+  b.frontEndFunctions("prelude/array-sort", "sort", "sortTypedArray", "toSorted"),
   b.frontEndFunctions(
     "prelude/decorators",
     "applyAccessorDecorators",

@@ -24,6 +24,7 @@
 
 #include <WebCore/BoxExtents.h>
 #include <WebCore/HitTestRequest.h>
+#include <WebCore/LayoutElementBox.h>
 #include <WebCore/RenderObject.h>
 #include <WebCore/RenderPtr.h>
 #include <WebCore/StyleComputedStyle.h>
@@ -37,6 +38,7 @@ namespace WebCore {
 class ContainerNode;
 class BlendingKeyframes;
 class GraphicsLayerAnimation;
+class ImageAnimationTimeline;
 class ReferencedSVGResources;
 class RenderBlock;
 class RenderHTMLCanvas;
@@ -50,21 +52,47 @@ struct MarginRect {
     LayoutRect anchorRect;
 };
 
-namespace Layout {
-class ElementBox;
-}
-
 namespace Style {
 class ComputedStyle;
 class Image;
 struct Content;
 }
 
-class RenderElement : public RenderObject {
+class RenderElement : public RenderObject, private Layout::ElementBox {
     WTF_MAKE_TZONE_ALLOCATED(RenderElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderElement);
 public:
     virtual ~RenderElement();
+
+    // RenderObject functions that the layout box base also has.
+    using RenderObject::firstLineUsedStyle;
+    using RenderObject::isAnonymous;
+    using RenderObject::isDescendantOf;
+    using RenderObject::isFloatingOrOutOfFlowPositioned;
+    using RenderObject::isImage;
+    using RenderObject::isInFlow;
+    using RenderObject::isInFlowPositioned;
+    using RenderObject::isInlineBox;
+    using RenderObject::isOutOfFlowPositioned;
+    using RenderObject::isPositioned;
+    using RenderObject::isRelativelyPositioned;
+    using RenderObject::nextInFlowSibling;
+    using RenderObject::nextSibling;
+    using RenderObject::parent;
+    using RenderObject::previousInFlowSibling;
+    using RenderObject::previousSibling;
+    using RenderObject::usedStyle;
+
+    // CheckedPtr to the renderer uses the RenderObject counter, CheckedPtr to the layout box the box counter. Deletion checks both.
+    using RenderObject::checkedPtrCount;
+    using RenderObject::decrementCheckedPtrCount;
+    using RenderObject::incrementCheckedPtrCount;
+    ALWAYS_INLINE uint32_t checkedPtrCountWithoutThreadCheck() const { return RenderObject::checkedPtrCountWithoutThreadCheck() + Layout::ElementBox::checkedPtrCountWithoutThreadCheck(); }
+    void setDidBeginCheckedPtrDeletion()
+    {
+        RenderObject::setDidBeginCheckedPtrDeletion();
+        Layout::ElementBox::setDidBeginCheckedPtrDeletion();
+    }
 
     static bool isContentDataSupported(const Style::Content&);
 
@@ -78,14 +106,12 @@ public:
 
     bool hasInitializedStyle() const { return m_hasInitializedStyle; }
 
-    const Style::ComputedStyle& style() const LIFETIME_BOUND { return m_style; }
-    inline UsedStyle usedStyle() const LIFETIME_BOUND;
-    inline UsedStyle firstLineUsedStyle() const LIFETIME_BOUND;
-    const Style::ComputedStyle* parentStyle() const LIFETIME_BOUND { return !m_parent ? nullptr : &m_parent->style(); }
-    const Style::ComputedStyle& LEGACY_NODELETE firstLineStyle() const LIFETIME_BOUND;
+    const Style::ComputedStyle& style() const LIFETIME_BOUND { return Layout::ElementBox::style(); }
+    const Style::ComputedStyle* parentStyle() const LIFETIME_BOUND { return !RenderObject::m_parent ? nullptr : &RenderObject::m_parent->style(); }
+    NODELETE const Style::ComputedStyle& firstLineStyle() const LIFETIME_BOUND;
 
     // FIXME: Style shouldn't be mutated.
-    Style::ComputedStyle& mutableStyle() LIFETIME_BOUND { return m_style; }
+    Style::ComputedStyle& mutableStyle() LIFETIME_BOUND { return Layout::ElementBox::mutableStyle(); }
 
     void initializeStyle();
 
@@ -108,8 +134,12 @@ public:
     RenderObject* firstInFlowChild() const;
     RenderObject* lastInFlowChild() const;
 
-    Layout::ElementBox* LEGACY_NODELETE layoutBox();
-    const Layout::ElementBox* LEGACY_NODELETE layoutBox() const;
+    // The layout box is part of the renderer.
+    ALWAYS_INLINE Layout::ElementBox& layoutBox() LIFETIME_BOUND { return *this; }
+    ALWAYS_INLINE const Layout::ElementBox& layoutBox() const LIFETIME_BOUND { return *this; }
+    // Every ElementBox except the initial containing block is the base of a RenderElement.
+    ALWAYS_INLINE static RenderElement& fromLayoutBox(Layout::ElementBox& box) { SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<RenderElement&>(box); }
+    ALWAYS_INLINE static const RenderElement& fromLayoutBox(const Layout::ElementBox& box) { SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<const RenderElement&>(box); }
 
     // Note that even if these 2 "canContain" functions return true for a particular renderer, it does not necessarily mean the renderer is the containing block (see containingBlockForAbsolute(Fixed)Position).
     inline bool isCanvasDrawable() const; // Defined in RenderElementStyleInlines.h.
@@ -147,7 +177,7 @@ public:
     // The following functions are used when the render tree hierarchy changes to make sure layers get
     // properly added and removed. Since containership can be implemented by any subclass, and since a hierarchy
     // can contain a mixture of boxes and other object types, these functions need to be in the base class.
-    RenderLayer* LEGACY_NODELETE layerParent() const;
+    NODELETE RenderLayer* layerParent() const;
     RenderLayer* layerNextSibling(RenderLayer& parentLayer) const;
     void removeLayers();
     void moveLayers(RenderLayer& newParent);
@@ -157,15 +187,15 @@ public:
     // positive (never cleared once set); never a false negative — set on every
     // createLayer and on every attach of a subtree that already has the bit.
     bool mayHaveLayerInSubtree() const { return m_mayHaveLayerInSubtree; }
-    void LEGACY_NODELETE setMayHaveLayerInSubtreeIncludingAncestors();
+    NODELETE void setMayHaveLayerInSubtreeIncludingAncestors();
 
     // Never cleared, so it may be a false positive - just like the mayHaveLayerInSubtree() logic.
     bool mayHaveNonScalingStrokeInSubtree() const { return m_mayHaveNonScalingStrokeInSubtree; }
-    void LEGACY_NODELETE setMayHaveNonScalingStrokeInSubtreeIncludingAncestors();
+    NODELETE void setMayHaveNonScalingStrokeInSubtreeIncludingAncestors();
 
-    void setChildNeedsLayout(MarkingBehavior = MarkingBehavior::MarkContainingBlockChain);
+    void setChildNeedsLayout(MarkingBehavior = MarkingBehavior::ContainingBlockChain);
     void setOutOfFlowChildNeedsStaticPositionLayout();
-    void LEGACY_NODELETE clearChildNeedsLayout();
+    NODELETE void clearChildNeedsLayout();
     void setNeedsOutOfFlowMovementLayout(const Style::ComputedStyle* oldStyle);
     void setNeedsLayoutForStyleDifference(Style::Difference, const Style::ComputedStyle* oldStyle);
     void setNeedsLayoutForOverflowChange();
@@ -213,14 +243,14 @@ public:
     inline bool hasClipOrNonVisibleOverflow() const; // Defined in RenderElementStyleInlines.h.
     inline bool hasClipPath() const; // Defined in RenderElementStyleInlines.h.
     inline bool hasHiddenBackface() const; // Defined in RenderElementStyleInlines.h.
-    bool LEGACY_NODELETE hasViewTransitionName() const;
-    bool LEGACY_NODELETE isViewTransitionRoot() const;
-    bool LEGACY_NODELETE requiresRenderingConsolidationForViewTransition() const;
+    NODELETE bool hasViewTransitionName() const;
+    NODELETE bool isViewTransitionRoot() const;
+    NODELETE bool requiresRenderingConsolidationForViewTransition() const;
     bool hasOutlineAnnotation() const;
     inline bool hasOutline() const; // Defined in RenderElementStyleInlines.h.
-    bool LEGACY_NODELETE hasSelfPaintingLayer() const;
+    NODELETE bool hasSelfPaintingLayer() const;
 
-    bool LEGACY_NODELETE checkForRepaintDuringLayout() const;
+    NODELETE bool checkForRepaintDuringLayout() const;
 
     // absoluteAnchorRect() is conceptually similar to absoluteBoundingBoxRect(), but is intended for scrolling to an
     // anchor. For inline renderers, this gets the logical top left of the first leaf child and the logical bottom
@@ -264,9 +294,12 @@ public:
     void setIsClippedByLineClamp(bool isClipped) { setLineClampState(isClipped ? LineClampState::Clipped : LineClampState::None); }
 
     bool allowsAnimation() const final;
-    bool repaintForPausedImageAnimationsIfNeeded(const IntRect& visibleRect, CachedImage&);
+    Ref<ImageAnimationTimeline> imageAnimationTimeline() const;
+    bool repaintForPausedImageAnimationsIfNeeded(const IntRect& visibleRect);
     bool hasPausedImageAnimations() const { return m_hasPausedImageAnimations; }
     void setHasPausedImageAnimations(bool b) { m_hasPausedImageAnimations = b; }
+
+    virtual void forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>&);
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
     bool hasHDRImages() const { return m_hasHDRImages; }
@@ -279,7 +312,7 @@ public:
     void adjustFontSizesOnBlocks(float size, float visibleWidth);
     WEBCORE_EXPORT void resetTextAutosizing();
 
-    WEBCORE_EXPORT ImageOrientation LEGACY_NODELETE imageOrientation() const;
+    NODELETE WEBCORE_EXPORT ImageOrientation imageOrientation() const;
 
     virtual std::optional<FloatSize> usedImageSize() const { return std::nullopt; }
     inline std::optional<FloatSize> usedZoomedImageSize() const; // Defined in RenderElementInlines.h
@@ -297,7 +330,7 @@ public:
     RenderObject* attachRendererInternal(RenderPtr<RenderObject> child, RenderObject* beforeChild);
     RenderPtr<RenderObject> detachRendererInternal(RenderObject&);
 
-    virtual bool startAnimation(double /* timeOffset */, const GraphicsLayerAnimation&, const BlendingKeyframes&) { return false; }
+    virtual bool startAnimation(double /* timeOffset */, const GraphicsLayerAnimation&, const BlendingKeyframes&, const IntOutsets& /* filterAnimationOutsets */) { return false; }
     virtual void animationPaused(double /* timeOffset */, const BlendingKeyframes&) { }
     virtual void animationFinished(const BlendingKeyframes&) { }
     virtual void transformRelatedPropertyDidChange() { }
@@ -315,10 +348,10 @@ public:
     void setPseudoElementRenderer(PseudoElementType, RenderBlockFlow&);
 
     ReferencedSVGResources& ensureReferencedSVGResources();
-    ReferencedSVGResources* LEGACY_NODELETE referencedSVGResources() const;
+    NODELETE ReferencedSVGResources* referencedSVGResources() const;
 
-    Overflow LEGACY_NODELETE effectiveOverflowX() const;
-    Overflow LEGACY_NODELETE effectiveOverflowY() const;
+    NODELETE Overflow effectiveOverflowX() const;
+    NODELETE Overflow effectiveOverflowY() const;
     inline Overflow effectiveOverflowInlineDirection() const;
     inline Overflow effectiveOverflowBlockDirection() const;
     virtual bool overflowChangesMayAffectLayout() const { return false; }
@@ -333,7 +366,7 @@ public:
     void establishesTopLayerWillChange();
     void establishesTopLayerDidChange();
 
-    static void markRendererDirtyAfterTopLayerChange(RenderElement* renderer, RenderBlock* containingBlockBeforeStyleResolution);
+    static void markRendererDirtyAfterTopLayerChange(RenderElement* renderer, RenderBoxModelObject* containingBlockBeforeStyleResolution);
 
     void clearNeedsLayoutForSkippedContent();
 
@@ -346,7 +379,7 @@ public:
     bool isInPendingSVGTransformAttributeUpdates() const { return m_isInPendingSVGTransformAttributeUpdates; }
     void setIsInPendingSVGTransformAttributeUpdates(bool b) { m_isInPendingSVGTransformAttributeUpdates = b; }
 
-    bool LEGACY_NODELETE isAnonymousBlock() const;
+    NODELETE bool isAnonymousBlock() const;
     inline bool shouldSkipForPercentageResolution() const;
     inline bool isBlockBox() const;
     inline bool isBlockLevelBox() const;
@@ -365,22 +398,24 @@ public:
 
     inline bool hasPotentiallyScrollableOverflow() const;
 
-    inline bool LEGACY_NODELETE isBeforeContent() const;
-    inline bool LEGACY_NODELETE isAfterContent() const;
-    inline bool LEGACY_NODELETE isBeforeOrAfterContent() const;
-    static bool LEGACY_NODELETE isBeforeContent(const RenderElement*);
-    static bool LEGACY_NODELETE isAfterContent(const RenderElement*);
-    static bool LEGACY_NODELETE isBeforeOrAfterContent(const RenderElement*);
+    NODELETE inline bool isBeforeContent() const;
+    NODELETE inline bool isAfterContent() const;
+    NODELETE inline bool isBeforeOrAfterContent() const;
+    NODELETE static bool isBeforeContent(const RenderElement*);
+    NODELETE static bool isAfterContent(const RenderElement*);
+    NODELETE static bool isBeforeOrAfterContent(const RenderElement*);
 
     WritingMode writingMode() const { return style().writingMode(); }
 
     bool addReferencedSVGResourceIfNeeded(SVGElement&, const AtomString&);
 
+    void scheduleRenderingUpdateForImage(CachedImage&) final;
+
 protected:
     RenderElement(Type, Element&, Style::ComputedStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags);
     RenderElement(Type, Document&, Style::ComputedStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags);
 
-    bool LEGACY_NODELETE layerCreationAllowedForSubtree() const;
+    NODELETE bool layerCreationAllowedForSubtree() const;
 
     enum class StylePropagationType {
         AllChildren,
@@ -441,7 +476,7 @@ private:
 
     inline bool mayContainOutOfFlowPositionedObjects(const Style::ComputedStyle* styleToUse = nullptr) const; // Defined in RenderElementStyleInlines.h.
 
-    RenderElement* LEGACY_NODELETE rendererForPseudoStyleAcrossShadowBoundary() const;
+    NODELETE RenderElement* rendererForPseudoStyleAcrossShadowBoundary() const;
 
     // Called when an object that was floating or positioned becomes a normal flow object
     // again.  We have to make sure the render tree updates as needed to accommodate the new
@@ -457,12 +492,10 @@ private:
     Style::Difference adjustStyleDifference(Style::Difference) const;
 
     bool canDestroyDecodedData() const final { return !isVisibleInViewport(); }
-    bool useSystemDarkAppearance() const final;
     VisibleInViewportState imageFrameAvailable(CachedImage&, ImageAnimatingState, const IntRect* changeRect) final;
     VisibleInViewportState imageVisibleInViewport(const Document&) const final;
     void didRemoveCachedImageClient(CachedImage&) final;
     void imageContentChanged(CachedImage&) final;
-    void scheduleRenderingUpdateForImage(CachedImage&) final;
 
     bool getLeadingCorner(FloatPoint& output, bool& insideFixed) const;
     bool getTrailingCorner(FloatPoint& output, bool& insideFixed) const;
@@ -505,11 +538,9 @@ private:
     unsigned m_mayHaveNonScalingStrokeInSubtree : 1 { false };
     unsigned m_lineClampState : 2 { static_cast<unsigned>(LineClampState::None) };
     // 8 bits free.
-
-    Style::ComputedStyle m_style;
 };
 
-WEBCORE_EXPORT float LEGACY_NODELETE opacity(const RenderElement&);
+NODELETE WEBCORE_EXPORT float opacity(const RenderElement&);
 
 inline void RenderElement::setChildNeedsLayout(MarkingBehavior markParents)
 {
@@ -517,7 +548,7 @@ inline void RenderElement::setChildNeedsLayout(MarkingBehavior markParents)
     if (normalChildNeedsLayout())
         return;
     setNormalChildNeedsLayoutBit(true);
-    if (markParents == MarkingBehavior::MarkContainingBlockChain)
+    if (markParents == MarkingBehavior::ContainingBlockChain)
         scheduleLayout(markContainingBlocksForLayout());
 }
 
@@ -554,3 +585,54 @@ inline RenderElement* RenderObject::parent() const
 } // namespace WebCore
 
 SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderElement, isRenderElement())
+
+namespace WebCore {
+namespace Layout {
+
+inline bool isExcludedFromLayoutBoxNavigation(const RenderObject& renderer)
+{
+    return renderer.isRenderListOutsideMarker() && renderer.isExcludedMarker();
+}
+
+inline RenderElement* ElementBox::rendererForIntegration() const
+{
+    if (isInitialContainingBlock()) [[unlikely]]
+        return nullptr;
+    return &RenderElement::fromLayoutBox(const_cast<ElementBox&>(*this));
+}
+
+inline const ElementBox& Box::parent() const
+{
+    SUPPRESS_UNCHECKED_LOCAL auto* parent = RenderObject::fromLayoutBox(*this).parent();
+    if (!parent) [[unlikely]]
+        return parentForRendererWithoutParent();
+    return parent->layoutBox();
+}
+
+inline const Box* ElementBox::firstChild() const
+{
+    if (isInitialContainingBlock()) [[unlikely]]
+        return &initialContainingBlockChild();
+    for (SUPPRESS_UNCHECKED_LOCAL auto* child = RenderElement::fromLayoutBox(*this).firstChild(); child; child = child->nextSibling()) {
+        if (!isExcludedFromLayoutBoxNavigation(*child)) [[likely]]
+            return &child->layoutBox();
+    }
+    return nullptr;
+}
+
+inline const Box* ElementBox::lastChild() const
+{
+    if (isInitialContainingBlock()) [[unlikely]]
+        return &initialContainingBlockChild();
+    for (SUPPRESS_UNCHECKED_LOCAL auto* child = RenderElement::fromLayoutBox(*this).lastChild(); child; child = child->previousSibling()) {
+        if (!isExcludedFromLayoutBoxNavigation(*child)) [[likely]]
+            return &child->layoutBox();
+    }
+    return nullptr;
+}
+
+} // namespace Layout
+} // namespace WebCore
+
+// For RenderObject::layoutBox() and fromLayoutBox(), which need both RenderElement and RenderText.
+#include <WebCore/RenderText.h>

@@ -79,7 +79,7 @@ const int DragController::DragIconBottomInset = 3;
 
 const float DragController::DragImageAlpha = 0.75f;
 
-bool LEGACY_NODELETE DragController::isCopyKeyDown(const DragData& dragData)
+NODELETE bool DragController::isCopyKeyDown(const DragData& dragData)
 {
     return dragData.flags().contains(DragApplicationFlags::IsCopyKeyDown);
 }
@@ -104,7 +104,7 @@ std::optional<DragOperation> DragController::dragOperation(const DragData& dragD
     return std::nullopt;
 }
 
-const IntSize& LEGACY_NODELETE DragController::maxDragImageSize()
+NODELETE const IntSize& DragController::maxDragImageSize()
 {
     static const IntSize maxDragImageSize(400, 400);
 
@@ -152,7 +152,8 @@ void DragController::updateSupportedTypeIdentifiersForDragHandlingMethod(DragHan
             supportedTypes.append(UTTypeContent.identifier);
             supportedTypes.append(UTTypeItem.identifier);
         } else {
-            for (NSString *type in Pasteboard::supportedWebContentPasteboardTypes())
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSString *type in Pasteboard::supportedWebContentPasteboardTypes())
                 supportedTypes.append(type);
         }
         break;
@@ -160,7 +161,8 @@ void DragController::updateSupportedTypeIdentifiersForDragHandlingMethod(DragHan
         supportedTypes.append(UIColorPboardType);
         break;
     default:
-        for (NSString *type in Pasteboard::supportedFileUploadPasteboardTypes())
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *type in Pasteboard::supportedFileUploadPasteboardTypes())
             supportedTypes.append(type);
         break;
     }

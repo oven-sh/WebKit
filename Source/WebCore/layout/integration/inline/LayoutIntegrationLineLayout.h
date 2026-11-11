@@ -70,11 +70,10 @@ public:
     LineLayout(RenderBlockFlow&);
     ~LineLayout();
 
-    static RenderBlockFlow* LEGACY_NODELETE blockContainer(const RenderObject&);
+    NODELETE static RenderBlockFlow* blockContainer(const RenderObject&);
     static LineLayout* containing(RenderObject&);
     static const LineLayout* containing(const RenderObject&);
 
-    static bool canUseForIntrinsicWidthComputation(const RenderBlockFlow&);
     static bool shouldInvalidateLineLayoutAfterContentChange(const RenderBlockFlow& parent, const RenderObject& rendererWithNewContent, const LineLayout&);
     static bool shouldInvalidateLineLayoutAfterTreeMutation(const RenderBlockFlow& parent, const RenderObject& renderer, const LineLayout&, bool isRemoval);
 
@@ -82,17 +81,16 @@ public:
 
     std::optional<LayoutRect> updateOverflow();
 
-    static void updateStyle(const RenderObject&);
-
     // Partial invalidation.
-    bool insertedIntoTree(const RenderElement& parent, RenderObject& child);
-    bool removedFromTree(const RenderElement& parent, RenderObject& child);
-    bool updateTextContent(const RenderText&, std::optional<size_t> offset, size_t oldLength);
+    bool insertedIntoTree(RenderObject& child);
+    bool removedFromTree(RenderObject& child);
+    bool updateTextContent(RenderText&, std::optional<size_t> offset, size_t oldLength);
     bool rootStyleWillChange(const RenderBlockFlow&, const Style::ComputedStyle& newStyle);
     bool styleWillChange(const RenderElement&, const Style::ComputedStyle& newStyle, Style::Difference);
     bool boxContentWillChange(const RenderBox&);
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicWidthConstraints();
+    void resetIntrinsicWidthConstraints();
 
     enum class ForceFullLayout : bool { No, Yes };
     std::optional<LayoutRect> layout(RenderBlockFlow::MarginInfo&, ForceFullLayout = ForceFullLayout::No);
@@ -107,22 +105,22 @@ public:
     LayoutRect inkOverflowBoundingBoxRectFor(const RenderBoxModelObject&) const;
     Vector<FloatRect> collectInlineBoxRects(const RenderBoxModelObject&) const;
 
-    LayoutUnit LEGACY_NODELETE contentLogicalHeight() const;
+    NODELETE LayoutUnit contentLogicalHeight() const;
     std::optional<LayoutUnit> clampedContentLogicalHeight() const;
-    bool LEGACY_NODELETE hasEllipsisInBlockDirectionOnLastFormattedLine() const;
+    NODELETE bool hasEllipsisInBlockDirectionOnLastFormattedLine() const;
     bool contentFitsWithinMaximumLines() const { return m_inlineContent && m_inlineContent->contentFitsWithinMaximumLines(); }
     bool contains(const RenderElement& renderer) const;
 
-    bool LEGACY_NODELETE isPaginated() const;
-    size_t LEGACY_NODELETE lineCount() const;
-    size_t LEGACY_NODELETE lineCountIgnoringBlockLevelBoxes() const;
+    NODELETE bool isPaginated() const;
+    NODELETE size_t lineCount() const;
+    NODELETE size_t lineCountIgnoringBlockLevelBoxes() const;
     // Lines with contentful inline content (block-in-inline and empty lines don't count) ending within logicalHeight from the border box top, and whether any ends past it.
-    std::pair<size_t, bool> LEGACY_NODELETE lineCountForHeight(LayoutUnit logicalHeight) const;
+    NODELETE std::pair<size_t, bool> lineCountForHeight(LayoutUnit logicalHeight) const;
     bool hasContent() const { return !!m_inlineContent; }
-    bool LEGACY_NODELETE hasContentfulInlineOrBlockLine() const;
-    bool LEGACY_NODELETE hasContentfulInlineLine() const;
+    NODELETE bool hasContentfulInlineOrBlockLine() const;
+    NODELETE bool hasContentfulInlineLine() const;
     bool isSelfCollapsingContent() const;
-    bool LEGACY_NODELETE hasInkOverflow() const;
+    NODELETE bool hasInkOverflow() const;
     std::optional<LayoutUnit> firstLineBaseline() const;
     std::optional<LayoutUnit> lastLineBaseline() const;
     LayoutRect firstInlineBoxRect(const RenderBoxModelObject&) const;
@@ -133,8 +131,8 @@ public:
     InlineIterator::InlineBoxIterator firstInlineBoxFor(const RenderBoxModelObject&) const;
     InlineIterator::InlineBoxIterator firstRootInlineBox() const;
     InlineIterator::BoxIterator lastBox() const;
-    InlineIterator::LineBoxIterator LEGACY_NODELETE firstLineBox() const;
-    InlineIterator::LineBoxIterator LEGACY_NODELETE lastLineBox() const;
+    NODELETE InlineIterator::LineBoxIterator firstLineBox() const;
+    NODELETE InlineIterator::LineBoxIterator lastLineBox() const;
 
     const RenderBlockFlow& flow() const { return downcast<RenderBlockFlow>(*m_rootLayoutBox->rendererForIntegration()); }
     RenderBlockFlow& flow() { return downcast<RenderBlockFlow>(*m_rootLayoutBox->rendererForIntegration()); }
@@ -146,7 +144,7 @@ public:
 #endif
 
     // This is temporary, required by partial bailout check.
-    bool LEGACY_NODELETE contentNeedsVisualReordering() const;
+    NODELETE bool contentNeedsVisualReordering() const;
     bool isDamaged() const { return !!m_lineDamage; }
     const Layout::InlineDamage* damage() const LIFETIME_BOUND { return m_lineDamage.get(); }
 #ifndef NDEBUG
@@ -162,7 +160,7 @@ public:
     // Sets the box rects from the SVG text fragments.
     FloatRect applySVGTextFragments();
 
-    bool LEGACY_NODELETE hasBlocks() const;
+    NODELETE bool hasBlocks() const;
 
     // The last layout() pass. A pagination restart runs a second pass from inside layout().
     struct LayoutInfoForTesting {
@@ -175,7 +173,7 @@ public:
         // Lines kept from the previous layout.
         size_t reusedLineCount { 0 };
     };
-    WEBCORE_EXPORT static void LEGACY_NODELETE setCollectsLayoutInfoForTesting(bool);
+    NODELETE WEBCORE_EXPORT static void setCollectsLayoutInfoForTesting(bool);
     const LayoutInfoForTesting* layoutInfoForTesting() const { return m_layoutInfoForTesting.get(); }
 
 private:
@@ -189,13 +187,13 @@ private:
     InlineContent& ensureInlineContent() LIFETIME_BOUND;
     Layout::BlockFormattingState& ensureBlockFormattingState() LIFETIME_BOUND;
     Layout::InlineContentCache& ensureInlineContentCache() LIFETIME_BOUND;
-    const Layout::InlineItemList& LEGACY_NODELETE inlineItemsForInvalidation() const LIFETIME_BOUND;
+    NODELETE const Layout::InlineItemList& inlineItemsForInvalidation() const LIFETIME_BOUND;
 
     Layout::LayoutState& layoutState() LIFETIME_BOUND { return *m_layoutState; }
     const Layout::LayoutState& layoutState() const LIFETIME_BOUND { return *m_layoutState; }
 
     Layout::InlineDamage& ensureLineDamage() LIFETIME_BOUND;
-    void removeLayoutBox(const RenderElement& parent, RenderObject& child);
+    void removeLayoutBox(RenderObject& child);
     void releaseContentRebuiltFromDamage();
 
     const Layout::ElementBox& rootLayoutBox() const { return *m_rootLayoutBox; }
@@ -203,9 +201,9 @@ private:
     void clearInlineContent();
     void releaseCachesAndResetDamage();
 
-    LayoutUnit LEGACY_NODELETE baselineForLine(const InlineDisplay::Line&) const;
+    NODELETE LayoutUnit baselineForLine(const InlineDisplay::Line&) const;
 
-    bool LEGACY_NODELETE isContentConsideredStale() const;
+    NODELETE bool isContentConsideredStale() const;
 
     using ExcludedMarkerList = Vector<CheckedPtr<RenderListOutsideMarker>>;
     ExcludedMarkerList excludedMarkersForFirstFormattedLine(Layout::InlineLayoutState&);

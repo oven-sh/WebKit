@@ -29,8 +29,9 @@ enum class NameForm : uint8_t { AsWritten, InFrames };
 JS_EXPORT_PRIVATE String functionName(const FunctionDescription&, NameForm);
 JSString* functionSourceText(JSGlobalObject*, FunctionID);
 std::optional<std::span<const Latin1Character>> functionSourceBytes(FunctionID);
-std::optional<std::span<const Latin1Character>> quotedTextBytes(uint32_t start, uint32_t length);
+std::optional<std::span<const Latin1Character>> quotedSourceBytes(uint32_t start, uint32_t length);
 
+String computedNameInFrames(VM&, const FunctionDescription&);
 String writtenFunctionName(FunctionID);
 String initialNameProperty(FunctionID);
 JSString* initialNamePropertyString(VM&, State&, FunctionID);

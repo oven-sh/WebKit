@@ -36,12 +36,12 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v15 = Call v14, -, v7, v8, v9, v10, v11, v12
     Return v15
 }
-function f1 name="work" module=m0 position=1 text={start=1 end=29} thisType={type=anything} results=[{type=anything}] {
+function f1 name="work" module=m0 position=1 sourceRange={start=1 end=29} thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=1 @25
     Return v0 @25
 }
-function f2 name="use" module=m0 position=30 text={start=30 end=125} length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f2 name="use" module=m0 position=30 sourceRange={start=30 end=125} length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=undefined @70
     Branch v2 -> taken b1(| 0), notTaken b2(| 0) @70
@@ -59,7 +59,7 @@ function f2 name="use" module=m0 position=30 text={start=30 end=125} length=2 th
   b5():
     Return v7 @117
 }
-function f3 name="handed" module=m0 position=130 text={start=130 end=225} length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f3 name="handed" module=m0 position=130 sourceRange={start=130 end=225} length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=undefined @170
     Branch v2 -> taken b1(| 0), notTaken b2(| 0) @170

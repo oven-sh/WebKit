@@ -43,6 +43,7 @@
 #include "AudioScheduledSourceNode.h"
 #include "AudioSession.h"
 #include "AudioWorklet.h"
+#include "AudioWorkletMessagingProxy.h"
 #include "BiquadFilterNode.h"
 #include "ChannelMergerNode.h"
 #include "ChannelMergerOptions.h"
@@ -114,14 +115,14 @@ bool BaseAudioContext::isSupportedSampleRate(float sampleRate)
     return sampleRate >= 3000 && sampleRate <= 384000;
 }
 
-static uint64_t LEGACY_NODELETE generateContextID()
+NODELETE static uint64_t generateContextID()
 {
     ASSERT(isMainThread());
     static uint64_t contextIDSeed = 0;
     return ++contextIDSeed;
 }
 
-static HashSet<uint64_t>& LEGACY_NODELETE liveAudioContexts()
+NODELETE static HashSet<uint64_t>& liveAudioContexts()
 {
     ASSERT(isMainThread());
     static NeverDestroyed<HashSet<uint64_t>> contexts;
@@ -294,6 +295,9 @@ void BaseAudioContext::stop()
 
     uninitialize();
     clear();
+
+    if (RefPtr proxy = audioWorklet().proxy())
+        proxy->stopThread();
 }
 
 Document* BaseAudioContext::document() const

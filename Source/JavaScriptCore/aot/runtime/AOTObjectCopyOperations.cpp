@@ -214,18 +214,6 @@ static bool tryCopyPropertiesExcluding(JSGlobalObject* globalObject, VM& vm, JSO
     return true;
 }
 
-static bool takesPlainPropertiesDirectly(Structure* target)
-{
-    return target->typeInfo().type() == FinalObjectType
-        && !target->isCompiledStructure()
-        && !target->mayHaveImmutableProperties()
-        && !target->mayBePrototype()
-        && !target->isWatchingReplacement()
-        && !target->isDictionary()
-        && target->isStructureExtensible()
-        && !target->hasPolyProto();
-}
-
 namespace {
 
 struct CopiedProperties {
@@ -381,7 +369,7 @@ static NEVER_INLINE bool tryCopyNamesThenElements(Instance* instance, JSGlobalOb
             names.append(property.name);
             values.appendWithCrashOnOverflow(property.value);
             return IterationStatus::Continue;
-        }, PropertyWalk::Elements::AreLeftOut);
+        }, PropertyWalk::Elements::Skip);
         if (walked != PropertyWalk::Result::Completed)
             return false;
         if (!names.isEmpty() && !target.tryDefineFields(vm, names.span(), { values.data(), values.size() }) && !tryAssignCollectedProperties(globalObject, vm, target, names, values)) {

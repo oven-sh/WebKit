@@ -6,8 +6,8 @@
 # The tests that what is imported from a CommonJS file is there stand in a body that is written straight. The one that fails throws what the walked body throws.
 # RUN: run-in-shell mechanisms=all
 # CHECK: Exception: SyntaxError: Export named 'missing' not found in module 'facade.cjs'.
-# RUN(COUNT): compile UnitsWrittenStraight mechanisms=all
-# COUNT: statistic UnitsWrittenStraight 2
+# RUN(COUNT): compile StraightUnitsCompiled mechanisms=all
+# COUNT: statistic StraightUnitsCompiled 2
 
 module m0 path="facade.cjs" displayPath="facade.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 module m1 path="#1" displayPath="facade.cjs" exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}] syntheticExports=[{name="missing" variable=g1}, {name="one" variable=g2}] namespaceLayout=L(m1)

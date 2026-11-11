@@ -22,11 +22,11 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{typ
 #     v2: anything @Cell = ToThis v0 traits=[mayCollect, mayTouchMemory]
 #     Jump -> next b1()
 #   b1() handler=b2():
-#     v3: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v3: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b3()
 #   b2() role=CatchHandler:
 #     v4: anything @JSValue = CatchValue traits=[mayCollect, mayTouchMemory]
-#     v5: anything @JSValue = Call v1, -, v2, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v5: anything @JSValue = Call v1, -, v2, v4 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Return v5
 #   b3():
 #     Return v0

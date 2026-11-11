@@ -8,8 +8,8 @@
 # CHECK-NEXT: [[product]]: number @Double = Mul [[element]], v1 form=Numbers
 # CHECK-NEXT: = StrictEq [[product]], [[product]] form=Numbers
 # CHECK: PutDoubleIndex {{*}}[[product]]
-# RUN(COUNTED): compile HolesReadAsNaNInTurnsThatStore mechanisms=all
-# COUNTED: statistic HolesReadAsNaNInTurnsThatStore 1
+# RUN(COUNTED): compile StoringLoopHoleChecksRemoved mechanisms=all
+# COUNTED: statistic StoringLoopHoleChecksRemoved 1
 # Another user sees undefined: function count(list: number[]) { let holes = 0; for (let i = 0; i < list.length; i++) { if (list[i] === undefined) holes++; list[i] = 0.25; } return holes; }
 # There a hole leaves the turn as ever.
 # RUN(OTHER): walk f2 mechanisms=all

@@ -338,7 +338,7 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
                 properties.append(property.name);
                 values.appendWithCrashOnOverflow(property.value);
                 return IterationStatus::Continue;
-            }, AOT::PropertyWalk::Elements::AreLeftOut);
+            }, AOT::PropertyWalk::Elements::Skip);
             RETURN_IF_EXCEPTION(scope, { });
             if (result != AOT::PropertyWalk::Result::Completed)
                 return false;

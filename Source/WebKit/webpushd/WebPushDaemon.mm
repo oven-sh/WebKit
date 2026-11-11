@@ -120,7 +120,7 @@ static constexpr Seconds s_incomingPushTransactionTimeout { 10_s };
 
 #if HAVE(FULL_FEATURED_USER_NOTIFICATIONS)
 
-static bool LEGACY_NODELETE platformShouldPlaySound(const WebCore::NotificationData& data)
+NODELETE static bool platformShouldPlaySound(const WebCore::NotificationData& data)
 {
 #if PLATFORM(IOS)
     return data.silent == std::nullopt || !(*data.silent);
@@ -208,9 +208,9 @@ void WebPushDaemon::startPushService(const String& incomingPushServiceName, cons
             return;
         }
 
-        auto& pushServiceRef = *pushService;
+        Ref pushServiceRef = *pushService;
         auto allowedBundleIdentifier = getAllowedBundleIdentifier();
-        pushServiceRef.updateSubscriptionSetState(allowedBundleIdentifier, daemon.ensureWebClipCache().visibleWebClipIdentifiers(allowedBundleIdentifier), [pushService = WTF::move(pushService)]() mutable {
+        pushServiceRef->updateSubscriptionSetState(allowedBundleIdentifier, daemon.ensureWebClipCache().visibleWebClipIdentifiers(allowedBundleIdentifier), [pushService = WTF::move(pushService)] mutable {
             WebPushDaemon::singleton().setPushService(WTF::move(pushService));
         });
 #else

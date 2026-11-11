@@ -41,6 +41,7 @@ JS_EXPORT_PRIVATE bool rejectsOwnPropertyOnLibraryFunction(JSObject*, UniquedStr
 JS_EXPORT_PRIVATE bool isMemberUnlockedForTests(JSObject*, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE bool isMemberFoldedAsConstant(JSObject*, UniquedStringImpl* key);
 bool reflectThrowsOnLockedProperty(JSObject* lockedObject);
+bool isReportedAsReadOnly(JSObject* lockedObject, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE ASCIILiteral rejectedEvaluationMessage();
 void rejectEvaluationUnlessAllowed(JSGlobalObject*);
 Instance* reserveInstance(JSGlobalObject*);
@@ -53,8 +54,11 @@ void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue);
 JSObject* takePreallocatedStaticProperty(JSObject* holder, UniquedStringImpl* key);
 bool reportsCreationOfMember(JSObject* holder, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE void hostDidCreateStructure(JSGlobalObject*, Structure*);
+using BufferStructureProvider = Structure* (*)(JSGlobalObject*);
+JS_EXPORT_PRIVATE void setBufferStructureProvider(BufferStructureProvider);
 JS_EXPORT_PRIVATE void hostDidCreateConstructor(JSGlobalObject*, JSObject* constructor);
 JS_EXPORT_PRIVATE void hostDidCreateNodeModule(JSGlobalObject*, JSObject* constructor);
+JS_EXPORT_PRIVATE void acceptForeignBinaryData(JSGlobalObject*);
 JS_EXPORT_PRIVATE void hostDidCreateGlobalMember(JSGlobalObject*, UniquedStringImpl* key, JSObject*);
 JS_EXPORT_PRIVATE void hostDidFillObjectWithFoldedMembers(JSGlobalObject*, JSObject*, ASCIILiteral holder, std::span<const ASCIILiteral> names);
 

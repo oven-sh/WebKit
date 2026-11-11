@@ -12,7 +12,7 @@
 #     v1: function @Cell = Unbox v0
 #     v2: Generator @Cell = NewGenerator v1 function=f1 traits=[mayCollect, mayTouchMemory]
 #     v3: AsyncGenerator @Cell = NewAsyncGenerator v1 function=f1 traits=[mayCollect, mayTouchMemory]
-#     v4 @Void = TakeGeneratorPrototype v2, v1 traits=[mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v4 @Void = TakeGeneratorPrototype v2, v1 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
 #     v5: AsyncGenerator @JSValue = Box v3
 #     Return v5
 # }

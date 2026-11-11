@@ -153,8 +153,8 @@ bool buildCopyWithWhatFollowsOfItsOpcodes(Walker& walker, const BodyValue& copy)
         walkedUpTo = place;
         if (walker.isUnreachable() || walker.hasFailed())
             return true;
-        std::optional<StringsInPlaceOfTextsInBuilders> strings;
-        if (walker.hasTextsInStringBuilders()) {
+        std::optional<MaterializedStringsScope> strings;
+        if (walker.hasStringsInBuilders()) {
             strings.emplace(walker, next);
             if (walker.isUnreachable())
                 return true;

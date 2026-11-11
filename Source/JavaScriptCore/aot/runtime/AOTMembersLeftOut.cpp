@@ -29,7 +29,7 @@ namespace {
 struct StandIn {
     Weak<JSObject> function;
     String message;
-    Weak<JSObject> answeredBy;
+    Weak<JSObject> owner;
     String name;
     bool isKnownToBeFunction { false };
 };
@@ -193,13 +193,13 @@ static String takeOmittedCodeErrorMessage(VM& vm)
     return message;
 }
 
-static JSValue createThrowingPlaceholder(JSGlobalObject* realm, String&& message, const String& nameOfMember, JSObject* answeredBy, const OmittedFunction* function = nullptr)
+static JSValue createThrowingPlaceholder(JSGlobalObject* realm, String&& message, const String& nameOfMember, JSObject* owner, const OmittedFunction* function = nullptr)
 {
     VM& vm = realm->vm();
-    if (answeredBy) {
+    if (owner) {
         Locker locker { membersLock };
         for (const StandIn& known : membersByVM().find(&vm)->value.standIns) {
-            if (known.function && known.answeredBy.get() == answeredBy && known.name == nameOfMember)
+            if (known.function && known.owner.get() == owner && known.name == nameOfMember)
                 return known.function.get();
         }
     }
@@ -213,7 +213,7 @@ static JSValue createThrowingPlaceholder(JSGlobalObject* realm, String&& message
     standIns.removeAllMatching([](const StandIn& known) {
         return !known.function;
     });
-    standIns.append(StandIn { Weak<JSObject>(standIn), WTF::move(message), answeredBy ? Weak<JSObject>(answeredBy) : Weak<JSObject>(), nameOfMember, !!function });
+    standIns.append(StandIn { Weak<JSObject>(standIn), WTF::move(message), owner ? Weak<JSObject>(owner) : Weak<JSObject>(), nameOfMember, !!function });
     return standIn;
 }
 
@@ -225,12 +225,12 @@ JSValue takeOmittedMemberPlaceholder(JSGlobalObject* realm, const String& nameOf
     return createThrowingPlaceholder(realm, WTF::move(message), nameOfMember, nullptr);
 }
 
-JSValue takeOmittedFunctionPlaceholder(JSGlobalObject* realm, const OmittedFunction& function, JSObject* answeredBy)
+JSValue takeOmittedFunctionPlaceholder(JSGlobalObject* realm, const OmittedFunction& function, JSObject* owner)
 {
     String message = takeOmittedCodeErrorMessage(realm->vm());
     if (message.isNull())
         return { };
-    return createThrowingPlaceholder(realm, WTF::move(message), function.name, answeredBy, &function);
+    return createThrowingPlaceholder(realm, WTF::move(message), function.name, owner, &function);
 }
 
 MemberReificationScope::MemberReificationScope(bool isPresenceCheck)

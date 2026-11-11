@@ -9,11 +9,14 @@
 # rows[2] = id("text");
 # print(byValue(rows));
 # print("went on");
-# `list[at].n` and `for (const row of list) row.n`: behind the read of the element stood the check (a cell? of the layout? or undefined?) and, in front of the read of the name, the test for nullish.
-# One test in full of the type less nullish asks both: the check is left to it; what it does not take is undefined, which throws as the read does, or stops by name.
-# In the for-of the check and the test lie in two blocks: a straight way of jumps, and between them nothing but pure records that do not mention the value (the bundle of the step's results aside).
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so all that it sees go into the list is objects of one layout, and undefined.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# `list[at].n` and `for (const row of list) row.n`: the read of the element used to be followed by the proof check (is it a cell? of the layout? or undefined?),
+# and the test for nullish came before the read of the name.
+# Now one full test for the type without nullish does both jobs, and the check is left to that test.
+# What the test rejects is either undefined, which throws as the read does, or a mismatch, which crashes with a named error.
+# In the for-of the check and the test are in two blocks.
+# A straight path of jumps connects them, and between them there are only pure operations that do not mention the value (apart from the bundle of the step's results).
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so all that it sees stored into the array is objects of one layout, and undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(INDEX): walk f1 mechanisms=all
 # INDEX: CheckProof [[given]] checkedType=undefined|L0 {{*}} source=Contents [isLeftToTestBehind]
 # INDEX-NEXT: TypeTest [[given]] testedType=L0 [asksInFull]
@@ -31,7 +34,8 @@
 # ALL-NEXT: 3
 # ALL-NEXT: true
 # ALL-NEXT: true
-# ALL-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ALL-NEXT: bun: internal AOT error: type check failed
+# ALL-NEXT: found string in
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
@@ -39,7 +43,8 @@
 # CALLS-NEXT: 3
 # CALLS-NEXT: true
 # CALLS-NEXT: true
-# CALLS-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# CALLS-NEXT: bun: internal AOT error: type check failed
+# CALLS-NEXT: found string in
 # CALLS-NOT: went on
 # CALLS: crashed with
 

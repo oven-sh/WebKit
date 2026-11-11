@@ -1,48 +1,30 @@
 enum KnowledgeLevel { Unknown Expected Proven }
 enum AccessCost { ByName TestsReceiver TestsSlot Free }
 enum AccessKind { Unknown Read Store Define Has Delete Call Construct Truthiness Equality Arithmetic Comparison Conversion TypeOf InstanceOf Iteration Spread }
-enum UnprovenCauseFamily { UnprovenType UnknownCode }
-enum UnprovenCause (family: UnprovenCauseFamily) {
-    Unknown(UnprovenType) ResultDisabled(UnprovenType) UnknownObject(UnknownCode) NonLayoutObject(UnprovenType) BuiltinBase(UnprovenType)
-    UnknownBase(UnknownCode) ClassEvaluatedAgain(UnknownCode) ReachesNativeCode(UnknownCode) ReachesUnknownJavaScript(UnknownCode) UnknownWriter(UnknownCode) UnknownCallee(UnknownCode)
-    UnprovenContents(UnprovenType)
-    OtherNewTarget(UnknownCode)
-    UndescribedNativeResult(UnknownCode) UnseenCode(UnknownCode) UncheckedConversionOfUntracked(UnprovenType) DataFromOutside(UnknownCode) ThrownByRunTime(UnknownCode)
-    ParameterOfEscapedFunction(UnknownCode) ContentsOfEscapedObject(UnknownCode) ResultOfUnknownCallee(UnknownCode) ObjectWithoutLayout(UnprovenType)
-    Untracked(UnprovenType) LayoutOutsideFamily(UnprovenType)
-}
+enum UnprovenCause { Unknown UnknownObject UnknownCallee Untracked }
 enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode FlowResultDisabled RunsMachineCode LoadsCodeByName }
 flags BuiltinUse { Tested Read Called Constructed Written Escaped StoredByName NamedAtRunTime }
 enum FeatureUseKind { Named Unnamed NamedAtRunTime FoundByName }
 enum LocaleUseKind { Unknown HostDefault Constant }
-enum TypeTestFailure { TakesGenericPath Throws Leaves }
+enum TypeTestFailure { TakesGenericPath Throws ExitsToSlowVersion }
 enum CodeForm { Open Closed Generic }
 
 enum ImageVerdict {
-    Unsupported Accepted CompiledCodeDisabled NotAnImage Truncated Misaligned AlreadyInUse LowPagesAccessible NoCode CannotMapCode NeedsCellCage OptionsConflict
+    Unsupported Accepted CompiledCodeDisabled NotAnImage Truncated Misaligned LowPagesAccessible NoCode CannotMapCode NeedsCellCage OptionsConflict
     MalformedTables StampMismatch IdentityMismatch CodeAtFixedAddress OutsideItsSegments CannotReadExecutable
 }
-flags AllocationEscapeReason {
-    Returned Thrown StoredInUnknownMemory PassedToUnknownCode RetainedByCallee StoredInEscapingObject LeakedByContainer LimitReached
-}
-enum AllocationHeapCause {
-    None NotTracked HasNoFrameForm Escapes SeveralLiveInstances HasUntrackedAlias LiveAcrossSuspension LiveAtReturnCall HeldByHeapCell HeldAcrossIterations ChangedByUse
-    SeenByNativeCode ClosureIsNotOnlyCalled LayoutDefersClosures FieldsCreatedLater ExceedsLimit MaterializationDoesNotPay
-}
-enum AllocationOutcome (| engine rank: UInt32, refinesHeap: Bool) {
-    Unknown(0, false) Removed(1, false) Heap(6, false) Frame(2, false) FrameUntilMaterialized(3, false) Slim(5, true) Deferred(4, true)
-}
-enum AllocationKind {
-    Other Object Array Closure Environment Arguments Rest IteratorResult Generator Promise BoundFunction StringRange Collection
-}
+flags AllocationEscapeReason { Returned Thrown }
+enum AllocationHeapCause { None NotTracked Escapes LiveAcrossSuspension RetainedAcrossIterations }
+enum AllocationOutcome { Unknown Removed Heap }
+enum AllocationKind { Other Object Closure Environment Generator }
 enum ResultSection {
     Image Text UserDiagnostics InternalErrors EntryModuleIds UnseenCode BuiltinsUsed FeaturesUsed LocalesUsed WorkerEntries Accesses AccessCounts TypeTests
     AllocationRemarks Statistics Symbols ObfuscatedSites
-    LibraryFunctionsLacked WorkerStartsWithoutName
+    MissingLibraryFunctions WorkerStartsWithoutName
     BytesByForm BytesByModule
     FunctionNames LayoutNames
-    URLsThatStartWorkers
-    LibraryModulesLacked LibraryModulesWithoutRecord
+    WorkerStartsFromURLs
+    MissingLibraryModules
 }
 
 record TextRange abi { offset: UInt32 length: UInt32 }
@@ -58,23 +40,19 @@ record InternalErrorRecord abi {
 }
 record UnseenCodeRecord abi { cause: UnseenCodeCause builtin: Builtin? witness: Witness }
 record BuiltinUseRecord abi { builtin: Builtin uses: BuiltinUse witness: Witness }
-record LackedFunctionRecord abi { function: UInt32 }
-record LackedModuleRecord abi { module: Module }
-record LackedRuntimeModuleRecord abi { module: RuntimeModule }
+record MissingFunctionRecord abi { function: UInt32 }
+record MissingModuleRecord abi { module: Module }
 record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witness kind: FeatureUseKind }
 record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
-record WorkerEntryRecord abi { path: TextRange isGuess: UInt32 hasOptions: UInt32 witness: Witness }
+record WorkerEntryRecord abi { path: TextRange witness: Witness }
 record WorkerStartRecord abi { witness: Witness }
-record WorkerURLRecord abi { witness: Witness }
+record WorkerURLStartRecord abi { witness: Witness }
 record AccessRecord abi {
-    location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause layout: Layout? copies: UInt32 witness: Witness
-    function: Function? illTypedCause: IllTypedCause cost: AccessCost loopDepth: UInt32
+    location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause layout: Layout? copies: UInt32
+    function: Function? cost: AccessCost loopDepth: UInt32
 }
 record AccessCountRecord abi { module: Module accesses: UInt32[3] calls: UInt32[3] typeTests: UInt32 accessCosts: UInt32[4] }
-record TypeTestRecord abi {
-    location: SourceLocation function: Function? failure: TypeTestFailure copies: UInt32 cause: UnprovenCause illTypedCause: IllTypedCause layout: Layout?
-    witness: Witness
-}
+record TypeTestRecord abi { location: SourceLocation function: Function? failure: TypeTestFailure copies: UInt32 layout: Layout? }
 record AllocationRemarkRecord abi {
     location: SourceLocation forcedBy: SourceLocation outcome: AllocationOutcome copies: UInt32 forcingOperation: TextRange reasons: AllocationEscapeReason
     function: Function? kind: AllocationKind cause: AllocationHeapCause
@@ -89,23 +67,22 @@ enum CompileAction { Compile VerifyOnly CheckOnly }
 enum Architecture { ARM64 X86_64 }
 enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
-flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons SpillSlots AllocatedRegisters ClaimsOfFlow KeepGoing LastWalksOfLoopsAlone WalksOfLoopsThatFitAgain FlowFindsNoLessFromMore }
+flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons SpillSlots AllocatedRegisters ClaimsOfFlow KeepGoing ReplayFinalLoopVisits RepeatFittingLoopVisits FlowMonotonicity }
 flags ReportSet { Flow Symbols Allocations AccessCounts Uses }
-flags TestingSwitch { IgnoreBranchHints IgnoreExpectedTypes DelayFlowRules DelayOtherFlowRules ShuffleExpectedTypes NativeCodeAnswersNullish CheckProofsAtRunTime UnseenCodeAnswersUndefined WritesBodiesStraight CheckProofsAtEntries CheckProofsAtEntriesAndFields KeepsCellsOutOfFrames TestsEveryPosition PositionsAreTakenToLieInside CheckEffectsAtRunTime RowSaysLess NoCalleeKeepsWhatItIsHanded ArgumentsOfUnseenCodeDoNotLeave UndoLeavesExpectations ShuffleBlockFrequencies FailGuesses GiveLinkMore ShuffleChoices LaterUnitsOpenNoGuesses CheckWalkAtRunTime OrderBlocksAgain WalksUnitsBy CutWalksOfLoopsShort ReadsBehindTestsOfLengthsAreLeftOut VariablesThatBoundAreTakenToBeAsInFront GuardsAndFactsAreTakenToHold FencesBehindLateStoresAreLeftOut DividendsOfReciprocalsAreTakenToFit32Bits OneRowSpeaksForAllThatCallMayTake NothingIsDoneToFreshLists BoundsOfCountersAreRoundedTheOtherWay Int32sGoIntoListsInTheBoxesTheyCameIn SweepTurnsBranchThatDecidesIntoJump SweepLetsGoEdgeThatIsTaken EmittersAloneTestEveryPosition QuestionsInFrontOfTurnsLaidOutAreTakenToHold EnoughTurnsAreTakenToBeLeftForTurnsLaidOut CallsMadeInFrontOfTurnsAreMadeAgainInThem EveryBuiltinInLineIsTakenToAnswerOutOfItsOperands NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN ReadsUnderKeysInFrontOfTurnsGoTheGenericRoad OperandsOfRowsUnderKeysAreNamedByWhatTheirVariablesHoldNow ShapeTestsInTurnsLaidOutAreTakenToPass EqualIntegersAreTakenToBeLess StorageAndLengthsAreTakenToBeAsInFront MarkedObjectsAreTakenToBearNoMark NobodyWakesSleepersOfSharedCalls PortersTakeWhatIsOfTheMemberForTheUnknown VouchedPositionsAreTakenOneFurther ReadsThroughFamiliesAreTiedMemberByMember ReadsByKeyOffFilledRecordsAreListed SavesAtHeadsThatPatchesAloneReadAreLeftOut VouchedReadsAreTakenOneFurther SpillsThatStepsReadAreTakenToBeReadByNone IgnoreEscapeAfterUnknownCall TreatLiteralFieldsAsDefined OverstateTypedArrayLength }
-flags TestingLie { ValuesKeptForTheCollectorAreTakenToBeReadByStepsAlone StoragesFromInFrontAreTakenOneWordFurther ValuesThatComeLaterAreTakenForOthersThanWhatIsMadeHere ReceiversOfMethodsOfListsAreTakenToBeMadeHere WaysOnAreTakenToReadNothing TypedTurnsPassStoresIntoListsOver BoundFunctionsAreTakenToBindOneMore ElementsBesideSumsAreTakenToComeOffListsOfNumbers IterablesOfPatternsAreTakenToStayAsMade GuardOfNameIsPassedOverAtCallsThroughSuper GuardOfLinkIsPassedOverAtCallsThroughSuper GroundsOfPositionsBelowSumsAreHandedOverUnproven LinksOfKinAreLeftUnguarded StrangersAmongKinAreNotAskedWhereTheyStand ObjectsOfClassAskedForAreNotAskedWhereTheyStand ValuesAskedForClassesAreTakenToStandWhereTheyWereMade LayoutsAboveClassAskedForAreTakenForStrangers ConditionsOfClassAskedForAreLeftUnguarded ValuesThatPatternsTakeApartInTurnsAreTakenForListsAsMade TurnsAreTakenToHaveDoneNothingWherePatternsAreHeld ElementsInsideListsAreTakenToBeThere LoopsAreTakenToNameNothingFromInFront ObjectsWrittenInLoopsAreTakenToBeOnlyForgotten ObjectsNamedInLoopsAreTakenToBeOnlyForgotten RowsOfShapeTestsLeaveOutTheirLastArm PartsOfPairsAreTakenWhateverIsStepped MarkedObjectsPassTestsOfLinks RoomsAskedInFrontAreTakenForGiven RowsOfFunctionsWithLargeCountsAreLeftOut RecordsOfFunctionsAreListedUnderOtherNumbers RunsOfClosureNumbersTakeInTheNextFunction TwoClosureNumbersChangePlaces TwoCellsOfBuiltinsBearEachOthersNumbers FusedCallEntriesAreListedBackwards TextsOfFunctionsAreListedBackwards WhatConditionsOfArmsInFrontOfLoopsSpeakOfIsTakenToStandInFront KeysOfForInAreTakenToBeAsTheStepFoundThem ListsSteppedByMethodsAreTakenToBeAsMade KindsAskedInFrontAreTakenForGiven VariablesReadInFrontOfLoopsAreTakenToHoldWhatIsProven WhatLoopsAskOfVariablesInFrontIsTakenToHold LengthsAskedInTurnsAreTakenForGiven StoresOfLengthsAreTakenToEndNothing ReadsOfConstructorsPrototypesAreTakenToEndNoGuard SlotsReadInFrontOfLoopsAreTakenToFollowTheirStores AssumeArithmeticElementUsers }
+flags TestingSwitch { IgnoreBranchHints IgnoreExpectedTypes DelayFlowRules DelayOtherFlowRules ShuffleExpectedTypes AssumeNullishHostResults CheckProofsAtRunTime AssumeUnknownCallsReturnUndefined ForceStraightCompilation CheckProofsAtEntries CheckProofsAtEntriesAndFields DisableFrameCells CheckBoundsAtRunTime AssumeIndexesInBounds CheckEffectsAtRunTime UnderstateEffects AssumeCalleesRetainNothing AssumeArgumentsNeverEscape ShuffleBlockFrequencies FailSpeculations WidenFlowNodes ShuffleChoices DisableLaterUnitSpeculation CheckWalkAtRunTime ForceFallbackBlockOrder ForceWalkMode AbortLoopVisits DropLengthCheckedReads AssumeInvariantLoopBounds AssumeGuardsAndFacts SkipFencesAfterLateStores AssumeUInt32Dividends IgnoreAlternativeOverloads IgnoreFreshArrayEscapes MisroundLoopBounds SkipInt32Reboxing MisfoldBranchInSweep DropEdgeInSweep CheckBoundsInEmittersOnly SkipUnrollEntryChecks SkipUnrollTripCountCheck CheckHoistedCallsAtRunTime AssumeInlineBuiltinsPure AssumeNoNaNStores UseGenericOwnKeyReads MisidentifyHoistedReadOperands SkipUnrolledShapeChecks TreatEqualIntegersAsLess AssumeInvariantArrayStorage IgnoreMarksInShapeChecks IgnoreDormantMemberUpdates TreatMemberCalleesAsUnknown MisplaceUncheckedAccesses DisableFamilyReadShortcut CheckDictionaryReadProofs DropPatchOnlySaves MisplaceUncheckedReads AssumeSpillSlotsDead IgnoreEscapeAfterUnknownCall TreatLiteralFieldsAsDefined OverstateTypedArrayLength CheckResultFreshnessAtRunTime }
+flags FaultInjection { IgnoreCollectorSpillReads MisplaceHoistedArrayStorage AssumeLaterValuesUnaliased AssumeLocalArrayReceivers IgnoreLoopArrayStores OverstateBoundArgumentCount AssumeNumericAddends AssumePermanentlyPristineIterables SkipSuperMethodGuard SkipSuperPrototypeGuard SkipBoundsProof SkipHierarchyGuards IgnoreSiblingPrototypes SkipPrototypeChecks AssumeLayoutPrototype SkipSuperclassCheck SkipClassGuards AssumePristineDestructuring AssumeIterationsRestartable AssumeInBoundsElementsPresent IgnoreLoopEscapes IgnoreLoopWrites IgnoreLoopUses DropLastCase SkipPairGuard AllowMarkedObjects SkipCapacityChecks DropLargeCountEntries MisnumberFunctionRecords OverstateClosureNumberRuns SwapClosureNumbers SwapBuiltinCellNumbers ReverseFusedCallEntries ReverseFunctionSourceEntries AssumeInvariantOperands AssumeEnumeratorCurrent AssumePristineReceivers SkipStorageChecks AssumeVariablesInitialized IgnoreVariableChecks SkipLengthChecks IgnoreLengthStores IgnorePrototypeReads AssumeSlotsInitialized AssumeArithmeticElementUsers AssumeClearUpperHalves }
 flags AdmittedCode { Inspector ReplacedBuiltins }
-flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText FilesOfImageForCodeOutside FeaturesNamedAtRunTime }
-flags OutputOptions { Obfuscate SharesRealms RunsInSeveralRealms RunsInPlaceOfFiles KeepsFunctionNames }
-record ImagesBelowWords abi { address: UInt64 size: UInt64 }
-record TargetOptions abi { features: UInt64 featuresKeptOnlyWhenNamed: UInt64[8] imagesBelow: ImagesBelowWords architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
+flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText FeaturesNamedAtRunTime }
+flags OutputOptions { Obfuscate RunsInSeveralRealms KeepsFunctionNames }
+record TargetOptions abi { features: UInt64 featuresRetainedByName: UInt64[8] architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
 record CompileOptions abi {
     target: TargetOptions sizeClassProgression: Double removedFeatures: UInt64[8] executableIdentity: UInt8[16] size: UInt32
-    action: CompileAction checks: CheckSet reports: ReportSet testing: TestingSwitch lies: TestingLie
+    action: CompileAction checks: CheckSet reports: ReportSet testing: TestingSwitch injectedFaults: FaultInjection
     threadCount: UInt32 admittedCode: AdmittedCode output: OutputOptions
-    excludedCode: ExcludedCode rowThatSaysLess: UInt32
-    seedOfShuffles: UInt32 periodOfGuessesThatFail: UInt32
-    wayForcedOnUnits: UInt32 periodOfUnitsWalkedThatWay: UInt32
-    periodOfHearingsThatCutWalks: UInt32 phaseOfHearingsThatCutWalks: UInt32 reserved: UInt32
+    excludedCode: ExcludedCode understatedEffects: UInt32
+    shuffleSeed: UInt32 speculationFailurePeriod: UInt32
+    forcedWalkMode: UInt32 forcedWalkModePeriod: UInt32
+    loopVisitAbortPeriod: UInt32 loopVisitAbortPhase: UInt32 reserved: UInt32
 }
 
 word "check" "<name>,.." "check" custom applyCheck listChecks

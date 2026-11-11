@@ -30,6 +30,7 @@
 #include "RemoteDisplayListIdentifier.h"
 #include "RemoteGradientIdentifier.h"
 #include "RemoteGraphicsContextIdentifier.h"
+#include "RemoteMeshGradientIdentifier.h"
 #include "RemotePathImplIdentifier.h"
 #include <WebCore/DisplayListRecorder.h>
 #include <wtf/TZoneMalloc.h>
@@ -112,25 +113,27 @@ private:
     void clipOut(const WebCore::Path&) final;
     void clipOutRoundedRect(const WebCore::FloatRoundedRect&) final;
     void clipPath(const WebCore::Path&, WebCore::WindRule) final;
+    void clipTransformedPath(const WebCore::AffineTransform&, const WebCore::Path&, WebCore::WindRule) final;
     void clipToImageBuffer(WebCore::ImageBuffer&, const WebCore::FloatRect& destinationRect) final;
     void resetClip() final;
     void beginTransparencyLayer(float) final;
     void beginTransparencyLayer(WebCore::CompositeOperator, WebCore::BlendMode) final;
     void endTransparencyLayer() final;
     void drawFilteredImageBuffer(WebCore::ImageBuffer*, const WebCore::FloatRect&, WebCore::Filter&, WebCore::FilterResults&) final;
-    void drawImageBuffer(WebCore::ImageBuffer&, const WebCore::FloatRect& destRect, const WebCore::FloatRect& srcRect, WebCore::ImageDrawingOptions) final;
-    void drawNativeImage(const WebCore::NativeImage&, const WebCore::FloatRect& destRect, const WebCore::FloatRect& srcRect, WebCore::ImageDrawingOptions) final;
+    void drawImageBuffer(WebCore::ImageBuffer&, const WebCore::FloatRect& destRect, const WebCore::FloatRect& srcRect, WebCore::RasterDrawingOptions) final;
+    void drawNativeImage(const WebCore::NativeImage&, const WebCore::FloatRect& destRect, const WebCore::FloatRect& srcRect, WebCore::RasterDrawingOptions) final;
     void drawSystemImage(WebCore::SystemImage&, const WebCore::FloatRect&) final;
     void drawRect(const WebCore::FloatRect&, float) final;
     void drawLine(const WebCore::FloatPoint& point1, const WebCore::FloatPoint& point2) final;
     void drawLinesForText(const WebCore::FloatPoint&, float thickness, std::span<const WebCore::FloatSegment>, bool isPrinting, bool doubleLines, WebCore::StrokeStyle) final;
     void drawDotsForDocumentMarker(const WebCore::FloatRect&, WebCore::DocumentMarkerLineStyle) final;
+    void drawMeshGradient(WebCore::MeshGradient&, const WebCore::FloatRect& destination) final;
     void drawEllipse(const WebCore::FloatRect&) final;
     void drawPath(const WebCore::Path&) final;
     void drawFocusRing(const WebCore::Path&, float outlineWidth, const WebCore::Color&, float zoomFactor) final;
     void drawFocusRing(const Vector<WebCore::FloatRect>&, float outlineWidth, const WebCore::Color&, float zoomFactor) final;
-    void drawPattern(const WebCore::NativeImage&, const WebCore::FloatRect& destRect, const WebCore::FloatRect& tileRect, const WebCore::AffineTransform&, const WebCore::FloatPoint& phase, const WebCore::FloatSize& spacing, WebCore::ImageDrawingOptions = { }) final;
-    void drawPattern(WebCore::ImageBuffer&, const WebCore::FloatRect& destRect, const WebCore::FloatRect& tileRect, const WebCore::AffineTransform&, const WebCore::FloatPoint& phase, const WebCore::FloatSize& spacing, WebCore::ImageDrawingOptions = { }) final;
+    void drawPattern(const WebCore::NativeImage&, const WebCore::FloatRect& destRect, const WebCore::FloatRect& tileRect, const WebCore::AffineTransform&, const WebCore::FloatPoint& phase, const WebCore::FloatSize& spacing, WebCore::RasterDrawingOptions = { }) final;
+    void drawPattern(WebCore::ImageBuffer&, const WebCore::FloatRect& destRect, const WebCore::FloatRect& tileRect, const WebCore::AffineTransform&, const WebCore::FloatPoint& phase, const WebCore::FloatSize& spacing, WebCore::RasterDrawingOptions = { }) final;
     void fillPath(const WebCore::Path&) final;
     void fillRect(const WebCore::FloatRect&, RequiresClipToRect) final;
     void fillRect(const WebCore::FloatRect&, const WebCore::Color&) final;
@@ -141,7 +144,7 @@ private:
     void fillRectWithRoundedHole(const WebCore::FloatRect&, const WebCore::FloatRoundedRect&, const WebCore::Color&) final;
     void fillEllipse(const WebCore::FloatRect&) final;
 #if ENABLE(VIDEO)
-    void drawVideoFrame(const WebCore::VideoFrame&, const WebCore::FloatRect& distination, WebCore::ShouldDiscardAlpha, WebCore::ImageDrawingOptions) final;
+    void drawVideoFrame(const WebCore::VideoFrame&, const WebCore::FloatRect& distination, WebCore::ShouldDiscardAlpha, WebCore::RasterDrawingOptions) final;
 #endif
     void strokePath(const WebCore::Path&) final;
     void strokeRect(const WebCore::FloatRect&, float) final;
@@ -167,6 +170,7 @@ private:
     bool recordResourceUse(const WebCore::SourceImage&);
     bool recordResourceUse(WebCore::FontBase&);
     std::optional<RemoteGradientIdentifier> recordResourceUse(WebCore::Gradient&);
+    std::optional<RemoteMeshGradientIdentifier> recordResourceUse(WebCore::MeshGradient&);
     bool recordResourceUse(WebCore::Filter&);
     std::optional<RemoteDisplayListIdentifier> recordResourceUse(const WebCore::DisplayList::DisplayList&);
 

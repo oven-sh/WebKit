@@ -6,12 +6,12 @@
 # CHECK-LABEL: code f1:Body
 # CHECK: PutEnvironmentField
 # CHECK: = Call
-# CHECK: = GetEnvironmentField {{*}}followsItsStore
+# CHECK: = GetEnvironmentField {{*}}isKnownInitialized
 # CHECK-NOT: = CheckInitialized
 # CHECK-LABEL: code f2:Body
 # CHECK-COUNT-1: = CheckInitialized
 # CHECK: = Call
-# CHECK: = GetEnvironmentField {{*}}followsItsStore
+# CHECK: = GetEnvironmentField {{*}}isKnownInitialized
 # CHECK-NOT: = CheckInitialized
 
 # Only one arm has stored, so behind the arms the check stands. What holds of one environment says nothing of another of the same layout, nor of another field.
@@ -30,7 +30,7 @@
 # LOOP: isLoopHead=true
 # LOOP: = GetEnvironmentField {{*}}field=1
 # LOOP: = CheckInitialized
-# LOOP: = GetEnvironmentField {{*}}followsItsStore
+# LOOP: = GetEnvironmentField {{*}}isKnownInitialized
 # LOOP-NOT: = CheckInitialized
 
 layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything|absent} variableName="held"}, {key=@"1" declared={type=anything|absent} variableName="other"}] ownFieldCount=2

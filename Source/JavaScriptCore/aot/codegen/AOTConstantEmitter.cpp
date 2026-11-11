@@ -136,7 +136,7 @@ void ConstantEmitter::generateModuleBuiltin(const ValueContext& value)
     auto callModuleBuiltinCell = [&](bool isOnRarePath) {
         return callOperation<CellPointer>(value, RuntimeOperation::ModuleBuiltinCell, { word32(static_cast<int32_t>(builtin.index())), word32(static_cast<int32_t>(module.index())) }, { .isOnRarePath = isOnRarePath });
     };
-    if (m_program.at(module).flags.contains(ModuleFlags::RunsAgain)) {
+    if (m_program.at(module).flags.contains(ModuleFlags::MayBeReevaluated)) {
         defineCell(value, callModuleBuiltinCell(false));
         return;
     }
@@ -305,6 +305,12 @@ CellPointer ConstantEmitter::cellMadeByStub(const OperationContext& context, Stu
     return numberedPermanentCell(*options.pureFunction, isNarrow, cellWord, [&](TypedPointer word) {
         return makeConstantAtSite(&context, { constant, options.numberedImmediate->mention, options.runsCodeOfHost }, *word.heap());
     });
+}
+
+bool ConstantEmitter::loadsStringConstantByStub(const OperationContext& context, StringID id)
+{
+    std::span<const uint8_t> text = types().bytesOf(id);
+    return !text.empty() && !singleLatin1CharacterOf(text) && formOfConstantsWithCellsAt(context).form == Form::Closed;
 }
 
 CellPointer ConstantEmitter::stringConstant(const OperationContext& context, StringID id)

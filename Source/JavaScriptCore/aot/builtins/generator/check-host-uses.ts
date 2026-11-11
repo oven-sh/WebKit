@@ -232,7 +232,7 @@ function checkCellsHoldingOnlyWhatIsStored(model: CheckedModel, written: readonl
 export interface NativeReads {
   readsEveryExport: boolean;
   names: Map<number, ModelName>;
-  namesWithAnotherUseThanKeepingMembers: Set<number>;
+  namesWithOtherUses: Set<number>;
 }
 
 export function collectNativeReads(model: Pick<TableModel, "builtins" | "startup">): Map<ModelModule, NativeReads> {
@@ -241,22 +241,22 @@ export function collectNativeReads(model: Pick<TableModel, "builtins" | "startup
   for (const { module, exports } of loads) {
     let read = reads.get(module);
     if (read === undefined)
-      reads.set(module, (read = { readsEveryExport: false, names: new Map(), namesWithAnotherUseThanKeepingMembers: new Set() }));
+      reads.set(module, (read = { readsEveryExport: false, names: new Map(), namesWithOtherUses: new Set() }));
     if (exports === null) read.readsEveryExport = true;
     else
       for (const { name, uses } of exports) {
         read.names.set(name.number, name);
-        const membersAloneAreKept = !!uses?.length && uses.every(use => use.read === "Kept" && use.path.length > 0);
-        if (!membersAloneAreKept) read.namesWithAnotherUseThanKeepingMembers.add(name.number);
+        const isMemberOnly = !!uses?.length && uses.every(use => use.read === "Kept" && use.path.length > 0);
+        if (!isMemberOnly) read.namesWithOtherUses.add(name.number);
       }
   }
   return reads;
 }
 
-function checkCellsKeepingMembersOfExportsAlone(model: CheckedModel, problems: Problems): void {
+function checkMemberOnlyCells(model: CheckedModel, problems: Problems): void {
   const flows = model.overloads.map(({ flow }) => flow);
   const called = new Set(flows.flatMap(({ handlerCalls }) => handlerCalls.flatMap(({ callee }) => cellOf(callee))));
-  const handedOut = new Set(
+  const cellsReadAsValues = new Set(
     flows.flatMap(({ transfers, callbacks, propertyActions, handlerCalls }) =>
       [
         ...transfers.map(({ from }) => from),
@@ -271,12 +271,12 @@ function checkCellsKeepingMembersOfExportsAlone(model: CheckedModel, problems: P
     for (const { module, exports } of loads) {
       const read = reads.get(module)!;
       for (const { name, uses } of exports ?? []) {
-        if (read.readsEveryExport || read.namesWithAnotherUseThanKeepingMembers.has(name.number)) continue;
+        if (read.readsEveryExport || read.namesWithOtherUses.has(name.number)) continue;
         for (const use of uses ?? []) {
           if (use.read !== "Kept") continue;
           const row = `${describeOwner(owner)} reads ${name.text} of ${module.specifier}: members of it alone are kept, in the native cell ${use.cell.text}`;
           if (!called.has(use.cell)) problems.add(null, `${row}, and no row calls what lies there`);
-          if (handedOut.has(use.cell)) problems.add(null, `${row}, and a row hands out what lies there`);
+          if (cellsReadAsValues.has(use.cell)) problems.add(null, `${row}, and a row hands out what lies there`);
         }
       }
     }
@@ -331,7 +331,7 @@ export function checkHostUses(model: CheckedModel, problems: Problems): void {
   for (const { row, uses } of written) forEachUse(uses, use => checkUse(row, use, problems));
   checkCells(model, written, problems);
   checkCellsHoldingOnlyWhatIsStored(model, written, problems);
-  checkCellsKeepingMembersOfExportsAlone(model, problems);
+  checkMemberOnlyCells(model, problems);
   checkHostObjects(model, problems);
   checkClassesWithHostMethods(model, problems);
 }

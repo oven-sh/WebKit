@@ -5,8 +5,8 @@
 # PROGRAM-OF: a-read-off-another-object-between-the-stores-of-a-stretch-has-its-look-in-front.ir
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = ShapeTest {{*}}layouts=[L0] [refusesMarkedObjects]
-# CHECK: = ShapeTest {{*}}layouts=[L0] [refusesMarkedObjects]
+# CHECK: = ShapeTest {{*}}layouts=[L0] [rejectsMarkedObjects]
+# CHECK: = ShapeTest {{*}}layouts=[L0] [rejectsMarkedObjects]
 # CHECK: PutSlot {{*}}key="a" receivers=[L0] level=Proven
 # CHECK: PutSlot {{*}}key="b" receivers=[L0] level=Proven
 # CHECK: PutSlot {{*}}key="c" receivers=[L0] level=Proven

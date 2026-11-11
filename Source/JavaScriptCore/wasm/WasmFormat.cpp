@@ -46,15 +46,56 @@ bool WasmCallableFunction::isJS() const
     return boxedCallee == CalleeBits { &WasmToJSCallee::singleton() };
 }
 
-std::unique_ptr<Segment> Segment::tryCreate(std::optional<I32InitExpr> offset, uint32_t sizeInBytes, Kind kind, uint32_t memoryIndex)
+bool Segments::tryReserve(size_t numberOfSegments, size_t numberOfBytes, size_t numberOfIndices)
 {
-    auto result = tryFastZeroedMalloc(allocationSize(sizeInBytes));
-    void* memory;
-    if (!result.getValue(memory))
-        return nullptr;
+    m_hasIndices = numberOfIndices;
+    // Passive segments are the usual ones with a long header, and only an index can name them.
+    size_t sizeOfHeaders = numberOfSegments * sizeof(Header) + numberOfIndices * sizeof(LongHeader);
+    return m_buffer.tryReserveInitialCapacity(sizeOfHeaders + numberOfBytes) && m_segmentOffsets.tryReserveInitialCapacity(numberOfIndices);
+}
 
-    ASSERT(kind == Kind::Passive || !!offset);
-    return std::unique_ptr<Segment>(new (memory) Segment(sizeInBytes, kind, WTF::move(offset), memoryIndex));
+bool Segments::tryAppend(const Segment& segment)
+{
+    if (m_hasIndices && !m_segmentOffsets.tryAppend(static_cast<uint32_t>(m_buffer.size())))
+        return false;
+
+    Header header { static_cast<uint32_t>(segment.bytes.size()), 0 };
+    if (segment.isActive() && segment.offsetIfActive->isConst() && segment.offsetIfActive->bits() <= std::numeric_limits<uint32_t>::max() && !segment.memoryIndex) [[likely]] {
+        header.offset = static_cast<uint32_t>(segment.offsetIfActive->bits());
+        if (!m_buffer.tryAppend(asByteSpan(header)))
+            return false;
+    } else {
+        LongHeader longHeader { };
+        longHeader.memoryIndex = segment.memoryIndex;
+        longHeader.isPassive = segment.isPassive();
+        if (segment.isActive()) {
+            longHeader.offset = segment.offsetIfActive->bits();
+            longHeader.isGlobalImport = segment.offsetIfActive->isGlobalImport();
+            longHeader.isExtendedExpression = segment.offsetIfActive->isExtendedExpression();
+        }
+        header.size |= hasLongHeaderBit;
+        if (!m_buffer.tryAppend(asByteSpan(header)) || !m_buffer.tryAppend(asByteSpan(longHeader)))
+            return false;
+    }
+    if (!m_buffer.tryAppend(segment.bytes))
+        return false;
+    ++m_size;
+    return true;
+}
+
+void Segments::readLongHeader(size_t& place, Segment& segment) const
+{
+    auto header = read<LongHeader>(place);
+    segment.memoryIndex = header.memoryIndex;
+    if (header.isPassive) {
+        segment.kind = Segment::Kind::Passive;
+        segment.offsetIfActive = std::nullopt;
+    } else if (header.isGlobalImport)
+        segment.offsetIfActive = I32InitExpr::globalImport(header.offset);
+    else if (header.isExtendedExpression)
+        segment.offsetIfActive = I32InitExpr::extendedExpression(header.offset);
+    else
+        segment.offsetIfActive = I32InitExpr::constValue(header.offset);
 }
 
 String makeString(const Name& characters)

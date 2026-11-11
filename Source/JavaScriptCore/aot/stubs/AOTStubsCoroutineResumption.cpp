@@ -129,7 +129,7 @@ StubSignature signatureOfEnterHandlerOfJob(StubKey) { return { }; }
 void generateEnterSavedFrame(StubAssembler& jit)
 {
     const GPRReg scratch = jit.reuseScratch(StubRegister::T11);
-    emitEnterAdapter(jit, AdapterCaller::NativeCodeForJobOfCoroutine);
+    emitEnterAdapter(jit);
     const GPRReg saved = jit.reuseScratch(StubRegister::A0);
     const GPRReg mode = jit.reuseScratch(StubRegister::A1);
     const GPRReg value = jit.reuseScratch(StubRegister::A2);
@@ -315,7 +315,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
 
         jit.align();
         jit.bindEntry(enterHandlerOfJob());
-        emitEnterAdapter(jit, AdapterCaller::NativeCodeForJobOfCoroutine);
+        emitEnterAdapter(jit);
         jit.load8(coroutineWord(AOT_INSTANCE_OFFSET(coroutines.nextEntryEndsJob)), scratch);
         jit.store8(TrustedImm32(0), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.nextEntryEndsJob)));
         jit.store64(scratch, endsJob);

@@ -8,7 +8,7 @@
 # REQUIRES(UNMADE): as-written
 # UNMADE-NOT: inlineBuiltin=StringFromCharCode
 # layout L908 kind=Closure
-module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 164, 210] quotedTexts=[{position=37 start=52 end=73}, {position=91 start=77 end=89}, {position=125 start=97 end=126}, {position=138 start=117 end=125}, {position=164 end=15}, {position=175 end=44}, {position=180 start=16 end=43}, {position=187 start=23 end=40}, {position=198 start=23 end=42}] textOfQuotes="globalThis.sink(decode(globalThis.source()))bytes = new Uint8Array(bytes)i < bytes.lengthtext += String.fromCharCode(bytes[i])"} functionText="function decode(bytes) { bytes = new Uint8Array(bytes); let text = \x22\x22; for (let i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]); return text; }\x0aglobalThis.sink(decode(globalThis.source()));\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 164, 210] quotedSources=[{position=37 start=52 end=73}, {position=91 start=77 end=89}, {position=125 start=97 end=126}, {position=138 start=117 end=125}, {position=164 end=15}, {position=175 end=44}, {position=180 start=16 end=43}, {position=187 start=23 end=40}, {position=198 start=23 end=42}] quotedSourceText="globalThis.sink(decode(globalThis.source()))bytes = new Uint8Array(bytes)i < bytes.lengthtext += String.fromCharCode(bytes[i])"} functionSource="function decode(bytes) { bytes = new Uint8Array(bytes); let text = \x22\x22; for (let i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]); return text; }\x0aglobalThis.sink(decode(globalThis.source()));\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -27,7 +27,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v13 = Undefined @164
     Return v13 @164
 }
-function f1 name="decode" module=m0 text={end=163} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array|Uint8Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="decode" module=m0 sourceRange={end=163} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array|Uint8Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string|Array|Uint8Array):
     v1 = Builtin builtin=Uint8Array @37
     v2 = Construct v1, -, v0 calleeName="Uint8Array" @37

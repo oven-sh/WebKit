@@ -51,24 +51,24 @@ static ALWAYS_INLINE TypeID typeOfReceiverBehindCheckInWalkTyped(Walker& walker,
     return walker.types().withoutNullish(typeOfReceiver);
 }
 
-static Reference splitNullishOffInFrontOfTypedCopyInWalkTyped(Walker& walker, const BodyValue& access, Reference receiver)
+static Reference tryHoistNullishCheck(Walker& walker, const BodyValue& access, Reference receiver)
 {
-    if (!walker.standsInFrontOfTypedCopy(receiver))
+    if (!walker.isInvariantInSpecializedVersion(receiver))
         return { };
     Origin origin = walker.originOf(access);
     origin.isTailCall = false;
     Reference isNullish;
     {
-        Walker::InFrontOfTypedCopy inFront(walker, true);
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true);
         Draft test(Opcode::TypeTest, origin);
         test.setValueOperand(receiver);
         test.setTestedType(TypeArena::fromPrimitives(Primitive::Undefined | Primitive::Null));
         isNullish = walker.build(WTF::move(test));
     }
-    if (!walker.branchInFrontOfTypedCopy(isNullish, false))
+    if (!walker.tryBranchInPreheader(isNullish, false))
         return { };
-    walker.noteGuessOpened();
-    Walker::InFrontOfTypedCopy inFront(walker, true);
+    walker.recordSpeculation();
+    Walker::SpecializedPreheaderScope preheaderScope(walker, true);
     Draft rest(Opcode::Narrowed, origin);
     rest.setValueOperand(receiver);
     rest.setTestOperand(isNullish);
@@ -104,7 +104,7 @@ static bool splitNullishOffReceiverInWalkTyped(Walker& walker, const BodyValue& 
             walker.bind(access.id(), built);
         return true;
     }
-    if (Reference checked = !isNeverType(rest) ? splitNullishOffInFrontOfTypedCopyInWalkTyped(walker, access, receiver) : Reference()) {
+    if (Reference checked = !isNeverType(rest) ? tryHoistNullishCheck(walker, access, receiver) : Reference()) {
         walker.state().noteCheckedName(receiver, checked);
         return walker.isUnreachable();
     }

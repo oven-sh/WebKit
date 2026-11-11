@@ -24,6 +24,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTPropertyWalk.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
@@ -363,8 +364,11 @@ static Structure* structureSharedWithClassesInheritingFrom(VM& vm, const Closure
     if (!classLayout.staticMethods().empty() || !classLayout.staticFields().empty())
         return nullptr;
     State& state = classObject.state();
-    if (parent != state.instance.globalObject->functionPrototype() && classLayout.evaluation() != EvaluationState::ProvenOnce)
-        return nullptr;
+    if (classLayout.evaluation() != EvaluationState::ProvenOnce) {
+        bool isFirstEvaluation = state.objects->closures.closureIfCreated(state.objects->classes.functionOfOwnClosure(classObject)) == &classObject;
+        if (parent != state.instance.globalObject->functionPrototype() || !isFirstEvaluation)
+            return nullptr;
+    }
     return state.objects->classes.classObjectStructureInheritingFrom(vm, parent);
 }
 
@@ -523,7 +527,10 @@ void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globa
 [[noreturn]] static void crashOnFalseProofOfClosure(uint32_t closureNumber, ASCIILiteral mutation)
 {
     FunctionID function = closureFunctionWithNumber(closureNumber);
-    dataLogLn("AOT: ", mutation, " of a closure of the function f", function.index(), " (", initialNameProperty(function), "): the compiler has proven that it never happens, and compiled code takes such closures to be as they were made without a look. This is a bug in Bun.");
+    RuntimeCheckFailure failure("object mutation check failed"_s);
+    failure.inFunction(function);
+    failure.detail(mutation, " on a closure of ", reportedFunctionName(function), ", but the compiler proved that this never happens");
+    failure.report();
     CRASH_WITH_INFO(function.index());
 }
 
@@ -559,25 +566,30 @@ bool holdsWhatIsFoundAbove(VM& vm, const JSObject* object, UniquedStringImpl* ui
     return own->getter() == found->getter() && own->setter() == found->setter();
 }
 
-void holdClosureToLackingNameSlowCase(VM& vm, const JSCell* closure, UniquedStringImpl* uid)
+bool closureAdmitsName(VM& vm, const JSCell* closure, UniquedStringImpl* uid)
 {
     std::optional<uint32_t> number = numberOfClosureHeldToListedNames(vm, closure);
     if (!number)
-        return;
+        return true;
     const CommonIdentifiers& names = *vm.propertyNames;
     if (uid == names.name.impl() || uid == names.length.impl() || uid == names.prototype.impl() || uid == names.arguments.impl() || uid == names.caller.impl())
-        return;
+        return true;
     if (uid->isSymbol() && static_cast<SymbolImpl*>(uid)->isPrivate())
-        return;
+        return true;
     std::optional<uint32_t> name = identifiersOf(*Instance::owning(closure)).numberOf(uid);
-    if (name && std::ranges::binary_search(programTables().namesLaidOnClosures(), NameLaidOnClosuresData { closureFunctionWithNumber(*number).index(), *name }))
+    return name && std::ranges::binary_search(programTables().closurePropertyNames(), ClosurePropertyNameData { closureFunctionWithNumber(*number).index(), *name });
+}
+
+void holdClosureToLackingNameSlowCase(VM& vm, const JSCell* closure, UniquedStringImpl* uid)
+{
+    if (closureAdmitsName(vm, closure, uid))
         return;
     const JSObject* object = static_cast<const JSObject*>(closure);
     unsigned attributes = 0;
     JSValue value = object->getDirect(vm, PropertyName(uid), attributes);
     if (!value || holdsWhatIsFoundAbove(vm, object, uid, value, attributes))
         return;
-    crashOnFalseProofOfClosure(*number, "AddName"_s);
+    crashOnFalseProofOfClosure(*numberOfClosureHeldToListedNames(vm, closure), "AddProperty"_s);
 }
 
 void holdClosureToItsPrototype(VM& vm, const JSCell* closure)
@@ -671,13 +683,13 @@ bool Closure::refusesOwnProperty(VM& vm, PropertyName name) const
 
 bool Closure::isBuiltinFunction() const
 {
-    return ModuleTable(state().instance.tables()).isRuntimeFunction(function());
+    return kind().isInRuntimeModule && ModuleTable(state().instance.tables()).isRuntimeFunction(function());
 }
 
-static bool storesPropertyOfClosureBelowClosure(VM& vm, Closure& closure, PropertyName name, const PutPropertySlot& slot)
+static bool canPutDirectly(VM& vm, Closure& closure, PropertyName name, const PutPropertySlot& slot)
 {
     JSObject* above = closure.getPrototypeDirect().getObject();
-    if (!above || above->type() != CompiledClosureType || slot.thisValue() != JSValue(&closure))
+    if (!above || (above->type() != CompiledClosureType && !isCompiledObject(above)) || slot.thisValue() != JSValue(&closure))
         return false;
     const CommonIdentifiers& names = *vm.propertyNames;
     if (name == names.prototype || name == names.name || name == names.length)
@@ -745,14 +757,15 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     closure->ensureClassObject(vm);
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
-    bool result = storesPropertyOfClosureBelowClosure(vm, *closure, name, slot) ? closure->putInlineFast(globalObject, name, value, slot) : Base::put(cell, globalObject, name, value, slot);
+    bool result = canPutDirectly(vm, *closure, name, slot) ? closure->putInlineFast(globalObject, name, value, slot) : Base::put(cell, globalObject, name, value, slot);
     if (slot.thisValue() == JSValue(closure))
         holdClosureToLackingNameSlowCase(vm, closure, name.uid());
     if (isStoreToClassObject) {
+        bool callsSetter = slot.type() == PutPropertySlot::SetterProperty;
         bool replacesUndeclaredProperty = slot.type() == PutPropertySlot::ExistingProperty && !classes.hasStaticMethodNamed(*classLayout, name.uid());
-        if (!replacesUndeclaredProperty)
+        if (!replacesUndeclaredProperty && !callsSetter)
             slot.disableCaching();
-        if (slot.type() != PutPropertySlot::SetterProperty) {
+        if (!callsSetter) {
             classes.holdMemberToProof(vm, *classLayout, ClassSide::Static, closure, name.uid());
             classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
         }

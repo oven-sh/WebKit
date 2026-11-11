@@ -37,7 +37,7 @@ public:
     const TypeTestPlan& planFor(TypeID from, Representation, TypeID to);
 
     void emitBranch(Operand, const TypeTestPlan&, BranchTargets);
-    void emitBranchAskingEachFunctionByItself(Operand, const TypeTestPlan&, BranchTargets);
+    void emitPerFunctionBranch(Operand, const TypeTestPlan&, BranchTargets);
     Condition emitBoolean(Operand, const TypeTestPlan&);
 
     Condition passesCellTest(CellPointer, const CellTest&, const Type& from, MarkedObjects = MarkedObjects::Pass);
@@ -94,7 +94,7 @@ private:
     std::array<PlanMap, numberOfEnumerators<Representation>> m_plans;
     bool m_casesAreBranchedOn { true };
     bool m_nextCaseIsUnlikely { false };
-    bool m_asksEachFunctionByItself { false };
+    bool m_isEmittingPerFunctionBranch { false };
 };
 
 void TypeTestEmitter::testCases(BlockEdge failure, const auto& forEachCase)

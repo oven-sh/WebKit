@@ -100,7 +100,7 @@ static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFram
     if (compiledFrame.frame.isAtFailedTailCall)
         return description.name(vm);
     if (!compiledFrame.frame.isAsyncFrame)
-        return description.calculatedDisplayName(vm, nullptr, compiledFrame.frame.hasCalleeInFrame);
+        return description.calculatedDisplayName(vm);
     String name = description.name(vm);
     if (name.isEmpty() || description.isNamedByOwner())
         return emptyString();
@@ -405,6 +405,8 @@ ALWAYS_INLINE auto StackFrame::withPartsOfString(VM& vm, const Functor& functor)
             return functor(functionName, "@[native code]"_s);
         auto position = AOT::positionOf(compiledFrame->frame);
         fullSourceURL = AOT::sourceProviderURLOf(compiledFrame->frame, position);
+        if (!fullSourceURL.isEmpty() && position && position->source)
+            fullSourceURL = AOT::displayPathOf(position->source);
         hasLineAndColumnInfo = true;
         if (position)
             lineColumn = position->lineColumn;

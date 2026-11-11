@@ -31,6 +31,10 @@ template<Opcode known> ALWAYS_INLINE bool buildCoroutineOperation(Walker& walker
 
 inline constexpr OpcodeSet opcodesThatAnswerFromStepWrittenByHandTakes { Opcode::PropGet, Opcode::TypeTest };
 AOT_LINK_OF_WALK(answerFromStepWrittenByHand, opcodesThatAnswerFromStepWrittenByHandTakes)
+inline constexpr OpcodeSet opcodesThatLeaveNextToStepTakes { Opcode::PropGet };
+AOT_LINK_OF_WALK(leaveNextToStep, opcodesThatLeaveNextToStepTakes)
+inline constexpr OpcodeSet opcodesThatCallStepsGeneratorTakes { Opcode::Call };
+AOT_LINK_OF_WALK(callStepsGenerator, opcodesThatCallStepsGeneratorTakes)
 
 std::optional<Vector<Reference, 8>> layOutEntryOperandsOfCall(Walker&, const BodyValue& call, FunctionID callee, CodeUnit entered);
 

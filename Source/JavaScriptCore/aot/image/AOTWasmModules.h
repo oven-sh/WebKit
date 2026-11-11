@@ -40,9 +40,15 @@ struct WasmFunctionCode {
     Vector<Wasm::HandlerInImage> handlers;
     BitVector directCallees;
     Wasm::SavedRegistersInImage savedRegisters { 0, 0, 0 };
+    Vector<Wasm::FramelessRangeInImage> framelessRanges;
     uint16_t savedRegistersIndex { 0 };
     bool usesVectors { false };
     bool dependsOnFlavor { false };
+    bool isOptimized { false };
+    unsigned threadedJumps { 0 };
+    unsigned firstStateTests { 0 };
+    uint32_t directEntry { 0 };
+    uint32_t directEntryWithZero { 0 };
 };
 
 struct WasmJSEntrypointCode {

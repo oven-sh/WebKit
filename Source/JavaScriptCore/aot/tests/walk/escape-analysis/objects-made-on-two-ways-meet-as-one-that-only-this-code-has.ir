@@ -11,8 +11,8 @@
 # NEVER-NOT: = NewObject
 # NEVER-NOT: GetSlot
 # NEVER-NOT: = PropGet
-# RUN(COUNT): compile ObjectsOfSeveralWaysMetAsOne mechanisms=none+TypedOperations+Folding+EscapeAnalysis
-# COUNT: statistic ObjectsOfSeveralWaysMetAsOne 1
+# RUN(COUNT): compile FreshObjectsMergedAtJoins mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# COUNT: statistic FreshObjectsMergedAtJoins 1
 # Without the mechanism both are made and the slot is read
 # RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+Folding
 # WITHHELD: = NewObject

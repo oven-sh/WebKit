@@ -73,9 +73,7 @@ static bool closureHoldsWordForListedCapture(const Program& program, const Calli
 void ConstantEmitter::generateNewClosure(const ValueContext& value)
 {
     CellPointer closure = closureCreatedBy(value);
-    if (!generator().hasFailed() && closureLentLiesInFrame(value.valueID()))
-        noteWhatClosureLentHolds(value.valueID());
-    if (!generator().hasFailed() && emitter<HintEmitter>().endsLivesAtRunTime() && lentClosureMayStandInHeap(m_code, value.valueID()) && value->loan() != LoanOfClosure::None)
+    if (!generator().hasFailed() && emitter<HintEmitter>().shouldEmitLifetimeEnds() && lentClosureMayStandInHeap(m_code, value.valueID()) && value->loan() != LoanOfClosure::None)
         emitter<HintEmitter>().noteThatCellIsLent(value, closure);
     defineCell(value, closure);
 }
@@ -84,28 +82,7 @@ bool ConstantEmitter::closureLentLiesInFrame(ValueID closure)
 {
     const Operation& made = operationAt(closure);
     return made.opcode == Opcode::NewClosure && made.storage() == AllocationStorage::Frame && made.loan() != LoanOfClosure::None
-        && !(emitter<HintEmitter>().endsLivesAtRunTime() && lentClosureMayStandInHeap(m_code, closure));
-}
-
-static ptrdiff_t offsetOfCapturesOfClosureInFrame(const Operation& made)
-{
-    RELEASE_ASSERT(made.closureForm() == ClosureForm::Slim || made.closureForm() == ClosureForm::Full);
-    return made.closureForm() == ClosureForm::Slim ? SlimClosure::offsetOfCaptures() : Closure::offsetOfCaptures();
-}
-
-void ConstantEmitter::noteWhatClosureLentHolds(ValueID closure)
-{
-    const Operation& made = operationAt(closure);
-    ClosureCaptureCounts counts = closureCaptureCountsOf(m_program, conventions(), made.function());
-    if (!counts.references)
-        return;
-    ptrdiff_t offsetOfCaptures = offsetOfCapturesOfClosureInFrame(made);
-    Vector<uint32_t, 8> offsets;
-    for (unsigned slot = 0; slot < counts.references; ++slot)
-        offsets.append(static_cast<uint32_t>(offsetOfCaptures + slot * sizeof(uint64_t)));
-    offsets.append(static_cast<uint32_t>(offsetOfCopyInHeapOfClosureInFrame(offsetOfCaptures, counts.captures)));
-    generator().noteClosureWhoseLifeEndsBehind(closure, callThatBorrowsClosure(m_code, closure));
-    emitter<CellAllocationEmitter>().noteWordsThatCellLentHolds(closure, offsets.span());
+        && !(emitter<HintEmitter>().shouldEmitLifetimeEnds() && lentClosureMayStandInHeap(m_code, closure));
 }
 
 CellPointer ConstantEmitter::closureCreatedBy(const ValueContext& value)
@@ -119,10 +96,10 @@ CellPointer ConstantEmitter::closureCreatedBy(const ValueContext& value)
     if (!conventions().exists(entry))
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
 
-    bool lifeIsEndedBehindCall = emitter<HintEmitter>().endsLivesAtRunTime() && lentClosureMayStandInHeap(m_code, value.valueID());
-    if (lifeIsEndedBehindCall)
-        generator().noteClosureWhoseLifeEndsBehind(value.valueID(), callThatBorrowsClosure(m_code, value.valueID()));
-    NewClosureRequest request { function, m_plan.functionKind(m_program, entry), { }, lifeIsEndedBehindCall ? AllocationStorage::Heap : value->storage(), value->closureForm(), captures };
+    bool endsLifetimeAfterCall = emitter<HintEmitter>().shouldEmitLifetimeEnds() && lentClosureMayStandInHeap(m_code, value.valueID());
+    if (endsLifetimeAfterCall)
+        generator().scheduleClosureLifetimeEnd(value.valueID(), callThatBorrowsClosure(m_code, value.valueID()));
+    NewClosureRequest request { function, m_plan.functionKind(m_program, entry), { }, endsLifetimeAfterCall ? AllocationStorage::Heap : value->storage(), value->closureForm(), captures };
     request.numberOfWords = closureCaptureCountsOf(m_program, conventions(), function).captures;
     if (request.form != ClosureForm::Deferred)
         emitter<EnvironmentEmitter>().markEnvironmentsThatClosureKeeps(value);
@@ -156,9 +133,18 @@ CellPointer ConstantEmitter::singletonClosure(const OperationContext& context, F
     };
     static constexpr OpcodeSet closures { Opcode::NewClosure };
     m_out.noteFormOf(closures, Form::Open, StateOfKnowledge::Singleton);
-    CellPointer created = emitter<ClosureTestEmitter>().closureIfCreated(function);
-    return either<CellPointer>(isNotEmpty(boxCell(created)), [&] {
-        return created;
+    ClosureTestEmitter& tests = emitter<ClosureTestEmitter>();
+    if (m_plan.usesWideReferences()) {
+        CellPointer created = tests.closureIfCreated(function);
+        return either<CellPointer>(isNotEmpty(boxCell(created)), [&] {
+            return created;
+        }, [&] {
+            return askStub(true);
+        });
+    }
+    Word32 tableEntry = tests.closureTableEntry(function);
+    return either<CellPointer>(Condition(m_out.notZero32(tableEntry.value())), [&] {
+        return tests.closureInTableEntry(tableEntry);
     }, [&] {
         return askStub(true);
     });

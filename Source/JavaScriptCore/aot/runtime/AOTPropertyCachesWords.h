@@ -152,6 +152,11 @@ struct NameOfText {
     UniquedStringImpl* uid;
 };
 
+struct UsesOfSubstringAsKey {
+    static constexpr uint8_t one = 1 << 3;
+    static constexpr uint8_t two = 2 * one;
+};
+
 struct KeyedValuePlace {
     static constexpr unsigned numberOfPlacesPerAccess = 512;
     static constexpr unsigned numberOfPlaces = 2 * numberOfPlacesPerAccess;
@@ -247,7 +252,7 @@ struct ProxyAccessWords {
     uint64_t storeIsStrictOrHeaderOfSlot;
 };
 
-struct RowsOfReads {
+struct ReadGroupCache {
     static constexpr unsigned numberOfRows = 4;
     static constexpr unsigned numberOfPlaces = 6;
     static constexpr int16_t placeIsAskedOfStub = 0;
@@ -271,7 +276,7 @@ struct RowsOfReads {
     uint8_t samplesThatHadRow;
     uint8_t cameInLastSample[numberOfRows];
 };
-static_assert(sizeof(RowsOfReads::Row) == 16 && sizeof(RowsOfReads) == 80 && !OBJECT_OFFSETOF(RowsOfReads, hasGivenUp));
+static_assert(sizeof(ReadGroupCache::Row) == 16 && sizeof(ReadGroupCache) == 80 && !OBJECT_OFFSETOF(ReadGroupCache, hasGivenUp));
 
 struct FrontWords {
     const uint32_t* rowsForStructureIDZero;
@@ -302,7 +307,8 @@ struct PropertyCacheWords {
     uint8_t placesSayAbsence;
     uint8_t placesTakeReplacementsAsUnwatched;
     uint8_t pairsHavePlaces;
-    uint8_t placesHoldCopiesOfSlots;
+    uint8_t hasCachedSlotValues;
+    uint8_t hasRunSinceClear;
     uint32_t timesAbsencesWereForgotten;
     uint32_t slowPathReadCount;
     const void* infoOfClassPrototypes;

@@ -73,9 +73,9 @@ void Quirk::apply(QuirksData& quirksData) const
 }
 
 static constexpr std::array rowFields { "bugs"_s, "comment"_s, "matches"_s, "embeddedMatches"_s, "excludeMatches"_s, "queryContains"_s, "fragmentContains"_s, "environment"_s, "available"_s, "behaviors"_s };
-static constexpr std::array behaviorFields { "id"_s, "script"_s, "userAgent"_s, "chromeCompatibilityVersion"_s, "cookieNames"_s, "elementSelector"_s, "documentSelector"_s, "secondaryURL"_s, "bugs"_s, "comment"_s };
+static constexpr std::array behaviorFields { "id"_s, "script"_s, "userAgent"_s, "chromeCompatibilityVersion"_s, "cookieNames"_s, "styleSheet"_s, "elementSelector"_s, "documentSelector"_s, "secondaryURL"_s, "bugs"_s, "comment"_s };
 
-static String LEGACY_NODELETE nonEmptyString(const JSON::Value& value)
+NODELETE static String nonEmptyString(const JSON::Value& value)
 {
     auto& string = value.asString();
     return string.isEmpty() ? String { } : string;
@@ -87,8 +87,7 @@ static std::optional<Vector<String>> nonEmptyStrings(JSON::Value& value)
     if (!array || !array->length())
         return std::nullopt;
 
-    Vector<String> strings;
-    strings.reserveInitialCapacity(array->length());
+    Vector<String> strings(ReserveCapacityTag { }, array->length());
     for (auto& element : *array) {
         auto string = nonEmptyString(element);
         if (string.isNull())
@@ -124,7 +123,7 @@ static bool isBugReference(StringView bug)
 namespace {
 
 template<typename CharacterType>
-bool LEGACY_NODELETE isBuildConditionNameCharacter(CharacterType character)
+NODELETE bool isBuildConditionNameCharacter(CharacterType character)
 {
     return isASCIIAlphanumeric(character) || character == '_';
 }
@@ -209,7 +208,7 @@ private:
         return isEnabled(*condition);
     }
 
-    bool LEGACY_NODELETE skipOperator(Operator op)
+    NODELETE bool skipOperator(Operator op)
     {
         auto character = op == Operator::Or ? '|' : '&';
         skipWhile(m_buffer, ' ');
@@ -238,6 +237,7 @@ static constexpr std::array parameterFields {
     std::pair { "userAgent"_s, QuirkParametersNeeded::NeedsUserAgent },
     std::pair { "chromeCompatibilityVersion"_s, QuirkParametersNeeded::NeedsChromeCompatibilityVersion },
     std::pair { "cookieNames"_s, QuirkParametersNeeded::NeedsCookieNames },
+    std::pair { "styleSheet"_s, QuirkParametersNeeded::NeedsStyleSheet },
 };
 
 static constexpr std::array conditionFields {
@@ -459,8 +459,7 @@ Vector<QuirkBehavior> QuirkTableParser::parseBehaviors(const JSON::Object& row, 
         return { };
     }
 
-    Vector<QuirkBehavior> behaviors;
-    behaviors.reserveInitialCapacity(values->length());
+    Vector<QuirkBehavior> behaviors(ReserveCapacityTag { }, values->length());
     QuirkBitSet seenIDs;
     for (auto [index, value] : WTF::indexedRange(*values)) {
         auto behavior = parseBehavior(value, rowLocation, index);
@@ -524,6 +523,7 @@ std::optional<QuirkBehavior> QuirkTableParser::parseBehavior(JSON::Value& value,
         .userAgent = fields.string("userAgent"_s),
         .chromeCompatibilityVersion = fields.string("chromeCompatibilityVersion"_s),
         .cookieNames = fields.strings("cookieNames"_s),
+        .styleSheet = fields.string("styleSheet"_s),
         .elementSelector = fields.string("elementSelector"_s),
         .documentSelector = fields.string("documentSelector"_s),
         .secondaryURL = fields.patterns("secondaryURL"_s),
@@ -659,6 +659,29 @@ void setQuirkTable(QuirkTable&& table)
 const QuirkTable& quirkTable()
 {
     return QuirkTableHolder::singleton().table();
+}
+
+static std::optional<QuirkTable>& originalQuirkTable()
+{
+    static MainThreadNeverDestroyed<std::optional<QuirkTable>> table;
+    return table.get();
+}
+
+void QuirkTableOverride::install(QuirkTable&& table)
+{
+    auto& original = originalQuirkTable();
+    if (!original)
+        original = quirkTable();
+    setQuirkTable(WTF::move(table));
+}
+
+void QuirkTableOverride::restore()
+{
+    auto& original = originalQuirkTable();
+    if (!original)
+        return;
+    setQuirkTable(WTF::move(*original));
+    original = std::nullopt;
 }
 
 } // namespace WebCore

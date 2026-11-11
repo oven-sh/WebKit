@@ -22,15 +22,15 @@ static Reference recordNotedInKnownElements(std::optional<uint64_t> noted)
     return noted ? Reference::fromBits(static_cast<uint32_t>(*noted)) : Reference();
 }
 
-static bool isTakenToLieInsideInKnownElements(Walker& walker, Reference position)
+static bool isAssumedInBoundsInKnownElements(Walker& walker, Reference position)
 {
-    TypeID type = position && walker.takesPositionsToLieInside() ? walker.typeOf(position) : TypeID();
+    TypeID type = position && walker.shouldAssumeIndexesInBounds() ? walker.typeOf(position) : TypeID();
     return type && walker.types().at(type).isInteger() && walker.types().at(type).integers.minimum >= 0;
 }
 
 std::optional<PassedTest> Walker::findWhatHoldsPositionInsideList(Reference list, Reference position)
 {
-    if (isTakenToLieInsideInKnownElements(*this, position)) {
+    if (isAssumedInBoundsInKnownElements(*this, position)) {
         PassedTest taken;
         taken.m_groundsOfPosition = GroundsOfPosition { .view = list && list.isRecord() ? list.id() : ValueID(), .position = position.id() };
         return taken;
@@ -40,11 +40,27 @@ std::optional<PassedTest> Walker::findWhatHoldsPositionInsideList(Reference list
     if (std::optional<PassedTest> found = showElementPresentBehindTest(list, position, findPassedTest(recordNotedInKnownElements(findKnown(*this, KnownNote::PositionFoundInsideList, list, position)))))
         return found;
     Reference length = recordNotedInKnownElements(findKnown(*this, KnownNote::LengthOfList, list));
-    std::optional<PassedTest> fromZeroUp = length ? findWhatHoldsFromZeroUp(position) : std::nullopt;
-    std::optional<PassedTest> below = fromZeroUp ? findWhatHoldsBelow(position, length) : std::nullopt;
+    std::optional<PassedTest> fromZeroUp = length ? findNonNegativeProof(position) : std::nullopt;
+    std::optional<PassedTest> below = fromZeroUp ? findUpperBoundProof(position, length) : std::nullopt;
     if (below)
-        return showPositionInsideBehindTests(list, position, length, *fromZeroUp, *below);
+        return boundsProofFromChecks(list, position, length, *fromZeroUp, *below);
     return fromZeroUp ? showPositionInsideBehindTestOfSum(list, position, length) : std::nullopt;
+}
+
+static bool isTermTestedForPosition(const Code& code, const Operation& narrowed, bool isWholePosition)
+{
+    static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
+    if (!narrowed.testOperand())
+        return false;
+    const Operation& test = code.at(narrowed.testOperand());
+    if (!allRelations.contains(test.opcode) || test.form() != OperatorForm::Integers || narrowed.operandIndex() > 1)
+        return false;
+    if (!isWholePosition)
+        return true;
+    ValueID bound = test.operand(1 - narrowed.operandIndex());
+    while (valuePreservingOpcodes.contains(code.at(bound).opcode))
+        bound = code.at(bound).operand(0);
+    return sums.contains(code.at(bound).opcode);
 }
 
 std::optional<PassedTest> Walker::showPositionInsideBehindTestOfSum(Reference list, Reference position, Reference length)
@@ -53,15 +69,19 @@ std::optional<PassedTest> Walker::showPositionInsideBehindTestOfSum(Reference li
         return std::nullopt;
     for (ValueID term = position.id(); term && !m_code.isConstant(term);) {
         const Operation& record = m_code.at(term);
-        if (record.opcode == Opcode::Narrowed && record.narrowsTermOfOperand()) {
-            GroundsOfPosition grounds { .view = list.id(), .position = position.id(), .length = length.id(), .isBelow = record.testOperand(), .isBelowAnswersYes = record.isOnTakenEdge() };
-            std::optional<PassedTest> shown = m_inputs.options.handsGroundsOfPositionsBelowSumsOverUnproven ? findPassedTest(referenceTo(grounds.isBelow), grounds.isBelowAnswersYes) : showPositionInside(grounds);
-            if (shown && m_inputs.options.handsGroundsOfPositionsBelowSumsOverUnproven)
+        bool isTermTested = record.opcode == Opcode::Narrowed && !record.narrowsTermOfOperand() && isTermTestedForPosition(m_code, record, term == position.id());
+        if (isTermTested || (record.opcode == Opcode::Narrowed && record.narrowsTermOfOperand())) {
+            GroundsOfPosition grounds { .view = list.id(), .position = position.id(), .length = length.id(), .isBelow = record.testOperand(), .isBelowResult = record.isOnTakenEdge() };
+            std::optional<PassedTest> shown = m_inputs.options.shouldSkipBoundsProof ? findPassedTest(referenceTo(grounds.isBelow), grounds.isBelowResult) : showPositionInside(grounds);
+            if (shown && m_inputs.options.shouldSkipBoundsProof)
                 shown->m_groundsOfPosition = grounds;
+            if (shown && isTermTested)
+                count(StatisticID::PositionsShownByTestedTerms);
             if (shown)
                 return shown;
         }
-        if (opcodesThatGiveSameValue.contains(record.opcode) || record.opcode == Opcode::Increment) {
+        bool stepsDown = record.opcode == Opcode::Decrement || (record.opcode == Opcode::Sub && m_code.isConstant(record.operand(1)));
+        if (valuePreservingOpcodes.contains(record.opcode) || record.opcode == Opcode::Increment || stepsDown) {
             term = record.operand(0);
             continue;
         }
@@ -83,7 +103,7 @@ bool isKnownToLieInsideList(Walker& walker, Reference list, Reference position)
 std::optional<Effects> effectsOfAppendToListAsMade(Walker& walker, const Draft& append)
 {
     static constexpr OpcodeSet appendsThatRunNoCode { Opcode::AppendElements, Opcode::AppendMembers, Opcode::AppendValuesOfMap };
-    if (!appendsThatRunNoCode.contains(append.opcode) || !walker.has(Mechanism::TypedOperations) || !isFreshListAsMade(walker, append.arrayOperand()))
+    if (!appendsThatRunNoCode.contains(append.opcode) || !walker.has(Mechanism::TypedOperations) || !isFreshPristineArray(walker, append.arrayOperand()))
         return std::nullopt;
     Effects effects = declaredEffectsOfOperation(walker.program(), append.opcode, append);
     if (effects.mayRunOtherCode())
@@ -136,7 +156,7 @@ void noteStorageOfListMade(Walker& walker, Reference list)
         return;
     uint64_t noted = static_cast<uint64_t>(storage) | static_cast<uint64_t>(length) << shiftOfLengthInKnownElements;
     noteKnown(walker, KnownNote::StorageOfListMadeInSight, list, { }, 0, LocationMasks(heapsUnderStorageOfListInKnownElements), noted);
-    walker.count(StatisticID::ListsWhoseStorageIsNoted);
+    walker.count(StatisticID::ArrayIndexingTypesRecorded);
 }
 
 WrittenListOfVariable writtenListThatVariableHolds(Walker& walker, VariableID variable)
@@ -157,9 +177,9 @@ WrittenListOfVariable writtenListThatVariableHolds(Walker& walker, VariableID va
 bool isReadOutOfVariableOfFileThatStays(Walker& walker, ValueID input)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID source = index.valueBehindCasts(input);
+    ValueID source = index.stripCasts(input);
     if (source && !index.isParameter(source) && index.opcodeOf(source) == Opcode::CheckInitialized)
-        source = index.valueBehindCasts(index.value(source).operand(0));
+        source = index.stripCasts(index.value(source).operand(0));
     if (!source || index.isParameter(source) || index.opcodeOf(source) != Opcode::GetModuleVariable)
         return false;
     VariableID variable = index.value(source).variable();
@@ -170,26 +190,26 @@ void noteStorageOfWrittenList(Walker& walker, Reference list, const WrittenListO
 {
     uint64_t noted = static_cast<uint64_t>(written.storage) | static_cast<uint64_t>(written.length) << shiftOfLengthInKnownElements;
     noteKnown(walker, KnownNote::StorageOfListMadeInSight, list, { }, 0, LocationMasks(heapsUnderStorageOfListInKnownElements), noted);
-    walker.count(StatisticID::ListsAskedWhetherTheirStorageIsTheWrittenData);
+    walker.count(StatisticID::ConstantArrayGuardsHoisted);
 }
 
 std::optional<PassedTest> Walker::findWhatHoldsPositionInsideListMadeInSight(Reference list, Reference position)
 {
     std::optional<uint64_t> noted = findKnown(*this, KnownNote::StorageOfListMadeInSight, list);
-    std::optional<PassedTest> fromZeroUp = noted ? findWhatHoldsFromZeroUp(position) : std::nullopt;
+    std::optional<PassedTest> fromZeroUp = noted ? findNonNegativeProof(position) : std::nullopt;
     if (!fromZeroUp)
         return std::nullopt;
     Draft length(Opcode::Integer);
     length.setInteger(static_cast<int64_t>(*noted >> shiftOfLengthInKnownElements));
     Reference lengthAsMade = constant(WTF::move(length));
-    std::optional<PassedTest> below = findWhatHoldsBelow(position, lengthAsMade);
-    return below ? showPositionInsideBehindTests(list, position, lengthAsMade, *fromZeroUp, *below) : std::nullopt;
+    std::optional<PassedTest> below = findUpperBoundProof(position, lengthAsMade);
+    return below ? boundsProofFromChecks(list, position, lengthAsMade, *fromZeroUp, *below) : std::nullopt;
 }
 
 WhatListWasMadeWith whatListWasMadeWith(Walker& walker, Reference list)
 {
     const Code& code = walker.code();
-    const Operation& making = code.at(rootOfCellInSweptCode(code, list.id()));
+    const Operation& making = code.at(underlyingCellOf(code, list.id()));
     if (making.opcode == Opcode::Data) {
         const auto* constant = making.data() ? walker.program().at(making.data()).root.tryAs<DataNode::Array>() : nullptr;
         if (!constant)
@@ -236,7 +256,7 @@ static void checkTestOfListInKnownElements(Walker& walker, Draft&& test)
     Origin origin = test.origin();
     Reference holds = walker.buildTestOfCheck(WTF::move(test));
     if (holds && holds.isValue() && !walker.isUnreachable())
-        walker.checkProof(holds, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::WhatIsRemembered, origin);
+        walker.checkProof(holds, TypeArena::fromPrimitives(Primitive::True), TypeTable::boolean, ProofSource::RememberedFact, origin);
 }
 
 std::optional<uint32_t> lengthOfListMadeInSight(Walker& walker, Reference list)
@@ -317,7 +337,7 @@ bool nameStorageOfListMadeInSight(Walker& walker, Draft& read)
         checkTestOfListInKnownElements(walker, WTF::move(test));
     }
     read.setArrayStorage(storage);
-    walker.count(StatisticID::ReadsThatNameStorageOfList);
+    walker.count(StatisticID::ElementReadsGivenIndexingType);
 
     std::optional<PassedTest> inside = read.isInBounds() ? read.testsPassed : walker.findWhatHoldsPositionInsideListMadeInSight(list, read.positionOperand());
     if (!inside)
@@ -333,7 +353,7 @@ bool nameStorageOfListMadeInSight(Walker& walker, Draft& read)
         checkTestOfListInKnownElements(walker, WTF::move(test));
     }
     read.setIsPresent(*inside);
-    walker.count(StatisticID::ReadsOfElementsKnownToBeThere);
+    walker.count(StatisticID::ElementReadsProvenPresent);
     return true;
 }
 

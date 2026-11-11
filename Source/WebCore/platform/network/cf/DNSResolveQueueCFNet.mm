@@ -103,7 +103,7 @@ private:
     std::optional<uint64_t> m_identifier;
 };
 
-static std::optional<IPAddress> LEGACY_NODELETE extractIPAddress(const struct sockaddr* address)
+NODELETE static std::optional<IPAddress> extractIPAddress(const struct sockaddr* address)
 {
     if (!address)
         return std::nullopt;
@@ -163,8 +163,7 @@ void DNSResolveQueueCFNet::performDNSLookup(const String& hostname, Ref<Completi
             return callCompletionHandler(makeUnexpected(DNSError::CannotResolve));
 
         size_t count = nw_array_get_count(resolvedEndpoints);
-        Vector<IPAddress> result;
-        result.reserveInitialCapacity(count);
+        Vector<IPAddress> result(ReserveCapacityTag { }, count);
         for (size_t i = 0; i < count; i++) {
             // FIXME: Reintroduce dynamicOSObjectCast use once macOS 26 Tahoe is the oldest supported release.
             if (RetainPtr resolvedEndpoint = reinterpret_cast<nw_endpoint_t>(nw_array_get_object_at_index(resolvedEndpoints, i))) {
@@ -179,6 +178,8 @@ void DNSResolveQueueCFNet::performDNSLookup(const String& hostname, Ref<Completi
         else
             callCompletionHandler(WTF::move(result));
     }).get());
+
+    ++m_prefetchedHostnameCountForTesting;
 }
 
 void DNSResolveQueueCFNet::platformResolve(const String& hostname)

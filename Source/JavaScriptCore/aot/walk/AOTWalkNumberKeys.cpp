@@ -61,9 +61,9 @@ static bool keyIsBoundToRemainderInNumberKeys(Walker& walker, ValueID writtenKey
         return false;
     const Code& code = walker.code();
     ValueID record = key.id();
-    while (opcodesThatGiveSameValue.contains(code.at(record).opcode))
+    while (valuePreservingOpcodes.contains(code.at(record).opcode))
         record = code.at(record).operand(0);
-    return code.at(record).opcode == Opcode::Mod;
+    return code.at(record).opcode == Opcode::Mod || code.at(record).opcode == Opcode::RemainderByWholeDivisor;
 }
 
 static WayInNumberForms endOfAccessInNumberKeys(Walker& walker, const BodyValue& value)
@@ -98,7 +98,7 @@ static bool buildAccessUnderWholeRemainderInNumberKeys(Walker& walker, const Bod
         return true;
     BlockID whereDivisorIsZero = walker.addBlock(BlockFrequency::Rare);
     BlockID meeting = walker.addBlock();
-    goOnWhereTestPassesInNumberForms(walker, divisorIsNotZero, whereDivisorIsZero);
+    continueIfTrue(walker, divisorIsNotZero, whereDivisorIsZero);
     buildAccessUnderKeyInNumberKeys(walker, value, key);
     WayInNumberForms underInteger = endOfAccessInNumberKeys(walker, value);
 
@@ -150,7 +150,7 @@ static bool buildViewAccessUnderNumberOrUndefinedInNumberKeys(Walker& walker, co
     if (!isNumber)
         return true;
     BlockID whereKeyIsUndefined = walker.addBlock(BlockFrequency::Rare);
-    goOnWhereTestPassesInNumberForms(walker, isNumber, whereKeyIsUndefined);
+    continueIfTrue(walker, isNumber, whereKeyIsUndefined);
     if (Reference proven = buildProofOfNumber(walker, writtenKey, isNumber, origin))
         buildAccessUnderKeyInNumberKeys(walker, value, proven);
     WayInNumberForms underNumber = endOfAccessInNumberKeys(walker, value);
@@ -199,7 +199,7 @@ static bool buildViewAccessUnderUnknownKeyInNumberKeys(Walker& walker, const Bod
     if (!isWhole)
         return false;
     BlockID whereKeyIsAnother = walker.addBlock(BlockFrequency::Rare);
-    goOnWhereTestPassesInNumberForms(walker, isWhole, whereKeyIsAnother);
+    continueIfTrue(walker, isWhole, whereKeyIsAnother);
     if (Reference proven = buildProofOfNumber(walker, writtenKey, isWhole, origin))
         buildAccessUnderKeyInNumberKeys(walker, value, proven);
     WayInNumberForms underWhole = endOfAccessInNumberKeys(walker, value);
@@ -213,7 +213,7 @@ static bool buildViewAccessUnderUnknownKeyInNumberKeys(Walker& walker, const Bod
             underAnother = endOfAccessInNumberKeys(walker, value);
         }
     }
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     if (!underAnother.end) {
         if (underWhole.end)
             walker.continueIn(underWhole.end);
@@ -228,14 +228,14 @@ static bool buildViewAccessUnderUnknownKeyInNumberKeys(Walker& walker, const Bod
 
 static bool buildListAccessUnderNumberAskedForInt32InNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
-    if (value.opcode() == Opcode::ElemHas || !walker.opensGuesses() || !walker.isInLoop() || !walker.standsInTurnThatLooksCountOn())
+    if (value.opcode() == Opcode::ElemHas || !walker.opensGuesses() || !walker.isInLoop() || !walker.canBuildIterationGuard())
         return false;
     if (!keyOfProvenListMayBeAskedForInt32(walker.types(), inputs.typeOf(value.objectOperand()), inputs.typeOf(value.propertyOperand())))
         return false;
     Reference writtenKey = walker.referenceOf(value.propertyOperand());
     if (!writtenKey || !writtenKey.isValue() || walker.state().checkedNameOf(writtenKey) || walker.code().at(writtenKey.id()).representation != Representation::Double)
         return false;
-    std::optional<ListTestedInFrontOfLoop> tested = findListTestedInFrontOfLoop(walker, value);
+    std::optional<HoistedArrayGuard> tested = findHoistedArrayGuard(walker, value);
     if (!tested || !tested->turnsStoreIntoLists || !hasTypedFormUnderKeyInNumberKeys(walker, value, inputs, TypeTable::int32))
         return false;
 
@@ -244,13 +244,13 @@ static bool buildListAccessUnderNumberAskedForInt32InNumberKeys(Walker& walker, 
     if (!isInt32 || !isInt32.isValue())
         return false;
     BlockID whereKeyIsAnother = walker.addBlock(BlockFrequency::Rare);
-    goOnWhereTestPassesInNumberForms(walker, isInt32, whereKeyIsAnother);
+    continueIfTrue(walker, isInt32, whereKeyIsAnother);
     BlockID whereKeyIsInt32 = walker.currentBlock();
     walker.continueIn(whereKeyIsAnother);
     if (!walker.isUnreachable())
-        walker.beginTurnAgainInClosedCopy();
+        walker.restartIteration();
     walker.continueIn(whereKeyIsInt32);
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     if (walker.isUnreachable() || walker.hasFailed())
         return true;
     Reference proven = buildProofOfNumber(walker, writtenKey, isInt32, origin);
@@ -258,7 +258,7 @@ static bool buildListAccessUnderNumberAskedForInt32InNumberKeys(Walker& walker, 
         return true;
     if (proven.isValue() && proven != writtenKey)
         walker.state().noteCheckedName(writtenKey, proven);
-    walker.count(StatisticID::KeysOfListsAskedForInt32InTurns);
+    walker.count(StatisticID::Int32KeysGuardedInIterations);
     buildAccessUnderKeyInNumberKeys(walker, value, proven);
     return true;
 }

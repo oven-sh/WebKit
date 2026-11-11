@@ -163,11 +163,22 @@ private:
 };
 
 struct SummaryEdge {
-    uint32_t from { 0 };
+    SummaryEdge() = default;
+    SummaryEdge(uint32_t from, uint32_t to, TypeID passes, bool runsCodeOfValue)
+        : from(from)
+        , runsCodeOfValue(runsCodeOfValue)
+        , to(to)
+        , passes(passes)
+    {
+        RELEASE_ASSERT(this->from == from);
+    }
+
+    uint32_t from : 31 { 0 };
+    uint32_t runsCodeOfValue : 1 { false };
     uint32_t to { 0 };
     TypeID passes;
-    bool runsCodeOfValue { false };
 };
+static_assert(sizeof(SummaryEdge) == 12);
 
 struct SummaryCall {
     enum class Callee : uint8_t {
@@ -189,7 +200,7 @@ struct SummaryCall {
     bool passesOnGatheredArguments : 1 { false };
     bool expectsCalleeItself : 1 { false };
     bool isMadeByHost : 1 { false };
-    bool handsOverLiteral : 1 { false };
+    bool passesLiteral : 1 { false };
     uint16_t lengthOfWrittenList : 13 { 0 };
     FunctionID function;
     BuiltinID builtin;
@@ -238,14 +249,10 @@ struct SummaryAccess {
     PropertyKeyID key;
     uint32_t keyNode { noSummaryNode };
 
-    StringID beginningOfKey;
     uint32_t value { noSummaryNode };
     SlotOfContents slot;
-    uint32_t whatHoldsNothing { noSummaryNode };
+    uint32_t whatHoldsNothingOrBeginningOfKey { noSummaryNode };
     uint32_t thrownTo { noSummaryNode };
-    FunctionID writtenGetter;
-    FunctionID writtenSetter;
-    LayoutID mapOfWrittenAccessor;
     union {
         uint32_t descriptorFromElsewhere { noSummaryNode };
         uint32_t writtenIndexOfRead;
@@ -253,7 +260,18 @@ struct SummaryAccess {
 
 
     bool isToContents() const { return !!slot; }
+    uint32_t whatHoldsNothing() const { return isToContents() ? whatHoldsNothingOrBeginningOfKey : noSummaryNode; }
+    StringID beginningOfKey() const { return isToContents() ? StringID() : StringID::fromBits(whatHoldsNothingOrBeginningOfKey); }
     bool laysValueInSightUnderName() const { return !isToContents() && (kind == Kind::Store || (kind == Kind::Define && value && value != noSummaryNode)); }
+};
+
+static_assert(sizeof(SummaryAccess) == 48 && StringID().bits() == noSummaryNode);
+
+struct SummaryWrittenAccessor {
+    uint32_t access { 0 };
+    FunctionID getter;
+    FunctionID setter;
+    LayoutID map;
 };
 
 struct SummaryOperator {
@@ -369,6 +387,7 @@ enum class SummaryTrait : uint16_t {
     StoresUnderComputedKey = 1 << 7,
     OnlyPassesOnGatheredArguments = 1 << 8,
     HoldsInt32Promise = 1 << 9,
+    ReturnsUInt32 = 1 << 10,
 };
 
 struct OtherNameOfObjectBeingMade {
@@ -429,12 +448,13 @@ struct SummaryWrittenListOfVariable {
 
 struct SummaryWithoutLists {
     uint64_t entryParametersCalledInLoops { 0 };
-    uint64_t entryParametersLetGo { 0 };
     uint32_t numberOfOperations { 0 };
     uint32_t numberOfOperationsThatOnlyTurnTruthRound { 0 };
     uint32_t weightOfOperations { 0 };
     uint32_t weightThatSwitchesSave { 0 };
     uint32_t numberOfOwnCalls { 0 };
+    uint16_t entryParametersReadAsNames { 0 };
+    uint16_t entryParametersReadAsKeys { 0 };
     uint32_t numberOfArgumentsOfOwnCalls { 0 };
     OptionSet<SummaryTrait> traits;
     bool operatorsLeftApartMayJoinTexts { false };
@@ -591,10 +611,10 @@ struct ThinSummary : SummaryWithoutLists {
             std::ranges::destroy(scopesStoredFirst.mutableSpan());
             fastFree(nodes.m_storage.blockKeptForWalk);
         }
-        freeListsNotKeptForWalk();
+        trimForWalk();
     }
 
-    void freeListsNotKeptForWalk()
+    void trimForWalk()
     {
         SummaryStorage& storage = nodes.m_storage;
         if (!storage.listsInRecord[0])
@@ -668,13 +688,25 @@ struct ThinSummary : SummaryWithoutLists {
         SummaryList<uint32_t, 56> placesOfWrittenLists;
         SummaryList<uint32_t, 57> definitionsByDescriptorInOrderOfSites;
         SummaryList<uint32_t, 58> callsAtSitesOfCopiesThatSpellStores;
+        SummaryList<SummaryWrittenAccessor, 59> writtenAccessors;
     };
+
+    const SummaryWrittenAccessor& writtenAccessorOf(uint32_t access) const LIFETIME_BOUND
+    {
+        auto found = std::ranges::lower_bound(writtenAccessors, access, { }, &SummaryWrittenAccessor::access);
+        RELEASE_ASSERT(found != writtenAccessors.end() && found->access == access);
+        return *found;
+    }
 
     uint64_t layoutsOfOwnWrites() const { return wordsOfEffects.isEmpty() ? 0 : wordsOfEffects[0]; }
     bool ownEffectsMayCallUnknownCode() const;
     JS_EXPORT_PRIVATE Effects ownEffects() const;
     JS_EXPORT_PRIVATE std::optional<Effects> ownEffectsOfOperators() const;
 
+    bool holdsWrittenList(DataID data) const
+    {
+        return std::ranges::any_of(writtenListsOfVariables, [&](const SummaryWrittenListOfVariable& written) { return written.data == data; });
+    }
     const SummaryWrittenListOfVariable* findWrittenListOf(VariableID variable) const LIFETIME_BOUND
     {
         auto found = std::ranges::lower_bound(writtenListsOfVariables, variable.index(), { }, [](const SummaryWrittenListOfVariable& each) { return each.variable.index(); });
@@ -692,13 +724,24 @@ struct ThinSummary : SummaryWithoutLists {
         }
     }
 
-    void forEachLayoutLeftEmpty(NOESCAPE const Invocable<void(LayoutID, std::span<const uint32_t> fieldsHeld)> auto& functor) const
+    static constexpr uint32_t isFilledByCopy = 1u << 31;
+    static constexpr uint32_t noCopy = UINT32_MAX;
+    void forEachLayoutLeftEmptyAndCopy(NOESCAPE const Invocable<void(LayoutID, std::span<const uint32_t> fieldsHeld, uint32_t copy)> auto& functor) const
     {
         std::span<const uint32_t> rest = fieldsHeldOfLayoutsLeftEmpty.span();
         while (!rest.empty()) {
-            functor(LayoutID(rest[0]), rest.subspan(2, rest[1]));
-            rest = rest.subspan(2 + rest[1]);
+            bool isFilled = rest[1] & isFilledByCopy;
+            size_t first = isFilled ? 3 : 2;
+            uint32_t numberHeld = rest[1] & ~isFilledByCopy;
+            functor(LayoutID(rest[0]), rest.subspan(first, numberHeld), isFilled ? rest[2] : noCopy);
+            rest = rest.subspan(first + numberHeld);
         }
+    }
+    void forEachLayoutLeftEmpty(NOESCAPE const Invocable<void(LayoutID, std::span<const uint32_t> fieldsHeld)> auto& functor) const
+    {
+        forEachLayoutLeftEmptyAndCopy([&](LayoutID layout, std::span<const uint32_t> fieldsHeld, uint32_t) {
+            functor(layout, fieldsHeld);
+        });
     }
 
     bool leavesEmpty(FieldReference field) const
@@ -714,6 +757,7 @@ struct ThinSummary : SummaryWithoutLists {
 static_assert(sizeof(ThinSummary) <= 128);
 
 struct SummaryBeingMade : SummaryWithoutLists {
+    bool makesCopies { false };
     Vector<SummaryNode> nodes;
     Vector<SummaryEdge> edges;
     Vector<SummaryCall> calls;
@@ -772,6 +816,7 @@ struct SummaryBeingMade : SummaryWithoutLists {
     Vector<uint32_t> placesOfWrittenLists;
     Vector<uint32_t> definitionsByDescriptorInOrderOfSites;
     Vector<uint32_t> callsAtSitesOfCopiesThatSpellStores;
+    Vector<SummaryWrittenAccessor> writtenAccessors;
     uint64_t layoutsOfOwnWrites { 0 };
     Effects ownEffects;
     std::optional<Effects> ownEffectsOfOperators;
@@ -787,11 +832,11 @@ public:
     size_t size() const { return m_summaries.size(); }
     void append(ThinSummary&& summary) { m_summaries.append(WTF::move(summary)); }
 
-    void freeListsNotKeptForWalk(const ParallelLoops& loops)
+    void trimForWalk(const ParallelLoops& loops)
     {
         forEachRangeOfIndicesInParallel(loops, m_summaries.size(), [&](size_t first, size_t end) {
             for (ThinSummary& summary : m_summaries.mutableSpan().subspan(first, end - first))
-                summary.freeListsNotKeptForWalk();
+                summary.trimForWalk();
         });
     }
 
@@ -805,6 +850,8 @@ public:
     void setNumberOfValuesScanned(uint64_t number) { m_numberOfValuesScanned = number; }
     std::span<const FunctionID> functionsThatCopyMembers() const LIFETIME_BOUND { return m_functionsThatCopyMembers.span(); }
     void setFunctionsThatCopyMembers(Vector<FunctionID>&& functions) { m_functionsThatCopyMembers = WTF::move(functions); }
+    std::span<const FunctionID> functionsThatMakeCopies() const LIFETIME_BOUND { return m_functionsThatMakeCopies.span(); }
+    void setFunctionsThatMakeCopies(Vector<FunctionID>&& functions) { m_functionsThatMakeCopies = WTF::move(functions); }
     struct MakerOfClosures {
         FunctionID closure;
         FunctionID maker;
@@ -815,6 +862,8 @@ public:
         return found != m_makersAboveCopiesOfMembers.end() && found->closure == closure ? found->maker : FunctionID();
     }
     void setMakersAboveCopiesOfMembers(Vector<MakerOfClosures>&& makers) { m_makersAboveCopiesOfMembers = WTF::move(makers); }
+    PropertyKeyID symbolHeldBy(VariableID variable) const { return variable.index() < m_symbolsOfVariables.size() ? m_symbolsOfVariables[variable.index()] : PropertyKeyID(); }
+    void setSymbolsOfVariables(Vector<PropertyKeyID>&& symbols) { m_symbolsOfVariables = WTF::move(symbols); }
 
 private:
     LargeList<ThinSummary> m_summaries;
@@ -823,7 +872,9 @@ private:
     SetsOfLayoutsWritten m_setsOfLayoutsWrittenInBodies;
     uint64_t m_numberOfValuesScanned { 0 };
     Vector<FunctionID> m_functionsThatCopyMembers;
+    Vector<FunctionID> m_functionsThatMakeCopies;
     Vector<MakerOfClosures> m_makersAboveCopiesOfMembers;
+    Vector<PropertyKeyID> m_symbolsOfVariables;
 };
 
 ThinSummaries scanBodies(const Program&, Diagnostics&, const ParallelLoops&, Mechanisms = allMechanisms);

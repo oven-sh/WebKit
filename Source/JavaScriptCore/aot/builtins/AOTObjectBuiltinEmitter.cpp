@@ -26,14 +26,14 @@ ObjectBuiltinEmitter::ObjectBuiltinEmitter(CodeGenerator& generator)
 {
 }
 
-CellPointer ObjectBuiltinEmitter::allocateEmptyObject(InlineAllocation kind, std::optional<Integer> header, LBasicBlock slowPath)
+CellPointer ObjectBuiltinEmitter::allocateEmptyObject(InlineAllocation kind, std::optional<Integer> header, LBasicBlock slowPath, unsigned inlineCapacity)
 {
     CellAllocationEmitter& allocation = emitter<CellAllocationEmitter>();
     CodeGenerator::InitializationScope scope(generator());
     CellPointer object = allocation.allocateObject(kind, slowPath);
     if (header)
         allocation.storeHeader(object, *header);
-    for (PropertyOffset slot = 0; slot < static_cast<PropertyOffset>(JSFinalObject::defaultInlineCapacity); ++slot)
+    for (PropertyOffset slot = 0; slot < static_cast<PropertyOffset>(inlineCapacity); ++slot)
         m_out.store64(m_out.int64Zero, inlineProperty(object, slot));
     emitter<BarrierEmitter>().fenceAfterInitialization();
     return object;
@@ -53,10 +53,10 @@ CellPointer ObjectBuiltinEmitter::createObjectWithPrototype(const InlineCall& ca
     CellPointer cachedPrototype(m_out.loadPtr(m_out.address(*cache.heap(), entry, cache.offset() + OBJECT_OFFSETOF(CacheEntry, prototype))));
     branchUnless(equal(cachedPrototype, prototype), slowPath);
     Integer header(m_out.load64(m_out.address(*cache.heap(), entry, cache.offset() + OBJECT_OFFSETOF(CacheEntry, header))));
-    join.add(allocateEmptyObject(InlineAllocation::DefaultFinalObject, header, slowPath));
+    join.add(allocateEmptyObject(InlineAllocation::DefaultFinalObject, header, slowPath, JSFinalObject::defaultInlineCapacity));
 
     m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectCreate, { prototype }, { .isOnRarePath = true }));
+    join.add(callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectCreate, { prototype, word32(0) }, { .isOnRarePath = true }));
     return join.finish();
 }
 
@@ -64,10 +64,12 @@ CellPointer ObjectBuiltinEmitter::createObjectWithoutPrototype(const InlineCall&
 {
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
-    join.add(allocateEmptyObject(InlineAllocation::NullPrototypeObject, std::nullopt, slowPath));
+    uint32_t numberOfDefinitions = call.numberOfParameters() ? call.parameterWord(0) : 0;
+    bool isSmall = numberOfDefinitions && numberOfDefinitions <= smallObjectInlineCapacity;
+    join.add(allocateEmptyObject(isSmall ? InlineAllocation::SmallNullPrototypeObject : InlineAllocation::NullPrototypeObject, std::nullopt, slowPath, isSmall ? smallObjectInlineCapacity : JSFinalObject::defaultInlineCapacity));
 
     m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectCreate, { CellPointer(m_out.intPtrZero) }, { .isOnRarePath = true }));
+    join.add(callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectCreate, { CellPointer(m_out.intPtrZero), word32(isSmall) }, { .isOnRarePath = true }));
     return join.finish();
 }
 
@@ -183,8 +185,11 @@ void ObjectBuiltinEmitter::generateObjectAssign(const InlineCall& call)
 {
     ValueID target = call.argument(0);
     CellPointer object = objectOrMiss(call, target);
-    Boxed source = boxedOperand(call.context(), call.argument(1));
-    missUnless(call, callOperation<Condition>(call.context(), RuntimeOperation::ObjectAssignWithoutCode, { object, source }, { .calledBuiltin = functionOf(call.overload()) }));
+    for (unsigned index = 1; index < call.arguments().size(); ++index) {
+        bool isLastSource = index + 1 == call.arguments().size();
+        RuntimeOperation operation = isLastSource ? RuntimeOperation::ObjectAssignWithoutCode : RuntimeOperation::ObjectAssignWithoutGetters;
+        missUnless(call, callOperation<Condition>(call.context(), operation, { object, boxedOperand(call.context(), call.argument(index)) }, { .calledBuiltin = functionOf(call.overload()) }));
+    }
     finish(call, get(target), typeOf(target));
 }
 

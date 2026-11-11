@@ -2,11 +2,13 @@
 # function drop(n) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; if (n > 0) kept = 5; return work; }
 # print(drop(0), kept === null);
 # print(drop(1), kept);
-# THE LIE STANDS IN THE RECORDS: the variable is said to hold null, as a type that the front end has established, so Link believes it: `variable g0 proven=null`. The body stores 5.
-# A door that can never pass is a contradiction between the walk and Link that the build itself sees. In a user's build it is the stop by name at run time, and it ends its block:
-# a-door-that-can-never-pass-in-an-arm-that-link-calls-dead-stops-no-build.ir (Bun's test/aot/from-source): a value COMPUTED out of one that a test has narrowed to nothing comes to such a door in a right program.
-# A CONSTANT has no source that a narrowing can empty, and a variable, a capture or a slot of a scope has no receiver that one can: there the door that can never pass IS an edge that Link has lost:
-# a build that verifies stops at it, and no run is needed to know.
+# The fault is written in the IR's records: the variable is declared to hold null, as a type that the front end has established, so Link believes it: `variable g0 proven=null`. The body stores 5.
+# An entry check that can never pass is a contradiction between the walk and Link that the build itself can see. In a user's build it is a crash with a named error at run time, and it ends its block.
+# See a-door-that-can-never-pass-in-an-arm-that-link-calls-dead-stops-no-build.ir (Bun's test/aot/from-source):
+# in a correct program, a value computed from one that a test has narrowed to nothing reaches such an entry check.
+# A constant has no source that a narrowing can empty, and a variable, a capture or a slot of a scope has no receiver that a narrowing can empty.
+# There an entry check that can never pass is an edge that Link has lost.
+# A build that verifies fails at it, and no run is needed to find out.
 # OPTIONS: check=Validate
 # DIAGNOSTIC: StoredTypeMismatch
 # RUN: walk f1 mechanisms=all-Inlining

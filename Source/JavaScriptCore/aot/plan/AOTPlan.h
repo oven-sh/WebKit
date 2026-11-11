@@ -128,7 +128,8 @@ public:
     const SlotPlan& slots() const { return m_parts.slots; }
     const PlannedLayout& layout(LayoutID id) const { return slots().layout(id); }
     const PlacedSlot& slot(LayoutID id, FieldIndex field) const { return slots().slot(id, field); }
-    bool isInUse(LayoutID id) const { return !slots().isNeverAllocated(id); }
+    bool isInUse(LayoutID id) const { return slots().hasDirectInstances(id); }
+    bool isAllocatable(LayoutID id) const { return !slots().isNeverAllocated(id); }
     bool usesWideReferences() const { return m_parts.usesWideReferences; }
 
     const ShapeTable& shapes() const { return m_parts.shapes; }

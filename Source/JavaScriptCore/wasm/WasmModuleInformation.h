@@ -222,6 +222,7 @@ struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> 
     bool m_hasGCObjectTypes { false };
     mutable Atomic<bool> m_usesLegacyExceptions { false };
     mutable Atomic<bool> m_usesModernExceptions { false };
+    Atomic<bool> m_usesTailCalls { false };
 
     Vector<FunctionData> functions;
     const ModuleInImage* moduleWithSkippedFunctions { nullptr };
@@ -229,7 +230,7 @@ struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> 
 
     Vector<Export> exports;
     std::optional<uint32_t> startFunctionIndexSpace;
-    Vector<std::unique_ptr<Segment>> data;
+    Segments data;
     Vector<Element> elements;
     Vector<TableInformation> tables;
     Vector<GlobalInformation> globals;

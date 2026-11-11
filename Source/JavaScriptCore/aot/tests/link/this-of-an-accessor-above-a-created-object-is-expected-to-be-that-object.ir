@@ -34,7 +34,7 @@ layout L1 module=m0 position=14 fields=[{key="code" declared={type=anything} fla
 layout L2 kind=Instance module=m0 position=201 flags=[IsOfCreatedObject]
 variable g0 name="reply" module=m0 declared={type=anything|absent} flags=[IsImmutable]
 variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
-module m0 path="/$bunfs/root/above.js" displayPath="above.js" flags=[KeepsError] body=f0 positions={lineStarts=[0, 108, 261, 290, 319, 334, 365] quotedTexts=[{position=36 start=138 end=146}, {position=67 start=146 end=162}, {position=85 start=162 end=178}, {position=139 start=66 end=99}, {position=159 start=79 end=99}, {position=208 start=99 end=124}, {position=215 start=113 end=123}, {position=228 start=124 end=138}, {position=280 end=10}, {position=303 start=10 end=21}, {position=310 start=10 end=24}, {position=319 start=24 end=37}, {position=334 start=37 end=66}, {position=354 start=57 end=66}] textOfQuotes="new Serverserver.make(1)made.code = 2globalThis.answer = made.codethis.reply = Object.create(reply)Object.create(this.reply)made.out = outthis.outthis.out = valuethis.seen = true"} functionText="const reply = { get code() { return this.out; }, set code(value) { this.out = value; this.seen = true; } };\x0aclass Server { constructor() { this.reply = Object.create(reply); } make(out) { const made = Object.create(this.reply); made.out = out; return made; } }\x0aconst server = new Server();\x0aconst made = server.make(1);\x0amade.code = 2;\x0aglobalThis.answer = made.code;\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/above.js" displayPath="above.js" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 108, 261, 290, 319, 334, 365] quotedSources=[{position=36 start=138 end=146}, {position=67 start=146 end=162}, {position=85 start=162 end=178}, {position=139 start=66 end=99}, {position=159 start=79 end=99}, {position=208 start=99 end=124}, {position=215 start=113 end=123}, {position=228 start=124 end=138}, {position=280 end=10}, {position=303 start=10 end=21}, {position=310 start=10 end=24}, {position=319 start=24 end=37}, {position=334 start=37 end=66}, {position=354 start=57 end=66}] quotedSourceText="new Serverserver.make(1)made.code = 2globalThis.answer = made.codethis.reply = Object.create(reply)Object.create(this.reply)made.out = outthis.outthis.out = valuethis.seen = true"} functionSource="const reply = { get code() { return this.out; }, set code(value) { this.out = value; this.seen = true; } };\x0aclass Server { constructor() { this.reply = Object.create(reply); } make(out) { const made = Object.create(this.reply); made.out = out; return made; } }\x0aconst server = new Server();\x0aconst made = server.make(1);\x0amade.code = 2;\x0aglobalThis.answer = made.code;\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @108
@@ -66,7 +66,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v26 = Undefined @334
     Return v26 @334
 }
-function f1 name="Server" module=m0 position=134 text={start=108 end=260} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+function f1 name="Server" module=m0 position=134 sourceRange={start=108 end=260} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0 @134
     v2 = NewObject v1 layout=L0 @134
@@ -85,7 +85,7 @@ function f1 name="Server" module=m0 position=134 text={start=108 end=260} kind=B
   b2(v13):
     Return v13 @139
 }
-function f2 name="make" module=m0 position=176 text={start=176 end=258} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="make" module=m0 position=176 sourceRange={start=176 end=258} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0, v1: anything):
     v2 = Builtin builtin=ObjectCreate @201
     v3 = PropGet v0 key="reply" @215
@@ -95,12 +95,12 @@ function f2 name="make" module=m0 position=176 text={start=176 end=258} kind=Met
     PropSet v6, v1 key="out" @228
     Return v6 @251
 }
-function f3 name="code" module=m0 position=16 text={start=16 end=47} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f3 name="code" module=m0 position=16 sourceRange={start=16 end=47} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     v1 = PropGet v0 key="out" @36
     Return v1 @36
 }
-function f4 name="code" module=m0 position=49 text={start=49 end=104} kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 name="code" module=m0 position=49 sourceRange={start=49 end=104} kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
     PropSet v0, v1 key="out" @67
     v3 = Boolean boolean=true @97

@@ -188,7 +188,16 @@ static BitVector findFallThroughs(const CodeLayoutInputs& inputs, std::span<cons
     return fallsIntoNext;
 }
 
-static UnitPlacement placeBodies(std::span<const size_t> unitSizes, std::span<const size_t> alignedOffsets, const BitVector& fallsIntoNext, size_t sharedCodeSize, unsigned codeGranuleShift, const ParallelLoops& loops)
+static uint32_t offsetOfFirstTransfer(const CodeBody& body)
+{
+    for (const Relocation& relocation : body.relocations) {
+        if (transfersControl(relocation.kind))
+            return relocation.offset;
+    }
+    return 0;
+}
+
+static UnitPlacement placeBodies(const LinkedFunctions& functions, std::span<const size_t> unitSizes, std::span<const size_t> alignedOffsets, const BitVector& fallsIntoNext, size_t sharedCodeSize, unsigned codeGranuleShift, const ParallelLoops& loops)
 {
     static_assert(!((1 << minCodeGranuleShift) % imageFunctionAlignment) && !(sizeof(uint32_t) % imageFunctionAlignment));
     const size_t numberOfBodies = unitSizes.size();
@@ -200,7 +209,7 @@ static UnitPlacement placeBodies(std::span<const size_t> unitSizes, std::span<co
         for (size_t index = first; index < end; ++index) {
             firstUseByBody[index] = static_cast<uint32_t>(index);
             if (index < numberOfBodies)
-                uses[index] = { 0, 0, clampTo<uint32_t>(unitSizes[index]), reachOfNearCall };
+                uses[index] = { 0, static_cast<int64_t>(unitSizes[index]) < reachOfNearCall ? 0 : offsetOfFirstTransfer(functions[index].body), clampTo<uint32_t>(unitSizes[index]), reachOfNearCall };
         }
     });
 
@@ -236,10 +245,14 @@ static void layOutWhatFollowsFunctions(const CodeLayoutInputs& inputs, CodeLayou
     const RegExpSection& regExpSection = inputs.regExpSection;
     size_t webAssemblyCodeOffset = WTF::roundUpToMultipleOf(inputs.webAssemblyCodeAlignment, functionsEnd);
     size_t ffiCodeOffset = WTF::roundUpToMultipleOf(inputs.ffiCodeAlignment, webAssemblyCodeOffset + inputs.webAssemblyCodeSize);
-    size_t executableSize = WTF::roundUpToMultipleOf<imagePageSize>(ffiCodeOffset + inputs.ffiCodeSize + regExpSection.dataOffset);
+    size_t endOfFFICode = ffiCodeOffset + inputs.ffiCodeSize;
+    size_t executableSize = WTF::roundUpToMultipleOf<imagePageSize>(endOfFFICode + regExpSection.dataOffset);
     size_t regExpCodeOffset = executableSize - regExpSection.dataOffset;
     size_t constantsOffset = WTF::roundUpToMultipleOf<imageConstantsAlignment>(regExpCodeOffset + regExpSection.bytes.size());
-    size_t ffiDirectoryOffset = constantsOffset + inputs.constantsSize;
+    size_t sizeOfAlignedConstants = WTF::roundUpToMultipleOf<imageConstantsAlignment>(inputs.constantsSize);
+    if (sizeOfAlignedConstants && !inputs.ffiCodeSize && regExpSection.bytes.isEmpty() && sizeOfAlignedConstants <= executableSize - endOfFFICode)
+        constantsOffset = executableSize - sizeOfAlignedConstants;
+    size_t ffiDirectoryOffset = std::max(executableSize, constantsOffset + inputs.constantsSize);
     if (inputs.ffiCodeSize)
         ffiDirectoryOffset = WTF::roundUpToMultipleOf<imageFFIDirectoryAlignment>(ffiDirectoryOffset);
     layout.codeSize = ffiDirectoryOffset + inputs.ffiDirectorySize;
@@ -290,7 +303,7 @@ static std::optional<UnitPlacement> placeCodeOfLayout(const CodeLayoutInputs& in
         }
     });
     size_t sharedCodeSize = sharedCodeSizeWithVeneers(inputs, layout);
-    UnitPlacement placement = placeBodies(unitSizes.span(), alignedOffsets, layout.fallsIntoNext, sharedCodeSize, inputs.codeGranuleShift, loops);
+    UnitPlacement placement = placeBodies(inputs.functions, unitSizes.span(), alignedOffsets, layout.fallsIntoNext, sharedCodeSize, inputs.codeGranuleShift, loops);
     layOutWhatFollowsFunctions(inputs, layout, placement.end, codeSizeLimit);
     if (layout.codeSize > codeSizeLimit) {
         context.reportLimitExceeded(LimitID::CodeBytes, layout.codeSize);

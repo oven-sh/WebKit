@@ -1,7 +1,7 @@
 # The list follows from the program alone. The plain built-ins, primitives in and a primitive out, readers of a list or of a Map, are among the most common calls of any program and fall under the rules for all: they are entered.
 # One whose work grows with a number that it is handed has a door of its own and is not: repeat.
 # new RegExp("s".toUpperCase() + "abc".startsWith("a")) . ("m".. + Math.max(1, 2)) . ("h".. + new Map().has("k")) . ("i".. + [1, 2].indexOf(2)) . ("n".. + Number.isInteger(3)) . ("p".. + parseInt("12px")) . ("r".. + "ab".repeat(2))
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /Hfalse/
 # CHECK: text /I1/

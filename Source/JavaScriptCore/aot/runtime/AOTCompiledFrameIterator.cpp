@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAsyncResumption.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTCallSiteCache.h"
 #include "AOTCompiledCallee.h"
@@ -21,6 +22,7 @@
 #include "AOTLoadedObject.h"
 #include "AOTModules.h"
 #include "AOTProgramTables.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTSavedFrame.h"
 #include "AOTShownFrameFilter.h"
 #include "AOTStackTrace.h"
@@ -155,7 +157,7 @@ ASCIILiteral faultOfReturnAddressInRun(const Image& image, const void* returnAdd
     case CodeKind::Function:
         if (callEndsAt(image.code(), returnAddress) || isBehindFaultSite(image, returnAddress))
             return { };
-        return "points into compiled code, at a place that no call returns to"_s;
+        return "points into compiled code, but not to the end of a call"_s;
     case CodeKind::NotInImage:
         if (isInCodeOfEngine(returnAddress))
             return { };
@@ -163,7 +165,7 @@ ASCIILiteral faultOfReturnAddressInRun(const Image& image, const void* returnAdd
     case CodeKind::RegExp:
     case CodeKind::WebAssembly:
     case CodeKind::FFI:
-        return "points neither into a compiled function nor into the code of the engine"_s;
+        return "points neither into a compiled function nor into the engine's code"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -173,7 +175,10 @@ NEVER_INLINE void checkReturnAddressInRun(const Image& image, const void* return
     ASCIILiteral fault = faultOfReturnAddressInRun(image, returnAddress);
     if (fault.isNull()) [[likely]]
         return;
-    dataLogLn("AOT: a walk over the stack has lost it: the word ", RawPointer(returnAddress), ", which lies where the frame at ", RawPointer(callee), " has its return address, ", fault);
+    UNUSED_PARAM(callee);
+    RuntimeCheckFailure failure("stack walk failed"_s);
+    failure.detail("the return address of a frame ", fault);
+    failure.report();
     CRASH();
 }
 
@@ -371,7 +376,7 @@ void forEachEvaluatingModuleOnStack(VM& vm, CallFrame* callFrame, const ScopedLa
     });
 }
 
-bool Modules::hasEnteredCodeOfProgramSinceAskingHost() const
+bool Modules::isHostRequestStale() const
 {
     VM& vm = *m_instance.vm;
     if (!vm.topCallFrame)
@@ -384,7 +389,7 @@ bool Modules::hasEnteredCodeOfProgramSinceAskingHost() const
                 const CompiledFrame& frame = visitor->compiledFrame();
                 if (frame.visibility != TraceVisibility::Visible)
                     return IterationStatus::Continue;
-                isCompiledCodeEnteredSince = m_isAskingHost.wasMadeBeforeEntering(frame.callFrame);
+                isCompiledCodeEnteredSince = m_currentHostRequest.wasMadeBeforeEntering(frame.callFrame);
                 return IterationStatus::Done;
             }
         }
@@ -429,7 +434,7 @@ bool isCodeOf(const Image& image, CompiledFunctionID code, FunctionID function)
     return sourceFunctionOf(image.rootFunctionOf(code.index())) == sourceFunctionOf(function);
 }
 
-std::optional<TraceFrame> frameOfFunctionWhoseThisIsMade(const Image& image, FunctionID constructed)
+std::optional<TraceFrame> makeElidedConstructorFrame(const Image& image, FunctionID constructed)
 {
     FunctionID function = sourceFunctionOf(constructed);
     if (FunctionDescription(function).visibility() != TraceVisibility::Visible)
@@ -478,7 +483,7 @@ std::optional<CompiledFrameIterator> CompiledFrameIterator::tryCreate(VM& vm, Ca
 
 std::optional<CompiledFrameIterator> CompiledFrameIterator::tryCreateAtCallerOf(VM& vm, CallFrame* callee, EntryFrame* entryFrame)
 {
-    return tryCreate(vm, Cursor { callee->callerFrame(), callee->rawReturnPC(), entryFrame, callee, stackPointerOfCaller(callee) }, OperationState::MayNotHaveCalled);
+    return tryCreate(vm, Cursor { callee->callerFrame(), callee->rawReturnPC(), entryFrame, callee, callerStackPointer(callee) }, OperationState::MayNotHaveCalled);
 }
 
 std::optional<CompiledFrameIterator> CompiledFrameIterator::tryCreateAtTop(VM& vm)
@@ -488,12 +493,12 @@ std::optional<CompiledFrameIterator> CompiledFrameIterator::tryCreateAtTop(VM& v
     return tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
 }
 
-const void* CompiledFrameIterator::findReturnAddressInFunctionAtTop(VM& vm)
+const void* CompiledFrameIterator::topFrameReturnAddress(VM& vm)
 {
     if (!isTopFrameCompiled(vm))
         return nullptr;
     CallFrame* callee = vm.topCallFrame;
-    Cursor cursor { callee->callerFrame(), callee->rawReturnPC(), vm.topEntryFrame, callee, stackPointerOfCaller(callee) };
+    Cursor cursor { callee->callerFrame(), callee->rawReturnPC(), vm.topEntryFrame, callee, callerStackPointer(callee) };
     Exit exit;
     do {
         const void* pc = removeCodePtrTag(cursor.rawPC);
@@ -562,7 +567,7 @@ bool CompiledFrameIterator::passOverFrame(Cursor& cursor, Exit& exit)
         cursor.framePointer = cursor.callFrame->callerFrame();
     }
     cursor.calleeFrame = cursor.callFrame;
-    cursor.stackPointer = stackPointerOfCaller(cursor.callFrame, cursor.bytesAboveReturnAddress);
+    cursor.stackPointer = callerStackPointer(cursor.callFrame, cursor.bytesAboveReturnAddress);
     cursor.rawPC = cursor.callFrame->rawReturnPC();
     return true;
 }
@@ -670,31 +675,31 @@ void CompiledFrameIterator::readFrame() const
     m_hasReadFrame = true;
 }
 
-void CompiledFrameIterator::listConstructedFunctionsThatLeft()
+void CompiledFrameIterator::collectElidedConstructorFrame()
 {
     if (m_isAtEnd) {
         if (m_runEnd.makesThis) [[unlikely]]
-            listFunctionWhoseThisTheAdapterMakes();
+            collectAdapterConstructorFrame();
         return;
     }
     if (!m_cursor.constructFrameMakesThis || !m_callSite.site.isConstruct())
         return;
     if (FunctionID constructed = functionConstructedAt(*m_image, m_callSite, m_cursor.plainFunctionConstructFrame))
-        m_constructedFunctionThatLeft = frameOfFunctionWhoseThisIsMade(*m_image, constructed);
+        m_elidedConstructorFrame = makeElidedConstructorFrame(*m_image, constructed);
 }
 
-void CompiledFrameIterator::listFunctionWhoseThisTheAdapterMakes()
+void CompiledFrameIterator::collectAdapterConstructorFrame()
 {
     FunctionID constructed = m_runEnd.constructedFunction();
     if (!constructed)
         return;
-    m_constructedFunctionThatLeft = frameOfFunctionWhoseThisIsMade(*m_image, constructed);
-    if (!m_constructedFunctionThatLeft)
+    m_elidedConstructorFrame = makeElidedConstructorFrame(*m_image, constructed);
+    if (!m_elidedConstructorFrame)
         return;
     m_hasNoMachineFrame = true;
     m_isAtEnd = false;
     m_instance = *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(m_runEnd.adapterFrame) + AdapterFrame::offsetOfInstance);
-    m_frame = { m_instance, m_runEnd.adapterFrame, removeCodePtrTag(m_cursor.rawPC), { }, m_constructedFunctionThatLeft->function, CallSiteIndex(0) };
+    m_frame = { m_instance, m_runEnd.adapterFrame, removeCodePtrTag(m_cursor.rawPC), { }, m_elidedConstructorFrame->function, CallSiteIndex(0) };
     m_hasReadFrame = true;
 }
 
@@ -702,8 +707,8 @@ void CompiledFrameIterator::advance()
 {
     if (m_isAtEnd)
         return;
-    if (m_constructedFunctionThatLeft) [[unlikely]] {
-        m_constructedFunctionThatLeft = std::nullopt;
+    if (m_elidedConstructorFrame) [[unlikely]] {
+        m_elidedConstructorFrame = std::nullopt;
         m_isAtEnd = m_hasNoMachineFrame;
         return;
     }
@@ -748,6 +753,7 @@ void CompiledFrameIterator::advanceToCallerMachineFrame()
     m_cursor.engineCalleeStubFrame = nullptr;
     m_cursor.plainFunctionConstructFrame = nullptr;
     m_cursor.constructFrameMakesThis = false;
+    m_cursor.isAmongFramesThatWait |= m_instance && m_cursor.callFrame && m_cursor.callFrame == std::bit_cast<const CallFrame*>(frameWithAwaitingCallers(*m_instance));
     m_calleeWasEntered = true;
     enterMachineFrame(findCallerFunctionFrame(m_cursor, m_exit, m_runEnd));
 }
@@ -953,7 +959,7 @@ static SUPPRESS_ASAN std::optional<FrameAtSite> findFrameWithRecordAt(const Imag
             if (!callee.mayBeFunction || (callee.function && !callee.names(site)))
                 return std::nullopt;
         }
-        frameAtSite = { caller, stackPointerOfCaller(callFrame, isFunction ? bytesAboveReturnAddressOf(frame) : bytesAboveReturnAddressOf(site.stubFrameKind)) };
+        frameAtSite = { caller, callerStackPointer(callFrame, isFunction ? bytesAboveReturnAddressOf(frame) : bytesAboveReturnAddressOf(site.stubFrameKind)) };
     }
 }
 
@@ -1004,12 +1010,12 @@ static SUPPRESS_ASAN std::optional<SampledTop> findTopBelowNativeCode(const Imag
         if (returnSite.runsCompiledCode()) {
             if (auto caller = findCallerOfCodeWithoutFrameRecord(image, stack, endOfFrameBelow, frame, returnSite, returnAddress))
                 return caller;
-            return sampledTopAtReturnSite(image, returnSite, returnAddress, stackPointerOfCaller(frame), record->callerFrame);
+            return sampledTopAtReturnSite(image, returnSite, returnAddress, callerStackPointer(frame), record->callerFrame);
         }
         if (record->callerFrame <= frame)
             break;
         pc = returnAddress;
-        endOfFrameBelow = stackPointerOfCaller(frame);
+        endOfFrameBelow = callerStackPointer(frame);
         frame = record->callerFrame;
     }
     return std::nullopt;
@@ -1077,7 +1083,7 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     FunctionDescription innermostDescription(innermost.function);
     entry.innermostVisibility = innermostDescription.visibility();
     entry.innermostIsAsync = innermostDescription.isAsync();
-    entry.namesConstructedCallee = image.constructedCalleeAt(location.function, entry.site.callSite).has_value();
+    entry.namesConstructedCallee = returnSite.hasConstructedCallees && image.constructedCalleeAt(location.function, entry.site.callSite).has_value();
     entry.namesTailCallingBuiltin = entry.site.calledBuiltin && leavesByTailCall(entry.site.calledBuiltin);
     entry.outermostVisibleFunction = findOutermostVisibleFunction(image, reader, entry, true);
     entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall());

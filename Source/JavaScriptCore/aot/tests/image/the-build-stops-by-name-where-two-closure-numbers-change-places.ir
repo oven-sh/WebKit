@@ -1,10 +1,10 @@
 # function first() { return 1; }
 # function second() { return 2; }
 # take(first, second);
-# The test "is this closure one of these functions" in compiled code sorts the functions by their numbers, joins neighbors into runs at the plan and branches on the closure numbers:
-# it is right only while closure numbers rise with the numbers of the functions. The image numbers the closure entries in that order, and holds itself to it in every build.
-# THE LIE, testing=TwoClosureNumbersChangePlaces: the first two closure entries are numbered the other way round. The build stops by name and writes no image.
-# RUN: image testing=TwoClosureNumbersChangePlaces
+# The test "is this closure one of these functions" in compiled code sorts the functions by their numbers, joins neighbors into runs in the plan and branches on the closure numbers.
+# It is correct only while closure numbers increase with the function numbers. The image numbers the closure entries in that order, and verifies the order in every build.
+# Fault injection, testing=SwapClosureNumbers: the first two closure entries are numbered in the opposite order. The build fails with a named internal error and writes no image.
+# RUN: image testing=SwapClosureNumbers
 # DIAGNOSTIC: PlacementCheckFailed
 # CHECK: image empty
 

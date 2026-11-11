@@ -1,9 +1,9 @@
-enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObjectLayout: Bool, hasOrdinaryOwnKeys: Bool, supportsRemoval: Bool, hasObjectsThatCodeAlters: Bool) {
-    Record(false, true, true, true, true, true) Instance(false, false, true, true, true, true) Container(false, false, true, false, false, true) Environment(true, false, false, false, true, false)
-    | engine Closure(true, false, false, false, false, false) CoroutineFrame(true, false, false, false, false, false) BuiltinResult(false, false, true, false, false, false) ModuleNamespace(false, false, false, false, false, false)
+enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObjectLayout: Bool) {
+    Record(false, true, true) Instance(false, false, true) Container(false, false, true) Environment(true, false, false)
+    | engine Closure(true, false, false) CoroutineFrame(true, false, false) BuiltinResult(false, false, true) ModuleNamespace(false, false, false)
 }
 flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType IsOfCreatedObject | engine IsDerived }
-flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods IsRequiredAndReadThoughNeverWritten | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
+flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods WasRequiredAndRead | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
 flags FieldForm { IsReadOnly IsNotEnumerable IsNotConfigurable IsAccessor }
 enum MethodKind { Method Getter Setter }
 enum ClassSide { Prototype Static }
@@ -26,14 +26,14 @@ record Variable wire {
     flags: VariableFlags place: UInt32?
 }
 
-enum FunctionKind (| engine canBeBound: Bool, isClassConstructor: Bool) {
-    Plain(true, false) Arrow(true, false) Method(true, false) Getter(false, false) Setter(false, false) BaseConstructor(false, true) DerivedConstructor(false, true) Initializer(false, false) Module(false, false) CommonJsModule(false, false)
+enum FunctionKind (| engine isClassConstructor: Bool) {
+    Plain(false) Arrow(false) Method(false) Getter(false) Setter(false) BaseConstructor(true) DerivedConstructor(true) Initializer(false) Module(false) CommonJsModule(false)
 }
 flags FunctionFlags {
     IsAsync IsGenerator IsSloppy HasRestParameter HasThis HasNewTarget TakesCallee HasArgumentCount HasHiddenRest IsChecked IsHiddenInStackTraces
     HasExplicitName IsNakedConstructor IsNamedByComputedKey IsAlwaysInlined
 }
-flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode IsShownInModuleOfHelpers MayAskForOwnOriginal }
+flags FunctionSyntax { HasLiveAwait IsEvaluatedScript IsShownAsNativeCode IsShownInHelperModule MayImportOwnOriginal }
 enum EntryParameter (presentWith: FunctionFlags) {
     Capture(none) This(HasThis) Callee(TakesCallee) NewTarget(HasNewTarget) ArgumentCount(HasArgumentCount) Parameter(none) HiddenRest(HasHiddenRest)
 }
@@ -41,10 +41,10 @@ record SourceRange wire { start: UInt32 end: UInt32 }
 record Body wire customEngine customText { code: Span<CodeWord> blockCount: UInt32 valueCount: UInt32 }
 record DeclaredCapture wire handwrittenStruct { type: Type site: TypeSite? flags: PositionFlags variableName: String? }
 record Function wire extendedEngine {
-    name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32 syntax: FunctionSyntax
+    name: String? module: Module(Referrer) position: UInt32 sourceRange: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32 syntax: FunctionSyntax
     enclosingRuntimeFunction: RuntimeFunction? captures: Span<DeclaredCapture> thisType: DeclaredType parameters: Span<DeclaredType>
     results: Span<DeclaredType> body: Body functionTypes: Span<Function(Dispatch)> sorted builtinMembers: Span<Builtin> sorted
-    originalsAskedFor: Span<String>
+    requestedOriginals: Span<String>
     | engine capabilities: FunctionCapabilities constructedClass: Layout?
 }
 
@@ -60,8 +60,8 @@ record EvalBinding wire {
 }
 record EvalScope wire { mode: ECMAMode flags: EvalScopeFlags bindings: Span<EvalBinding> outer: EvalScope? }
 
-enum ModuleKind (| engine hoistsFunctionsIntoVariables: Bool, isFoundByPath: Bool, isProgramModule: Bool, canOwnVariables: Bool, isEvaluatedAtMostOnce: Bool, hasExportTable: Bool) {
-    SourceText(true, true, true, true, true, true) CommonJs(true, true, true, true, true, false) Data(false, true, true, true, true, true) RuntimeSource(true, true, false, true, true, false) Runtime(false, true, false, false, false, false) External(false, false, false, false, false, false)
+enum ModuleKind (| engine hoistsFunctionsIntoVariables: Bool, isFoundByPath: Bool, isProgramModule: Bool, isEvaluatedAtMostOnce: Bool, hasExportTable: Bool) {
+    SourceText(true, true, true, true, true) CommonJs(true, true, true, true, false) Data(false, true, true, true, true) RuntimeSource(true, true, false, true, false) Runtime(false, true, false, false, false) External(false, false, false, false, false)
 }
 enum CommonJsParameter { Exports Require Module Filename Dirname }
 enum ExternalKind { UncompiledCode HostValue }
@@ -71,20 +71,20 @@ enum ImportPhase { Evaluation Defer }
 enum ModuleRequestKind { Import Require }
 enum ModuleExportKind { Variable Namespace Indirect }
 flags ModuleFlags {
-    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad MayBeImportedWhileItRuns IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache RunsAgain AnswersLoaderWithNamespace IsHeldUnderNameWithoutPrefix IsChangedOnDiskByRun IsShownByEntryOfCache LoadsCompiledFilesAlone FindsBuiltinsReadOnly IsHandedOutByTestRunner IsReachedWithoutExtension IsReachedUnderAnotherExtension IsReachedAsFolder ThrowsAtLoad IsModuleToImports DependsOnMoreThanSource
+    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects CachesEvaluationError IsBundlerHelper ReachesModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad IsImportableDuringEvaluation IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache MayBeReevaluated LoaderReturnsNamespace RejectsRequireCacheOverride IsChangedOnDiskByRun IsExposedByRequireCache RejectsUncompiledCode HasReadOnlyBuiltins IsExposedByTestRunner IsImportedWithoutExtension IsImportedWithOtherExtension IsImportedAsDirectory ThrowsAtLoad IsImportedAsESModule DependsOnMoreThanSource
     | engine EvaluatesItself
 }
 record ColumnAdjustment wire { offset: UInt32 line: UInt32 column: UInt32 }
-record QuotedText wire { position: UInt32 start: UInt32 end: UInt32 }
-record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<ColumnAdjustment> quotedTexts: Span<QuotedText> sorted by position textOfQuotes: Span<Byte> }
+record QuotedSource wire { position: UInt32 start: UInt32 end: UInt32 }
+record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<ColumnAdjustment> quotedSources: Span<QuotedSource> sorted by position quotedSourceText: Span<Byte> }
 record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool isHoisted: Bool starPlace: UInt32? }
 record ModuleExport wire {
     name: String kind: ModuleExportKind variable: Variable? module: Module(Target)? importName: String? phase: ImportPhase isFromStarExport: Bool
-    isDroppedWhileEmpty: Bool isLeftOut: Bool writer: Module(Referrer)?
+    isHiddenUntilInitialized: Bool isOmitted: Bool writer: Module(Referrer)?
 }
 record SyntheticExport wire { name: String variable: Variable? isKnownMember: Bool isReplaceable: Bool }
-record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? dropsExportIfAbsent: Bool isAskedForByStar: Bool }
-record ModuleFailure wire { importer: Module(Referrer) specifier: String exporter: Module(Target)? exportSpecifier: String? endsLoadOf: Module(Referrer)? }
+record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? dropsExportIfAbsent: Bool isRequestedByStarExport: Bool }
+record ModuleFailure wire { importer: Module(Referrer) specifier: String exporter: Module(Target)? exportSpecifier: String? failedLoadRoot: Module(Referrer)? }
 record AmbiguousExport wire { module: Module(Referrer) name: String }
 record SourceStamp wire { module: Module(Referrer) low: UInt32 high: UInt32 }
 record DeclaredRecord wire { module: Module(Referrer) position: UInt32 parameter: UInt32 names: Span<PropertyKey> sorted }
@@ -92,7 +92,7 @@ record Module wire {
     path: String displayPath: String kind: ModuleKind flags: ModuleFlags exportRule: SyntheticExportRule requireResult: RequireResult
     externalKind: ExternalKind typeAttribute: String? runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?
     requests: Span<ModuleRequest> exports: Span<ModuleExport> sorted by name syntheticExports: Span<SyntheticExport> sorted by name
-    requiredNames: Span<RequiredName> otherNames: Span<String> namesOfStatements: Span<String> positions: SourcePositions functionText: Span<Byte>
+    requiredNames: Span<RequiredName> otherNames: Span<String> namesOfStatements: Span<String> positions: SourcePositions functionSource: Span<Byte>
     | engine namespaceLayout: Layout?
 }
 record HostRead wire { exportName: String builtin: Builtin? parameter: UInt32 namesLookedFor: Span<String> }
@@ -121,9 +121,9 @@ enum NullishAccess { Read Write Iterate Spread Update }
 enum ErrorKind { Error EvalError RangeError ReferenceError SyntaxError TypeError URIError AggregateError }
 enum RuntimeErrorKind {
     UninitializedBinding ConstantAssignment UninitializedThis ThisAlreadyBound DeleteSuperProperty UnresolvableReference ImportAssignment NotDestructurable
-    DerivedConstructorResult StaticPrototypeKey IteratorResultNotObject IteratorWithoutThrowMethod IteratorIsNotAnObject InvalidPrivateRead
-    InvalidPrivateWrite InvalidPrivateBrand PrivateFieldExists PrivateMethodWrite PrivateAccessorWithoutGetter PrivateAccessorWithoutSetter PrivateStaticTestOfNonObject
-    SpreadResultNotObject LeftOutOfExecutable FunctionNotCompiled NoSyncIteratorForAsyncIteration SyncIteratorForAsyncIterationIsNotAnObject
+    DerivedConstructorResult StaticPrototypeKey IteratorResultNotObject IteratorWithoutThrowMethod IteratorNotObject InvalidPrivateRead
+    InvalidPrivateWrite InvalidPrivateBrand PrivateFieldExists PrivateMethodWrite PrivateAccessorWithoutGetter PrivateAccessorWithoutSetter StaticPrivateInNotObject
+    SpreadResultNotObject OmittedFromExecutable FunctionNotCompiled AsyncFromSyncIteratorMissing AsyncFromSyncIteratorNotObject
 }
 flags RegExpFlags { HasIndices Global IgnoreCase Multiline DotAll Unicode UnicodeSets Sticky }
 
@@ -137,7 +137,7 @@ list moduleExports : ModuleExport
 list syntheticExports : SyntheticExport
 list requiredNames : RequiredName
 list columnAdjustments : ColumnAdjustment
-list quotedTexts : QuotedText
+list quotedSources : QuotedSource
 list moduleFailures : ModuleFailure as modulefailure prefix q
 list ambiguousExports : AmbiguousExport as ambiguousexport
 list sourceStamps : SourceStamp as sourcestamp

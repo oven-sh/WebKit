@@ -21,11 +21,11 @@
 # EITHER-LABEL: code f2:Body
 # EITHER-NOT: form=Numbers # uses=1
 # Under the testing word the join is made again in the turn and held against the one in front
-# RUN(NET): walk f1:Body mechanisms=all testing=CheckProofsAtRunTime,CallsMadeInFrontOfTurnsAreMadeAgainInThem
+# RUN(NET): walk f1:Body mechanisms=all testing=CheckProofsAtRunTime,CheckHoistedCallsAtRunTime
 # NET-LABEL: code f1:Body
-# NET: source=CallMadeInFront
+# NET: source=HoistedCall
 # layout L916 kind=Closure
-module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 305, 646, 677] quotedTexts=[{position=646 end=15}, {position=657 end=29}] textOfQuotes="globalThis.sink(find, either)"} functionText="function find(wanted, name, tail, turns) { if (typeof wanted === \x22string\x22 && typeof name === \x22string\x22 && typeof tail === \x22string\x22 && typeof turns === \x22number\x22) { let found = 0; for (let turn = 0; turn < turns; turn = turn + 1) { if (wanted === name + \x22-\x22 + tail) found = found + turn; } return found; } }\x0afunction either(wanted, name, value, turns) { if (typeof wanted === \x22string\x22 && typeof name === \x22string\x22 && (typeof value === \x22string\x22 || typeof value === \x22number\x22) && typeof turns === \x22number\x22) { let found = 0; for (let turn = 0; turn < turns; turn = turn + 1) { if (wanted === name + \x22-\x22 + value) found = found + turn; } return found; } }\x0aglobalThis.sink(find, either);\x0a" namespaceLayout=L(m0)
+module m0 path="/$bunfs/root/source.mjs" displayPath="source.mjs" flags=[CachesEvaluationError] body=f0 positions={lineStarts=[0, 305, 646, 677] quotedSources=[{position=646 end=15}, {position=657 end=29}] quotedSourceText="globalThis.sink(find, either)"} functionSource="function find(wanted, name, tail, turns) { if (typeof wanted === \x22string\x22 && typeof name === \x22string\x22 && typeof tail === \x22string\x22 && typeof turns === \x22number\x22) { let found = 0; for (let turn = 0; turn < turns; turn = turn + 1) { if (wanted === name + \x22-\x22 + tail) found = found + turn; } return found; } }\x0afunction either(wanted, name, value, turns) { if (typeof wanted === \x22string\x22 && typeof name === \x22string\x22 && (typeof value === \x22string\x22 || typeof value === \x22number\x22) && typeof turns === \x22number\x22) { let found = 0; for (let turn = 0; turn < turns; turn = turn + 1) { if (wanted === name + \x22-\x22 + value) found = found + turn; } return found; } }\x0aglobalThis.sink(find, either);\x0a" namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     v0 = NewClosure function=f1 @0
@@ -40,7 +40,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v9 = Undefined @646
     Return v9 @646
 }
-function f1 name="find" module=m0 text={end=304} flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="find" module=m0 sourceRange={end=304} flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: undefined|null|string, v2: undefined|null|string, v3: anything):
     v4 = TypeTest v0 testedType=string @47
     Branch v4 -> taken b1(| 0), notTaken b10() @47
@@ -88,7 +88,7 @@ function f1 name="find" module=m0 text={end=304} flags=[HasExplicitName] length=
     v34 = Undefined @294
     Return v34 @294
 }
-function f2 name="either" module=m0 position=305 text={start=305 end=645} flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="either" module=m0 position=305 sourceRange={start=305 end=645} flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: undefined|null|string, v2: undefined|null|number|string, v3: anything):
     v4 = TypeTest v0 testedType=string @355
     Branch v4 -> taken b1(| 0), notTaken b11() @355

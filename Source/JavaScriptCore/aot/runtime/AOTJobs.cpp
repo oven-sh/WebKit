@@ -70,14 +70,43 @@ static ALWAYS_INLINE SavedFrame* savedFrameIn(JSValue value)
 }
 
 static void markStepsWhoseConsumerHasAwaited(const Instance&, const uint64_t* frame);
+static JSAsyncGenerator* asyncGeneratorEnteredByStub(const Instance&, const uint64_t* frame);
+
+static ALWAYS_INLINE bool mustSuspendAtNextAwait(const uint64_t* frame) { return std::bit_cast<uintptr_t>(frame) & mustSuspendAtNextAwaitBit; }
+static ALWAYS_INLINE const uint64_t* withoutBit(const uint64_t* frame) { return std::bit_cast<const uint64_t*>(std::bit_cast<uintptr_t>(frame) & ~static_cast<uintptr_t>(mustSuspendAtNextAwaitBit)); }
+
+static const uint64_t* frameThatMayContinue(const Instance& instance)
+{
+    const uint64_t* frame = instance.coroutines.frameThatMayContinue;
+    return mustSuspendAtNextAwait(frame) ? nullptr : frame;
+}
+
+static const uint64_t* withoutRightToContinue(const Instance& instance, const uint64_t* frame)
+{
+    const uint64_t* bare = withoutBit(frame);
+    if (!bare || asyncGeneratorEnteredByStub(instance, bare))
+        return nullptr;
+    return std::bit_cast<const uint64_t*>(std::bit_cast<uintptr_t>(bare) | mustSuspendAtNextAwaitBit);
+}
+
+const uint64_t* frameWithAwaitingCallers(const Instance& instance)
+{
+    const uint64_t* frame = withoutBit(instance.coroutines.frameThatMayContinue);
+    if (!frame) [[likely]]
+        return nullptr;
+    const void* returnAddress = std::bit_cast<const void*>(frame[1]);
+    if (returnAddress == instance.stubs.returnAddress(StubFrameKind::SavedFrameAdapter) || returnAddress == instance.stubs.returnAddress(StubFrameKind::AsyncGeneratorBody))
+        return nullptr;
+    return frame;
+}
 
 static AdapterEntry willEnterAdapter(Instance& instance, JSCell* frame, JSCell* asyncGenerator, bool asyncContextIsPutBack)
 {
     instance.vm->didEnterVM = true;
     if (!instance.vm->isAsyncContextTrackingEnabled())
-        markStepsWhoseConsumerHasAwaited(instance, instance.coroutines.frameThatMayContinue);
+        markStepsWhoseConsumerHasAwaited(instance, frameThatMayContinue(instance));
     CoroutineWords& coroutines = instance.coroutines;
-    return { std::exchange(coroutines.enteredFrame, frame), std::exchange(coroutines.enteredAsyncGenerator, asyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, nullptr), !!std::exchange(coroutines.asyncContextIsPutBack, asyncContextIsPutBack) };
+    return { std::exchange(coroutines.enteredFrame, frame), std::exchange(coroutines.enteredAsyncGenerator, asyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, nullptr), !!std::exchange(coroutines.asyncContextIsPutBack, asyncContextIsPutBack), withoutRightToContinue(instance, coroutines.frameThatMayContinue) };
 }
 
 struct LastEnteredByAdapter {
@@ -90,6 +119,7 @@ static LastEnteredByAdapter didLeaveAdapter(Instance& instance, const AdapterEnt
 {
     CoroutineWords& coroutines = instance.coroutines;
     coroutines.asyncContextIsPutBack = entry.outerAsyncContextIsPutBack;
+    coroutines.frameThatMayContinue = entry.outerFrameThatMayContinue;
     return { static_cast<SavedFrame*>(std::exchange(coroutines.enteredFrame, entry.outerFrame)), std::exchange(coroutines.enteredAsyncGenerator, entry.outerAsyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, entry.outerPromiseOfHandler) };
 }
 
@@ -275,7 +305,6 @@ JSAsyncGenerator* didReturnFromAsyncGeneratorBody(const AsyncGeneratorBodyEntry&
     auto [lastFrame, lastAsyncGenerator, promiseOfHandler] = didLeaveAdapter(instance, entry.adapterEntry);
     if (lastFrame && lastFrame->kind() == CoroutineKind::AsyncGenerator)
         return uncheckedDowncast<JSAsyncGenerator>(lastAsyncGenerator);
-    instance.coroutines.frameThatMayContinue = nullptr;
     if (isTerminated)
         return nullptr;
     if (!lastFrame) {
@@ -305,7 +334,7 @@ JSValue driverResumeContext(JSValue settlementTarget)
     return saved && saved->goesOnInContextOfItsAwait() ? saved->contextOfAwait() : JSValue();
 }
 
-bool takesBareSteps(JSValue settlementTarget)
+bool acceptsBareSteps(JSValue settlementTarget)
 {
     return savedFrameOfDriver(settlementTarget);
 }
@@ -449,7 +478,10 @@ static void markStepsWhoseConsumerHasAwaited(const Instance& instance, const uin
 
 void takeAwayRightToContinue(Instance& instance)
 {
-    markStepsWhoseConsumerHasAwaited(instance, std::exchange(instance.coroutines.frameThatMayContinue, nullptr));
+    const uint64_t* frame = frameThatMayContinue(instance);
+    markStepsWhoseConsumerHasAwaited(instance, frame);
+    if (frame)
+        instance.coroutines.frameThatMayContinue = withoutRightToContinue(instance, frame);
 }
 
 static void rejectAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOfStub, JSAsyncGenerator* generator, JSValue error)
@@ -537,9 +569,12 @@ JSValue enterSavedFrame(VM& vm, Instance& instance, SavedFrame* saved, ResumeMod
     static_assert(static_cast<int32_t>(JSGenerator::Argument::Value) == 3 && static_cast<int32_t>(JSGenerator::Argument::ResumeMode) == 4);
     ASSERT(&instance == Instance::owning(saved));
     if (!instance.vm->isAsyncContextTrackingEnabled())
-        markStepsWhoseConsumerHasAwaited(instance, instance.coroutines.frameThatMayContinue);
+        markStepsWhoseConsumerHasAwaited(instance, frameThatMayContinue(instance));
+    const uint64_t* outerFrame = withoutRightToContinue(instance, instance.coroutines.frameThatMayContinue);
     CallData callData = CallData::forCompiledCode(instance.state->coroutines->savedFrameEntrypoint(), instance.globalObject);
-    return enterCompiledCode(vm, callData, saved, jsUndefined(), saved, jsUndefined(), jsNumber(0), sent, jsNumber(static_cast<int32_t>(engineResumeModeOf(mode))));
+    JSValue returned = enterCompiledCode(vm, callData, saved, jsUndefined(), saved, jsUndefined(), jsNumber(0), sent, jsNumber(static_cast<int32_t>(engineResumeModeOf(mode))));
+    instance.coroutines.frameThatMayContinue = outerFrame;
+    return returned;
 }
 
 void settlePromiseOfHandler(VM& vm, JSCell* cell, JSValue returned, JSValue error)
@@ -553,7 +588,6 @@ void settlePromiseOfHandler(VM& vm, JSCell* cell, JSValue returned, JSValue erro
 
 static void finishAdapterEntry(VM& vm, Instance& instance, const AdapterEntry& entry, TopExceptionScope& scope, JSValue returned)
 {
-    instance.coroutines.frameThatMayContinue = nullptr;
     auto [lastFrame, lastAsyncGenerator, promiseOfHandler] = didLeaveAdapter(instance, entry);
     JSValue error;
     Exception* exception = scope.exception();

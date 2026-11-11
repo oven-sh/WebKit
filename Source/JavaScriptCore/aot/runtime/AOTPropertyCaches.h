@@ -509,8 +509,8 @@ public:
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
     void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse, bool stubFollowsFurtherAnswers = false, bool stubJumpsToArmOfAnswer = false);
     void fileOwnPlainValueUnlessFiled(JSObject*, uint32_t identifierNumber);
-    static RowsOfReads::Row* claimRowOfReads(JSValue, RowsOfReads&);
-    void findPlaceInRowOfReads(JSCell*, uint32_t identifierNumber, RowsOfReads::Row&, uint32_t index);
+    static ReadGroupCache::Row* claimReadGroupRow(JSValue, ReadGroupCache&);
+    void fillReadGroupOffset(JSCell*, uint32_t identifierNumber, ReadGroupCache::Row&, uint32_t index);
     bool fillAboveFieldLeftOut(uint32_t place, SiteUse, Object&, const CachedName&);
     JSCell* keyForTraps(UniquedStringImpl*);
     void prepareHoldersBeforeLookupsUnder(Symbol*, JSObject* function);

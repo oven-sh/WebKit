@@ -75,7 +75,7 @@ void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
 {
     VariableID variable = value->variable();
     PlannedVariable planned = m_plan.variable(variable);
-    if (value->givesWordAsItLies()) {
+    if (value->returnsRawSlot()) {
         if (planned.hasWordInStatics())
             define(value, emitter<StaticsEmitter>().loadVariable(variable));
         else if (m_plan.hasClosureCell(planned.function))
@@ -173,7 +173,7 @@ void BindingEmitter::generateGetEnvironmentField(const ValueContext& value)
         return;
     }
     CellPointer environment = in<CellPointer>(value->environmentOperand());
-    emitter<HintEmitter>().stopWhereLifeHasEnded(value, environment);
+    emitter<HintEmitter>().crashIfLifetimeEnded(value, environment);
     define(value, emitter<SlotEmitter>().loadSlot(environment, slot, MemoryLocation::environmentField(layout, field)));
 }
 
@@ -196,7 +196,7 @@ void BindingEmitter::generatePutEnvironmentField(const ValueContext& value)
         return;
     }
     CellPointer environment = in<CellPointer>(value->environmentOperand());
-    emitter<HintEmitter>().stopWhereLifeHasEnded(value, environment);
+    emitter<HintEmitter>().crashIfLifetimeEnded(value, environment);
     ValueID storedValue = value->valueOperand();
     Operand stored = get(storedValue);
     emitter<SlotEmitter>().storeSlot(environment, slot, MemoryLocation::environmentField(layout, field), stored);

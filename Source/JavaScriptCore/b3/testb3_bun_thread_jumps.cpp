@@ -466,6 +466,31 @@ static void testThreadJumpsDemotesPhiWithUpsilonBeforeBranch()
     CHECK_EQ(invoke<int64_t>(*code, 0, 4, memory), 20);
 }
 
+static void testThreadJumpsUpsilonBeforePhi()
+{
+    Procedure proc(policyWithMaxTailSize(1));
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    Value* joined = graph.phi(blocks.tail, Int64);
+    Value* phi = proc.add<Value>(Phi, Int64, Origin());
+    graph.upsilon(blocks.tail, joined, phi);
+    blocks.tail->append(phi);
+    graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+    graph.upsilon(blocks.left, graph.int64(blocks.left, 0), phi);
+    graph.upsilon(blocks.left, graph.int64(blocks.left, 1), joined);
+    graph.upsilon(blocks.right, graph.int64(blocks.right, 0), phi);
+    graph.upsilon(blocks.right, blocks.second, joined);
+    graph.branch(blocks.tail, phi, blocks.taken, blocks.notTaken);
+    CHECK(threadJumpsMakesVariables(graph, blocks));
+
+    CHECK(blocks.left->successorBlock(0) == blocks.taken);
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 1, 0, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
+}
+
 static void testThreadJumpsKeepsUndecidedTest()
 {
     Procedure proc(policyWithMaxTailSize(1));
@@ -1573,6 +1598,7 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testThreadJumpsKeepsBlockLocalPhi());
     RUN(testThreadJumpsDemotesPhiUsedByAnotherBlock());
     RUN(testThreadJumpsDemotesPhiWithUpsilonBeforeBranch());
+    RUN(testThreadJumpsUpsilonBeforePhi());
     RUN(testThreadJumpsKeepsUndecidedTest());
     RUN(testThreadJumpsSkipsTailWithUncloneablePatchpoint());
     RUN(testThreadJumpsSkipsLoopHeader());

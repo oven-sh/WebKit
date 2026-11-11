@@ -1,7 +1,7 @@
 enum AllocationStorage { | engine Heap Frame }
 enum ClosureForm { | engine Full Slim Deferred Singleton }
 enum LoanOfClosure { | engine None ToFunctionEntered LeftToStubOfCall }
-enum ArrayLiteralStorage { | engine Fresh Profiled ProfiledForRoom }
+enum ArrayLiteralStorage { | engine Fresh Profiled }
 enum TailCallRequirement { | engine Required Allowed }
 enum CodeRole { | engine Body GenericCallEntry GenericConstructEntry AllocatingConstructEntry CoroutineBody ModuleStart SlowBody ParameterGuard TableEntry TableLookup }
 enum DataEncoding { | engine Unselected ReadOnlyTree CopyOnWriteArray TreeWithOwnStorage }
@@ -40,18 +40,18 @@ operation EmptyArgumentList (valueType: Type) -> declared(valueType) ; none ; Pr
 
 family Binding AsRead..Placed
 engine operation Parameter () -> declared ; none ; boundTo = Function ; flow = Copies ; form = Open
-operation GetModuleVariable (variable: Variable) [| engine mayPrecedeItsStore followsItsStore givesWordAsItLies] -> declared(variable) ; reads(ModuleVariables[variable]) collects ; flow = Copies ; form = Open
+operation GetModuleVariable (variable: Variable) [| engine isKnownInitialized returnsRawSlot] -> declared(variable) ; reads(ModuleVariables[variable]) collects ; flow = Copies ; form = Open
 operation PutModuleVariable (variable: Variable, value: Declared/retains) -> none ; writes(ModuleVariables[variable]) ; flow = Copies ; form = Open
 engine operation GetStaticFieldOrAbsent (variable: Variable, valueType: Type, classObject: Object/inspects) -> declared(valueType) ; reads(NamedProperties) ; Prepared..Placed ; replaces = PropGet ; form = Open
 engine operation PutStaticField (variable: Variable, classObject: Object/inspects, value: Any/retains(classObject)) -> none ; writes(NamedProperties) ; Prepared..Placed ; replaces = PropSet ; form = Open
-operation GetEnvironmentField (environment: Layout/inspects, layout: Layout, field: Field) [| engine mayPrecedeItsStore followsItsStore] -> declared(field) ; reads(EnvironmentFields[layout, field]) ; interpreted = Read ; flow = Copies ; form = Open
+operation GetEnvironmentField (environment: Layout/inspects, layout: Layout, field: Field) [| engine isKnownInitialized] -> declared(field) ; reads(EnvironmentFields[layout, field]) ; interpreted = Read ; flow = Copies ; form = Open
 operation PutEnvironmentField (environment: Layout/inspects, layout: Layout, field: Field, value: Declared/retains(environment)) -> none ; writes(EnvironmentFields[layout, field]) ; interpreted = Store ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Copies ; form = Open
 operation ScopeHasBinding (scope: Object/inspects, key: PropertyKey) -> natural(boolean) ; unknownCode ; runtime = ScopeHasBinding ; flow = TableProves ; flowRule = Heap ; form = Runtime
 
 family Allocation AsRead..Placed
-operation NewObject (layout: Layout, fields: List<Field>, prototype?: Object/retains(result), values...: Declared/retains(result), with CellStamp) -> allocation(layout) ; Allocates writes(MemberGuards) ; runtime = AllocateSlow ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CreateIteratorResult ; flow = Allocates ; flowRule = Heap ; closedUnder = Always, ObjectInFrame ; openUnder = CellInFrameFilledOnce ; formDependsOnLoop = true ; openIn = Loop
+operation NewObject (layout: Layout, fields: List<Field>, prototype?: Object/retains(result), values...: Declared/retains(result), with CellStamp) [| engine endsNoGuards] -> allocation(layout) ; Allocates writes(MemberGuards) ; runtime = AllocateSlow ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CreateIteratorResult ; flow = Allocates ; flowRule = Heap ; closedUnder = Always, ObjectInFrame ; openUnder = CellInFrameFilledOnce ; formDependsOnLoop = true ; openIn = Loop
 operation NewDictionary () -> natural(object) ; Allocates ; runtime = NewDictionary ; allocatesInline = true ; flow = Allocates ; flowRule = NewDictionary ; form = Closed
-operation FinishObject (object: Object/returns) -> natural(same(object)) ; none ; interpreted = Cast ; flow = Copies ; handsOn = Mark ; form = Open
+operation FinishObject (object: Object/returns) -> natural(same(object)) ; none ; interpreted = Cast ; flow = Copies ; passThrough = Mark ; form = Open
 operation NewArray (contents: Type, holes: List<UInt32>, elements...: Declared/retains(result), engine storage: AllocationStorage, engine literalStorage: ArrayLiteralStorage, engine arrayStorage: ArrayStorage) -> allocation(Array<contents>) ; Allocates ; runtime = NewArray ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; flowRule = Heap ; formDependsOnLoop = true ; form = Closed
 operation AppendElement (array: Array/inspects+writesContents, value: Any/retains(array), engine length...: Integer/inspects) -> none ; GrowsArray ; runtime = ArrayPush ; interpreted = Store ; runsOwnerBarrier = true ; flow = Copies ; flowRule = Heap ; formDependsOnLoop = true ; openIn = Loop ; form = Closed
 operation AppendSpread (array: Array/inspects+writesContents, iterable: Any/Iterated) -> none ; GrowsArray ; AsRead..AsRead ; interpreted = List ; flow = Copies ; flowRule = Iteration
@@ -126,16 +126,17 @@ operation ToObject (value: Any/returns, message?: String, engine calledBuiltin?:
 operation ToThis (value: Any/returns) -> natural(object) ; Allocates ; runtime = ToThis ; flow = Copies ; flowRule = ConversionToObject ; openUnder = PassesTest, NeedsTest ; runtimeUnder = FailsTest
 
 family Cast AsRead..Placed
-operation Upcast (value: Any/returns, castType: Type) -> cast(castType) ; none ; interpreted = Cast ; flow = Copies ; hasKnownValueRule = true ; handsOn = UnclaimedType ; form = Open
-operation NarrowByField (value: Any/returns, read: Any/inspects, key: PropertyKey) -> cast ; none ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true ; handsOn = TestedField ; form = Open
-operation NarrowByTest (value: Any/returns, left: Any/inspects) -> cast ; none ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true ; handsOn = TestedField ; form = Open
-operation Check (value: Any/returns, expectedType: Type as ExpectedType, site?: TypeSite) -> cast(expectedType) ; none ; AsRead..Prepared ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true ; handsOn = ClaimedType
-operation Convert (value: Any/returns, declared: DeclaredType, illTypedCause: IllTypedCause) -> natural(same(value)) ; none ; AsRead..AsRead ; flow = Unsound ; flowRule = Convert ; handsOn = UnclaimedType
-engine operation Expect (value: Any/returns, expectedType: Type as ExpectedType) -> cast(expectedType) ; none ; Prepared..Placed ; interpreted = Cast ; hasKnownValueRule = true ; handsOn = UnclaimedType ; form = Open
-operation CheckInitialized (value: Any/returns, name: String) -> cast ; throws ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true ; handsOn = PassedCheck ; form = Open
-operation RequireObjectCoercible (value: Any/returns, nullishAccess: NullishAccess, name?: String) -> cast ; throws ; interpreted = Cast ; flow = Checks ; runsBeforeCallee = true ; hasKnownValueRule = true ; handsOn = PassedCheck ; form = Open
-operation RequireObject (value: Any/returns, runtimeError: RuntimeErrorKind) -> cast ; throws ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true ; handsOn = PassedCheck ; openUnder = PassesTest, NeedsTest ; runtimeUnder = FailsTest
+operation Upcast (value: Any/returns, castType: Type) -> cast(castType) ; none ; interpreted = Cast ; flow = Copies ; hasKnownValueRule = true ; passThrough = UnclaimedType ; form = Open
+operation NarrowByField (value: Any/returns, read: Any/inspects, key: PropertyKey) -> cast ; none ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true ; passThrough = TestedField ; form = Open
+operation NarrowByTest (value: Any/returns, left: Any/inspects) -> cast ; none ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true ; passThrough = TestedField ; form = Open
+operation Check (value: Any/returns, expectedType: Type as ExpectedType, site?: TypeSite) -> cast(expectedType) ; none ; AsRead..Prepared ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true ; passThrough = ClaimedType
+operation Convert (value: Any/returns, declared: DeclaredType, illTypedCause: IllTypedCause) -> natural(same(value)) ; none ; AsRead..AsRead ; flow = Unsound ; flowRule = Convert ; passThrough = UnclaimedType
+engine operation Expect (value: Any/returns, expectedType: Type as ExpectedType) -> cast(expectedType) ; none ; Prepared..Placed ; interpreted = Cast ; hasKnownValueRule = true ; passThrough = UnclaimedType ; form = Open
+operation CheckInitialized (value: Any/returns, name: String) -> cast ; throws ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true ; passThrough = PassedCheck ; form = Open
+operation RequireObjectCoercible (value: Any/returns, nullishAccess: NullishAccess, name?: String) -> cast ; throws ; interpreted = Cast ; flow = Checks ; runsBeforeCallee = true ; hasKnownValueRule = true ; passThrough = PassedCheck ; form = Open
+operation RequireObject (value: Any/returns, runtimeError: RuntimeErrorKind) -> cast ; throws ; interpreted = Cast ; flow = Checks ; hasKnownValueRule = true ; passThrough = PassedCheck ; openUnder = PassesTest, NeedsTest ; runtimeUnder = FailsTest
 operation TypeTest (value: Any/inspects, testedType: Type) [| engine asksInFull] -> natural(boolean) ; none ; proves = TestedType ; branches = May ; interpreted = Test ; flow = Checks ; hasKnownValueRule = true ; hasOwnFoldingRule = true ; form = Open
+operation IsUnlockedInstance (value: Any/inspects, testedType: Type) -> natural(boolean) ; none ; branches = May ; interpreted = Test ; flow = Checks ; hasOwnFoldingRule = true ; form = Open
 
 family Call AsRead..Placed
 operation Call (callee: Any/calls, thisValue?: Any/retains, arguments...: Any/retains, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, calledBuiltin?: Builtin, callNumber?: UInt32, engine methodOfReceiverAsMade?: Builtin, with CallStamp) [isNeverInlined isDoneInPlace | engine methodIsNamedByKeyAlone] -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call ; entersByValue = Call ; form = Closed
@@ -153,7 +154,6 @@ operation CatchException () -> natural(Exception) ; UsesRuntime collects ; runti
 
 family Hint AsRead..Placed
 operation LoopHint () [| engine throwsOwedError] -> none ; UsesRuntime throws terminates collects ; runtime = PollSlow ; flow = TableProves ; form = Open
-operation ReleaseHint (value: Any/inspects) [| engine isBehindCopiedBody] -> none ; writes(ExternalState) ; boundTo = Function ; flow = TableProves ; form = Open
 
 family Control AsRead..Placed
 terminator Jump () -> next ; none

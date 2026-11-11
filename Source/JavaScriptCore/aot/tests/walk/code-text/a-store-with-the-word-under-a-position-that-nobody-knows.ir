@@ -6,9 +6,9 @@
 #   constants:
 #     v1: 1 @JSValue = Integer integer=1
 #   b0(v0: anything @JSValue) entry=0:
-#     v2: int[0, 1] @Int32 = BitAnd v0, v1 form=Generic traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v2: int[0, 1] @Int32 = BitAnd v0, v1 form=Generic traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v3: Array @Cell = NewArray v0, v0 contents=anything traits=[mayCollect, mayTouchMemory]
-#     v4 @Void = PutArrayElement v3, v2, v0 level=Proven [keyIsIntegral, fillsPlaceOfListMadeHere] traits=[mayThrow, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v4 @Void = PutArrayElement v3, v2, v0 level=Proven [keyIsIntegral, fillsPlaceOfListMadeHere] traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]
 #     Return v0
 # }
 # -- end of code

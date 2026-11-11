@@ -3,7 +3,7 @@
 # delete Array.prototype.push; function later() { Array.prototype[name] = 1; Array.prototype.pop = later; }
 # DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
 # DIAGNOSTIC: LockedBuiltinWriteMayRun 1
-# DIAGNOSTIC: LockedBuiltinWriteUnderUnreadName 1
+# DIAGNOSTIC: LockedBuiltinWriteWithUnknownKey 1
 # RUN: locks
 
 module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}

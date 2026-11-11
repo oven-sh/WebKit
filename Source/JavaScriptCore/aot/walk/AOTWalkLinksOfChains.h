@@ -14,7 +14,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 extern const OpcodeSet opcodesThatBuildDeferredDefinitionTakes;
-inline constexpr OpcodeSet opcodesThatBuildDeferredDefinitionTakesInChains = inputOperationsThatHandOn | OpcodeSet { Opcode::NewRegExp, Opcode::Data, Opcode::GetModuleVariable, Opcode::PutModuleVariable };
+inline constexpr OpcodeSet opcodesThatBuildDeferredDefinitionTakesInChains = inputPassThroughOpcodes | OpcodeSet { Opcode::NewRegExp, Opcode::Data, Opcode::GetModuleVariable, Opcode::PutModuleVariable };
 bool buildDeferredDefinitionOfItsOpcodes(Walker&, const BodyValue&);
 ALWAYS_INLINE bool buildDeferredDefinition(Walker& walker, const BodyValue& value) { return opcodesThatBuildDeferredDefinitionTakesInChains.contains(value.opcode()) && buildDeferredDefinitionOfItsOpcodes(walker, value); }
 template<Opcode known> ALWAYS_INLINE bool buildDeferredDefinition(Walker& walker, const BodyValueOf<known>& value)
@@ -27,9 +27,9 @@ template<Opcode known> ALWAYS_INLINE bool buildDeferredDefinition(Walker& walker
         return walker.plan().deferredDefinitions().bodiesThatDefine.get(walker.currentFunction().index()) && buildDeferredDefinitionOfItsOpcodes(walker, value);
 }
 extern const OpcodeSet opcodesThatFoldOperationTakes;
-inline constexpr OpcodeSet opcodesThatFoldOperationTakesInChains = operationsOnPrimitivesInFolding | castsOfFolding | checksThatHandOnOrThrow | OpcodeSet { Opcode::TypeTest, Opcode::IsClosureOf, Opcode::ToBoolean, Opcode::Eq, Opcode::StrictEq,
+inline constexpr OpcodeSet opcodesThatFoldOperationTakesInChains = operationsOnPrimitivesInFolding | castsOfFolding | passThroughChecks | OpcodeSet { Opcode::TypeTest, Opcode::IsClosureOf, Opcode::ToBoolean, Opcode::Eq, Opcode::StrictEq,
     Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::PropGet, Opcode::ElemGet, Opcode::PutModuleVariable, Opcode::PutEnvironmentField,
-    Opcode::ToObject, Opcode::ToThis, Opcode::TypeOf, Opcode::ToLength };
+    Opcode::ToObject, Opcode::ToThis, Opcode::TypeOf, Opcode::ToLength, Opcode::IsUnlockedInstance };
 AOT_LINK_OF_WALK(foldOperation, opcodesThatFoldOperationTakesInChains)
 inline constexpr OpcodeSet allocationsOfEscapeAnalysis = opcodesWhere([](Opcode opcode) {
     if (opcode == Opcode::NewClosure || opcode == Opcode::Data)
@@ -37,12 +37,12 @@ inline constexpr OpcodeSet allocationsOfEscapeAnalysis = opcodesWhere([](Opcode 
     if (resultRuleOf(opcode) != ResultRule::Allocation || effectRuleOf(opcode) != EffectRule::Declared || boundToOf(opcode) == BoundTo::Site)
         return false;
     Effects bound = declaredBoundOf(opcode);
-    return bound.writes.containsOnly(heapsWhoseWritesNobodySees) && !bound.mayRunOtherCode();
+    return bound.writes.containsOnly(unobservableWriteHeaps) && !bound.mayRunOtherCode();
 });
 static_assert(allocationsOfEscapeAnalysis.contains(Opcode::NewObject) && allocationsOfEscapeAnalysis.contains(Opcode::NewArray) && allocationsOfEscapeAnalysis.contains(Opcode::CreateIteratorResult));
 static_assert(!allocationsOfEscapeAnalysis.contains(Opcode::NewTemplateObject) && !allocationsOfEscapeAnalysis.contains(Opcode::TruncateNewArray));
 
-inline constexpr OpcodeSet namesOfOperandInEscapeAnalysis = opcodesThatHandOn({ HandedOn::PassedCheck, HandedOn::Mark });
+inline constexpr OpcodeSet namesOfOperandInEscapeAnalysis = opcodesWithPassThrough({ PassThroughKind::PassedCheck, PassThroughKind::Mark });
 inline constexpr OpcodeSet argumentsObjectsOfEscapeAnalysis { Opcode::CreateUnmappedArguments, Opcode::CreateMappedArguments };
 static_assert(allocationsOfEscapeAnalysis.contains(Opcode::CreateUnmappedArguments) && allocationsOfEscapeAnalysis.contains(Opcode::CreateMappedArguments));
 inline constexpr OpcodeSet opcodesOfEscapeAnalysis = allocationsOfEscapeAnalysis | namesOfOperandInEscapeAnalysis | OpcodeSet { Opcode::StrictEq, Opcode::GetMappedArgument, Opcode::PropDelete };

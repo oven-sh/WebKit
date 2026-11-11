@@ -98,13 +98,13 @@ static ValueID allocationOfPromiseInCoroutinePromises(const Walker& walker, Refe
     if (!promise || !promise.isValue())
         return { };
     const Code& code = walker.code();
-    ValueID made = rootOfCellInSweptCode(code, promise.id());
+    ValueID made = underlyingCellOf(code, promise.id());
     return !code.isConstant(made) && code.at(made).opcode == Opcode::NewPromise ? made : ValueID();
 }
 
 static bool isFirstToMentionPromiseInCoroutinePromises(const BodyIndex& index, const BodyValue& resolution)
 {
-    ValueID promise = index.valueBehindCasts(resolution.as<Opcode::ResolvePromise>().promiseOperand());
+    ValueID promise = index.stripCasts(resolution.as<Opcode::ResolvePromise>().promiseOperand());
     if (!promise || index.isParameter(promise) || index.hasIrreducibleFlow() || index.loopOf(index.blockOf(promise)) != index.loopOf(index.blockOf(resolution.id())))
         return false;
     while (ValueID onlyUser = index.onlyUsingValue(promise)) {
@@ -189,7 +189,7 @@ static void resolveInCoroutinePromises(Walker& walker, Reference promise, Refere
     BlockID looksUp = walker.addBlock(BlockFrequency::Rare);
     BlockID meet = walker.addBlock();
     walker.branch(hasNoThen, stores, looksUp);
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
 
     walker.continueIn(stores);
     buildFulfillmentInCoroutinePromises(walker, promise, value, origin);
@@ -231,9 +231,9 @@ static Reference valueAwaitedInPlaceOfPromiseInCoroutinePromises(Walker& walker,
     if (!walker.has(Mechanism::EscapeAnalysis))
         return { };
     Reference value = valueOfPromiseFulfilledHere(walker, promise);
-    if (!value || !isListAsMade(walker, promise) || !findsConstructorOfPromisesInCoroutinePromises(walker, promise))
+    if (!value || !isKnownPristine(walker, promise) || !findsConstructorOfPromisesInCoroutinePromises(walker, promise))
         return { };
-    walker.askAgainWhetherObjectIsAsMade(promise);
+    walker.verifyPristineObject(promise);
     return value;
 }
 
@@ -269,7 +269,7 @@ Reference buildAwaitOfWhatHasNoThen(Walker& walker, Reference awaited, std::span
     BlockID suspends = walker.addBlock();
     BlockID goesOn = walker.addBlock();
     walker.branch(mayGoOn, goesOn, suspends);
-    walker.noteGuessOpened();
+    walker.recordSpeculation();
     walker.continueIn(suspends);
     walker.build(WTF::move(await));
     walker.state().invalidateHeap();

@@ -8,7 +8,7 @@ enum MemberConditionKind { | engine MemberUnchanged PrototypeLinkUnchanged Class
 record MemberConditionRecord engine { kind: MemberConditionKind layout: Layout side: ClassSide key: PropertyKey? }
 
 family Guard Prepared..Placed ; branches = May ; interpreted = Test
-operation ShapeTest (object: Any/inspects, layouts: LayoutSet) [| engine refusesMarkedObjects asksInFull] -> natural(boolean) ; reads(ShapeWords[layouts]) ; proves = Shape ; form = Open
+operation ShapeTest (object: Any/inspects, layouts: LayoutSet) [| engine rejectsMarkedObjects asksInFull] -> natural(boolean) ; reads(ShapeWords[layouts], NamedProperties) ; proves = Shape ; form = Open
 operation IsSlotFilled (object: Object/inspects, with SlotStamp) [holdsDeclaredType] -> natural(boolean) ; reads(ObjectFields[key]) ; proves = SlotFilled ; relies = Shape ; access = Has ; receiver = object ; accessClass = Slot ; replaces = PropHas, PropHasOwn, PrivateHas ; formDependsOnLoop = true ; openUnder = Always, FieldLeftOutByMakers, FieldInExtension ; openIn = Loop ; closedIn = RareBlock
 operation HasNoExtraProperties (object: Object/inspects) [| engine hasNoFieldOutsideSlot] -> natural(boolean) ; reads(NamedProperties) ; proves = NoExtraProperties ; relies = Shape ; form = Open
 operation HasNoFieldOutsideSlot (object: Object/inspects) [mayMeetUnfinishedObject] -> natural(boolean) ; reads(NamedProperties) ; proves = NoFieldOutsideSlot ; relies = Shape ; form = Open
@@ -21,7 +21,7 @@ engine operation HasNumberOfBoundArguments (function: Object/inspects, count: UI
 engine operation GetWordOfBoundFunction (function: Object/inspects, index: UInt32) -> unknown ; reads(RuntimeState) ; form = Open
 operation IsHolderWithoutAddedNames (builtin: Builtin) -> natural(boolean) ; reads(NamedProperties) ; AsRead..Placed ; flow = TableProves ; form = Open
 operation HasArrayStorage (array: Array/inspects, arrayStorage: ArrayStorage, engine data?: Data) [isWritable | engine admitsInt32Storage] -> natural(boolean) ; reads(ArrayStorage) ; proves = ArrayStorage ; form = Open
-operation IsElementPresent (array: Array/inspects, position: Number/inspects, storage?: ArrayStoragePointer/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage) [keyIsIntegral | engine admitsInt32Storage isInBounds] -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; proves = InBounds ; relies = ArrayStorage ; form = Open
+operation IsElementPresent (array: Array/inspects, position: Number/inspects, storage?: ArrayStoragePointer/inspects, holdsDoubles?: Boolean/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage) [keyIsIntegral | engine admitsInt32Storage isInBounds] -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; proves = InBounds ; relies = ArrayStorage ; form = Open
 operation IsNotThenable (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, ObjectFields, PrototypeLinks, RuntimeState) ; proves = NotThenable ; replaces = ReturnAsyncResult, ResolvePromise ; formDependsOnLoop = true ; openIn = Loop ; form = Closed
 operation AreMembersUnchanged (conditions: List<MemberConditionRecord>) -> natural(boolean) ; reads(MemberGuards[conditions]) ; proves = MemberUnchanged ; form = Open
 operation HasKeyOrder (object: Layout/inspects, layout: Layout, fields: List<Field>) [| engine hasNoFlags] -> natural(boolean) ; reads(OrderWords) ; proves = KeyOrder ; relies = Shape ; form = Open
@@ -38,7 +38,7 @@ operation GetSlotGetter (object: Object/inspects, with SlotStamp) -> declared(ke
 operation GetSlotSetter (object: Object/inspects, with SlotStamp) [isInStrictCode] -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; replaces = PropSet ; formDependsOnLoop = true ; openUnder = Always, FieldLeftOutByMakers, FieldInExtension ; openIn = Loop ; closedIn = RareBlock
 operation GetDeferredClosureSlot (object: Object/inspects, with SlotStamp) [holdsDeclaredType] -> declared(key) ; Allocates reads(ObjectFields[key]) writes(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; replaces = PropGet ; runtime = MaterializeDeferredClosure ; writesOnlyItsAnswer = true ; form = Open
 operation GetDeferredClosureSlotOrUndefined (object: Object/inspects, with SlotStamp) -> declared(key) ; Allocates reads(ObjectFields[key], NamedProperties, OrderWords) writes(ObjectFields[key]) ; access = Read ; relies = Shape ; replaces = PropGet ; runtime = MaterializeDeferredClosure ; writesOnlyItsAnswer = true ; form = Open
-operation PutSlot (object: Object/inspects, value: Declared/retains(object), with SlotStamp, mode: ECMAMode) [isDefinition | engine putsBackWhatTurnStored] -> none ; writes(ObjectFields[key]) ; access = Store ; stored = value ; relies = Shape, NotFrozen ; interpreted = Store ; replaces = PropSet, PropDefine, PrivateSet, PrivateDefine ; runsOwnerBarrier = true ; remembersOwner = true ; form = Open
+operation PutSlot (object: Object/inspects, value: Declared/retains(object), with SlotStamp, mode: ECMAMode) [isDefinition | engine undoesIterationStore] -> none ; writes(ObjectFields[key]) ; access = Store ; stored = value ; relies = Shape, NotFrozen ; interpreted = Store ; replaces = PropSet, PropDefine, PrivateSet, PrivateDefine ; runsOwnerBarrier = true ; remembersOwner = true ; form = Open
 operation PutSlotOrAdd (object: Object/inspects, value: Declared/retains(object), conditions: List<MemberConditionRecord>, with SlotStamp, mode: ECMAMode, orderWordAfter?: OrderWord) [isDefinition | engine isExpectedToCreate] -> none ; AllocatesWithoutCollecting reads(ObjectFields[key], OrderWords, RuntimeState, MemberGuards[conditions]) writes(ObjectFields[key], OrderWords, MemberGuards, RuntimeState) ; access = Store ; stored = value ; relies = Shape, NotFrozen ; interpreted = Store ; replaces = PropSet, PropDefine, PrivateDefine ; runtime = DidCreateField ; runsOwnerBarrier = true ; remembersOwner = true ; formDependsOnLoop = true ; openUnder = Always ; closedUnder = FieldInExtension ; openIn = Loop ; closedIn = UnlikelyBlock, RareBlock
 
 family Allocation Prepared..Placed
@@ -58,13 +58,13 @@ operation ElemGetOrOwnAccessor (object: Object/retains, property: Any/inspects) 
 operation GetGetterOfAccessorOrUndefined (value: Any/inspects) -> unknown ; reads(ShapeWords, RuntimeState) ; replaces = ElemGet ; form = Open
 operation GetCachedGetter (object: Object/inspects, key: PropertyKey) -> unknown ; reads(ShapeWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, RuntimeState) writes(RuntimeState) ; replaces = PropGet ; form = Closed
 engine operation GetPropertyOfHeir (object: Object/inspects, layout: Layout, field: Field) -> unknown ; reads(NamedProperties) ; replaces = PropGet ; form = Open
-engine operation PutPropertyOfHeir (object: Object/inspects, value: Any/retains(object), layout: Layout, field: Field) [| engine putsBackWhatTurnStored] -> none ; writes(NamedProperties) ; replaces = PropSet ; form = Open
+engine operation PutPropertyOfHeir (object: Object/inspects, value: Any/retains(object), layout: Layout, field: Field) [| engine undoesIterationStore] -> none ; writes(NamedProperties) ; replaces = PropSet ; form = Open
 operation ElemGetByKeyParts (object: Any/retains, firstPart: Any/inspects, secondPart: Any/inspects) -> unknown ; unknownCode ; accessClass = ByName ; replaces = ElemGet, Strcat ; runtime = GetByValAndCache ; form = Closed
 
 family ElementAccess Prepared..Placed
 operation GetArrayLength (array: Array/inspects) -> natural(uint32) ; reads(ArrayStorage, ArrayLengths) ; relies = Pristine, ArrayStorage ; interpreted = Read ; form = Open
 engine operation GetArrayStorage (array: Array/inspects) -> natural(ArrayStoragePointer) ; reads(ArrayStorage) ; base = array ; form = Open
-engine operation GetArrayRoom (array: Array/inspects) -> natural(uint32) ; reads(ArrayStorage) ; form = Open
+engine operation GetArrayCapacity (array: Array/inspects) -> natural(uint32) ; reads(ArrayStorage) ; form = Open
 engine operation ExtendArrayLength (array: Array/inspects+writesContents, position: Integer/inspects, storage?: ArrayStoragePointer/inspects) -> none ; reads(ArrayStorage) writes(Elements[Array], ArrayLengths) ; form = Open
 engine operation SetArrayLength (array: Array/inspects+writesContents, length: Integer/inspects, mode: ECMAMode) -> none ; GrowsArray writes(ShapeWords, ArrayLengths) ; replaces = PropSet ; runtime = SetArrayLength ; accessClass = Slot ; formDependsOnLoop = true ; openIn = Loop ; form = Closed
 operation GetArrayElement (array: Array/inspects+readsContents, position: Number/inspects, storage?: ArrayStoragePointer/inspects, holdsDoubles?: Boolean/inspects, length...: Integer/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel) [keyIsIntegral isInBounds isPresent readsHoleAsNaN | engine admitsInt32Storage asksCellWhereNothingIsFound] -> unknown => declared(array) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; interpreted = Read ; replaces = ElemGet ; accessClass = Slot ; formDependsOnLoop = true ; openIn = Loop ; form = Open
@@ -73,7 +73,7 @@ operation HasArrayElement (array: Array/inspects, position: Number/inspects, len
 operation AppendElements (array: Array/inspects+writesContents, source: Array/Listed) -> none ; GrowsArray ; relies = Pristine, ArrayStorage ; interpreted = List ; replaces = AppendSpread ; runtime = AppendElements ; form = Closed
 operation AppendMembers (array: Array/inspects+writesContents, source: Object/inspects+readsContents+retainsContents+writesContents) -> none ; GrowsArray reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; relies = Pristine ; replaces = AppendSpread ; runtime = AppendMembers ; form = Closed
 operation AppendValuesOfMap (array: Array/inspects+writesContents, source: Object/inspects+readsContents+retainsContents+writesContents) -> none ; GrowsArray reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; relies = Pristine ; replaces = AppendSpread ; runtime = AppendValuesOfMap ; form = Closed
-engine operation ReserveArrayRoom (array: Array/inspects+writesContents, room: Number/inspects, held...: Any/inspects) -> none ; Allocates reads(ArrayStorage) writes(ArrayStorage) ; runtime = ReserveArrayRoom ; form = Closed
+engine operation ReserveArrayCapacity (array: Array/inspects+writesContents, capacity: Number/inspects, held...: Any/inspects) -> none ; Allocates reads(ArrayStorage) writes(ArrayStorage) ; runtime = ReserveArrayCapacity ; form = Closed
 engine operation ConvertToDoubleStorage (array: Array/inspects+writesContents) -> none ; Allocates reads(ArrayStorage, Elements) writes(ArrayStorage, Elements, ShapeWords) ; runtime = ConvertToDoubleStorage ; form = Open
 operation GetTypedArrayLength (view: Object/inspects, typedArrayType: TypedArrayType) -> natural(int[0, 17179869184]) ; reads(TypedArrayStorage) ; form = Open
 operation GetTypedArrayVector (view: Object/inspects) -> natural(ViewVector) ; reads(TypedArrayStorage) ; base = view ; form = Open
@@ -101,6 +101,8 @@ operation DivideIntegers (dividend: Integer/inspects, divisor: Integer/inspects,
 operation RemainderOfIntegers (dividend: Integer/inspects, divisor: Integer/inspects) -> natural(integer) ; none ; form = Open
 operation ReciprocalOfDivisor (divisor: Integer/inspects) -> natural(Reciprocal) ; none ; form = Open
 operation RemainderByReciprocal (dividend: Integer/inspects, divisor: Integer/inspects, reciprocal: Reciprocal/inspects) -> natural(integer) ; none ; form = Open
+operation WholeDivisor (divisor: Number/inspects) -> natural(integer) ; none ; form = Open
+operation RemainderByWholeDivisor (dividend: Number/inspects, divisor: Number/inspects, wholeDivisor: Integer/inspects) -> natural(number) ; none ; form = Open
 operation ToInt32 (value: Number/inspects) [| engine givesOnlyLowestBits] -> natural(int32) ; none ; runtime = ToInt32 ; hasKnownValueRule = true ; form = Open
 operation ToUint32 (value: Number/inspects) -> natural(uint32) ; none ; runtime = ToInt32 ; hasKnownValueRule = true ; form = Open
 operation ToIntegerOrInfinity (value: Number/inspects) -> natural(number) ; none ; form = Open
@@ -163,8 +165,8 @@ operation PromiseAllOfElements (contents: Type, directCalls: UInt32, elements...
 
 family Operator Prepared..Placed
 operation HasInPrototypeChain (value: Any/inspects+runs(PrototypeChain), prototype: Object/inspects) -> natural(boolean) ; Allocates reads(PrototypeLinks) throws ; runtime = DefaultHasInstance ; branches = May ; replaces = InstanceOf ; hasOwnFoldingRule = true ; form = Closed
-engine operation FindInPrototypeChainUnlessTrapped (value: Any/inspects, prototype: Object/inspects) -> natural(int[0, 2]) ; reads(PrototypeLinks) ; form = Closed
-engine operation FindsDefaultHasInstanceUnlessTrapped (constructor: Object/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; form = Closed
+engine operation TryFindInPrototypeChain (value: Any/inspects, prototype: Object/inspects) -> natural(int[0, 2]) ; reads(PrototypeLinks) ; form = Closed
+engine operation HasDefaultHasInstance (constructor: Object/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; form = Closed
 
 family Module Prepared..Placed
 operation BeginModuleEvaluation (module: Module(Target)) -> natural(boolean) ; unknownCode ; runtime = BeginModuleEvaluation ; branches = May ; form = Open

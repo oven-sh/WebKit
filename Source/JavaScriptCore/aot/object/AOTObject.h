@@ -350,7 +350,7 @@ private:
 };
 static_assert(sizeof(Object) == offsetOfOrderWord);
 
-JSObject* extraPropertiesIfMade(const Object&);
+JSObject* extraPropertiesIfCreated(const Object&);
 
 class Extension {
 public:

@@ -209,7 +209,7 @@ NEVER_INLINE bool ErrorInstance::tryRetainReturnAddresses(VM& vm, bool useCurren
     std::optional<unsigned> stackTraceLimit = realm()->stackTraceLimit();
     if (!stackTraceLimit)
         return false;
-    auto* returnAddresses = AOT::tryCaptureStackTrace(vm, this, *stackTraceLimit, otherFrames, subclassCaller, useCurrentFrame ? AOT::FrameOnTop::IsListed : AOT::FrameOnTop::IsLeftOut);
+    auto* returnAddresses = AOT::tryCaptureStackTrace(vm, this, *stackTraceLimit, otherFrames, subclassCaller, useCurrentFrame ? AOT::TopFramePolicy::Include : AOT::TopFramePolicy::Skip);
     if (!returnAddresses)
         return false;
     Locker locker { cellLock() };

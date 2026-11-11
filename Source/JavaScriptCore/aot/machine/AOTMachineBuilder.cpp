@@ -338,6 +338,50 @@ static ALWAYS_INLINE MachineBuilderAddress machineBuilderAddressOf(Builder& buil
     return { base, static_cast<int32_t>(distance) };
 }
 
+static bool machineBuilderAccessTakesSharedSum(const MachineBuilderAddress& address)
+{
+    if (!isARM64() || !address.offset || address.base->opcode() != Add || address.base->hasNoPosition())
+        return false;
+    const Operation* pointer = address.base->child(0);
+    return pointer->isArgumentReg(cellCageBaseGPR) || pointer->has(OperationFlag::IsInnerPointer);
+}
+
+#if CPU(ARM64)
+struct MachineBuilderIndexOfSum {
+    explicit MachineBuilderIndexOfSum(const Operation* sum)
+        : word(sum->child(1))
+    {
+        if (word->opcode() == Shl && word->child(1)->hasInt32()) {
+            shift = static_cast<unsigned>(word->child(1)->asInt32()) & 63;
+            word = word->child(0);
+        }
+        if (word->opcode() == ZExt32 || word->opcode() == SExt32) {
+            extension = word->opcode();
+            word = word->child(0);
+        }
+    }
+    friend bool operator==(const MachineBuilderIndexOfSum&, const MachineBuilderIndexOfSum&) = default;
+
+    const Operation* word;
+    unsigned shift { 0 };
+    Opcode extension { Nop };
+};
+
+Operation* Builder::sharedSumFor(Operation* sum)
+{
+    ASSERT(sum->opcode() == Add && sum->type() == Int64);
+    MachineBuilderIndexOfSum index(sum);
+    Operation*& last = m_lastSharedSums[(sum->child(0)->index() * 7 + index.word->index() * 3 + index.shift) % m_lastSharedSums.size()];
+    if (last && last->child(0) == sum->child(0) && MachineBuilderIndexOfSum(last) == index) {
+        NumberingKey key = machineBuilderKeyOf(Add, Int64, last->child(0), last->child(1));
+        if (Operation* visible = findNumbered(key, Numbering::hashOf(key)))
+            return visible;
+    }
+    last = sum;
+    return sum;
+}
+#endif
+
 static constexpr unsigned machineBuilderNumberOfSetsOfHeapTraits = 32;
 static_assert(static_cast<unsigned>(HeapTrait::Immutable) < machineBuilderNumberOfSetsOfHeapTraits && static_cast<unsigned>(HeapTrait::HoldsInnerPointer) < machineBuilderNumberOfSetsOfHeapTraits);
 static_assert(static_cast<unsigned>(HeapTrait::HoldsPermanentCell) < machineBuilderNumberOfSetsOfHeapTraits && static_cast<unsigned>(HeapTrait::IsFilledOnce) < machineBuilderNumberOfSetsOfHeapTraits);
@@ -686,7 +730,8 @@ Operation* Builder::binary(Opcode opcode, Operation* left, Operation* right)
     ASSERT(opcode != RotR || right->hasInt32());
     sealPendingPatch();
 
-    if (isCommutative(opcode) && machineBuilderShouldSwapOperands(left, right))
+    bool comparesLinkedNumber = (opcode == Equal || opcode == NotEqual) && (left->opcode() == NumberOf) != (right->opcode() == NumberOf) && !left->isConstant() && !right->isConstant();
+    if (comparesLinkedNumber ? left->opcode() == NumberOf : isCommutative(opcode) && machineBuilderShouldSwapOperands(left, right))
         std::swap(left, right);
 
     Type type = typeOfResult(opcode, left);
@@ -967,6 +1012,9 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
     }
 
     MachineBuilderAddress address = machineBuilderAddressOf(*this, base, offset, !traps);
+    bool takesSharedSum = !traps && machineBuilderAccessTakesSharedSum(address);
+    if (takesSharedSum)
+        address.base = sharedSumFor(address.base);
     NumberingKey key = machineBuilderKeyOf(opcode, type, address.base, nullptr, nullptr, machineBuilderPayloadOfAccess(address.offset, heap.index()));
     uint32_t hash = 0;
     if (!traps) {
@@ -977,8 +1025,10 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
             return existing;
         }
     }
-    if (Operation* ownBase = duplicateIfFusable(address.base); ownBase != address.base)
-        return load(opcode, type, ownBase, address.offset, heap, trapping);
+    if (!takesSharedSum) {
+        if (Operation* ownBase = duplicateIfFusable(address.base); ownBase != address.base)
+            return load(opcode, type, ownBase, address.offset, heap, trapping);
+    }
 
     Operation* result = appendNewMemoryAccess(opcode, type, address.base);
     result->m_payload.memory.offset = address.offset;
@@ -992,6 +1042,26 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
             noteNumberedLoadForStores(result);
     }
     return result;
+}
+
+Operation* Builder::makeSumOfStore(Operation* sum)
+{
+    if (!isX86_64() || sum->opcode() != Add || sum->hasNoPosition() || sum->isNarrowReference())
+        return duplicateIfFusable(sum);
+    Operation* base = sum->child(0);
+    Operation* index = sum->child(1);
+    Operation* amount = index->opcode() == Shl && index->child(1)->hasInt32() ? index->child(1) : nullptr;
+    Operation* scaled = amount ? index->child(0) : index;
+    if (base->hasNoPosition() || scaled->hasNoPosition() || scaled->isNarrowReference() || !isEncodableIndexedAddress(Width64, amount ? static_cast<unsigned>(amount->asInt32()) & 63 : 0, IndexExtension::None, 0))
+        return duplicateIfFusable(sum);
+    if (scaled->opcode() == ZExt32 && !scaled->child(0)->hasNoPosition() && clearsUpperHalf(scaled->child(0))) {
+        Operation* extension = appendNewComputation(ZExt32, Int64, scaled->child(0));
+        extension->m_flags |= scaled->m_flags & static_cast<uint16_t>(OperationFlag::ExtendsWordThatIsNotNegative);
+        scaled = extension;
+    }
+    Operation* own = appendNewComputation(Add, Int64, base, amount ? appendNewComputation(Shl, Int64, scaled, amount) : scaled);
+    own->m_flags |= sum->m_flags & static_cast<uint16_t>(OperationFlag::IsInnerPointer);
+    return own;
 }
 
 Operation* Builder::store(Opcode opcode, Operation* value, Operation* base, ptrdiff_t offset, const AbstractHeap& heap)
@@ -1009,7 +1079,7 @@ Operation* Builder::store(Opcode opcode, Operation* value, Operation* base, ptrd
 
     MachineBuilderAddress address = machineBuilderAddressOf(*this, base, offset, true);
     Operation* ownValue = duplicateIfFusable(value);
-    Operation* ownBase = duplicateIfFusable(address.base);
+    Operation* ownBase = machineBuilderAccessTakesSharedSum(address) ? sharedSumFor(address.base) : value->type().isFloat() ? makeSumOfStore(address.base) : duplicateIfFusable(address.base);
     Operation* result = appendNewMemoryAccess(opcode, Void, ownValue, ownBase);
     result->m_payload.memory.offset = address.offset;
     result->m_payload.memory.heap = heap.index();
@@ -1248,7 +1318,7 @@ Operation* Builder::upsilonOfCompletePhi(Operation* value, Operation* phi)
 
 bool Builder::handOnUpperHalf(const Operation* value, Operation* phi)
 {
-    if (clearsUpperHalfOfRegister(value) || phi->has(OperationFlag::UpperHalfMayBeSet))
+    if (clearsUpperHalf(value) || phi->has(OperationFlag::UpperHalfMayBeSet))
         return false;
     phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
     return true;

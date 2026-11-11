@@ -438,6 +438,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Int32, numberOfSuperAndPerformanceCoresOverride, 0, Normal, "If non-zero, overrides the number of Super and Performance (i.e. non-Efficiency) cores reported by the hardware; 0 means use the value reported by the hardware."_s) \
     v(Double, dfgThresholdScaleForFewPerformanceCores, 2.0, Normal, "On Apple silicon Macs with few Super and Performance cores, scale the DFG tier-up thresholds (thresholdForOptimize*) by this factor."_s) \
     v(Double, ftlThresholdScaleForFewPerformanceCores, 1.5, Normal, "On Apple silicon Macs with few Super and Performance cores, scale the FTL tier-up thresholds (thresholdForFTLOptimize*) by this factor."_s) \
+    v(Double, ftlThresholdScaleForFewCores, 4.0, Normal, "On Linux ARM64 devices (not Android) with four or fewer cores, scale the FTL tier-up thresholds (thresholdForFTLOptimize*) by this factor."_s) \
     v(Bool, forceEagerCompilation, false, Normal, nullptr) \
     v(Double, startupJITDeferralScale, 1, Normal, "While the VM's startup window is active, LLInt->Baseline and Baseline->DFG tier-up require this multiple of the normal execution-count threshold (1 = off)."_s) \
     v(Int32, thresholdForJITAfterWarmUp, 500, Normal, nullptr) \
@@ -776,9 +777,9 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useDecimal, false, Normal, "Expose the Decimal constructor of the TC39 Decimal proposal, and parse Decimal literals (1.5m)."_s) \
     v(Bool, useDecimalToJSON, false, Normal, "With useDecimal: Decimal.prototype.toJSON() answers the exact value as a String. In the proposal it throws."_s) \
     v(Bool, useDecimalOperators, false, Normal, "With useDecimal: + - * / % < <= > >= and unary -, ++ and -- work on Decimals, where they throw in the proposal, and == and != compare two Decimals by value, where they compare identity. Not in programs compiled ahead of time."_s) \
-    /* Not sourced from UnifiedWebPreferences.yaml: exposes SharedArrayBuffer to every global object. */ \
-    v(Bool, useSharedArrayBuffer, false, Normal, nullptr) \
-    /* Not sourced from UnifiedWebPreferences.yaml: lets an embedder expose SharedArrayBuffer to some global objects, see JSGlobalObject::exposeSharedArrayBuffer(). */ \
+    /* Not sourced from UnifiedWebPreferences.yaml: unconditionally expose SharedArrayBuffer to every global object. */ \
+    v(Bool, alwaysUseSharedArrayBuffer, false, Normal, nullptr) \
+    /* Not sourced from UnifiedWebPreferences.yaml: allows an embedder to conditionally expose SharedArrayBuffer per global, see callers of JSGlobalObject::exposeSharedArrayBuffer(). */ \
     v(Bool, allowSharedArrayBuffer, true, Normal, nullptr) \
     /* Not sourced from UnifiedWebPreferences.yaml: shares its semantics with the WebCore-bound TrustedTypes feature. */ \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
@@ -852,7 +853,7 @@ public:
     OptionRange(std::nullptr_t) { }
 
     bool init(const char*);
-    bool LEGACY_NODELETE isInRange(unsigned) const;
+    NODELETE bool isInRange(unsigned) const;
     const char* rangeString() const { return (m_state > InitError) ? m_rangeString : s_nullRangeStr; }
 
     void dump(PrintStream& out) const;

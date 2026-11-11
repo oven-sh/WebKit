@@ -21,16 +21,16 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean
 #     v3: Array @Cell = NewArray v0 contents=anything traits=[mayCollect, mayTouchMemory]
 #     Jump -> next b1()
 #   b1() handler=b2():
-#     v4: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
-#     v5 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteWhatIsSeen, mayTouchMemory]
-#     v6: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
+#     v5 @Void = SetMappedArgument v3, v1 index=0 traits=[mayWriteObservableState, mayTouchMemory]
+#     v6: anything @JSValue = Call v1, - traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b3()
 #   b2() role=CatchHandler:
 #     Jump -> next b3()
 #   b3():
 #     Branch v2 -> taken b4(), notTaken b5()
 #   b4():
-#     v7: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v7: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     Jump -> next b5()
 #   b5():
 #     Return v0

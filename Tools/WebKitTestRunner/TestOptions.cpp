@@ -45,14 +45,6 @@ static constexpr bool mediaSourceEnabledValue = false;
 static constexpr bool mediaSourceEnabledValue = true;
 #endif
 
-#if ENABLE(GPU_PROCESS)
-#if ENABLE(GPU_PROCESS_DOM_RENDERING_BY_DEFAULT)
-static constexpr bool fullGPUProcessEnabledValue = true;
-#else
-static constexpr bool fullGPUProcessEnabledValue = false;
-#endif
-#endif
-
 #if ENABLE(UNIFIED_PDF)
 #if ENABLE(UNIFIED_PDF_BY_DEFAULT)
 static constexpr bool unifiedPDFEnabledValue = true;
@@ -160,11 +152,11 @@ const TestFeatures& TestOptions::defaults()
 #if PLATFORM(IOS_FAMILY_SIMULATOR)
             { "VP9DecoderEnabled", false },
 #endif
-#if ENABLE(GPU_PROCESS)
-            { "UseGPUProcessForDOMRenderingEnabled", fullGPUProcessEnabledValue },
+#if ENABLE(GPU_PROCESS) && !PLATFORM(COCOA)
+            { "UseGPUProcessForDOMRenderingEnabled", false },
 #endif
-#if ENABLE(GPU_PROCESS) && ENABLE(WEBGL) && !PLATFORM(WIN)
-            { "UseGPUProcessForWebGLEnabled", fullGPUProcessEnabledValue },
+#if ENABLE(GPU_PROCESS) && ENABLE(WEBGL) && !PLATFORM(WIN) && !PLATFORM(COCOA)
+            { "UseGPUProcessForWebGLEnabled", false },
 #endif
         };
         features.stringWebPreferenceFeatures = {
@@ -184,6 +176,7 @@ const TestFeatures& TestOptions::defaults()
             { "allowTestOnlyOriginAccessAllowListIPC", true },
             { "appHighlightsEnabled", false },
             { "blockThirdPartyStorage", false },
+            { "dumpCSSPageBoxes", false },
             { "dumpJSConsoleLogInStdErr", false },
             { "dumpResourceLoadCallbacks", false },
             { "editable", false },
@@ -197,6 +190,7 @@ const TestFeatures& TestOptions::defaults()
             { "isAppBoundWebView", false },
             { "isAppInitiated", true },
             { "advancedPrivacyProtectionsEnabled", false },
+            { "fingerprintingProtectionsEnabled", false },
             { "runSingly", false },
             { "runInCrossOriginFrame", false },
             { "shouldHandleRunOpenPanel", true },
@@ -211,8 +205,6 @@ const TestFeatures& TestOptions::defaults()
             { "useDataDetection", false },
             { "useEphemeralSession", false },
             { "useFlexibleViewport", false },
-            { "useRemoteLayerTree", false },
-            { "noUseRemoteLayerTree", false },
             { "useThreadedScrolling", false },
             { "suppressInputAccessoryView", false },
             { "allowsInlinePredictions", false },
@@ -274,6 +266,7 @@ const std::unordered_map<std::string, TestHeaderKeyType>& TestOptions::keyTypeMa
         { "allowTestOnlyMockContentFilterIPC", TestHeaderKeyType::BoolTestRunner },
         { "allowTestOnlyOriginAccessAllowListIPC", TestHeaderKeyType::BoolTestRunner },
         { "blockThirdPartyStorage", TestHeaderKeyType::BoolTestRunner },
+        { "dumpCSSPageBoxes", TestHeaderKeyType::BoolTestRunner },
         { "dumpJSConsoleLogInStdErr", TestHeaderKeyType::BoolTestRunner },
         { "dumpResourceLoadCallbacks", TestHeaderKeyType::BoolTestRunner },
         { "dumpResourceResponseMIMETypes", TestHeaderKeyType::StringTestRunner },
@@ -288,6 +281,7 @@ const std::unordered_map<std::string, TestHeaderKeyType>& TestOptions::keyTypeMa
         { "isAppBoundWebView", TestHeaderKeyType::BoolTestRunner },
         { "isAppInitiated", TestHeaderKeyType::BoolTestRunner },
         { "advancedPrivacyProtectionsEnabled", TestHeaderKeyType::BoolTestRunner },
+        { "fingerprintingProtectionsEnabled", TestHeaderKeyType::BoolTestRunner },
         { "runSingly", TestHeaderKeyType::BoolTestRunner },
         { "runInCrossOriginFrame", TestHeaderKeyType::BoolTestRunner },
         { "shouldHandleRunOpenPanel", TestHeaderKeyType::BoolTestRunner },
@@ -302,7 +296,6 @@ const std::unordered_map<std::string, TestHeaderKeyType>& TestOptions::keyTypeMa
         { "useDataDetection", TestHeaderKeyType::BoolTestRunner },
         { "useEphemeralSession", TestHeaderKeyType::BoolTestRunner },
         { "useFlexibleViewport", TestHeaderKeyType::BoolTestRunner },
-        { "useRemoteLayerTree", TestHeaderKeyType::BoolTestRunner },
         { "useThreadedScrolling", TestHeaderKeyType::BoolTestRunner },
         { "suppressInputAccessoryView", TestHeaderKeyType::BoolTestRunner },
         { "allowsInlinePredictions", TestHeaderKeyType::BoolTestRunner },

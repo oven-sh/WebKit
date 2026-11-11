@@ -146,7 +146,7 @@ static constexpr uint8_t isOpcodeOfHeldBackAllocation = 2;
 static bool isAllocationWhoseStoresAreHeldBack(const BuiltinTable& builtins, const Operation& made, std::array<uint8_t, numberOfEnumerators<Opcode>>& answersOfSchema)
 {
     EffectTraits traits = made.traits();
-    if (traits.mayWriteWhatIsSeen() || traits.mayRunOtherCode())
+    if (traits.mayWriteObservableState() || traits.mayRunOtherCode())
         return false;
 
     Opcode opcode = made.opcode;
@@ -182,7 +182,7 @@ bool Sweep::isStoreIntoOwnObject(const Operation& operation, ValueID& object)
     if (!name)
         return false;
 
-    ValueID allocation = rootOfCellInSweptCode(*m_code, name);
+    ValueID allocation = underlyingCellOf(*m_code, name);
     const Operation& made = m_code->at(allocation);
     if (made.blockIndex == Operation::noBlock)
         return false;
@@ -238,6 +238,7 @@ struct BirthThatMayMove {
     BlockID whereItComesToStand;
     uint32_t numberOfUsesSeen { 0 };
     bool isFollowed { false };
+    bool isSettledBeforeLoops { false };
     Vector<ValueID, 4> stores;
     Vector<ValueID, 4> birthsThatListIt;
 };
@@ -253,6 +254,15 @@ struct BlockBelowBirth {
     uint32_t numberOfEdgesTakenInto { std::numeric_limits<uint32_t>::max() };
     uint32_t look { 0 };
     bool isLookedAt { false };
+    bool isPassedLoopHead { false };
+    BlockID innermostLoop;
+    BlockID loopAround;
+    uint32_t numberOfWaysOutOfLoop { 0 };
+};
+
+struct EdgeBackToLoopHead {
+    BlockID head;
+    BlockID from;
 };
 
 struct OperationThatMoves {
@@ -262,20 +272,38 @@ struct OperationThatMoves {
 
 } // anonymous namespace
 
-static bool birthMayMoveInSweep(const Program& program, const Facts& facts, const Operation& made)
+static bool entryHidesItsListInSweep(const Program& program, const Code& code)
 {
-    if (!made.traits().isUnobservable() || made.storage() != AllocationStorage::Heap)
+    const Function& function = program.at(code.function());
+    return function.has(FunctionFlags::HasHiddenRest) && !function.has(FunctionFlags::HasRestParameter);
+}
+
+static bool isListMadeByEntryInSweep(const Code& code, ValueID list)
+{
+    static constexpr OpcodeSet changesOfForm { Opcode::Box, Opcode::Unbox, Opcode::Decode };
+    while (!code.isConstant(list) && changesOfForm.contains(code.at(list).opcode))
+        list = code.at(list).valueOperand();
+    return !code.isConstant(list) && (code.at(list).opcode == Opcode::CreateRest || (code.at(list).opcode == Opcode::Parameter && code.at(list).block() == entryBlock));
+}
+
+static bool birthMayMoveInSweep(const Program& program, const Facts& facts, const Code& code, const Operation& made)
+{
+    if (!made.traits().isUnobservable() || (PayloadWord::storage(made.opcode) && made.storage() != AllocationStorage::Heap))
         return false;
     switch (made.opcode) {
     case Opcode::NewArray:
         return true;
+    case Opcode::CreateRest:
+        return entryHidesItsListInSweep(program, code);
+    case Opcode::CreateUnmappedArguments:
+        return entryHidesItsListInSweep(program, code) && isListMadeByEntryInSweep(code, made.restOperand());
     case Opcode::NewClosure:
         if (made.isHeldByClosureTable() || made.isMadeOnDemand() || (made.closureForm() != ClosureForm::Full && made.closureForm() != ClosureForm::Slim))
             return false;
         return !program.at(made.function()).constructedClass;
     case Opcode::NewObject: {
         LayoutID declared = declaredLayoutOf(program, made.layout());
-        if (made.prototypeOperand() || !declared || program.at(declared).has(LayoutFlags::IsConstructorFunction))
+        if (!declared || ((made.prototypeOperand() || program.at(declared).has(LayoutFlags::IsConstructorFunction)) && (!made.endsNoGuards() || !code.at(made.block()).isInLoop)))
             return false;
         switch (program.at(declared).kind) {
         case LayoutKind::Record:
@@ -297,24 +325,29 @@ bool Sweep::beginLookingForBirthsToMove()
     const Code& code = *m_code;
     if (!code.opcodesOfValues().intersects(birthsThatSweepMayMove))
         return false;
-    if (code.role() != CodeRole::Body || code.hasSuspensions())
+    bool isEntryThatMakesArguments = code.role() == CodeRole::GenericCallEntry && code.opcodesOfValues().contains(Opcode::CreateUnmappedArguments);
+    if ((code.role() != CodeRole::Body && !isEntryThatMakesArguments) || code.hasSuspensions())
         return false;
     return code.has(Mechanism::EscapeAnalysis, m_inputs->facts);
 }
 
-void Sweep::noteIfBirthMayMove(ValueID allocation, const Operation& made)
+bool Sweep::isWhereBirthMayMove(ValueID allocation, const Operation& made) const
 {
     const Code& code = *m_code;
     if (ValueID user = m_arrays.onlyUsers[allocation.index()]) {
         const Operation& only = code.at(user);
+        if (only.blockIndex == made.blockIndex && only.opcode == Opcode::Box)
+            return code.at(made.block()).isInLoop && isWhereBirthMayMove(user, only);
         if (only.blockIndex == made.blockIndex && !storesThatMoveWithBirthsInSweep.contains(only.opcode) && !birthsThatSweepMayMove.contains(only.opcode))
-            return;
+            return false;
     }
-    const Program& program = m_inputs->program;
     const Block& block = code.at(made.block());
-    if (block.handler || !block.terminator.numberOfEdges || (!block.isInLoop && program.at(code.function()).isModuleBody()))
-        return;
-    if (birthMayMoveInSweep(program, m_inputs->facts, made))
+    return !block.handler && block.terminator.numberOfEdges && (block.isInLoop || !m_inputs->program.at(code.function()).isModuleBody());
+}
+
+void Sweep::noteIfBirthMayMove(ValueID allocation, const Operation& made)
+{
+    if (isWhereBirthMayMove(allocation, made) && birthMayMoveInSweep(m_inputs->program, m_inputs->facts, *m_code, made))
         m_birthsThatMayMove.append(allocation);
 }
 
@@ -325,7 +358,7 @@ SweepTotals Sweep::sweepAgainBehindMovedBirths(const SweepInputs& inputs, Code& 
     again.m_sweepsAgainBehindMovedBirths = true;
     SweepTotals totals = again.run(inputs, code);
     totals.operationsSwept += m_totals.operationsSwept;
-    totals.birthsMoved = m_totals.birthsMoved;
+    totals.allocationsSunk = m_totals.allocationsSunk;
     totals.branchesThatDecideNothing += m_totals.branchesThatDecideNothing;
     return totals;
 }
@@ -385,12 +418,16 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
         }
     };
 
+    auto mayBeBoxThatMoves = [&](ValueID value) {
+        const Operation& operation = code.at(value);
+        return operation.opcode == Opcode::Box && operation.representation == Representation::JSValue && code.at(operation.block()).isInLoop && isWhereBirthMayMove(value, operation);
+    };
     for (size_t firstOfBlock = 0, end = 0; firstOfBlock < m_birthsThatMayMove.size(); firstOfBlock = end) {
         BlockID id = code.at(m_birthsThatMayMove[firstOfBlock]).block();
         while (end < m_birthsThatMayMove.size() && code.at(m_birthsThatMayMove[end]).block() == id)
             ++end;
         forEachUseOfBirthIn(id, m_birthsThatMayMove[end - 1].index() + 1, [&](ValueID birth, ValueID user, bool onlyFillsCell) {
-            if (onlyFillsCell || code.at(birth).block() != id || namesBirth(user))
+            if (onlyFillsCell || code.at(birth).block() != id || namesBirth(user) || (user && mayBeBoxThatMoves(user)))
                 return;
             mayMove.quickClear(birth.index());
             --numberThatMayMove;
@@ -400,6 +437,30 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
     numberOfOperationsLookedAt = 0;
     if (!numberThatMayMove)
         return false;
+
+    Vector<ValueID, 8> boxes;
+    bool someBirthMovesInLoop = std::ranges::any_of(m_birthsThatMayMove, [&](ValueID allocation) {
+        return mayMove.quickGet(allocation.index()) && code.at(code.at(allocation).block()).isInLoop;
+    });
+    for (BlockID id : m_reachedInPostorder) {
+        if (!someBirthMovesInLoop || !code.at(id).isInLoop)
+            continue;
+        for (ValueID value : code.valuesOf(id)) {
+            if (code.at(value).opcode == Opcode::Box && namesBirth(code.at(value).valueOperand()) && code.useCountOf(value) != usesAreNotCounted && mayBeBoxThatMoves(value))
+                boxes.append(value);
+        }
+    }
+    for (ValueID box : boxes)
+        mayMove.quickSet(box.index());
+    for (ValueID box : boxes) {
+        forEachUseOfBirthIn(code.at(box).block(), box.index() + 1, [&](ValueID used, ValueID user, bool) {
+            if (used == box && !namesBirth(user))
+                mayMove.quickClear(box.index());
+        }, [](ValueID) { });
+    }
+    m_birthsThatMayMove.appendVector(boxes);
+    m_totals.operationsSwept += numberOfOperationsLookedAt;
+    numberOfOperationsLookedAt = 0;
 
     auto standsOnOneSideOfBranch = [&](BlockID id) {
         BlockID above;
@@ -425,7 +486,7 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
     for (ValueID allocation : m_birthsThatMayMove) {
         if (!mayMove.quickGet(allocation.index()))
             continue;
-        births.append(BirthThatMayMove { allocation, { }, { }, 0, false, { }, { } });
+        births.append(BirthThatMayMove { allocation, { }, { }, 0, false, false, { }, { } });
     }
     AOT::sort(births, { }, &BirthThatMayMove::allocation);
     auto recordOf = [&](ValueID allocation) -> BirthThatMayMove& {
@@ -469,6 +530,10 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
         laid.depth = 0;
         laid.nearestFreeOfHandlers = BlockID();
         laid.nearestSideOfBranch = BlockID();
+        laid.isPassedLoopHead = false;
+        laid.innermostLoop = BlockID();
+        laid.loopAround = BlockID();
+        laid.numberOfWaysOutOfLoop = 0;
         if (above) {
             const BlockBelowBirth& upper = blocksBelow[above.index()];
             const BlockBelowBirth& leap = blocksBelow[upper.leap.index()];
@@ -482,13 +547,26 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
             laid.nearestFreeOfHandlers = id;
         blocksToLookAt.append(id);
     };
+    Vector<BlockID, 8> loopHeadsAwaited;
+    Vector<BlockID, 8> loopHeadsPassed;
+    Vector<EdgeBackToLoopHead, 8> edgesBackToLoopHeads;
+    bool hasOtherWayIntoPassedLoop = false;
     auto noteEdgeOutOf = [&](BlockID from, const Edge& edge) {
         BlockID to = edge.to;
         BlockBelowBirth& below = blocksBelow[to.index()];
+        if (below.look == look && below.isPassedLoopHead) {
+            --below.numberOfEdgesAwaited;
+            hasOtherWayIntoPassedLoop |= !standsAtOrAbove(to, from);
+            edgesBackToLoopHeads.append({ to, from });
+            return;
+        }
         if (below.isLookedAt || code.at(to).isEntry)
             return;
         if (below.look != look) {
             below.look = look;
+            below.isPassedLoopHead = false;
+            if (code.at(to).isLoopHead)
+                loopHeadsAwaited.append(to);
             below.aboveEdgesSeen = from;
             if (below.numberOfEdgesTakenInto == std::numeric_limits<uint32_t>::max()) {
                 below.numberOfEdgesTakenInto = 0;
@@ -502,56 +580,171 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
             return;
         layBelow(to, below.aboveEdgesSeen);
     };
+    auto passLoopHead = [&] {
+        BlockID head;
+        for (BlockID awaited : loopHeadsAwaited) {
+            const BlockBelowBirth& below = blocksBelow[awaited.index()];
+            if (below.numberOfEdgesAwaited && !below.isPassedLoopHead && (!head || awaited < head))
+                head = awaited;
+        }
+        if (!head)
+            return false;
+        BlockBelowBirth& below = blocksBelow[head.index()];
+        uint32_t numberOfEdgesAwaited = below.numberOfEdgesAwaited;
+        layBelow(head, below.aboveEdgesSeen);
+        below.numberOfEdgesAwaited = numberOfEdgesAwaited;
+        below.isPassedLoopHead = true;
+        loopHeadsPassed.append(head);
+        return true;
+    };
+    auto awaitsEdgesBack = [&] {
+        return std::ranges::any_of(loopHeadsPassed, [&](BlockID head) {
+            return !!blocksBelow[head.index()].numberOfEdgesAwaited;
+        });
+    };
+    auto holdsBlock = [&](BlockID loop, BlockID block) {
+        BlockID around = blocksBelow[block.index()].innermostLoop;
+        while (around && around != loop)
+            around = blocksBelow[around.index()].loopAround;
+        return !!around;
+    };
+    Vector<BlockID, 16> blocksOfLoop;
+    Vector<BlockID, 32> blocksInPassedLoops;
+    auto markPassedLoops = [&] {
+        blocksInPassedLoops.shrink(0);
+        for (size_t index = loopHeadsPassed.size(); index--;) {
+            BlockID head = loopHeadsPassed[index];
+            auto addToLoop = [&](BlockID block) {
+                if (block == head)
+                    return;
+                BlockBelowBirth& below = blocksBelow[block.index()];
+                if (!below.innermostLoop) {
+                    below.innermostLoop = head;
+                    blocksOfLoop.append(block);
+                    blocksInPassedLoops.append(block);
+                    return;
+                }
+                BlockID loop = below.innermostLoop;
+                while (loop != head && blocksBelow[loop.index()].loopAround)
+                    loop = blocksBelow[loop.index()].loopAround;
+                if (loop == head)
+                    return;
+                blocksBelow[loop.index()].loopAround = head;
+                blocksOfLoop.append(loop);
+            };
+            for (EdgeBackToLoopHead edge : edgesBackToLoopHeads) {
+                if (edge.head == head)
+                    addToLoop(edge.from);
+            }
+            while (!blocksOfLoop.isEmpty()) {
+                BlockID block = blocksOfLoop.takeLast();
+                for (EdgeID edge = code.at(block).firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
+                    if (isSweptEdgeTaken(code, m_states, edge, code.at(edge)))
+                        addToLoop(code.at(edge).from);
+                }
+            }
+            blocksBelow[head.index()].innermostLoop = head;
+            blocksInPassedLoops.append(head);
+        }
+        for (BlockID id : blocksInPassedLoops) {
+            auto noteWayOut = [&](EdgeID edge) {
+                if (!isSweptEdgeTaken(code, m_states, edge, code.at(edge)))
+                    return;
+                for (BlockID loop = blocksBelow[id.index()].innermostLoop; loop && !holdsBlock(loop, code.at(edge).to); loop = blocksBelow[loop.index()].loopAround)
+                    ++blocksBelow[loop.index()].numberOfWaysOutOfLoop;
+            };
+            const Block& block = code.at(id);
+            for (uint32_t index = 0; index < block.terminator.numberOfEdges; ++index)
+                noteWayOut(block.terminator.edge(index));
+            if (EdgeID handler = handlerOfSweptBlock(block, m_states[id.index()]))
+                noteWayOut(handler);
+        }
+    };
+    auto findOutermostLoopWithout = [&](BlockID block, BlockID without) {
+        BlockID found;
+        for (BlockID loop = blocksBelow[block.index()].innermostLoop; loop; loop = blocksBelow[loop.index()].loopAround) {
+            if (!holdsBlock(loop, without))
+                found = loop;
+        }
+        return found;
+    };
+    auto isOnlyWayOutOfLoop = [&](BlockID side) {
+        EdgeID edge = code.at(side).firstEdgeIn();
+        while (!isSweptEdgeTaken(code, m_states, edge, code.at(edge)))
+            edge = code.at(edge).nextInto();
+        BlockID loop = findOutermostLoopWithout(code.at(edge).from, side);
+        return loop && blocksBelow[loop.index()].numberOfWaysOutOfLoop == 1;
+    };
 
     const uint32_t firstBirth = births.first().allocation.index();
     for (size_t indexOfTop = 0; indexOfTop < births.size(); ++indexOfTop) {
         if (births[indexOfTop].isFollowed || !mayMove.quickGet(births[indexOfTop].allocation.index()))
             continue;
         ++look;
+        loopHeadsAwaited.shrink(0);
+        loopHeadsPassed.shrink(0);
+        edgesBackToLoopHeads.shrink(0);
+        hasOtherWayIntoPassedLoop = false;
         layBelow(code.at(births[indexOfTop].allocation).block(), BlockID());
+        bool hasSeenAllUses = false;
         do {
+            if (blocksToLookAt.isEmpty()) {
+                if (loopHeadsPassed.isEmpty()) {
+                    for (uint32_t index : birthsFollowedInLook)
+                        births[index].isSettledBeforeLoops = births[index].numberOfUsesSeen == code.useCountOf(births[index].allocation);
+                }
+                if (!passLoopHead())
+                    break;
+            }
             BlockID id = blocksToLookAt.takeLast();
-            blocksBelow[id.index()].isLookedAt = true;
-            forEachUseOfBirthIn(id, firstBirth, [&](ValueID allocation, ValueID user, bool onlyFillsCell) {
-                BirthThatMayMove& birth = recordOf(allocation);
-                if (!birth.isFollowed && code.at(allocation).block() != id) {
+            if (!hasSeenAllUses) {
+                blocksBelow[id.index()].isLookedAt = true;
+                forEachUseOfBirthIn(id, firstBirth, [&](ValueID allocation, ValueID user, bool onlyFillsCell) {
+                    BirthThatMayMove& birth = recordOf(allocation);
+                    if (!birth.isFollowed && code.at(allocation).block() != id) {
+                        mayMove.quickClear(allocation.index());
+                        return;
+                    }
+                    ++birth.numberOfUsesSeen;
+                    RELEASE_ASSERT(birth.numberOfUsesSeen <= code.useCountOf(allocation));
+                    if (birth.isFollowed)
+                        --numberOfUsesAwaited;
+                    if (onlyFillsCell || namesBirth(user)) {
+                        auto& users = onlyFillsCell ? birth.stores : birth.birthsThatListIt;
+                        if (users.isEmpty() || users.last() != user)
+                            users.append(user);
+                        return;
+                    }
+                    birth.whereCellIsNeeded = birth.whereCellIsNeeded ? nearestBlockAboveBoth(birth.whereCellIsNeeded, id) : id;
+                    BlockID from = code.at(allocation).block();
+                    BlockID side = blocksBelow[birth.whereCellIsNeeded.index()].nearestSideOfBranch;
+                    if (side && side != from && standsAtOrAbove(from, side))
+                        return;
                     mayMove.quickClear(allocation.index());
-                    return;
-                }
-                ++birth.numberOfUsesSeen;
-                RELEASE_ASSERT(birth.numberOfUsesSeen <= code.useCountOf(allocation));
-                if (birth.isFollowed)
-                    --numberOfUsesAwaited;
-                if (onlyFillsCell || namesBirth(user)) {
-                    auto& users = onlyFillsCell ? birth.stores : birth.birthsThatListIt;
-                    if (users.isEmpty() || users.last() != user)
-                        users.append(user);
-                    return;
-                }
-                birth.whereCellIsNeeded = birth.whereCellIsNeeded ? nearestBlockAboveBoth(birth.whereCellIsNeeded, id) : id;
-                BlockID from = code.at(allocation).block();
-                BlockID side = blocksBelow[birth.whereCellIsNeeded.index()].nearestSideOfBranch;
-                if (side && side != from && standsAtOrAbove(from, side))
-                    return;
-                mayMove.quickClear(allocation.index());
-                if (birth.isFollowed)
-                    numberOfUsesAwaited -= code.useCountOf(allocation) - birth.numberOfUsesSeen;
-            }, [&](ValueID allocation) {
-                BirthThatMayMove& birth = recordOf(allocation);
-                birth.isFollowed = true;
-                numberOfUsesAwaited += code.useCountOf(allocation) - birth.numberOfUsesSeen;
-                birthsFollowedInLook.append(static_cast<uint32_t>(&birth - births.begin()));
-            });
-            if (!numberOfUsesAwaited)
+                    if (birth.isFollowed)
+                        numberOfUsesAwaited -= code.useCountOf(allocation) - birth.numberOfUsesSeen;
+                }, [&](ValueID allocation) {
+                    BirthThatMayMove& birth = recordOf(allocation);
+                    birth.isFollowed = true;
+                    numberOfUsesAwaited += code.useCountOf(allocation) - birth.numberOfUsesSeen;
+                    birthsFollowedInLook.append(static_cast<uint32_t>(&birth - births.begin()));
+                });
+                hasSeenAllUses = !numberOfUsesAwaited;
+            }
+            if (hasSeenAllUses && !awaitsEdgesBack())
                 break;
             const Block& block = code.at(id);
             for (uint32_t index = 0; index < block.terminator.numberOfEdges; ++index)
                 noteEdgeOutOf(id, code.at(block.terminator.edge(index)));
             if (EdgeID handler = handlerOfSweptBlock(block, m_states[id.index()]))
                 noteEdgeOutOf(id, code.at(handler));
-        } while (!blocksToLookAt.isEmpty());
+        } while (true);
+        bool holdsBehindLoops = !hasOtherWayIntoPassedLoop && !awaitsEdgesBack();
+        if (holdsBehindLoops)
+            markPassedLoops();
         for (uint32_t index : birthsFollowedInLook) {
-            if (births[index].numberOfUsesSeen != code.useCountOf(births[index].allocation))
+            bool holds = holdsBehindLoops || births[index].isSettledBeforeLoops;
+            if (!holds || births[index].numberOfUsesSeen != code.useCountOf(births[index].allocation))
                 mayMove.quickClear(births[index].allocation.index());
         }
         birthsFollowedInLook.shrink(0);
@@ -561,13 +754,16 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
     m_totals.operationsSwept += numberOfOperationsLookedAt;
 
     Vector<OperationThatMoves, 8> moves;
-    uint32_t numberOfBirthsMoved = 0;
+    uint32_t numberOfAllocationsSunk = 0;
     for (size_t indexOfBirth = births.size(); indexOfBirth--;) {
         BirthThatMayMove& birth = births[indexOfBirth];
         const Operation& made = code.at(birth.allocation);
         BlockID from = made.block();
         birth.whereItComesToStand = from;
         if (!mayMove.quickGet(birth.allocation.index()))
+            continue;
+        bool isBox = made.opcode == Opcode::Box;
+        if (isBox && !mayMove.quickGet(made.valueOperand().index()))
             continue;
         auto standsBelowBirth = [&](BlockID id) {
             return id && id != from && standsAtOrAbove(from, id);
@@ -578,9 +774,19 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
             BlockID ofLister = recordOf(lister).whereItComesToStand;
             to = to ? nearestBlockAboveBoth(to, ofLister) : ofLister;
         }
-        if (standsBelowBirth(to))
+        while (standsBelowBirth(to)) {
             to = blocksBelow[to.index()].nearestFreeOfHandlers;
-        if (!standsBelowBirth(to) || !standsBelowBirth(blocksBelow[to.index()].nearestSideOfBranch))
+            BlockID loop = to ? findOutermostLoopWithout(to, from) : BlockID();
+            if (!loop)
+                break;
+            to = blocksBelow[loop.index()].above;
+        }
+        if (!standsBelowBirth(to))
+            continue;
+        BlockID side = blocksBelow[to.index()].nearestSideOfBranch;
+        while (standsBelowBirth(side) && isOnlyWayOutOfLoop(side))
+            side = blocksBelow[blocksBelow[side.index()].above.index()].nearestSideOfBranch;
+        if (!standsBelowBirth(side))
             continue;
 
         size_t numberOfMovesBefore = moves.size();
@@ -590,7 +796,7 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
             BlockID at = code.at(store).block();
             if (standsAtOrAbove(to, at))
                 continue;
-            everythingHasItsPlace &= standsAtOrAbove(at, to) && !code.at(at).handler;
+            everythingHasItsPlace &= standsAtOrAbove(at, to) && !code.at(at).handler && !findOutermostLoopWithout(at, from);
             moves.append({ to, store });
         }
         AOT::sort(moves.mutableSpan().subspan(numberOfMovesBefore), { }, &OperationThatMoves::operation);
@@ -607,7 +813,7 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
             moves.shrink(numberOfMovesBefore);
             continue;
         }
-        ++numberOfBirthsMoved;
+        numberOfAllocationsSunk += !isBox;
         birth.whereItComesToStand = to;
     }
     if (moves.isEmpty())
@@ -652,7 +858,7 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
         }
     }
 
-    m_totals.birthsMoved += numberOfBirthsMoved;
+    m_totals.allocationsSunk += numberOfAllocationsSunk;
     m_hasMovedBirths = true;
     return true;
 }

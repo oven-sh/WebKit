@@ -58,13 +58,13 @@ inline constexpr unsigned mostArmsOfOwnKeyWalk = 2;
 inline constexpr size_t mostFieldsOfOwnKeyWalk = 12;
 std::optional<OwnKeyOrder> ownKeysInSight(Walker&, Reference object);
 OwnKeyPlan planOwnKeyWalk(Walker&, ValueID source, Reference built, size_t mostFields = mostFieldsOfOwnKeyWalk);
-bool goOnWhereObjectHasOwnKeys(Walker&, Reference& object, const OwnKeyOrder&, bool layoutIsProven, Origin, BlockID whereTestFails);
+bool continueIfOwnKeys(Walker&, Reference& object, const OwnKeyOrder&, bool layoutIsProven, Origin, BlockID whereTestFails);
 struct WaysOutOfOwnKeyTests {
     BlockID whereLayoutDiffers;
     BlockID whereOrderDiffers;
     BlockID whereTestFails;
 };
-bool goOnWhereObjectHasOwnKeys(Walker&, Reference& object, const OwnKeyOrder&, bool layoutIsProven, Origin, const WaysOutOfOwnKeyTests&);
+bool continueIfOwnKeys(Walker&, Reference& object, const OwnKeyOrder&, bool layoutIsProven, Origin, const WaysOutOfOwnKeyTests&);
 Reference valueOfOwnKey(Walker&, Reference object, LayoutID, FieldIndex, Origin);
 bool orderWordTellsOwnKeysOf(const Walker&, LayoutID);
 

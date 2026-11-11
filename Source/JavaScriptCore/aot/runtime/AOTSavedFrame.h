@@ -89,21 +89,18 @@ public:
     static constexpr unsigned skippedPairsShift = liveSlotMapOffsetBits + savedRegisterBits;
     static constexpr unsigned skippedPairsBits = 4;
     static constexpr uint32_t manySkippedPairs = (1u << skippedPairsBits) - 1;
-    static constexpr unsigned clearedWordsShift = skippedPairsShift + skippedPairsBits;
-    static constexpr unsigned clearedWordsBits = 4;
-    static constexpr uint32_t maxClearedWords = (1u << clearedWordsBits) - 1;
-    static constexpr unsigned promiseLocationShift = clearedWordsShift + clearedWordsBits;
+    static constexpr unsigned promiseLocationShift = skippedPairsShift + skippedPairsBits;
     static constexpr unsigned promiseLocationBits = 16;
     static constexpr unsigned manySkippedPairsShift = promiseLocationShift + promiseLocationBits;
     static constexpr size_t maxNumberOfWords = UINT16_MAX;
     static_assert(manySkippedPairsShift + 16 <= 63 && !(maxNumberOfWords >> promiseLocationBits));
     static constexpr uint32_t numberOfWordsSkippedFor(uint32_t deadWordsAtBottom) { return deadWordsAtBottom & ~1u; }
-    static std::optional<uint64_t> siteWord(uint32_t liveSlotMapOffset, uint32_t promiseLocation, uint32_t savedRegistersOrPairs, uint32_t deadWordsAtBottom = 0, size_t numberOfWordsInFrame = 0, uint32_t clearedWords = 0)
+    static std::optional<uint64_t> siteWord(uint32_t liveSlotMapOffset, uint32_t promiseLocation, uint32_t savedRegistersOrPairs, uint32_t deadWordsAtBottom = 0, size_t numberOfWordsInFrame = 0)
     {
-        if (liveSlotMapOffset >> liveSlotMapOffsetBits || savedRegistersOrPairs >> savedRegisterBits || promiseLocation >> promiseLocationBits || numberOfWordsInFrame > maxNumberOfWords || deadWordsAtBottom > maxNumberOfWords || clearedWords > maxClearedWords)
+        if (liveSlotMapOffset >> liveSlotMapOffsetBits || savedRegistersOrPairs >> savedRegisterBits || promiseLocation >> promiseLocationBits || numberOfWordsInFrame > maxNumberOfWords || deadWordsAtBottom > maxNumberOfWords)
             return std::nullopt;
         uint64_t skippedPairs = numberOfWordsSkippedFor(deadWordsAtBottom) / 2;
-        uint64_t word = liveSlotMapOffset | savedRegistersOrPairs << liveSlotMapOffsetBits | clearedWords << clearedWordsShift | static_cast<uint64_t>(promiseLocation) << promiseLocationShift;
+        uint64_t word = liveSlotMapOffset | savedRegistersOrPairs << liveSlotMapOffsetBits | static_cast<uint64_t>(promiseLocation) << promiseLocationShift;
         if (skippedPairs < manySkippedPairs)
             return word | skippedPairs << skippedPairsShift;
         return word | static_cast<uint64_t>(manySkippedPairs) << skippedPairsShift | skippedPairs << manySkippedPairsShift;
@@ -125,7 +122,6 @@ public:
         uint32_t skippedPairs = static_cast<uint32_t>(siteWord >> skippedPairsShift) & manySkippedPairs;
         return 2 * (skippedPairs == manySkippedPairs ? static_cast<uint16_t>(siteWord >> manySkippedPairsShift) : skippedPairs);
     }
-    static constexpr uint32_t clearedWordsOf(uint64_t siteWord) { return static_cast<uint32_t>(siteWord >> clearedWordsShift) & maxClearedWords; }
 
     static SavedFrame* create(VM&, Instance&, CoroutineKind, size_t numberOfWords, uint32_t savedRegistersOrPairs, uint32_t skippedAtBottom);
     static SavedFrame* create(VM&, Instance&, CoroutineKind, const SuspendedMachineFrame&);
@@ -174,8 +170,6 @@ public:
     void fulfill(JSGlobalObject* globalObject, VM& vm, JSValue value) { settle(globalObject, vm, value, false); }
     void reject(JSGlobalObject* globalObject, VM& vm, JSValue error) { settle(globalObject, vm, error, true); }
     JSPromise* ensurePromise(JSGlobalObject*, VM&);
-
-    void overwriteDeadWords(uint32_t versionAtVisit, const SavedFrameMap&, uint64_t replacement);
 
     static constexpr uint8_t isEnteredByJobLoopFlag = 1;
     static constexpr uint8_t isSuspendedAtYieldFlag = 2;
@@ -227,8 +221,6 @@ private:
         ++m_version;
     }
     std::optional<SavedFrameMap> liveSlotMap(uint32_t offsetPlusOne) const;
-    void overwriteDeadWordsAtEndOfCollection(uint32_t versionAtVisit, const SavedFrameMap&);
-    template<typename Functor> bool forEachDeadWord(const SavedFrameMap&, const Functor&);
     std::optional<uint32_t> narrowReferenceAt(uint32_t narrowLocation) const;
     void settle(JSGlobalObject*, VM&, JSValue, bool isRejected);
     uint32_t combinatorIndex() const { return static_cast<uint32_t>(m_continuation) - static_cast<uint32_t>(Continuation::CombinatorElement); }
@@ -236,8 +228,6 @@ private:
     uint16_t m_numberOfWords;
     uint16_t m_numberOfWordsSkippedAtBottom;
     uint32_t m_version { 0 };
-    static constexpr uint32_t hasNoDeadWordsToOverwrite = 1u << 31;
-    static_assert(liveSlotMapOffsetBits < 31);
     uint32_t m_liveSlotMapOffsetPlusOne { 0 };
     CoroutineKind m_kind;
     Continuation m_continuation { Continuation::None };
@@ -289,15 +279,6 @@ ALWAYS_INLINE std::optional<uint32_t> SavedFrame::narrowReferenceAt(uint32_t nar
     return static_cast<uint32_t>(isInUpperHalf(narrowLocation) ? *word >> 32 : *word);
 }
 
-template<typename Functor>
-ALWAYS_INLINE bool SavedFrame::forEachDeadWord(const SavedFrameMap& map, const Functor& functor)
-{
-    uint32_t lastLocation = m_numberOfWords + numberOfWordsSkippedAtTop();
-    return map.forEachDeadWord(preservedRegister != InvalidGPRReg, numberOfWordsSkippedAtTop() + 1, lastLocation, [&](uint32_t location) {
-        return functor(location == locationInRegister ? m_preservedRegister : words()[lastLocation - location]);
-    });
-}
-
 template<typename Visitor>
 ALWAYS_INLINE void SavedFrame::visitFields(SavedFrame* saved, Visitor& visitor)
 {
@@ -305,25 +286,17 @@ ALWAYS_INLINE void SavedFrame::visitFields(SavedFrame* saved, Visitor& visitor)
     visitor.appendUnbarriered(JSValue::decode(saved->m_asyncContext));
     if (saved->liesOnHeap()) {
         for (uint32_t index = 0; index < saved->m_numberOfWords; ++index)
-            visitor.appendUnbarriered(JSValue::decode(static_cast<EncodedJSValue>(WTF::atomicLoad(&saved->words()[index], std::memory_order_relaxed))));
+            visitor.appendUnbarriered(JSValue::decode(static_cast<EncodedJSValue>(WTF::atomicLoad<MemoryOrder::Relaxed>(&saved->words()[index]))));
         return;
     }
     uint32_t version = saved->m_version;
     WTF::loadLoadFence();
     Vector<JSCell*, 32> cells;
     Vector<uint32_t, 8> narrowReferences;
-    std::optional<SavedFrameMap> mapOfDeadWordsToOverwrite;
     auto collectLiveCells = [&](uint32_t offsetPlusOne) {
         std::optional<SavedFrameMap> map = saved->liveSlotMap(offsetPlusOne);
         if (!map)
             return false;
-        if (!(offsetPlusOne & hasNoDeadWordsToOverwrite)) {
-            bool areAllZero = saved->forEachDeadWord(*map, [](uint64_t& word) {
-                return !word;
-            });
-            if (!areAllZero)
-                mapOfDeadWordsToOverwrite = map;
-        }
         bool hasAllValues = map->forEachValue([&](uint32_t location) {
             std::optional<uint64_t> word = saved->wordAt(location);
             if (!word)
@@ -354,10 +327,6 @@ ALWAYS_INLINE void SavedFrame::visitFields(SavedFrame* saved, Visitor& visitor)
         visitor.appendUnbarriered(referencedCell);
     for (uint32_t reference : narrowReferences)
         visitNarrowReference(visitor, saved, reference);
-    if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
-        if (mapOfDeadWordsToOverwrite)
-            saved->overwriteDeadWordsAtEndOfCollection(version, *mapOfDeadWordsToOverwrite);
-    }
 }
 
 } } // namespace JSC::AOT

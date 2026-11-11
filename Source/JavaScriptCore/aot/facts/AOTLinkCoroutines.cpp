@@ -34,7 +34,7 @@ const LinkedCoroutine* LinkTables::findCoroutine(FunctionID function) const
 
 static TypeID typeHeldInLinkCoroutines(const LinkFlow& flow, TypeArena& types, LinkType held)
 {
-    if (held.isNothing())
+    if (held.isNever())
         return TypeTable::never;
     if (held.isAnything())
         return { };

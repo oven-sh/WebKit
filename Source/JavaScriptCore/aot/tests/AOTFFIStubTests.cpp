@@ -308,16 +308,16 @@ static void testOpenProgramBuiltWithoutForeignCallsHasNone()
     AOT_TEST_CHECK(!header.code.ffiCodeSize);
     AOT_TEST_CHECK(header.flags == headerOf(*withStubs).flags && header.has(ImageFlag::AdmitsUnknownJavaScript));
     AOT_TEST_CHECK(header.executableSize + headerOf(*withStubs).code.ffiCodeSize <= headerOf(*withStubs).executableSize);
-    AOT_TEST_CHECK(static_cast<uint64_t>(header.code.constantsOffset) + header.code.constantsSize == header.codeSize);
+    AOT_TEST_CHECK(std::max<uint64_t>(header.executableSize, static_cast<uint64_t>(header.code.constantsOffset) + header.code.constantsSize) == header.codeSize);
 }
 
 static void testUnseenCodeWithoutForeignCalls()
 {
     AOT_TEST_CHECK(headerOf(*compileOpenProgram()).code.ffiCodeSize);
     std::unique_ptr<CompileOutput> output = compileProgram(evaluatesText, { noCodeFromDiskWord, "exclude=ForeignCallsOfUnseenCode"_s });
-    AOT_TEST_CHECK(!headerOf(*output).code.ffiCodeSize && headerOf(*output).has(ImageFlag::AdmitsUnknownJavaScript) && !headerOf(*output).has(ImageFlag::AdmitsLibraryText));
+    AOT_TEST_CHECK(!headerOf(*output).code.ffiCodeSize && headerOf(*output).has(ImageFlag::AdmitsUnknownJavaScript) && !headerOf(*output).has(ImageFlag::AllowsLibrarySource));
     std::unique_ptr<CompileOutput> withLibrary = compileProgram(importsModuleOutsideImage, { "exclude=ForeignCallsOfUnseenCode"_s });
-    AOT_TEST_CHECK(headerOf(*withLibrary).code.ffiCodeSize && headerOf(*withLibrary).has(ImageFlag::AdmitsLibraryText));
+    AOT_TEST_CHECK(headerOf(*withLibrary).code.ffiCodeSize && headerOf(*withLibrary).has(ImageFlag::AllowsLibrarySource));
     AOT_TEST_CHECK(headerOf(*compileEmptyProgram({ "admit=Inspector"_s, "exclude=ForeignCallsOfUnseenCode"_s })).code.ffiCodeSize);
 }
 
@@ -332,7 +332,7 @@ static void testDirectoryIsNotExecutable()
 
     std::unique_ptr<CompileOutput> closedOutput = compileClosedProgram();
     const ImageHeader& closed = headerOf(*closedOutput);
-    AOT_TEST_CHECK(static_cast<uint64_t>(closed.code.constantsOffset) + closed.code.constantsSize == closed.codeSize);
+    AOT_TEST_CHECK(std::max<uint64_t>(closed.executableSize, static_cast<uint64_t>(closed.code.constantsOffset) + closed.code.constantsSize) == closed.codeSize);
 }
 
 static String runInShell(const CompileOutput& output, ASCIILiteral statements)

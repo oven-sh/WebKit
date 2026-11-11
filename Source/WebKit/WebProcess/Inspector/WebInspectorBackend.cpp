@@ -406,8 +406,10 @@ void WebInspectorBackend::enableNetworkInstrumentation()
         corePage->settings().setDeveloperExtrasEnabled(true);
         corePage->inspectorController().connectRemoteInstrumentation();
 
-        // Buffer certificates only when the page opts in, matching PageNetworkAgent.
-        CheckedRef { m_resourceDataStore.get() }->setSupportsShowingCertificate(corePage->settings().inspectorSupportsShowingCertificate());
+        // Use the page's content size limit, and buffer certificates only when the page opts in, matching PageNetworkAgent.
+        CheckedRef resourceDataStore = m_resourceDataStore;
+        resourceDataStore->setMaximumResourcesContentSize(corePage->settings().inspectorMaximumResourcesContentSize() * MB);
+        resourceDataStore->setSupportsShowingCertificate(corePage->settings().inspectorSupportsShowingCertificate());
     }
 
     forEachLocalOrProvisionalFrame(*corePage, [&](LocalFrame& frame) {
@@ -422,6 +424,7 @@ void WebInspectorBackend::disableNetworkInstrumentation()
 
     m_frameNetworkAgentProxies.clear();
     m_networkInstrumentationEnabled = false;
+    CheckedRef { m_resourceDataStore }->clear();
 
     // Reset latched Network overrides so nothing persists past inspection. The caching flag lives
     // on the Page and would otherwise stay disabled with no inspector attached. Mirrors
@@ -651,7 +654,7 @@ void WebInspectorBackend::searchInFramesAndRequests(Vector<WebCore::FrameIdentif
 
     CheckedRef resourceDataStore = m_resourceDataStore.get();
     resourceDataStore->forEach([&](const BackendResourceDataStore::ResourceData& entry) {
-        if (!entry.hasContent() || entry.base64Encoded())
+        if (!entry.hasContent() || entry.base64Encoded() || entry.url().isNull())
             return;
         // Skip entries already emitted by the cached-resource walk to avoid double-counting
         // (e.g. a stylesheet is both a CachedResource and a buffered data-store entry).
@@ -786,6 +789,13 @@ void WebInspectorBackend::disablePageInstrumentation()
     // resets on disable().
     m_showPaintRects = false;
     m_bootstrapScript = { };
+
+    if (RefPtr corePage = m_page ? m_page->corePage() : nullptr) {
+        for (auto& settingName : std::exchange(m_overriddenSettings, { })) {
+            if (auto setting = Inspector::Protocol::Helpers::parseEnumValueFromString<Inspector::Protocol::Page::Setting>(settingName))
+                InspectorPageAgent::applySettingOverride(*corePage, *setting, std::nullopt);
+        }
+    }
 }
 
 void WebInspectorBackend::setShowPaintRects(bool show)
@@ -795,6 +805,22 @@ void WebInspectorBackend::setShowPaintRects(bool show)
     m_showPaintRects = show;
     for (auto& proxy : m_framePageAgentProxies.values())
         proxy->setShowPaintRects(show);
+}
+
+void WebInspectorBackend::setSettingOverride(const String& settingName, std::optional<bool> value)
+{
+    RefPtr corePage = m_page ? m_page->corePage() : nullptr;
+    if (!corePage)
+        return;
+
+    auto setting = Inspector::Protocol::Helpers::parseEnumValueFromString<Inspector::Protocol::Page::Setting>(settingName);
+    if (!setting || !InspectorPageAgent::applySettingOverride(*corePage, *setting, value))
+        return;
+
+    if (value)
+        m_overriddenSettings.add(settingName);
+    else
+        m_overriddenSettings.remove(settingName);
 }
 
 void WebInspectorBackend::setBootstrapScript(const String& source)
@@ -813,8 +839,7 @@ void WebInspectorBackend::getFrameResourceData(Vector<WebCore::FrameIdentifier>&
     // process only for the frames it hosts; it then builds the Page.getResourceTree protocol objects
     // from this typed data under Site Isolation. Frames not local to this process are silently
     // skipped (another process answers for them). See webkit.org/b/308896.
-    Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>> resourcesByFrame;
-    resourcesByFrame.reserveInitialCapacity(frameIDs.size());
+    Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>> resourcesByFrame(ReserveCapacityTag { }, frameIDs.size());
 
     for (auto frameID : frameIDs) {
         RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
@@ -835,6 +860,23 @@ void WebInspectorBackend::getFrameResourceData(Vector<WebCore::FrameIdentifier>&
     }
 
     completionHandler(WTF::move(resourcesByFrame));
+}
+
+void WebInspectorBackend::getFrameCookies(Vector<WebCore::FrameIdentifier>&& frameIDs, CompletionHandler<void(Vector<WebCore::Cookie>&&)>&& completionHandler)
+{
+    // Return the cookies each requested frame local to this WebContent process would send to its document's URL and to its
+    // cached same-site subresources' URLs, the lookup Page.getCookies does without Site Isolation. Cross-site subresource
+    // URLs are skipped because the NetworkProcess refuses them for this process; the Storage tab never listed their
+    // cookies, since it only has a section per frame host. The UIProcess InspectorStorageAgent asks each process only for
+    // the frames it hosts and merges the results.
+    ListHashSet<WebCore::Cookie> cookies;
+    for (auto frameID : frameIDs) {
+        RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
+        if (RefPtr localFrame = webFrame ? webFrame->coreLocalFrame() : nullptr)
+            Inspector::ResourceUtilities::collectRawCookiesForFrame(*localFrame, cookies, Inspector::ResourceUtilities::SubresourceSites::FrameSiteOnly);
+    }
+
+    completionHandler(copyToVector(cookies));
 }
 
 void WebInspectorBackend::getFrameResourceContent(WebCore::FrameIdentifier frameID, String url, CompletionHandler<void(String content, bool base64Encoded, String errorString)>&& completionHandler)

@@ -140,7 +140,7 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
         },
         [&] {
             if (!willVerifyCode(prepared, build))
-                prepared.facts->freeListsOfSummariesNotKeptForWalk(build.parallelLoops());
+                prepared.facts->trimSummariesForWalk(build.parallelLoops());
         },
     });
     times.didFinish("make the stub catalog"_s);

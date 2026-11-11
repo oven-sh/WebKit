@@ -449,6 +449,7 @@ private:
             case NewSet:
             case NewWeakMap:
             case NewWeakSet:
+            case NewProxyObject:
             case NewSymbol:
             case MaterializeNewObject:
             case MaterializeNewArrayWithButterfly:
@@ -466,8 +467,11 @@ private:
             case NewBoundFunction:
             case AllocatePropertyStorage:
             case ReallocatePropertyStorage:
-                // Nodes that allocate get to set their epoch because for those nodes we know
-                // that they will be the newest object in the heap.
+                // Set the node's epoch to current so that store barriers are not needed on the results
+                // of these nodes until the next epoch bump. In order for that to be sound, no GC safepoint
+                // can execute between the allocation of the node's result and the next doesGC() node.
+                // Once a doesGC() node is encountered (and therefore a GC safepoint could be executed)
+                // the allocation becomes discoverable by the collector and so barriers are needed.
                 m_node->setEpoch(m_currentEpoch);
                 break;
                 
@@ -705,7 +709,7 @@ private:
         m_insertionSet.insertNode(nodeIndex, SpecNone, FencedStoreBarrier, origin, base);
     }
     
-    bool LEGACY_NODELETE reallyInsertBarriers()
+    NODELETE bool reallyInsertBarriers()
     {
         return mode == PhaseMode::Fast || m_isConverged;
     }

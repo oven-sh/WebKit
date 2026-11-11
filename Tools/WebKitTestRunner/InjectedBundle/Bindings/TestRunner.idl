@@ -277,6 +277,7 @@ interface TestRunner {
     undefined setStatisticsTopFrameUniqueRedirectTo(DOMString hostName, DOMString hostNameRedirectedTo);
     undefined setStatisticsTopFrameUniqueRedirectFrom(DOMString hostName, DOMString hostNameRedirectedTo);
     undefined setStatisticsCrossSiteLoadWithLinkDecoration(DOMString fromHost, DOMString toHost, boolean wasFiltered);
+    undefined setStatisticsLinkDecorationFilteringData(DOMString queryParameter);
     undefined setStatisticsTimeToLiveUserInteraction(double seconds);
     Promise<undefined> statisticsNotifyObserver();
     undefined setStatisticsTimeAdvanceForTesting(double value);
@@ -375,6 +376,9 @@ interface TestRunner {
     readonly attribute boolean canModifyResourceMonitorList;
 
     undefined setHasMouseDeviceForTesting(boolean hasMouseDevice);
+
+    // Apple Pay
+    undefined setHasFakePaymentUIForTesting(boolean hasFakePaymentUI);
 
     // Immersive models
     undefined exitImmersive();

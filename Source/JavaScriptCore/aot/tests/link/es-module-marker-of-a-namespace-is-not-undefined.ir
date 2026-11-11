@@ -5,8 +5,8 @@
 # CHECK-NOT: function f2 unreached
 
 variable g0 name="one" module=m0 declared={type=anything|absent} flags=[IsImmutable]
-module m0 path="/lib.mjs" displayPath="lib.mjs" flags=[KeepsError, IsImportedAsNamespace] body=f0 exports=[{name="one" variable=g0}]
-module m1 path="/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f1 requests=[{target=m0 completes=true}]
+module m0 path="/lib.mjs" displayPath="lib.mjs" flags=[CachesEvaluationError, IsImportedAsNamespace] body=f0 exports=[{name="one" variable=g0}]
+module m1 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f1 requests=[{target=m0 completes=true}]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=1
@@ -34,12 +34,12 @@ function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anythi
     v12 = Undefined
     Return v12
 }
-function f2 name="handed" module=m1 text={start=34 end=65} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+function f2 name="handed" module=m1 sourceRange={start=34 end=65} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=1
     Return v0
 }
-function f3 name="pick" module=m1 text={start=66 end=115} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
+function f3 name="pick" module=m1 sourceRange={start=66 end=115} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="__esModule"
     Return v1

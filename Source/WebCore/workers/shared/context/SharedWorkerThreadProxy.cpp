@@ -36,6 +36,7 @@
 #include "FileSystemStorageConnection.h"
 #include "FrameLoader.h"
 #include "IDBConnectionProxy.h"
+#include "InspectorObjectIdentifier.h"
 #include "LoaderStrategy.h"
 #include "LocalFrame.h"
 #include "MessageEvent.h"
@@ -55,12 +56,11 @@
 #include "WorkerFetchResult.h"
 #include "WorkerInitializationData.h"
 #include "WorkerThread.h"
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
-static HashMap<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<SharedWorkerThreadProxy>>& LEGACY_NODELETE allSharedWorkerThreadProxies()
+NODELETE static HashMap<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<SharedWorkerThreadProxy>>& allSharedWorkerThreadProxies()
 {
     static MainThreadNeverDestroyed<HashMap<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<SharedWorkerThreadProxy>>> map;
     return map;
@@ -73,8 +73,9 @@ static WorkerParameters generateWorkerParameters(const WorkerFetchResult& worker
         workerFetchResult.responseURL,
         document.url(),
         workerOptions.name,
-        makeString("sharedworker:"_s, Inspector::IdentifiersFactory::createIdentifier()),
+        makeString("sharedworker:"_s, generateInspectorObjectIdentifierString()),
         WTF::move(initializationData.userAgent),
+        WTF::move(initializationData.navigatorPlatform),
         platformStrategies()->loaderStrategy()->isOnLine(),
         workerFetchResult.contentSecurityPolicy,
         false,

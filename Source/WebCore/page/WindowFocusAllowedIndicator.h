@@ -32,10 +32,10 @@ namespace WebCore {
 class WindowFocusAllowedIndicator {
     WTF_MAKE_NONCOPYABLE(WindowFocusAllowedIndicator);
 public:
-    WindowFocusAllowedIndicator();
-    ~WindowFocusAllowedIndicator();
+    NODELETE WindowFocusAllowedIndicator();
+    NODELETE ~WindowFocusAllowedIndicator();
 
-    static bool LEGACY_NODELETE windowFocusAllowed();
+    NODELETE static bool windowFocusAllowed();
 
 private:
     bool m_previousWindowFocusAllowed;

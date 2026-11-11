@@ -60,8 +60,18 @@
 
 #if defined(ENABLE_WEBXR_WEBGPU) && ENABLE_WEBXR_WEBGPU && PLATFORM(VISION)
 #define Webgpu_webxr_feature_status Stable
+#elif defined(ENABLE_WEBXR_WEBGPU) && ENABLE_WEBXR_WEBGPU
+#define Webgpu_webxr_feature_status Testable
 #else
 #define Webgpu_webxr_feature_status Unstable
+#endif
+
+#if defined(ENABLE_WEBXR) && ENABLE_WEBXR && PLATFORM(MAC)
+#define Webxr_feature_status Preview
+#elif defined(ENABLE_WEBXR) && ENABLE_WEBXR
+#define Webxr_feature_status Stable
+#else
+#define Webxr_feature_status Unstable
 #endif
 
 #if defined(ENABLE_UNPREFIXED_BACKDROP_FILTER) && ENABLE_UNPREFIXED_BACKDROP_FILTER
@@ -92,7 +102,7 @@ bool defaultTextAutosizingUsesIdempotentMode();
 #endif
 
 #if ENABLE(FULLSCREEN_API)
-bool LEGACY_NODELETE defaultVideoFullscreenRequiresElementFullscreen();
+NODELETE bool defaultVideoFullscreenRequiresElementFullscreen();
 #endif
 
 #if PLATFORM(MAC)
@@ -105,9 +115,9 @@ bool defaultTextInputClientSelectionUpdatesEnabled();
 #endif
 
 #if ENABLE(MEDIA_STREAM)
-bool LEGACY_NODELETE defaultCaptureAudioInGPUProcessEnabled();
-bool LEGACY_NODELETE defaultManageCaptureStatusBarInGPUProcessEnabled();
-double LEGACY_NODELETE defaultInactiveMediaCaptureStreamRepromptWithoutUserGestureIntervalInMinutes();
+NODELETE bool defaultCaptureAudioInGPUProcessEnabled();
+NODELETE bool defaultManageCaptureStatusBarInGPUProcessEnabled();
+NODELETE double defaultInactiveMediaCaptureStreamRepromptWithoutUserGestureIntervalInMinutes();
 #endif
 
 #if ENABLE(MEDIA_SOURCE) && PLATFORM(IOS_FAMILY)
@@ -115,10 +125,10 @@ bool defaultMediaSourceEnabled();
 #endif
 
 #if ENABLE(MEDIA_SOURCE)
-bool LEGACY_NODELETE defaultManagedMediaSourceEnabled();
-bool LEGACY_NODELETE defaultMediaSourcePrefersDecompressionSession();
+NODELETE bool defaultManagedMediaSourceEnabled();
+NODELETE bool defaultMediaSourcePrefersDecompressionSession();
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
-bool LEGACY_NODELETE defaultManagedMediaSourceNeedsAirPlay();
+NODELETE bool defaultManagedMediaSourceNeedsAirPlay();
 #endif
 #endif
 
@@ -133,15 +143,25 @@ bool defaultRemoveBackgroundEnabled();
 #endif
 
 #if ENABLE(GAMEPAD)
-bool LEGACY_NODELETE defaultGamepadVibrationActuatorEnabled();
+NODELETE bool defaultGamepadVibrationActuatorEnabled();
 #endif
 
 #if ENABLE(WEB_AUTHN)
-bool LEGACY_NODELETE defaultDigitalCredentialsEnabled();
+NODELETE bool defaultDigitalCredentialsEnabled();
+#endif
+
+#if ENABLE(APPLE_PAY) && PLATFORM(APPLETV)
+bool defaultApplePayEnabled();
+#endif
+
+#if HAVE(AVEXPERIENCECONTROLLER)
+bool defaultAVExperienceControllerFullscreenEnabled();
 #endif
 
 #if PLATFORM(IOS_FAMILY)
 bool defaultAutomaticLiveResizeEnabled();
+bool defaultAutomaticallyAdjustsViewScaleUsingMinimumEffectiveDeviceWidth();
+double defaultLayoutViewportHeightExpansionFactor();
 bool defaultVisuallyContiguousBidiTextSelectionEnabled();
 bool defaultBidiContentAwarePasteEnabled();
 #endif
@@ -154,36 +174,36 @@ bool defaultRunningBoardThrottlingEnabled();
 bool defaultShouldDropNearSuspendedAssertionAfterDelay();
 bool defaultShouldTakeNearSuspendedAssertion();
 bool defaultShowModalDialogEnabled();
-bool LEGACY_NODELETE defaultLinearMediaPlayerEnabled();
+NODELETE bool defaultLinearMediaPlayerEnabled();
 
-bool LEGACY_NODELETE defaultShouldEnableScreenOrientationAPI();
+NODELETE bool defaultShouldEnableScreenOrientationAPI();
 bool defaultPopoverAttributeEnabled();
 bool defaultUseGPUProcessForDOMRenderingEnabled();
-unsigned LEGACY_NODELETE defaultMaximumNestedInlineFormattingContextCount();
+NODELETE unsigned defaultMaximumNestedInlineFormattingContextCount();
 
 #if USE(LIBWEBRTC)
 bool defaultPeerConnectionEnabledAvailable();
 #endif
-bool LEGACY_NODELETE defaultWebRTCSocketsServiceClassEnabled();
+NODELETE bool defaultWebRTCSocketsServiceClassEnabled();
 
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
-bool defaultHorizontalBannerViewOverlaysEnabled();
+NODELETE bool defaultHorizontalBannerViewOverlaysEnabled();
 #endif
 
 #if ENABLE(DEVICE_ORIENTATION)
-bool LEGACY_NODELETE defaultDeviceOrientationPermissionAPIEnabled();
+NODELETE bool defaultDeviceOrientationPermissionAPIEnabled();
 #endif
 
-#if ENABLE(REQUIRES_PAGE_VISIBILITY_FOR_NOW_PLAYING)
+#if PLATFORM(APPLETV)
 bool defaultRequiresPageVisibilityForVideoToBeNowPlaying();
 #endif
 
-bool LEGACY_NODELETE defaultRequiresUserGestureToStartAudiblePlaybackWhenHidden();
+NODELETE bool defaultRequiresUserGestureToStartAudiblePlaybackWhenHidden();
 
-bool LEGACY_NODELETE defaultCookieStoreAPIEnabled();
+NODELETE bool defaultCookieStoreAPIEnabled();
 
 bool defaultContentInsetBackgroundFillEnabled();
-bool LEGACY_NODELETE defaultTopContentInsetBackgroundCanChangeAfterScrolling();
+NODELETE bool defaultTopContentInsetBackgroundCanChangeAfterScrolling();
 
 #if ENABLE(SCREEN_TIME)
 bool defaultScreenTimeEnabled();
@@ -199,7 +219,7 @@ bool defaultSearchInputResultsAttributeEnabled();
 bool defaultPreferSpatialAudioExperience();
 #endif
 
-bool LEGACY_NODELETE defaultRTCEncodedStreamsQuirkEnabled();
+NODELETE bool defaultRTCEncodedStreamsQuirkEnabled();
 
 bool defaultMutationEventsEnabled();
 
@@ -209,8 +229,8 @@ bool isSafariOrWebApp();
 
 bool defaultTrustedTypesEnabled();
 
-bool LEGACY_NODELETE defaultGetBoundingClientRectZoomedEnabled();
-bool LEGACY_NODELETE defaultFacebookLiveRecordingQuirkEnabled();
+NODELETE bool defaultGetBoundingClientRectZoomedEnabled();
+NODELETE bool defaultFacebookLiveRecordingQuirkEnabled();
 bool defaultFontFaceSetConstructorEnabled();
 
 #if HAVE(MATERIAL_HOSTING)
@@ -223,16 +243,16 @@ bool defaultIOSurfaceLosslessCompressionEnabled();
 bool defaultUnifiedPDFEnabled();
 #endif
 
-bool LEGACY_NODELETE defaultScrollbarColorEnabled();
+NODELETE bool defaultScrollbarColorEnabled();
 
-bool LEGACY_NODELETE defaultAllowMultipleCommitLayerTreePending();
+NODELETE bool defaultAllowMultipleCommitLayerTreePending();
 
 #if ENABLE(VIDEO)
 bool defaultCaptionDisplaySettingsEnabled();
 #endif
 
 #if ENABLE(MEDIA_STREAM)
-bool LEGACY_NODELETE defaultShouldEnableScreenCapture();
+NODELETE bool defaultShouldEnableScreenCapture();
 #endif
 
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
@@ -240,7 +260,7 @@ bool defaultContentChangeObserverEnabled();
 #endif
 
 #if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
-bool LEGACY_NODELETE defaultWebContentRestrictionsAskToEnabled();
+NODELETE bool defaultWebContentRestrictionsAskToEnabled();
 #endif
 
 bool defaultWebTransportEnabled();

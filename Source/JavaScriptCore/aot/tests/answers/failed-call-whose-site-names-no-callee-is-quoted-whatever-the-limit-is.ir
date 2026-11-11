@@ -11,7 +11,7 @@
 # TEN-NEXT: null is not an object (evaluating 'task.run')
 # TEN-NEXT: exited with 0
 
-module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 92, 183] quotedTexts=[{position=36 end=10}, {position=126 start=10 end=18}, {position=131 start=10 end=21}] textOfQuotes="task.titletask.run(1)"}
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 92, 183] quotedSources=[{position=36 end=10}, {position=126 start=10 end=18}, {position=131 start=10 end=21}] quotedSourceText="task.titletask.run(1)"}
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():

@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRuntimeReporter.h"
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSModuleNamespaceObject.h"
@@ -39,6 +40,7 @@
 #include "JSWebAssemblyModule.h"
 #include "JSWebAssemblyStruct.h"
 #include "JSWebAssemblyTag.h"
+#include "WasmCodeInImage.h"
 #include "Register.h"
 #include "VMTrapsInlines.h"
 #include "WasmBaselineData.h"
@@ -131,8 +133,7 @@ JSWebAssemblyInstance::JSWebAssemblyInstance(VM& vm, Structure* structure, JSWeb
     }
 
     for (unsigned dataSegmentIndex = 0; dataSegmentIndex < m_moduleInformation->dataSegmentsCount(); ++dataSegmentIndex) {
-        const auto& dataSegment = m_moduleInformation->data[dataSegmentIndex];
-        if (dataSegment->isPassive())
+        if (m_moduleInformation->data[dataSegmentIndex].isPassive())
             m_passiveDataSegments.quickSet(dataSegmentIndex);
     }
 
@@ -308,6 +309,15 @@ void JSWebAssemblyInstance::finalizeCreation(VM& vm, JSGlobalObject* globalObjec
 void JSWebAssemblyInstance::adoptCalleeGroup(const CalleeGroup& calleeGroup)
 {
     m_imageCodePointers = calleeGroup.imageCodePointers();
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode()) [[unlikely]] {
+        AOT::countEvent(vm(), m_imageCodePointers ? AOT::RuntimeCounterID::WasmInstancesUsingImageCode : AOT::RuntimeCounterID::WasmInstancesInterpreted);
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+        if (m_imageCodePointers && Wasm::CodeInImage::flavorFor(module().moduleInformation(), calleeGroup.mode()) == Wasm::ImageCodeFlavor::Checking)
+            AOT::countEvent(vm(), AOT::RuntimeCounterID::WasmInstancesUsingCheckingCode);
+#endif
+    }
+#endif
     module().createInterpreterMetadataIfNeeded(calleeGroup);
 }
 
@@ -611,12 +621,12 @@ bool JSWebAssemblyInstance::memoryInit(uint64_t dstAddress, uint32_t srcAddress,
     if (sumOverflows<uint32_t>(srcAddress, length))
         return false;
 
-    auto& segment = module().moduleInformation().data[dataSegmentIndex];
-    const uint32_t segmentSizeInBytes = m_passiveDataSegments.quickGet(dataSegmentIndex) ? segment->sizeInBytes() : 0U;
+    Wasm::Segment segment = module().moduleInformation().data[dataSegmentIndex];
+    const uint32_t segmentSizeInBytes = m_passiveDataSegments.quickGet(dataSegmentIndex) ? segment.bytes.size() : 0U;
     if (srcAddress + length > segmentSizeInBytes)
         return false;
 
-    const uint8_t* segmentData = !length ? nullptr : &segment->byte(srcAddress);
+    const uint8_t* segmentData = !length ? nullptr : segment.bytes.subspan(srcAddress).data();
 
     ASSERT(memoryIndex < m_moduleInformation->memoryCount());
     return memory(memoryIndex)->memory().init(dstAddress, segmentData, length);
@@ -706,8 +716,8 @@ bool JSWebAssemblyInstance::copyDataSegment(JSWebAssemblyArray* array, uint32_t 
     // Fail if the data segment index is out of bounds
     RELEASE_ASSERT(segmentIndex < module().moduleInformation().dataSegmentsCount());
     // Otherwise, get the `segmentIndex`th data segment
-    auto& segment = module().moduleInformation().data[segmentIndex];
-    const uint32_t segmentSizeInBytes = m_passiveDataSegments.quickGet(segmentIndex) ? segment->sizeInBytes() : 0U;
+    Wasm::Segment segment = module().moduleInformation().data[segmentIndex];
+    const uint32_t segmentSizeInBytes = m_passiveDataSegments.quickGet(segmentIndex) ? segment.bytes.size() : 0U;
 
     // Caller checks that the (offset + lengthInBytes) calculation doesn't overflow
     if ((offset + lengthInBytes) > segmentSizeInBytes) {
@@ -718,7 +728,7 @@ bool JSWebAssemblyInstance::copyDataSegment(JSWebAssemblyArray* array, uint32_t 
     if (!lengthInBytes)
         return true;
     // Cast the data segment to a pointer
-    const uint8_t* segmentData = &segment->byte(offset);
+    const uint8_t* segmentData = segment.bytes.subspan(offset).data();
 
     // Copy the data from the segment into the out param vector
     if (array->elementsAreRefTypes()) {

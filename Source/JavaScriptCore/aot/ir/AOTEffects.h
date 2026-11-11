@@ -92,12 +92,12 @@ struct Effects {
 
     static constexpr Effects ofReadByNameThatRunsNoCode()
     {
-        return { .reads = LocationMasks::top(), .writes = LocationMasks::top().restrictedTo(heapsWhoseWritesNobodySees), .mayThrow = ThrowEffect::onlyForLackOfMemory(), .mayCollect = true, .mayCallUnknownCode = false, .maySuspend = false, .mayBeTerminated = false };
+        return { .reads = LocationMasks::top(), .writes = LocationMasks::top().restrictedTo(unobservableWriteHeaps), .mayThrow = ThrowEffect::onlyForLackOfMemory(), .mayCollect = true, .mayCallUnknownCode = false, .maySuspend = false, .mayBeTerminated = false };
     }
 
     constexpr bool isPure() const { return reads.isEmpty() && writes.isEmpty() && mayThrow == ThrowEffect(false) && !mayCollect && !mayCallUnknownCode && !maySuspend && !mayBeTerminated; }
-    constexpr bool isRemovableWhenUnused() const { return writes.containsOnly(heapsWhoseWritesNobodySees) && !mayThrowByRule() && !mayBeTerminated && !mayRunOtherCode(); }
-    constexpr bool mayBeRunAgainUnseen() const { return writes.containsOnly(heapsWhoseWritesNobodySees) && !mayRunOtherCode(); }
+    constexpr bool isRemovableWhenUnused() const { return writes.containsOnly(unobservableWriteHeaps) && !mayThrowByRule() && !mayBeTerminated && !mayRunOtherCode(); }
+    constexpr bool mayBeRunAgainUnseen() const { return writes.containsOnly(unobservableWriteHeaps) && !mayRunOtherCode(); }
     constexpr bool isUnobservable() const { return isRemovableWhenUnused() && !mayThrow; }
     constexpr bool mayThrowByRule() const { return mayThrow.byRule(); }
     constexpr bool mayThrowOtherThanStackOverflow() const { return mayThrow.otherThanStackOverflow(); }
@@ -178,9 +178,9 @@ public:
             | (effects.mayCallUnknownCode ? callsUnknownCode : 0)
             | (effects.maySuspend ? suspends : 0)
             | (effects.mayBeTerminated ? isTerminated : 0)
-            | (effects.writes.containsOnly(heapsWhoseWritesNobodySees) ? 0 : writesWhatIsSeen)
+            | (effects.writes.containsOnly(unobservableWriteHeaps) ? 0 : writesObservableState)
             | (effects.reads.isEmpty() && effects.writes.isEmpty() ? 0 : touchesMemory)
-            | (effects.writes.containsOnly(perObjectHeaps | heapsWhoseWritesNobodySees) ? 0 : writesOutsideObjects))
+            | (effects.writes.containsOnly(perObjectHeaps | unobservableWriteHeaps) ? 0 : writesOutsideObjects))
     {
     }
 
@@ -195,7 +195,7 @@ public:
     constexpr uint16_t bits() const { return m_bits; }
 
     constexpr bool isPure() const { return !m_bits; }
-    constexpr bool isRemovableWhenUnused() const { return !(m_bits & (writesWhatIsSeen | throwsByRule | isTerminated | suspends | callsUnknownCode)); }
+    constexpr bool isRemovableWhenUnused() const { return !(m_bits & (writesObservableState | throwsByRule | isTerminated | suspends | callsUnknownCode)); }
     constexpr bool isUnobservable() const { return isRemovableWhenUnused() && !mayThrow(); }
     constexpr EffectTraits withoutThrowByRule() const { return fromBits(m_bits & ~throwsByRule); }
     constexpr bool mayThrow() const { return m_bits & throws; }
@@ -207,7 +207,7 @@ public:
     constexpr bool mayRunOtherCode() const { return m_bits & (suspends | callsUnknownCode); }
     constexpr bool alwaysCompletes() const { return !(m_bits & (isTerminated | suspends | callsUnknownCode)); }
     constexpr bool mayExitSideways() const { return m_bits & (throws | isTerminated | suspends | callsUnknownCode); }
-    constexpr bool mayWriteWhatIsSeen() const { return m_bits & writesWhatIsSeen; }
+    constexpr bool mayWriteObservableState() const { return m_bits & writesObservableState; }
     constexpr bool mayTouchMemory() const { return m_bits & touchesMemory; }
     constexpr bool mayWriteOutsideObjects() const { return m_bits & writesOutsideObjects; }
 
@@ -226,7 +226,7 @@ private:
     static constexpr uint16_t callsUnknownCode = 1 << 3;
     static constexpr uint16_t suspends = 1 << 4;
     static constexpr uint16_t isTerminated = 1 << 5;
-    static constexpr uint16_t writesWhatIsSeen = 1 << 6;
+    static constexpr uint16_t writesObservableState = 1 << 6;
     static constexpr uint16_t touchesMemory = 1 << 7;
     static constexpr uint16_t writesOutsideObjects = 1 << 8;
     static_assert(writesOutsideObjects >> (numberOfBits - 1) == 1);

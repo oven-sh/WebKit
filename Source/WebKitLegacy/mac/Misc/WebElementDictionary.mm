@@ -52,7 +52,7 @@
 #import <wtf/RunLoop.h>
 
 
-static RetainPtr<CFMutableDictionaryRef>& LEGACY_NODELETE lookupTable()
+NODELETE static RetainPtr<CFMutableDictionaryRef>& lookupTable()
 {
     static NeverDestroyed<RetainPtr<CFMutableDictionaryRef>> lookupTable;
     return lookupTable;
@@ -213,7 +213,7 @@ static NSString* NSStringOrNil(String coreString)
     RefPtr image = cachedImage->image();
     if (!image)
         return nil;
-    return image->adapter().nsImage(renderImage->concreteObjectSizeForElementImage());
+    return image->adapter().nsImage(WebCore::ImageDrawDescriptor { renderImage->concreteObjectSizeForElementImage() });
 }
 
 - (NSValue *)_imageRect

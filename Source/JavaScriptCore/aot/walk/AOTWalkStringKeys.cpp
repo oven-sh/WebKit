@@ -28,7 +28,7 @@ static constexpr unsigned mostValuesFollowedBehindTextInStringKeys = 4;
 static PrimitiveKnownToFolding keyKnownWhereverAskedInStringKeys(const Walker& walker, ValueID written, ValueID access)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID definition = written ? index.valueBehindCasts(written) : ValueID();
+    ValueID definition = written ? index.stripCasts(written) : ValueID();
     if (!definition)
         return { };
     if (!index.isParameter(definition)) {
@@ -157,7 +157,7 @@ bool buildReadByPartsOfKey(Walker& walker, const BodyValue& read, const InputsOf
     if (read.opcode() != Opcode::ElemGet || inputs.areOnlyTypes())
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
-    ValueID text = index.valueBehindCasts(read.propertyOperand());
+    ValueID text = index.stripCasts(read.propertyOperand());
     static constexpr OpcodeSet callsThatMayStandCopied { Opcode::Call, Opcode::CallDirect };
     if (!text || index.isParameter(text) || !(operationsThatJoinTexts | callsThatMayStandCopied).contains(index.opcodeOf(text)) || findReadThatAloneTakesTextAsKeyInStringKeys(index, text) != read.id())
         return false;

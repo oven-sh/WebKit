@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArrivals.h"
+#include "AOTBodyIndex.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFacts.h"
 #include "AOTLinkTables.h"
@@ -19,10 +20,12 @@
 #include "AOTThreads.h"
 #include <algorithm>
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
+#include <wtf/Deque.h>
 #include <wtf/MonotonicTime.h>
 
 namespace JSC { namespace AOT {
@@ -41,6 +44,53 @@ struct OutputOfCompileThread {
     WTF::BitSet<numberOfEntries> entriesUsed;
     Typed::CompileWorker::InstructionsOfSteps instructionsOfSteps;
     Vector<UseOfCompileThreads::Unit> timesOfUnits;
+};
+
+class RetiredBodyCaches {
+    WTF_MAKE_NONCOPYABLE(RetiredBodyCaches);
+public:
+    explicit RetiredBodyCaches(unsigned numberOfThreads)
+        : m_threads(numberOfThreads, [](size_t) { return makeUniqueWithoutFastMallocCheck<OfThread>(); })
+    {
+    }
+
+    void didBeginUnit(unsigned thread) { m_threads[thread]->startOfUnit.store(m_clock.load()); }
+
+    void didEndUnit(unsigned thread, const Typed::BodyIndex* body)
+    {
+        OfThread& own = *m_threads[thread];
+        own.startOfUnit.store(notInUnit);
+        if (body) {
+            std::unique_ptr<const Typed::KeptWithBodyIndex> kept = body->takeKeptByWalk();
+            std::unique_ptr<const Typed::BodyLivenessData> liveness = body->takeLiveness();
+            if (kept || liveness)
+                own.retired.append(Retired { m_clock.fetch_add(1), WTF::move(kept), WTF::move(liveness) });
+        }
+        if (own.retired.isEmpty())
+            return;
+        uint64_t oldestStart = notInUnit;
+        for (const std::unique_ptr<OfThread>& other : m_threads)
+            oldestStart = std::min(oldestStart, other->startOfUnit.load());
+        while (!own.retired.isEmpty() && own.retired.first().time < oldestStart)
+            own.retired.removeFirst();
+    }
+
+private:
+    static constexpr uint64_t notInUnit = UINT64_MAX;
+
+    struct Retired {
+        uint64_t time;
+        std::unique_ptr<const Typed::KeptWithBodyIndex> kept;
+        std::unique_ptr<const Typed::BodyLivenessData> liveness;
+    };
+
+    struct OfThread {
+        std::atomic<uint64_t> startOfUnit { notInUnit };
+        Deque<Retired> retired;
+    };
+
+    std::atomic<uint64_t> m_clock { 0 };
+    Vector<std::unique_ptr<OfThread>> m_threads;
 };
 
 struct PlaceOfCompiledCode {
@@ -216,7 +266,7 @@ static std::optional<LinkedFunctions> linkCodeOfCompileThreads(std::span<OutputO
     });
 
     Vector<FusedCallEntry> described = describeFusedCallEntries(fusedCallEntries, inputs, loops);
-    if (AOT::hasFlag(build.options().lies, Wire::TestingLie::FusedCallEntriesAreListedBackwards))
+    if (AOT::hasFlag(build.options().injectedFaults, Wire::FaultInjection::ReverseFusedCallEntries))
         described.reverse();
     if (!std::ranges::is_sorted(described, { }, &FusedCallEntry::unitIndex) || !std::ranges::is_sorted(described, { }, &FusedCallEntry::place)) {
         build.diagnostics().add(InternalError { .kind = InternalErrorKind::ProgramTableCheckFailed, .detail = "TableNotSorted: fusedCallEntries"_s });
@@ -336,6 +386,7 @@ CompiledProgram compileQueuedUnits(const Typed::CompileInputs& inputs, Typed::Ty
     queue.addSeeds(seeds.span(), loops);
     std::atomic<bool> didFail { false };
     Vector<OutputOfCompileThread> outputs(numberOfThreads);
+    RetiredBodyCaches retiredCaches(numberOfThreads);
     bool timesUnits = build.options().logging.logsPhaseTimes;
     MonotonicTime startOfUnits = MonotonicTime::now();
 
@@ -349,7 +400,10 @@ CompiledProgram compileQueuedUnits(const Typed::CompileInputs& inputs, Typed::Ty
         for (; unit; unit = queue.take(thread)) {
             MonotonicTime startOfUnit = timesUnits ? MonotonicTime::now() : MonotonicTime();
             Typed::CompileWorker::InstructionsOfSteps instructionsInFront = worker.instructionsOfSteps();
+            retiredCaches.didBeginUnit(index);
             std::optional<CompiledCode> code = worker.compile(*unit);
+            bool walksBody = unit->role == Typed::CodeRole::Body || unit->role == Typed::CodeRole::CoroutineBody || unit->role == Typed::CodeRole::SlowBody;
+            retiredCaches.didEndUnit(index, walksBody ? inputs.walk.facts.bodies().find(unit->function) : nullptr);
             if (timesUnits) [[unlikely]] {
                 const Typed::CompileWorker::InstructionsOfSteps& instructions = worker.instructionsOfSteps();
                 output.timesOfUnits.append({ *unit, startOfUnit - startOfUnits, MonotonicTime::now() - startOfUnit, instructions.walkAndSweep - instructionsInFront.walkAndSweep, instructions.emitToEncode - instructionsInFront.emitToEncode });

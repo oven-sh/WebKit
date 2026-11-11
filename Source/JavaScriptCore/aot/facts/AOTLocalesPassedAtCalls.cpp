@@ -52,7 +52,7 @@ static ValueID valueBehindWhatHandsOnInLocalesPassed(const BodyIndex& index, Val
 {
     while (id && !index.isParameter(id)) {
         BodyValue definition = index.value(id);
-        if (!inputOperationsThatHandOn.contains(definition.opcode()) || !definition.operand(0))
+        if (!inputPassThroughOpcodes.contains(definition.opcode()) || !definition.operand(0))
             break;
         id = definition.operand(0);
     }
@@ -160,7 +160,7 @@ bool LocalesPassedAtCall::isHandedToCallAlone(ValueID list) const
         if (user == m_call.id())
             return true;
         BodyValue operation = m_index.value(user);
-        if (!inputOperationsThatHandOn.contains(operation.opcode()) || operation.operand(0) != value)
+        if (!inputPassThroughOpcodes.contains(operation.opcode()) || operation.operand(0) != value)
             return false;
         value = user;
     }

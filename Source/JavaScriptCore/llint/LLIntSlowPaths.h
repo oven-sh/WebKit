@@ -97,6 +97,7 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_in_by_val);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_instanceof);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_enumerator_get_by_val);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_object);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_empty_array);
 extern "C" UGPRPair SYSV_ABI llint_slow_path_aot_call_custom_getter(CallFrame*, const JSInstruction*, const AOT::CustomAccessorRecord*, JSCell* base) REFERENCED_FROM_ASM WTF_INTERNAL;
 #endif
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_has_private_name);
@@ -154,7 +155,9 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_async_iterator_open_get_next);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_async_iterator_next_with_driver);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_ensure_call_link_info);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_size_frame_for_varargs);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_size_frame_for_varargs_with_spread);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_call_varargs);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_call_varargs_with_spread);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_tail_call_varargs);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_construct_varargs);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_super_construct_varargs);

@@ -103,8 +103,8 @@ public:
         JS_EXPORT_PRIVATE const AOT::CompiledFrame& compiledFrame() const;
         // This frame represents the built-in function that compiledFrame() calls and that compiled code runs inline.
         bool isInlinedBuiltinFrame() const { return m_isInlinedBuiltinFrame; }
-        // compiledFrame() is the frame of its caller: CompiledFrameIterator::constructedFunctionThatLeft().
-        bool isOfConstructedFunctionThatLeft() const { return m_isOfConstructedFunctionThatLeft; }
+        // A constructor that has no machine frame yet: compiledFrame() is its caller's frame.
+        bool isElidedConstructorFrame() const { return m_isElidedConstructorFrame; }
         JS_EXPORT_PRIVATE bool isConstructCall() const;
 #else
         static constexpr bool isCompiledFrame() { return false; }
@@ -127,9 +127,9 @@ public:
             ASSERT(isNativeCalleeFrame());
             return m_wasmFunctionIndexOrName;
         }
-        size_t LEGACY_NODELETE wasmFunctionIndex() const;
+        NODELETE size_t wasmFunctionIndex() const;
 
-        CallSiteIndex LEGACY_NODELETE wasmCallSiteIndex() const;
+        NODELETE CallSiteIndex wasmCallSiteIndex() const;
 
         JS_EXPORT_PRIVATE String functionName() const;
         JS_EXPORT_PRIVATE String sourceURL() const;
@@ -138,8 +138,8 @@ public:
 
         JS_EXPORT_PRIVATE SourceID sourceID();
 
-        CodeType LEGACY_NODELETE codeType() const;
-        bool LEGACY_NODELETE hasLineAndColumnInfo() const;
+        NODELETE CodeType codeType() const;
+        NODELETE bool hasLineAndColumnInfo() const;
         JS_EXPORT_PRIVATE LineColumn computeLineAndColumn() const;
 
 #if ENABLE(ASSEMBLER)
@@ -159,7 +159,7 @@ public:
         Frame() { }
         ~Frame() { }
 
-        void LEGACY_NODELETE setToEnd();
+        NODELETE void setToEnd();
 
 #if ENABLE(DFG_JIT)
         InlineCallFrame* m_inlineDFGCallFrame { nullptr };
@@ -183,7 +183,7 @@ public:
 #if ENABLE(AOT)
         AOT::CompiledFrameIterator* m_compiledFrames { nullptr };
         bool m_isInlinedBuiltinFrame { false };
-        bool m_isOfConstructedFunctionThatLeft { false };
+        bool m_isElidedConstructorFrame { false };
 #endif
 
         friend class StackVisitor;
@@ -264,7 +264,7 @@ private:
 #if ENABLE(DFG_JIT)
     void readInlinedFrame(CallFrame*, CodeOrigin*);
 #endif
-    CallFrame* LEGACY_NODELETE updatePreviousReturnPCIfNecessary(CallFrame*);
+    NODELETE CallFrame* updatePreviousReturnPCIfNecessary(CallFrame*);
 
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
@@ -301,7 +301,7 @@ private:
     AOT::ShownFrameFilter m_shownFrameFilter;
     CompiledFrameVisit m_compiledFrameVisit;
     bool m_nextFrameIsPublished { false };
-    // The frame that returns to m_previousReturnPC, while m_frame has no frame.
+    // The callee frame that returns to m_previousReturnPC, for when m_frame has no call frame.
     CallFrame* m_previousCalleeFrame { nullptr };
     alignas(void*) std::byte m_compiledFramesStorage[compiledFrameIteratorCapacity];
 };

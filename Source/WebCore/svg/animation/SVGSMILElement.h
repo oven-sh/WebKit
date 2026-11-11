@@ -86,7 +86,7 @@ public:
     void seekToIntervalCorrespondingToTime(SMILTime elapsed);
     void updateIntervalForProgress(SMILTime elapsed, bool seekToTime);
     bool progress(SMILTime elapsed, SVGSMILElement& firstAnimation, bool seekToTime);
-    SMILTime LEGACY_NODELETE nextProgressTime() const;
+    NODELETE SMILTime nextProgressTime() const;
 
     void reset();
 
@@ -94,7 +94,7 @@ public:
     static SMILTime parseOffsetValue(StringView);
 
     bool isContributing(SMILTime elapsed) const;
-    bool LEGACY_NODELETE isFrozen() const;
+    NODELETE bool isFrozen() const;
 
     unsigned documentOrderIndex() const { return m_documentOrderIndex; }
     void setDocumentOrderIndex(unsigned index) { m_documentOrderIndex = index; }
@@ -157,7 +157,7 @@ private:
     // for example <animate begin="otherElement.begin + 8s; button.click" ... />
     struct Condition {
         enum Type { EventBase, Syncbase, AccessKey };
-        Condition(Type, BeginOrEnd, const String& baseID, const AtomString& name, SMILTime offset, int repeats = -1);
+        NODELETE Condition(Type, BeginOrEnd, const String& baseID, const AtomString& name, SMILTime offset, int repeats = -1);
         Type m_type;
         BeginOrEnd m_beginOrEnd;
         String m_baseID;

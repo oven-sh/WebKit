@@ -22,7 +22,7 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{typ
 #     v4 @Void = CheckProof v3 checkedType=true typeWithoutProof=boolean source=Field [goesWithItsValue]
 #     v5 @Void = CheckProof v2 checkedType=true typeWithoutProof=boolean source=Field
 #     v6: anything @Cell = NewSuppressedError v0, v1 traits=[mayCollect, mayTouchMemory]
-#     v7 @Void = PropDefine v6, v3 key="name" traits=[mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v7 @Void = PropDefine v6, v3 key="name" traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
 #     Return v1
 # }
 # -- end of code

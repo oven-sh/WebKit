@@ -20,7 +20,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static bool holdsObjectsForLinkOperators(const LinkType& type)
 {
-    return type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None || type.builtin || type.holdsUnseen;
+    return type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None || type.builtin || type.hasUnknownObjects;
 }
 
 class StateOfLinkOperators {
@@ -125,7 +125,7 @@ static LinkType::Counts countsThatOperatorGivesInLinkOperators(const SummaryOper
 
 void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& now)
 {
-    if (!typeObservedBefore().isNothing() && typeObservedBefore().primitives == now.primitives && holdsObjectsForLinkOperators(typeObservedBefore()) == holdsObjectsForLinkOperators(now) && typeObservedBefore().hasSameShadowsAs(now))
+    if (!typeObservedBefore().isNever() && typeObservedBefore().primitives == now.primitives && holdsObjectsForLinkOperators(typeObservedBefore()) == holdsObjectsForLinkOperators(now) && typeObservedBefore().hasSameShadowsAs(now))
         return;
 
     const SummaryOperator& operation = summaries.at(observer.function).operators[observer.record];
@@ -133,8 +133,8 @@ void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& no
     auto answer = [&](bool ofWhatWasSeen) -> LinkType {
         auto held = [&](uint32_t node) {
             const LinkType& type = typeAt(nodeOf(observer.function, node));
-            someCameByEscapeAlone |= type.primitivesByEscapeAlone || type.unseenIsByEscapeAlone;
-            return ofWhatWasSeen ? type.asSeen() : type;
+            someCameByEscapeAlone |= type.escapeOnlyPrimitives || type.isUnknownEscapeOnly;
+            return ofWhatWasSeen ? type.directPart() : type;
         };
         if (flowRuleOf(operation.opcode) == FlowRule::ToPropertyKey) {
             constexpr uint16_t handedOn = LinkType::closed(Primitive::AnyString | Primitive::AnySymbol);
@@ -157,7 +157,7 @@ void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& no
             LinkType converted;
             if (operation.opcode == Opcode::ToThis && given & Primitive::UndefinedOrNull)
                 converted.builtin = program.builtins().canonicalID(Builtins::GlobalThis);
-            converted.holdsUnseen = given & ~Primitive::UndefinedOrNull;
+            converted.hasUnknownObjects = given & ~Primitive::UndefinedOrNull;
             return converted;
         }
         Vector<uint16_t, SummaryOperator::mostOperands> operands;
@@ -195,11 +195,11 @@ void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& no
         return result;
     };
     LinkType result = answer(false);
-    if (result.isNothing())
+    if (result.isNever())
         return;
     LinkType seen = someCameByEscapeAlone ? answer(true) : result;
-    result.primitivesByEscapeAlone = result.primitives & ~seen.primitives;
-    result.unseenIsByEscapeAlone = result.holdsUnseen && !seen.holdsUnseen;
+    result.escapeOnlyPrimitives = result.primitives & ~seen.primitives;
+    result.isUnknownEscapeOnly = result.hasUnknownObjects && !seen.hasUnknownObjects;
     arrive(nodeOf(observer.function, operation.result), result, flowRuleOf(operation.opcode) == FlowRule::ToPropertyKey ? symbolSeenAt(nodeOf(observer.function, operation.operands[0])) : PropertyKeyID());
 }
 

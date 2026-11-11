@@ -6,7 +6,7 @@
 
 layout L0 module=m1 fields=[{key="parse" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
-module m1 path="/parse.cjs" displayPath="parse.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
+module m1 path="/parse.cjs" displayPath="parse.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
 entry module=m0
 variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {

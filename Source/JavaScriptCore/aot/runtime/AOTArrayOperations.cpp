@@ -93,25 +93,17 @@ static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target
     return target->appendMemcpy(globalObject, vm, target->length(), source);
 }
 
-static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* source)
+static ALWAYS_INLINE bool isPlainTarget(JSArray* target)
 {
-    IndexingType type = source->indexingType();
-    unsigned length = source->length();
-    if (!hasInt32(type) && !hasDouble(type) && !hasContiguous(type))
-        return false;
-    if (source->structure()->holesMustForwardToPrototype(source) || !copiesIntoDenseStorage(vm.arrayStoragePolicy(), static_cast<uint64_t>(target->length()) + length))
-        return false;
-    auto valueAt = [&](unsigned i) {
-        if (hasDouble(type)) {
-            double number = source->butterfly()->contiguousDouble().data()[i];
-            return std::isnan(number) ? jsUndefined() : JSValue(JSValue::EncodeAsDouble, number);
-        }
-        JSValue value = source->butterfly()->contiguous().data()[i].get();
-        return value ? value : jsUndefined();
-    };
+    IndexingType type = target->indexingType();
+    return !isCopyOnWrite(target->indexingMode()) && (hasInt32(type) || hasDouble(type) || hasContiguous(type)) && !target->structure()->outOfLineCapacity() && !target->structure()->hasElementsStartOffset();
+}
+
+template<typename ValueAt>
+static ALWAYS_INLINE bool tryFillEmptyTarget(VM& vm, JSArray* target, unsigned length, NOESCAPE const ValueAt& valueAt)
+{
     IndexingType targetType = target->indexingType();
-    bool targetIsPlain = !isCopyOnWrite(target->indexingMode()) && (hasInt32(targetType) || hasDouble(targetType) || hasContiguous(targetType)) && !target->structure()->outOfLineCapacity() && !target->structure()->hasElementsStartOffset();
-    if (!target->length() && length && targetIsPlain) {
+    if (!target->length() && length && isPlainTarget(target)) {
         if (hasContiguous(targetType) && target->butterfly()->vectorLength() >= length) {
             Butterfly* butterfly = target->butterfly();
             butterfly->setPublicLength(length);
@@ -142,12 +134,73 @@ static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, V
             return true;
         }
     }
+    return false;
+}
+
+static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* source)
+{
+    IndexingType type = source->indexingType();
+    unsigned length = source->length();
+    if (!hasInt32(type) && !hasDouble(type) && !hasContiguous(type))
+        return false;
+    if (source->structure()->holesMustForwardToPrototype(source) || !copiesIntoDenseStorage(vm.arrayStoragePolicy(), static_cast<uint64_t>(target->length()) + length))
+        return false;
+    auto valueAt = [&](unsigned i) {
+        if (hasDouble(type)) {
+            double number = source->butterfly()->contiguousDouble().data()[i];
+            return std::isnan(number) ? jsUndefined() : JSValue(JSValue::EncodeAsDouble, number);
+        }
+        JSValue value = source->butterfly()->contiguous().data()[i].get();
+        return value ? value : jsUndefined();
+    };
+    if (tryFillEmptyTarget(vm, target, length, valueAt))
+        return true;
     Vector<EncodedJSValue, 16> values(length, [&](size_t i) {
         return JSValue::encode(valueAt(i));
     });
     if (!target->tryMakeWritableContiguous(vm).data())
         return false;
     return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, values.span());
+}
+
+static bool tryFillWithCodePoints(Instance& instance, JSArray* target, std::span<const char16_t> units)
+{
+    VM& vm = *instance.vm;
+    if (target->length() || !isPlainTarget(target) || !target->tryMakeWritableContiguous(vm).data() || !target->ensureLength(vm, static_cast<unsigned>(units.size())))
+        return false;
+    unsigned count = 0;
+    for (size_t i = 0; i < units.size(); ++i) {
+        bool isPair = U16_IS_LEAD(units[i]) && i + 1 < units.size() && U16_IS_TRAIL(units[i + 1]);
+        JSString* character = isPair ? jsNontrivialString(vm, String(units.subspan(i, 2))) : stringOfCharacter(instance, units[i]);
+        i += isPair;
+        target->butterfly()->contiguous().at(target, count++).set(vm, target, character);
+    }
+    target->butterfly()->setPublicLength(count);
+    return true;
+}
+
+bool tryAppendCharacters(Instance& instance, JSArray* target, JSString* string)
+{
+    JSGlobalObject* globalObject = instance.globalObject;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (view->isEmpty())
+        return true;
+    if (!copiesIntoDenseStorage(vm.arrayStoragePolicy(), static_cast<uint64_t>(target->length()) + view->length()))
+        return false;
+    if (!view->is8Bit()) {
+        bool isFilled = tryFillWithCodePoints(instance, target, view->span16());
+        ensureStillAliveHere(string);
+        return isFilled;
+    }
+    std::span<const Latin1Character> characters = view->span8();
+    bool isFilled = tryFillEmptyTarget(vm, target, static_cast<unsigned>(characters.size()), [&](unsigned i) {
+        return JSValue(vm.smallStrings.singleCharacterString(characters[i]));
+    });
+    ensureStillAliveHere(string);
+    return isFilled;
 }
 
 static void appendElements(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* source)
@@ -190,10 +243,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Ins
     array->tryMakeWritableDouble(vm);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayRoom, void, (Instance* instance, JSCell* cell, uint64_t room))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayCapacity, void, (Instance* instance, JSCell* cell, uint64_t room))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayRoom);
-    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayRoom);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayCapacity);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayCapacity);
     IndexingType mode = array->indexingMode();
     if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
         return;
@@ -230,7 +283,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, 
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendElements);
     JSArray* target = cellArgument<JSArray>(cell, Entry::operationAOTAppendElements);
     JSArray* source = cellArgument<JSArray>(sourceCell, Entry::operationAOTAppendElements);
-    if (hasAnyArrayStorage(target->indexingType()) || mayRefuseOrRunOtherCode(target)) [[unlikely]] {
+    if (hasAnyArrayStorage(target->indexingType()) || mayRejectOrInterceptWrites(target)) [[unlikely]] {
         MarkedArgumentBuffer elements;
         for (unsigned i = 0, length = source->length(); i < length; ++i) {
             elements.append(source->getIndex(globalObject, i));
@@ -476,7 +529,7 @@ static EncodedJSValue pushToArray(Instance* instance, JSArray* array, JSValue va
     if (unsigned newLength = pushToFullVector(vm, array, value))
         return JSValue::encode(jsNumber(newLength));
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (mayRefuseOrRunOtherCode(array)) [[unlikely]]
+    if (mayRejectOrInterceptWrites(array)) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypePush, array, value)));
     array->push(globalObject, value);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());

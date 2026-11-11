@@ -1,4 +1,4 @@
-# a CommonJS file that a function requires has a start that begins in its body, and whoever requires it calls the start. One that only the body of its face evaluates has no state: the face calls its body
+# a CommonJS file that a function requires has a start that begins in its body, and whoever requires it calls the start. One that only the body of its facade evaluates has no state: the facade calls its body
 # main.js: import one from "./file.cjs"; require("./answers.cjs"); function late() { require("./late.cjs") }  late();
 # RUN: plan module-starts units
 # CHECK: module-start m4 body=f4: AbandonOnThrow m4, CallBody f4
@@ -20,8 +20,8 @@
 # A start returns undefined. The loader is asked for a file whose body returns anything else
 # WALK-LABEL: code f0:Body
 # WALK: EvaluateRequiredModule module=m3 referrer=m0
-# RUN(FACE): walk f2 mechanisms=none
-# FACE-NOT: EvaluateRequiredModule
+# RUN(FACADE): walk f2 mechanisms=none
+# FACADE-NOT: EvaluateRequiredModule
 # RUN(RUNS): run-in-shell mechanisms=none
 # RUNS: the file runs
 # RUNS-NEXT: the late file runs
@@ -32,10 +32,10 @@
 # ALL-NEXT: exited with 0
 
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 completes=true}, {target=m3 kind=Require completes=true}, {target=m4 kind=Require completes=true}]
-module m1 path="/file.cjs" displayPath="file.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
+module m1 path="/file.cjs" displayPath="file.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
 module m2 path="#2" displayPath="file.cjs" exportRule=CommonJs body=f2 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
-module m3 path="/answers.cjs" displayPath="answers.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2
-module m4 path="/late.cjs" displayPath="late.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g3
+module m3 path="/answers.cjs" displayPath="answers.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2
+module m4 path="/late.cjs" displayPath="late.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g3
 entry module=m0
 variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 name="default" module=m2 declared={type=anything}
@@ -57,7 +57,7 @@ function f1 name="file" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[
     PutModuleVariable v4 variable=g0
     Return
 }
-function f2 name="faceOfFile" module=m1 kind=Module results=[{type=anything}] {
+function f2 name="facadeOfFile" module=m1 kind=Module results=[{type=anything}] {
     EvaluateModule module=m1 referrer=m2 [isBare]
     Return
 }

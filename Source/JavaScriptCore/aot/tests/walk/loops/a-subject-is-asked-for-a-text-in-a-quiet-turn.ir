@@ -11,8 +11,8 @@
 # ASKED: [[isText]]: boolean @Boolean = TypeTest [[subject]] testedType=string
 # ASKED: = Narrowed [[subject]], [[isText]]
 # ASKED: = RegExpMatchLiteralInParts
-# RUN(COUNTED): compile OperandsAskedForTextInQuietTurns mechanisms=all
-# COUNTED: statistic OperandsAskedForTextInQuietTurns 1
+# RUN(COUNTED): compile StringOperandsGuardedInIterations mechanisms=all
+# COUNTED: statistic StringOperandsGuardedInIterations 1
 # RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
 # SHELL: 4 4
 # SHELL: exited with 0

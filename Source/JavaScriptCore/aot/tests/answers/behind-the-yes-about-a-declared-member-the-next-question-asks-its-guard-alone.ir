@@ -798,7 +798,7 @@ function f14 name="either" module=m4 position=2494 role=Library flags=[HasExplic
     v20 = Add v17, v19 @2648
     Return v20 @2648
 }
-function f15 name="awaited" module=m4 position=2665 role=Library flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
+function f15 name="awaited" module=m4 position=2665 role=Library flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasLiveAwait] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned] {
   b0(v0: anything, v1: undefined|null|L0):
     v2 = Undefined @2703
     v3 = Undefined @2703

@@ -44,7 +44,7 @@ void EnvironmentEmitter::generateGetCapture(const ValueContext& value)
         return;
     }
     CellPointer holder = in<CellPointer>(value->closureOperand());
-    emitter<HintEmitter>().stopWhereLifeHasEnded(value, holder);
+    emitter<HintEmitter>().crashIfLifetimeEnded(value, holder);
     define(value, closureCapture(holder, value->function(), value->index()));
 }
 
@@ -100,8 +100,8 @@ void EnvironmentEmitter::generateReleaseEnvironment(const ValueContext& value)
     LayoutID layout = typeOf(environment).environment;
     Word32 byteWithEscapeMark(m_out.load8ZeroExt32(byteWithEscapeMarkOf(environment)));
     ifElse(hasNoBits(byteWithEscapeMark, environmentIsEscapedBit), [&] {
-        if (emitter<HintEmitter>().endsLivesAtRunTime()) {
-            emitter<HintEmitter>().endLifeOf(value, environment);
+        if (emitter<HintEmitter>().shouldEmitLifetimeEnds()) {
+            emitter<HintEmitter>().emitLifetimeEnd(value, environment);
             return;
         }
         Machine::DeclaredAccessesSuspension writesToCellThatNobodyHolds(m_out);

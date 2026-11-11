@@ -39,7 +39,7 @@ export interface RuntimeDependencies {
   certain: Set<ModelFunction>;
   namedBy: Map<ModelModule | ModelFunction, ModelBuiltin>;
   hasMethodCalledWithStartupLoads: boolean;
-  mayHandOutAnyHostObject: boolean;
+  exposesAnyHostObject: boolean;
 }
 
 export interface UndescribedResult {
@@ -47,22 +47,22 @@ export interface UndescribedResult {
   reason: string;
 }
 
-interface HandedOutValues {
+interface ExposedValues {
   objects: readonly ModelBuiltin[];
   undescribedValue: string | null;
   features: readonly FeatureName[];
-  isNoOtherHostObject: boolean;
+  hasOnlyDescribedObjects: boolean;
 }
 
 const promiseClassName: ClassName = "Promise";
 const proxyClassName: ClassName = "Proxy";
 
-const nothingHandedOut: HandedOutValues = { objects: [], undescribedValue: null, features: [], isNoOtherHostObject: false };
+const noExposedValues: ExposedValues = { objects: [], undescribedValue: null, features: [], hasOnlyDescribedObjects: false };
 
-function handsOutNoOtherHostObject(builtin: ModelBuiltin): boolean {
+function exposesOnlyDescribedObjects(builtin: ModelBuiltin): boolean {
   const standsForWhatLiesBelow = ({ kind }: ModelBuiltin): boolean => kind === "Constructor" || kind === "Prototype";
   for (let current: ModelBuiltin | null = builtin; current !== null; current = current.holder) {
-    const isMarked = current.marks.includes("HandsOutNoOtherHostObject");
+    const isMarked = current.marks.includes("ExposesOnlyDescribedObjects");
     if (isMarked && (current === builtin || standsForWhatLiesBelow(current))) return true;
   }
   return false;
@@ -78,7 +78,7 @@ function createDependencies(): RuntimeDependencies {
     certain: new Set(),
     namedBy: new Map(),
     hasMethodCalledWithStartupLoads: false,
-    mayHandOutAnyHostObject: false,
+    exposesAnyHostObject: false,
   };
 }
 
@@ -128,7 +128,7 @@ function mergeDependencies(into: RuntimeDependencies, from: RuntimeDependencies)
   for (const implementation of from.implementedBy) into.implementedBy.add(implementation);
   for (const needed of from.certain) into.certain.add(needed);
   into.hasMethodCalledWithStartupLoads ||= from.hasMethodCalledWithStartupLoads;
-  into.mayHandOutAnyHostObject ||= from.mayHandOutAnyHostObject;
+  into.exposesAnyHostObject ||= from.exposesAnyHostObject;
   for (const [dependency, builtin] of from.namedBy) {
     if (!into.namedBy.has(dependency)) into.namedBy.set(dependency, builtin);
   }
@@ -154,12 +154,12 @@ function collectCompiledFunctions(functions: readonly ModelFunction[]): Map<Mode
   return compiledFunctions;
 }
 
-const isHandedOut = ({ from, to }: ModelTransfer): boolean =>
+const isExposingTransfer = ({ from, to }: ModelTransfer): boolean =>
   to.place !== "NativeMemory" && (to.place !== "NativeCell" || from.place === "NewValue");
 
-function handedOutPlacesOf({ transfers, callbacks, propertyActions, handlerCalls }: ModelFlow): ModelPlace[] {
+function exposedPlacesOf({ transfers, callbacks, propertyActions, handlerCalls }: ModelFlow): ModelPlace[] {
   return [
-    ...transfers.filter(isHandedOut).map(({ from }) => from),
+    ...transfers.filter(isExposingTransfer).map(({ from }) => from),
     ...handlerCalls.flatMap(call => [call.thisValue, ...call.arguments]),
     ...callbacks.flatMap(callback => [
       callback.newTarget,
@@ -231,7 +231,7 @@ function collectNamesAskedOfOperands({ overloads, protocolKeys }: TableModel): N
   return [...asked.values()];
 }
 
-class HandedOutValueCollector {
+class ExposedValueCollector {
   readonly objects = new Set<ModelBuiltin>();
   undescribedValue: string | null = null;
   readonly #classObjects: ReadonlyMap<ModelClass, readonly ModelBuiltin[]>;
@@ -252,7 +252,7 @@ class HandedOutValueCollector {
   addOverload(overload: ModelOverload): void {
     const { mode, effects, flags, receiver, parameters } = overload;
     this.#addType(overload.result.type, `the result of ${mode}`);
-    for (const place of handedOutPlacesOf(overload.flow)) this.#addPlace(place, `a value ${mode} passes on`);
+    for (const place of exposedPlacesOf(overload.flow)) this.#addPlace(place, `a value ${mode} passes on`);
     if (effects.capability === "js" && !flags.includes("RunsOnlyOperandCode")) {
       this.#addUndescribedValue(`${mode} can run JavaScript that no operand names`);
     }
@@ -381,7 +381,7 @@ export class DependencyClosure {
   readonly #enginePrototypes: readonly ModelBuiltin[];
   readonly #askedOfAnyOperand: readonly NamesAskedOfOperands[];
   readonly #foundOnInstances = new Map<string, RuntimeDependencies>();
-  readonly #handedOut = new Map<ModelBuiltin, HandedOutValues>();
+  readonly #exposed = new Map<ModelBuiltin, ExposedValues>();
   readonly #reachable = new Map<string, RuntimeDependencies>();
   readonly #dependencies = new Map<ModelBuiltin, RuntimeDependencies>();
 
@@ -447,18 +447,18 @@ export class DependencyClosure {
   #computeDependencies(builtin: ModelBuiltin): RuntimeDependencies {
     const dependencies = createDependencies();
     this.#addOwnDependencies(dependencies, builtin, null);
-    mergeDependencies(dependencies, this.#reachableFrom(this.#handedOutBy(builtin)));
+    mergeDependencies(dependencies, this.#reachableFrom(this.#exposedBy(builtin)));
     mergeDependencies(dependencies, this.#foundOnInstancesFrom(builtin));
-    const holders = this.#holdersOfClassesHandedOutBy(builtin);
+    const holders = this.#holdersOfExposedClasses(builtin);
     for (const holder of holders) this.#addOwnDependencies(dependencies, holder, holders);
     if (this.#engineClassObjects.has(builtin)) {
-      mergeDependencies(dependencies, this.#reachableFrom({ ...nothingHandedOut, objects: [builtin] }));
+      mergeDependencies(dependencies, this.#reachableFrom({ ...noExposedValues, objects: [builtin] }));
     }
     if (DependencyClosure.isInEveryProgram(builtin)) {
       const { calledFunctions } = builtin.attachments;
       const calledOnCondition = new Set(calledFunctions.flatMap(called => (called.condition === null ? [] : [called.function])));
       dependencies.certain = dependencies.calls.union(dependencies.implementedBy).difference(calledOnCondition);
-      dependencies.mayHandOutAnyHostObject = false;
+      dependencies.exposesAnyHostObject = false;
     }
     for (const [key, listed] of dependencies.callsForTexts) {
       listed.calls = listed.calls.difference(dependencies.calls);
@@ -482,7 +482,7 @@ export class DependencyClosure {
     if (this.#promiseClass === null) return false;
     const ofPromises = objectsOfClass(this.#promiseClass).map(holder => holder.sameObjectAs ?? holder);
     const made = builtin.sameObjectAs ?? builtin;
-    const holders = this.#holdersOfClassesHandedOutBy(made);
+    const holders = this.#holdersOfExposedClasses(made);
     return ofPromises.some(holder => holder === made || holders.has(holder));
   }
 
@@ -497,7 +497,7 @@ export class DependencyClosure {
   }
 
   dependenciesOfAnyHostObject(): RuntimeDependencies {
-    return this.#reachableFrom({ ...nothingHandedOut, objects: this.#hostClassObjectsInEveryExecutable });
+    return this.#reachableFrom({ ...noExposedValues, objects: this.#hostClassObjectsInEveryExecutable });
   }
 
   entriesInReachOf(roots: readonly ModelBuiltin[], isLeftOut: (builtin: ModelBuiltin) => boolean): ModelBuiltin[] {
@@ -508,7 +508,7 @@ export class DependencyClosure {
       const builtin = next.sameObjectAs ?? next;
       if (visited.has(builtin) || isLeftOut(builtin)) continue;
       visited.add(builtin);
-      const { objects, undescribedValue } = this.#handedOutBy(builtin);
+      const { objects, undescribedValue } = this.#exposedBy(builtin);
       workList.push(...builtin.members, ...linkedObjectsOf(builtin), ...objects);
       if (undescribedValue === null || holdsAnyHostObject) continue;
       holdsAnyHostObject = true;
@@ -519,7 +519,7 @@ export class DependencyClosure {
 
   undescribedResults(): UndescribedResult[] {
     return this.#builtins.flatMap(builtin => {
-      const reason = this.#handedOutBy(builtin).undescribedValue;
+      const reason = this.#exposedBy(builtin).undescribedValue;
       return reason === null ? [] : [{ builtin, reason }];
     });
   }
@@ -591,10 +591,10 @@ export class DependencyClosure {
 
   #foundOnInstancesFrom(builtin: ModelBuiltin): RuntimeDependencies {
     const isPrototypeOfLanguage = ({ kind, origin }: ModelBuiltin): boolean => kind === "Prototype" && origin === "Engine";
-    const handedOut = this.#instancesHandedOutBy(builtin);
+    const exposed = this.#instancesExposedBy(builtin);
     const makesOnlyWhatItSays =
-      handedOut.undescribedValue === null || DependencyClosure.isInEveryProgram(builtin) || builtin.kind === "DataProperty";
-    const roots = makesOnlyWhatItSays ? handedOut.objects : this.#enginePrototypes;
+      exposed.undescribedValue === null || DependencyClosure.isInEveryProgram(builtin) || builtin.kind === "DataProperty";
+    const roots = makesOnlyWhatItSays ? exposed.objects : this.#enginePrototypes;
     const prototypes = [builtin, ...roots].filter(isPrototypeOfLanguage);
     const key = prototypes.map(prototype => prototype.id).join(",");
     return this.#foundOn(prototypes, this.#namesAskedOfOperands, key);
@@ -624,7 +624,7 @@ export class DependencyClosure {
           const runs = called.has(listed.name) || (member.kind === "Accessor" && read.has(listed.name));
           if (!runs || member.kind === "Constructor") continue;
           found.add(member);
-          workList.push(...this.#instancesHandedOutBy(member).objects);
+          workList.push(...this.#instancesExposedBy(member).objects);
         }
       }
     }
@@ -632,7 +632,7 @@ export class DependencyClosure {
     return dependencies;
   }
 
-  #holdersOfClassesHandedOutBy(builtin: ModelBuiltin): Set<ModelBuiltin> {
+  #holdersOfExposedClasses(builtin: ModelBuiltin): Set<ModelBuiltin> {
     const types = new Set<ModelType>();
     const classes = new Set<ModelClass>();
     for (const { result, flow, effects, flags } of builtin.overloads) {
@@ -659,31 +659,31 @@ export class DependencyClosure {
       }
     }
     const holders = new Set<ModelBuiltin>();
-    for (const handedOut of classes) {
-      if (handedOut.token === functionClassName && DependencyClosure.isInEveryProgram(builtin)) continue;
-      for (const holder of objectsOfClass(handedOut)) holders.add(holder.sameObjectAs ?? holder);
-      if (handedOut.parent !== null) classes.add(handedOut.parent);
+    for (const exposed of classes) {
+      if (exposed.token === functionClassName && DependencyClosure.isInEveryProgram(builtin)) continue;
+      for (const holder of objectsOfClass(exposed)) holders.add(holder.sameObjectAs ?? holder);
+      if (exposed.parent !== null) classes.add(exposed.parent);
     }
     return holders;
   }
 
-  #instancesHandedOutBy(builtin: ModelBuiltin): HandedOutValueCollector {
-    const collector = new HandedOutValueCollector(this.#classObjects, this.#functionsInCells, null);
-    for (const { result, flow } of builtin.overloads) collector.addValues(result.type, handedOutPlacesOf(flow));
+  #instancesExposedBy(builtin: ModelBuiltin): ExposedValueCollector {
+    const collector = new ExposedValueCollector(this.#classObjects, this.#functionsInCells, null);
+    for (const { result, flow } of builtin.overloads) collector.addValues(result.type, exposedPlacesOf(flow));
     return collector;
   }
 
-  #handedOutBy(builtin: ModelBuiltin): HandedOutValues {
-    let handedOut = this.#handedOut.get(builtin);
-    if (handedOut === undefined) {
-      handedOut = this.#isMadeByHostCode(builtin) ? this.#collectHandedOutValues(builtin) : nothingHandedOut;
-      this.#handedOut.set(builtin, handedOut);
+  #exposedBy(builtin: ModelBuiltin): ExposedValues {
+    let exposed = this.#exposed.get(builtin);
+    if (exposed === undefined) {
+      exposed = this.#isMadeByHostCode(builtin) ? this.#collectExposedValues(builtin) : noExposedValues;
+      this.#exposed.set(builtin, exposed);
     }
-    return handedOut;
+    return exposed;
   }
 
-  #collectHandedOutValues(builtin: ModelBuiltin): HandedOutValues {
-    const collector = new HandedOutValueCollector(this.#classObjects, this.#functionsInCells, receiverObjectOf(builtin));
+  #collectExposedValues(builtin: ModelBuiltin): ExposedValues {
+    const collector = new ExposedValueCollector(this.#classObjects, this.#functionsInCells, receiverObjectOf(builtin));
     for (const overload of builtin.overloads) collector.addOverload(overload);
     for (const { uses } of builtin.attachments.calledFunctions) {
       for (const use of uses ?? []) if (use.read === "Called" && use.call !== null) collector.addCallByHost(use.call);
@@ -692,12 +692,12 @@ export class DependencyClosure {
       objects: [...collector.objects].sort((left, right) => left.id - right.id),
       undescribedValue: collector.undescribedValue,
       features: collector.undescribedValue === null ? [] : featuresOf(builtin),
-      isNoOtherHostObject: handsOutNoOtherHostObject(builtin),
+      hasOnlyDescribedObjects: exposesOnlyDescribedObjects(builtin),
     };
   }
 
-  #reachableFrom(roots: HandedOutValues): RuntimeDependencies {
-    const key = `${roots.undescribedValue !== null}:${roots.isNoOtherHostObject}:${roots.features.join(",")}:${roots.objects.map(object => object.id).join(",")}`;
+  #reachableFrom(roots: ExposedValues): RuntimeDependencies {
+    const key = `${roots.undescribedValue !== null}:${roots.hasOnlyDescribedObjects}:${roots.features.join(",")}:${roots.objects.map(object => object.id).join(",")}`;
     let dependencies = this.#reachable.get(key);
     if (dependencies === undefined) {
       dependencies = this.#computeReachable(roots);
@@ -706,23 +706,23 @@ export class DependencyClosure {
     return dependencies;
   }
 
-  #computeReachable(roots: HandedOutValues): RuntimeDependencies {
+  #computeReachable(roots: ExposedValues): RuntimeDependencies {
     const dependencies = createDependencies();
     const visited = new Set<ModelBuiltin>();
     const reached: ModelBuiltin[] = [];
     const workList: ModelBuiltin[] = [];
     const featuresAdded = new Set<FeatureName>();
-    const addHandedOut = ({ objects, undescribedValue, features, isNoOtherHostObject }: HandedOutValues): void => {
+    const addExposedValues = ({ objects, undescribedValue, features, hasOnlyDescribedObjects }: ExposedValues): void => {
       workList.push(...objects);
-      if (undescribedValue === null || isNoOtherHostObject) return;
-      dependencies.mayHandOutAnyHostObject = true;
+      if (undescribedValue === null || hasOnlyDescribedObjects) return;
+      dependencies.exposesAnyHostObject = true;
       for (const feature of features) {
         if (featuresAdded.has(feature)) continue;
         featuresAdded.add(feature);
         workList.push(...(this.#hostClassObjectsOfFeature.get(feature) ?? []));
       }
     };
-    addHandedOut(roots);
+    addExposedValues(roots);
     for (let next = workList.pop(); next !== undefined; next = workList.pop()) {
       const builtin = next.sameObjectAs ?? next;
       if (visited.has(builtin) || builtin.flags.includes("IsGlobalObject")) continue;
@@ -733,7 +733,7 @@ export class DependencyClosure {
       }
       reached.push(builtin);
       workList.push(...builtin.members, ...linkedObjectsOf(builtin));
-      addHandedOut(this.#handedOutBy(builtin));
+      addExposedValues(this.#exposedBy(builtin));
     }
     for (const builtin of reached) this.#addOwnDependencies(dependencies, builtin, visited);
     return dependencies;

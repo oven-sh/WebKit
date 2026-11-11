@@ -7,10 +7,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCastEmitter.h"
 #include "AOTOperationEmitter.h"
 #include "AOTStubsArithmetic.h"
 #include "AOTStubsPropertyKeys.h"
 #include <optional>
+#include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -26,6 +28,7 @@ public:
     {
     }
 
+    Number remainderByWholeDivisor(const ValueContext&, Number dividend, Number divisor, Integer wholeDivisor);
     void generateAdd(const ValueContext& value) { defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Add)); }
     void generateSub(const ValueContext& value) { defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Sub)); }
     void generateMul(const ValueContext& value) { defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Mul)); }
@@ -52,11 +55,12 @@ public:
     void generateNumberOrNaN(const ValueContext&);
     void generateToNumeric(const ValueContext&);
     void generateToNumber(const ValueContext&);
+    bool isCutToInt32Alone(ValueID number);
     void generateInstanceOf(const ValueContext&);
     bool leaveOperandToInstanceOf(const ValueContext& read, InstanceOfOperand, NumberedImmediate);
     void generateHasInPrototypeChain(const ValueContext&);
-    void generateFindInPrototypeChainUnlessTrapped(const ValueContext&);
-    void generateFindsDefaultHasInstanceUnlessTrapped(const ValueContext&);
+    void generateTryFindInPrototypeChain(const ValueContext&);
+    void generateHasDefaultHasInstance(const ValueContext&);
     void generateToBoolean(const ValueContext&);
     void generateLogicalNot(const ValueContext&);
     void generateTypeOf(const ValueContext&);
@@ -83,7 +87,8 @@ private:
     Number asNumericOperand(ValueID, const OperationContext* user = nullptr);
     Number numericOperandAsItComes(ValueID);
     Number asNumericOperandWithAnyNaN(ValueID);
-    Number asNumber(Operand, const Type&);
+    enum class PayloadOfNaN : bool { Goes, Stays };
+    Number asNumber(Operand, const Type&, PayloadOfNaN = PayloadOfNaN::Goes);
     Number asNumberLikeOperand(ValueID);
     template<typename Functor> Operand withIntegerOperand(const ValueContext&, const Functor&);
     template<typename T, typename Functor> T passingOrConverted(Boxed, const TypeTestPlan&, Form formOfConversion, const Functor& convert);
@@ -92,10 +97,12 @@ private:
     bool standsInRareBlock(const ValueContext& value) const { return m_code.at(value.block()).frequency == BlockFrequency::Rare; }
     Operand arithmeticOnIntegers(const ValueContext&, ArithmeticOperator);
     Operand arithmeticOnCheckedIntegers(const ValueContext&, ArithmeticOperator);
-    Number arithmeticOnNumbers(ArithmeticOperator, Number, Number);
-    Boxed sumOfBoxedNumbers(ArithmeticOperator, Operand left, const Type& leftType, Operand right, const Type& rightType);
+    Number arithmeticOnNumbers(ArithmeticOperator, Number, Number, const ValueContext* = nullptr);
+    Boxed sumOfBoxedNumbers(ArithmeticOperator, Operand left, const Type& leftType, Operand right, const Type& rightType, std::span<const CastEmitter::DeferredNumberCheck> = { });
     Number arithmeticOnNumberAndValue(const ValueContext&, ArithmeticOperator);
     Boxed arithmeticOnBoxedOperands(const ValueContext&, ArithmeticOperator, Boxed left, Boxed right);
+    bool sumsInt32sInPlace(const ValueContext&, ArithmeticOperator);
+    Boxed sumOfAnyValues(const ValueContext&, ArithmeticOperator, Boxed left, Boxed right);
     Operand addStrings(const ValueContext&);
     CellPointer concatenationOfParts(const ValueContext&);
     Operand unaryOnIntegers(const ValueContext&, UnaryOperator);
@@ -106,11 +113,13 @@ private:
     template<typename T> Condition compare(std::optional<Relation>, T, T);
     void generateComparisonOfNumbers(const ValueContext&, std::optional<Relation>);
     Condition relationOnStringCells(const ValueContext&, Relation, CellPointer left, CellPointer right);
+    Condition relationOnBigInts(const ValueContext&, Relation, CellPointer left, CellPointer right);
     Condition relationOnNullableStrings(const ValueContext&, Relation);
     enum class ValueInRelation : uint8_t { MayBeInt32, IsNoInt32 };
     Condition relationOnValues(const ValueContext&, Relation, ValueInRelation = ValueInRelation::MayBeInt32);
     bool generateRelationOfIntegerAndValue(const ValueContext&, Relation);
     bool generateRelationOfBoxedNumberAndValue(const ValueContext&, Relation);
+    bool generateRelationOfDoubleAndValue(const ValueContext&, Relation);
     bool generateRelationOfValuesThatAreLikelyInt32s(const ValueContext&, Relation);
 
     struct OperandLeftToInstanceOf {

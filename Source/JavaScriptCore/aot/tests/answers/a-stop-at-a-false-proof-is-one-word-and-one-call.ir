@@ -5,20 +5,24 @@
 # print(read("first"));
 # print(read("second"));
 # print("went on");
-# The program and the lie of what-a-map-gives-is-asked-where-it-comes-out.ir. What is asked here is the form of the stop.
-# In the cold end stands one call. Its thunk lays one word into a register and enters the stub that throws at sites: the word names the register that holds the value and the source of the proof, so all stops of a kind share one thunk.
-# The function and the place in the text are found by the address that the call returns to, also where read() stands in line in the module's body: no position lies in the code. A program written as this one has no lines: 1:1.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# The program and the injected fault are those of what-a-map-gives-is-asked-where-it-comes-out.ir. This test checks the code of the crash path.
+# The cold end of the code holds one call. Its thunk puts one word into a register and enters the stub that throws at sites.
+# The word names the register that holds the value and the source of the proof, so all crash paths of one kind share one thunk.
+# The function and the source position are found from the call's return address, also where read() is inlined into the module's body. The code holds no position.
+# A program written as IR text, like this one, has no lines, so the position is 1:1.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(BYTES): bytes f1:Body mechanisms=all
 # BYTES: argument thunk {{*}}ThrowAtSite.WordInRegister
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 1
-# ALL-NEXT: AOT: f1 at 1:1: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ALL-NEXT: bun: internal AOT error: type check failed at {{*}} (read)
+# ALL-NEXT: found string in
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS: 1
-# CALLS-NEXT: AOT: f1 at 1:1: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# CALLS-NEXT: bun: internal AOT error: type check failed at {{*}} (read)
+# CALLS-NEXT: found string in
 # CALLS-NOT: went on
 # CALLS: crashed with
 

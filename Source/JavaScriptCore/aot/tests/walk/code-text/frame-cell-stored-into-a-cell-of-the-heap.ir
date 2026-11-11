@@ -9,7 +9,7 @@
 #     v3: Array @Cell = CreateRest firstArgument=0 storage=Heap
 #     Jump -> next b1(v2)
 #   b1(v4: Array @JSValue):
-#     v5 @Void = AppendElement v3, v4 traits=[mayThrow, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v5 @Void = AppendElement v3, v4 traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]
 #     Return v0
 # }
 # -- end of code

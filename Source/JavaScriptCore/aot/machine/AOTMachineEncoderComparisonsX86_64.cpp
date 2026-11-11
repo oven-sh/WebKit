@@ -9,7 +9,10 @@
 #if ENABLE(AOT) && CPU(X86_64)
 
 #include "AllowMacroScratchRegisterUsage.h"
+#include <array>
+#include <bit>
 #include <optional>
+#include <span>
 #include <utility>
 
 namespace JSC { namespace AOT { namespace Machine {
@@ -150,6 +153,7 @@ struct X86Comparison {
     X86ComparedOperand left;
     X86ComparedOperand right;
     bool rightIsNumberOfBit { false };
+    const Operation* linkedNumberOnRight { nullptr };
 };
 
 static X86ComparedOperand x86ComparedOperandAt(const Encoder& encoder, Location location, int64_t constant)
@@ -199,7 +203,7 @@ static ALWAYS_INLINE X86Comparison x86ComparisonOfTest(Encoder& encoder, const T
 {
     RELEASE_ASSERT(!test.left.isImmediate());
     X86ComparedOperand left = test.loadOnLeft ? x86ComparedOperandReadByFusedLoad(encoder, test.loadOnLeft, test.addressOnLeft) : x86ComparedOperandAt(encoder, test.left, 0);
-    return X86Comparison { test.kind, test.relation, test.width, left, x86ComparedOperandAt(encoder, test.right, test.rightConstant), test.rightIsNumberOfBit };
+    return X86Comparison { test.kind, test.relation, test.width, left, x86ComparedOperandAt(encoder, test.right, test.rightConstant), test.rightIsNumberOfBit, test.linkedNumberOnRight };
 }
 
 static X86ComparedOperand takeX86ComparedOperand(Encoder& encoder, const Operation* comparison, unsigned childIndex, LeafCursor& cursor)
@@ -222,12 +226,16 @@ static X86ComparedOperand takeX86ComparedOperand(Encoder& encoder, const Operati
 static X86Comparison takeX86Comparison(Encoder& encoder, const Operation* operation, LeafCursor& cursor)
 {
     X86ComparedOperand left = takeX86ComparedOperand(encoder, operation, 0, cursor);
-    X86ComparedOperand right = takeX86ComparedOperand(encoder, operation, 1, cursor);
+    const Operation* rightChild = operation->child(1);
+    bool comparesLinkedNumber = rightChild->opcode() == NumberOf && cursor.peek().isImmediate();
+    if (comparesLinkedNumber)
+        cursor.take();
+    X86ComparedOperand right = comparesLinkedNumber ? X86ComparedOperand::forConstant(0) : takeX86ComparedOperand(encoder, operation, 1, cursor);
     RELEASE_ASSERT(!left.mentions(scratchGPR) || !right.mentions(scratchGPR));
     RELEASE_ASSERT(!left.mentions(scratchFPR) || !right.mentions(scratchFPR));
 
     Type type = operation->child(0)->type();
-    return X86Comparison { type.isFloat() ? Test::CompareNumbers : Test::CompareIntegers, operation->opcode(), widthOf(type), left, right };
+    return X86Comparison { type.isFloat() ? Test::CompareNumbers : Test::CompareIntegers, operation->opcode(), widthOf(type), left, right, false, comparesLinkedNumber ? rightChild : nullptr };
 }
 
 static void bringX86ComparedIntegerIntoScratch(CCallHelpers& jit, Width width, X86ComparedOperand& operand, const X86ComparedOperand& other)
@@ -350,8 +358,16 @@ static ALWAYS_INLINE std::optional<MacroAssembler::RelationalCondition> tryEmitF
     return condition;
 }
 
-static MacroAssembler::RelationalCondition emitFlagsOfX86Comparison(CCallHelpers& jit, X86Comparison comparison)
+static MacroAssembler::RelationalCondition emitFlagsOfX86Comparison(Encoder& encoder, X86Comparison comparison)
 {
+    if (const Operation* number = std::exchange(comparison.linkedNumberOnRight, nullptr)) {
+        RELEASE_ASSERT(comparison.kind == Test::CompareIntegers && comparison.width == Width32 && comparison.right.isConstant());
+        return encoder.m_relocations.withNumberAsImmediate(number->symbol(), [&](int32_t placeholder) {
+            comparison.right = X86ComparedOperand::forConstant(placeholder);
+            return emitFlagsOfX86Comparison(encoder, comparison);
+        });
+    }
+    CCallHelpers& jit = encoder.m_jit;
     bool testsBits = comparison.kind == Test::TestBits;
     RELEASE_ASSERT(testsBits || comparison.kind == Test::CompareIntegers);
     RELEASE_ASSERT(!testsBits || comparison.relation == Equal || comparison.relation == NotEqual);
@@ -379,8 +395,15 @@ static MacroAssembler::RelationalCondition emitFlagsOfX86Comparison(CCallHelpers
 
     if (left.isConstant())
         bringX86ComparedIntegerIntoScratch(jit, width, left, right);
-    if (right.isConstant() && width == Width64 && !isRepresentableAs<int32_t>(right.constant))
+    if (right.isConstant() && width == Width64 && !isRepresentableAs<int32_t>(right.constant)) {
+        if (!testsBits && left.isInRegister()) {
+            auto bytes = std::bit_cast<std::array<uint8_t, sizeof(uint64_t)>>(right.constant);
+            uint32_t index = encoder.m_proc.addConstantData(std::span<const uint8_t>(bytes), sizeof(uint64_t), ConstantKind::Number);
+            encoder.m_relocations.compare64(left.gpr(), CodeSymbol { SymbolSpace::Constant, index });
+            return *condition;
+        }
         bringX86ComparedIntegerIntoScratch(jit, width, right, left);
+    }
     if (left.isInMemory() && right.isConstant()) {
         if (std::optional<MacroAssembler::RelationalCondition> conditionInPlace = tryEmitFlagsOfX86WordInMemory(jit, comparison.kind, left, right.constant, width, *condition))
             return *conditionInPlace;
@@ -510,14 +533,15 @@ static MacroAssembler::JumpList branchOnX86ComparedNumbers(CCallHelpers& jit, X8
     return jumps;
 }
 
-static MacroAssembler::JumpList branchOnX86Comparison(CCallHelpers& jit, const X86Comparison& comparison, bool whenItHolds)
+static MacroAssembler::JumpList branchOnX86Comparison(Encoder& encoder, const X86Comparison& comparison, bool whenItHolds)
 {
+    CCallHelpers& jit = encoder.m_jit;
     switch (comparison.kind) {
     case Test::CompareNumbers:
         return branchOnX86ComparedNumbers(jit, comparison, whenItHolds);
     case Test::CompareIntegers:
     case Test::TestBits: {
-        MacroAssembler::RelationalCondition condition = emitFlagsOfX86Comparison(jit, comparison);
+        MacroAssembler::RelationalCondition condition = emitFlagsOfX86Comparison(encoder, comparison);
         return MacroAssembler::JumpList(jit.branchOnFlags(whenItHolds ? condition : MacroAssembler::invert(condition)));
     }
     }
@@ -585,9 +609,10 @@ static void moveArmOfX86Select(Encoder& encoder, const X86SelectArm& arm, Reg de
     case Location::Immediate: {
         RELEASE_ASSERT(canMoveArmOfX86SelectWithoutClobberingFlags(arm));
         int64_t constant = arm.value->asInt();
-        if (type == Int32 || isRepresentableAs<uint32_t>(constant))
-            jit.moveWithoutClobberingFlags(MacroAssembler::TrustedImm32(static_cast<int32_t>(constant)), destination.gpr());
-        else
+        if (type == Int32 || isRepresentableAs<uint32_t>(constant)) {
+            if (!tryMoveSmallConstant(jit, static_cast<int32_t>(constant), destination.gpr()))
+                jit.moveWithoutClobberingFlags(MacroAssembler::TrustedImm32(static_cast<int32_t>(constant)), destination.gpr());
+        } else
             jit.moveWithoutClobberingFlags(MacroAssembler::TrustedImm64(constant), destination.gpr());
         return;
     }
@@ -636,7 +661,7 @@ static void encodeX86SelectByConditionalMove(Encoder& encoder, X86Comparison com
         return;
     }
 
-    MacroAssembler::RelationalCondition condition = emitFlagsOfX86Comparison(jit, comparison);
+    MacroAssembler::RelationalCondition condition = emitFlagsOfX86Comparison(encoder, comparison);
     if (!movesWhenTestHolds)
         condition = MacroAssembler::invert(condition);
     GPRReg source = placeArms();
@@ -649,13 +674,13 @@ static void encodeX86SelectByBranching(Encoder& encoder, const X86Comparison& co
     Location inDestination = Location::reg(destination);
 
     if (otherwise.location == inDestination) {
-        MacroAssembler::JumpList done = branchOnX86Comparison(jit, comparison, false);
+        MacroAssembler::JumpList done = branchOnX86Comparison(encoder, comparison, false);
         moveArmOfX86SelectAfterTest(encoder, whenItHolds, destination);
         done.link(&jit);
         return;
     }
     if (whenItHolds.location == inDestination) {
-        MacroAssembler::JumpList done = branchOnX86Comparison(jit, comparison, true);
+        MacroAssembler::JumpList done = branchOnX86Comparison(encoder, comparison, true);
         moveArmOfX86SelectAfterTest(encoder, otherwise, destination);
         done.link(&jit);
         return;
@@ -664,13 +689,13 @@ static void encodeX86SelectByBranching(Encoder& encoder, const X86Comparison& co
     bool testReadsDestination = comparison.left.mentions(destination) || comparison.right.mentions(destination);
     if (!testReadsDestination && !otherwise.location.isImmediate()) {
         moveArmOfX86Select(encoder, otherwise, destination);
-        MacroAssembler::JumpList done = branchOnX86Comparison(jit, comparison, false);
+        MacroAssembler::JumpList done = branchOnX86Comparison(encoder, comparison, false);
         moveArmOfX86SelectAfterTest(encoder, whenItHolds, destination);
         done.link(&jit);
         return;
     }
 
-    MacroAssembler::JumpList holds = branchOnX86Comparison(jit, comparison, true);
+    MacroAssembler::JumpList holds = branchOnX86Comparison(encoder, comparison, true);
     moveArmOfX86SelectAfterTest(encoder, otherwise, destination);
     MacroAssembler::Jump done = jit.jump();
     holds.link(&jit);
@@ -681,7 +706,7 @@ static void encodeX86SelectByBranching(Encoder& encoder, const X86Comparison& co
 MacroAssembler::JumpList Encoder::branchOn(const Test& test, bool whenItHolds)
 {
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
-    return branchOnX86Comparison(m_jit, x86ComparisonOfTest(*this, test), whenItHolds);
+    return branchOnX86Comparison(*this, x86ComparisonOfTest(*this, test), whenItHolds);
 }
 
 static ALWAYS_INLINE std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86Register(CCallHelpers& jit, bool testsBits, Opcode relation, Width width, GPRReg left, Location right, int64_t constant)
@@ -743,7 +768,7 @@ static ALWAYS_INLINE std::optional<MacroAssembler::RelationalCondition> tryEmitF
 
 static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86TestOfRegister(CCallHelpers& jit, const Test& test)
 {
-    if (test.loadOnLeft || test.rightIsNumberOfBit || !test.left.isRegister())
+    if (test.loadOnLeft || test.rightIsNumberOfBit || test.linkedNumberOnRight || !test.left.isRegister())
         return std::nullopt;
     RELEASE_ASSERT(test.kind == Test::TestBits || test.kind == Test::CompareIntegers);
     return tryEmitFlagsOfX86Register(jit, test.kind == Test::TestBits, test.relation, test.width, test.left.gpr(), test.right, test.rightConstant);
@@ -797,7 +822,7 @@ static ALWAYS_INLINE MacroAssembler::RelationalCondition emitFlagsOfX86WordReadB
         return *condition;
     AllowMacroScratchRegisterUsage allowScratch(encoder.m_jit);
     X86ComparedOperand word = x86ComparedOperandReadByFusedLoad(encoder, load, address);
-    return emitFlagsOfX86Comparison(encoder.m_jit, X86Comparison { testsBits ? Test::TestBits : Test::CompareIntegers, relation, widthOf(load->type()), word, x86ComparedOperandAt(encoder, right, constant), false });
+    return emitFlagsOfX86Comparison(encoder, X86Comparison { testsBits ? Test::TestBits : Test::CompareIntegers, relation, widthOf(load->type()), word, x86ComparedOperandAt(encoder, right, constant), false });
 }
 
 std::optional<MacroAssembler::RelationalCondition> Encoder::tryEmitFlagsOfPredicate(const Step& step, const Operation* predicate)
@@ -839,6 +864,8 @@ std::optional<MacroAssembler::RelationalCondition> Encoder::tryEmitFlagsOfPredic
 
     const Operation* left = inlineChildWithoutCheck(fused, 0);
     const Operation* right = inlineChildWithoutCheck(fused, 1);
+    if (left->opcode() == NumberOf || right->opcode() == NumberOf)
+        return std::nullopt;
     if (isFused(right)) {
         if (isFused(left) || !isLoad(right->opcode()))
             return std::nullopt;
@@ -888,9 +915,9 @@ MacroAssembler::Jump Encoder::jumpOnIntegers(const Test& test, bool whenItHolds)
     ASSERT(test.kind != Test::CompareNumbers);
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     std::optional<MacroAssembler::RelationalCondition> conditionOfRegister = tryEmitFlagsOfX86TestOfRegister(m_jit, test);
-    if (!conditionOfRegister && test.loadOnLeft && test.addressOnLeft.kind == AddressForm::InstanceSymbol && !test.rightIsNumberOfBit)
+    if (!conditionOfRegister && test.loadOnLeft && test.addressOnLeft.kind == AddressForm::InstanceSymbol && !test.rightIsNumberOfBit && !test.linkedNumberOnRight)
         conditionOfRegister = tryEmitFlagsOfX86InstanceWord(*this, test.kind == Test::TestBits, test.relation, test.width, test.loadOnLeft, test.addressOnLeft.symbol, test.right, test.rightConstant);
-    MacroAssembler::RelationalCondition condition = conditionOfRegister ? *conditionOfRegister : emitFlagsOfX86Comparison(m_jit, x86ComparisonOfTest(*this, test));
+    MacroAssembler::RelationalCondition condition = conditionOfRegister ? *conditionOfRegister : emitFlagsOfX86Comparison(*this, x86ComparisonOfTest(*this, test));
     return m_jit.branchOnFlags(whenItHolds ? condition : MacroAssembler::invert(condition));
 }
 
@@ -918,7 +945,7 @@ void Encoder::encodeComparison(const Step& step)
     bool clearsDestinationFirst = !comparison.left.mentions(destination) && !comparison.right.mentions(destination);
     if (clearsDestinationFirst)
         m_jit.move(MacroAssembler::TrustedImm32(0), destination);
-    MacroAssembler::RelationalCondition condition = emitFlagsOfX86Comparison(m_jit, comparison);
+    MacroAssembler::RelationalCondition condition = emitFlagsOfX86Comparison(*this, comparison);
     m_jit.m_assembler.setCC_r(static_cast<X86Assembler::Condition>(condition), destination);
     if (!clearsDestinationFirst)
         m_jit.zeroExtend8To32(destination, destination);

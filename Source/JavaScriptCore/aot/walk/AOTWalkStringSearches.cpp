@@ -24,7 +24,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
+Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 
 static constexpr OptionSet<RegExpFlags> flagsOfRegExpsThatSearchForNoText { RegExpFlags::Global, RegExpFlags::Sticky, RegExpFlags::IgnoreCase, RegExpFlags::Unicode, RegExpFlags::UnicodeSets };
 
@@ -111,11 +111,11 @@ bool buildTestOfEndOfString(Walker& walker, const CallByOneRow& call)
     return true;
 }
 
-static Reference buildStartOfSearchForStringSearches(Walker& walker, Reference string, Reference position, Origin origin)
+static Reference buildStartOfSearchForStringSearches(Walker& walker, Reference string, const std::optional<PieceOfString>& piece, Reference position, Origin origin)
 {
     if (position == integerForStrings(walker, 0))
         return position;
-    Reference length = buildLengthOfString(walker, string, origin);
+    Reference length = piece ? buildLengthOfPiece(walker, *piece, origin) : buildLengthOfString(walker, string, origin);
     if (!length)
         return { };
     if (Reference clamped = clampedPositionForStrings(walker, position, length, false, origin); clamped && walker.types().at(walker.typeOf(clamped)).isInt32())
@@ -129,14 +129,27 @@ static Reference buildStartOfSearchForStringSearches(Walker& walker, Reference s
     return buildResultOfRangeForStrings(walker, walker.build(WTF::move(range)), startOfStringRange, origin);
 }
 
-static Reference buildSearchForWrittenTextForStringSearches(Walker& walker, Reference string, StringID text, Reference position, bool searchesFromEnd, Origin origin)
+static std::optional<PieceOfString> pieceToSearchForStringSearches(Walker& walker, Reference string, StringID text, Origin origin)
+{
+    Vector<char16_t> buffer;
+    StringView view = walker.types().viewOf(text, buffer);
+    if (!view.is8Bit() && !WTF::charactersAreAllLatin1(view.span16()))
+        return std::nullopt;
+    return pieceReadInLoop(walker, string, origin);
+}
+
+static Reference buildSearchForWrittenTextForStringSearches(Walker& walker, Reference string, const std::optional<PieceOfString>& piece, StringID text, Reference position, bool searchesFromEnd, Origin origin)
 {
     if (walker.isUnreachable() || !position)
         return { };
     std::optional<char16_t> unit = searchesFromEnd ? std::nullopt : onlyCodeUnitOfText(walker, text);
     Draft search(searchesFromEnd ? Opcode::StringLastIndexOfLiteral : unit ? Opcode::StringIndexOfCharacter : Opcode::StringIndexOfLiteral, origin);
-    search.setStringOperand(stringReadByStringSearches(walker, string, origin));
+    search.setStringOperand(stringReadByStringSearches(walker, piece ? piece->string : string, origin));
     search.setPositionOperand(position);
+    if (piece) {
+        search.setStartOperand(piece->start);
+        search.setEndOperand(piece->end);
+    }
     if (unit)
         search.setCodeUnit(*unit);
     else
@@ -172,10 +185,12 @@ bool buildSearchInString(Walker& walker, const CallByOneRow& call)
         Type type = walker.types().at(walker.typeOf(call.arguments[1]));
         if (searchesFromEnd ? !type.isInt32() : !type.isNumber())
             return false;
-        position = searchesFromEnd ? call.arguments[1] : buildStartOfSearchForStringSearches(walker, call.receiver, call.arguments[1], origin);
     }
+    std::optional<PieceOfString> piece = pieceToSearchForStringSearches(walker, call.receiver, sought, origin);
+    if (hasPosition)
+        position = searchesFromEnd ? call.arguments[1] : buildStartOfSearchForStringSearches(walker, call.receiver, piece, call.arguments[1], origin);
 
-    Reference found = buildSearchForWrittenTextForStringSearches(walker, call.receiver, sought, position, searchesFromEnd, origin);
+    Reference found = buildSearchForWrittenTextForStringSearches(walker, call.receiver, piece, sought, position, searchesFromEnd, origin);
     if (found && asksWhetherFound)
         found = buildNegationForStrings(walker, buildOperatorForStrings(walker, Opcode::StrictEq, found, integerForStrings(walker, -1), origin), origin);
     if (found)
@@ -205,11 +220,12 @@ Reference buildSearchForAtomOfRegExp(Walker& walker, const BodyValue&, BuiltinOv
         return { };
 
     StringID text = pattern == StringView(summary.atom) ? regExp.pattern : walker.types().internText(encodeProgramString(StringView(summary.atom)).span());
-    Reference found = buildSearchForWrittenTextForStringSearches(walker, string, text, integerForStrings(walker, 0), false, origin);
+    std::optional<PieceOfString> piece = pieceToSearchForStringSearches(walker, string, text, origin);
+    Reference found = buildSearchForWrittenTextForStringSearches(walker, string, piece, text, integerForStrings(walker, 0), false, origin);
     if (!found)
         return { };
     if (*codeInLine == InlineBuiltin::StringSearch)
-        return boxedUnlessNumbersAreUnboxed(walker, found, origin);
+        return boxNumberIfNeeded(walker, found, origin);
     return buildOperatorForStrings(walker, Opcode::GreaterEq, found, integerForStrings(walker, 0), origin);
 }
 

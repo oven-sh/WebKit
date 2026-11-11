@@ -835,6 +835,64 @@ void checkComparisonsOf()
 }
 
 template<typename T>
+Vector<T> constantsOfComparisonTest()
+{
+    using U = std::make_unsigned_t<T>;
+    constexpr T least = std::numeric_limits<T>::min();
+    constexpr T greatest = std::numeric_limits<T>::max();
+    Vector<T> result;
+    for (U distance : { U(0), U(1), U(2), U(3), U(5), U(4094), U(4095), U(4096), U(4097), U(0xffe000), U(0xfff000), U(0xfff001), U(0x1000000) }) {
+        result.append(static_cast<T>(static_cast<U>(least) + distance));
+        result.append(static_cast<T>(static_cast<U>(greatest) - distance));
+    }
+    for (unsigned bit = 0; bit < 8 * sizeof(T); ++bit) {
+        for (int distance : { -1, 0, 1 })
+            result.append(static_cast<T>((U(1) << bit) + static_cast<U>(distance)));
+        result.append(static_cast<T>(U(0) - (U(1) << bit)));
+    }
+    return result;
+}
+
+template<typename T>
+void checkComparisonsWithConstantsOf()
+{
+    Vector<T> constants = constantsOfComparisonTest<T>();
+    Vector<uint64_t> values;
+    for (T constant : constants) {
+        for (int distance : { -1, 0, 1 })
+            values.append(static_cast<uint64_t>(constant) + static_cast<uint64_t>(distance));
+    }
+    for (const OperationTestComparison<T>& row : operationTestComparisonsOf<T>()) {
+        for (T constant : constants) {
+            OperationTestProcedure test;
+            Output& out = test.out();
+            LValue argument = test.argumentGPR(0);
+            LValue left = sizeof(T) == sizeof(int32_t) ? out.castToInt32(argument) : argument;
+            auto compare = [&] {
+                LValue comparison = out.binary(row.opcode, out.opaque(left), sizeof(T) == sizeof(int32_t) ? out.constInt32(static_cast<int32_t>(constant)) : out.constInt64(static_cast<int64_t>(constant)));
+                return comparison->isConstant() ? out.opaque(comparison) : comparison;
+            };
+            LValue result = compare();
+            result = out.bitOr(result, out.shl(appendBranchOfOperationTest(out, operationTestUses[1], compare()), 1));
+            result = out.bitOr(result, out.shl(out.select(compare(), out.opaque(out.constInt32(1)), out.opaque(out.constInt32(0))), 2));
+            out.ret(out.zeroExt(result, Int64));
+            compileOrFail(test);
+            for (uint64_t value : values) {
+                uint64_t answer = test.call<uint64_t>(operationTestWithDirtAbove(value, sizeof(T)));
+                uint64_t expected = row.reference(static_cast<T>(value), constant) ? 7 : 0;
+                checkOperationTest(answer == expected, test, descriptionOf(row.opcode).name, "(", RawHex(value), ", ", RawHex(static_cast<uint64_t>(constant)), ") of ", sizeof(T), " bytes gave ", answer);
+            }
+        }
+    }
+}
+
+static void testMachineOperationsThatCompareWithConstants()
+{
+    checkComparisonsWithConstantsOf<int32_t>();
+    checkComparisonsWithConstantsOf<int64_t>();
+}
+
+template<typename T>
 void checkBitTestsOf()
 {
     checkPredicate<T>("BitAnd that is not zero"_s, [](T a, T b) { return !!(a & b); }, operationTestUses, operationTestOperandsOf<T>(), [](Output& out, LValue left, LValue right) {
@@ -1471,7 +1529,7 @@ static void checkSumTestedByOverflow(const OverflowTestRelation& relation, const
         else if (greatest == overflowTestNoGreatest)
             failingSideIsTold = areToldByOverflow(overflowTestNoLeast, least - 1, minSum, maxSum);
     }
-    bool goesByOverflow = passingSideIsTold || failingSideIsTold;
+    bool usesOverflowFlag = passingSideIsTold || failingSideIsTold;
     bool otherSumIsTold = false;
     if (biasIsFoldedIntoOperand) {
         int64_t foldedConstant = testCase.constant - least;
@@ -1479,8 +1537,8 @@ static void checkSumTestedByOverflow(const OverflowTestRelation& relation, const
         otherSumIsTold = someSumsPassAndSomeFail && isOperandOf32Bits && areToldByOverflow(0, greatest - least, minSum - least, maxSum - least);
     }
     const Liveness& liveness = test.procedure().liveness();
-    check(liveness.goesByOverflow(end) == (goesByOverflow || otherSumIsTold), "the Branch");
-    check(liveness.goesByOverflow(sum) == goesByOverflow, "the sum");
+    check(liveness.usesOverflowFlag(end) == (usesOverflowFlag || otherSumIsTold), "the Branch");
+    check(liveness.usesOverflowFlag(sum) == usesOverflowFlag, "the sum");
 
     const Operation* operandTakenBack = nullptr;
     if ((passingSideIsTold || otherSumIsTold) && testCase.wordsAreValuesOf32Bits) {
@@ -1632,7 +1690,7 @@ static void testMachineOperationsOnSumThatGoesRoundLoop()
 
         const Liveness& liveness = test.procedure().liveness();
         const Allocation& allocation = test.procedure().allocation();
-        checkOperationTest(liveness.goesByOverflow(body->last()) && liveness.goesByOverflow(sum), test, "the sum that goes round goes by overflow");
+        checkOperationTest(liveness.usesOverflowFlag(body->last()) && liveness.usesOverflowFlag(sum), test, "the sum that goes round goes by overflow");
         checkOperationTest(allocation.step(allocation.stepsOf(body).terminator).other == total, test, "the total is taken back on the failing way");
         const Step* stepOfSum = allocation.findExecuteOf(sum);
         checkOperationTest(stepOfSum && stepOfSum->destination == Location::reg(allocation.registerAtDefinitionOf(total)), test, "the sum lies in the register of the Phi");
@@ -1692,8 +1750,8 @@ static void testMachineOperationsOnSpilledSumThatIsWidened()
     out.ret(out.add(out.add(calledOnFailingSide, sum), out.constInt64(overflowTestMarkerOfFailingSide)));
     compileOrFail(test);
 
-    checkOperationTest(test.procedure().liveness().goesByOverflow(tests->last()), test, "the Branch goes by overflow");
-    checkOperationTest(sumTestedByOverflowOf(test.procedure().liveness(), sum).isWidenedWhereTestFails, test, "the sum is widened");
+    checkOperationTest(test.procedure().liveness().usesOverflowFlag(tests->last()), test, "the Branch goes by overflow");
+    checkOperationTest(overflowCheckedSumOf(test.procedure().liveness(), sum).isWidenedOnFailure, test, "the sum is widened");
     checkOperationTest(test.procedure().allocation().isStoredBehindDefinition(sum), test, "the sum is stored behind its definition");
 
     uint64_t returnedForZero = test.call<uint64_t>(uint64_t { 0 }, uint64_t { 0 }, seedOfRun);
@@ -1734,7 +1792,7 @@ static void testMachineOperationsOnSumThatIsMadeNumberWhereItOverflows()
             out.ret(out.phi(Double, whenItFits, whenItOverflows));
             compileOrFail(test);
 
-            checkOperationTest(test.procedure().liveness().goesByOverflow(tests->last()), test, opcode, " whose failing side rejoins goes by overflow");
+            checkOperationTest(test.procedure().liveness().usesOverflowFlag(tests->last()), test, opcode, " whose failing side rejoins goes by overflow");
             for (uint64_t a : operationTestInt32s) {
                 for (uint64_t b : operationTestInt32s) {
                     int64_t x = static_cast<int32_t>(a);
@@ -1776,8 +1834,8 @@ static void testMachineOperationsOnLowHalfOfSumThatIsExtendedWithoutCode()
             out.ret(out.phi(Int64, whenItFits, whenItOverflows));
             compileOrFail(test);
 
-            checkOperationTest(test.procedure().liveness().goesByOverflow(tests->last()), test, opcode, " whose low half is extended goes by overflow");
-            checkOperationTest(extended->opcode() == ZExt32 && isFreeInRegisterOfChild(test.procedure().liveness(), extended), test, opcode, ": the extension of its low half takes code");
+            checkOperationTest(test.procedure().liveness().usesOverflowFlag(tests->last()), test, opcode, " whose low half is extended goes by overflow");
+            checkOperationTest(extended->opcode() == ZExt32 && isFreeWhenCoalesced(test.procedure().liveness(), extended), test, opcode, ": the extension of its low half takes code");
             for (uint64_t a : operationTestInt32s) {
                 for (uint64_t b : operationTestInt32s) {
                     int64_t x = static_cast<int32_t>(a);
@@ -1808,7 +1866,7 @@ static void testMachineOperationsOnLowHalfOfSumThatIsExtendedWhereTestFailed()
 
         out.appendTo(passes);
         LValue extendedWhereItPassed = out.zeroExtPtr(out.castToInt32(sum));
-        out.ret(out.add(extendedWhereItPassed, out.constInt64(static_cast<int64_t>(tag))));
+        out.ret(out.add(out.opaque(extendedWhereItPassed), out.constInt64(static_cast<int64_t>(tag))));
 
         out.appendTo(fails);
         LValue wholeAsNumber = out.bitCast(out.intToDouble(sum), Int64);
@@ -1818,16 +1876,16 @@ static void testMachineOperationsOnLowHalfOfSumThatIsExtendedWhereTestFailed()
         out.appendTo(fits);
         if (extendsInBlockBehind)
             extendedWhereItFailed = out.zeroExtPtr(low);
-        out.ret(out.add(extendedWhereItFailed, out.constInt64(static_cast<int64_t>(tag))));
+        out.ret(out.add(out.opaque(extendedWhereItFailed), out.constInt64(static_cast<int64_t>(tag))));
         out.appendTo(doesNotFit);
         out.ret(wholeAsNumber);
         compileOrFail(test);
 
         const Liveness& liveness = test.procedure().liveness();
-        checkOperationTest(liveness.goesByOverflow(tests->last()), test, "the Branch goes by overflow");
-        checkOperationTest(sumTestedByOverflowOf(liveness, sum).isWidenedWhereTestFails, test, "the sum is widened");
-        checkOperationTest(isFreeInRegisterOfChild(liveness, extendedWhereItPassed), test, "where the test passed the extension of the low half takes code");
-        checkOperationTest(!isFreeInRegisterOfChild(liveness, extendedWhereItFailed), test, "where the test failed the extension of the low half takes no code");
+        checkOperationTest(liveness.usesOverflowFlag(tests->last()), test, "the Branch goes by overflow");
+        checkOperationTest(overflowCheckedSumOf(liveness, sum).isWidenedOnFailure, test, "the sum is widened");
+        checkOperationTest(isFreeWhenCoalesced(liveness, extendedWhereItPassed), test, "where the test passed the extension of the low half takes code");
+        checkOperationTest(!isFreeWhenCoalesced(liveness, extendedWhereItFailed), test, "where the test failed the extension of the low half takes no code");
         for (uint64_t a : operationTestInt32s) {
             int64_t whole = static_cast<int64_t>(static_cast<int32_t>(a)) - 1;
             uint64_t expected = whole == static_cast<int32_t>(whole) ? static_cast<uint32_t>(whole) + tag : std::bit_cast<uint64_t>(static_cast<double>(whole));
@@ -1901,6 +1959,7 @@ static std::span<const NativeTest> listOfMachineOperationTests()
         { "machine/operations/numbers/unary"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnOneNumber> },
         { "machine/operations/numbers/what-keeps-the-rest-of-its-destination-does-not-wait-for-an-earlier-block"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatKeepRestOfDestination> },
         { "machine/operations/comparisons/int32"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<int32_t>> },
+        { "machine/operations/comparisons/constants"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatCompareWithConstants> },
         { "machine/operations/comparisons/double"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<double>> },
         { "machine/operations/comparisons/bit-tests"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatTestBits> },
         { "machine/operations/switch"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatSwitch> },

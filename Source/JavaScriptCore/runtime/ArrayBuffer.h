@@ -51,10 +51,6 @@ class ArrayBuffer;
 class ArrayBufferView;
 class JSArrayBuffer;
 
-namespace Wasm {
-class Memory;
-}
-
 using ArrayBufferDestructorFunction = RefPtr<SharedTask<void(void*)>>;
 
 #if defined(__swift__)
@@ -196,7 +192,7 @@ public:
     bool isGrowableShared() const { return isResizableOrGrowableShared() && isShared(); }
     bool isResizableNonShared() const { return isResizableOrGrowableShared() && !isShared(); }
     
-    void refreshAfterWasmMemoryGrow(Wasm::Memory*);
+    void refreshAfterWasmMemoryGrow();
 
     void swap(ArrayBufferContents& other)
     {
@@ -322,10 +318,10 @@ public:
     // WebAssembly.Memory, or is a SharedArrayBuffer.
     inline void pinAndLock();
 
-    void LEGACY_NODELETE makeWasmMemory();
+    NODELETE void makeWasmMemory();
     inline bool isWasmMemory();
     // When a resizable buffer is associated with a non-shared Wasm memory, this function is called by the memory's growthSuccessCallback.
-    void refreshAfterWasmMemoryGrow(Wasm::Memory*);
+    void refreshAfterWasmMemoryGrow();
 
     JS_EXPORT_PRIVATE bool transferTo(VM&, ArrayBufferContents&);
     JS_EXPORT_PRIVATE bool shareWith(ArrayBufferContents&);
@@ -354,8 +350,8 @@ private:
     static Ref<ArrayBuffer> createInternal(ArrayBufferContents&&, const void*, size_t);
     static RefPtr<ArrayBuffer> tryCreate(size_t numElements, unsigned elementByteSize, std::optional<size_t> maxByteLength, ArrayBufferContents::InitializationPolicy);
     ArrayBuffer(ArrayBufferContents&&);
-    inline size_t LEGACY_NODELETE clampIndex(double index) const;
-    static inline size_t LEGACY_NODELETE clampValue(double x, size_t left, size_t right);
+    NODELETE inline size_t clampIndex(double index) const;
+    NODELETE static inline size_t clampValue(double x, size_t left, size_t right);
 
     void notifyDetaching(VM&);
 

@@ -53,11 +53,26 @@ public:
 
     void allow(const String& audioDeviceUID, const String& videoDeviceUID);
     void allow();
+#if ENABLE(MEDIA_STREAM)
+    struct DeviceUIDs {
+        String audioDeviceUID;
+        String videoDeviceUID;
+    };
+    struct BestMatchingDeviceCounts {
+        unsigned audio { 0 };
+        unsigned video { 0 };
+    };
+    void preferDevices(const DeviceUIDs&, BestMatchingDeviceCounts);
+    void reapplyDeviceSelection(BestMatchingDeviceCounts);
+#endif
     void promptForGetUserMedia();
 
     Kind kind() const { return m_kind; }
 
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
+    void devicesChanged();
+    void gpuProcessExited();
+
     using PromptResultHandler = CompletionHandler<void(MediaPermissionPromptResult&&)>;
     void showCapturePromptWithoutDeciding(MediaPermissionPromptCustomization&&, PromptResultHandler&&);
 #endif
@@ -71,7 +86,7 @@ public:
     void deny(UserMediaAccessDenialReason = UserMediaAccessDenialReason::UserMediaDisabled);
 
     virtual void invalidate();
-    bool LEGACY_NODELETE isPending() const;
+    NODELETE bool isPending() const;
 
     bool requiresAudioCapture() const { return m_eligibleAudioDevices.size(); }
     bool requiresVideoCapture() const { return !requiresDisplayCapture() && m_eligibleVideoDevices.size(); }
@@ -121,9 +136,10 @@ public:
 protected:
     UserMediaPermissionRequestProxy(UserMediaPermissionRequestManagerProxy&, std::optional<WebCore::UserMediaRequestIdentifier>, WebCore::FrameIdentifier mainFrameID, FrameInfoData&&, Ref<WebCore::SecurityOrigin>&& userMediaDocumentOrigin, Ref<WebCore::SecurityOrigin>&& topLevelDocumentOrigin, Vector<WebCore::CaptureDevice>&& audioDevices, Vector<WebCore::CaptureDevice>&& videoDevices, WebCore::MediaStreamRequest&&, CompletionHandler<void(bool)>&&, Kind);
 
-    UserMediaPermissionRequestManagerProxy* LEGACY_NODELETE manager() const;
+    NODELETE UserMediaPermissionRequestManagerProxy* manager() const;
 
 private:
+    void applyDeviceSelection(const String& audioDeviceUID, const String& videoDeviceUID);
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
     void showCapturePrompt(MediaPermissionPromptCustomization&&, PromptResultHandler&&);
 #endif
@@ -143,8 +159,14 @@ private:
     Function<void()> m_beforeStartingCaptureCallback;
     const Kind m_kind;
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
-    MediaPermissionPromptDismisser m_promptDismisser;
+    CapturePreviewPromptHandles m_previewPromptHandles;
+    uint64_t m_deviceListGeneration { 0 };
     bool m_isShowingPrompt { false };
+    Function<void()> m_afterPromptCloses;
+#endif
+#if ENABLE(MEDIA_STREAM)
+    DeviceUIDs m_selectedDeviceUIDs;
+    bool m_deviceSelectionWasExplicit { false };
 #endif
 };
 

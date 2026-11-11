@@ -2,11 +2,11 @@
 # A script that the build never saw comes by the object and reads it. Nothing is loaded there: the refusal names the export and the object, and no path to load.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: run-in-shell mechanisms=all runCompiledEntryPoint(1).then(all => { try { print(all.port); } catch (error) { print(error.name, error.code, error.message); } }); drainMicrotasks();
-# CHECK: ReferenceError ERR_MODULE_NOT_FOUND Cannot read 'port' from the namespace object of '/main.mjs': it hands out only the exports that the build saw somebody read from it. Import 'port' by name.
+# CHECK: ReferenceError ERR_MODULE_NOT_FOUND Cannot read 'port' from the namespace object of '/main.mjs': the build kept only the exports that it saw your code read. Import 'port' by name.
 # CHECK: exited with 0
 
 variable g0 name="port" module=m0 declared={type=anything|absent} flags=[IsImmutable]
-module m0 path="/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 exports=[{name="port" variable=g0}]
+module m0 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f0 exports=[{name="port" variable=g0}]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer

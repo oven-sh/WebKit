@@ -22,8 +22,8 @@ static constexpr ASCIILiteral programText = R"IR(layout L0 module=m1 fields=[{ke
 variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}]
-module m1 path="/parse.cjs" displayPath="parse.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
-module m2 path="/found.cjs" displayPath="found.cjs" kind=CommonJs flags=[KeepsError, IsFoundByName] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g1
+module m1 path="/parse.cjs" displayPath="parse.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
+module m2 path="/found.cjs" displayPath="found.cjs" kind=CommonJs flags=[CachesEvaluationError, IsFoundByName] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g1
 entry module=m0
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
@@ -58,8 +58,8 @@ layout L1 module=m0 fields=[{key="parse" declared={type=anything} flags=[IsRequi
 layout L2 module=m1 fields=[{key="count" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
-module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
-module m1 path="/worker.cjs" displayPath="worker.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/worker.cjs" displayPath="worker.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
 entry module=m0 hostReads=[{exportName="default" builtin=ObjectKeys namesLookedFor=["parse"]}, {exportName="then"}]
 entry module=m1 hostReads=[{exportName="default" builtin=ObjectKeys namesLookedFor=["parse"]}, {exportName="then"}]
 
@@ -81,7 +81,7 @@ function f1 name="worker" module=m1 kind=CommonJsModule results=[{type=anything}
 }
 )IR"_s;
 
-static constexpr ModuleID entryThatStartsRealm { 0u };
+static constexpr ModuleID mainEntryPoint { 0u };
 static constexpr ModuleID otherEntry { 1u };
 static constexpr ASCIILiteral startsRealmTest = "exports-that-stay-in-compiled-code/the-host-starts-the-realm-with-an-entry-and-is-refused-the-other"_s;
 static constexpr ASCIILiteral preloadsRunFirstTest = "exports-that-stay-in-compiled-code/the-host-runs-preloads-ahead-of-the-entry-that-starts-the-realm"_s;
@@ -93,7 +93,7 @@ static constexpr ASCIILiteral stopsByNameTest = "exports-that-stay-in-compiled-c
 static constexpr ASCIILiteral storeStopsByNameTest = "exports-that-stay-in-compiled-code/a-store-through-the-module-object-stops-by-name"_s;
 static constexpr ASCIILiteral mockStopsByNameTest = "exports-that-stay-in-compiled-code/a-mock-laid-over-the-file-stops-by-name"_s;
 static constexpr ASCIILiteral objectStopsByNameTest = "exports-that-stay-in-compiled-code/making-the-module-object-stops-by-name"_s;
-static constexpr ASCIILiteral wordsOfStop = "AOT: the exports of /parse.cjs are read or stored from outside compiled code"_s;
+static constexpr ASCIILiteral wordsOfStop = "the exports of /parse.cjs were accessed from outside compiled code"_s;
 
 static JSValue requiredWhileEngineAsksHost(LoadedProgram& program, ModuleID file, bool& threw)
 {
@@ -110,8 +110,8 @@ static JSValue requiredWhileEngineAsksHost(LoadedProgram& program, ModuleID file
 static void checkHostIsRefusedFileWhileEngineAsksHost(LoadedProgram& program)
 {
     Modules& modules = modulesOf(program.instance());
-    AOT_TEST_CHECK(modules.data(fileThatSitesAloneRead).exportsStayInCompiledCode());
-    AOT_TEST_CHECK(!modules.data(fileFoundByName).exportsStayInCompiledCode());
+    AOT_TEST_CHECK(modules.data(fileThatSitesAloneRead).hasUnescapedExports());
+    AOT_TEST_CHECK(!modules.data(fileFoundByName).hasUnescapedExports());
 
     bool threw = false;
     AOT_TEST_CHECK(requiredWhileEngineAsksHost(program, fileFoundByName, threw) == jsNumber(7));
@@ -124,12 +124,12 @@ static void checkHostStartsRealmAndIsRefusedOtherEntry(LoadedProgram& program)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
     Modules& modules = modulesOf(program.instance());
-    AOT_TEST_CHECK(modules.data(entryThatStartsRealm).exportsStayInCompiledCode());
-    AOT_TEST_CHECK(modules.data(otherEntry).exportsStayInCompiledCode());
+    AOT_TEST_CHECK(modules.data(mainEntryPoint).hasUnescapedExports());
+    AOT_TEST_CHECK(modules.data(otherEntry).hasUnescapedExports());
 
-    evaluateModuleSynchronously(program.realm(), entryThatStartsRealm);
+    evaluateModuleSynchronously(program.realm(), mainEntryPoint);
     AOT_TEST_CHECK(!scope.exception());
-    AOT_TEST_CHECK(moduleNamespace(program.realm(), entryThatStartsRealm));
+    AOT_TEST_CHECK(moduleNamespace(program.realm(), mainEntryPoint));
     AOT_TEST_CHECK(!scope.exception());
     AOT_TEST_CHECK(!moduleNamespace(program.realm(), otherEntry));
     AOT_TEST_CHECK(scope.exception());
@@ -146,9 +146,9 @@ static void checkHostRunsPreloadAheadOfEntryThatStartsRealm(LoadedProgram& progr
     AOT_TEST_CHECK(!scope.exception());
     didRunPreloads(program.realm());
 
-    evaluateModuleSynchronously(program.realm(), entryThatStartsRealm);
+    evaluateModuleSynchronously(program.realm(), mainEntryPoint);
     AOT_TEST_CHECK(!scope.exception());
-    AOT_TEST_CHECK(moduleNamespace(program.realm(), entryThatStartsRealm));
+    AOT_TEST_CHECK(moduleNamespace(program.realm(), mainEntryPoint));
     AOT_TEST_CHECK(!scope.exception());
     AOT_TEST_CHECK(!moduleNamespace(program.realm(), otherEntry));
     AOT_TEST_CHECK(scope.exception());
@@ -157,7 +157,7 @@ static void checkHostRunsPreloadAheadOfEntryThatStartsRealm(LoadedProgram& progr
 
 static void requireEntry(LoadedProgram& program)
 {
-    requireModule(program.realm(), entryThatStartsRealm);
+    requireModule(program.realm(), mainEntryPoint);
 }
 
 static void askModuleObjectForExports(LoadedProgram& program)
@@ -197,12 +197,12 @@ static void hostRunsPreloadAheadOfEntryThatStartsRealm()
 
 static void requireOfEntryStopsByName()
 {
-    runWithLoadedProgramThatStops(requireOfEntryStopsByNameTest, textOfTwoEntries, requireEntry, "AOT: the exports of /main.cjs are read or stored from outside compiled code"_s, { "exclude=CodeOutsideImage"_s });
+    runWithLoadedProgramThatStops(requireOfEntryStopsByNameTest, textOfTwoEntries, requireEntry, "the exports of /main.cjs were accessed from outside compiled code"_s, { "exclude=CodeOutsideImage"_s });
 }
 
 static void moduleObjectStopsByName()
 {
-    runWithLoadedProgramThatStops(stopsByNameTest, programText, askModuleObjectForExports, "AOT: the exports of /parse.cjs are read or stored from outside compiled code"_s, { "exclude=CodeOutsideImage"_s });
+    runWithLoadedProgramThatStops(stopsByNameTest, programText, askModuleObjectForExports, "the exports of /parse.cjs were accessed from outside compiled code"_s, { "exclude=CodeOutsideImage"_s });
 }
 
 static void storeThroughModuleObjectStopsByName()

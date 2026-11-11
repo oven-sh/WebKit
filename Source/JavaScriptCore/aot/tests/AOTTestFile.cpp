@@ -904,7 +904,7 @@ void TestFileParser::finishCheckGroups()
     for (PendingCheckGroup& group : m_checkGroups) {
         if (!group.hasMalformedLine)
             validateCheckGroup(group);
-        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && isBuiltWithAddressSanitizer) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresWindows && !isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls) || (group.requiresCallingLoopPolls && hasFaultingLoopPolls) || (group.requiresCodeOutsideImage && runsOnlyCodeOfImage) || (group.requiresTargetWithoutJSCVT && targetHasJSCVT)) {
+        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && isBuiltWithAddressSanitizer) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresWindows && !isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls) || (group.requiresCallingLoopPolls && hasFaultingLoopPolls) || (group.requiresCodeOutsideImage && isHardenedBuild) || (group.requiresTargetWithoutJSCVT && targetHasJSCVT)) {
             m_file.runs.removeAllMatching([&](const RunDirective& run) {
                 return run.prefix == group.prefix;
             });

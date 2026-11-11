@@ -17,6 +17,7 @@
 #include "AOTObjectVisiting.h"
 #include "AOTObjectWords.h"
 #include "AOTPlan.h"
+#include "AOTPrefixCode.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeType.h"
 #include "AOTStringUses.h"
@@ -184,8 +185,8 @@ static BoundsOfTablePart landmarkOfTablePart(const ProgramTables& tables, TableP
         return boundsOf(ProgramTableIndex::staticsLayout);
     case TablePartID::Functions:
         return boundsOf(ProgramTableIndex::functionRecordNumbers);
-    case TablePartID::FunctionTexts:
-        return boundsOf(ProgramTableIndex::functionTexts);
+    case TablePartID::FunctionSources:
+        return boundsOf(ProgramTableIndex::functionSources);
     case TablePartID::Modules:
         return boundsOf(ProgramTableIndex::modules);
     case TablePartID::Requests:
@@ -450,25 +451,24 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
     checkAscending(tables.constructEntrypoints(), &ConstructEntrypointData::function, "constructEntrypoints"_s);
     checkAscending(tables.implementedBuiltins(), &ImplementedBuiltinData::function, "implementedBuiltins"_s);
     checkAscending(tables.functionsWithLargeCounts(), [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; }, "functionsWithLargeCounts"_s);
-    checkAscending(tables.functionRecordsByFunction(), &FunctionRecordByFunctionData::function, "functionRecordsByFunction"_s);
-    checkAscending(tables.namesLaidOnClosures(), std::identity { }, "namesLaidOnClosures"_s);
+    checkAscending(tables.unsharedFunctionRecords(), &UnsharedFunctionRecordData::function, "unsharedFunctionRecords"_s);
+    checkAscending(tables.closurePropertyNames(), std::identity { }, "closurePropertyNames"_s);
     auto checkSorted = [&](auto entries, const auto& keyOf, ASCIILiteral table) {
         check.expect(std::ranges::is_sorted(entries, { }, keyOf), "TableNotSorted"_s, { }, table);
     };
     checkSorted(tables.ambiguousExports(), &AmbiguousExportData::module, "ambiguousExports"_s);
     checkSorted(tables.asyncFunctionsWithoutAwait(), std::identity { }, "asyncFunctionsWithoutAwait"_s);
     checkSorted(tables.exportStatements(), &ExportStatementData::requiredName, "exportStatements"_s);
-    checkSorted(tables.functionsThatMayAskForOwnOriginal(), std::identity { }, "functionsThatMayAskForOwnOriginal"_s);
+    checkSorted(tables.functionsImportingOwnOriginal(), std::identity { }, "functionsImportingOwnOriginal"_s);
     checkSorted(tables.methodTableDependents(), &MethodTableDependentData::guardBit, "methodTableDependents"_s);
-    checkSorted(tables.modulesReachedUnderOtherNames(), std::identity { }, "modulesReachedUnderOtherNames"_s);
+    checkSorted(tables.importedModuleAliases(), std::identity { }, "importedModuleAliases"_s);
     checkSorted(tables.modulesThatDependOnMoreThanSource(), std::identity { }, "modulesThatDependOnMoreThanSource"_s);
-    checkSorted(tables.modulesThatFindBuiltinsReadOnly(), std::identity { }, "modulesThatFindBuiltinsReadOnly"_s);
-    checkSorted(tables.modulesThatLoadCompiledFilesAlone(), std::identity { }, "modulesThatLoadCompiledFilesAlone"_s);
-    checkSorted(tables.namesLaidOutsideClassRecords(), std::identity { }, "namesLaidOutsideClassRecords"_s);
+    checkSorted(tables.modulesWithReadOnlyBuiltins(), std::identity { }, "modulesWithReadOnlyBuiltins"_s);
+    checkSorted(tables.modulesRejectingUncompiledCode(), std::identity { }, "modulesRejectingUncompiledCode"_s);
+    checkSorted(tables.addedPrototypeNames(), std::identity { }, "addedPrototypeNames"_s);
     checkSorted(tables.namesOfStatements(), &NameOfStatementData::module, "namesOfStatements"_s);
-    checkSorted(tables.originalsAskedFor(), &OriginalAskedForData::function, "originalsAskedFor"_s);
-    checkSorted(tables.parsedRecordFields(), &ParsedRecordFieldData::nameNumber, "parsedRecordFields"_s);
-    checkSorted(tables.quotedTextGroups(), [](const QuotedTextGroupData& group) { return std::tuple { group.module, group.line, group.column }; }, "quotedTextGroups"_s);
+    checkSorted(tables.requestedOriginals(), &RequestedOriginalData::function, "requestedOriginals"_s);
+    checkSorted(tables.quotedSourceGroups(), [](const QuotedSourceGroupData& group) { return std::tuple { group.module, group.line, group.column }; }, "quotedSourceGroups"_s);
     checkSorted(tables.sourceStamps(), &SourceStampData::module, "sourceStamps"_s);
     checkSorted(tables.starsAsWritten(), &StarAsWrittenData::module, "starsAsWritten"_s);
     checkSorted(tables.writersOfExports(), [](const WriterOfExportData& entry) { return static_cast<uint64_t>(entry.module) << 32 | entry.place; }, "writersOfExports"_s);
@@ -569,14 +569,14 @@ static void checkFunctionTables(const JoinedTables& check)
     const Typed::CallingConventions& conventions = check.plan.conventions();
     const FunctionNumbers& functions = check.numbers.functions();
     size_t numberOfClosureFunctions = tables.closureFunctions.end - tables.closureFunctions.first;
-    std::span<const Number24> cellNumbers = tables.closureCellNumbers();
+    SparseNumberTable cells(tables.closureCells());
     bool hasRowForEachFunction = tables.numberOfFunctions() == functions.numberOfFunctions() && tables.closureFunctionKinds().size() == numberOfClosureFunctions && tables.functionLengths().size() == numberOfClosureFunctions
-        && tables.closureCaptureCounts().size() == numberOfClosureFunctions && cellNumbers.size() == numberOfClosureFunctions;
+        && tables.closureCaptureCounts().size() == numberOfClosureFunctions && tables.closureCells().size() >= NumberGroup::numberOfGroupWords(numberOfClosureFunctions);
     if (!check.expect(hasRowForEachFunction, "TableOutOfBounds"_s, { }, "functionRecordNumbers"_s))
         return;
     for (uint32_t number = 0; number < numberOfClosureFunctions; ++number) {
         CodeUnit unit = conventions.unitAt(functions.unitOf(FunctionID(tables.closureFunctionWithNumber(number))));
-        uint32_t cell = cellNumbers[number];
+        uint32_t cell = cells.at(number);
         bool isCellOfFunction = unit.role != Typed::CodeRole::GenericCallEntry || cell == check.numbers.closureCellNumber(unit.function);
         if (!check.expect(isCellOfFunction && (!cell || cell < tables.numberOfClosureCells), "ClosureCellDiffersFromNumbers"_s, unit.function))
             return;
@@ -585,26 +585,26 @@ static void checkFunctionTables(const JoinedTables& check)
         return variable.offset < tables.instanceSizes.sizeOfStatics && variable.function < tables.numberOfFunctions();
     }), "TableOutOfBounds"_s, { }, "functionVariables"_s);
 
-    if (std::span<const uint32_t> blocks = tables.blocksOfTextOfQuotes(); !blocks.empty()) {
+    if (std::span<const uint32_t> blocks = tables.quotedSourceBlocks(); !blocks.empty()) {
         std::span<const uint32_t> ends = blocks.subspan(1);
-        bool blocksFit = !ends.empty() && ends.size() == (static_cast<uint64_t>(blocks[0]) + sizeOfBlockOfText - 1) / sizeOfBlockOfText && std::ranges::is_sorted(ends) && ends.back() == tables.textOfQuotes().size();
-        if (!check.expect(blocksFit, "OffsetOutsideItsPart"_s, { }, "blocksOfTextOfQuotes"_s))
+        bool blocksFit = !ends.empty() && ends.size() == (static_cast<uint64_t>(blocks[0]) + sourceBlockSize - 1) / sourceBlockSize && std::ranges::is_sorted(ends) && ends.back() == tables.quotedSourceText().size();
+        if (!check.expect(blocksFit, "OffsetOutsideItsPart"_s, { }, "quotedSourceBlocks"_s))
             return;
     }
-    for (const FunctionTexts& texts : tables.functionTexts()) {
-        uint64_t sizeOfEntries = static_cast<uint64_t>(texts.numberOfEntries) * sizeof(FunctionTextEntry);
-        bool liesInPart = (!texts.numberOfEntries || check.liesInPart(TablePartID::FunctionTexts, texts.entriesOffset, sizeOfEntries, alignof(FunctionTextEntry))) && (!texts.textOffset || check.liesInPart(TablePartID::FunctionTexts, texts.textOffset, 0, 1)) && (!texts.numberOfBlocks || check.liesInPart(TablePartID::FunctionTexts, texts.endsOfBlocksOffset, static_cast<uint64_t>(texts.numberOfBlocks) * sizeof(uint32_t), alignof(uint32_t)));
-        if (!check.expect(liesInPart, "OffsetOutsideItsPart"_s, { }, "functionTexts"_s))
+    for (const FunctionSources& sources : tables.functionSources()) {
+        uint64_t sizeOfEntries = static_cast<uint64_t>(sources.numberOfEntries) * sizeof(FunctionSourceEntry);
+        bool liesInPart = (!sources.numberOfEntries || check.liesInPart(TablePartID::FunctionSources, sources.entriesOffset, sizeOfEntries, alignof(FunctionSourceEntry))) && (!sources.sourceOffset || check.liesInPart(TablePartID::FunctionSources, sources.sourceOffset, 0, 1)) && (!sources.numberOfBlocks || check.liesInPart(TablePartID::FunctionSources, sources.blockEndsOffset, static_cast<uint64_t>(sources.numberOfBlocks) * sizeof(uint32_t), alignof(uint32_t)));
+        if (!check.expect(liesInPart, "OffsetOutsideItsPart"_s, { }, "functionSources"_s))
             return;
-        if (texts.numberOfBlocks) {
-            auto ends = spanReinterpretCast<const uint32_t>(check.bytes.subspan(texts.endsOfBlocksOffset, static_cast<uint64_t>(texts.numberOfBlocks) * sizeof(uint32_t)));
-            bool blocksFit = texts.numberOfBlocks == (static_cast<uint64_t>(texts.sizeOfText) + sizeOfBlockOfText - 1) / sizeOfBlockOfText && std::ranges::is_sorted(ends)
-                && check.liesInPart(TablePartID::FunctionTexts, texts.textOffset, ends.back(), 1);
-            if (!check.expect(blocksFit, "OffsetOutsideItsPart"_s, { }, "functionTexts"_s))
+        if (sources.numberOfBlocks) {
+            auto ends = spanReinterpretCast<const uint32_t>(check.bytes.subspan(sources.blockEndsOffset, static_cast<uint64_t>(sources.numberOfBlocks) * sizeof(uint32_t)));
+            bool blocksFit = sources.numberOfBlocks == (static_cast<uint64_t>(sources.sourceSize) + sourceBlockSize - 1) / sourceBlockSize && std::ranges::is_sorted(ends)
+                && check.liesInPart(TablePartID::FunctionSources, sources.sourceOffset, ends.back(), 1);
+            if (!check.expect(blocksFit, "OffsetOutsideItsPart"_s, { }, "functionSources"_s))
                 return;
         }
-        auto entries = spanReinterpretCast<const FunctionTextEntry>(check.bytes.subspan(texts.numberOfEntries ? texts.entriesOffset : 0, sizeOfEntries));
-        check.expect(std::ranges::is_sorted(entries, { }, [](const FunctionTextEntry& entry) -> uint32_t { return entry.function; }), "TableNotSorted"_s, { }, "functionTexts"_s);
+        auto entries = spanReinterpretCast<const FunctionSourceEntry>(check.bytes.subspan(sources.numberOfEntries ? sources.entriesOffset : 0, sizeOfEntries));
+        check.expect(std::ranges::is_sorted(entries, { }, [](const FunctionSourceEntry& entry) -> uint32_t { return entry.function; }), "TableNotSorted"_s, { }, "functionSources"_s);
     }
 }
 
@@ -614,7 +614,7 @@ static void checkNamesForHeapSnapshots(const JoinedTables& check)
     Vector<VariableData> variables;
     uint32_t lastModule = 0;
     uint32_t endOfClosureNumbers = 0;
-    bool endsWhereModuleEnds = forEachNamedVariable(tables.namedVariables(), [&](uint32_t module, size_t) {
+    bool endsWhereModuleEnds = forEachNamedVariable(decodeVarintBytes(tables.namedVariables()).span(), [&](uint32_t module, size_t) {
         lastModule = module;
     }, [&](const VariableData& variable) {
         variables.append(variable);
@@ -634,7 +634,7 @@ static void checkNamesForHeapSnapshots(const JoinedTables& check)
     }), "TableOutOfBounds"_s, { }, "namedVariables"_s);
 
     Vector<NamedCaptureData> captures;
-    bool endsWhereClosureNumberEnds = forEachNamedCapture(tables.namedCaptures(), [&](const NamedCaptureData& capture) {
+    bool endsWhereClosureNumberEnds = forEachNamedCapture(decodeVarintBytes(tables.namedCaptures()).span(), [&](const NamedCaptureData& capture) {
         captures.append(capture);
     });
     check.expect(endsWhereClosureNumberEnds && ascendsStrictlyInTable(captures.span(), [](const NamedCaptureData& capture) { return capture.closureNumber << 8 | capture.slot; }), "TableNotSorted"_s, { }, "namedCaptures"_s);
@@ -662,7 +662,7 @@ static void checkListedFunctions(const JoinedTables& check)
     }
     for (size_t index = 0; index < check.program.layouts.size(); ++index) {
         FunctionID constructor = check.program.layouts[index].constructor;
-        if (!constructor || !check.plan.isInUse(LayoutID(index)))
+        if (!constructor || !check.plan.isAllocatable(LayoutID(index)))
             continue;
         std::optional<FunctionID> entry = check.encoder.findEntrypoint(constructor);
         check.expect(!entry || std::ranges::binary_search(tables.constructors(), entry->index(), { }, &ConstructorData::function), "FunctionNotListed"_s, LayoutID(index), "constructors"_s);
@@ -672,6 +672,7 @@ static void checkListedFunctions(const JoinedTables& check)
         if (!listed.function || !isCalledByHost.get(listed.function.index()) || !functionInImage(conventions.closureEntryOf(listed.function)))
             continue;
         check.expect(std::ranges::binary_search(tables.compiledRuntimeFunctions(), listed.id.index(), { }, &CompiledRuntimeFunctionData::id), "FunctionNotListed"_s, listed.function, "compiledRuntimeFunctions"_s);
+        check.expect(check.plan.functionKind(check.program, conventions.closureEntryOf(listed.function)).isInRuntimeModule, "FunctionOutsideRuntimeModule"_s, listed.function, "compiledRuntimeFunctions"_s);
     }
 }
 
@@ -838,7 +839,7 @@ static void checkLayoutRecords(const JoinedTables& check)
     for (uint32_t shape = 0; shape < offsets.size(); ++shape) {
         uint32_t offset = offsets[shape];
         LayoutID id = shapes.isAssigned(shape) ? shapes.shape(shape).layout : LayoutID();
-        if (id && !check.plan.isInUse(id))
+        if (id && !check.plan.isAllocatable(id))
             id = { };
         if (!check.expect(!offset == !id, "ShapeWithoutLayout"_s, id) || !id)
             continue;

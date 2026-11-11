@@ -1,5 +1,6 @@
-# BEHIND THE YES OF `$findsNoMember(object, "missing")` THE LIBRARY's TEXT MAY LEAVE A READ OUT: `object.missing` is undefined and free. The yes rests on the shape, on bits of the cell and on the guard of the class under the name, which the run time ends.
-# Under testing=CheckWalkAtRunTime the yes is asked of the object itself, by an inquiry that reads no guard. 2305 says "nothing, answered by the proof that a lookup finds nothing".
+# After `$findsNoMember(object, "missing")` returns true, the library's source may omit a read: `object.missing` is undefined and costs nothing.
+# The true result rests on the shape, on bits of the cell and on the class's guard for that name, which the runtime invalidates.
+# With testing=CheckWalkAtRunTime the true result is checked against the object itself, by a VM inquiry that reads no guard. 2305 means "nothing, answered by the proof that a lookup finds nothing".
 # f3 = asks
 # RUN(EMIT): emit f3 mechanisms=all testing=CheckWalkAtRunTime
 # EMIT: = Const32(526593)
@@ -9,12 +10,13 @@
 # ASKED: lacks | may hold
 # ASKED-NEXT: may hold may hold
 # ASKED-NEXT: exited with 0
-# The lie, testing=GuardsAndFactsAreTakenToHold: the question takes its guards to hold. By itself it says yes in silence where the prototype holds the name.
-# RUN(BITES): run-in-shell mechanisms=all testing=GuardsAndFactsAreTakenToHold hand = function (asks, meter, gauge, Meter) { print(asks(meter)); Meter.prototype.missing = 2; print(asks(meter), asks(new Meter(1))); };
+# Fault injection, testing=AssumeGuardsAndFacts: the test assumes that its guards hold. With that fault alone it silently returns true where the prototype holds the name.
+# RUN(BITES): run-in-shell mechanisms=all testing=AssumeGuardsAndFacts hand = function (asks, meter, gauge, Meter) { print(asks(meter)); Meter.prototype.missing = 2; print(asks(meter), asks(new Meter(1))); };
 # BITES: lacks
 # BITES-NEXT: lacks lacks
-# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,GuardsAndFactsAreTakenToHold hand = function (asks, meter, gauge, Meter) { print(asks(meter)); Meter.prototype.missing = 2; print(asks(meter), asks(new Meter(1))); };
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts hand = function (asks, meter, gauge, Meter) { print(asks(meter)); Meter.prototype.missing = 2; print(asks(meter), asks(new Meter(1))); };
 # ASKEDLIE: lacks
-# ASKEDLIE-NEXT: AOT: {{*}} under the name missing, and the object, asked again, answers a value.{{*}}
+# ASKEDLIE-NEXT: bun: internal AOT error: property lookup check failed
+# ASKEDLIE-NEXT: for 'missing', but a full lookup finds a value
 # ASKEDLIE: crashed with
 # PROGRAM-OF: a-lookup-that-finds-nothing-is-asked-of-an-operand-that-is-only-expected.ir

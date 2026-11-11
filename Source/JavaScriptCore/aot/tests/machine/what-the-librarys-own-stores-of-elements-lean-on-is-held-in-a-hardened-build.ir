@@ -1,17 +1,17 @@
 # The library's own stores of elements test nothing by themselves. Under `--aot-harden=ignore-told-ranges` each holds its position and the kind of its list; three things more that its text leans on are held here.
 # The store of an int32 writes the low half of the word alone: the place must bear the mark of an int32 already: a hole inside the length does not. The boxed store takes storage for int32s too: what is no int32 may not go into it.
 # Under `--aot-harden=proof-checks` the store of a double holds that it does not store the word of a hole, as the store that the walk makes does.
-# RUN(RIGHT): run-in-shell mechanisms=all testing=TestsEveryPosition,CheckProofsAtRunTime globalThis.after = () => print(putInt32.call(Array.of(1, 2, 3), 1, 7).join(), putBoxed.call(Array.of("a", "b"), 1, "c").join(), putBoxed.call(Array.of(1, 2), 1, 5).join(), putDouble.call(Array.of(0.5, 1.5), 1, 2.5).join());
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,CheckProofsAtRunTime globalThis.after = () => print(putInt32.call(Array.of(1, 2, 3), 1, 7).join(), putBoxed.call(Array.of("a", "b"), 1, "c").join(), putBoxed.call(Array.of(1, 2), 1, 5).join(), putDouble.call(Array.of(0.5, 1.5), 1, 2.5).join());
 # RIGHT: 1,7,3 a,c 1,5 0.5,2.5
 # RIGHT-NEXT: exited with 0
-# RUN(MARK): run-in-shell mechanisms=all testing=TestsEveryPosition globalThis.after = () => { const list = Array.of(1, 2, 3); delete list[1]; print(putInt32.call(list, 1, 7).length); };
-# MARK: This is a bug in Bun.
+# RUN(MARK): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime globalThis.after = () => { const list = Array.of(1, 2, 3); delete list[1]; print(putInt32.call(list, 1, 7).length); };
+# MARK: This is a bug in Bun, not in your code.
 # MARK: crashed with
-# RUN(AMONG): run-in-shell mechanisms=all testing=TestsEveryPosition globalThis.after = () => print(putBoxed.call(Array.of(1, 2, 3), 1, "text").length);
-# AMONG: This is a bug in Bun.
+# RUN(AMONG): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime globalThis.after = () => print(putBoxed.call(Array.of(1, 2, 3), 1, "text").length);
+# AMONG: This is a bug in Bun, not in your code.
 # AMONG: crashed with
 # RUN(HOLE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.after = () => print(putDouble.call(Array.of(0.5, 1.5), 1, NaN).length);
-# HOLE: This is a bug in Bun.
+# HOLE: This is a bug in Bun, not in your code.
 # HOLE: crashed with
 
 module m0 path="main.mjs" displayPath="main.mjs" body=f0

@@ -68,7 +68,6 @@
 #include "InlineIteratorInlineBox.h"
 #include "InlineIteratorLineBox.h"
 #include "InlineRunAndOffset.h"
-#include "LineSelection.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
@@ -190,12 +189,12 @@ IntRect DragCaretController::editableElementRectInMainFrameViewCoordinates() con
     return { };
 }
 
-static inline bool LEGACY_NODELETE shouldAlwaysUseDirectionalSelection(Document* document)
+NODELETE static inline bool shouldAlwaysUseDirectionalSelection(Document* document)
 {
     return !document || document->editingBehavior().shouldConsiderSelectionAsDirectional();
 }
 
-static inline bool LEGACY_NODELETE isPageActive(Document* document)
+NODELETE static inline bool isPageActive(Document* document)
 {
     return document && document->page() && document->page()->focusController().isActive();
 }
@@ -601,7 +600,7 @@ void FrameSelection::updateDataDetectorsForSelection()
 #endif
 }
 
-static bool LEGACY_NODELETE removingNodeRemovesPosition(Node& node, const Position& position)
+NODELETE static bool removingNodeRemovesPosition(Node& node, const Position& position)
 {
     if (!position.anchorNode())
         return false;
@@ -637,7 +636,7 @@ void DragCaretController::clearCaretPositionWithoutUpdatingStyle()
     clearCaretRect();
 }
 
-static void LEGACY_NODELETE setNodeContainsSelectionEndPoint(const Position& position, bool value)
+NODELETE static void setNodeContainsSelectionEndPoint(const Position& position, bool value)
 {
     // We use anchorNode instead of containerNode() because nodeWillBeRemoved must update position when anchored node is removed.
     for (auto* currentNode = position.anchorNode(); currentNode; currentNode = currentNode->parentOrShadowHostNode()) {
@@ -969,7 +968,7 @@ void FrameSelection::adjustSelectionExtentIfNeeded(VisiblePosition& extent, bool
     }
 
     if (RefPtr rootUserSelectAll = Position::rootUserSelectAllForNode(protect(extent.deepEquivalent().anchorNode())))
-        extent = isForward ? positionAfterNode(*rootUserSelectAll).downstream(CanCrossEditingBoundary) : positionBeforeNode(*rootUserSelectAll).upstream(CanCrossEditingBoundary);
+        extent = isForward ? positionAfterNode(*rootUserSelectAll).downstream(EditingBoundaryCrossingRule::CanCross) : positionBeforeNode(*rootUserSelectAll).upstream(EditingBoundaryCrossingRule::CanCross);
 }
 
 VisiblePosition FrameSelection::modifyExtendingRight(TextGranularity granularity, UserTriggered userTriggered)
@@ -984,9 +983,9 @@ VisiblePosition FrameSelection::modifyExtendingRight(TextGranularity granularity
     switch (granularity) {
     case TextGranularity::CharacterGranularity:
         if (directionOfEnclosingBlock() == TextDirection::LTR)
-            pos = pos.next(CannotCrossEditingBoundary);
+            pos = pos.next(EditingBoundaryCrossingRule::CannotCross);
         else
-            pos = pos.previous(CannotCrossEditingBoundary);
+            pos = pos.previous(EditingBoundaryCrossingRule::CannotCross);
         break;
     case TextGranularity::WordGranularity:
         if (directionOfEnclosingBlock() == TextDirection::LTR)
@@ -1022,7 +1021,7 @@ VisiblePosition FrameSelection::modifyExtendingForward(TextGranularity granulari
     VisiblePosition pos(m_selection.extent(), m_selection.affinity());
     switch (granularity) {
     case TextGranularity::CharacterGranularity:
-        pos = pos.next(CannotCrossEditingBoundary);
+        pos = pos.next(EditingBoundaryCrossingRule::CannotCross);
         break;
     case TextGranularity::WordGranularity:
         pos = nextWordPositionForPlatform(pos);
@@ -1129,7 +1128,7 @@ VisiblePosition FrameSelection::modifyMovingForward(TextGranularity granularity,
         if (isRange())
             pos = VisiblePosition(m_selection.end(), m_selection.affinity());
         else
-            pos = VisiblePosition(m_selection.extent(), m_selection.affinity()).next(CannotCrossEditingBoundary, reachedBoundary);
+            pos = VisiblePosition(m_selection.extent(), m_selection.affinity()).next(EditingBoundaryCrossingRule::CannotCross, reachedBoundary);
         break;
     case TextGranularity::WordGranularity:
         pos = nextWordPositionForPlatform(currentPosition);
@@ -1197,9 +1196,9 @@ VisiblePosition FrameSelection::modifyExtendingLeft(TextGranularity granularity,
     switch (granularity) {
     case TextGranularity::CharacterGranularity:
         if (directionOfEnclosingBlock() == TextDirection::LTR)
-            pos = pos.previous(CannotCrossEditingBoundary);
+            pos = pos.previous(EditingBoundaryCrossingRule::CannotCross);
         else
-            pos = pos.next(CannotCrossEditingBoundary);
+            pos = pos.next(EditingBoundaryCrossingRule::CannotCross);
         break;
     case TextGranularity::WordGranularity:
         if (directionOfEnclosingBlock() == TextDirection::LTR)
@@ -1239,7 +1238,7 @@ VisiblePosition FrameSelection::modifyExtendingBackward(TextGranularity granular
     // over everything.
     switch (granularity) {
     case TextGranularity::CharacterGranularity:
-        pos = pos.previous(CannotCrossEditingBoundary);
+        pos = pos.previous(EditingBoundaryCrossingRule::CannotCross);
         break;
     case TextGranularity::WordGranularity:
         pos = previousWordPosition(pos);
@@ -1345,7 +1344,7 @@ VisiblePosition FrameSelection::modifyMovingBackward(TextGranularity granularity
         if (isRange())
             pos = VisiblePosition(m_selection.start(), m_selection.affinity());
         else
-            pos = VisiblePosition(m_selection.extent(), m_selection.affinity()).previous(CannotCrossEditingBoundary, reachedBoundary);
+            pos = VisiblePosition(m_selection.extent(), m_selection.affinity()).previous(EditingBoundaryCrossingRule::CannotCross, reachedBoundary);
         break;
     case TextGranularity::WordGranularity:
         pos = previousWordPosition(currentPosition);
@@ -1396,7 +1395,7 @@ VisiblePosition FrameSelection::modifyMovingBackward(TextGranularity granularity
     return pos;
 }
 
-static bool LEGACY_NODELETE isBoundary(TextGranularity granularity)
+NODELETE static bool isBoundary(TextGranularity granularity)
 {
     return granularity == TextGranularity::LineBoundary || granularity == TextGranularity::ParagraphBoundary || granularity == TextGranularity::DocumentBoundary;
 }
@@ -1469,7 +1468,7 @@ AXTextStateChangeIntent FrameSelection::textSelectionIntent(Alteration alter, Se
     return intent;
 }
 
-static AXTextSelection LEGACY_NODELETE textSelectionWithDirectionAndGranularity(SelectionDirection direction, TextGranularity granularity)
+NODELETE static AXTextSelection textSelectionWithDirectionAndGranularity(SelectionDirection direction, TextGranularity granularity)
 {
     // FIXME: Account for BIDI in SelectionDirection::Right & SelectionDirection::Left. (In a RTL block, Right would map to Previous/Beginning and Left to Next/End.)
     AXTextSelectionDirection intentDirection = AXTextSelectionDirection::Unknown;
@@ -1871,7 +1870,7 @@ RenderBlock* DragCaretController::caretRenderer() const
     return rendererForCaretPainting(protect(m_position.deepEquivalent().deprecatedNode()));
 }
 
-static bool LEGACY_NODELETE isNonOrphanedCaret(const VisibleSelection& selection)
+NODELETE static bool isNonOrphanedCaret(const VisibleSelection& selection)
 {
     return selection.isCaret() && !selection.start().isOrphan() && !selection.end().isOrphan();
 }
@@ -1887,7 +1886,7 @@ IntRect FrameSelection::absoluteCaretBounds(bool* insideFixed)
     return m_absCaretBounds;
 }
 
-static LayoutBoxExtent LEGACY_NODELETE computeOutsetFromInnerOuterRect(const LayoutRect& innerRect, const LayoutRect& outerRect)
+NODELETE static LayoutBoxExtent computeOutsetFromInnerOuterRect(const LayoutRect& innerRect, const LayoutRect& outerRect)
 {
     LayoutBoxExtent result;
     result.setLeft(std::max<LayoutUnit>(0, innerRect.x() - outerRect.x()));
@@ -2038,7 +2037,7 @@ static bool inlineBackgroundCoversCaret(const RenderBoxModelObject& inlineBox, c
     auto caretMiddleAlongBlockAxis = logicalCaretRect.y() + logicalCaretRect.height() / 2;
 
     for (auto& box : InlineIterator::inlineBoxesFor(inlineBox)) {
-        auto lineRect = LayoutRect { LineSelection::logicalRect(box.lineBox()) };
+        auto lineRect = LayoutRect { box.lineBox().contentLogicalRectAdjustedForAdjacentLineBoxes() };
         lineRect.move(logicalOffset);
         if (caretMiddleAlongBlockAxis < lineRect.y())
             break;
@@ -2782,7 +2781,7 @@ static RefPtr<HTMLFormElement> scanForForm(Element* start)
     return nullptr;
 }
 
-static ValidatedFormListedElement* LEGACY_NODELETE findFormControlElementAncestor(Element& element)
+NODELETE static ValidatedFormListedElement* findFormControlElementAncestor(Element& element)
 {
     for (auto& ancestor : lineageOfType<Element>(element)) {
         if (auto* formControlAncestor = ancestor.asValidatedFormListedElement())
@@ -3202,7 +3201,7 @@ void FrameSelection::setCaretColor(const Color& caretColor)
 
 #endif // PLATFORM(IOS_FAMILY)
 
-static bool LEGACY_NODELETE containsEndpoints(const WeakPtr<Document, WeakPtrImplWithEventTargetData>& document, const std::optional<SimpleRange>& range)
+NODELETE static bool containsEndpoints(const WeakPtr<Document, WeakPtrImplWithEventTargetData>& document, const std::optional<SimpleRange>& range)
 {
     return document && range && document->contains(range->start.container) && document->contains(range->end.container);
 }
@@ -3248,7 +3247,7 @@ void FrameSelection::associateLiveRange(Range& liveRange)
     updateFromAssociatedLiveRange();
 }
 
-void FrameSelection::updateFromAssociatedLiveRange()
+void FrameSelection::updateFromAssociatedLiveRange(OptionSet<SetSelectionOption> additionalOptions)
 {
     ASSERT(m_associatedLiveRange);
     if (!containsEndpoints(m_document, protect(*m_associatedLiveRange)))
@@ -3258,7 +3257,7 @@ void FrameSelection::updateFromAssociatedLiveRange()
         Ref associatedLiveRange = *m_associatedLiveRange;
         auto start = makeContainerOffsetPosition(protect(associatedLiveRange->startContainer()), associatedLiveRange->startOffset());
         auto end = makeContainerOffsetPosition(protect(associatedLiveRange->endContainer()), associatedLiveRange->endOffset());
-        setSelection({ start, end }, defaultSetSelectionOptions() | SetSelectionOption::MaintainLiveRange);
+        setSelection({ start, end }, defaultSetSelectionOptions() | additionalOptions | SetSelectionOption::MaintainLiveRange);
     }
 }
 

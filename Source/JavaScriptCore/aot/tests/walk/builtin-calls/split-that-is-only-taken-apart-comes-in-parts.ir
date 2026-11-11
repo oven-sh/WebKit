@@ -35,8 +35,8 @@
 # EMPTY-LABEL: code f5:Body
 # EMPTY-NOT: BoundsOfStringSplit
 # EMPTY: inlineBuiltin=StringSplit
-# RUN(COUNTED): compile SplitsTakenInParts mechanisms=all
-# COUNTED: statistic SplitsTakenInParts 3
+# RUN(COUNTED): compile StringSplitAllocationsElided mechanisms=all
+# COUNTED: statistic StringSplitAllocationsElided 3
 # What it leans on withheld, nothing is taken in parts.
 # RUN(WITHHELD): walk f1 mechanisms=all-EscapeAnalysis
 # WITHHELD-NOT: BoundsOfStringSplit

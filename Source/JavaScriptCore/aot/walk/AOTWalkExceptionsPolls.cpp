@@ -89,7 +89,7 @@ void Walker::noteRecordBuiltForPolls(ValueID id, const Draft& draft, const Effec
 
     bool pollsOnRareWay = false;
     if (speaksOfLoopsAround) {
-        bool standsOnRareWay = mayBuildPoll && !m_numberOfCopiesBuiltForSize && m_code.at(m_block).frequency == BlockFrequency::Rare && familyOf(draft.opcode) != OperationFamily::Exception;
+        bool standsOnRareWay = mayBuildPoll && !m_coldCopyDepth && m_code.at(m_block).frequency == BlockFrequency::Rare && familyOf(draft.opcode) != OperationFamily::Exception;
         uint32_t numberOfLoops = std::min<uint32_t>(m_openLoops.size(), m_numberOfLoopsThatMayBeLeft);
         bool isSettled = false;
         for (size_t frameIndex = m_frames.size(); frameIndex-- && !isSettled;) {
@@ -130,7 +130,7 @@ void Walker::noteRecordBuiltForPolls(ValueID id, const Draft& draft, const Effec
 void Walker::buildPollInFrontOfLoop(BlockID inputHead, const LoopPreview& preview)
 {
     m_pollInFrontOfLoopBeingEntered = { };
-    if (!has(Mechanism::Handlers) || preview.effects.maySuspend || m_numberOfCopiesBuiltForSize || isUnreachable() || !isUnderHandler())
+    if (!has(Mechanism::Handlers) || preview.effects.maySuspend || m_coldCopyDepth || isUnreachable() || !isUnderHandler())
         return;
 
     size_t frameIndex = m_frames.size() - 1;

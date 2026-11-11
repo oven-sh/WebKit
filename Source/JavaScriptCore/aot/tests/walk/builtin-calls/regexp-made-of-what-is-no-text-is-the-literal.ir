@@ -12,7 +12,7 @@
 # EMPTY-LABEL: code f3:Body
 # EMPTY: = NewRegExp
 # nobody knows the pattern, and the build says so: function any(pattern) { return new RegExp(pattern); }
-# DIAGNOSTIC: RegExpTextKnownAtRunTime 1
+# DIAGNOSTIC: RegExpPatternNotConstant 1
 # RUN(ANY): walk f4 mechanisms=all
 # ANY-LABEL: code f4:Body
 # ANY-NOT: = NewRegExp

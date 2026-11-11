@@ -285,12 +285,12 @@ struct BytesOfForm {
     bool isNamed { true };
     uint32_t countThatLooksOtherwise { 0 };
     uint32_t countLongerThanCall { 0 };
-    uint32_t countThatDiffersFromSchema { 0 };
+    uint32_t schemaMismatchCount { 0 };
     uint32_t countFoundOpen { 0 };
     uint32_t countFoundClosed { 0 };
     uint32_t countFoundRuntime { 0 };
 
-    bool isPickedByPlaceOtherThanLoop() const { return place != Typed::Place::Anywhere && place != Typed::Place::Loop; }
+    bool isChosenForColdCode() const { return place != Typed::Place::Anywhere && place != Typed::Place::Loop; }
 };
 
 struct BytesOutsideOperations {

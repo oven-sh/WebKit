@@ -2,7 +2,7 @@
 # sink(name => require(name), () => import(known), () => require("./not-there.js"));  function nobodyCallsThis(name) { return require(name); }
 # One warning, at the first load. Of the second the front end has read every name. The third is a constant path that finds no file at build time: it is left to the run time. Nothing reaches the fourth.
 # OPTIONS: exclude=CodeOutsideImage
-# DIAGNOSTIC: CodeOutsideImageIsRefused 1
+# DIAGNOSTIC: NonConstantImportPath 1
 # RUN: link functions mechanisms=all
 # CHECK: function f4 unreached
 

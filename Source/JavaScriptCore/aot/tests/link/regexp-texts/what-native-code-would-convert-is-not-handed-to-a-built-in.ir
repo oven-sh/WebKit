@@ -1,7 +1,7 @@
 # The list follows from the program alone. What a built-in is handed is looked at by its kind before it is entered: what native code would first convert is not handed over, for nobody can say from outside what the conversion gives.
 # boxed: new String("abc").indexOf("c") . counted: "abc".slice([1]) . gone: new Set(new String("abab")).size . listed: "abc".indexOf(["c"]) . matched: "aab".match("b+"): a text that would be made a pattern . spread: [...new String("abab")].length
 # plain: "abc".indexOf("c") and written: "aab".match(/b+/) are entered as ever.
-# DIAGNOSTIC: RegExpTextKnownAtRunTime
+# DIAGNOSTIC: RegExpPatternNotConstant
 # RUN: regexp-texts mechanisms=all
 # CHECK-NOT: text /A2/
 # CHECK-NOT: text /Bbc/

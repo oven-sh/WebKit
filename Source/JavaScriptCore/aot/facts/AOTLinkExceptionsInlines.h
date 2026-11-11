@@ -28,7 +28,7 @@ inline void WriterOfLink::writeCatches()
     for (const Handler& handler : found) {
         const LinkType arrived = m_flow.withoutObjectsThatHaveEscaped(m_flow.typeAt(handler.caught));
         LinkType seen = arrived;
-        seen.holdsUnseen = false;
+        seen.hasUnknownObjects = false;
         seen.holdsLostBuiltins = false;
         if (TypeID caught = withoutLostBuiltinsInLink(arrived).isAnything() ? TypeID() : typeIDOf(seen))
             m_tables.catches.append(LinkedCatch { handler.function, handler.handler, caught });

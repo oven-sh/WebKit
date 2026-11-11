@@ -1112,7 +1112,7 @@ static void testMachineFrameFormCheckerRefusesFrameWithoutRecordThatPatchCountsO
     Procedure& proc = test.procedure();
     AOT_FRAME_FORM_TEST_CHECK(test, proc.frame().hasFrameRecord() && !proc.frame().numberOfCalleeSaves() && checkFrame(proc));
     proc.frameForTesting().setHasFrameRecordForTesting(false);
-    AOT_FRAME_FORM_TEST_CHECK(test, !checkFrame(proc) && proc.failure() && proc.failure()->kind == FailureKind::NeedsFrameWhereNoneIsSetUp);
+    AOT_FRAME_FORM_TEST_CHECK(test, !checkFrame(proc) && proc.failure() && proc.failure()->kind == FailureKind::MissingFrameSetup);
 }
 
 static void testMachineFrameFormsGiveEverythingBack()

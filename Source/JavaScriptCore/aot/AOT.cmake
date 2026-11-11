@@ -74,13 +74,16 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/image/AOTImageForward.h
     aot/image/AOTImageLoading.h
     aot/image/AOTImageText.h
+    aot/image/AOTPrefixCode.h
     aot/image/AOTRegExpSummary.h
     aot/image/AOTRuntimeDescription.h
+    aot/image/AOTSideTableCodes.h
     aot/image/AOTStoredStrings.h
     aot/image/AOTVarint.h
     aot/image/AOTWasmInterface.h
     aot/ir/AOTID.h
     aot/ir/AOTNameClass.h
+    aot/ir/AOTPrimitives.h
     aot/object/AOTCellFormat.h
     aot/object/AOTClosure.h
     aot/object/AOTClosureWord.h
@@ -165,7 +168,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/support/AOTCompileOptionWords.h
     aot/support/AOTCompileOptions.h
     aot/support/AOTCurrentWork.h
-    aot/support/AOTHostFunctionTexts.h
+    aot/support/AOTHostFunctionSources.h
     aot/support/AOTLimits.h
     aot/support/AOTSort.h
     aot/support/AOTThreads.h

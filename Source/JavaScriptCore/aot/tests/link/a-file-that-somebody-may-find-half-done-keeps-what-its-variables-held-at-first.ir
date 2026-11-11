@@ -8,10 +8,10 @@
 # CHECK: variable g1 proven=undefined|int[0, 2147483647] writers-known
 # CHECK: variable g3 proven=int[0, 2147483647] writers-known filled
 
-module m0 path="probe.mjs" displayPath="probe.mjs" flags=[KeepsError] body=f0 requests=[{target=m1 kind=Require}] exports=[{name="look" variable=g0}] namespaceLayout=L(m0)
-module m1 path="ledger.cjs" displayPath="ledger.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2
-module m2 path="steady.cjs" displayPath="steady.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f3
-module m3 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f4 requests=[{target=m1 kind=Require}, {target=m2 kind=Require completes=true}]
+module m0 path="probe.mjs" displayPath="probe.mjs" flags=[CachesEvaluationError] body=f0 requests=[{target=m1 kind=Require}] exports=[{name="look" variable=g0}] namespaceLayout=L(m0)
+module m1 path="ledger.cjs" displayPath="ledger.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2
+module m2 path="steady.cjs" displayPath="steady.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f3
+module m3 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f4 requests=[{target=m1 kind=Require}, {target=m2 kind=Require completes=true}]
 entry module=m3
 variable g0 name="look" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="total" module=m1 declared={type=anything} initialization=Undefined

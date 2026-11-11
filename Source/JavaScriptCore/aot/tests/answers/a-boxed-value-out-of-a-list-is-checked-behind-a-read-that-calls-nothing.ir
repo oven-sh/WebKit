@@ -5,17 +5,18 @@
 # one.push(id(2147483650.5));
 # print(read(one));
 # print("went on");
-# In the typed copy of the loop the read lies inside its list and the storage holds boxed values: its code is loads alone, and its effects say so: it makes no string, throws nothing, collects nothing.
-# Link claims strings, so the comparison with a number is folded and nobody reads the value. The read stays all the same: the check of what the list holds is a record of its own behind it.
-# The twin for raw numbers is a-double-out-of-a-list-is-asked-for-the-part-that-link-claims.ir: there the check lies in the code of the read itself, so that read keeps the wider effects: with the narrow ones it was swept away, and the lie went unseen.
-# The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# In the specialized version of the loop the read is in bounds and the storage holds boxed values. Its code is only loads, and its effects say so: it allocates no string, throws nothing and never collects.
+# Link claims strings, so the comparison with a number is folded and nothing uses the value. The read stays anyway, because the check of what the array holds is a separate operation after the read.
+# The counterpart for unboxed numbers is a-double-out-of-a-list-is-asked-for-the-part-that-link-claims.ir. There the check is part of the read's own code, so that read keeps the wider effects.
+# With the narrow effects the sweep removed that read, and the injected fault went undetected.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(FORM): walk f2 mechanisms=all
 # FORM: [[read]]: undefined|string @JSValue = GetArrayElement {{*}} arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds] traits=[mayTouchMemory]
 # FORM: = CheckProof [[read]] checkedType=undefined|string
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 3
-# ALL-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it.
+# ALL-NEXT: bun: internal AOT error: type check failed
 # ALL-NOT: went on
 # ALL: crashed with
 

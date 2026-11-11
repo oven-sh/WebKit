@@ -3,7 +3,7 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = GetModuleVariable
-# CHECK: ReserveArrayRoom {{*}}, {{*}}, v
+# CHECK: ReserveArrayCapacity {{*}}, {{*}}, v
 # CHECK: LoopHint
 
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -19,9 +19,9 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}] results=[{typ
 #     v2: boolean @Boolean = TypeTest v0 testedType=undefined
 #     Jump -> next b1(v0)
 #   b1(v3: anything @JSValue) isInLoop=true isLoopHead=true:
-#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteWhatIsSeen, mayTouchMemory, mayWriteOutsideObjects]
+#     v4: anything @JSValue = Call v1, -, v3 traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode, mayBeTerminated, mayWriteObservableState, mayTouchMemory, mayWriteOutsideObjects]
 #     v5: anything @Cell = NewPromise traits=[mayCollect, mayTouchMemory]
-#     v6: anything @JSValue = PutInternalField v5, v0 index=0 traits=[mayThrow, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+#     v6: anything @JSValue = PutInternalField v5, v0 index=0 traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]
 #     v7 @Void = CheckProof v6 checkedType=undefined typeWithoutProof=anything source=Field [goesWithItsValue]
 #     v8: boolean @Boolean = TypeTest v4 testedType=null
 #     Branch v8 -> taken b1(v6), notTaken b2()

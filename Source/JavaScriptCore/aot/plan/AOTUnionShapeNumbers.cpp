@@ -303,8 +303,10 @@ private:
         ConsecutiveSets consecutiveSets(numberOfLeaves);
         Vector<uint32_t> firstRefusedSetOfLeaf(FillWith { }, numberOfLeaves, inNoRefusedSet);
         uint32_t numberOfRefusedSets = 0;
+        bool allSetsAreNested = true;
         for (MentionedSet& set : m_sets) {
-            set.isKeptTogether = consecutiveSets.tryKeepTogether(leavesOf(set));
+            allSetsAreNested = allSetsAreNested && set.isFamily && consecutiveSets.tryKeepNestedSetTogether(leavesOf(set));
+            set.isKeptTogether = allSetsAreNested || consecutiveSets.tryKeepTogether(leavesOf(set));
             RELEASE_ASSERT(set.isKeptTogether || !set.isFamily);
             if (set.isKeptTogether)
                 continue;

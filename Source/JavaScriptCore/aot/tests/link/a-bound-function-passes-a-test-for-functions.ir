@@ -2,7 +2,7 @@
 # A bound function is an object of a class of functions: a test for functions lets it pass, and the call behind the test goes by the rows of Math.floor. Where it is dropped the
 # call has no callee and the result is the 0 of the other arm alone.
 # RUN: link functions mechanisms=all
-# CHECK: function f1 {{*}}result={{*}}number
+# CHECK: function f1 {{*}}result=int|whole
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -26,11 +26,11 @@
 #import "config.h"
 #import "AttributedString.h"
 
-#import "BitmapImage.h"
 #import "ColorCocoa.h"
 #import "Font.h"
 #import "LoaderNSURLExtras.h"
 #import "Logging.h"
+#import "NativeImage.h"
 #import "PlatformNSAdaptiveImageGlyph.h"
 #import "UTIRegistry.h"
 #import "WebCoreTextAttachment.h"
@@ -173,7 +173,7 @@ inline static NSTextAlignment reconstructNSTextAlignment(ParagraphStyleAlignment
     return NSTextAlignmentLeft;
 }
 
-inline static NSTextBlockVerticalAlignment LEGACY_NODELETE reconstructNSTextBlockVerticalAlignment(TextTableBlockVerticalAlignment alignment)
+NODELETE inline static NSTextBlockVerticalAlignment reconstructNSTextBlockVerticalAlignment(TextTableBlockVerticalAlignment alignment)
 {
     switch (alignment) {
     case TextTableBlockVerticalAlignment::Top:
@@ -189,7 +189,7 @@ inline static NSTextBlockVerticalAlignment LEGACY_NODELETE reconstructNSTextBloc
     return NSTextBlockVerticalAlignmentTop;
 }
 
-inline static NSTextTableLayoutAlgorithm LEGACY_NODELETE reconstructNSTextTableLayoutAlgorithm(TextTableLayoutAlgorithm layout)
+NODELETE inline static NSTextTableLayoutAlgorithm reconstructNSTextTableLayoutAlgorithm(TextTableLayoutAlgorithm layout)
 {
     switch (layout) {
     case TextTableLayoutAlgorithm::Automatic:
@@ -201,7 +201,7 @@ inline static NSTextTableLayoutAlgorithm LEGACY_NODELETE reconstructNSTextTableL
     return NSTextTableLayoutAlgorithmAutomatic;
 }
 
-inline static NSWritingDirection LEGACY_NODELETE reconstructNSWritingDirection(ParagraphStyleWritingDirection writingDirection)
+NODELETE inline static NSWritingDirection reconstructNSWritingDirection(ParagraphStyleWritingDirection writingDirection)
 {
     switch (writingDirection) {
     case ParagraphStyleWritingDirection::LeftToRight:
@@ -227,7 +227,7 @@ inline static RetainPtr<NSParagraphStyle> reconstructStyle(const ParagraphStyle&
 
     for (const auto& item : style.textTables) {
         tables.ensure(item.thisID, [&] {
-            RetainPtr table = adoptNS([PlatformNSTextTable new]);
+            RetainPtr table = checked_objc_cast<NSTextTable>(adoptNS([PlatformNSTextTable new]));
             [table setNumberOfColumns:item.numberOfColumns];
             [table setLayoutAlgorithm:reconstructNSTextTableLayoutAlgorithm(item.layout)];
             [table setCollapsesBorders:item.collapsesBorders];
@@ -280,7 +280,7 @@ inline static RetainPtr<NSParagraphStyle> reconstructStyle(const ParagraphStyle&
 
     if (!style.textTabs.isEmpty()) {
         for (const auto& item : style.textTabs)
-            [mutableStyle addTabStop:adoptNS([[PlatformNSTextTab alloc] initWithTextAlignment:reconstructNSTextAlignment(item.alignment) location:item.location options:@{ }]).get()];
+            [mutableStyle addTabStop:checked_objc_cast<NSTextTab>(adoptNS([[PlatformNSTextTab alloc] initWithTextAlignment:reconstructNSTextAlignment(item.alignment) location:item.location options:@{ }]))];
     }
 
     return mutableStyle;
@@ -303,8 +303,7 @@ static MultiRepresentationHEICAttachmentData toMultiRepresentationHEICAttachment
 
     for (NSEmojiImageStrike *strike in attachment.strikes) {
         MultiRepresentationHEICAttachmentSingleImage image;
-        RefPtr nativeImage = NativeImage::create(strike.cgImage);
-        image.image = BitmapImage::create(WTF::move(nativeImage));
+        image.image = NativeImage::create(strike.cgImage);
         image.size = FloatSize { strike.alignmentInset };
         attachmentData.images.append(image);
     }
@@ -342,10 +341,10 @@ static RetainPtr<NSAdaptiveImageGlyph> toWebMultiRepresentationHEICAttachment(co
     NSMutableArray *images = [NSMutableArray arrayWithCapacity:attachmentData.images.size()];
     for (auto& singleImage : attachmentData.images) {
 #if HAVE(NS_EMOJI_IMAGE_STRIKE_PROVENANCE)
-        RetainPtr strike = adoptNS([[CTEmojiImageStrike alloc] initWithImage:singleImage.image->nativeImage()->platformImage().get() alignmentInset:singleImage.size provenanceInfo:provenanceInfo.get()]);
+        RetainPtr strike = adoptNS([[CTEmojiImageStrike alloc] initWithImage:singleImage.image->platformImage().get() alignmentInset:singleImage.size provenanceInfo:provenanceInfo.get()]);
 #else
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-        RetainPtr strike = adoptNS([[CTEmojiImageStrike alloc] initWithImage:singleImage.image->nativeImage()->platformImage().get() alignmentInset:singleImage.size]);
+        RetainPtr strike = adoptNS([[CTEmojiImageStrike alloc] initWithImage:singleImage.image->platformImage().get() alignmentInset:singleImage.size]);
 ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 
@@ -583,8 +582,7 @@ static std::optional<AttributedString::AttributeValue> extractArray(NSArray *arr
     if (!arrayLength)
         return { { { Vector<String>() } } };
     if ([array[0] isKindOfClass:NSString.class]) {
-        Vector<String> result;
-        result.reserveInitialCapacity(arrayLength);
+        Vector<String> result(ReserveCapacityTag { }, arrayLength);
         // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
         for (SUPPRESS_UNRETAINED_LOCAL id element in array) {
             if (RetainPtr string = dynamic_objc_cast<NSString>(element))
@@ -595,8 +593,7 @@ static std::optional<AttributedString::AttributeValue> extractArray(NSArray *arr
         return { { { WTF::move(result) } } };
     }
     if ([array[0] isKindOfClass:NSNumber.class]) {
-        Vector<double> result;
-        result.reserveInitialCapacity(arrayLength);
+        Vector<double> result(ReserveCapacityTag { }, arrayLength);
         // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
         for (SUPPRESS_UNRETAINED_LOCAL id element in array) {
             if ([element isKindOfClass:NSNumber.class])
@@ -611,7 +608,7 @@ static std::optional<AttributedString::AttributeValue> extractArray(NSArray *arr
     return std::nullopt;
 }
 
-inline static ParagraphStyleAlignment LEGACY_NODELETE extractParagraphStyleAlignment(NSTextAlignment alignment)
+NODELETE inline static ParagraphStyleAlignment extractParagraphStyleAlignment(NSTextAlignment alignment)
 {
     switch (alignment) {
     case NSTextAlignmentLeft:
@@ -629,7 +626,7 @@ inline static ParagraphStyleAlignment LEGACY_NODELETE extractParagraphStyleAlign
     return ParagraphStyleAlignment::Left;
 }
 
-inline static TextTableBlockVerticalAlignment LEGACY_NODELETE extractTextTableBlockVerticalAlignment(NSTextBlockVerticalAlignment verticalAlignment)
+NODELETE inline static TextTableBlockVerticalAlignment extractTextTableBlockVerticalAlignment(NSTextBlockVerticalAlignment verticalAlignment)
 {
     switch (verticalAlignment) {
     case NSTextBlockVerticalAlignmentTop:
@@ -645,7 +642,7 @@ inline static TextTableBlockVerticalAlignment LEGACY_NODELETE extractTextTableBl
     return TextTableBlockVerticalAlignment::Top;
 }
 
-inline static TextTableLayoutAlgorithm LEGACY_NODELETE extractTextTableLayoutAlgorithm(NSTextTableLayoutAlgorithm layout)
+NODELETE inline static TextTableLayoutAlgorithm extractTextTableLayoutAlgorithm(NSTextTableLayoutAlgorithm layout)
 {
     switch (layout) {
     case NSTextTableLayoutAlgorithmAutomatic:
@@ -657,7 +654,7 @@ inline static TextTableLayoutAlgorithm LEGACY_NODELETE extractTextTableLayoutAlg
     return TextTableLayoutAlgorithm::Automatic;
 }
 
-inline static ParagraphStyleWritingDirection LEGACY_NODELETE extractParagraphStyleWritingDirection(NSWritingDirection writingDirection)
+NODELETE inline static ParagraphStyleWritingDirection extractParagraphStyleWritingDirection(NSWritingDirection writingDirection)
 {
     switch (writingDirection) {
     case NSWritingDirectionLeftToRight:
@@ -835,31 +832,31 @@ static std::optional<AttributedString::AttributeValue> extractValue(id value, Ta
 {
     if (CFGetTypeID((CFTypeRef)value) == CGColorGetTypeID())
         return { { AttributedString::ColorFromCGColor  { Color::createAndPreserveColorSpace((CGColorRef) value) } } };
-    if (auto* number = dynamic_objc_cast<NSNumber>(value))
-        return { { { number.doubleValue } } };
-    if (auto* string = dynamic_objc_cast<NSString>(value))
+    if (RetainPtr number = dynamic_objc_cast<NSNumber>(value))
+        return { { { [number doubleValue] } } };
+    if (RetainPtr string = dynamic_objc_cast<NSString>(value))
         return { { { String { string } } } };
-    if (auto* url = dynamic_objc_cast<NSURL>(value))
+    if (RetainPtr url = dynamic_objc_cast<NSURL>(value))
         return { { { URL { url } } } };
-    if (auto* array = dynamic_objc_cast<NSArray>(value))
+    if (RetainPtr array = dynamic_objc_cast<NSArray>(value))
         return extractArray(array);
-    if (auto* date = dynamic_objc_cast<NSDate>(value))
-        return { { { protect(date) } } };
-    if (auto* shadow = dynamic_objc_cast<NSShadow>(value))
-        return { { { protect(shadow) } } };
+    if (RetainPtr date = dynamic_objc_cast<NSDate>(value))
+        return { { { WTF::move(date) } } };
+    if (RetainPtr shadow = dynamic_objc_cast<NSShadow>(value))
+        return { { { WTF::move(shadow) } } };
     if ([value isKindOfClass:PlatformNSParagraphStyle]) {
-        auto style = static_cast<NSParagraphStyle *>(value);
+        RetainPtr style = static_cast<NSParagraphStyle *>(value);
         return { { extractParagraphStyle(style, tableIDs, tableBlockIDs, listIDs) } };
     }
-    if (auto* intent = dynamic_objc_cast<NSPresentationIntent>(value))
-        return { { { protect(intent) } } };
+    if (RetainPtr intent = dynamic_objc_cast<NSPresentationIntent>(value))
+        return { { { WTF::move(intent) } } };
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
     if ([value isKindOfClass:PlatformNSAdaptiveImageGlyph]) {
         auto attachment = static_cast<NSAdaptiveImageGlyph *>(value);
         return { { toMultiRepresentationHEICAttachmentData(attachment) } };
     }
 #endif
-    if (auto* attachment = dynamic_objc_cast<NSTextAttachment>(value)) {
+    if (RetainPtr attachment = dynamic_objc_cast<NSTextAttachment>(value)) {
         if (isWebCoreTextAttachmentMissingPlatformImage(static_cast<CocoaImage*>(retainPtr([attachment image]).get())))
             return { { TextAttachmentMissingImage() } };
         TextAttachmentFileWrapper textAttachment;

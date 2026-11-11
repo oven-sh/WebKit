@@ -12,7 +12,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static ValueID openOfCleanupThatClosesAndThrowsOn(const BodyIndex& index, BodyBlock block)
+static ValueID iteratorClosedByHandler(const BodyIndex& index, BodyBlock block)
 {
     BodyTarget edge = block.handler();
     if (!edge.arguments().empty())
@@ -33,8 +33,6 @@ static ValueID openOfCleanupThatClosesAndThrowsOn(const BodyIndex& index, BodyBl
             caught = operation.id();
             continue;
         }
-        if (operation.opcode() == Opcode::ReleaseHint)
-            continue;
         if (closes || operation.opcode() != Opcode::IteratorClose || operation.operand(0) != open || operation.as<Opcode::IteratorClose>().completion() != IteratorCompletion::Throw)
             return { };
         closes = true;
@@ -43,29 +41,45 @@ static ValueID openOfCleanupThatClosesAndThrowsOn(const BodyIndex& index, BodyBl
     return closes && end.kind() == TerminatorKind::Rethrow && end.operand(0) == caught ? open : ValueID();
 }
 
-ValueID openOfCleanupThatOnlyThrowsOn(const BodyIndex& index, BodyBlock block)
+ValueID iteratorClosedLeavingFunction(const BodyIndex& index, BodyBlock block)
 {
-    return index.block(block.handler().block()).hasHandler() ? ValueID() : openOfCleanupThatClosesAndThrowsOn(index, block);
+    return index.block(block.handler().block()).hasHandler() ? ValueID() : iteratorClosedByHandler(index, block);
 }
 
-ValueID openOfCleanupThatThrowsOnOutsideLoop(const BodyIndex& index, BodyBlock block, LoopID loop)
+ValueID iteratorClosedLeavingLoop(const BodyIndex& index, BodyBlock block, LoopID loop)
 {
     BodyBlock cleanup = index.block(block.handler().block());
     if (cleanup.hasHandler() && index.isInLoop(cleanup.handler().block(), loop))
         return { };
-    return openOfCleanupThatClosesAndThrowsOn(index, block);
+    return iteratorClosedByHandler(index, block);
 }
 
-bool Walker::handlerOnlyClosesIterations(const BodyIndex& index, BodyBlock block) const
+bool Walker::handlerOnlyClosesIterations(Frame& frame, BodyBlock block) const
 {
+    const BodyIndex& index = *frame.index;
+    bool onlyClosesIterations = false;
+    Vector<BlockID, 8> classified;
     for (BodyBlock covered = block;;) {
-        if (!openOfCleanupThatClosesAndThrowsOn(index, covered))
-            return false;
-        BodyBlock cleanup = index.block(covered.handler().block());
-        if (!cleanup.hasHandler())
-            return true;
-        covered = cleanup;
+        InputBlock& record = frame.blocks[covered.id().index()];
+        if (record.handlerIsClassified) {
+            onlyClosesIterations = record.handlerOnlyClosesIterations;
+            break;
+        }
+        classified.append(covered.id());
+        if (!iteratorClosedByHandler(index, covered))
+            break;
+        covered = index.block(covered.handler().block());
+        if (!covered.hasHandler()) {
+            onlyClosesIterations = true;
+            break;
+        }
     }
+    for (BlockID covered : classified) {
+        InputBlock& record = frame.blocks[covered.index()];
+        record.handlerIsClassified = true;
+        record.handlerOnlyClosesIterations = onlyClosesIterations;
+    }
+    return onlyClosesIterations;
 }
 
 bool Walker::throwsPastHandlerOf(BodyBlock block) const
@@ -75,12 +89,12 @@ bool Walker::throwsPastHandlerOf(BodyBlock block) const
     const Frame& frame = m_frames.last();
     const BodyIndex& index = *frame.index;
     for (BodyBlock covered = block;;) {
-        ValueID open = openOfCleanupThatClosesAndThrowsOn(index, covered);
+        ValueID open = iteratorClosedByHandler(index, covered);
         Reference state = open ? referenceBoundIn(frame, open) : Reference();
         if (!state || !state.isVirtual())
             return false;
-        const IterationByIndex& iteration = m_iterationsByIndex[state.object().index()];
-        if (!iteration.list || iteration.iterator || iteration.mayGoByProtocol || iteration.inlineFrame != frame.inlineFrame)
+        const IndexedIteration& iteration = m_indexedIterations[state.object().index()];
+        if (!iteration.list || iteration.iterator || iteration.hasProtocolFallback || iteration.inlineFrame != frame.inlineFrame)
             return false;
         BodyBlock cleanup = index.block(covered.handler().block());
         if (!cleanup.hasHandler())

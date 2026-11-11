@@ -5,8 +5,8 @@
 # CHECK-LABEL: code f1:Body
 # CHECK: = IsElementPresent {{*}} arrayStorage=Double [keyIsIntegral, admitsInt32Storage]
 # CHECK: = GetArrayElement {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isPresent, admitsInt32Storage]
-# RUN(COUNT): compile NumbersOfListsReadInFrontOfTypedCopies mechanisms=all
-# COUNT-NOT: statistic NumbersOfListsReadInFrontOfTypedCopies 0
+# RUN(COUNT): compile NumericElementReadsHoisted mechanisms=all
+# COUNT-NOT: statistic NumericElementReadsHoisted 0
 # RUN(ANSWER): run-in-shell globalThis.sink = (weigh, stores) => { const say = run => { try { print(run()); } catch (error) { print(error.constructor.name); } }; const written = () => { const l = [0.5, 1.5, 2.5]; l[2] = 3.5; return l; }; say(() => weigh(written(), [1, 2, 3])); say(() => weigh([2, 3], [1, 2, 3])); say(() => weigh(null, [])); say(() => weigh(undefined, [])); say(() => weigh(null, [1])); say(() => weigh([], [1])); say(() => weigh([, 1.5], [1, 2])); say(() => weigh([0.5], [1, 2])); say(() => { const view = new Float64Array(2); view[0] = 0.5; view[1] = 1.5; return weigh(view, [1, 2, 3]); }); say(() => { const m = written(); return stores(m, m, [1, 2, 3]); }); say(() => stores(written(), written(), [1, 2, 3])); say(() => { let reads = 0; const m = [0.5, 1.5]; Object.defineProperty(m, 0, { get() { return ++reads; } }); return weigh(m, [1, 2, 3]) + " " + reads; }); };
 # ANSWER: 7.5
 # ANSWER-NEXT: 21

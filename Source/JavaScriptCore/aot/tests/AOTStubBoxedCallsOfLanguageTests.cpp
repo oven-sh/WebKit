@@ -557,17 +557,18 @@ static void testShiftOfFewValuesInLanguageCallTests()
     FakeObject<sizeof(JSFunction)> callee;
     constexpr StubKey key = callBoxedBuiltin(BoxedCallForm::ArrayShift, 0);
     constexpr uint64_t answerOfOperation = int32InLanguageCallTests(99);
-    runner.recordCallsOf(Entry::operationAOTArrayShiftOfAnyList);
+    runner.install(Entry::operationAOTMoveBytes, operationAOTMoveBytes);
+    runner.recordCallsOf(Entry::operationAOTArrayShiftGeneric);
     runner.setResultOfRecordedOperation(answerOfOperation);
 
-    auto isShiftedByStub = [&](ListInLanguageCallTests& list, uint64_t first) {
+    auto isShiftedByStub = [&](auto& list, uint64_t first) {
         Vector<uint64_t, 20> before;
         before.append(list.elements().first(list.length()));
         StubRun run = runner.runCall(key, callee.address(), list.cell.address(), { });
         AOT_TEST_CHECK(!run.calledOperation && run.result == first && list.length() + 1 == before.size());
         AOT_TEST_CHECK(std::ranges::equal(list.elements().first(list.length()), before.span().subspan(1)) && !list.elements()[list.length()]);
     };
-    auto isLeftToOperation = [&](ListInLanguageCallTests& list) {
+    auto isLeftToOperation = [&](auto& list) {
         Vector<uint64_t, 20> before;
         before.append(list.elements().first(list.length()));
         StubRun run = runner.runCall(key, callee.address(), list.cell.address(), { });
@@ -576,11 +577,14 @@ static void testShiftOfFewValuesInLanguageCallTests()
     };
 
     for (IndexingType shape : { Int32Shape, ContiguousShape }) {
-        for (uint32_t count : { 1u, 2u, 3u, 9u, 17u }) {
+        for (uint32_t count : { 1u, 2u, 3u, 9u, 17u, 18u, 40u }) {
             ListInLanguageCallTests list(shape, integersInLanguageCallTests(count).span());
             isShiftedByStub(list, int32InLanguageCallTests(1));
         }
-        ListInLanguageCallTests ofOneMore(shape, integersInLanguageCallTests(18).span());
+        using LongList = ListOfCapacityInLanguageCallTests<JSArray::shiftThreshold + 1>;
+        LongList longestMoved(shape, integersInLanguageCallTests(JSArray::shiftThreshold).span());
+        isShiftedByStub(longestMoved, int32InLanguageCallTests(1));
+        LongList ofOneMore(shape, integersInLanguageCallTests(JSArray::shiftThreshold + 1).span());
         isLeftToOperation(ofOneMore);
 
         ListInLanguageCallTests empty(shape, { });
@@ -606,8 +610,10 @@ static void testShiftOfFewValuesInLanguageCallTests()
     isLeftToOperation(ofDoubles);
 
     runner.instance().mutatorShouldBeFenced = true;
-    ListInLanguageCallTests ofValuesWhileCollectorMayVisit(ContiguousShape, integersInLanguageCallTests(3).span());
-    isLeftToOperation(ofValuesWhileCollectorMayVisit);
+    for (uint32_t count : { 3u, 18u }) {
+        ListInLanguageCallTests ofValuesWhileCollectorMayVisit(ContiguousShape, integersInLanguageCallTests(count).span());
+        isLeftToOperation(ofValuesWhileCollectorMayVisit);
+    }
     ListInLanguageCallTests ofIntegersWhileCollectorMayVisit(Int32Shape, integersInLanguageCallTests(3).span());
     isShiftedByStub(ofIntegersWhileCollectorMayVisit, int32InLanguageCallTests(1));
     ListInLanguageCallTests aloneWhileCollectorMayVisit(ContiguousShape, integersInLanguageCallTests(1).span());
@@ -816,8 +822,8 @@ static void testSpliceOfOneItemInLanguageCallTests()
     constexpr uint64_t one = int32InLanguageCallTests(1);
     constexpr uint64_t none = int32InLanguageCallTests(0);
     constexpr uint64_t come = int32InLanguageCallTests(77);
-    runner.recordCallsOf(Entry::operationAOTArraySpliceOfAnyList);
-    runner.recordCallsOf(Entry::operationAOTArraySpliceItemIntoAnyList);
+    runner.recordCallsOf(Entry::operationAOTArraySpliceGeneric);
+    runner.recordCallsOf(Entry::operationAOTArraySpliceItemGeneric);
     runner.setResultOfRecordedOperation(answerOfOperation);
     constexpr StubKey takesOut = callBoxedBuiltin(BoxedCallForm::ArraySplice, 2);
     constexpr StubKey putsIn = callBoxedBuiltin(BoxedCallForm::ArraySplice, 3);

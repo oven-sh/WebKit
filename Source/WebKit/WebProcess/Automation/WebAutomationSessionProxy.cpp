@@ -153,7 +153,7 @@ WebAutomationSessionProxy::~WebAutomationSessionProxy()
 #endif
 }
 
-static bool LEGACY_NODELETE isValidNodeHandle(const String& nodeHandle)
+NODELETE static bool isValidNodeHandle(const String& nodeHandle)
 {
     // Node identifier has the following format:
     // node-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
@@ -1012,6 +1012,38 @@ void WebAutomationSessionProxy::computeElementLayout(WebCore::PageIdentifier pag
     completionHandler(std::nullopt, resultElementBounds, resultInViewCenterPoint, isObscured);
 }
 
+void WebAutomationSessionProxy::frameViewportInLayoutViewport(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, CompletionHandler<void(std::optional<String>, std::optional<WebCore::FloatRect>)>&& completionHandler)
+{
+    RefPtr page = WebProcess::singleton().webPage(pageID);
+    if (!page) {
+        String windowNotFoundErrorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::WindowNotFound);
+        completionHandler(windowNotFoundErrorType, std::nullopt);
+        return;
+    }
+
+    RefPtr frame = frameID ? WebProcess::singleton().webFrame(*frameID) : &page->mainWebFrame();
+    RefPtr coreLocalFrame = frame ? frame->coreLocalFrame() : nullptr;
+    RefPtr frameView = coreLocalFrame ? coreLocalFrame->view() : nullptr;
+    if (!frameView) {
+        String windowNotFoundErrorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::WindowNotFound);
+        completionHandler(windowNotFoundErrorType, std::nullopt);
+        return;
+    }
+
+    Ref mainFrame = coreLocalFrame->mainFrame();
+    RefPtr mainFrameView = mainFrame->virtualView();
+    if (!mainFrameView) {
+        String windowNotFoundErrorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::WindowNotFound);
+        completionHandler(windowNotFoundErrorType, std::nullopt);
+        return;
+    }
+
+    auto originInMainFrameView = convertPointFromFrameClientToMainFrameView(frameView.get(), { });
+    auto origin = mainFrameView->absoluteToLayoutViewportPoint(mainFrameView->rootViewToContents(originInMainFrameView));
+
+    completionHandler(std::nullopt, WebCore::FloatRect { origin, frameView->visibleContentRect().size() });
+}
+
 void WebAutomationSessionProxy::getComputedRole(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String nodeHandle, CompletionHandler<void(std::optional<String>, std::optional<String>)>&& completionHandler)
 {
     String errorType;
@@ -1151,20 +1183,25 @@ void WebAutomationSessionProxy::setFilesForInputFileUpload(WebCore::PageIdentifi
     completionHandler(std::nullopt);
 }
 
+// In the main frame's document coordinates, even for an element in a subframe, including one hosted by another process.
 static WebCore::IntRect snapshotElementRectForScreenshot(WebPage& page, WebCore::Element* element, bool clipToViewport)
 {
-    RefPtr frameView = page.localMainFrameView();
-    if (!frameView)
-        return { };
-
     if (element) {
-        if (!element->renderer())
+        CheckedPtr renderer = element->renderer();
+        RefPtr frameView = element->document().view();
+        RefPtr mainFrameView = frameView ? protect(frameView->frame().mainFrame())->virtualView() : nullptr;
+        if (!renderer || !mainFrameView)
             return { };
 
         WebCore::LayoutRect topLevelRect;
-        WebCore::IntRect elementRect = WebCore::snappedIntRect(protect(element->renderer())->subtreePaintRootRect(topLevelRect));
-        if (clipToViewport)
-            elementRect.intersect(frameView->visibleContentRect());
+        WebCore::IntRect elementRect = mainFrameView->rootViewToContents(frameView->contentsToMainFrameView(WebCore::snappedIntRect(renderer->subtreePaintRootRect(topLevelRect))));
+        if (clipToViewport) {
+            // For a main frame in another process, use the layout viewport synced from it, as computeElementLayout() does.
+            if (RefPtr localMainFrameView = dynamicDowncast<WebCore::LocalFrameView>(*mainFrameView))
+                elementRect.intersect(localMainFrameView->visibleContentRect());
+            else
+                elementRect.intersect(WebCore::snappedIntRect(mainFrameView->layoutViewportRect()));
+        }
 
         return elementRect;
     }
@@ -1177,21 +1214,12 @@ static WebCore::IntRect snapshotElementRectForScreenshot(WebPage& page, WebCore:
 
 void WebAutomationSessionProxy::takeScreenshot(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String nodeHandle, bool scrollIntoViewIfNeeded, bool clipToViewport, CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&, String&&)>&& completionHandler)
 {
-    snapshotRectForScreenshot(pageID, frameID, nodeHandle, scrollIntoViewIfNeeded, clipToViewport, [pageID, frameID, completionHandler = WTF::move(completionHandler)] (std::optional<String> errorString, WebCore::IntRect&& rect) mutable {
+    documentRectForScreenshot(pageID, frameID, nodeHandle, scrollIntoViewIfNeeded, clipToViewport, [pageID, completionHandler = WTF::move(completionHandler)](std::optional<String> errorString, WebCore::IntRect&& snapshotRect) mutable {
         if (errorString)
             return completionHandler(std::nullopt, WTF::move(*errorString));
 
         RefPtr page = WebProcess::singleton().webPage(pageID);
         ASSERT(page);
-        RefPtr frame = frameID ? WebProcess::singleton().webFrame(*frameID) : &page->mainWebFrame();
-        ASSERT(frame && frame->coreLocalFrame());
-        // Convert through this frame's local root rather than the page's main frame, which is a
-        // RemoteFrame with no LocalFrameView in this process under site isolation.
-        RefPtr localRootFrame = frame ? frame->coreLocalFrame() : nullptr;
-        RefPtr localRootView = localRootFrame ? localRootFrame->rootFrame().view() : nullptr;
-        if (!localRootView)
-            return completionHandler(std::nullopt, Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::InternalError));
-        auto snapshotRect = WebCore::IntRect(localRootView->clientToDocumentRect(rect));
         RefPtr<WebImage> image = page->scaledSnapshotWithOptions(snapshotRect, 1, SnapshotOption::Shareable);
         if (!image)
             return completionHandler(std::nullopt, Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::ScreenshotError));
@@ -1201,6 +1229,22 @@ void WebAutomationSessionProxy::takeScreenshot(WebCore::PageIdentifier pageID, s
 }
 
 void WebAutomationSessionProxy::snapshotRectForScreenshot(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String nodeHandle, bool scrollIntoViewIfNeeded, bool clipToViewport, CompletionHandler<void(std::optional<String>, WebCore::IntRect&&)>&& completionHandler)
+{
+    documentRectForScreenshot(pageID, frameID, nodeHandle, scrollIntoViewIfNeeded, clipToViewport, [pageID, completionHandler = WTF::move(completionHandler)](std::optional<String> errorString, WebCore::IntRect&& rect) mutable {
+        if (errorString)
+            return completionHandler(WTF::move(errorString), { });
+
+        RefPtr page = WebProcess::singleton().webPage(pageID);
+        ASSERT(page);
+        RefPtr mainFrameView = page->localMainFrameView();
+        if (!mainFrameView)
+            return completionHandler(Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::InternalError), { });
+
+        completionHandler(std::nullopt, WebCore::IntRect(mainFrameView->documentToClientRect(rect)));
+    });
+}
+
+void WebAutomationSessionProxy::documentRectForScreenshot(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String nodeHandle, bool scrollIntoViewIfNeeded, bool clipToViewport, CompletionHandler<void(std::optional<String>, WebCore::IntRect&&)>&& completionHandler)
 {
     RefPtr page = WebProcess::singleton().webPage(pageID);
     if (!page) {
@@ -1242,14 +1286,7 @@ void WebAutomationSessionProxy::snapshotRectForScreenshot(WebCore::PageIdentifie
         return;
     }
 
-    RefPtr localMainFrame = dynamicDowncast<LocalFrame>(frame->coreFrame()->mainFrame());
-    if (!localMainFrame) {
-        String internalErrorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::InternalError);
-        completionHandler(internalErrorType, { });
-        return;
-    }
-
-    completionHandler(std::nullopt, WebCore::IntRect(protect(localMainFrame->view())->documentToClientRect(snapshotRect)));
+    completionHandler(std::nullopt, WTF::move(snapshotRect));
 }
 
 void WebAutomationSessionProxy::getCookiesForFrame(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, CompletionHandler<void(std::optional<String>, Vector<WebCore::Cookie>)>&& completionHandler)

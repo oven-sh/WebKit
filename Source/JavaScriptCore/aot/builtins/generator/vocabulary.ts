@@ -338,7 +338,7 @@ export type UseSpec =
   | ({ use: "CallsKept"; cell: string } & HandlerSpec)
   | { use: "RetainsMember"; path: MemberPath; in: PlaceSpec }
   | { use: "ReturnsKept"; cell: string; holdsOnlyWhatIsStored?: boolean }
-  | { use: "HandsOutKept"; cell: string }
+  | { use: "ExposesKept"; cell: string }
   | { use: "Creates"; value: TypeSpec; in: PlaceSpec }
   | { use: "ReadsByKey"; key: KeySpec; to: PlaceSpec }
   | { use: "StoresByKey"; key: KeySpec; value: PlaceSpec }
@@ -548,16 +548,17 @@ export const builtinMarks = [
   "IsReplacedByFakeTimers",
   "RunsCodeThatLocksDoNotBind",
   "RunsCodeWithLoader",
-  "HandsOutWhatNativeCodeHolds",
+  "ExposesNativeRoots",
   "RegistersPreparationOfHolders",
   "AnswersWithPathOfModule",
   "IsKeyReadOnlyByRowsThatNameIt",
   "LaysOperandAbovePrototype",
-  "HandsOutNoOtherHostObject",
+  "ExposesOnlyDescribedObjects",
   "IsDeletedWhenModuleOfLibraryLoads",
   "PassesOverListWhereItTakesRecordOfHandlers",
   "AsksOptionsForListedNamesAlone",
   "MayLayListenerForUncaughtExceptions",
+  "IsReportedAsReadOnly",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -601,7 +602,7 @@ export interface SlotSpec {
   contentsSlot: ContentsSlot | null;
   holds?: TypeSpec;
   internalField?: number;
-  holdsWhatStepsHandOut?: boolean;
+  holdsStepValues?: boolean;
   holdsWhatIsThrown?: boolean;
   wordOfCell?: WordOfCell;
 }

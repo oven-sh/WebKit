@@ -397,12 +397,12 @@ ALLOW_NONLITERAL_FORMAT_END
         return m_code.dataLocation();
     }
 
-    size_t LEGACY_NODELETE size() const { return m_size; }
+    NODELETE size_t size() const { return m_size; }
     
     bool wasAlreadyDisassembled() const { return m_alreadyDisassembled; }
     void didAlreadyDisassemble() { m_alreadyDisassembled = true; }
 
-    JS_EXPORT_PRIVATE static void LEGACY_NODELETE clearProfileStatistics();
+    NODELETE JS_EXPORT_PRIVATE static void clearProfileStatistics();
     JS_EXPORT_PRIVATE static void dumpProfileStatistics(std::optional<PrintStream*> = std::nullopt);
 
     void setIsThunk() { m_isThunk = true; }
@@ -422,6 +422,9 @@ ALLOW_NONLITERAL_FORMAT_END
         RELEASE_ASSERT(m_didFinalize && m_policy.recordsProcessAddresses);
         return m_records->externalLinks;
     }
+
+    // A branch of code for an image could not be encoded, and was left as it was emitted. The code must not be used.
+    bool hasBranchOutOfReach() const { return m_hasBranchOutOfReach; }
 
     bool hasProcessAddress() const
     {
@@ -559,6 +562,7 @@ private:
 #endif
     bool m_didAllocate { false };
     bool m_didFinalize { false };
+    bool m_hasBranchOutOfReach { false };
     AssemblerPolicy m_policy;
 #ifndef NDEBUG
     bool m_completed { false };

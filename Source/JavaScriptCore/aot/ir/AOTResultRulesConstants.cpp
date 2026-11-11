@@ -16,6 +16,7 @@
 #include "AOTInliningAcrossFiles.h"
 #include "AOTObjects.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <span>
 #include <wtf/StdLibExtras.h>
 
@@ -77,6 +78,53 @@ TypeID typeOfBuiltinObject(const TypingContext& context, BuiltinID builtin)
     if (builtins.at(builtin).kind == BuiltinKind::DataProperty)
         return typeReadFromBuiltinDataProperty(context, builtin);
     return typeOfBuiltinConstant({ context.program, types }, builtin);
+}
+
+static bool hasCompleteSignature(const BuiltinTable& builtins, BuiltinID function)
+{
+    if (builtins.at(function).marks || builtins.letsInUnseenCode(function) || !builtins.calledFunctionsOf(function).empty() || !builtins.moduleLoadsOf(function).empty())
+        return false;
+    return std::ranges::all_of(builtins.overloadsOf(function), [](const BuiltinOverload& overload) {
+        if (overload.mode == BuiltinCallMode::Get)
+            return true;
+        bool runsCode = overload.effects.capability == BuiltinCapability::JS && !overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode);
+        return !overload.isUndeclared() && !runsCode && overload.flow.callbacks.empty() && overload.flow.handlerCalls.empty() && overload.flow.propertyActions.empty();
+    });
+}
+
+static bool hasDescribedResult(const BuiltinTable& builtins, BuiltinID function)
+{
+    return std::ranges::any_of(builtins.overloadsOf(function), [&](const BuiltinOverload& overload) {
+        if (overload.mode != BuiltinCallMode::Call || !overload.result.type)
+            return false;
+        const BuiltinType& answer = builtins.at(overload.result.type);
+        return !answer.isAnything() && (!(answer.primitives - BuiltinPrimitive::Undefined).isEmpty() || !answer.stringLiterals.empty() || !answer.parts.empty());
+    });
+}
+
+BuiltinID findNativeFunction(const BuiltinTable& builtins, BuiltinID binding)
+{
+    BuiltinID answered;
+    for (const BuiltinOverload& overload : builtins.overloadsOf(binding)) {
+        if (overload.mode != BuiltinCallMode::Get)
+            continue;
+        if (answered || overload.isUndeclared() || overload.resultIsDeclaredOnly() || !overload.result.type)
+            return { };
+        const BuiltinType& written = builtins.at(overload.result.type);
+        if (!written.flags.isEmpty() || !written.primitives.isEmpty() || !written.stringLiterals.empty() || written.parts.size() != 1 || written.parts[0].kind != BuiltinTypePartKind::Builtin)
+            return { };
+        answered = builtins.canonicalID(written.parts[0].builtin);
+        if (builtins.at(answered).kind != BuiltinKind::Function)
+            return { };
+    }
+    bool isDescribed = answered && hasDescribedResult(builtins, answered) && hasCompleteSignature(builtins, binding) && hasCompleteSignature(builtins, answered);
+    return isDescribed ? answered : BuiltinID();
+}
+
+static TypeID typeOfNativeBinding(const TypingContext& context, BuiltinID binding)
+{
+    BuiltinID function = findNativeFunction(context.program.builtins(), binding);
+    return function ? context.types.forBuiltin(function) : context.types.anything(UnknownSeed::UndescribedNativeResult);
 }
 
 static TypeID typeOfBuiltinObjectOfModule(const TypingContext& context, BuiltinID builtin, ModuleID module)
@@ -257,6 +305,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES TypeID typeOfConstant(const TypingContext& contex
         return typeOfBuiltinObject(context, operation.builtin());
     case Opcode::ModuleBuiltin:
         return typeOfBuiltinObjectOfModule(context, operation.builtin(), operation.module());
+    case Opcode::NativeBinding:
+        return typeOfNativeBinding(context, operation.builtin());
     case Opcode::KeyConstant:
         return typeOfKeyConstant(context, operation.key());
     case Opcode::Data: {

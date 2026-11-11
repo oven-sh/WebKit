@@ -1,8 +1,9 @@
 # function take(value) { return value; }
 # print(typeof id(take)(given));
 # print("went on");
-# THE LIE IS LAID BY HAND IN THE TEXT BELOW: `function f1 name="take" .. parameters=[{type=undefined|"on"|"off" flags=[IsFromCompiler]}]`: the front end says that the parameter holds undefined or one of two texts, and the function is called by value with whatever the shell's `given` holds.
-# testing=CheckProofsAtRunTime: literal texts are asked of the type's record: the stub leaves every text to the run time, which compares a rope piece by piece and resolves nothing.
+# The fault is written by hand in the IR below: `function f1 name="take" .. parameters=[{type=undefined|"on"|"off" flags=[IsFromCompiler]}]`.
+# The front end claims that the parameter holds undefined or one of two strings, and the function is called indirectly with whatever the shell's `given` holds.
+# With testing=CheckProofsAtRunTime, string literals are checked against the type's record. The stub leaves every string to the runtime, which compares a rope piece by piece and resolves nothing.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(FORM): walk f1 mechanisms=all-Inlining
 # FORM: CheckProof {{*}} checkedType=undefined|"off"|"on" typeWithoutProof={{*}}
@@ -19,13 +20,16 @@
 # ROPE: string
 # ROPE-NEXT: went on
 # RUN(OTHER): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = "of";
-# OTHER: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# OTHER: bun: internal AOT error: type check failed
+# OTHER-NEXT: found string in
 # OTHER-NOT: went on
 # RUN(OTHERROPE): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.half = "of"; globalThis.given = globalThis.half + String.fromCharCode(102, 102);
-# OTHERROPE: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# OTHERROPE: bun: internal AOT error: type check failed
+# OTHERROPE-NEXT: found string in
 # OTHERROPE-NOT: went on
 # RUN(NUMBER): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 0;
-# NUMBER: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# NUMBER: bun: internal AOT error: type check failed
+# NUMBER-NEXT: found int32 in
 # NUMBER-NOT: went on
 
 module m0 path="main.js" displayPath="main.js" body=f0

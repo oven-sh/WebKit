@@ -76,14 +76,6 @@ private:
     bool isKeptAtSuspensions(int64_t offsetFromFP) const { return offsetFromFP + m_bytesBelowFrameRecord >= static_cast<int64_t>(m_frame.bytesDeadAtSuspensions()); }
     static uint32_t wordHolding(int64_t offsetOfByteFromFP) { return static_cast<uint32_t>((bytesPerWord - 1 - offsetOfByteFromFP) / bytesPerWord); }
     uint32_t lowestWordKeptAtSuspensions() const { return static_cast<uint32_t>((m_bytesBelowFrameRecord - m_frame.bytesDeadAtSuspensions() / stackAlignmentBytes() * stackAlignmentBytes()) / bytesPerWord); }
-    bool isClearedAt(const PatchOperation* suspension, uint32_t word) const
-    {
-        if (suspension->frameWordsClearedInFrontOfSuspension().get(word))
-            return true;
-        uint32_t lowestWord = lowestWordKeptAtSuspensions();
-        return word <= lowestWord && word + suspension->numberOfFrameWordsToClearAtFirstSuspension() > lowestWord;
-    }
-    bool somePathLacksStoreOf(const SpillFacts&, const PatchOperation* suspension);
     bool checkSuspensions();
 
     Procedure& m_proc;
@@ -131,15 +123,15 @@ bool FrameChecker::run()
 bool FrameChecker::checkShape()
 {
     if (m_proc.traits().setsUpFrameAtEntry() && m_frame.coverage() != FrameCoverage::WholeFunction)
-        return fail(FailureKind::NeedsFrameWhereNoneIsSetUp);
+        return fail(FailureKind::MissingFrameSetup);
     if (!m_frame.hasFrame())
         return true;
     if (!m_frame.hasFrameRecord() && (!m_proc.traits().mayOmitFrameRecord || m_proc.traits().setsUpFrameAtEntry() || !m_proc.stackSlots().empty()))
-        return fail(FailureKind::NeedsFrameWhereNoneIsSetUp);
+        return fail(FailureKind::MissingFrameSetup);
     if ((m_bytesBelowFrameRecord + bytesOfFrameRecord) % stackAlignmentBytes())
-        return fail(FailureKind::SpillSlotLacksItsValue);
+        return fail(FailureKind::WrongValueInSpillSlot);
     if (m_frame.bytesDeadAtSuspensions() > m_frame.bytesBelowFrameRecord() || m_frame.bytesDeadAtSuspensions() % bytesPerWord)
-        return fail(FailureKind::SpillSlotLacksItsValue);
+        return fail(FailureKind::WrongValueInSpillSlot);
     return true;
 }
 
@@ -161,11 +153,11 @@ bool FrameChecker::checkCalleeSaves()
 {
     RegisterMask saves = m_frame.calleeSavesMask();
     if (m_allocation.usedCalleeSaves() & ~saves)
-        return fail(FailureKind::RegisterLacksItsValue);
+        return fail(FailureKind::WrongValueInRegister);
     if (saves && m_frame.coverage() != FrameCoverage::WholeFunction && m_frame.coverage() != FrameCoverage::FramedPart)
-        return fail(FailureKind::NeedsFrameWhereNoneIsSetUp);
+        return fail(FailureKind::MissingFrameSetup);
     if (m_proc.traits().savesFrameOnSuspend && !savedFrameCanDescribe(saves))
-        return fail(FailureKind::RegisterLacksItsValue);
+        return fail(FailureKind::WrongValueInRegister);
 
     const RegisterAtOffsetList& list = m_frame.calleeSaveRegisterAtOffsetList();
     size_t count = list.registerCount();
@@ -174,12 +166,12 @@ bool FrameChecker::checkCalleeSaves()
         const RegisterAtOffset& save = list.at(index);
         int64_t offsetInRun = offsetOfFirstSaveOf(m_frame) + static_cast<int64_t>(bytesPerWord * index);
         if (save.reg().index() > Reg::maxIndex() || maskOf(save.reg()) <= listed || save.offset() != offsetInRun)
-            return fail(FailureKind::SpillSlotLacksItsValue);
+            return fail(FailureKind::WrongValueInSpillSlot);
         if (!holdThroughout(save.offset(), bytesPerWord, bytesPerWord))
             return false;
         listed |= maskOf(save.reg());
     }
-    return listed == saves || fail(FailureKind::SpillSlotLacksItsValue);
+    return listed == saves || fail(FailureKind::WrongValueInSpillSlot);
 }
 
 bool FrameChecker::runsInFrame(const Block* block) const
@@ -227,15 +219,15 @@ bool FrameChecker::checkFramedPart()
     if (m_frame.coverage() != FrameCoverage::FramedPart)
         return true;
     if (!m_allocation.hasFramedPart() || m_allocation.needsFrameAheadOfFramedPart() || m_proc.entrypoints().size() != 1)
-        return fail(FailureKind::NeedsFrameWhereNoneIsSetUp);
+        return fail(FailureKind::MissingFrameSetup);
     for (const Allocation::HeadOfFramedPart& headOfFramedPart : m_allocation.headsOfFramedPart()) {
         const Block* head = headOfFramedPart.block;
         const BlockPlace& placeOfHead = m_order.of(head);
         if (head->isEntry() || head->isLandingPad() || !placeOfHead.isReached() || (placeOfHead.isRare() && m_order.rareRegions()[placeOfHead.rareRegion].onlyEntry != head) || m_liveness.standsInLoopThatMayTurn(m_order, placeOfHead) || !m_frame.isSetUpAtHeadOf(head) || !m_allocation.isHeadOfFramedPart(head))
-            return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, head->last());
+            return fail(FailureKind::MissingFrameSetup, head->last());
         for (const Operation* phi : head->phis()) {
             if (!m_liveness.isDropped(phi) && m_allocation.isSpilled(phi) && !m_allocation.registerAtDefinitionOf(phi).isSet())
-                return fail(FailureKind::SpillSlotLacksItsValue, phi);
+                return fail(FailureKind::WrongValueInSpillSlot, phi);
         }
     }
 
@@ -243,7 +235,7 @@ bool FrameChecker::checkFramedPart()
         bool isInFramedPart = m_allocation.isInFramedPart(block);
         bool isHead = m_allocation.isHeadOfFramedPart(block);
         if (isInFramedPart && !m_frame.holdsStepsOf(block))
-            return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, block->last());
+            return fail(FailureKind::MissingFrameSetup, block->last());
         for (const Block* predecessor : m_order.of(block).predecessors) {
             if (!isInFramedPart || isHead)
                 break;
@@ -264,12 +256,12 @@ bool FrameChecker::checkFramedPart()
                 bringsOnlyHeadsKnownAboveBlock = firstIsKnown && furtherAreKnown;
             }
             if (!bringsOnlyHeadsKnownAboveBlock)
-                return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, block->last());
+                return fail(FailureKind::MissingFrameSetup, block->last());
         }
         if (!m_frame.isSetUpAtHeadOf(block) || isHead)
             continue;
         if (isInFramedPart || !m_frame.holdsStepsOf(block) || !m_order.of(block).entersRareRegion)
-            return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, block->last());
+            return fail(FailureKind::MissingFrameSetup, block->last());
     }
     return true;
 }
@@ -282,15 +274,15 @@ bool FrameChecker::checkStepsAtHeadOfFramedPart()
         if (begin == end)
             continue;
         if (begin > end || end > m_allocation.steps().size() || !runsInFrame(head.block))
-            return fail(FailureKind::NeedsFrameWhereNoneIsSetUp);
+            return fail(FailureKind::MissingFrameSetup);
         m_block = head.block;
         for (uint32_t index = begin; index < end; ++index) {
             const Step& step = m_allocation.step(index);
             if (step.kind != StepKind::Save || !step.destination.isSpill() || !step.sources[0].isRegister() || step.destination.spillIndex() >= m_spills.size())
-                return fail(FailureKind::SpillSlotLacksItsValue, step.operation);
+                return fail(FailureKind::WrongValueInSpillSlot, step.operation);
             const SpillFacts& facts = m_spills[step.destination.spillIndex()];
             if (!facts.isStoredAtHeadOfFramedPart || facts.value != step.operation)
-                return fail(FailureKind::SpillSlotLacksItsValue, step.operation);
+                return fail(FailureKind::WrongValueInSpillSlot, step.operation);
             if (!checkStep(step, true, false))
                 return false;
         }
@@ -302,20 +294,20 @@ bool FrameChecker::checkReturnInPlaceOfJump(const Block* block)
 {
     const Operation* last = block->last();
     if (isLeftInFrame(block) || block->numSuccessors() != 1 || !last->isUnconditionalJump())
-        return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, last);
+        return fail(FailureKind::MissingFrameSetup, last);
     const Block* returning = block->successor(0).block();
     const BlockSteps& steps = m_allocation.stepsOf(returning);
     if (returning->last()->opcode() != Return || !isEnteredInFrame(returning) || steps.beginOfEdgeMoves != steps.endOfEdgeMoves)
-        return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, last);
+        return fail(FailureKind::MissingFrameSetup, last);
     for (uint32_t index = steps.begin; index < steps.end; ++index) {
         const Step& step = m_allocation.step(index);
         Opcode opcode = step.operation ? step.operation->opcode() : Oops;
         if (step.kind != StepKind::Execute || (opcode != Nop && opcode != Phi && opcode != Upsilon))
-            return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, last);
+            return fail(FailureKind::MissingFrameSetup, last);
     }
     for (const Operation* phi : returning->phis()) {
         if (!m_liveness.isDropped(phi) && m_allocation.isSpilled(phi))
-            return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, phi);
+            return fail(FailureKind::MissingFrameSetup, phi);
     }
     return true;
 }
@@ -346,14 +338,14 @@ bool FrameChecker::noteLocation(Location location, const Operation* blamed, bool
     case Location::Spill:
         needsFrame = true;
         if (location.spillIndex() >= m_spills.size())
-            return fail(FailureKind::SpillSlotLacksItsValue, blamed);
-        return !m_spills[location.spillIndex()].isStoredAtHeadOfFramedPart || m_allocation.isInFramedPart(m_block) || fail(FailureKind::SpillSlotLacksItsValue, blamed);
+            return fail(FailureKind::WrongValueInSpillSlot, blamed);
+        return !m_spills[location.spillIndex()].isStoredAtHeadOfFramedPart || m_allocation.isInFramedPart(m_block) || fail(FailureKind::WrongValueInSpillSlot, blamed);
     case Location::SlotBytes:
         needsFrame = true;
-        return location.indexOfStackSlot() < m_proc.stackSlots().size() || fail(FailureKind::SpillSlotLacksItsValue, blamed);
+        return location.indexOfStackSlot() < m_proc.stackSlots().size() || fail(FailureKind::WrongValueInSpillSlot, blamed);
     case Location::Outgoing:
         needsFrame = true;
-        return static_cast<uint64_t>(location.offsetFromSP()) + bytesPerWord <= m_proc.callArgAreaSizeInBytes() || fail(FailureKind::SpillSlotLacksItsValue, blamed);
+        return static_cast<uint64_t>(location.offsetFromSP()) + bytesPerWord <= m_proc.callArgAreaSizeInBytes() || fail(FailureKind::WrongValueInSpillSlot, blamed);
     case Location::None:
     case Location::Register:
     case Location::InstanceWord:
@@ -394,9 +386,9 @@ bool FrameChecker::checkStep(const Step& step, bool frameIsSetUp, bool resultIsS
             needsFrame |= patch->needsFrameRecord() || !patch->runsWithoutFrame();
             bool everyPathPassesSetup = m_frame.coverage() == FrameCoverage::WholeFunction || (m_frame.coverage() == FrameCoverage::FramedPart && m_allocation.isInFramedPart(m_block));
             if (patch->followsFrameSetup() && !everyPathPassesSetup && !(patch->testsStackAheadOfFramedPart() && m_frame.coverage() == FrameCoverage::FramedPart))
-                return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, patch);
+                return fail(FailureKind::MissingFrameSetup, patch);
             if (patch->opcode() == Patch)
-                writtenByCodeOfPatch = patch->earlyClobberedMask() | patch->lateClobberedMask() | (patch->effects.terminal ? 0 : maskOf(patch->registersToRelease()));
+                writtenByCodeOfPatch = patch->earlyClobberedMask() | patch->lateClobberedMask();
         }
 
         if (step.patchAssignment == UINT32_MAX)
@@ -421,19 +413,18 @@ bool FrameChecker::checkStep(const Step& step, bool frameIsSetUp, bool resultIsS
     case StepKind::Move:
     case StepKind::Reload:
     case StepKind::Save:
-    case StepKind::ClearSpill:
     case StepKind::KeepPointer:
         break;
     }
 
     if (!m_frame.hasFrameRecord() && stepCountsOnFrameRecord(m_proc, step))
-        return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, operation);
+        return fail(FailureKind::MissingFrameSetup, operation);
     if (needsFrame && !frameIsSetUp)
-        return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, operation);
+        return fail(FailureKind::MissingFrameSetup, operation);
     if (written & m_calleeSavesLeftToCaller)
-        return fail(FailureKind::RegisterLacksItsValue, operation);
+        return fail(FailureKind::WrongValueInRegister, operation);
     if (m_frame.coverage() == FrameCoverage::FramedPart && !frameIsSetUp && ((written | writtenByCodeOfPatch) & m_calleeSaved))
-        return fail(FailureKind::RegisterLacksItsValue, operation);
+        return fail(FailureKind::WrongValueInRegister, operation);
     return true;
 }
 
@@ -458,21 +449,21 @@ bool FrameChecker::checkBlock(const Block* block)
     } else {
         for (const Edge& edge : block->successors()) {
             if (isEnteredInFrame(edge.block()) != isLeft)
-                return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, last);
+                return fail(FailureKind::MissingFrameSetup, last);
         }
     }
     if (m_frame.coverage() == FrameCoverage::FramedPart && !isEnteredInFrame(block)) {
         for (const RegisterBinding& binding : m_allocation.registersAtHeadOf(block)) {
             if (maskOf(binding.reg) & m_calleeSaved)
-                return fail(FailureKind::RegisterLacksItsValue, binding.value);
+                return fail(FailureKind::WrongValueInRegister, binding.value);
         }
     }
     if (isInFrame && !isLeft && !last->isUnconditionalJump())
-        return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, last);
+        return fail(FailureKind::MissingFrameSetup, last);
 
     for (const Operation* phi : block->phis()) {
         if (!isInFrame && isStoredBehindDefinition(phi))
-            return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, phi);
+            return fail(FailureKind::MissingFrameSetup, phi);
     }
     for (uint32_t index = steps.begin; index < steps.end; ++index) {
         if (!checkStep(m_allocation.step(index), isInFrame, true))
@@ -488,7 +479,7 @@ bool FrameChecker::checkBlock(const Block* block)
     if (last->opcode() == Patch && block->numSuccessors() && isStoredBehindDefinition(last)) {
         const Block* blockOfStore = block->successor(0).block();
         if (!blockOfStore->isLandingPad() && !runsInFrame(blockOfStore))
-            return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, last);
+            return fail(FailureKind::MissingFrameSetup, last);
     }
     return true;
 }
@@ -507,10 +498,10 @@ bool FrameChecker::holdThroughout(int64_t offsetFromFP, uint32_t byteSize, uint3
 {
     CellRange cells;
     if (!findCells(offsetFromFP, byteSize, alignment, cells))
-        return fail(FailureKind::SpillSlotLacksItsValue);
+        return fail(FailureKind::WrongValueInSpillSlot);
     for (Cell cell = cells.begin; cell < cells.end; ++cell) {
         if (m_isHeldThroughout.get(cell))
-            return fail(FailureKind::SpillSlotLacksItsValue);
+            return fail(FailureKind::WrongValueInSpillSlot);
         m_isHeldThroughout.set(cell);
     }
     return true;
@@ -532,16 +523,16 @@ bool FrameChecker::checkPlaces()
     for (SpillIndex spill = 0; spill < numberOfSpills; ++spill) {
         const SpillFacts& facts = m_spills[spill];
         if (facts.width != Width32 && facts.width != Width64)
-            return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
+            return fail(FailureKind::WrongValueInSpillSlot, facts.value);
         uint32_t byteSize = facts.isPointerBesideNarrowReference ? bytesPerWord : static_cast<uint32_t>(bytesForWidth(facts.width));
         CellRange cells;
         if (!findCells(m_frame.offsetFromFPOf(spill), byteSize, byteSize, cells))
-            return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
+            return fail(FailureKind::WrongValueInSpillSlot, facts.value);
         if (facts.hasGap() && (facts.beginOfGap <= facts.begin || facts.endOfGap < facts.beginOfGap || facts.end <= facts.endOfGap))
-            return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
+            return fail(FailureKind::WrongValueInSpillSlot, facts.value);
         for (Cell cell = cells.begin; cell < cells.end; ++cell) {
             if (m_isHeldThroughout.get(cell))
-                return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
+                return fail(FailureKind::WrongValueInSpillSlot, facts.value);
             if (facts.hasGap()) {
                 spillsInCells.append(m_arena, SpillInCell { cell, facts.begin, facts.beginOfGap - 1, spill });
                 spillsInCells.append(m_arena, SpillInCell { cell, facts.endOfGap + 1, facts.end, spill });
@@ -561,39 +552,9 @@ bool FrameChecker::checkPlaces()
         const SpillInCell& earlier = spillsInCells[index - 1];
         const SpillInCell& later = spillsInCells[index];
         if (earlier.cell == later.cell && later.begin <= earlier.end)
-            return fail(FailureKind::SpillSlotLacksItsValue, m_spills[later.spill].value);
+            return fail(FailureKind::WrongValueInSpillSlot, m_spills[later.spill].value);
     }
     return true;
-}
-
-bool FrameChecker::somePathLacksStoreOf(const SpillFacts& facts, const PatchOperation* suspension)
-{
-    const Position store = positionOfStoreToSpillPlace(m_proc, facts);
-    auto holdsStore = [&](const Block* block) {
-        return m_order.headOf(block) <= store && store < m_order.endOf(block);
-    };
-    const Block* blockOfSuspension = suspension->owner();
-    if (holdsStore(blockOfSuspension) && store < m_order.latePositionOf(suspension))
-        return false;
-
-    BitSpan isSeen = BitSpan::create(m_arena, m_order.blocksInOrder().size());
-    ArenaVector<const Block*> blocksToVisit;
-    isSeen.set(m_order.of(blockOfSuspension).orderIndex);
-    blocksToVisit.append(m_arena, blockOfSuspension);
-    while (!blocksToVisit.isEmpty()) {
-        const Block* block = blocksToVisit.takeLast();
-        if (block->isEntry())
-            return true;
-        const BlockPlace& place = m_order.of(block);
-        for (const Block* predecessor : place.predecessors) {
-            uint32_t orderIndex = m_order.of(predecessor).orderIndex;
-            if (orderIndex >= place.orderIndex || isSeen.get(orderIndex) || holdsStore(predecessor))
-                continue;
-            isSeen.set(orderIndex);
-            blocksToVisit.append(m_arena, predecessor);
-        }
-    }
-    return false;
 }
 
 bool FrameChecker::checkSuspensions()
@@ -602,7 +563,7 @@ bool FrameChecker::checkSuspensions()
     std::span<SuspensionInOrder> suspensions = m_arena.createSpan<SuspensionInOrder>(listed.size());
     for (size_t index = 0; index < listed.size(); ++index) {
         if (!listed[index]->frameWordsDeadAcrossSuspension())
-            return fail(FailureKind::SpillSlotLacksItsValue, listed[index]);
+            return fail(FailureKind::WrongValueInSpillSlot, listed[index]);
         suspensions[index] = { m_order.latePositionOf(listed[index]), listed[index], static_cast<uint32_t>(index) };
     }
     std::sort(suspensions.begin(), suspensions.end(), [](const SuspensionInOrder& a, const SuspensionInOrder& b) {
@@ -613,20 +574,16 @@ bool FrameChecker::checkSuspensions()
         const SpillFacts& facts = m_spills[spill];
         int64_t offset = m_frame.offsetFromFPOf(spill);
         if (facts.livesAcrossSuspension && !isKeptAtSuspensions(offset))
-            return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
+            return fail(FailureKind::WrongValueInSpillSlot, facts.value);
 
         auto suspension = std::partition_point(suspensions.begin(), suspensions.end(), [&](const SuspensionInOrder& candidate) {
             return candidate.late < facts.begin;
         });
         for (; suspension != suspensions.end() && suspension->late - 1 <= facts.end; ++suspension) {
-            if (!m_allocation.spillsHeldAt(suspension->index).get(spill))
+            if (!m_allocation.liveSpillsAt(suspension->index).get(spill))
                 continue;
             if (!facts.livesAcrossSuspension || facts.isInGap(suspension->late - 1) || facts.isInGap(suspension->late) || suspension->patch->frameWordsDeadAcrossSuspension()->get(wordHolding(offset)))
-                return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
-            if (!isClearedAt(suspension->patch, wordHolding(offset)))
-                continue;
-            if (!spillPlaceIsWrittenBehindDefinitionAlone(m_proc, facts) || !somePathLacksStoreOf(facts, suspension->patch))
-                return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
+                return fail(FailureKind::WrongValueInSpillSlot, facts.value);
         }
     }
 
@@ -637,14 +594,14 @@ bool FrameChecker::checkSuspensions()
             continue;
         int64_t offset = slot->offsetFromFP();
         if (!isKeptAtSuspensions(offset))
-            return fail(FailureKind::SpillSlotLacksItsValue);
+            return fail(FailureKind::WrongValueInSpillSlot);
         uint32_t highestWord = wordHolding(offset + slot->byteSize() - 1);
         uint32_t lowestWord = wordHolding(offset);
         for (const SuspensionInOrder& suspension : suspensions) {
             const BitSpan& deadWords = *suspension.patch->frameWordsDeadAcrossSuspension();
             for (uint32_t word = highestWord; word <= lowestWord; ++word) {
-                if (deadWords.get(word) || isClearedAt(suspension.patch, word))
-                    return fail(FailureKind::SpillSlotLacksItsValue, suspension.patch);
+                if (deadWords.get(word))
+                    return fail(FailureKind::WrongValueInSpillSlot, suspension.patch);
             }
         }
     }
@@ -654,26 +611,14 @@ bool FrameChecker::checkSuspensions()
     };
     for (SpillIndex spill = 0; spill < m_spills.size(); ++spill) {
         if (isKeptWithLastPairAlone(m_frame.offsetFromFPOf(spill)))
-            return fail(FailureKind::SpillSlotLacksItsValue, m_spills[spill].value);
+            return fail(FailureKind::WrongValueInSpillSlot, m_spills[spill].value);
     }
     for (const StackSlot* slot : m_proc.stackSlots()) {
         if (slot->byteSize() && isKeptWithLastPairAlone(slot->offsetFromFP() + slot->byteSize() - 1))
-            return fail(FailureKind::SpillSlotLacksItsValue);
+            return fail(FailureKind::WrongValueInSpillSlot);
     }
     if (m_proc.callArgAreaSizeInBytes() && isKeptWithLastPairAlone(static_cast<int64_t>(m_proc.callArgAreaSizeInBytes()) - m_bytesBelowFrameRecord - 1))
-        return fail(FailureKind::SpillSlotLacksItsValue);
-
-    for (const SuspensionInOrder& suspension : suspensions) {
-        for (uint32_t word = 1; word <= m_frame.numberOfCalleeSaves(); ++word) {
-            if (isClearedAt(suspension.patch, word))
-                return fail(FailureKind::SpillSlotLacksItsValue, suspension.patch);
-        }
-        const BitSpan& wordsClearedInFront = suspension.patch->frameWordsClearedInFrontOfSuspension();
-        for (size_t word = lowestWordKeptAtSuspensions() + 1; word < wordsClearedInFront.size(); ++word) {
-            if (wordsClearedInFront.get(word))
-                return fail(FailureKind::SpillSlotLacksItsValue, suspension.patch);
-        }
-    }
+        return fail(FailureKind::WrongValueInSpillSlot);
     return true;
 }
 

@@ -44,8 +44,8 @@ public:
 
     FunctionID function() const { return m_function; }
     JS_EXPORT_PRIVATE String name(VM&) const;
-    JS_EXPORT_PRIVATE String stackTraceName(VM&, JSCell* callee = nullptr, bool hasCalleeInFrame = false) const;
-    String calculatedDisplayName(VM&, JSCell* callee, bool hasCalleeInFrame) const;
+    JS_EXPORT_PRIVATE String stackTraceName(VM&) const;
+    String calculatedDisplayName(VM&) const;
     JS_EXPORT_PRIVATE CodeType codeType() const;
     JS_EXPORT_PRIVATE bool isStrict() const;
     JS_EXPORT_PRIVATE bool isConstructor() const;

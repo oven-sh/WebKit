@@ -18,18 +18,18 @@
 # CHECK: exited with 0
 
 module m0 path="/main.js" displayPath="main.js" body=f0
-module m1 path="/start.cjs" displayPath="start.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="/start.cjs" displayPath="start.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}]
 module m2 path="/top.js" displayPath="top.js" body=f2 requests=[{target=m7 completes=true isHoisted=true}, {target=m12 completes=true isHoisted=true}, {target=m3 completes=true}, {target=m4 completes=true}]
 module m3 path="/reader.js" displayPath="reader.js" body=f3 requests=[{target=m7 completes=true}, {target=m8 completes=true}]
 module m4 path="/side.js" displayPath="side.js" flags=[IsRequiredDuringLoad] body=f4 requests=[{target=m5 completes=true}]
 module m5 path="/deep.js" displayPath="deep.js" body=f5 requests=[{target=m9 completes=true}]
-module m6 path="/old.cjs" displayPath="old.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g1 requests=[{target=m4 kind=Require completes=true}]
-module m7 path="#7" displayPath="old.cjs" flags=[KeepsError] exportRule=CommonJs body=f7 requests=[{target=m6 kind=Require completes=true}] syntheticExports=[{name="default" variable=g2}]
+module m6 path="/old.cjs" displayPath="old.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g1 requests=[{target=m4 kind=Require completes=true}]
+module m7 path="#7" displayPath="old.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f7 requests=[{target=m6 kind=Require completes=true}] syntheticExports=[{name="default" variable=g2}]
 module m8 path="/lower.js" displayPath="lower.js" body=f8 requests=[{target=m12 completes=true}]
 module m9 path="/deepest.js" displayPath="deepest.js" body=f9 requests=[{target=m10 completes=true}]
 module m10 path="/bottom.js" displayPath="bottom.js" body=f10
-module m11 path="/older.cjs" displayPath="older.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f11 exportsVariable=g3
-module m12 path="#12" displayPath="older.cjs" flags=[KeepsError] exportRule=CommonJs body=f12 requests=[{target=m11 kind=Require completes=true}] syntheticExports=[{name="default" variable=g4}]
+module m11 path="/older.cjs" displayPath="older.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f11 exportsVariable=g3
+module m12 path="#12" displayPath="older.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f12 requests=[{target=m11 kind=Require completes=true}] syntheticExports=[{name="default" variable=g4}]
 entry module=m0
 variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m6 declared={type=anything} initialization=Undefined
@@ -95,7 +95,7 @@ function f6 name="old" module=m6 kind=CommonJsModule flags=[IsSloppy] results=[{
     PutModuleVariable v7 variable=g1
     Return
 }
-function f7 name="faceOfOld" module=m6 kind=Module results=[{type=anything}] {
+function f7 name="facadeOfOld" module=m6 kind=Module results=[{type=anything}] {
     EvaluateModule module=m6 referrer=m7 [isBare]
     Return
 }
@@ -132,7 +132,7 @@ function f11 name="older" module=m11 kind=CommonJsModule flags=[IsSloppy] result
     PutModuleVariable v7 variable=g3
     Return
 }
-function f12 name="faceOfOlder" module=m11 kind=Module results=[{type=anything}] {
+function f12 name="facadeOfOlder" module=m11 kind=Module results=[{type=anything}] {
     EvaluateModule module=m11 referrer=m12 [isBare]
     Return
 }

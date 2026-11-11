@@ -5,19 +5,19 @@
 # It is a hint and changes no answer; but room that is asked for and never filled is memory, so nothing in the turn may run other code.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: ReserveArrayRoom
+# CHECK: ReserveArrayCapacity
 # CHECK: isLoopHead=true
 # RUN(STORES): walk f2 mechanisms=all
 # STORES-LABEL: code f2:Body
-# STORES: ReserveArrayRoom
+# STORES: ReserveArrayCapacity
 # STORES: isLoopHead=true
 # A push that stands in some turns only, a turn that runs other code, and a list that arrives and may have a push of its own ask for nothing.
 # RUN(SOME): walk f3 mechanisms=all
-# SOME-NOT: ReserveArrayRoom
+# SOME-NOT: ReserveArrayCapacity
 # RUN(CALLS): walk f4 mechanisms=all
-# CALLS-NOT: ReserveArrayRoom
+# CALLS-NOT: ReserveArrayCapacity
 # RUN(ARRIVES): walk f5 mechanisms=all
-# ARRIVES-NOT: ReserveArrayRoom
+# ARRIVES-NOT: ReserveArrayCapacity
 # RUN(ANSWER): run-in-shell globalThis.sink = (pushes, stores, pushesSome, pushesWhatACallGives, pushesOnto) => { const sum = list => { let all = 0; for (let k = 0; k < list.length; k++) all += list[k]; return list.length + ":" + all; }; print(sum(pushes())); const a = []; pushesOnto(a); pushesOnto(a); print(sum(a)); const b = [0.5]; stores(b); print(sum(b)); const c = []; pushesSome(c, 9); print(sum(c)); const d = []; pushesWhatACallGives(d, 4, i => i * 2); print(sum(d)); const own = []; own.push = function (value) { this[0] = value; }; pushesOnto(own); print(sum(own)); const closed = Object.preventExtensions([]); try { pushesOnto(closed); } catch (error) { print(error.constructor.name); } print(sum(closed)); const shared = [1, 2, 3]; pushesOnto(shared); print(sum(shared)); };
 # ANSWER: 1000:499500
 # ANSWER-NEXT: 2000:999000

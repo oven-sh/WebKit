@@ -61,8 +61,8 @@
 #     v15: boolean @Boolean = IsElementPresent v0, v2 arrayStorage=Contiguous [keyIsIntegral] traits=[mayTouchMemory]
 #     v16: boolean @Boolean = IsElementPresent v0, v3 arrayStorage=Contiguous [keyIsIntegral] traits=[mayTouchMemory]
 #     v17: boolean @Boolean = IsElementPresent v1, v2 arrayStorage=Contiguous [keyIsIntegral] traits=[mayTouchMemory]
-#     v18: int[0, 4294967295] @Int64 = GetArrayRoom v0 traits=[mayTouchMemory]
-#     v19: int[0, 4294967295] @Int64 = GetArrayRoom v1 traits=[mayTouchMemory]
+#     v18: int[0, 4294967295] @Int64 = GetArrayCapacity v0 traits=[mayTouchMemory]
+#     v19: int[0, 4294967295] @Int64 = GetArrayCapacity v1 traits=[mayTouchMemory]
 #     v20: boolean @Boolean = Less v2, v3 form=Integers
 #     v21: boolean @Boolean = LessEq v3, v18 form=Integers
 #     v22: boolean @Boolean = LessEq v3, v19 form=Integers

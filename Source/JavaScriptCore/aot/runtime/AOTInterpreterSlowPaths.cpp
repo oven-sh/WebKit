@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTChainDependents.h"
 #include "AOTClosure.h"
 #include "AOTCompiledStructure.h"
@@ -140,7 +141,7 @@ static JSValue readBySlot(Instance& instance, const Slot& slot, JSCell* base, co
     case Slot::Kind::FieldGetter:
     case Slot::Kind::FieldCreation:
     case Slot::Kind::FieldOrInherited:
-    case Slot::Kind::FieldOrInheritedSetter:
+    case Slot::Kind::FieldOrInheritedAccessor:
     case Slot::Kind::FieldOrInheritedField:
     case Slot::Kind::Variable:
     case Slot::Kind::ExtraGetter:
@@ -483,6 +484,20 @@ const ObjectLiteralPlan* ObjectLiteralPlans::findOrCreate(Instance& instance, st
 void didLinkNewObject(ObjectAllocationProfile& profile)
 {
     allocatorWord(profile) = ObjectLiteralPlan::notPlannedYet;
+}
+
+JSArray* createEmptyArray(JSGlobalObject* globalObject, JSC::ArrayAllocationProfile& profile)
+{
+    constexpr unsigned vectorLength = BASE_CONTIGUOUS_VECTOR_LEN_EMPTY;
+    Instance* instance = interpreterInstance(globalObject);
+    IndexingType indexingType = profile.selectIndexingType();
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(hasUndecided(indexingType) ? ArrayWithInt32 : indexingType);
+    bool hasStorageInCell = hasInt32(structure->indexingType()) || hasContiguous(structure->indexingType());
+    JSArray* array = instance && hasStorageInCell && !structure->outOfLineCapacity() ? tryCreateArrayWithStorage(globalObject->vm(), structure, 0, vectorLength) : nullptr;
+    if (!array)
+        return constructEmptyArray(globalObject, &profile);
+    instance->findMissingShortArrayAllocator(vectorLength);
+    return profile.updateLastAllocation(array);
 }
 
 void planObjectLiteral(JSGlobalObject* globalObject, CodeBlock* codeBlock, const JSInstruction* instruction, ObjectAllocationProfile& profile)

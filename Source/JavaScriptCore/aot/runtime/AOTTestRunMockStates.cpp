@@ -27,8 +27,8 @@ auto Modules::mockState(ModuleID module) -> MockState
     bool isLaidOver = loaded && loaded->isPatchedByMock;
     bool isOverModuleThatHasRun = hasIntactOriginal(module);
     bool isToBeLetGo = hasRemovedMock(module);
-    bool hasWaited = m_modulesWithMockThatWaited.get(module.index());
-    bool hasKeptError = m_modulesWithMockLoadError.get(module.index()) || m_mockedModulesWithErrorKeptByLoader.get(module.index());
+    bool hasWaited = m_modulesWithDeferredMock.get(module.index());
+    bool hasKeptError = m_modulesWithMockLoadError.get(module.index()) || m_modulesWithCachedMockError.get(module.index());
     bool isOfLibrary = data(module).isOfLibrary();
     ModuleStatus body = status(module);
     bool hasBegun = body != ModuleStatus::Unlinked && body != ModuleStatus::Linking && body != ModuleStatus::Linked;
@@ -55,7 +55,7 @@ auto Modules::mockState(ModuleID module) -> MockState
     if (isOverModuleThatHasRun)
         return MockState::Runs;
     if (isMocked(module))
-        return hasWaited || isOfLibrary || m_modulesWhoseFactoryRuns.get(module.index()) ? MockState::Runs : MockState::Fills;
+        return hasWaited || isOfLibrary || m_modulesWithRunningFactory.get(module.index()) ? MockState::Runs : MockState::Fills;
     if (hasKeptError)
         return MockState::Failed;
     return hasWaited ? MockState::NoneOfThem : MockState::None;
@@ -66,9 +66,9 @@ String Modules::describeMockState(ModuleID module)
     static constexpr std::array<ASCIILiteral, 12> names { "none"_s, "waits"_s, "runs"_s, "in place"_s, "in place while another waits"_s, "in place over a module that has run"_s, "fills"_s, "laid over"_s, "failed"_s, "ended"_s, "ended while another waits"_s, "NONE OF THEM"_s };
     static constexpr std::array<ASCIILiteral, 7> bodies { "unlinked"_s, "linking"_s, "linked"_s, "evaluating"_s, "awaiting"_s, "evaluated"_s, "failed"_s };
     MockState state = mockState(module);
-    ASCIILiteral kind = data(module).isOfLibrary() ? "library"_s : data(module).kind == ModuleKind::CommonJs ? "CommonJS"_s : data(module).isFaceOfFile() ? "face"_s : data(module).isESModuleOfProgram() ? "ES"_s : "other"_s;
+    ASCIILiteral kind = data(module).isOfLibrary() ? "library"_s : data(module).kind == ModuleKind::CommonJs ? "CommonJS"_s : data(module).isFacade() ? "facade"_s : data(module).isESModuleOfProgram() ? "ES"_s : "other"_s;
     StringBuilder text;
-    text.append(kind, ' ', names[static_cast<size_t>(state)], " (body "_s, bodies[static_cast<size_t>(status(module)) - static_cast<size_t>(ModuleStatus::Unlinked)], m_filesWhoseOriginalRuns.get(module.index()) ? ", its original runs"_s : ""_s, isEvicted(module) ? ", left to the host)"_s : ")"_s);
+    text.append(kind, ' ', names[static_cast<size_t>(state)], " (body "_s, bodies[static_cast<size_t>(status(module)) - static_cast<size_t>(ModuleStatus::Unlinked)], m_originalsBeingEvaluated.get(module.index()) ? ", its original runs"_s : ""_s, isEvicted(module) ? ", left to the host)"_s : ")"_s);
     if (state == MockState::NoneOfThem) {
         LoadedModule* loaded = loadedIfExists(module);
         auto say = [&](bool isSet, ASCIILiteral what) {
@@ -78,14 +78,14 @@ String Modules::describeMockState(ModuleID module)
         text.append(" ["_s);
         say(isMocked(module), "mocked"_s);
         say(m_modulesWithPendingMock.get(module.index()), "to-run"_s);
-        say(m_modulesWithMockThatWaited.get(module.index()), "waited"_s);
+        say(m_modulesWithDeferredMock.get(module.index()), "waited"_s);
         say(m_mocksRetriedAfterFailure.get(module.index()), "asks-again"_s);
         say(m_modulesWithActiveMock.get(module.index()), "in-place"_s);
         say(hasRemovedMock(module), "to-let-go"_s);
         say(loaded && loaded->isPatchedByMock, "laid-over"_s);
         say(hasIntactOriginal(module), "over-run"_s);
         say(m_modulesWithMockLoadError.get(module.index()), "load-ended"_s);
-        say(m_mockedModulesWithErrorKeptByLoader.get(module.index()), "error-kept"_s);
+        say(m_modulesWithCachedMockError.get(module.index()), "error-kept"_s);
         text.append(" ]"_s);
     }
     return text.toString();
@@ -102,7 +102,7 @@ void Modules::countMockStates(ASCIILiteral door, const String& before, ModuleID 
     String after = describeMockState(module);
     countMockTransitionInTestRunMockStates(*m_instance.vm, makeString(before, " > "_s, door, " > "_s, after));
     if (mockState(module) == MockState::NoneOfThem) [[unlikely]]
-        writeToStandardError(makeString("[aot] the mock of "_s, m_table.pathText(module), " is in no state of its life: "_s, before, " > "_s, door, " > "_s, after, '\n'));
+        writeToStandardError(makeString("[aot] the mock of "_s, m_table.fullPath(module), " is in no state of its life: "_s, before, " > "_s, door, " > "_s, after, '\n'));
 }
 
 MockDoor::MockDoor(Modules* modules, ModuleID module, ASCIILiteral door)

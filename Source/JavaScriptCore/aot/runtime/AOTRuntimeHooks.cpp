@@ -15,6 +15,8 @@
 #include "AOTErrorMessages.h"
 #include "AOTGenerator.h"
 #include "AOTInstance.h"
+#include "AOTRuntimeCheckFailure.h"
+#include "AOTState.h"
 #include "BuiltinExecutables.h"
 #include "ImmutablePropertyNames.h"
 #include "JSCInlines.h"
@@ -71,9 +73,33 @@ bool rejectsNativeConstructorProperty(JSGlobalObject* realm, PropertyName name)
     return !name.isPrivateName() && Closure::isNameThatBuiltinFunctionsRefuse(realm->vm(), name.uid()) && locksBuiltins(realm);
 }
 
+static bool isBinaryDataClass(JSGlobalObject* realm, JSObject* constructor)
+{
+    if (realm->arrayBufferConstructor(ArrayBufferSharingMode::Default) == constructor)
+        return true;
+#define RETURN_IF_CONSTRUCTOR(name) \
+    if (realm->typedArrayConstructorConcurrently(Type##name) == constructor) \
+        return true;
+    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(RETURN_IF_CONSTRUCTOR)
+#undef RETURN_IF_CONSTRUCTOR
+    return false;
+}
+
+bool acceptsHasInstanceOfHost(InternalFunction* constructor, PropertyName name, JSValue method)
+{
+    JSGlobalObject* realm = constructor->globalObject();
+    Instance* instance = realm->aotInstance();
+    if (name != realm->vm().propertyNames->hasInstanceSymbol || !method || !instance || !instance->state || !instance->state->acceptsForeignBinaryData)
+        return false;
+    auto* function = dynamicDowncast<JSFunction>(method);
+    return function && function->isBuiltinFunction() && isBinaryDataClass(realm, constructor);
+}
+
 void crashOnHavingABadTime()
 {
-    dataLogLn("AOT: the realm of a compiled program is having a bad time: an indexed accessor or a read-only index has come to lie above its arrays, which its locked built-ins refuse. Compiled code would go on making arrays that pass it by.");
+    RuntimeCheckFailure failure("array prototype check failed"_s);
+    failure.detail("an indexed accessor or a read-only indexed property was added to the prototype chain of arrays, which the locked built-ins should have refused");
+    failure.report();
     CRASH();
 }
 

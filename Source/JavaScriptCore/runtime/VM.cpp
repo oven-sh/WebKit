@@ -302,10 +302,11 @@ private:
         static constexpr bool safeToCompareToEmptyOrDeleted = true;
     };
 
-    void finalize(Handle<Unknown> handle, void* context) final
+    FinalizeResult finalize(Handle<Unknown> handle, void* context) final
     {
         auto& executable = *static_cast<NativeExecutable*>(handle.get().asCell());
         m_executables.remove(keyFor(executable.function(), executable.constructor(), executable.implementationVisibility(), static_cast<Intrinsic>(reinterpret_cast<uintptr_t>(context)), executable.length(), executable.name()));
+        return FinalizeResult::KeepImpl;
     }
 
     UncheckedKeyHashMap<Key, Weak<NativeExecutable>, KeyHash> m_executables;
@@ -968,7 +969,7 @@ Exception* VM::ensureTerminationException()
 }
 
 #if ENABLE(JIT)
-static ThunkGenerator LEGACY_NODELETE thunkGeneratorForIntrinsic(Intrinsic intrinsic)
+NODELETE static ThunkGenerator thunkGeneratorForIntrinsic(Intrinsic intrinsic)
 {
     switch (intrinsic) {
     case CharCodeAtIntrinsic:

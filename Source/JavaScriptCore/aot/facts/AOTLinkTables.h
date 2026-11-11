@@ -22,6 +22,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class BodyIndex;
 class BodyIndexTable;
 
 struct LinkedParameter {
@@ -41,8 +42,10 @@ struct LinkedFunction {
     bool everyCallerIsKnown { false };
     bool everyCallHasOneCallee { false };
     bool everyTakerOfResultKnowsCallee { false };
+    bool hasSingleCallSite { false };
     bool ringsOfTailCallsAreListed { false };
     bool runsAtMostOnce { false };
+    bool isIterationCallback { false };
     bool isNamedInItsCycle { true };
     bool liesUnderNameOrIsLost { false };
     bool isInQueueFromStart { false };
@@ -113,7 +116,9 @@ inline constexpr uint32_t maxAppendedFieldsOutOfLine = maxExtensionGranules;
 struct LinkedLayout {
     FamilyID family;
     bool isAllocated { true };
+    bool hasDirectInstances { true };
     bool reachesUnseenCode { true };
+    bool instancesMayBeLocked { true };
     OptionSet<LayoutChange> possibleChanges { LayoutChange::IsFrozen, LayoutChange::GainsProperty, LayoutChange::LosesProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor, LayoutChange::GetsObjectAbove };
     bool isRedefinedByLiteralsAlone { false };
     bool isDefinedOnByDescriptorsThatLayValuesAlone { false };
@@ -251,6 +256,12 @@ struct LinkedResultOfRead {
     TypeID proven;
 };
 
+struct LinkedNativeCallResult {
+    FunctionID function;
+    ValueID site;
+    TypeID proven;
+};
+
 struct LinkedContentsAtOperation {
     FunctionID function;
     ValueID site;
@@ -346,7 +357,7 @@ struct LookupsPastProgramObjects {
     BitVector builtinsConstructed;
     BitVector builtinsCalledByCode;
     BitVector builtinsLetGo;
-    BitVector builtinsUsedWhereFlowBroughtThem;
+    BitVector builtinsUsedViaFlow;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> builtinsFoundWhereFlowBroughtHolders;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> constructorsBelowBuiltins;
     BitVector builtinsCalledOutOfSight;
@@ -396,8 +407,9 @@ struct LookupsPastProgramObjects {
     bool readsUnderKeysNobodyKnows { false };
     bool readsUnderNamesThatLoopsGave { false };
     UncheckedKeyHashSet<uint64_t> readsOfProgramUnderKeysNobodyKnows;
-    bool namesFromRunTimeWereHeldBack { false };
-    BitVector builtinsUsedWithoutNamesFromRunTime;
+    bool wereRuntimeNamesDeferred { false };
+    BitVector staticallyUsedBuiltins;
+    BitVector staticallyInstantiatedClasses;
     bool nativeCodeMayHoldObjects { false };
 };
 
@@ -421,6 +433,10 @@ struct LinkedFunctionUnderName {
     friend constexpr auto operator<=>(const LinkedFunctionUnderName&, const LinkedFunctionUnderName&) = default;
 };
 
+class Program;
+struct LinkTables;
+bool instancesMayBeLocked(const Program&, const LinkTables&, TypeID testedType);
+
 struct LinkTables {
     std::unique_ptr<Families> familiesBehindFlow;
     BitVector exportsThatStayIn;
@@ -442,6 +458,8 @@ struct LinkTables {
     Vector<LinkedCoroutine> coroutines;
     const LinkedCoroutine* findCoroutine(FunctionID) const;
     Vector<LinkedResultOfRead> resultsOfReadsByKey;
+    Vector<LinkedNativeCallResult> nativeCallResults;
+    BitVector nativeFunctionCallers;
     Vector<LinkedContentsAtOperation> contentsAtOperations;
     Vector<LinkedReceiverAsMade> receiversThatStayAsMade;
     Vector<LinkedReceiverAsMade> receiversThatNobodyChanges;
@@ -728,6 +746,15 @@ struct LinkTables {
         });
         return found ? found->key : PropertyKeyID();
     }
+    TypeID nativeCallResult(FunctionID function, ValueID site) const
+    {
+        if (!nativeFunctionCallers.get(function.index()))
+            return { };
+        const LinkedNativeCallResult* found = findListedUnder(nativeCallResults.span(), placeOfSite(function, site), [](const LinkedNativeCallResult& call) {
+            return placeOfSite(call.function, call.site);
+        });
+        return found ? found->proven : TypeID();
+    }
     TypeID resultOfReadByKey(FunctionID function, ValueID site) const
     {
         const LinkedResultOfRead* found = findListedUnder(resultsOfReadsByKey.span(), placeOfSite(function, site), [](const LinkedResultOfRead& read) {
@@ -780,12 +807,13 @@ struct LinkTables {
 
 bool isNameInTextOf(const Program&, PropertyKeyID symbol, FunctionID);
 PropertyKeyID keyOfWellKnownSymbol(const Program&, BuiltinID constant);
+PropertyKeyID provenSymbolAt(const Program&, const ThinSummaries&, FunctionID, const BodyIndex&, ValueID);
 bool isSymbolOfLibrary(const Program&, PropertyKeyID);
 
 LinkTables conservativeLinkTables(const Program&);
 LinkTables conservativeLinkTables(const Program&, const ParallelLoops&);
-void findParametersThatAreOnlyCalled(const Program&, const BodyIndexTable&, const ThinSummaries&, const ParallelLoops&, Mechanisms, bool takesCalleesToKeepNothing, LinkTables&);
-void findParametersThatAreOnlyLookedAt(const Program&, const BodyIndexTable&, const ThinSummaries&, Mechanisms, bool takesCalleesToKeepNothing, LinkTables&);
+void findParametersThatAreOnlyCalled(const Program&, const BodyIndexTable&, const ThinSummaries&, const ParallelLoops&, Mechanisms, bool shouldAssumeCalleesRetainNothing, LinkTables&);
+void findParametersThatAreOnlyLookedAt(const Program&, const BodyIndexTable&, const ThinSummaries&, Mechanisms, bool shouldAssumeCalleesRetainNothing, LinkTables&);
 void carryExpectationOfThisIntoCaptures(const Program&, const BodyIndexTable&, const ThinSummaries&, LinkTables&);
 
 BitVector bodiesThatLoaderEntersAtMostOnce(const Program&);

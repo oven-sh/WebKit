@@ -243,6 +243,7 @@ private:
     CompiledProgram m_compiled;
     std::optional<BuiltImage> m_built;
     bool m_planIsChecked { false };
+    std::unique_ptr<EarlyWasmModules> m_earlyWasmModules;
 };
 
 void BuildDriver::read(std::span<const uint8_t> bytes)
@@ -323,15 +324,26 @@ void BuildDriver::runStagesAfterRead()
     if (makesImage && m_context.threadCount() > 1)
         m_prepared.checkOfPlan = CheckOfPlan::LeftToCaller;
 
-    if (!prepare())
-        return;
-    if (!makesImage && !m_prepared.compileInputs->walk.options.takesNotes && !walkJudgesSomethingOfProgramForDriver(*m_prepared.program, m_context.parallelLoops()))
-        return;
-    if (!compile())
-        return;
-    if (m_prepared.compileInputs->walk.options.takesNotes)
-        explain();
-    if (makesImage && !hasErrors())
+    auto analyzeAndCompile = [&] {
+        if (!prepare())
+            return false;
+        if (!makesImage && !m_prepared.compileInputs->walk.options.takesNotes && !walkJudgesSomethingOfProgramForDriver(*m_prepared.program, m_context.parallelLoops()))
+            return false;
+        if (!compile())
+            return false;
+        if (m_prepared.compileInputs->walk.options.takesNotes)
+            explain();
+        return true;
+    };
+    bool isCompiled = false;
+    if (makesImage && !m_prepared.program->webAssemblyModules.isEmpty()) {
+        runLanes(m_context.parallelLoops(), {
+            [&] { isCompiled = analyzeAndCompile(); },
+            [&] { m_earlyWasmModules = compileWebAssemblyFiles(*m_prepared.program, m_context); },
+        });
+    } else
+        isCompiled = analyzeAndCompile();
+    if (isCompiled && makesImage && !hasErrors())
         buildImageFromCode();
 }
 
@@ -439,6 +451,7 @@ void BuildDriver::buildImageFromCode()
         .functions = WTF::move(m_compiled.functions),
         .bodyFacts = WTF::move(bodyFacts),
         .entriesUsedByFunctions = m_compiled.entriesUsed,
+        .earlyWasmModules = WTF::move(m_earlyWasmModules),
     }, m_context));
     if (hasErrors())
         return;
@@ -532,7 +545,8 @@ std::unique_ptr<CompileOutput> compileBytesWithBuildDriver(std::span<const uint8
         {
             BuildContext context(options, hostPool);
             jobs = &context.backgroundJobs();
-            context.setFunctionTexts(owner.functionTexts);
+            context.setFunctionSources(owner.functionSources);
+            context.setStringEncoders(owner.stringEncoders);
             BuildDriver driver(context, *output, owner);
             driver.setMechanisms(withoutMechanismsThatOptionsWithhold(mechanisms, options.testing));
             logTimeToEnterEngine(context, entered);

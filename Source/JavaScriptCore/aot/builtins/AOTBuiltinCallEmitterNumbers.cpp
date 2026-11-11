@@ -10,6 +10,7 @@
 
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTOperatorEmitter.h"
 #include "AOTIRProgram.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTypeTable.h"
@@ -127,7 +128,7 @@ void BuiltinCallEmitter::holdOperandsOfDivisionToToldRanges(const ValueContext& 
     auto liesIn = [&](Integer operand, Range told) {
         return belowOrEqual(sub(operand, integer(told.minimum)), integer(told.maximum - told.minimum));
     };
-    emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalAnd(liesIn(dividend, dividends), liesIn(divisor, divisors)), std::nullopt, ProofSource::OtherOperation);
+    emitter<ThrowEmitter>().requireOrCrash(value, logicalAnd(liesIn(dividend, dividends), liesIn(divisor, divisors)), std::nullopt, ProofSource::OtherOperation);
 }
 
 void BuiltinCallEmitter::generateDivideIntegers(const ValueContext& value)
@@ -191,7 +192,7 @@ void BuiltinCallEmitter::generateReciprocalOfDivisor(const ValueContext& value)
 {
     Integer divisor = integerOperand(value->divisorOperand());
     if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime))
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalAnd(isNotZero(divisor), belowOrEqual(divisor, integer(INT32_MAX))), std::nullopt, ProofSource::OtherOperation);
+        emitter<ThrowEmitter>().requireOrCrash(value, logicalAnd(isNotZero(divisor), belowOrEqual(divisor, integer(INT32_MAX))), std::nullopt, ProofSource::OtherOperation);
     define(value, Pointer(m_out.add(m_out.uDiv(m_out.constInt64(-1), divisor.value()), m_out.constInt64(1))));
 }
 
@@ -218,11 +219,11 @@ void BuiltinCallEmitter::generateRemainderByReciprocal(const ValueContext& value
     Integer divisor = integerOperand(value->divisorOperand());
     bool checksProofs = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime);
     if (checksProofs)
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalAnd(belowOrEqual(dividend, integer(UINT32_MAX)), logicalAnd(isNotZero(divisor), belowOrEqual(divisor, integer(INT32_MAX)))), std::nullopt, ProofSource::OtherOperation);
+        emitter<ThrowEmitter>().requireOrCrash(value, logicalAnd(belowOrEqual(dividend, integer(UINT32_MAX)), logicalAnd(isNotZero(divisor), belowOrEqual(divisor, integer(INT32_MAX)))), std::nullopt, ProofSource::OtherOperation);
     LValue lowHalf = lowHalfOfProductWithReciprocal(in<Pointer>(value->reciprocalOperand()).value(), dividend.value());
     Integer remainder(m_out.uMulHigh(lowHalf, divisor.value()));
     if (checksProofs)
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, equal(remainder, Integer(m_out.mod(dividend.value(), divisor.value()))), std::nullopt, ProofSource::OtherOperation);
+        emitter<ThrowEmitter>().requireOrCrash(value, equal(remainder, Integer(m_out.mod(dividend.value(), divisor.value()))), std::nullopt, ProofSource::OtherOperation);
     defineAs(value, remainder, typeOf(value.id()));
 }
 
@@ -297,6 +298,21 @@ Word32 BuiltinCallEmitter::int32BitsOf(ValueID operand, bool givesOnlyLowestBits
 void BuiltinCallEmitter::generateToInt32(const ValueContext& value)
 {
     defineAs(value, int32BitsOf(value->valueOperand(), value->givesOnlyLowestBits()), m_program.at(TypeTable::int32));
+}
+
+void BuiltinCallEmitter::generateWholeDivisor(const ValueContext& value)
+{
+    Number divisor = numberOperand(value->divisorOperand());
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    Integer whole = conversions.truncateUnchecked(divisor);
+    Integer wholeOrZero = select(equal(conversions.bitsOf(toNumber(whole)), conversions.bitsOf(divisor)), whole, integer(0));
+    defineAs(value, select(below(wholeOrZero, integer(maxExactInteger + 1)), wholeOrZero, integer(0)), typeOf(value.id()));
+}
+
+void BuiltinCallEmitter::generateRemainderByWholeDivisor(const ValueContext& value)
+{
+    Number remainder = emitter<OperatorEmitter>().remainderByWholeDivisor(value, numberOperand(value->dividendOperand()), numberOperand(value->divisorOperand()), integerOperand(value->wholeDivisorOperand()));
+    defineAs(value, remainder, typeOf(value.id()));
 }
 
 void BuiltinCallEmitter::generateToUint32(const ValueContext& value)

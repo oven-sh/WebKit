@@ -129,7 +129,7 @@ void ScanOfBody::noteStoreThatBecameEdge(const StoreInScan& store)
     effects.merge(declaredBoundOf(NamedEffectSet::UsesRuntime));
     effects.reads.merge(ofDefinition.reads);
     effects.reads.add(AbstractHeapSet { AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards });
-    effects.writes.merge(ofDefinition.writes.restrictedTo(heapsWhoseWritesNobodySees));
+    effects.writes.merge(ofDefinition.writes.restrictedTo(unobservableWriteHeaps));
     effects.mayThrow = ThrowEffect(true);
     m_summary.ownEffects.merge(effects);
     noteWritesIn(store.block, effects.writes);

@@ -10,20 +10,23 @@
 # if (which === 4) print(leavesByIt());
 # print("went on");
 # a-false-proof-of-a-raw-parameter-traps-in-straight-code.ir, its program and its lie. WHERE PROOFS ARE CHECKED THE FAULT IS NAMED IN FRONT OF THE TRAP, in straight code as in walked code.
-# OPTIONS: testing=WritesBodiesStraight,CheckProofsAtEntries
+# OPTIONS: testing=ForceStraightCompilation,CheckProofsAtEntries
 # RUN(WHOLE): run-in-shell mechanisms=all globalThis.which = 1;
 # WHOLE: 4.5
-# WHOLE: AOT: f{{*}} at {{*}}: an entry parameter is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# WHOLE: bun: internal AOT error: type check failed
+# WHOLE-NEXT: found string in an argument
 # WHOLE-NOT: went on
 # WHOLE: crashed with
 # RUN(HALF): run-in-shell mechanisms=all globalThis.which = 2;
 # HALF: 4.5
-# HALF: AOT: f{{*}} at {{*}}: an entry parameter is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# HALF: bun: internal AOT error: type check failed
+# HALF-NEXT: found string in an argument
 # HALF-NOT: went on
 # HALF: crashed with
 # RUN(LEAVES): run-in-shell mechanisms=all globalThis.which = 4;
 # LEAVES: 4.5
-# LEAVES: AOT: f{{*}} at {{*}}: an entry parameter is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# LEAVES: bun: internal AOT error: type check failed
+# LEAVES-NEXT: found string in an argument
 # LEAVES-NOT: went on
 # LEAVES: crashed with
 # Where no false proof is come by, nothing stops.

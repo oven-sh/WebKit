@@ -1,8 +1,12 @@
 # function take(value) { return value; }
 # print(typeof id(take)(given));
 # print("went on");
-# THE LIE IS LAID BY HAND IN THE TEXT BELOW: `function f1 name="take" .. parameters=[{type=undefined|int[1, 9]|string flags=[IsFromCompiler]}]`: the front end says that the parameter holds undefined, a text or a whole number from one to nine, and the function is called by value with whatever the shell's `given` holds. No legal program makes the front end say so.
-# testing=CheckProofsAtRunTime: a type test that is long in line (numbers in part here) is one call of a stub: the kinds that pass whole lie beside the source of the proof, the rest is asked of the type's record in the image's tables, and what the stub cannot tell there (a double) is asked of the run time, which stops by the same sentence.
+# The fault is written by hand in the IR below: `function f1 name="take" .. parameters=[{type=undefined|int[1, 9]|string flags=[IsFromCompiler]}]`.
+# The front end claims that the parameter holds undefined, a string or an integer from one to nine, and the function is called indirectly with whatever the shell's `given` holds.
+# No legal program makes the front end claim that.
+# With testing=CheckProofsAtRunTime, a type test that would be long as inline code (here, only some of the numbers) is one call of a stub.
+# The kinds that pass as a whole are stored next to the source of the proof. The rest is checked against the type's record in the image's tables.
+# What the stub cannot decide there (a double) is left to the runtime, which crashes with the same message.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(FORM): walk f1 mechanisms=all-Inlining
 # FORM: CheckProof {{*}} checkedType=undefined|int[1, 9]|string typeWithoutProof={{*}}
@@ -23,22 +27,28 @@
 # NINE: number
 # NINE-NEXT: went on
 # RUN(ZERO): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 0;
-# ZERO: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# ZERO: bun: internal AOT error: type check failed
+# ZERO-NEXT: found int32 in
 # ZERO-NOT: went on
 # RUN(TEN): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 10;
-# TEN: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# TEN: bun: internal AOT error: type check failed
+# TEN-NEXT: found int32 in
 # TEN-NOT: went on
 # RUN(FRACTION): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = 1.5;
-# FRACTION: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# FRACTION: bun: internal AOT error: type check failed
+# FRACTION-NEXT: found double in
 # FRACTION-NOT: went on
 # RUN(NOTANUMBER): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = NaN;
-# NOTANUMBER: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# NOTANUMBER: bun: internal AOT error: type check failed
+# NOTANUMBER-NEXT: found double in
 # NOTANUMBER-NOT: went on
 # RUN(NULL): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = null;
-# NULL: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: null. This is a bug in Bun.
+# NULL: bun: internal AOT error: type check failed
+# NULL-NEXT: found null in
 # NULL-NOT: went on
 # RUN(OBJECT): run-in-shell mechanisms=all-Inlining globalThis.id = (value) => value; globalThis.given = {};
-# OBJECT: AOT: f{{*}} at {{*}} is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# OBJECT: bun: internal AOT error: type check failed
+# OBJECT-NEXT: found object in
 # OBJECT-NOT: went on
 
 module m0 path="main.js" displayPath="main.js" body=f0

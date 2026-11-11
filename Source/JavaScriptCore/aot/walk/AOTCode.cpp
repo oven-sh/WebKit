@@ -59,7 +59,7 @@ bool readsNumberOrNothingOutOfBytes(const Operation& operation)
 {
     if (operation.opcode != Opcode::GetTypedArrayElement || operation.isInsideView() || operation.representation != Representation::OptionalDouble)
         return false;
-    return isFloat(operation.typedArrayType()) && hasInlineElementAccess(operation.typedArrayType());
+    return !isBigInt(operation.typedArrayType()) && hasInlineElementAccess(operation.typedArrayType());
 }
 
 bool handsOnBitsOfNaN(const Operation& operation)
@@ -297,7 +297,7 @@ void Code::reset(CodeUnit unit)
     m_inputsOfHolesReadAsNaN.shrink(0);
     m_readsAnsweredByHolesReadAsNaN.shrink(0);
     m_cellsMadeForOneOperation.shrink(0);
-    m_readsOfVariablesThatStandForNoValueOfText.shrink(0);
+    m_syntheticVariableReads.shrink(0);
     m_valuesThatFoldedArithmeticGives.shrink(0);
     m_pollsWithFates.shrink(0);
     m_opcodesOfValues = { };
@@ -329,7 +329,6 @@ void Code::reset(CodeUnit unit)
     m_blocksWithoutThrows = BitVector();
     m_suspensions.shrink(0);
     m_liveValues.shrink(0);
-    m_releasesBehindLastReads.shrink(0);
 
     InlineFrame functionItself { };
     functionItself.callee = unit.function;
@@ -525,7 +524,7 @@ void Code::setTypeOfJoinParameter(ValueID parameter, TypeID type)
     record.type = type;
 }
 
-Code::AllEdgesInto Code::seal(BlockID blockID)
+Code::AllIncomingEdges Code::seal(BlockID blockID)
 {
     RELEASE_ASSERT(!m_isSwept);
     Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];

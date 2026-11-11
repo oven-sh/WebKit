@@ -141,7 +141,7 @@ bool openGuessAtOperandOfBuiltinCall(Walker& walker, const BodyValue& call, Oper
     if (ValueID receiver = call.thisValueOperand(); receiver && walker.isInLoop() && tested == OperandsTestedAtBuiltinCall::All) {
         Reference value = walker.referenceOf(receiver);
         TypeID proven = value && value.isValue() ? walker.typeOf(value) : TypeID();
-        if (proven && !isNeverType(proven) && types.at(proven).isObject() && singleBuiltinClassOf(types, types.at(proven)) && !isListAsMade(walker, value) && goesByOneRowOnOperandAsMade(walker, call, builtin, value, proven)) {
+        if (proven && !isNeverType(proven) && types.at(proven).isObject() && singleBuiltinClassOf(types, types.at(proven)) && !isKnownPristine(walker, value) && goesByOneRowOnOperandAsMade(walker, call, builtin, value, proven)) {
             NotesOfStrings& changed = notesOfStrings(walker);
             ValueID callBefore = std::exchange(changed.callWhoseOperandIsTested, call.id());
             size_t depthBefore = std::exchange(changed.depthOfCopiesAroundThatCall, walker.depthOfCopies());
@@ -180,19 +180,19 @@ bool openGuessAtOperandThatSpecialCaseTakesAsMade(Walker& walker, const BodyValu
         return false;
     builtin = program.builtins().canonicalID(builtin);
 
-    bool handsOverOneFunction = std::ranges::any_of(call.argumentsOperands(), [&](ValueID argument) {
-        Reference handedOver = walker.referenceOf(argument);
-        if (!handedOver)
+    bool passesKnownFunction = std::ranges::any_of(call.argumentsOperands(), [&](ValueID argument) {
+        Reference passedValue = walker.referenceOf(argument);
+        if (!passedValue)
             return false;
-        Type type = types.at(walker.typeOf(handedOver));
+        Type type = types.at(walker.typeOf(passedValue));
         return type.isObject() && type.isJavaScriptValue() && singleFunctionOf(types, type);
     });
-    if (!handsOverOneFunction)
+    if (!passesKnownFunction)
         return false;
 
     for (ValueID argument : call.argumentsOperands()) {
         Reference value = walker.referenceOf(argument);
-        if (!value || !value.isValue() || isListAsMade(walker, value))
+        if (!value || !value.isValue() || isKnownPristine(walker, value))
             continue;
         TypeID proven = walker.typeOf(value);
         if (isNeverType(proven))
@@ -243,7 +243,7 @@ static BuiltinID builtinExpectedToBeCalledForStringOperands(Walker& walker, cons
         if (BuiltinID builtin = type.isObject() ? singleBuiltinOf(types, type) : BuiltinID())
             return builtin;
     }
-    ValueID read = index.valueBehindCasts(call.calleeOperand());
+    ValueID read = index.stripCasts(call.calleeOperand());
     if (!read || index.isParameter(read) || index.opcodeOf(read) != Opcode::PropGet || index.value(read).isFreeName())
         return { };
     TypeID object = typeProvenOrExpectedForStringOperands(walker, index.value(read).objectOperand(), call.id());

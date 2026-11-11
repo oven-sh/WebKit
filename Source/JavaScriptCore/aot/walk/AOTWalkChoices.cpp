@@ -126,7 +126,7 @@ Reference findScopeOfClosureReadOffObjectInSight(const Walker& walker, FunctionI
     auto findScopeOfClosureThatStateHolds = [&]() -> Reference {
         if (!walker.has(Mechanism::Folding) || walker.checksProofs())
             return { };
-        ValueID holder = rootOfCellInSweptCode(code, read.objectOperand());
+        ValueID holder = underlyingCellOf(code, read.objectOperand());
         if (code.isConstant(holder) || code.at(holder).opcode != Opcode::NewObject)
             return { };
         std::optional<FieldReference> field = findField(walker.program(), code.at(holder).layout(), read.key());
@@ -655,17 +655,17 @@ static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
         return;
     if (!list.numberOfVariadicOperands() || !list.holes().empty() || list.storage() != AllocationStorage::Heap || list.arrayStorage() != ArrayStorage::Other)
         return;
-    bool holdsNumbersAsWritten = list.contents() && holdsOnlyNumbers(arrayStorageHolding(walker.types(), list.contents()));
+    bool holdsNumbersAsWritten = list.contents() && isNumericStorage(arrayStorageHolding(walker.types(), list.contents()));
     if (list.contents() && !walker.types().at(list.contents()).isAnything() && !holdsNumbersAsWritten)
         return;
-    if (ArrayStorage asked = walker.storageAskedOfLiteralBeingBorn(); holdsOnlyNumbers(asked)) {
+    if (ArrayStorage asked = walker.requestedLiteralStorage(); isNumericStorage(asked)) {
         bool everyElementFits = std::ranges::all_of(list.variadicOperands(), [&](Reference element) {
             TypeID proven = walker.typeOf(element);
             return proven && walker.types().at(proven).isNumber() && (asked != ArrayStorage::Int32 || walker.types().at(proven).isInt32());
         });
         if (everyElementFits) {
             list.setArrayStorage(asked);
-            walker.count(StatisticID::LiteralsOfNumbersBornForWhatLoopStores);
+            walker.count(StatisticID::ArrayLiteralsAllocatedForLoops);
             return;
         }
     }
@@ -701,7 +701,7 @@ ArrayStorage askBirthOfListForStorage(Walker& walker, Reference list, ArrayStora
 {
     if (!list || !list.isValue() || !walker.has(Mechanism::TypedOperations))
         return ArrayStorage::Other;
-    ValueID root = rootOfCellInSweptCode(walker.code(), list.id());
+    ValueID root = underlyingCellOf(walker.code(), list.id());
     const Operation& born = walker.code().at(root);
     if (born.opcode != Opcode::NewArrayLike)
         return ArrayStorage::Other;
@@ -724,12 +724,12 @@ static bool stepsElementOfListItselfInChoices(Walker& walker, Reference list, Re
     static constexpr OpcodeSet steps { Opcode::Increment, Opcode::Decrement, Opcode::Add, Opcode::Sub };
     if (!steps.contains(made.opcode))
         return false;
-    ValueID root = rootOfCellInSweptCode(code, list.id());
+    ValueID root = underlyingCellOf(code, list.id());
     bool readsListItself = false;
     bool restAreIntegers = true;
     made.forEachChild([&](ValueID child) {
-        const Operation& read = code.at(rootOfCellInSweptCode(code, child));
-        if (read.opcode == Opcode::GetArrayElement && rootOfCellInSweptCode(code, read.arrayOperand()) == root)
+        const Operation& read = code.at(underlyingCellOf(code, child));
+        if (read.opcode == Opcode::GetArrayElement && underlyingCellOf(code, read.arrayOperand()) == root)
             readsListItself = true;
         else
             restAreIntegers &= walker.types().at(read.type).isInteger();
@@ -748,15 +748,15 @@ ArrayStorage askBirthOfListForStorageThatTakes(Walker& walker, Reference list, R
     if (type.isNumberWithoutFraction() && type.primitives & Primitive::Integer)
         taking = ArrayStorage::Int32;
     else if (type.isNumber())
-        taking = list && list.isValue() && walker.runOverBoxedValuesTakesFirst(rootOfCellInSweptCode(walker.code(), list.id())) ? ArrayStorage::Contiguous : ArrayStorage::Double;
+        taking = list && list.isValue() && walker.runOverBoxedValuesTakesFirst(underlyingCellOf(walker.code(), list.id())) ? ArrayStorage::Contiguous : ArrayStorage::Double;
     else if (!(type.primitives & Primitive::Number))
         taking = ArrayStorage::Contiguous;
     ArrayStorage born = askBirthOfListForStorage(walker, list, taking, widerListRefusesStore);
     if (born == ArrayStorage::Int32 && taking == ArrayStorage::Int32 && !type.isInt32()) {
-        ValueID root = rootOfCellInSweptCode(walker.code(), list.id());
+        ValueID root = underlyingCellOf(walker.code(), list.id());
         if (!walker.code().at(root).remembersStorageAtSite()) {
             walker.code().letListRememberStorageAtSite(root);
-            walker.count(StatisticID::ListsOfLengthThatRememberStorageAtSite);
+            walker.count(StatisticID::SizedArraysGivenAllocationProfiles);
         }
     }
     return born;
@@ -766,7 +766,7 @@ static bool isBornHereWithoutSourceInChoices(Walker& walker, Reference list)
 {
     if (!list || !list.isValue())
         return false;
-    const Operation& born = walker.code().at(rootOfCellInSweptCode(walker.code(), list.id()));
+    const Operation& born = walker.code().at(underlyingCellOf(walker.code(), list.id()));
     return born.opcode == Opcode::NewArrayLike && (!born.sourceOperand() || walker.types().at(walker.code().at(born.sourceOperand()).type).isUndefinedOrNull());
 }
 
@@ -780,20 +780,20 @@ static void chooseStorageOfListBeingFilledInChoices(Walker& walker, Draft& store
     if (store.opcode != Opcode::TryPutByValDirect)
         return;
     if (hasArrayStorageForm(born) || !isBornHereWithoutSourceInChoices(walker, list)) {
-        if (walker.depthOfCopies() && holdsOnlyNumbers(born) && isBornHereWithoutSourceInChoices(walker, list) && !walker.types().at(walker.typeOf(stored)).isNumber()) {
-            walker.count(StatisticID::StoresOfCopiedRunsThatTakeListsAsTheyAre);
+        if (walker.depthOfCopies() && isNumericStorage(born) && isBornHereWithoutSourceInChoices(walker, list) && !walker.types().at(walker.typeOf(stored)).isNumber()) {
+            walker.count(StatisticID::InlineeArrayStoresLeftGeneric);
             return;
         }
         store.setArrayStorage(born);
         return;
     }
     if (walker.depthOfCopies()) {
-        ValueID root = rootOfCellInSweptCode(walker.code(), list.id());
+        ValueID root = underlyingCellOf(walker.code(), list.id());
         if (!walker.code().at(root).remembersStorageAtSite()) {
             walker.code().letListRememberStorageAtSite(root, true);
-            walker.count(StatisticID::ListsFilledByCopiedRunsThatRememberStorageAtSite);
+            walker.count(StatisticID::InlineeArraysGivenAllocationProfiles);
         }
-        walker.count(StatisticID::StoresOfCopiedRunsThatTakeListsAsTheyAre);
+        walker.count(StatisticID::InlineeArrayStoresLeftGeneric);
         return;
     }
     Reference position = store.positionOperand();
@@ -833,7 +833,7 @@ static void becomeNodeOfDataInChoices(Walker& walker, Draft& draft, const DataNo
     draft.setContents(array->contents);
     draft.setHoles(holes.span());
     draft.setVariadicOperands(elements.span());
-    if (ArrayStorage written = holes.isEmpty() && !elements.isEmpty() && isStorageOfArray(*array) ? arrayStorageOfData(walker.program(), *array) : ArrayStorage::Other; holdsOnlyNumbers(written) && walker.has(Mechanism::TypedOperations))
+    if (ArrayStorage written = holes.isEmpty() && !elements.isEmpty() && isStorageOfArray(*array) ? arrayStorageOfData(walker.program(), *array) : ArrayStorage::Other; isNumericStorage(written) && walker.has(Mechanism::TypedOperations))
         draft.setArrayStorage(written);
     chooseWhatListTakesFromItsSiteInChoices(walker, draft);
 }
@@ -878,6 +878,22 @@ static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array&
     return std::ranges::all_of(array.elements, canLieInSharedStorageInChoices);
 }
 
+static bool isBornToBeFilledInChoices(const DataNode::Array& array)
+{
+    return array.elements.size() > 1 && std::ranges::all_of(array.elements, [](const DataNode& element) {
+        const auto* number = element.tryAs<DataNode::Number>();
+        return number && !number->value;
+    });
+}
+
+static bool variableHoldsListInChoices(Walker& walker, DataID data)
+{
+    const Program& program = walker.program();
+    const Function& function = program.at(walker.currentFunction());
+    FunctionID body = program.at(function.module).body;
+    return function.isModuleBody() || (body && walker.facts().summaries().at(body).holdsWrittenList(data));
+}
+
 static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
 {
     RootOfConstant whereRootEnds = walker.constantEndsWhereItLeaves(data.inputValueGiven, data.data()) ? RootOfConstant::EndsWhereItLeaves : RootOfConstant::IsAsked;
@@ -888,6 +904,10 @@ static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
     SetForScope makingObjectsOfConstant = walker.makingObjectsOfConstant();
     const DataNode& root = walker.program().at(data.data()).root;
     if (const auto* array = root.tryAs<DataNode::Array>(); array && sharesStorageOfArrayInChoices(walker, *array)) {
+        if (array->elements.size() <= maxNodesOfExpandedData && isBornToBeFilledInChoices(*array) && !variableHoldsListInChoices(walker, data.data())) {
+            becomeNodeOfDataInChoices(walker, data, root);
+            return;
+        }
         bool isStoredIntoInLoop = data.inputValueGiven && walker.facts().summaries().at(walker.currentFunction()).constantListIsStoredIntoInLoop(data.inputValueGiven) && surveyDataInChoices(walker, data.data()).tableOfImageHoldsIt;
         data.setEncoding(isStoredIntoInLoop ? DataEncoding::TreeWithOwnStorage : DataEncoding::CopyOnWriteArray);
         return;
@@ -1054,7 +1074,7 @@ static void nameClassOfSuperBaseInChoices(Walker& walker, Draft& draft)
     if (!classLayout || !walker.plan().hasClassRecord(classLayout) || !walker.facts().isEvaluatedAtMostOnce(classLayout))
         return;
     draft.setLayout(classLayout);
-    walker.count(StatisticID::BasesOfSuperReadOffRecordsOfClasses);
+    walker.count(StatisticID::SuperBasesFromClassRecords);
 }
 
 void Walker::chooseConservativeFieldsOfOpcodeThatNeedsChoices(Draft& draft)

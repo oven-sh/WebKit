@@ -1,5 +1,5 @@
 # main.mjs, the entry: export * from "./lib.cjs"; import "./other.mjs" . other.mjs: import { helper } from "./main.mjs"; helper()
-# Who else asks the entry is no question: the other module's name is bound to a variable of the face, the host's look at `then` is a read off the file's exports.
+# Who else asks the entry is no question: the other module's name is bound to a variable of the facade, the host's look at `then` is a read off the file's exports.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link functions modules lookups mechanisms=all
 # CHECK: function f3 unreached
@@ -8,10 +8,10 @@
 layout L0 module=m0 fields=[{key="helper" declared={type=anything}}, {key="fetch" declared={type=anything}}] ownFieldCount=2
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="helper" module=m1 declared={type=anything|absent}
-module m0 path="/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
-module m1 path="#1" displayPath="lib.cjs" flags=[KeepsError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}] syntheticExports=[{name="helper" variable=g1}]
-module m2 path="/other.mjs" displayPath="other.mjs" flags=[KeepsError] body=f4 requests=[{target=m3 completes=true}]
-module m3 path="/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f5 requests=[{target=m1 completes=true isHoisted=true}, {target=m1 isDynamicStarExport=true completes=true}, {target=m2 completes=true}]
+module m0 path="/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="#1" displayPath="lib.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}] syntheticExports=[{name="helper" variable=g1}]
+module m2 path="/other.mjs" displayPath="other.mjs" flags=[CachesEvaluationError] body=f4 requests=[{target=m3 completes=true}]
+module m3 path="/main.mjs" displayPath="main.mjs" flags=[CachesEvaluationError] body=f5 requests=[{target=m1 completes=true isHoisted=true}, {target=m1 isDynamicStarExport=true completes=true}, {target=m2 completes=true}]
 function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = NewObject layout=L0
@@ -34,12 +34,12 @@ function f1 module=m0 kind=Module flags=[IsHiddenInStackTraces] thisType={type=a
     v1 = Undefined
     Return v1
 }
-function f2 name="helper" module=m0 text={start=17 end=48} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+function f2 name="helper" module=m0 sourceRange={start=17 end=48} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=1
     Return v0
 }
-function f3 name="fetch" module=m0 text={start=66 end=96} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+function f3 name="fetch" module=m0 sourceRange={start=66 end=96} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = Integer integer=2
     Return v0

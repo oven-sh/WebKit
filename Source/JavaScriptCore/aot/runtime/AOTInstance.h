@@ -49,7 +49,7 @@ namespace AOT {
 
 class Image;
 struct CaseConversions;
-struct QuotedTexts;
+struct QuotedStringCache;
 struct SortedStorage;
 struct ImageFunction;
 struct ImageRegExp;
@@ -157,7 +157,9 @@ struct ImageWords {
     const FunctionKindData* closureFunctionKinds;
     const ImageRegExp* regExps;
     const uint8_t* regExpCode;
-    const uint32_t* functionStarts;
+    const uint16_t* functionSteps;
+    const uint32_t* functionStartGroups;
+    uint64_t endOfIdentifiers;
 };
 
 struct LazyStringWords {
@@ -165,9 +167,10 @@ struct LazyStringWords {
     uint64_t capacity;
 };
 
-enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject };
-static constexpr unsigned numberOfInlineAllocations = 12;
-static_assert(static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + 1 == numberOfInlineAllocations);
+enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject, SmallNullPrototypeObject };
+static constexpr unsigned numberOfInlineAllocations = 13;
+static_assert(static_cast<unsigned>(InlineAllocation::SmallNullPrototypeObject) + 1 == numberOfInlineAllocations);
+static constexpr unsigned smallObjectInlineCapacity = 2;
 
 struct InlineAllocationData {
     void* allocator;
@@ -240,7 +243,7 @@ struct RealmWords {
     const void* keysOfPairs;
     uint64_t keyOfPairMask;
     CaseConversions* caseConversions;
-    QuotedTexts* quotedTexts;
+    QuotedStringCache* quotedStringCache;
     SortedStorage* sortedStorage;
     MicrotaskQueue* microtaskQueue;
     JSCell* functionOfEngineOverCompiledFunction;

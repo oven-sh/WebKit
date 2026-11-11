@@ -1769,7 +1769,7 @@ static void allocatorAsksEachLoopAroundBlockInTurn()
 {
     ProcedureTraits traits;
     traits.checksAllocation = true;
-    traits.ordersBlocksAsWhenOrderedAgain = true;
+    traits.shouldUseFallbackBlockOrder = true;
     TestProcedure test(traits);
     Output& out = test.out();
     LValue ways = test.argumentGPR(0);
@@ -3221,7 +3221,7 @@ static void allocatorKeepsNoConstantWhoseReaderTakesItsRegister()
 
     AllocationTestText text(test);
     const Order& order = test.procedure().order();
-    AOT_ALLOCATION_TEST_CHECK(test, number->opcode() == NumberOf && extended->opcode() == ZExt32 && isFreeInRegisterOfChild(test.procedure().liveness(), extended));
+    AOT_ALLOCATION_TEST_CHECK(test, number->opcode() == NumberOf && extended->opcode() == ZExt32 && isFreeWhenCoalesced(test.procedure().liveness(), extended));
     AOT_ALLOCATION_TEST_CHECK(test, std::ranges::count(test.procedure().liveness().of(order.loops()[order.of(head).loop], order).valuesReadFromOutside, number) == (isX86_64() ? 0 : 1));
     AOT_ALLOCATION_TEST_CHECK(test, text.count("materialize"_s, number) == 1 && text.count("materialize"_s, number, body) == (isX86_64() ? 1u : 0u));
     AOT_ALLOCATION_TEST_CHECK(test, allocationTestRegisterAtHead(test, head, number).isSet() == !isX86_64());
@@ -3620,7 +3620,7 @@ static void allocatorExtendsCountOfLoop()
     out.setOrigin(allocationTestOriginOfExtension);
     LValue extended = out.zeroExtPtr(count);
     out.setOrigin(Origin());
-    LValue nextSum = out.add(sum, extended);
+    LValue nextSum = out.add(sum, out.opaque(extended));
     out.upsilon(nextCount, count);
     out.upsilon(nextSum, sum);
     out.branch(out.notEqual(nextCount, end), normalEdge(loop), normalEdge(behindLoop));

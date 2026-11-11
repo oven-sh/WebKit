@@ -37,6 +37,7 @@
 #include "B3CaseCollectionInlines.h"
 #include "B3CheckValue.h"
 #include "B3ConstDoubleValue.h"
+#include "B3ConstFloatValue.h"
 #include "B3ConstPtrValue.h"
 #include "B3FenceValue.h"
 #include "B3InsertionSetInlines.h"
@@ -1179,7 +1180,13 @@ private:
             std::swap(a, b);
         // select(b, a) returns a when a is NaN and when both are zeros. That is only wrong when b is the zero that must win: -0 for min, +0 for max.
         if (isNeverNaN(b) && !isZeroWithSign(b, !isMax)) {
-            m_value->replaceWithIdentity(select(b, a));
+            Value* result = select(b, a);
+            if (m_proc.isWasm() && !givesQuietNaN(a)) {
+                // Adding -0 makes a NaN quiet and leaves every other value unchanged.
+                Value* negativeZero = m_value->type() == Float ? static_cast<Value*>(m_insertionSet.insert<ConstFloatValue>(m_index, m_origin, -0.0f)) : m_insertionSet.insert<ConstDoubleValue>(m_index, m_origin, -0.0);
+                result = m_insertionSet.insert<Value>(m_index, Add, m_origin, result, negativeZero);
+            }
+            m_value->replaceWithIdentity(result);
             m_changed = true;
             return;
         }

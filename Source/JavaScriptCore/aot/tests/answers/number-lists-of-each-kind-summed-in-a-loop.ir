@@ -55,7 +55,7 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
     Branch v6 -> taken b2(), notTaken b3()
   b2():
     v7 = ElemGet v0, v3
-    v8 = Convert v7 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v8 = Convert v7 declared={type=number} illTypedCause=FromLooseType
     v9 = Add v2, v8
     v10 = Increment v3
     Jump -> next b1(v9, v10)
@@ -74,7 +74,7 @@ function f2 name="totalWhile" module=m0 flags=[IsChecked, HasExplicitName] lengt
   b2():
     v8 = Call v1, -, v4 calleeName="change"
     v9 = ElemGet v0, v4
-    v10 = Convert v9 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v10 = Convert v9 declared={type=number} illTypedCause=FromLooseType
     v11 = Add v3, v10
     v12 = Increment v4
     Jump -> next b1(v11, v12)

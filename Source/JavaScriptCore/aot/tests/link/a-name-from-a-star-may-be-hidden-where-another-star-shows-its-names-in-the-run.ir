@@ -11,8 +11,8 @@
 module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}]
 module m1 path="/barrel.mjs" displayPath="barrel.mjs" body=f1 requests=[{target=m2 completes=true}, {target=m4 isDynamicStarExport=true completes=true}] exports=[{name="level" variable=g0 isFromStarExport=true}]
 module m2 path="/first.mjs" displayPath="first.mjs" body=f2 exports=[{name="level" variable=g0}]
-module m3 path="/second.cjs" displayPath="second.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g5
-module m4 path="#4" displayPath="second.cjs" flags=[KeepsError] exportRule=CommonJs body=f4 requests=[{target=m3 kind=Require completes=true}] syntheticExports=[{name="default" variable=g6}]
+module m3 path="/second.cjs" displayPath="second.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g5
+module m4 path="#4" displayPath="second.cjs" flags=[CachesEvaluationError] exportRule=CommonJs body=f4 requests=[{target=m3 kind=Require completes=true}] syntheticExports=[{name="default" variable=g6}]
 module m5 path="/still.mjs" displayPath="still.mjs" body=f5 requests=[{target=m2 completes=true}] exports=[{name="level" variable=g0 isFromStarExport=true}]
 module m6 path="/above.mjs" displayPath="above.mjs" body=f6 requests=[{target=m1 isDynamicStarExport=true completes=true}] exports=[{name="level" variable=g0 isFromStarExport=true}]
 entry module=m0
@@ -56,7 +56,7 @@ function f3 name="file" module=m3 kind=CommonJsModule results=[{type=anything}] 
   b0():
     Return
 }
-function f4 name="face" module=m3 kind=Module results=[{type=anything}] {
+function f4 name="facade" module=m3 kind=Module results=[{type=anything}] {
   b0():
     EvaluateModule module=m3 referrer=m4 [isBare]
     Return

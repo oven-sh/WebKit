@@ -137,8 +137,8 @@ static InlineForm chooseFormOfFunctionBind(const InlineBuiltinQuery& query)
 
 static bool standsInFunctionBehindCallOfInlineBuiltin(const InlineBuiltinQuery& query)
 {
-    RuntimeFunctionID behindCall = query.overload.slowPathFunction();
-    const RuntimeFunctionEntry* entry = behindCall ? findRuntimeFunction(query.context.program, behindCall) : nullptr;
+    RuntimeFunctionID slowPath = query.overload.slowPathFunction();
+    const RuntimeFunctionEntry* entry = slowPath ? findRuntimeFunction(query.context.program, slowPath) : nullptr;
     return entry && entry->function == query.context.writtenIn;
 }
 
@@ -170,7 +170,7 @@ static InlineForm chooseFormOfReflectApply(const InlineBuiltinQuery& query)
 static InlineForm chooseFormOfReflectConstruct(const InlineBuiltinQuery& query)
 {
     bool takesOperands = (query.numberOfArguments() == 2 || query.numberOfArguments() == 3) && everyArgumentButThisMayBeObjectForReflect(query, std::nullopt);
-    return query.hasSlowPath && query.isDoneInPlace && takesOperands ? InlineForm::TwoWay : InlineForm::Call;
+    return query.hasSlowPath && takesOperands ? InlineForm::TwoWay : InlineForm::Call;
 }
 
 InlineForm chooseFormOfFunctionBuiltin(const InlineBuiltinQuery& query)

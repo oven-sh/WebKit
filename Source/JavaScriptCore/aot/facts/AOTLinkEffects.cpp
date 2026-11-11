@@ -113,12 +113,12 @@ static constexpr OperandUses usesThatRunCodeNobodyNamesInLinkEffects = usesThatS
 
 static bool mayBeObjectForLinkEffects(const LinkType& type)
 {
-    return type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None || type.builtin || type.holdsUnseen;
+    return type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None || type.builtin || type.hasUnknownObjects;
 }
 
 static bool mayBeOtherCallableForLinkEffects(const LinkType& type)
 {
-    return type.classes != LinkType::Classes::None || type.builtin || type.holdsUnseen;
+    return type.classes != LinkType::Classes::None || type.builtin || type.hasUnknownObjects;
 }
 
 static bool rowLooksIntoAnswerInLinkEffects(BuiltinCallbackResultUse use)
@@ -251,6 +251,7 @@ private:
     struct GivenArgumentsInKnownEffects {
         uint32_t parametersTakenAsExpected { 0 };
         uint32_t parametersCalled { 0 };
+        Vector<uint32_t> parametersThatBringObjectsAlone;
     };
 
     static EffectsOfComponentInKnownEffects knownEffectsOfUnknownCode() { return { Effects::unknownCode(), LocationMasks::top(), objectsOfAnyLayout }; }
@@ -270,7 +271,9 @@ private:
     static void takeKnownEffects(const Effects& all, const LocationMasks& writesOnReturn, uint64_t layoutsWritten, WayInKnownEffects, EffectsOfComponentInKnownEffects& into);
     void takeKnownEffectsOfFunction(FunctionID callee, WayInKnownEffects, EffectsOfComponentInKnownEffects& into) const;
     bool mergeKnownEffectsOfCodeOutside(const CodeEntered&, uint32_t component, WayInKnownEffects, EffectsOfComponentInKnownEffects&) const;
-    void addEffectsOfOperatorsLeftApart(FunctionID, const ThinSummary&, EffectsOfComponentInKnownEffects&) const;
+    void addEffectsOfOperatorsLeftApart(FunctionID, const ThinSummary&, EffectsOfComponentInKnownEffects&, GivenArgumentsInKnownEffects&) const;
+    std::optional<uint16_t> primitivesExpectedOfParameter(FunctionID, uint32_t entryParameter) const;
+    uint32_t parametersExpectedPrimitiveThatBringObjectsAlone(FunctionID, const ThinSummary&, uint32_t node, GivenArgumentsInKnownEffects&) const;
     bool readMayMakeClosureOfField(const LinkType& subject, PropertyKeyID) const;
     void addEffectsOfAccessItself(FunctionID, const ThinSummary&, const SummaryAccess&, const LinkType& subject, PropertyKeyID, WayInKnownEffects, EffectsOfComponentInKnownEffects&);
     static std::optional<uint32_t> entryParameterAt(const ThinSummary&, uint32_t node);
@@ -407,7 +410,7 @@ bool CalleeSummarizerForLinkEffects::isAnyCodeByItsOwnText(FunctionID id, const 
         if (call.callee != SummaryCall::Callee::Value)
             return false;
         SummaryNode::Kind callee = summary.nodes[call.subject].kind;
-        return callee != SummaryNode::Kind::Closure && callee != SummaryNode::Kind::Parameter && !m_flow.typeAt(m_flow.nodeOf(id, call.subject)).isNothing();
+        return callee != SummaryNode::Kind::Closure && callee != SummaryNode::Kind::Parameter && !m_flow.typeAt(m_flow.nodeOf(id, call.subject)).isNever();
     });
 }
 
@@ -442,7 +445,7 @@ auto CalleeSummarizerForLinkEffects::beliefInKindOfNode(SummaryNode::Kind kind) 
 
 LinkType CalleeSummarizerForLinkEffects::asDoorsAsk(LinkType linked)
 {
-    if (linked.holdsUnseen || linked.holdsLostBuiltins || linked.builtin || linked.classes != LinkType::Classes::None)
+    if (linked.hasUnknownObjects || linked.holdsLostBuiltins || linked.builtin || linked.classes != LinkType::Classes::None)
         return LinkType::anything();
     if (linked.objects == LinkType::Objects::Prototype || linked.objects == LinkType::Objects::Prototypes || linked.objects == LinkType::Objects::Lost)
         return LinkType::anything();
@@ -515,7 +518,7 @@ void CalleeSummarizerForLinkEffects::findBeliefInNodes()
                     const SummaryAccess& access = summary.accesses[summary.nodes[node].first];
                     bool isReadByName = access.kind == SummaryAccess::Kind::Read && !access.isToContents() && access.receiver == noSummaryNode && access.subject != noSummaryNode;
                     LinkType subject = isReadByName ? asDoorsAsk(m_flow.typeAt(m_flow.nodeOf(id, access.subject))) : LinkType::anything();
-                    lower(node, subject.holdsUnseen || subject.functions != LinkType::Functions::None ? Belief::Nothing : Belief::WhatDoorsAsk);
+                    lower(node, subject.hasUnknownObjects || subject.functions != LinkType::Functions::None ? Belief::Nothing : Belief::WhatDoorsAsk);
                 } else if (beliefInKindOfNode(kindOf(node)) != Belief::Everything)
                     toVisit.append(node);
             }
@@ -535,7 +538,7 @@ void CalleeSummarizerForLinkEffects::findBeliefInNodes()
 bool CalleeSummarizerForLinkEffects::mayHoldFunction(FlowNodeID field) const
 {
     LinkType held = asDoorsAsk(m_flow.typeAt(field));
-    return held.holdsUnseen || held.functions != LinkType::Functions::None;
+    return held.hasUnknownObjects || held.functions != LinkType::Functions::None;
 }
 
 bool CalleeSummarizerForLinkEffects::mayFindFunctionInFieldUnder(const LinkType& subject, PropertyKeyID key) const
@@ -789,7 +792,7 @@ void CalleeSummarizerForLinkEffects::lookInLayout(LayoutID layout, bool hasOwnFi
 
 void CalleeSummarizerForLinkEffects::findCodeBehindLookup(const LinkType& subject, PropertyKeyID key, SummaryAccess::Kind kind, bool callsWhatIsFound, CodeFound& found)
 {
-    if (subject.isNothing())
+    if (subject.isNever())
         return;
     constexpr uint16_t primitivesWithoutMembers = Primitive::UndefinedOrNull | Primitive::Absent;
     bool isOfProgram = !mayBeOtherCallableForLinkEffects(subject) && subject.functions == LinkType::Functions::None && !(subject.primitives & ~primitivesWithoutMembers);
@@ -909,7 +912,7 @@ bool CalleeSummarizerForLinkEffects::rowSaysAllOfCallsOf(const BuiltinOverload& 
 
 bool CalleeSummarizerForLinkEffects::addEffectsOnOperand(const BuiltinOverload& row, BuiltinOperand position, const LinkType& type, CodeFound& found, Effects& effects) const
 {
-    if (type.isNothing())
+    if (type.isNever())
         return true;
     bool mayBeObject = mayBeObjectForLinkEffects(type);
     const BuiltinParameter* parameter = m_builtins.parameterFor(row, position);
@@ -1004,7 +1007,7 @@ bool CalleeSummarizerForLinkEffects::passesNoIterable(FunctionID id, const ThinS
     if (arguments.empty())
         return true;
     LinkType first = typeAt(id, arguments[0]);
-    return !first.isNothing() && !mayBeObjectForLinkEffects(first) && !(first.primitives & ~Primitive::UndefinedOrNull);
+    return !first.isNever() && !mayBeObjectForLinkEffects(first) && !(first.primitives & ~Primitive::UndefinedOrNull);
 }
 
 bool CalleeSummarizerForLinkEffects::addEffectsOfRows(BuiltinID named, FunctionID id, const ThinSummary& summary, const SummaryCall& call, CodeFound& found, Effects& effects) const
@@ -1060,7 +1063,7 @@ void CalleeSummarizerForLinkEffects::findCodeEnteredByCall(FunctionID id, const 
         break;
     case SummaryCall::Callee::Name: {
         LinkType receiver = typeAt(id, summary, call.receiver);
-        if (receiver.holdsUnseen || (call.key && mayFindFunctionInFieldUnder(receiver, call.key)))
+        if (receiver.hasUnknownObjects || (call.key && mayFindFunctionInFieldUnder(receiver, call.key)))
             found.mayBeUnseen = true;
         receiver.primitives = 0;
         receiver.builtin = { };
@@ -1148,7 +1151,7 @@ Effects CalleeSummarizerForLinkEffects::effectsOfCallItself(FunctionID id, const
     case SummaryCall::Callee::Builtin:
         break;
     case SummaryCall::Callee::Name:
-        if (!typeAt(id, call.receiver).isNothing()) {
+        if (!typeAt(id, call.receiver).isNever()) {
             effects = effectsOfLookupItself(SummaryAccess::Kind::Read, call.key);
             if (call.key && readMayMakeClosureOfField(typeAt(id, call.receiver), call.key))
                 effects.writes.add(m_program, MemoryLocation::objectField(call.key));
@@ -1187,7 +1190,7 @@ bool CalleeSummarizerForLinkEffects::handsObjectToCodeNobodyNames(FunctionID id,
 bool CalleeSummarizerForLinkEffects::changeMayRunCode(FunctionID id, const SummaryChange& change) const
 {
     const LinkType subject = typeAt(id, change.subject);
-    if (subject.isNothing())
+    if (subject.isNever())
         return false;
     switch (change.kind) {
     case SummaryChange::Kind::CopiesInto:

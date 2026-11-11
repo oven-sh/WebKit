@@ -64,6 +64,7 @@ export default b.declarations(
   ),
   b.hostRoles(
     "Buffer.byteLength",
+    "Buffer.from",
     "Buffer.prototype.toString",
     "TextEncoder.prototype.encode",
     "TextEncoder.prototype.encodeInto",

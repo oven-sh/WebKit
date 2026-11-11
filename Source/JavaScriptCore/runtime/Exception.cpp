@@ -119,7 +119,7 @@ void Exception::retainReturnAddresses(VM& vm, AOT::ReturnAddressTrace* returnAdd
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
 }
 
-// Two readers tell the stack of an Error that was made on the spot from the stack of the throw: an inspector lists the frames, and node:vm marks the throw in the source text of the bytecode on top.
+// The inspector and node:vm tell the stack of the Error from the stack of the throw, so they get null.
 ErrorInstance* Exception::errorToTakeStackFrom(VM& vm, JSValue thrownValue)
 {
     auto* error = dynamicDowncast<ErrorInstance>(thrownValue);

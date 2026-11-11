@@ -51,6 +51,7 @@
 #include "PropertyNameArray.h"
 #include "PropertyRun.h"
 #include "ProxyObject.h"
+#include "ReflectObject.h"
 #include "RegExpObject.h"
 #include "ResourceExhaustion.h"
 #include "StringObject.h"
@@ -442,6 +443,27 @@ bool JSObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject
 }
 #endif // ASSERT_ENABLED
 
+// The result holds only until user code runs. [[GetOwnProperty]] on it can add a trap to, or revoke, a skipped
+// proxy, so callers walk again afterwards and define through the original receiver if the walk ends elsewhere.
+static ALWAYS_INLINE JSObject* skipProxiesForwardingOwnPropertyDefinition(JSObject* receiver)
+{
+    while (receiver->type() == ProxyObjectType) {
+        auto* proxy = uncheckedDowncast<ProxyObject>(receiver);
+        if (!proxy->forwardsOwnPropertyDefinitionToTarget())
+            break;
+        receiver = proxy->target();
+    }
+    return receiver;
+}
+
+static ALWAYS_INLINE JSObject* receiverForDefinePropertyOnReceiver(JSObject* receiver)
+{
+    receiver = skipProxiesForwardingOwnPropertyDefinition(receiver);
+    if (receiver->type() == GlobalProxyType)
+        receiver = uncheckedDowncast<JSGlobalProxy>(receiver)->target();
+    return receiver;
+}
+
 // https://tc39.github.io/ecma262/#sec-ordinaryset
 bool ordinarySetSlow(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, JSValue value, JSValue receiver, bool shouldThrow)
 {
@@ -528,10 +550,12 @@ bool ordinarySetWithOwnDescriptor(JSGlobalObject* globalObject, JSObject* object
         // So, we perform [[GetOwnProperty]] onto the receiver while we already perform [[GetOwnProperty]] onto the object.
 
         // 9.1.9.1-4-c Let existingDescriptor be ? Receiver.[[GetOwnProperty]](P).
-        JSObject* receiverObject = asObject(receiver);
+        JSObject* receiverObject = skipProxiesForwardingOwnPropertyDefinition(asObject(receiver));
         PropertyDescriptor existingDescriptor;
         bool existingDescriptorFound = receiverObject->getOwnPropertyDescriptor(globalObject, propertyName, existingDescriptor);
         RETURN_IF_EXCEPTION(scope, false);
+        if (skipProxiesForwardingOwnPropertyDefinition(asObject(receiver)) != receiverObject)
+            receiverObject = asObject(receiver);
 
         // 9.1.9.1-4-d If existingDescriptor is not undefined, then
         if (existingDescriptorFound) {
@@ -820,7 +844,7 @@ bool JSObject::mightBeSpecialProperty(VM& vm, JSType type, UniquedStringImpl* ui
     }
 }
 
-static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, JSObject* receiver, bool shouldThrow)
+static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, JSObject* originalReceiver, JSObject* receiver, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -828,13 +852,16 @@ static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObje
     PropertySlot slot(receiver, PropertySlot::InternalMethodType::GetOwnProperty);
     bool hasProperty = receiver->methodTable()->getOwnPropertySlot(receiver, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
+    JSObject* definitionReceiver = receiverForDefinePropertyOnReceiver(originalReceiver) == receiver ? receiver : originalReceiver;
 
     if (hasProperty) {
         // FIXME: For an accessor with setter, the error message is misleading.
         if (slot.attributes() & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor)
             return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 
-        if (slot.attributes() & PropertyAttribute::CustomValue) {
+        // A custom setter stands in for [[Set]] on the receiver itself. Through a proxy, the property is
+        // reached by [[DefineOwnProperty]] instead, which replaces the custom value.
+        if (originalReceiver->type() != ProxyObjectType && (slot.attributes() & PropertyAttribute::CustomValue)) {
             // (Not for a receiver with immutable properties: a native setter does not ask, and [[DefineOwnProperty]] below does.)
             PutValueFunc customSetter = slot.customSetter();
             if (customSetter && !receiver->structure()->isImmutableProperty(propertyName.uid()))
@@ -843,10 +870,10 @@ static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObje
 
         PropertyDescriptor descriptor;
         descriptor.setValue(value);
-        RELEASE_AND_RETURN(scope, receiver->methodTable()->defineOwnProperty(receiver, globalObject, propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, definitionReceiver->methodTable()->defineOwnProperty(definitionReceiver, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    RELEASE_AND_RETURN(scope, receiver->createDataProperty(globalObject, propertyName, value, shouldThrow));
+    RELEASE_AND_RETURN(scope, definitionReceiver->createDataProperty(globalObject, propertyName, value, shouldThrow));
 }
 
 // https://tc39.es/ecma262/#sec-ordinaryset (step 3)
@@ -861,8 +888,12 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
     // FIXME: For a failure due to primitive receiver, the error message is misleading.
     if (!receiver)
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
-    if (receiver->type() == GlobalProxyType)
-        receiver = uncheckedDowncast<JSGlobalProxy>(receiver)->target();
+    JSObject* originalReceiver = receiver;
+    receiver = receiverForDefinePropertyOnReceiver(receiver);
+    // Bun: whether the walk above goes through a proxy depends on what the proxy has cached of its handler. Such a store is
+    // judged as it is while nothing is cached, where the proxy's [[DefineOwnProperty]] asks the target: not as a store
+    // that starts at the target.
+    bool lookedThroughForwardingProxy = originalReceiver->type() == ProxyObjectType && receiver != originalReceiver;
 #if ENABLE(AOT)
     if (JSObject* defineTarget = vm.hasCompiledCode() ? AOT::RuntimeHooks::proxyDefinePropertyTarget(vm, receiver) : nullptr; defineTarget && defineTarget->type() != ProxyObjectType && defineTarget->type() != CompiledObjectType)
         receiver = defineTarget;
@@ -874,23 +905,26 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
         // Same policy as in putInlineSlow(), where the store starts at the receiver.
         LockedPropertyPolicy policy = lockedPropertyPolicy(globalObject, receiver, propertyName.uid(), false);
         bool shouldThrow = slot.isStrictMode()
-            || ((slot.context() == PutPropertySlot::ReflectSet ? policy.throwsFromReflect : policy.throwsInSloppyMode) && !specRejectsStore(globalObject, receiver, propertyName));
-        return definePropertyOnReceiverSlow(globalObject, propertyName, value, receiver, shouldThrow);
+            || (!lookedThroughForwardingProxy && (slot.context() == PutPropertySlot::ReflectSet ? policy.throwsFromReflect : policy.throwsInSloppyMode) && !specRejectsStore(globalObject, receiver, propertyName));
+        return definePropertyOnReceiverSlow(globalObject, propertyName, value, originalReceiver, receiver, shouldThrow);
     }
 
     if (slot.isTaintedByOpaqueObject() || receiver->methodTable()->defineOwnProperty != JSObject::defineOwnProperty) {
         if (mightBeSpecialProperty(vm, receiver->type(), propertyName.uid()))
-            return definePropertyOnReceiverSlow(globalObject, propertyName, value, receiver, slot.isStrictMode());
+            return definePropertyOnReceiverSlow(globalObject, propertyName, value, originalReceiver, receiver, slot.isStrictMode());
     }
 
     if (receiver->structure()->hasAnyKindOfGetterSetterProperties()) {
         unsigned attributes;
         if (receiver->getDirectOffset(vm, propertyName, attributes) != invalidOffset && (attributes & PropertyAttribute::CustomValue))
-            return definePropertyOnReceiverSlow(globalObject, propertyName, value, receiver, slot.isStrictMode());
+            return definePropertyOnReceiverSlow(globalObject, propertyName, value, originalReceiver, receiver, slot.isStrictMode());
     }
 
-    if (receiver->hasNonReifiedStaticProperties()) [[unlikely]]
+    if (receiver->hasNonReifiedStaticProperties()) [[unlikely]] {
+        if (originalReceiver->type() == ProxyObjectType)
+            return definePropertyOnReceiverSlow(globalObject, propertyName, value, originalReceiver, receiver, slot.isStrictMode());
         return receiver->putInlineFastReplacingStaticPropertyIfNeeded(globalObject, propertyName, value, slot);
+    }
     return receiver->putInlineFast(globalObject, propertyName, value, slot);
 }
 
@@ -1092,7 +1126,7 @@ ArrayStorage* JSObject::enterDictionaryIndexingModeWhenArrayStorageAlreadyExists
     return newButterfly->arrayStorage();
 }
 
-void JSObject::enterDictionaryIndexingMode(VM& vm)
+ArrayStorage* JSObject::enterDictionaryIndexingMode(VM& vm)
 {
     switch (indexingType()) {
     case NonArray:
@@ -1103,7 +1137,7 @@ void JSObject::enterDictionaryIndexingMode(VM& vm)
         // allocated ArrayStorage, so do not skip for JSArray subclasses that
         // use NonArray indexing (e.g. $vm RuntimeArray with DerivedArrayType).
         if (!inherits<JSArray>()) [[likely]]
-            return;
+            return nullptr;
         [[fallthrough]];
     case ArrayClass:
     case ALL_UNDECIDED_INDEXING_TYPES:
@@ -1115,14 +1149,13 @@ void JSObject::enterDictionaryIndexingMode(VM& vm)
         // doesn't support traditional indexed properties. At the time of writing, this just affects
         // typed arrays.
         if (ArrayStorage* storage = ensureArrayStorageSlow(vm))
-            enterDictionaryIndexingModeWhenArrayStorageAlreadyExists(vm, storage);
-        break;
+            return enterDictionaryIndexingModeWhenArrayStorageAlreadyExists(vm, storage);
+        return nullptr;
     case ALL_ARRAY_STORAGE_INDEXING_TYPES:
-        enterDictionaryIndexingModeWhenArrayStorageAlreadyExists(vm, this->butterfly()->arrayStorage());
-        break;
+        return enterDictionaryIndexingModeWhenArrayStorageAlreadyExists(vm, this->butterfly()->arrayStorage());
         
     default:
-        break;
+        return nullptr;
     }
 }
 
@@ -3033,7 +3066,8 @@ void JSObject::seal(VM& vm)
     if (isSealed(vm))
         return;
     materializeLazyOwnProperties(vm);
-    enterDictionaryIndexingMode(vm);
+    if (ArrayStorage* storage = enterDictionaryIndexingMode(vm))
+        storage->m_sparseMap->seal();
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -3057,7 +3091,14 @@ void JSObject::freeze(VM& vm)
     if (isFrozen(vm))
         return;
     materializeLazyOwnProperties(vm);
-    enterDictionaryIndexingMode(vm);
+    if (ArrayStorage* storage = enterDictionaryIndexingMode(vm)) {
+        SparseArrayValueMap* map = storage->m_sparseMap.get();
+        map->freeze();
+        if (indexingType() & IsArray)
+            map->setLengthIsReadOnly();
+        if (!map->isEmpty())
+            notifyPresenceOfIndexedAccessors(vm);
+    }
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -3067,9 +3108,24 @@ void JSObject::freeze(VM& vm)
     }
 }
 
+bool JSObject::isSealedWithArrayStorage(VM& vm)
+{
+    return structure()->isSealed(vm) && arrayStorage()->m_sparseMap->isSealed();
+}
+
+bool JSObject::isFrozenWithArrayStorage(VM& vm)
+{
+    if (!structure()->isFrozen(vm))
+        return false;
+    SparseArrayValueMap* map = arrayStorage()->m_sparseMap.get();
+    if ((indexingType() & IsArray) && !map->lengthIsReadOnly())
+        return false;
+    return map->isFrozen();
+}
+
 void JSObject::materializeLazyOwnProperties(VM& vm)
 {
-    if (!structure()->typeInfo().overridesGetOwnSpecialPropertyNames())
+    if (!structure()->typeInfo().overridesGetOwnSpecialPropertyNames() || isJSArray(this))
         return;
 
     // Force reifying lazy properties. Special properties (e.g. function "length" / "name",
@@ -4498,6 +4554,15 @@ static bool onlyRepeatsOrRestrictsProperty(JSGlobalObject* globalObject, const P
     return !descriptor.value() || sameValue(globalObject, descriptor.value(), current.value());
 }
 
+// True if reflection reports a locked property differently from the structure.
+static bool repeatsReportedDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
+{
+    if (!descriptor.isDataDescriptor() || !descriptor.value() || !descriptor.writablePresent() || !descriptor.enumerablePresent() || !descriptor.configurablePresent())
+        return false;
+    PropertyDescriptor reported = current;
+    return reportIfLocked(object, propertyName, reported) && reported.equalTo(globalObject, descriptor);
+}
+
 // https://tc39.es/ecma262/#sec-validateandapplypropertydescriptor
 bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, bool isExtensible,
     const PropertyDescriptor& descriptor, bool isCurrentDefined, const PropertyDescriptor& current, bool throwException)
@@ -4546,6 +4611,10 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         bool isUnchanged = isPropertyUnchangedByDescriptor(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
         if (isUnchanged)
+            return true;
+        bool repeatsReported = repeatsReportedDescriptor(globalObject, object, propertyName, current, descriptor);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (repeatsReported)
             return true;
         bool onlyRestricts = onlyRepeatsOrRestrictsProperty(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
@@ -4621,6 +4690,21 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         object->putDirectAccessor(globalObject, propertyName, getterSetter, attributes & ~PropertyAttribute::ReadOnly);
     } else {
         ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());
+#if USE(BUN_JSC_ADDITIONS)
+        // Bun: a definition that gives a value and changes no attribute is a store of that value. Where native code
+        // stands behind the property (a CustomValue with a setter), the setter gets the value and the property stays
+        // what it is, as V8 has it for its native data properties. Upstream puts the value in the property's place
+        // (JSTests/stress/reflect-set-proxy-receiver-custom-value.js), and since 324876@main a store through a proxy
+        // that only forwards ends here.
+        if (descriptor.value() && attributes == current.attributes() && object->structure()->hasAnyKindOfGetterSetterProperties()) {
+            unsigned storedAttributes;
+            PropertyOffset offset = object->getDirectOffset(vm, propertyName, storedAttributes);
+            if (isValidOffset(offset) && (storedAttributes & PropertyAttribute::CustomValue) && !(storedAttributes & PropertyAttribute::ReadOnly)) {
+                if (PutValueFunc setter = uncheckedDowncast<CustomGetterSetter>(object->getDirect(offset))->setter())
+                    RELEASE_AND_RETURN(scope, setter(object->realm(), JSValue::encode(object), JSValue::encode(descriptor.value()), propertyName));
+            }
+        }
+#endif
         JSValue value = descriptor.value() ? descriptor.value() : (current.value() ? current.value() : jsUndefined());
         object->putDirect(vm, propertyName, value, attributes & ~PropertyAttribute::Accessor);
     }

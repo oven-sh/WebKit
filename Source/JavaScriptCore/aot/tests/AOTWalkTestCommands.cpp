@@ -190,7 +190,7 @@ static void runPositionInsideCommand(TestCommandContext& context)
             : named->first == "from-zero-up"_s ? &GroundsOfPosition::isFromZeroUp
             : named->first == "counter"_s ? &GroundsOfPosition::counter
             : named->first == "start"_s ? &GroundsOfPosition::start
-            : named->first == "length-holds-bound"_s ? &GroundsOfPosition::lengthHoldsBound
+            : named->first == "length-holds-bound"_s ? &GroundsOfPosition::limitWithinLengthCheck
             : nullptr;
         if (!place) {
             context.out.println("bad argument "_s, word);
@@ -198,7 +198,7 @@ static void runPositionInsideCommand(TestCommandContext& context)
         }
         grounds.*place = named->second;
         if (named->first == "not-below"_s)
-            grounds.isBelowAnswersYes = false;
+            grounds.isBelowResult = false;
     }
     bool isShown = grounds.position && groundsShowPositionInside(code, walks.types(), grounds.position, grounds, scopedLambda<bool(ValueID, bool)>([](ValueID, bool) {
         return true;
@@ -252,7 +252,9 @@ static void runVerifyGroundsCommand(TestCommandContext& context)
             : named->first == "length"_s ? &GroundsOfPosition::length
             : named->first == "below"_s ? &GroundsOfPosition::isBelow
             : named->first == "from-zero-up"_s ? &GroundsOfPosition::isFromZeroUp
-            : named->first == "length-holds-bound"_s ? &GroundsOfPosition::lengthHoldsBound
+            : named->first == "counter"_s ? &GroundsOfPosition::counter
+            : named->first == "start"_s ? &GroundsOfPosition::start
+            : named->first == "length-holds-bound"_s ? &GroundsOfPosition::limitWithinLengthCheck
             : nullptr;
         if (!place) {
             context.out.println("bad argument "_s, word);

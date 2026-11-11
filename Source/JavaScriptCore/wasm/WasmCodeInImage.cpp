@@ -16,7 +16,10 @@
 #include "Options.h"
 #include "WasmModuleInformation.h"
 #include "WasmOperations.h"
+#include "WasmSections.h"
+#include "WasmStreamingParser.h"
 #include <algorithm>
+#include <wtf/LEBDecoder.h>
 #include <wtf/SHA1.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -66,8 +69,22 @@ ImagePointerTable ImagePointerTable::forModule(const ModuleInformation& info, ui
 
 std::array<uint8_t, 20> CodeInImage::digestOf(std::span<const uint8_t> source)
 {
-    SHA1 sha1;
-    sha1.addBytes(source);
+    SourceHasher sha1;
+    constexpr size_t headerSize = 8;
+    size_t hashedEnd = 0;
+    size_t offset = std::min(headerSize, source.size());
+    while (offset < source.size()) {
+        Section section;
+        uint32_t payloadSize;
+        if (!decodeSection(source[offset++], section) || !WTF::LEBDecoder::decodeUInt32(source, offset, payloadSize) || payloadSize > source.size() - offset)
+            break;
+        if (section == Section::Data || section == Section::Custom) {
+            sha1.addBytes(source.subspan(hashedEnd, offset - hashedEnd));
+            hashedEnd = offset + payloadSize;
+        }
+        offset += payloadSize;
+    }
+    sha1.addBytes(source.subspan(hashedEnd));
     SHA1::Digest digest;
     sha1.computeHash(digest);
     return digest;
@@ -76,10 +93,8 @@ std::array<uint8_t, 20> CodeInImage::digestOf(std::span<const uint8_t> source)
 RegisterAtOffsetList CodeInImage::savedRegistersFrom(const SavedRegistersInImage& saved)
 {
     RegisterSet registers;
-    for (unsigned reg = 0; reg < 64; ++reg) {
-        if (saved.registers >> reg & 1)
-            registers.add(Reg::fromIndex(reg), IgnoreVectors);
-    }
+    for (uint64_t left = saved.registers; left; left &= left - 1)
+        registers.add(Reg::fromIndex(std::countr_zero(left)), IgnoreVectors);
     RegisterAtOffsetList list(registers);
     if (list.registerCount())
         list.adjustOffsets(saved.offsetOfFirst - list.at(0).offset());
@@ -148,6 +163,41 @@ static std::span<const DeclinedModuleInImage> declinedModulesIn(const uint8_t* d
     return { reinterpret_cast<const DeclinedModuleInImage*>(std::to_address(modulesIn(directory).end())), header.numberOfDeclinedModules };
 }
 
+const void* CodeInImage::framelessFaultStub(const void* pc)
+{
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        uintptr_t place = std::bit_cast<uintptr_t>(pc) - std::bit_cast<uintptr_t>(image->code.data());
+        if (place >= image->code.size())
+            continue;
+        const uint8_t* directory = image->directory.data();
+        for (auto& module : modulesIn(directory)) {
+            std::span ranges { reinterpret_cast<const FramelessRangeInImage*>(directory + module.framelessRanges), module.numberOfFramelessRanges };
+            auto next = std::ranges::upper_bound(ranges, place, { }, &FramelessRangeInImage::begin);
+            if (next != ranges.begin() && place < std::prev(next)->end)
+                return image->code.data() + reinterpret_cast<const DirectoryInImage*>(directory)->faultWithoutFrame;
+        }
+    }
+    return nullptr;
+}
+
+bool CodeInImage::isInFunction(const void* pc)
+{
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        uintptr_t place = std::bit_cast<uintptr_t>(pc) - std::bit_cast<uintptr_t>(image->code.data());
+        if (place >= image->code.size())
+            continue;
+        const uint8_t* directory = image->directory.data();
+        for (auto& module : modulesIn(directory)) {
+            for (uint32_t offset : module.functions) {
+                std::span functions { reinterpret_cast<const FunctionInImage*>(directory + offset), module.numberOfFunctions };
+                if (std::ranges::any_of(functions, [&](const FunctionInImage& function) { return place - function.entry < function.size; }))
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
 const ModuleInImage* CodeInImage::findRecord(const ModuleInformation& info)
 {
     if (!info.hasSourceDigest)
@@ -178,6 +228,22 @@ ImageCodeFlavor CodeInImage::flavorFor(const ModuleInformation& info, MemoryMode
     if (!info.memoryCount() && Options::useWasmFaultSignalHandler())
         return ImageCodeFlavor::Trapping;
     return ImageCodeFlavor::Checking;
+}
+
+const ModuleInImage* CodeInImage::findBeforeParsing(std::span<const uint8_t> source, ModuleInformation& info)
+{
+    if (!needsSourceDigests())
+        return nullptr;
+    info.sourceDigest = digestOf(source);
+    info.sourceSize = source.size();
+    info.hasSourceDigest = true;
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        for (auto& module : modulesIn(image->directory.data())) {
+            if (module.sourceSize == info.sourceSize && module.digest == info.sourceDigest)
+                return usesDisabledVectors(module) ? nullptr : &module;
+        }
+    }
+    return nullptr;
 }
 
 const ModuleInImage* CodeInImage::find(const ModuleInformation& info)
@@ -246,6 +312,7 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
     m_pointers[ImagePointerTable::restoreFrameCallee] = CalleeBits::boxNativeCallee(&RestoreFrameCallee::singleton());
     m_pointers[ImagePointerTable::restoreFrameReturnAddress] = reinterpret_cast<void*>(untagCodePtr<CFunctionPtrTag>(wasm_restore_frame_return));
     m_pointers[ImagePointerTable::structureIDBase] = std::bit_cast<void*>(structureIDBase());
+    m_pointers[ImagePointerTable::throwFromFaultHandler] = LLInt::getCodePtr<CFunctionPtrTag>(wasm_throw_from_fault_handler_trampoline_reg_instance).taggedPtr();
 #if GIGACAGE_ENABLED
     m_pointers[ImagePointerTable::primitiveGigacageDisableRequest] = &Gigacage::disablePrimitiveGigacageRequested;
     m_pointers[ImagePointerTable::primitiveGigacageBase] = Gigacage::addressOfBasePtr(Gigacage::Primitive);
@@ -290,6 +357,28 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
 }
 
 CodeInImage::~CodeInImage() = default;
+
+bool CodeInImage::holds(const Callee* callee, size_t functionCodeIndex) const
+{
+    if (m_callees[functionCodeIndex].ptr() == callee)
+        return true;
+    Locker locker { m_faultCalleesLock };
+    auto iterator = m_faultCallees.find(functionCodeIndex);
+    return iterator != m_faultCallees.end() && iterator->value.ptr() == callee;
+}
+
+Ref<OMGCallee> CodeInImage::calleeWithoutSavedRegisters(const void* pc)
+{
+    size_t index = m_callees.findIf([&](auto& callee) {
+        auto [start, end] = callee->range();
+        return start <= pc && pc < end;
+    });
+    RELEASE_ASSERT(index != notFound);
+    Locker locker { m_faultCalleesLock };
+    return m_faultCallees.ensure(index, [&] {
+        return OMGCallee::createWithoutSavedRegisters(m_callees[index].get());
+    }).iterator->value;
+}
 
 CodePtr<JSEntryPtrTag> CodeInImage::jsEntrypoint(const RTT& rtt) const
 {

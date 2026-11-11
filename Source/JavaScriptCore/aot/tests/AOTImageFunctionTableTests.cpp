@@ -20,6 +20,7 @@
 #include "AOTNumbering.h"
 #include "AOTOperationData.h"
 #include "AOTPlan.h"
+#include "AOTPrefixCode.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRepresentation.h"
 #include "AOTStubsBarriers.h"
@@ -91,7 +92,7 @@ static void testImageFunctionOf()
     const Image& loaded = *image.image;
     auto hasOwnRecord = [&](uint32_t function) {
         std::optional<uint32_t> index = loaded.imageFunctionOf(FunctionID(function));
-        return index && loaded.function(*index).function() == function;
+        return index && loaded.rootFunctionOf(*index) == FunctionID(function);
     };
 
     for (uint32_t function : { 1u, 2u, 4u, 6u })
@@ -128,7 +129,7 @@ static void testRecords()
     AOT_TEST_CHECK(!loaded.frameOf(frameless).frameSizeInBytes());
     AOT_TEST_CHECK(&loaded.frameOf(second) == &loaded.frameOf(third));
     AOT_TEST_CHECK(&loaded.frameOf(first) != &loaded.frameOf(second));
-    AOT_TEST_CHECK(loaded.section<ImageFunction>(ImageSection::Functions).size() == 4);
+    AOT_TEST_CHECK(loaded.header().counts.functions == 4);
 
     AOT_TEST_CHECK(loaded.function(first).flags() == OptionSet<ImageFunctionFlag>({ HasCallSites, HasPositions }));
     AOT_TEST_CHECK(loaded.function(second).flags() == OptionSet<ImageFunctionFlag>({ HasCallSites, HasPositions }));
@@ -136,7 +137,7 @@ static void testRecords()
     AOT_TEST_CHECK(!loaded.function(frameless).has(HasHandlers));
     AOT_TEST_CHECK(!loaded.function(frameless).has(HasFrameMaps));
     for (uint32_t function : { 1u, 2u, 3u, 4u })
-        AOT_TEST_CHECK(loaded.function(image.indexOf(function)).function() == function);
+        AOT_TEST_CHECK(loaded.rootFunctionOf(image.indexOf(function)) == FunctionID(function));
 }
 
 static SUPPRESS_ASAN void testSampleInNativeCode()
@@ -464,7 +465,7 @@ static void testNameNumberPastFifteenBits()
         ++numberOfNamesPastFifteenBits;
         AOT_TEST_CHECK(names.at(*number).key == word.key);
         AOT_TEST_CHECK(*number < text.numberOfIdentifiers());
-        AOT_TEST_CHECK(text.identifier(*number).text() == program.at(word.key).text);
+        AOT_TEST_CHECK(text.identifier(*number).text() == StringID(image.built.numbers->stringNumbers().requiredNumberOf(program.at(word.key).text)));
     }
     AOT_TEST_CHECK(numberOfNamesPastFifteenBits >= numberOfNames - firstNumberPastFifteenBits);
 }
@@ -473,12 +474,12 @@ static constexpr uint32_t numberOfVariedFunctions = 9000;
 static constexpr uint32_t closuresHandedToOneCall = 50;
 static constexpr std::array<unsigned, 3> threadCountsOfFunctionTables { 1, 2, 16 };
 static constexpr std::array flagsOfVariedFunctions { "IsSloppy"_s, "IsHiddenInStackTraces"_s, "HasExplicitName"_s, "IsNamedByComputedKey"_s };
-static constexpr std::array syntaxOfVariedFunctions { "IsEvaluatedScript"_s, "IsShownAsNativeCode"_s, "IsShownInModuleOfHelpers"_s };
+static constexpr std::array syntaxOfVariedFunctions { "IsEvaluatedScript"_s, "IsShownAsNativeCode"_s, "IsShownInHelperModule"_s };
 static constexpr uint32_t numberOfWrittenForms = (1u << flagsOfVariedFunctions.size()) * 2 * 2 * 3;
 static constexpr uint32_t lengthThatFitsNoByte = 300;
 static constexpr unsigned numberOfCapturesThatFitNoHalfByte = 16;
 static_assert(numberOfVariedFunctions > 2 * indicesInRangeOfLoop);
-static_assert(numberOfWrittenForms / 2 * 3 > functionRecordIsListedByFunction);
+static_assert(numberOfWrittenForms / 2 * 3 > unsharedFunctionRecord);
 
 static bool variedFunctionHasName(uint32_t function) { return function % 3; }
 static bool variedFunctionHasCode(uint32_t function) { return function % 11 != 3; }
@@ -628,7 +629,7 @@ static void checkTablesOfVariedFunctions(const TestBuild& build, const TestImage
         AOT_TEST_CHECK(tables.builtinImplementedBy(index).has_value() == trace.implements().has_value());
 
         bool isShownByName = source && source <= numberOfVariedFunctions && variedFunctionHasCode(source);
-        std::optional<uint32_t> name = isShownByName && function.name && function.name != program.strings.emptyString() ? std::optional(function.name.index()) : std::nullopt;
+        std::optional<uint32_t> name = isShownByName && function.name && function.name != program.strings.emptyString() ? numbers.stringNumbers().numberOf(function.name) : std::nullopt;
         AOT_TEST_CHECK(tables.nameOfFunction(index) == name);
         numberOfNames += name && index < functions.firstDerived();
 
@@ -642,7 +643,7 @@ static void checkTablesOfVariedFunctions(const TestBuild& build, const TestImage
         AOT_TEST_CHECK(tables.functionLengthOf(index) == lengthOfVariedFunction(source));
         numberWithLargeCounts += lengthOfVariedFunction(source) >= countsAreListed || countsInTable.encoded() == countsAreListed;
         AOT_TEST_CHECK(std::bit_cast<uint16_t>(tables.kindOfClosureNumber(closureNumber)) == std::bit_cast<uint16_t>(record.kind));
-        AOT_TEST_CHECK(tables.closureCellNumbers()[closureNumber] == numbers.closureCellNumber(unit.function));
+        AOT_TEST_CHECK(SparseNumberTable(tables.closureCells()).at(closureNumber) == numbers.closureCellNumber(unit.function));
 
         AOT_TEST_CHECK(!conventions.genericEntry(unit).constructEntry);
         bool onlyReturns = bodyFacts.functionsThatOnlyReturn.get(source) && record.kind.isConstructiblePlainFunction();
@@ -653,7 +654,7 @@ static void checkTablesOfVariedFunctions(const TestBuild& build, const TestImage
         for (unsigned capture = 0; capture < function.captures.size(); ++capture) {
             StringID variableName = function.captures[capture].variableName;
             if (variableName && Typed::holdsCells(Typed::closureCaptureRepresentationOf(program, conventions, unit.function, capture)))
-                namedCaptures.append({ Number24(closureNumber), static_cast<uint8_t>(Typed::closureCaptureSlotOf(program, conventions, unit.function, capture)), variableName.index() });
+                namedCaptures.append({ Number24(closureNumber), static_cast<uint8_t>(Typed::closureCaptureSlotOf(program, conventions, unit.function, capture)), numbers.stringNumbers().requiredNumberOf(variableName) });
         }
         std::ranges::stable_sort(namedCaptures.mutableSpan().subspan(firstOfFunction), { }, &NamedCaptureData::slot);
     }
@@ -662,14 +663,14 @@ static void checkTablesOfVariedFunctions(const TestBuild& build, const TestImage
     AOT_TEST_CHECK(tables.functionsWithLargeCounts().size() == numberWithLargeCounts);
     AOT_TEST_CHECK(tables.constructEntrypoints().size() == numberThatOnlyReturn);
     Vector<NamedCaptureData> namedCapturesInTable;
-    AOT_TEST_CHECK(forEachNamedCapture(tables.namedCaptures(), [&](const NamedCaptureData& row) {
+    AOT_TEST_CHECK(forEachNamedCapture(decodeVarintBytes(tables.namedCaptures()).span(), [&](const NamedCaptureData& row) {
         namedCapturesInTable.append(row);
     }));
     AOT_TEST_CHECK(equalSpans(asBytes(namedCapturesInTable.span()), asBytes(namedCaptures.span())));
 
-    AOT_TEST_CHECK(tables.functionRecords().size() == functionRecordIsListedByFunction);
-    AOT_TEST_CHECK(!tables.functionRecordsByFunction().empty() && !tables.functionsWithLargeCounts().empty() && !tables.constructEntrypoints().empty() && !namedCaptures.isEmpty());
-    AOT_TEST_CHECK(lieInSeveralRangesOfLoop(tables.functionRecordsByFunction().front().function, tables.functionRecordsByFunction().back().function));
+    AOT_TEST_CHECK(tables.functionRecords().size() == unsharedFunctionRecord);
+    AOT_TEST_CHECK(!tables.unsharedFunctionRecords().empty() && !tables.functionsWithLargeCounts().empty() && !tables.constructEntrypoints().empty() && !namedCaptures.isEmpty());
+    AOT_TEST_CHECK(lieInSeveralRangesOfLoop(tables.unsharedFunctionRecords().front().function, tables.unsharedFunctionRecords().back().function));
     AOT_TEST_CHECK(lieInSeveralRangesOfLoop(tables.functionsWithLargeCounts().front().function, tables.functionsWithLargeCounts().back().function));
     AOT_TEST_CHECK(lieInSeveralRangesOfLoop(closureFunctions.first + tables.constructEntrypoints().front().function, closureFunctions.first + tables.constructEntrypoints().back().function));
     AOT_TEST_CHECK(lieInSeveralRangesOfLoop(closureFunctions.first + namedCaptures.first().closureNumber, closureFunctions.first + namedCaptures.last().closureNumber));
@@ -704,10 +705,13 @@ static Vector<uint8_t> encodeTablesOfVariedFunctions(unsigned threadCount)
     NamesOfTables names(build.program());
     nameWhatFunctionTablesName(tableInputs, GatheredMentions { }, names);
     const ProgramTables& tables = image.image->programTables();
+    BitVector numbersOfNames;
+    for (size_t string : names.strings)
+        numbersOfNames.set(image.built.numbers->stringNumbers().requiredNumberOf(StringID(static_cast<uint32_t>(string))));
     for (Number24 name : tables.functionNames())
-        AOT_TEST_CHECK(names.strings.get(name));
-    AOT_TEST_CHECK(forEachNamedCapture(tables.namedCaptures(), [&](const NamedCaptureData& row) {
-        AOT_TEST_CHECK(names.strings.get(row.name));
+        AOT_TEST_CHECK(numbersOfNames.get(name));
+    AOT_TEST_CHECK(forEachNamedCapture(decodeVarintBytes(tables.namedCaptures()).span(), [&](const NamedCaptureData& row) {
+        AOT_TEST_CHECK(numbersOfNames.get(row.name));
     }));
 
     Vector<uint8_t> bytes(part);
@@ -765,6 +769,73 @@ static void checkNamedVariablesAsBytes(const Vector<Vector<VariableData>>& modul
         }, [](uint32_t, uint32_t) { });
         AOT_TEST_CHECK(!isWhole || numberOfRowsRead < numberOfRows || numberOfModulesRead < modules.size());
     }
+}
+
+static void checkImageFunctions(const Vector<uint32_t>& numbers, const Vector<uint32_t>& sideTables)
+{
+    Vector<uint8_t> bytes = ImageFunctions::encode(sideTables.span(), numbers.span());
+    auto words = spanReinterpretCast<const uint32_t>(bytes.span());
+    AOT_TEST_CHECK(ImageFunctions::hasSize(words, numbers.size()) && !ImageFunctions::hasSize(words, numbers.size() + 1));
+    ImageFunctions section(words.data(), static_cast<uint32_t>(numbers.size()));
+    for (uint32_t index = 0; index < numbers.size(); ++index)
+        AOT_TEST_CHECK(section.numberOf(index) == numbers[index] && section.sideTableOf(index) == sideTables[index]);
+}
+
+static void checkImageFunctions(const Vector<uint32_t>& numbers)
+{
+    auto sideTables = [&](const auto& place) {
+        return Vector<uint32_t>(numbers.size(), place);
+    };
+    checkImageFunctions(numbers, sideTables([](size_t index) { return static_cast<uint32_t>(1000 * index); }));
+    checkImageFunctions(numbers, sideTables([](size_t index) { return static_cast<uint32_t>(40000 * index); }));
+    checkImageFunctions(numbers, sideTables([](size_t index) { return static_cast<uint32_t>(index % 3 ? 70 : 9 * index); }));
+}
+
+static void testImageFunctions()
+{
+    checkImageFunctions({ 5 });
+    checkImageFunctions(Vector<uint32_t>(100, [](size_t index) { return static_cast<uint32_t>(index); }));
+    checkImageFunctions(Vector<uint32_t>(100, [](size_t index) { return static_cast<uint32_t>(200 - index); }));
+    checkImageFunctions(Vector<uint32_t>(40000, [](size_t index) { return static_cast<uint32_t>(index); }));
+    checkImageFunctions(Vector<uint32_t>(97, [](size_t index) { return static_cast<uint32_t>(index + index / 5 * 1000); }));
+}
+
+static void checkSourceFunctions(const Vector<uint32_t>& functions, size_t maxWords)
+{
+    Vector<uint32_t> words = AscendingNumberTable::create(functions.span());
+    AOT_TEST_CHECK(words.size() <= maxWords);
+    for (uint32_t index = 0; index < functions.size(); ++index)
+        AOT_TEST_CHECK(AscendingNumberTable(words.span()).at(index) == functions[index]);
+}
+
+static void testSourceFunctions()
+{
+    checkSourceFunctions({ }, 0);
+    checkSourceFunctions({ 7 }, 2);
+    checkSourceFunctions(Vector<uint32_t>(40, [](size_t) { return 9u; }), 4 + 2);
+    checkSourceFunctions(Vector<uint32_t>(1000, [](size_t index) { return static_cast<uint32_t>(index); }), 64 + 63);
+    checkSourceFunctions(Vector<uint32_t>(1000, [](size_t index) { return static_cast<uint32_t>(index / 3 + index / 50 * 40); }), 64 + 66);
+    checkSourceFunctions(Vector<uint32_t>(70, [](size_t index) { return static_cast<uint32_t>(index < 40 ? index * 16 : 3000 - index); }), 6 + 70);
+    checkSourceFunctions(Vector<uint32_t>(70, [](size_t index) { return static_cast<uint32_t>(index * 17); }), 6 + 70);
+    checkSourceFunctions(Vector<uint32_t>(96, [](size_t index) { return static_cast<uint32_t>(index + (index < 50 ? 0 : 1 << 20)); }), 6 + 2 + 32 + 2);
+}
+
+static void checkClosureCells(const Vector<uint32_t>& cells, size_t maxWords)
+{
+    Vector<uint32_t> words = SparseNumberTable::create(cells.span());
+    AOT_TEST_CHECK(words.size() <= maxWords);
+    for (uint32_t number = 0; number < cells.size(); ++number)
+        AOT_TEST_CHECK(SparseNumberTable(words.span()).at(number) == cells[number]);
+}
+
+static void testClosureCells()
+{
+    checkClosureCells({ }, 0);
+    checkClosureCells({ 0, 1, 0, 2 }, 2);
+    checkClosureCells(Vector<uint32_t>(100, [](size_t index) { return static_cast<uint32_t>(index + 1); }), 8);
+    checkClosureCells(Vector<uint32_t>(100, [](size_t index) { return index % 3 ? 0 : static_cast<uint32_t>(index / 3 + 1); }), 8);
+    checkClosureCells(Vector<uint32_t>(100, [](size_t index) { return index % 2 ? 0 : static_cast<uint32_t>(101 - index); }), 8 + 50);
+    checkClosureCells(Vector<uint32_t>(64, [](size_t index) { return index < 32 ? 5 + static_cast<uint32_t>(index) : static_cast<uint32_t>(64 - index); }), 4 + 32);
 }
 
 static void testNamedVariablesAsBytes()
@@ -825,6 +896,9 @@ std::span<const NativeTest> imageFunctionTableTests()
         { "image/functions/name-number-past-fifteen-bits"_s, testNameNumberPastFifteenBits },
         { "image/functions/tables-over-several-ranges"_s, testFunctionTablesOverSeveralRanges },
         { "image/functions/named-variables-as-bytes"_s, testNamedVariablesAsBytes },
+        { "image/functions/numbers-in-groups"_s, testImageFunctions },
+        { "image/functions/source-functions-in-groups"_s, testSourceFunctions },
+        { "image/functions/closure-cells-in-groups"_s, testClosureCells },
     };
     return tests;
 }

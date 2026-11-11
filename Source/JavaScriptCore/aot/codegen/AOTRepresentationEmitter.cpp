@@ -26,7 +26,7 @@ RepresentationEmitter::RepresentationEmitter(CodeGenerator& generator)
 Integer RepresentationEmitter::heldToWhatConversionGives(const OperationContext& context, Number number, Integer integer)
 {
     if (emittersCheckProofs())
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(context, equal(integer, emitter<ConversionEmitter>().toInteger(number)), std::nullopt, ProofSource::OtherOperation);
+        emitter<ThrowEmitter>().requireOrCrash(context, equal(integer, emitter<ConversionEmitter>().toInteger(number)), std::nullopt, ProofSource::OtherOperation);
     return integer;
 }
 
@@ -120,12 +120,21 @@ void RepresentationEmitter::generate(const ValueContext& value)
         define(value, get(converted));
         return;
     }
+    if (std::optional<Boxed> boxed = generator().findBoxed(converted)) [[unlikely]] {
+        RELEASE_ASSERT(value.opcode() == Opcode::Box && value.representation() == Representation::JSValue);
+        define(value, *boxed);
+        return;
+    }
     if (ValueID sum = generator().sumBoxedBy(value.value())) [[unlikely]] {
         define(value, emitter<OperatorEmitter>().boxedSum(sum));
         return;
     }
     if (value.opcode() == Opcode::Box && value.representation() == Representation::JSValue && representationOf(converted) == Representation::Int64 && emitter<ArrayIntrinsicEmitter>().standsBehindTestThatFoundElement(value, { }, converted)) {
         define(value, emitter<ConversionEmitter>().boxInteger(in<Integer>(converted), Range { 0, IndexingHeader::maximumLength - 1 }));
+        return;
+    }
+    if (value.opcode() == Opcode::Unbox && generator().isOnlyTakenAsPosition(value.id())) {
+        generator().defineBoxed(value, in<Boxed>(converted));
         return;
     }
     if (value.opcode() == Opcode::Unbox) {

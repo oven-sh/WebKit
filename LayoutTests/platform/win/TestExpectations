@@ -110,10 +110,14 @@ imported/w3c/web-platform-tests/digital-credentials/ [ Skip ]
 fast/webcodecs/audio-data-copy-to-crash.html [ Skip ]
 fast/webcodecs/audio-data-copy-to-zero-frames-crash.html [ Skip ]
 fast/webcodecs/audio-data-copy-to-planar-frame-offset.html [ Skip ]
+fast/canvas/canvas-drawImage-video-frame-composite.html [ Skip ]
 
 # WebGPU is disabled
 http/tests/webgpu [ Skip ]
 fast/webgpu [ Skip ]
+
+# WebGL video-format tests: the baselines record macOS decoder and WebGL video upload behaviour.
+webgl/video-formats [ Skip ]
 inspector/canvas/console-record-webgpu.html [ Skip ]
 inspector/canvas/create-context-webgpu.html [ Skip ]
 inspector/canvas/recording-webgpu-frameCount.html [ Skip ]
@@ -401,7 +405,9 @@ fast/events/wheel/platform-wheelevent-paging-y-in-scrolling-page.html [ Skip ]
 fast/harness/platform-layer-tree-as-text.html [ Skip ]
 
 # OffscreenCanvas isn't supported yet
+fast/text/font-face/font-face-loaded-resolution-deferred-in-worker.html [ Skip ]
 fast/canvas/canvas-font-attributes-state.html [ Skip ]
+fast/canvas/canvas-reset-after-noninvertible-transform-offscreen.html [ Skip ]
 fast/canvas/offscreen-backing-store-attached.html [ Skip ]
 fast/canvas/offscreen-border.html [ Skip ]
 fast/canvas/offscreen-clipped.html [ Skip ]
@@ -429,6 +435,8 @@ webgl/2.0.y/conformance/offscreencanvas/context-lost.html [ Skip ]
 webgl/offscreen-webgl-errors-to-console.html [ Skip ]
 webgl/webgl-worker.html [ Skip ]
 webgl/webgl2-init-missing-fragment-output-components.html [ Skip ]
+fast/text/font-face/css-font-selector-opportunistic-load-reentrancy-crash.html [ Skip ]
+fast/text/font-face/font-cascade-fallback-walk-prune-crash.html [ Skip ]
 
 # Accelerated canvas isn't supported yet
 fast/canvas/canvas-will-read-frequently.html [ Skip ]
@@ -885,6 +893,9 @@ http/tests/resourceLoadStatistics/only-accept-first-party-cookies-with-third-par
 http/tests/resourceLoadStatistics/only-partitioned-third-party-cookies.https.html [ Skip ]
 http/tests/resourceLoadStatistics/only-partitioned-cookies-after-redirect.https.html [ Skip ]
 http/tests/resourceLoadStatistics/only-partitioned-cookies-after-redirect-fetch.https.html [ Skip ]
+
+http/tests/resourceLoadStatistics/log-cross-site-load-with-filtered-link-decoration-and-fragment.html [ Skip ]
+http/tests/resourceLoadStatistics/log-cross-site-load-with-filtered-link-decoration.html [ Skip ]
 
 http/tests/cookies/multiple-cookies-iframes.https.html [ Skip ]
 http/tests/cookies/multiple-cookies.https.html [ Skip ]
@@ -4512,6 +4523,7 @@ fast/text/international/thai-line-breaks.html [ Failure Pass ]
 
 # Doesn't support variable fonts
 fast/text/variations [ Skip ]
+fast/text/variations/font-weight-gpu-process.html [ Pass ]
 
 fast/images/image-alt-text-vertical.html [ ImageOnlyFailure ]
 
@@ -4609,6 +4621,7 @@ http/tests/loading/reusing-cached-stylesheet-from-different-domain.html [ ImageO
 # ImageOnlyFailure only on EWS. The background images doesn't seem to be loaded.
 imported/w3c/web-platform-tests/css/css-viewport/zoom/background-image.html [ ImageOnlyFailure Pass ]
 imported/w3c/web-platform-tests/css/css-viewport/zoom/image-intrinsic-size.html [ ImageOnlyFailure Pass ]
+imported/w3c/web-platform-tests/css/css-viewport/zoom/translate-matrix-zoom-anim-accumulate.html [ ImageOnlyFailure ]
 
 http/tests/login-status/login-status-api-getter-setter-functions.html [ Failure ]
 
@@ -5023,3 +5036,6 @@ webkit.org/b/320901 webgl/1.0.x/conformance/textures/misc/tex-image-svg-image-no
 webkit.org/b/320901 webgl/2.0.y/conformance/glsl/misc/shader-with-double-underscore.html [ Failure Crash ]
 webkit.org/b/320901 webgl/2.0.y/conformance/textures/misc/tex-image-svg-image-no-natural-width-and-height.html [ Failure Crash ]
 webkit.org/b/320901 webgl/2.0.y/conformance2/rendering/blitframebuffer-test.html [ Failure Crash ]
+
+# Requires the GPU process to host the video layer.
+media/media-source/media-source-real-video-layer-size-after-leaving-viewport.html [ Skip ]

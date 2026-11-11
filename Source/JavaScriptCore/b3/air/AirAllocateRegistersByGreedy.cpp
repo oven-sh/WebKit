@@ -141,7 +141,7 @@ enum InsertionPhase : unsigned {
     SpillMoveFrom,
 };
 
-static bool LEGACY_NODELETE verbose() { return Options::airGreedyRegAllocVerbose(); }
+NODELETE static bool verbose() { return Options::airGreedyRegAllocVerbose(); }
 
 // Terminology / core data-structures:
 //
@@ -323,7 +323,7 @@ public:
         validate();
     }
 
-    inline void LEGACY_NODELETE validate()
+    NODELETE inline void validate()
     {
 #if ASSERT_ENABLED
         size_t size = 0;
@@ -387,17 +387,17 @@ public:
         validate();
     }
 
-    Intervals LEGACY_NODELETE intervals() const
+    NODELETE Intervals intervals() const
     {
         return { m_intervals, m_count };
     }
 
-    size_t LEGACY_NODELETE size() const
+    NODELETE size_t size() const
     {
         return m_size;
     }
 
-    bool LEGACY_NODELETE contains(Point point) const
+    NODELETE bool contains(Point point) const
     {
         for (auto& interval : intervals()) {
             if (interval.end() <= point)
@@ -407,7 +407,7 @@ public:
         return false;
     }
 
-    bool LEGACY_NODELETE overlaps(const LiveRange& other) const
+    NODELETE bool overlaps(const LiveRange& other) const
     {
         if (!m_count || !other.m_count || m_intervals[m_count - 1].end() <= other.m_intervals[0].begin() || other.m_intervals[other.m_count - 1].end() <= m_intervals[0].begin())
             return false;
@@ -525,7 +525,7 @@ private:
     static constexpr size_t tmpIndexShift = rangeSizeShift - tmpIndexBits;
     static_assert(!tmpIndexShift);
 
-    inline void LEGACY_NODELETE packPriority(uint64_t val, size_t numBits, size_t shift, bool reverse)
+    NODELETE inline void packPriority(uint64_t val, size_t numBits, size_t shift, bool reverse)
     {
         const uint64_t mask = (1ull << numBits) - 1;
         val &= mask;
@@ -551,9 +551,9 @@ public:
         packPriority(tmp.tmpIndex(), tmpIndexBits, tmpIndexShift, true);
     }
 
-    Tmp LEGACY_NODELETE tmp() { return m_tmp; }
+    NODELETE Tmp tmp() { return m_tmp; }
 
-    Stage LEGACY_NODELETE stage() const
+    NODELETE Stage stage() const
     {
         const uint64_t mask = (1 << stageBits) - 1;
         uint64_t stageReversed = m_priority >> stageShift;
@@ -568,7 +568,7 @@ public:
 
     // The packed priority is built so that a numerically greater value is more urgent, which is the
     // order PriorityQueue serves.
-    friend bool LEGACY_NODELETE operator<(const TmpPriority& left, const TmpPriority& right)
+    NODELETE friend bool operator<(const TmpPriority& left, const TmpPriority& right)
     {
         return left.m_priority < right.m_priority;
     }
@@ -598,7 +598,7 @@ public:
             , tmp(pair.second)
         { }
 
-        bool LEGACY_NODELETE operator<(const AllocatedInterval& other) const
+        NODELETE bool operator<(const AllocatedInterval& other) const
         {
             return this->interval.end() < other.interval.end();
         }
@@ -637,7 +637,7 @@ public:
             m_allocations.erase(interval);
     }
 
-    bool LEGACY_NODELETE hasConflict(const LiveRange& range, Width width)
+    NODELETE bool hasConflict(const LiveRange& range, Width width)
     {
         for (auto interval : range.intervals()) {
             if (m_allocations.hasOverlap(interval))
@@ -679,7 +679,7 @@ public:
         forEachConflictImpl(m_allocationsHigh64, range, func);
     }
 
-    bool LEGACY_NODELETE isEmpty() const
+    NODELETE bool isEmpty() const
     {
         return m_allocations.isEmpty() && m_allocationsHigh64.isEmpty();
     }
@@ -886,7 +886,7 @@ struct TmpData {
         return std::min(cost, maxSpillableSpillCost);
     }
 
-    void LEGACY_NODELETE validate()
+    NODELETE void validate()
     {
         ASSERT(!!assigned == (stage == Stage::Assigned));
         ASSERT(liveRange.intervals().isEmpty() == !liveRange.size());
@@ -1471,7 +1471,7 @@ public:
         }
     }
 
-    const List& LEGACY_NODELETE useDefs() const { return m_instPoints; }
+    NODELETE const List& useDefs() const { return m_instPoints; }
 
     void dump(PrintStream& out) const
     {
@@ -3710,11 +3710,14 @@ private:
         // Merges the other group into this one.
         void merge(GreedyAllocator& allocator, AffinityGroup& other)
         {
-            if (m_liveness || other.m_liveness) {
-                ensureMap(allocator);
-                other.ensureMap(allocator);
-                m_liveness->merge(WTF::move(*other.m_liveness));
-                other.m_liveness = nullptr;
+            if (m_liveness && other.m_liveness)
+                m_liveness->merge(WTF::move(*std::exchange(other.m_liveness, nullptr)));
+            else if (m_liveness)
+                addToMap(allocator, other.members());
+            else if (other.m_liveness) {
+                m_liveness = WTF::move(other.m_liveness);
+                addToMap(allocator, members());
+                m_range = LiveRange();
             } else
                 m_range = LiveRange::unionOf(allocator.m_intervalArena, m_range, other.m_range);
             other.m_range = LiveRange();
@@ -3760,8 +3763,7 @@ private:
             if (m_liveness)
                 return;
             m_liveness = makeUnique<LivenessMap<bank>>();
-            for (Tmp member : members())
-                m_liveness->add(member, allocator.m_map.template get<bank>(member).liveRange);
+            addToMap(allocator, members());
             m_range = LiveRange();
         }
 
@@ -3787,6 +3789,12 @@ private:
         Tmp m_representative; // Only set for non-empty groups at finalization
 
     private:
+        void addToMap(GreedyAllocator& allocator, std::span<const Tmp> tmps)
+        {
+            for (Tmp tmp : tmps)
+                m_liveness->add(tmp, allocator.m_map.template get<bank>(tmp).liveRange);
+        }
+
         void makeMapIfLarge(GreedyAllocator& allocator)
         {
             if (m_size > AirLimits::maxAffinityGroupSizeWithoutMap || m_range.intervals().size() > AirLimits::maxAffinityGroupSizeWithoutMap) [[unlikely]]
@@ -3891,6 +3899,20 @@ private:
     }
 
     template<Bank bank>
+    bool interferesWithMap(Tmp tmp, const AffinityGroup<bank>& group)
+    {
+        ASSERT(group.hasMap());
+        const TmpData& data = m_map.get<bank>(tmp);
+        bool interferes = false;
+        group.forEachOverlap(data.liveRange, [&](const auto& tmpList) {
+            // Pigeonhole principle
+            interferes = tmpList.size() > data.coalescables.size() || std::ranges::any_of(tmpList, [&](Tmp member) { return !data.coalescables.template contains<bank>(member); });
+            return interferes ? IterationStatus::Done : IterationStatus::Continue;
+        });
+        return interferes;
+    }
+
+    template<Bank bank>
     bool tryCoalesceSingletonWithGroup(Tmp singleton, GroupIndex groupIndex, Vector<AffinityGroup<bank>>& groups, TmpGroupMap<bank>& tmpToGroup)
     {
         const auto& group = groups[groupIndex];
@@ -3906,19 +3928,8 @@ private:
                     }
                 }
             }
-        } else group.forEachOverlap(singletonData.liveRange, [&](const auto& tmpList) {
-            if (tmpList.size() > singletonData.coalescables.size()) {
-                conflict = true; // Pigeonhole principle
-                return IterationStatus::Done;
-            }
-            for (Tmp member : tmpList) {
-                if (!singletonData.coalescables.contains<bank>(member)) {
-                    conflict = true;
-                    return IterationStatus::Done;
-                }
-            }
-            return IterationStatus::Continue;
-        });
+        } else
+            conflict = interferesWithMap<bank>(singleton, group);
         if (conflict)
             return false;
 
@@ -3951,11 +3962,10 @@ private:
                         break;
                 }
             }
-        } else {
-            group0.ensureMap(*this);
-            group1.ensureMap(*this);
-        }
-        if (group0.hasMap()) AffinityGroup<bank>::forEachPairwiseOverlap(group0, group1, [&](const auto& tmpListA, const auto& tmpListB) {
+        } else if (!group0.hasMap() || !group1.hasMap()) {
+            const auto& groupWithMap = group0.hasMap() ? group0 : group1;
+            conflict = std::ranges::any_of((group0.hasMap() ? group1 : group0).members(), [&](Tmp member) { return interferesWithMap<bank>(member, groupWithMap); });
+        } else AffinityGroup<bank>::forEachPairwiseOverlap(group0, group1, [&](const auto& tmpListA, const auto& tmpListB) {
             for (Tmp tmpA : tmpListA) {
                 const Coalescables& coalescables = m_map.get<bank>(tmpA).coalescables;
                 if (tmpListB.size() > coalescables.size()) {
@@ -4039,6 +4049,9 @@ private:
             return a.tmp1.tmpIndex(bank) < b.tmp1.tmpIndex(bank);
         });
 
+        // Groups only grow, so two groups that interfere keep interfering.
+        UncheckedKeyHashSet<std::pair<GroupIndex, GroupIndex>> interferingGroups;
+
         for (Move& move : moves) {
             dataLogLnIf(verbose(), "Processing move: ", move);
             auto groupIndex0 = tmpToGroup[move.tmp0];
@@ -4051,9 +4064,13 @@ private:
 
             if (groupIndex0 == noGroup && groupIndex1 == noGroup)
                 coalesceSingletons<bank>(move.tmp0, move.tmp1, groups, tmpToGroup);
-            else if (groupIndex0 != noGroup && groupIndex1 != noGroup)
-                tryCoalesceGroups<bank>(groupIndex0, groupIndex1, groups, tmpToGroup);
-            else {
+            else if (groupIndex0 != noGroup && groupIndex1 != noGroup) {
+                std::pair<GroupIndex, GroupIndex> pair = std::minmax(groupIndex0, groupIndex1);
+                if (interferingGroups.contains(pair))
+                    continue;
+                if (!tryCoalesceGroups<bank>(groupIndex0, groupIndex1, groups, tmpToGroup) && (groups[groupIndex0].hasMap() || groups[groupIndex1].hasMap()))
+                    interferingGroups.add(pair);
+            } else {
                 auto groupIndex = groupIndex0 != noGroup ? groupIndex0 : groupIndex1;
                 Tmp singleton = groupIndex0 != noGroup ? move.tmp1 : move.tmp0;
                 tryCoalesceSingletonWithGroup<bank>(singleton, groupIndex, groups, tmpToGroup);
@@ -6344,13 +6361,13 @@ private:
             // FIXME: reconsider that, see https://bugs.webkit.org/show_bug.cgi?id=288122
             ASSERT(hole.begin() > positionOfHead(block));
             // Model gapTmp interference with any other tmp split at this location by starting
-            // the gapTmp's range one position before the hole. Otherwise, the same register
+            // the gapTmp's range where the instruction begins. Otherwise, the same register
             // may be chosen for the gapTmp and another splitTmp, which wouldn't be valid
             // since there could be a cycle among the set of fixup Move instructions.
             // An alternative would be to use the Shuffle opcode (which can handle that
             // rotation of register assignments) but that would trigger an extra liveness
             // analysis (see lowerAfterRegAlloc()), and that's unlikely to be worth it.
-            Interval gapInterval = hole | Interval(hole.begin() - 1);
+            Interval gapInterval = hole | Interval(pointAtOffset(hole.begin(), PointOffsets::Pre));
             if (spansStretches)
                 gapInterval = Interval(pointAtOffset(hole.begin(), PointOffsets::Pre), pointAtOffset(hole.end() - 1, PointOffsets::Post) + 1);
             Tmp gapTmp = addSplitTmp(tmp, UseDefCost(freq), gapInterval);
@@ -6889,7 +6906,7 @@ private:
         return trySplitIntoClusters<bank>(tmp, m_splitPolicy.splitsIntoClustersOverBlocks && !tmpData.isClusterOverBlocks && !tmpData.isOnStackInSomeBlocks ? ClusterReach::OverBlocks : ClusterReach::WithinBlock);
     }
 
-    static unsigned LEGACY_NODELETE stackSlotMinimumWidth(Width width)
+    NODELETE static unsigned stackSlotMinimumWidth(Width width)
     {
         if (width <= Width32)
             return 4;
@@ -6929,7 +6946,7 @@ private:
         tmpData.validate();
     }
 
-    bool LEGACY_NODELETE queueContainsOnlySpills()
+    NODELETE bool queueContainsOnlySpills()
     {
         for (auto& elem : m_queue) {
             if (elem.stage() != Stage::Spill)
@@ -7133,7 +7150,9 @@ private:
                                     imm = Arg::bigImm(value);
                                 ASSERT(inst.isValidForm(m_code.targetFeatures()));
                                 arg = imm;
-                                if (inst.isValidForm(m_code.targetFeatures())) {
+                                std::span<const Arg> args = inst.args();
+                                bool isInExtendedForm = args.size() == 2 ? isExtendedForm(inst.kind.opcode, args[0].kind(), args[1].kind()) : args.size() == 3 && isExtendedForm(inst.kind.opcode, args[0].kind(), args[1].kind(), args[2].kind());
+                                if (inst.isValidForm(m_code.targetFeatures()) && (m_usesExtendedForms || !isInExtendedForm)) {
                                     m_stats[bank].numRematerializeConst++;
                                     dataLogLnIf(verbose(), "Rematerialized (direct imm), BB", *block, " arg=", oldArg, ", inst=", inst);
                                     return;
@@ -7621,7 +7640,7 @@ private:
         dataLogLnIf(verbose(), "AroundLoop fixup: nonLoop=", nonLoopTmp, " loop=", loopTmp, " header=BB", *header);
     }
 
-    bool LEGACY_NODELETE mayBeCoalescable(Inst& inst)
+    NODELETE bool mayBeCoalescable(Inst& inst)
     {
         switch (inst.kind.opcode) {
         case Move:
@@ -7644,7 +7663,9 @@ private:
         // We can coalesce a Move32 so long as either of the following holds:
         // - The input is already zero-filled.
         // - The output only cares about the low 32 bits.
-        if (inst.kind.opcode == Move32 && m_tmpWidth.defWidth(inst.args()[0].tmp()) > Width32)
+        Tmp source = inst.args()[0].tmp();
+        bool isZeroFilledRegister = source.isReg() && m_registerPolicy.zeroExtended.contains(source.reg(), IgnoreVectors);
+        if (inst.kind.opcode == Move32 && !isZeroFilledRegister && m_tmpWidth.defWidth(source) > Width32)
             return false;
         return true;
     }

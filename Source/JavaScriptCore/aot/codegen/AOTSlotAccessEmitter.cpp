@@ -92,7 +92,7 @@ LayoutSetID SlotAccessEmitter::layoutsThatTestAgainstEveryShapeLetThrough(ValueI
             const Operation& asked = m_code.at(test);
             if (asked.opcode == Opcode::ShapeTest && m_code.isNeeded(test) && asked.objectOperand() == definition.valueOperand()) {
                 Type known = typeOf(asked.objectOperand());
-                if (asked.refusesMarkedObjects() || asked.asksInFull() || !known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
+                if (asked.rejectsMarkedObjects() || asked.asksInFull() || !known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
                     return asked.layouts();
             }
         }
@@ -253,8 +253,8 @@ std::optional<size_t> SlotAccessEmitter::findOffsetsByShape(const FieldAccess& a
             members.append({ range, offset - access.slot.offset });
         }
         LayoutSetID membersLaidIn = setOfMembers;
-        if (uint32_t word = build().options().rowThatSaysLess) [[unlikely]] {
-            RowThatSaysLess row = RowThatSaysLess::decode(word);
+        if (uint32_t word = build().options().understatedEffects) [[unlikely]] {
+            UnderstatedEffects row = UnderstatedEffects::decode(word);
             bool strikesHighest = row.part == PartOfEffects::ShapesOfField;
             if ((strikesHighest || row.part == PartOfEffects::MiddleShapesOfField) && generator().unit().function.index() == row.row && members.size() > 1) {
                 std::ranges::sort(members, { }, [](const DistanceOfShapes& member) {
@@ -293,11 +293,11 @@ Word32 SlotAccessEmitter::distanceBehindLowestOffset(CellPointer cell, const Fie
     if (!testInCodeHasAsked && (offsets.distances.form == DistanceForm::FlatTable || offsets.distances.form == DistanceForm::PagedTable)) {
         const OperationContext* context = generator().contextBeingGenerated();
         RELEASE_ASSERT(context);
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(*context, below(add(shapeWord, word32(offsets.distances.lastShape)), offsets.distances.numberOfShapes), std::nullopt, ProofSource::OtherOperation);
+        emitter<ThrowEmitter>().requireOrCrash(*context, below(add(shapeWord, word32(offsets.distances.lastShape)), offsets.distances.numberOfShapes), std::nullopt, ProofSource::OtherOperation);
     }
     Word32 distance(appendDistanceOfShape(m_out, m_heaps.AOTImage_tables, shapeWord.value(), offsets.distances, offsets.constant));
     if (!testInCodeHasAsked && offsets.distances.form == DistanceForm::FlatTable)
-        emitter<ThrowEmitter>().requireOrStopAtFalseProof(*generator().contextBeingGenerated(), notEqual(distance, word32(offsets.distances.distanceOfNoMember())), std::nullopt, ProofSource::OtherOperation);
+        emitter<ThrowEmitter>().requireOrCrash(*generator().contextBeingGenerated(), notEqual(distance, word32(offsets.distances.distanceOfNoMember())), std::nullopt, ProofSource::OtherOperation);
     return distance;
 }
 
@@ -315,7 +315,7 @@ CellPointer SlotAccessEmitter::baseOfSlot(CellPointer cell, const FieldAccess& a
     return CellPointer(m_out.add(cell.value(), zeroExtended(distanceBehindLowestOffset(cell, access, membersWithFieldAmong(access, receivers))).value()));
 }
 
-std::optional<CellPointer> SlotAccessEmitter::baseOfSlotWhereOneTableTellsShapeAndDistance(CellPointer cell, const FieldAccess& access, LayoutSetID receivers, bool refusesMarkedObjects, LBasicBlock whereShapeIsNoReceiver)
+std::optional<CellPointer> SlotAccessEmitter::baseOfSlotWhereOneTableTellsShapeAndDistance(CellPointer cell, const FieldAccess& access, LayoutSetID receivers, bool rejectsMarkedObjects, LBasicBlock whereShapeIsNoReceiver)
 {
     if (!access.findsOffsetByShape)
         return std::nullopt;
@@ -325,9 +325,9 @@ std::optional<CellPointer> SlotAccessEmitter::baseOfSlotWhereOneTableTellsShapeA
         return std::nullopt;
     OffsetsByShape& offsets = m_offsetsByShape[*known];
     ++offsets.numberOfSites;
-    build().statistics().count(StatisticID::ReceiversToldByTablesOfOffsets);
+    build().statistics().count(StatisticID::ReceiversCheckedByOffsetTables);
     ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
-    Word32 place = refusesMarkedObjects ? shapes.distanceOfUnmarkedObjectFromShape(cell, members, offsets.distances.lastShape) : add(shapes.shapeWordOf(cell), word32(offsets.distances.lastShape));
+    Word32 place = rejectsMarkedObjects ? shapes.distanceOfUnmarkedObjectFromShape(cell, members, offsets.distances.lastShape) : add(shapes.shapeWordOf(cell), word32(offsets.distances.lastShape));
     branchUnless(below(place, offsets.distances.numberOfShapes), whereShapeIsNoReceiver);
     LValue placeInTable = zeroExtended(place).value();
     unsigned logBytes = offsets.distances.logBytesPerDistance;
@@ -356,7 +356,13 @@ Operand SlotAccessEmitter::loadSlotOrUndefined(const ValueContext& value, CellPo
         return inResultRepresentation(value, loadSlot(cell, access));
     bool checksWhatSlotsHold = sourcesOfProofsCheckedUnder(build().options().testing) & bitOfSourceOfProofs(ProofSource::Field);
     if (representation == SlotRepresentation::OptionalCell32 && value.representation() == Representation::Cell32 && !access.slot.isOutOfLine() && !checksWhatSlotsHold && generator().isReadAgainBehindItsOwnTruthAlone(value)) {
-        build().statistics().count(StatisticID::EmptySlotsAskedForTruthAsTheyLie);
+        build().statistics().count(StatisticID::EmptySlotConversionsSkipped);
+        return loadSlot(cell, access);
+    }
+    bool holdsMarkedNumber = representation == SlotRepresentation::OptionalDouble || representation == SlotRepresentation::OptionalInt64;
+    bool answersMayBeAskedAgain = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckWalkAtRunTime) || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckBoundsInEmittersOnly);
+    if (holdsMarkedNumber && value.representation() == Typed::representationOf(representation) && !access.slot.isOutOfLine() && !checksWhatSlotsHold && !answersMayBeAskedAgain && generator().isReadBehindOwnUndefinedTest(value)) {
+        build().statistics().count(StatisticID::EmptySlotConversionsSkipped);
         return loadSlot(cell, access);
     }
     if (traits.hasUndefined)
@@ -427,7 +433,7 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
             return readIfMemberHasField(value, cell, access, [&] {
                 CellPointer base = baseOfSlot(cell, access);
                 if (sourcesOfProofsCheckedUnder(build().options().testing) & bitOfSourceOfProofs(ProofSource::Field))
-                    emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, emitter<SlotEmitter>().holdsValue(base, access.slot, locationOfSlotAccess(access), extensionWordOfSlotAccess(access)), std::nullopt, ProofSource::Field);
+                    emitter<ThrowEmitter>().requireOrCrash(value, emitter<SlotEmitter>().isFilled(base, access.slot, locationOfSlotAccess(access), extensionWordOfSlotAccess(access)), std::nullopt, ProofSource::Field);
                 return inResultRepresentation(value, loadFilledSlot(value, base, access));
             });
         }
@@ -441,8 +447,8 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
 ALWAYS_INLINE_INTO_OTHER_FILES void SlotAccessEmitter::askObjectAgainWhatReadAnswered(const ValueContext& value, CellPointer object, Operand read, bool readsEmptySlotAsUndefined)
 {
     PropertyKeyID key = value->key();
-    bool standsInLaneOfTurnsLaidOut = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::EmittersAloneTestEveryPosition) && generator().isLayingOutTurns();
-    if ((!emitter<AccessEmitter>().verifiesFastPathAnswers(key) && !standsInLaneOfTurnsLaidOut) || value.representation() == Representation::Void || m_program.at(key).kind == PropertyKeyKind::PrivateName)
+    bool isInCheckedUnrolledLoop = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckBoundsInEmittersOnly) && generator().isLayingOutTurns();
+    if ((!emitter<AccessEmitter>().verifiesFastPathAnswers(key) && !isInCheckedUnrolledLoop) || value.representation() == Representation::Void || m_program.at(key).kind == PropertyKeyKind::PrivateName)
         return;
     const Type& type = typeOf(value.id());
     if (type.primitives & (Primitive::Absent | Primitive::Unspecified))
@@ -825,7 +831,7 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
         if (needsStorage || !access.slot.isLeftOutByMakers)
             store();
         else if (emittersCheckProofs())
-            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, logicalNot(slots.holdsValue(baseOfSlot(cell, access), access.slot, location, extensionWordOfSlotAccess(access))), std::nullopt, ProofSource::WhatIsRemembered);
+            emitter<ThrowEmitter>().requireOrCrash(value, logicalNot(slots.holdsValue(baseOfSlot(cell, access), access.slot, location, extensionWordOfSlotAccess(access))), std::nullopt, ProofSource::RememberedFact);
         return;
     }
 

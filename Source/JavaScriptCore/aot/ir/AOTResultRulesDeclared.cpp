@@ -114,11 +114,10 @@ TypeID tryTypeWrittenAbove(const TypingContext& context, LayoutID layout, Proper
     LayoutID declaring = declaredLayoutOf(program, layout);
     std::span<const LayoutID> views = program.viewsAbove(declaring);
     if (views.size() >= Program::fewestViewsIndexedByKey) {
-        for (const Program::FieldWrittenAbove& listed : program.fieldsWrittenAbove(declaring, key)) {
-            if (!add(listed.view, listed.field))
-                return { };
-        }
-        return isWritten ? written.finish() : TypeID();
+        bool isAnswered = program.visitFieldsWrittenAbove(declaring, key, [&](Program::FieldOfView listed) {
+            return add(listed.view, listed.field);
+        });
+        return isAnswered && isWritten ? written.finish() : TypeID();
     }
     for (LayoutID view : views) {
         if (std::optional<uint32_t> field = program.at(view).findField(key); field && !add(view, *field))
@@ -154,7 +153,7 @@ static TypeID askEachReceiverForSlotContents(const TypingContext& context, Layou
     bool someReceiverHasField = false;
     LayoutID onlyReceiver;
     Vector<LayoutID, 16> asked;
-    bool asksSomeReceivers = !holdsOneMember(receivers) && context.positions.listLayoutsAskedAbout(key, receivers, false, asked);
+    bool asksSomeReceivers = !holdsOneMember(receivers) && context.positions.collectQueriedLayouts(key, receivers, false, asked);
     for (LayoutID receiver : asksSomeReceivers ? asked.span() : layoutsOfSetInResultRules(context, receivers, onlyReceiver)) {
         std::optional<FieldReference> field = findFieldOfSlotAccess(context, receiver, key);
         if (!field)
@@ -410,7 +409,7 @@ static TypeID askEachReceiverForExpectedTypeOfFieldRead(const TypingContext& con
     }
     std::span<const LayoutID> unnamedLayouts = membersOf(context.types, receiver.unnamedLayouts);
     Vector<LayoutID, 16> asked;
-    if (receiver.unnamedLayouts && !holdsOneMember(receiver.unnamedLayouts) && context.positions.listLayoutsAskedAbout(key, receiver.unnamedLayouts, true, asked)) {
+    if (receiver.unnamedLayouts && !holdsOneMember(receiver.unnamedLayouts) && context.positions.collectQueriedLayouts(key, receiver.unnamedLayouts, true, asked)) {
         isMissingSomewhere |= asked.size() < unnamedLayouts.size();
         unnamedLayouts = asked.span();
     }
@@ -633,7 +632,7 @@ TypeID tryTypeOfArrayElementRead(const TypingContext& context, TypeID array, Arr
         result = context.types.unionOf(result, TypeTable::int32);
     bool mayBeFraction = context.at(result).holdsFractionsWithoutBounds();
     if (!readsHoleAsNaN)
-        return mayBeFraction && holdsOnlyNumbers(storage) ? context.types.withPrimitives(result, Primitive::Number) : result;
+        return mayBeFraction && isNumericStorage(storage) ? context.types.withPrimitives(result, Primitive::Number) : result;
     return context.types.withPrimitives(result, mayBeFraction ? Primitive::Number : Primitive::WholeNumber);
 }
 

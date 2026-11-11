@@ -56,7 +56,6 @@ static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::Setter:
     case Slot::Kind::CustomSetter:
     case Slot::Kind::FieldCreation:
-    case Slot::Kind::FieldOrInheritedSetter:
     case Slot::Kind::ExtraSetter:
     case Slot::Kind::ExtraPropertyAddition:
     case Slot::Kind::Transition:
@@ -70,6 +69,7 @@ static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::FarValue:
     case Slot::Kind::FieldOrInherited:
     case Slot::Kind::FieldOrInheritedField:
+    case Slot::Kind::FieldOrInheritedAccessor:
     case Slot::Kind::Constant:
         return !isPacked;
     case Slot::Kind::Value:
@@ -342,6 +342,14 @@ void generateReadSlot(StubAssembler& jit)
             returnUndefined();
             return;
         }
+        case Slot::Kind::FieldOrInheritedAccessor:
+            slot.loadFirstPayloadWord(jit, T10);
+            jit.load32(Address(R0, offsetOfOrderWord), T11);
+            jit.and32(TrustedImm32(static_cast<int32_t>(orderAndCountMask | orderWordHasFieldOutsideSlot)), T11);
+            uncached.append(jit.branch32(CCallHelpers::NotEqual, T11, T10));
+            loadInheritedValueBySlot(jit, slot, T10, T11, T10);
+            callGetter(T10);
+            return;
         case Slot::Kind::InheritedField: {
             if (slot.form() == SlotForm::Slot) {
                 const GPRReg word = jit.clobberOperand(headerOperand);
@@ -481,7 +489,6 @@ void generateReadSlot(StubAssembler& jit)
         case Slot::Kind::Setter:
         case Slot::Kind::CustomSetter:
         case Slot::Kind::FieldCreation:
-        case Slot::Kind::FieldOrInheritedSetter:
         case Slot::Kind::ExtraSetter:
         case Slot::Kind::ExtraPropertyAddition:
         case Slot::Kind::Transition:

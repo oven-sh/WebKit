@@ -73,11 +73,15 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
             return low32(Integer(in<OptionalInteger>(id).value()));
         case Representation::Double:
         case Representation::OptionalDouble:
+            if (representationOf(id) == Representation::OptionalDouble && !generator().holdsAnyNaN(id))
+                return emitter<ConversionEmitter>().toInt32(asNumber(in<OptionalNumber>(id), typeOf(id), PayloadOfNaN::Stays), bits);
             return emitter<ConversionEmitter>().toInt32(asNumericOperandWithAnyNaN(id), bits);
         case Representation::JSValue:
-            if (!typeOf(id).isNumber())
+            if (typeOf(id).isNumber())
+                return emitter<ConversionEmitter>().toInt32OfBoxedNumber(in<Boxed>(id));
+            if (!typeOf(id).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
                 break;
-            return emitter<ConversionEmitter>().toInt32OfBoxedNumber(in<Boxed>(id));
+            return emitter<ConversionEmitter>().truncateNullableNumber(in<Boxed>(id));
         case Representation::Unchosen:
         case Representation::Void:
         case Representation::Boolean:

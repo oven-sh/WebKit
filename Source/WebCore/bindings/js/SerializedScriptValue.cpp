@@ -181,7 +181,7 @@ static bool isInterfaceExposedInGlobalObject(JSC::JSGlobalObject& globalObject, 
     return traits.isExposedInGlobalObject(*domGlobalObject);
 }
 
-static const PlatformObjectSerializationTraits* LEGACY_NODELETE platformObjectSerializationTraitsForTag(SerializationTag tag)
+NODELETE static const PlatformObjectSerializationTraits* platformObjectSerializationTraitsForTag(SerializationTag tag)
 {
     switch (tag) {
     case ArrayTag:
@@ -316,7 +316,7 @@ static bool isTypeExposedToGlobalObject(JSC::JSGlobalObject& globalObject, Seria
     return !traits || isInterfaceExposedInGlobalObject(globalObject, *traits);
 }
 
-static bool LEGACY_NODELETE isTagRestrictedToSameAgentCluster(SerializationTag tag)
+NODELETE static bool isTagRestrictedToSameAgentCluster(SerializationTag tag)
 {
     auto* traits = platformObjectSerializationTraitsForTag(tag);
     return traits && traits->isRestrictedToSameAgentCluster;
@@ -436,7 +436,7 @@ enum class CryptoAlgorithmIdentifierTag {
 
 const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 23;
 
-static unsigned LEGACY_NODELETE countUsages(CryptoKeyUsageBitmap usages)
+NODELETE static unsigned countUsages(CryptoKeyUsageBitmap usages)
 {
     // Fast bit count algorithm for sparse bit maps.
     unsigned count = 0;
@@ -1139,10 +1139,10 @@ public:
 
     bool allowsSharedMemorySerialization()
     {
-        return m_forStorage == SerializationForStorage::No && (isCrossOriginIsolatedContext(m_lexicalGlobalObject) || JSC::Options::useSharedArrayBuffer());
+        return m_forStorage == SerializationForStorage::No && (isCrossOriginIsolatedContext(m_lexicalGlobalObject) || JSC::Options::alwaysUseSharedArrayBuffer());
     }
 
-    bool LEGACY_NODELETE allowsWasmModuleSerialization()
+    NODELETE bool allowsWasmModuleSerialization()
     {
         return m_forStorage == SerializationForStorage::No;
     }
@@ -2107,7 +2107,7 @@ private:
 
     using Base::read;
 
-    std::optional<uint32_t> LEGACY_NODELETE readImageDataIndex()
+    NODELETE std::optional<uint32_t> readImageDataIndex()
     {
         return readConstantPoolIndex(m_imageDataPool);
     }
@@ -2159,7 +2159,7 @@ private:
         return true;
     }
 
-    bool LEGACY_NODELETE read(PredefinedColorSpace& result)
+    NODELETE bool read(PredefinedColorSpace& result)
     {
         uint8_t tag;
         if (!read(tag))
@@ -2185,7 +2185,7 @@ private:
         }
     }
 
-    bool LEGACY_NODELETE read(ColorSpaceTag& tag)
+    NODELETE bool read(ColorSpaceTag& tag)
     {
         if (m_data.empty())
             return false;
@@ -2270,7 +2270,7 @@ private:
         return false;
     }
 
-    bool LEGACY_NODELETE read(CryptoKeyOKP::NamedCurve& result)
+    NODELETE bool read(CryptoKeyOKP::NamedCurve& result)
     {
         uint8_t nameTag;
         if (!read(nameTag))
@@ -2290,7 +2290,7 @@ private:
         return true;
     }
 
-    bool LEGACY_NODELETE read(CryptoAlgorithmIdentifier& result)
+    NODELETE bool read(CryptoAlgorithmIdentifier& result)
     {
         uint8_t algorithmTag;
         if (!read(algorithmTag))
@@ -2365,7 +2365,7 @@ private:
         return true;
     }
 
-    bool LEGACY_NODELETE read(CryptoKeyClassSubtag& result)
+    NODELETE bool read(CryptoKeyClassSubtag& result)
     {
         uint8_t tag;
         if (!read(tag))
@@ -2376,7 +2376,7 @@ private:
         return true;
     }
 
-    bool LEGACY_NODELETE read(CryptoKeyUsageTag& result)
+    NODELETE bool read(CryptoKeyUsageTag& result)
     {
         uint8_t tag;
         if (!read(tag))
@@ -2387,7 +2387,7 @@ private:
         return true;
     }
 
-    bool LEGACY_NODELETE read(CryptoKeyAsymmetricTypeSubtag& result)
+    NODELETE bool read(CryptoKeyAsymmetricTypeSubtag& result)
     {
         uint8_t tag;
         if (!read(tag))
@@ -2784,7 +2784,7 @@ private:
         return toJSNewlyCreated(m_lexicalGlobalObject, downcast<JSDOMGlobalObject>(m_globalObject), T::create(x, y, width, height));
     }
 
-    std::optional<DOMPointInit> LEGACY_NODELETE readDOMPointInit()
+    NODELETE std::optional<DOMPointInit> readDOMPointInit()
     {
         DOMPointInit point;
         if (!read(point.x))
@@ -3611,7 +3611,7 @@ private:
     Vector<RefPtr<MediaStreamTrackHandle>> m_mediaStreamTrackHandles;
 #endif
 
-    String LEGACY_NODELETE blobFilePathForBlobURL(const String& blobURL)
+    NODELETE String blobFilePathForBlobURL(const String& blobURL)
     {
         size_t i = 0;
         for (; i < m_blobURLs.size(); ++i) {
@@ -4602,8 +4602,7 @@ Vector<String> SerializedScriptValue::blobURLs() const
 
 Vector<FileSystemHandleGlobalIdentifier> SerializedScriptValue::fileSystemHandleGlobalIdentifiers() const
 {
-    Vector<FileSystemHandleGlobalIdentifier> result;
-    result.reserveInitialCapacity(m_internals->fileSystemHandleKeepAlives.size());
+    Vector<FileSystemHandleGlobalIdentifier> result(ReserveCapacityTag { }, m_internals->fileSystemHandleKeepAlives.size());
     for (auto& keepAlive : m_internals->fileSystemHandleKeepAlives) {
         if (auto identifier = keepAlive.globalIdentifier())
             result.append(*identifier);

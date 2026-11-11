@@ -44,7 +44,7 @@
 # ANSWER-NEXT: undefined 30
 # ANSWER-NEXT: z 0.5
 # ANSWER-NEXT: exited with 0
-# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,TestsEveryPosition globalThis.sink = (pick, anywhere, named, made, seen, holed, filled) => { print(pick(0), pick(1), pick(6), pick(7)); print(anywhere(3), anywhere(4), anywhere(-1)); print(named(1), named(7)); print(made("x", "y", 1), made(1.5, null, 0)); print(seen(list => { list[1] = "changed"; list.length = 2; }, 1), seen(list => { list.length = 2; }, 3)); print(holed(1), holed(2)); print(filled(1, "z"), filled(2, 0.5)); };
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckBoundsAtRunTime globalThis.sink = (pick, anywhere, named, made, seen, holed, filled) => { print(pick(0), pick(1), pick(6), pick(7)); print(anywhere(3), anywhere(4), anywhere(-1)); print(named(1), named(7)); print(made("x", "y", 1), made(1.5, null, 0)); print(seen(list => { list[1] = "changed"; list.length = 2; }, 1), seen(list => { list.length = 2; }, 3)); print(holed(1), holed(2)); print(filled(1, "z"), filled(2, 0.5)); };
 # CHECKED: 10 20 30 40
 # CHECKED-NEXT: 40 undefined undefined
 # CHECKED-NEXT: b d

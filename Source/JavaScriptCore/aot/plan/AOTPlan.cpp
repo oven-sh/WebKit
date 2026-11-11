@@ -454,7 +454,7 @@ static void chooseModuleWordsOfPlan(const Program& program, PlanParts& parts)
         const Module& module = program.modules[index];
         if (module.kind != ModuleKind::CommonJs)
             parts.modulesWithValue.quickSet(index);
-        bool isCommonJsWithOneNamespace = module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsImportedAsNamespace) && !module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted });
+        bool isCommonJsWithOneNamespace = module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsImportedAsNamespace) && !module.flags.containsAny({ ModuleFlags::MayBeReevaluated, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted });
         if (module.kind == ModuleKind::Runtime || module.kind == ModuleKind::RuntimeSource || isCommonJsWithOneNamespace)
             parts.modulesWithNamespaceWord.quickSet(index);
         if (!module.body || !program.at(module.body).hasBody() || bodyOfModuleOnlyReturns(program.at(module.body).body))
@@ -467,7 +467,7 @@ static void chooseModuleWordsOfPlan(const Program& program, PlanParts& parts)
         }
     }
     for (const Module& module : program.modules) {
-        if (isFaceOfCommonJSFile(program, module))
+        if (isCommonJSFacade(program, module))
             parts.modulesWithNamespaceWord.quickClear(module.requests[0].target.index());
     }
     parts.modulesWithRequireCacheValue.filter(parts.modulesWithValue);
@@ -807,7 +807,7 @@ static void planConventions(const Program& program, const Facts& facts, BuildCon
         Representation result = parts.conventions.resultRepresentation({ FunctionID(index), CodeRole::Body });
         numberOfFunctionsThatReturnNumberOrUndefinedRaw += result == Representation::OptionalInt64 || result == Representation::OptionalDouble;
     }
-    build.statistics().count(StatisticID::AsyncWorkersMade, numberOfAsyncFunctionsThatNeverSuspend);
+    build.statistics().count(StatisticID::NonSuspendingAsyncFunctions, numberOfAsyncFunctionsThatNeverSuspend);
     build.statistics().count(StatisticID::NumbersOrUndefinedReturnedRaw, numberOfFunctionsThatReturnNumberOrUndefinedRaw);
 
 }
@@ -959,7 +959,7 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
         slots.variables = WTF::move(variables);
         slots.classCreation = WTF::move(classCreation);
         build.statistics().count(StatisticID::EnvironmentsPromotedToVariables, parts.promotedEnvironments.layouts.size());
-        build.statistics().count(StatisticID::CapturesOfClassesStoredForGoodPromoted, parts.promotedEnvironments.numberOfCapturesOfClassesStoredForGood);
+        build.statistics().count(StatisticID::PermanentClassCapturesPromoted, parts.promotedEnvironments.numberOfCapturesOfClassesStoredForGood);
         holdDoorsToProofsInSlotPlan(program, facts, build.parallelLoops(), slots);
         appendPromotedVariables(parts.promotedEnvironments, slots);
         markSlotsFilledAtBirthInPlan(program, facts, build.parallelLoops(), slots);
@@ -1403,7 +1403,7 @@ void CheckerOfPlan::checkLayout(LayoutID id)
     checkArea(id, planned, SlotStorage::Inline, isEnvironment ? offsetOfFirstEnvironmentVariable : offsetOfFirstField, planned.size, RuleOfPlan::SlotOutsideCell);
     checkArea(id, planned, SlotStorage::OutOfLine, offsetOfFirstExtensionSlot, std::min(planned.extensionSize, maxExtensionSize), RuleOfPlan::SlotOutsideExtension);
 
-    if (!m_plan.isInUse(id) || !(planned.holdsCompiledObjects() || isEnvironment))
+    if (!m_plan.isAllocatable(id) || !(planned.holdsCompiledObjects() || isEnvironment))
         return;
     expect(m_plan.shapes().isAssigned(m_plan.shapes().generalShapeOf(id)), RuleOfPlan::ShapeMissing, id);
     for (FieldIndex field = 0; field < planned.numberOfFields(); ++field)
@@ -1512,7 +1512,7 @@ void Plan::findCallEntriesThatWalkBodies(const Program& program, const Facts& fa
             continue;
         GenericEntryPlan entry = conventions().genericEntry({ id, CodeRole::GenericCallEntry });
         const BodyIndex* body = facts.bodies().find(id);
-        if (!entry.takesNewTarget && entry.target.role == CodeRole::Body && body && !storesListAtEntry(id, *body))
+        if ((!entry.takesNewTarget || program.at(id).kind == FunctionKind::DerivedConstructor) && entry.target.role == CodeRole::Body && body && !storesListAtEntry(id, *body))
             m_parts.functionsWhoseCallEntryWalksBody.quickSet(index);
     }
 }

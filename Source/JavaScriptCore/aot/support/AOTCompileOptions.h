@@ -28,7 +28,7 @@ using Wire::ImageForm;
 using Wire::OutputOptions;
 using Wire::ReferenceWidth;
 using Wire::ReportSet;
-using Wire::TestingLie;
+using Wire::FaultInjection;
 using Wire::TestingSwitch;
 
 template<typename Flags>
@@ -40,7 +40,7 @@ constexpr bool hasFlag(Flags set, Flags flag)
 
 static_assert(hasFlag(allMembersOf<TestingSwitch>.back(), allMembersOf<TestingSwitch>.back()));
 
-enum class DrawnFor : uint8_t { BlockFrequency, LoopMark, ExpectedType, OtherExpectedType, StepOfGuessesThatFail, NodeOfLink, CopyInLine, ParameterGuard, LoopBuiltTwice, PlaceInFrontOfLoop, GuessOutsideLoops, WayOfWalking, ResultInParts };
+enum class DrawnFor : uint8_t { BlockFrequency, LoopMark, ExpectedType, OtherExpectedType, StepOfGuessesThatFail, NodeOfLink, CopyInLine, ParameterGuard, LoopBuiltTwice, PlaceInFrontOfLoop, GuessOutsideLoops, WalkMode, ResultInParts };
 
 constexpr uint32_t drawBySeed(uint32_t seed, DrawnFor question, uint32_t first, uint32_t second)
 {
@@ -54,9 +54,9 @@ constexpr uint32_t drawBySeed(uint32_t seed, DrawnFor question, uint32_t first, 
 }
 
 #if defined(BUN_HARDENED)
-constexpr bool runsOnlyCodeOfImage = true;
+constexpr bool isHardenedBuild = true;
 #else
-constexpr bool runsOnlyCodeOfImage = false;
+constexpr bool isHardenedBuild = false;
 #endif
 
 constexpr ImageForm imageFormOfThisRuntime()
@@ -102,26 +102,26 @@ struct CompileOptions {
     RecordedOptions recorded;
     std::array<uint8_t, 16> executableIdentity { };
     std::array<uint64_t, 8> removedFeatures { };
-    std::array<uint64_t, 8> featuresKeptOnlyWhenNamed { };
+    std::array<uint64_t, 8> featuresRetainedByName { };
     double sizeClassProgression { 0 };
     unsigned threadCount { 1 };
     CompileAction action { CompileAction::Compile };
     bool verifiesCode { false };
     bool verifiesMachineCode { false };
-    bool asksWhetherFlowOfLinkIsClosed { false };
-    bool walksLastWalksOfLoopsAlone { false };
-    bool walksLoopsThatFitAgain { false };
-    bool asksWhetherLinkFindsLessFromMore { false };
+    bool checksFlowFixpoint { false };
+    bool replaysFinalLoopVisits { false };
+    bool repeatsFittingLoopVisits { false };
+    bool checksFlowMonotonicity { false };
     ReportSet reports { };
     TestingSwitch testing { };
-    TestingLie lies { };
-    uint32_t rowThatSaysLess { 0 };
-    uint32_t seedOfShuffles { 0 };
-    uint32_t periodOfGuessesThatFail { 0 };
-    uint32_t wayForcedOnUnits { 0 };
-    uint32_t periodOfUnitsWalkedThatWay { 0 };
-    uint32_t periodOfHearingsThatCutWalks { 0 };
-    uint32_t phaseOfHearingsThatCutWalks { 0 };
+    FaultInjection injectedFaults { };
+    uint32_t understatedEffects { 0 };
+    uint32_t shuffleSeed { 0 };
+    uint32_t speculationFailurePeriod { 0 };
+    uint32_t forcedWalkMode { 0 };
+    uint32_t forcedWalkModePeriod { 0 };
+    uint32_t loopVisitAbortPeriod { 0 };
+    uint32_t loopVisitAbortPhase { 0 };
     ExcludedCode excludedCode { };
     OutputOptions output { };
     LoggingOptions logging;
@@ -132,7 +132,7 @@ struct CompileOptions {
     bool excludesHostEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::HostEvaluatedText); }
     bool excludesForeignCalls() const { return hasFlag(excludedCode, ExcludedCode::ForeignCalls); }
     bool excludesForeignCallsOfUnseenCode() const { return hasFlag(excludedCode, ExcludedCode::ForeignCallsOfUnseenCode); }
-    bool excludesCodeOutsideImage() const { return runsOnlyCodeOfImage || hasFlag(excludedCode, ExcludedCode::CodeOutsideImage); }
+    bool excludesCodeOutsideImage() const { return isHardenedBuild || hasFlag(excludedCode, ExcludedCode::CodeOutsideImage); }
     bool excludesLibraryText() const { return hasFlag(excludedCode, ExcludedCode::LibraryText); }
     bool excludesFeaturesNamedAtRunTime() const { return hasFlag(excludedCode, ExcludedCode::FeaturesNamedAtRunTime); }
     bool obfuscates() const { return hasFlag(output, OutputOptions::Obfuscate); }

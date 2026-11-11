@@ -286,6 +286,8 @@ InlineForm ArrayFormChooser::formOfArrayBufferViewBuiltin() const
         return wholeIf(constructsViewOfOneElementType() && isNumber(argument(0)));
     case InlineBuiltin::TypedArraySet:
         return twoWayIf(movesElementsOfOneType());
+    case InlineBuiltin::ByteLiteral:
+        return InlineForm::Call;
     FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_BUILTIN(AOT_CASE_IN_FORMS_OF_ARRAYS)
     FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_STORAGE_BUILTIN(AOT_CASE_IN_FORMS_OF_ARRAYS)
     FOR_EACH_AOT_INLINE_BUILTIN_OUTSIDE_FORMS_OF_ARRAYS(AOT_CASE_IN_FORMS_OF_ARRAYS)

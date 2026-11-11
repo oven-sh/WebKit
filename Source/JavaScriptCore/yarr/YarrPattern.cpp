@@ -146,7 +146,7 @@ public:
         appendDifferenceOfTables(characterClass.m_matches32, characterClass.m_ranges32, excluded.m_matches32, excluded.m_ranges32, m_matches32, m_ranges32);
     }
 
-    void LEGACY_NODELETE combiningSetOp(CharacterClassSetOp setOp)
+    NODELETE void combiningSetOp(CharacterClassSetOp setOp)
     {
         ASSERT(m_setOp == CharacterClassSetOp::Default || m_setOp == setOp);
         m_setOp = setOp;
@@ -516,12 +516,12 @@ public:
         nonLatin1OpSorted(rhsSortedMatches32, rhsRanges32);
     }
 
-    bool LEGACY_NODELETE hasInvertedStrings()
+    NODELETE bool hasInvertedStrings()
     {
         return m_invertedStrings;
     }
 
-    static ALWAYS_INLINE int LEGACY_NODELETE compareUTF32Strings(const Vector<char32_t>& a, const Vector<char32_t>& b)
+    NODELETE static ALWAYS_INLINE int compareUTF32Strings(const Vector<char32_t>& a, const Vector<char32_t>& b)
     {
         // Longer strings before shorter.
         if (a.size() > b.size())
@@ -571,7 +571,7 @@ public:
         return characterClass;
     }
 
-    void LEGACY_NODELETE setIsCaseInsensitive(bool ignoreCase)
+    NODELETE void setIsCaseInsensitive(bool ignoreCase)
     {
         m_isCaseInsensitive = ignoreCase;
     }
@@ -1235,12 +1235,12 @@ private:
         return widths;
     }
 
-    bool LEGACY_NODELETE anyCharacter()
+    NODELETE bool anyCharacter()
     {
         return m_anyCharacter;
     }
 
-    bool LEGACY_NODELETE isUnionSetOp() { return m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union; }
+    NODELETE bool isUnionSetOp() { return m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union; }
 
     bool m_isCaseInsensitive : 1;
     bool m_anyCharacter : 1;
@@ -1309,12 +1309,12 @@ class YarrPatternConstructor {
         PatternAlternative* alternative() const { return m_alternative; }
         unsigned termIndex() const { return m_termIndex; }
 
-        bool LEGACY_NODELETE hasNamedGroup()
+        NODELETE bool hasNamedGroup()
         {
             return !m_namedGroup.isNull();
         }
 
-        const String LEGACY_NODELETE namedGroup()
+        NODELETE const String namedGroup()
         {
             return m_namedGroup;
         }
@@ -1681,7 +1681,7 @@ public:
         }
     }
 
-    void LEGACY_NODELETE atomCharacterClassBegin(bool invert = false)
+    NODELETE void atomCharacterClassBegin(bool invert = false)
     {
         m_invertCharacterClass = invert;
 
@@ -1741,7 +1741,7 @@ public:
         m_currentCharacterClassConstructor->atomClassStringDisjunction(utf32Strings);
     }
 
-    void LEGACY_NODELETE atomCharacterClassSetOp(CharacterClassSetOp setOp)
+    NODELETE void atomCharacterClassSetOp(CharacterClassSetOp setOp)
     {
         m_currentCharacterClassConstructor->combiningSetOp(setOp);
     }
@@ -2137,8 +2137,7 @@ public:
     // std::nullopt when one of those has to be matched, i.e. this alternative cannot match at all.
     std::optional<PatternTermList> copyTerms(PatternAlternative* alternative, bool filterStartsWithBOL, Vector<unsigned>& sourceTermIndices)
     {
-        PatternTermList copiedTerms;
-        copiedTerms.reserveInitialCapacity(alternative->m_terms.size());
+        PatternTermList copiedTerms(ReserveCapacityTag { }, alternative->m_terms.size());
         for (unsigned termIndex = 0; termIndex < alternative->m_terms.size(); ++termIndex) {
             auto& term = alternative->m_terms[termIndex];
             if (auto copied = copyTerm(term, filterStartsWithBOL)) {
@@ -2295,12 +2294,12 @@ public:
         m_alternative = m_alternative->m_parent->addNewAlternative(m_pattern.m_numSubpatterns, parenthesisMatchDirection());
     }
 
-    inline bool LEGACY_NODELETE abortedDueToError() const
+    NODELETE inline bool abortedDueToError() const
     {
         return hasError(m_error);
     }
 
-    inline ErrorCode LEGACY_NODELETE abortErrorCode() const
+    NODELETE inline ErrorCode abortErrorCode() const
     {
         return m_error;
     }
@@ -4325,7 +4324,7 @@ public:
             return;
     }
 
-    ErrorCode LEGACY_NODELETE error() { return m_error; }
+    NODELETE ErrorCode error() { return m_error; }
     StackCheck& stackCheck() { return m_stackCheck; }
 
 private:
@@ -4342,7 +4341,7 @@ private:
             {
             }
 
-            void LEGACY_NODELETE restore(bool& isModifier, bool& invert, MatchDirection& matchDirection, bool& insideLookbehind, OptionSet<Flags>& flags)
+            NODELETE void restore(bool& isModifier, bool& invert, MatchDirection& matchDirection, bool& insideLookbehind, OptionSet<Flags>& flags)
             {
                 isModifier = m_isModifier;
                 invert = m_invert;
@@ -4376,7 +4375,7 @@ private:
             m_isModifier = false;
         }
 
-        void LEGACY_NODELETE pop()
+        NODELETE void pop()
         {
             ASSERT(m_stackDepth > 0);
 
@@ -4392,17 +4391,17 @@ private:
             }
         }
 
-        void LEGACY_NODELETE setModifier(bool isMod)
+        NODELETE void setModifier(bool isMod)
         {
             m_isModifier = isMod;
         }
 
-        bool LEGACY_NODELETE isModifier() const
+        NODELETE bool isModifier() const
         {
             return m_isModifier;
         }
 
-        void LEGACY_NODELETE setInvert(bool invert)
+        NODELETE void setInvert(bool invert)
         {
             m_invert = invert;
         }
@@ -4429,17 +4428,17 @@ private:
         // True inside a lookbehind at ANY nesting depth (including within a lookahead
         // nested in a lookbehind), unlike matchDirection(), which is only the innermost
         // assertion's own direction.
-        bool LEGACY_NODELETE insideLookbehind() const
+        NODELETE bool insideLookbehind() const
         {
             return m_insideLookbehind;
         }
 
-        void LEGACY_NODELETE setFlags(OptionSet<Flags> flags)
+        NODELETE void setFlags(OptionSet<Flags> flags)
         {
             m_flags = flags;
         }
 
-        OptionSet<Flags> LEGACY_NODELETE flags() const
+        NODELETE OptionSet<Flags> flags() const
         {
             return m_flags;
         }
@@ -4471,27 +4470,27 @@ private:
         m_parenthesisContext.push();
     }
 
-    void LEGACY_NODELETE popParenthesisContext()
+    NODELETE void popParenthesisContext()
     {
         m_parenthesisContext.pop();
     }
 
-    void LEGACY_NODELETE setParenthesisInvert(bool invert)
+    NODELETE void setParenthesisInvert(bool invert)
     {
         m_parenthesisContext.setInvert(invert);
     }
 
-    bool LEGACY_NODELETE parenthesisInvert() const
+    NODELETE bool parenthesisInvert() const
     {
         return m_parenthesisContext.invert();
     }
 
-    void LEGACY_NODELETE setParenthesisMatchDirection(MatchDirection matchDirection)
+    NODELETE void setParenthesisMatchDirection(MatchDirection matchDirection)
     {
         m_parenthesisContext.setMatchDirection(matchDirection);
     }
 
-    MatchDirection LEGACY_NODELETE parenthesisMatchDirection() const
+    NODELETE MatchDirection parenthesisMatchDirection() const
     {
         return m_parenthesisContext.matchDirection();
     }
@@ -5101,8 +5100,7 @@ CharacterClassBitTable::CharacterClassBitTable(const CharacterClass& characterCl
     while (!bits.isEmpty() && !bits.last())
         bits.removeLast();
 
-    Vector<uint64_t> uniqueWords;
-    uniqueWords.reserveInitialCapacity(bits.size());
+    Vector<uint64_t> uniqueWords(ReserveCapacityTag { }, bits.size());
     for (size_t i = 0; i < bits.size(); ++i) {
         if (!i || bits[i] != bits[i - 1])
             uniqueWords.append(bits[i]);

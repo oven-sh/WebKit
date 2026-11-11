@@ -249,13 +249,13 @@ Reference BuilderOfEntries::positionalArgument(uint32_t argumentIndex, const Dec
     Reference marker = m_walker.constant(WTF::move(absent));
 
     BlockID leftOut = m_walker.addBlock();
-    BlockID handedOver = m_walker.addBlock();
+    BlockID passedBlock = m_walker.addBlock();
     BlockID next = m_walker.addBlock();
     Reference either = m_walker.addParameter(next, m_types.unionOf(m_walker.typeOf(marker), m_walker.typeOf(argument)), Representation::JSValue);
-    m_walker.branch(isLeftOut, leftOut, handedOver);
+    m_walker.branch(isLeftOut, leftOut, passedBlock);
     m_walker.continueIn(leftOut);
     m_walker.jumpTo(next, singleElementSpan(marker));
-    m_walker.continueIn(handedOver);
+    m_walker.continueIn(passedBlock);
     m_walker.jumpTo(next, singleElementSpan(argument));
     return either;
 }
@@ -503,7 +503,7 @@ bool BuilderOfEntries::buildGenericEntry()
         return !m_walker.hasFailed();
     }
     if (m_walker.arrivals().entriesAreClosed(m_unit.function)) {
-        m_walker.count(StatisticID::EntriesThatNobodyEnters);
+        m_walker.count(StatisticID::GenericEntriesProvenUnreachable);
         m_walker.buildCheckOfProof(thisValue(), TypeTable::never, TypeTable::anything, ProofSource::EntryParameter, m_origin);
         endAsUnreachable();
         return !m_walker.hasFailed();
@@ -533,7 +533,7 @@ bool BuilderOfEntries::buildGenericEntry()
         layOutOperands(values, entry.target, operands, ListsOfArguments::AreLeftOut);
         if (m_cannotGoOn)
             return !m_walker.hasFailed();
-        return m_walker.walkBodyBehindEntry(operands.span(), whereListsAreNamed, scopedLambda<Reference(unsigned)>([&](unsigned entryParameter) {
+        return m_walker.visitBodyFromEntry(operands.span(), whereListsAreNamed, scopedLambda<Reference(unsigned)>([&](unsigned entryParameter) {
             m_cannotGoOn = false;
             return inFormThatUnitTakes(listOfArgumentsBehindParameters(), entry.target, entryParameter);
         }));

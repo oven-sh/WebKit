@@ -17,7 +17,7 @@ namespace JSC { namespace AOT { namespace Typed {
 void StringEmitter::holdRangeInside(const ValueContext& value, Word32 start, Word32 end)
 {
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    if (!elements.testsEveryPosition())
+    if (!elements.checksBounds())
         return;
     if (start.value() != end.value())
         elements.stopUnlessInside(value, belowOrEqual(start, end));

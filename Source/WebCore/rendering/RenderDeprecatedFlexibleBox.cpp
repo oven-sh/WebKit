@@ -74,7 +74,7 @@ public:
         reset();
     }
 
-    void LEGACY_NODELETE reset()
+    NODELETE void reset()
     {
         m_currentChild = nullptr;
         m_ordinalIteration = std::numeric_limits<unsigned>::max();
@@ -118,7 +118,7 @@ public:
     }
 
 private:
-    bool LEGACY_NODELETE notFirstOrdinalValue()
+    NODELETE bool notFirstOrdinalValue()
     {
         unsigned int firstOrdinalValue = m_forward ? 1 : m_largestOrdinal;
         return m_currentOrdinal == firstOrdinalValue && m_currentChild->style().boxOrdinalGroup() != firstOrdinalValue;
@@ -143,7 +143,7 @@ RenderDeprecatedFlexibleBox::RenderDeprecatedFlexibleBox(Element& element, Style
 
 RenderDeprecatedFlexibleBox::~RenderDeprecatedFlexibleBox() = default;
 
-static LayoutUnit LEGACY_NODELETE marginWidthForChild(RenderBox* child)
+NODELETE static LayoutUnit marginWidthForChild(RenderBox* child)
 {
     // A margin basically has three types: fixed, percentage, and auto (variable).
     // Auto and percentage margins simply become 0 when computing min/max width.
@@ -157,20 +157,20 @@ static LayoutUnit LEGACY_NODELETE marginWidthForChild(RenderBox* child)
     return margin;
 }
 
-static bool LEGACY_NODELETE childDoesNotAffectWidthOrFlexing(RenderObject* child)
+NODELETE static bool childDoesNotAffectWidthOrFlexing(RenderObject* child)
 {
     // Positioned children don't affect the min/max width.
     return child->isOutOfFlowPositioned();
 }
 
-static LayoutUnit LEGACY_NODELETE widthForChild(RenderBox* child)
+NODELETE static LayoutUnit widthForChild(RenderBox* child)
 {
     if (auto overridingLogicalWidth = child->overridingBorderBoxLogicalWidth())
         return *overridingLogicalWidth;
     return child->logicalWidth();
 }
 
-static LayoutUnit LEGACY_NODELETE heightForChild(RenderBox* child)
+NODELETE static LayoutUnit heightForChild(RenderBox* child)
 {
     if (auto overridingLogicalHeight = child->overridingBorderBoxLogicalHeight())
         return *overridingLogicalHeight;
@@ -187,7 +187,7 @@ static LayoutUnit contentHeightForChild(RenderBox* child)
     return std::max<LayoutUnit>(0, heightForChild(child) - child->borderAndPaddingLogicalHeight());
 }
 
-static LayoutUnit LEGACY_NODELETE mainAxisExtentForChild(RenderBox* child, bool isVerticalBox)
+NODELETE static LayoutUnit mainAxisExtentForChild(RenderBox* child, bool isVerticalBox)
 {
     bool useLogicalHeight = isVerticalBox == child->isHorizontalWritingMode();
     return useLogicalHeight ? heightForChild(child) : widthForChild(child);
@@ -264,21 +264,15 @@ std::pair<LayoutUnit, LayoutUnit> RenderDeprecatedFlexibleBox::computeIntrinsicL
     return { minLogicalWidth + scrollbarWidth, maxLogicalWidth + scrollbarWidth };
 }
 
-void RenderDeprecatedFlexibleBox::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderDeprecatedFlexibleBox::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
-    m_minContentLogicalWidthContribution = 0_lu;
-    m_maxContentLogicalWidthContribution = 0_lu;
     if (auto fixedWidth = style().width().tryFixed(); fixedWidth && fixedWidth->isPositive()) {
-        m_maxContentLogicalWidthContribution = adjustContentBoxLogicalWidthForBoxSizing(*fixedWidth);
-        m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-    } else
-        std::tie(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution) = computeIntrinsicLogicalWidths();
-
-    constrainIntrinsicLogicalWidthsByMinMax(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
-
-    clearContentLogicalWidthsInvalidation();
+        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(*fixedWidth);
+        return { logicalWidth, logicalWidth };
+    }
+    return computeIntrinsicLogicalWidths();
 }
 
 // Use an inline capacity of 8, since flexbox containers usually have less than 8 children.
@@ -433,7 +427,7 @@ static void gatherFlexChildrenInfo(FlexBoxIterator& iterator, RelayoutChildren r
             // may have changed, and we need to reallocate space.
             child->clearOverridingSize();
             if (relayoutChildren == RelayoutChildren::No)
-                child->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+                child->setChildNeedsLayout(MarkingBehavior::OnlyThis);
             haveFlex = true;
             unsigned flexGroup = child->style().boxFlexGroup().value;
             if (lowestFlexGroup == 0)
@@ -505,7 +499,7 @@ void RenderDeprecatedFlexibleBox::layoutHorizontalBox(RelayoutChildren relayoutC
         LayoutUnit maxAscent, maxDescent;
         for (RenderBox* child = iterator.first(); child; child = iterator.next()) {
             if (relayoutChildren == RelayoutChildren::Yes)
-                child->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+                child->setChildNeedsLayout(MarkingBehavior::OnlyThis);
 
             if (child->isOutOfFlowPositioned())
                 continue;
@@ -563,7 +557,7 @@ void RenderDeprecatedFlexibleBox::layoutHorizontalBox(RelayoutChildren relayoutC
                 if (childLayer->staticBlockPosition() != yPos) {
                     childLayer->setStaticBlockPosition(yPos);
                     if (child->style().hasStaticBlockPosition(writingMode().isHorizontal()))
-                        child->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+                        child->setChildNeedsLayout(MarkingBehavior::OnlyThis);
                 }
                 continue;
             }
@@ -576,7 +570,7 @@ void RenderDeprecatedFlexibleBox::layoutHorizontalBox(RelayoutChildren relayoutC
             LayoutUnit oldChildHeight = child->borderBoxHeight();
             child->updateLogicalHeight();
             if (oldChildHeight != child->borderBoxHeight())
-                child->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+                child->setChildNeedsLayout(MarkingBehavior::OnlyThis);
 
             child->markForPaginationRelayoutIfNeeded();
 
@@ -825,7 +819,7 @@ void RenderDeprecatedFlexibleBox::layoutVerticalBox(RelayoutChildren relayoutChi
         for (RenderBox* child = iterator.first(); child; child = iterator.next()) {
             // Make sure we relayout children if we need it.
             if (!haveLegacyLineClamp && relayoutChildren == RelayoutChildren::Yes)
-                child->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+                child->setChildNeedsLayout(MarkingBehavior::OnlyThis);
 
             if (child->isOutOfFlowPositioned()) {
                 child->containingBlock()->addOutOfFlowBox(*child);
@@ -834,7 +828,7 @@ void RenderDeprecatedFlexibleBox::layoutVerticalBox(RelayoutChildren relayoutChi
                 if (childLayer->staticBlockPosition() != borderBoxHeight()) {
                     childLayer->setStaticBlockPosition(borderBoxHeight());
                     if (child->style().hasStaticBlockPosition(writingMode().isHorizontal()))
-                        child->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+                        child->setChildNeedsLayout(MarkingBehavior::OnlyThis);
                 }
                 continue;
             }
@@ -1063,13 +1057,13 @@ std::optional<LegacyLineClampUpdater::ClampedContent> RenderDeprecatedFlexibleBo
             child->clearOverridingSize();
             if (relayoutChildren == RelayoutChildren::Yes || (child->isBlockLevelReplacedOrAtomicInline() && (child->style().width().isPercentOrCalculated() || child->style().height().isPercentOrCalculated()))
                 || (child->style().height().isAuto() && is<RenderBlockFlow>(*child))) {
-                child->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+                child->setChildNeedsLayout(MarkingBehavior::OnlyThis);
 
                 // Dirty all the positioned objects. The child lays them out when it lays out below, so marking their
                 // containing block chain would only dirty ancestors, some of which may have finished layout already
                 // (e.g. this runs as part of the scrollbar relayout a flex or grid ancestor issues after its children are done).
                 if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(*child))
-                    blockFlow->markOutOfFlowBoxesForLayout(MarkingBehavior::MarkOnlyThis);
+                    blockFlow->markOutOfFlowBoxesForLayout(MarkingBehavior::OnlyThis);
             }
         }
     };

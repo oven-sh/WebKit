@@ -29,7 +29,11 @@
 
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 
+#include "AirArgInlines.h"
 #include "AirCode.h"
+#include "AirInstInlines.h"
+#include "AirOpcodeUtils.h"
+#include "AirReuseConditionFlags.h"
 #include "AllowMacroScratchRegisterUsageIf.h"
 #include "B3AbstractHeapRepository.h"
 #include "B3BasicBlockInlines.h"
@@ -40,6 +44,7 @@
 #include "B3FixSSA.h"
 #include "B3Generate.h"
 #include "B3InsertionSet.h"
+#include "B3RelocatableValue.h"
 #include "B3SIMDValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3SwitchValue.h"
@@ -70,6 +75,7 @@
 #include "SIMDShuffle.h"
 #include "ScratchRegisterAllocator.h"
 #include "WasmBaselineData.h"
+#include "WasmBinding.h"
 #include "WasmBranchHints.h"
 #include "WasmByteLoopIdiom.h"
 #include "WasmCallProfile.h"
@@ -92,10 +98,13 @@
 #include <limits>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/LEBDecoder.h>
 #include <wtf/RecursableLambda.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
+
+#include "AOTRelocation.h"
 
 #if !ENABLE(WEBASSEMBLY)
 #error ENABLE(WEBASSEMBLY_OMGJIT) is enabled, but ENABLE(WEBASSEMBLY) is not.
@@ -148,17 +157,17 @@ public:
         ASSERT(!isEmpty() && !isMaterialized() && b3Value() == value);
     }
 
-    bool LEGACY_NODELETE isEmpty() const
+    NODELETE bool isEmpty() const
     {
         return !m_storage;
     }
 
-    bool LEGACY_NODELETE isMaterialized() const
+    NODELETE bool isMaterialized() const
     {
         return m_storage & isMaterializedMask;
     }
 
-    void LEGACY_NODELETE setMaterialized(B3::Variable* var)
+    NODELETE void setMaterialized(B3::Variable* var)
     {
         ASSERT(!isMaterialized());
         m_storage = reinterpret_cast<uintptr_t>(var) | isMaterializedMask;
@@ -166,20 +175,20 @@ public:
     }
 
     // Not named value() to disambiguate with TypedExpression::value()
-    B3::Value* LEGACY_NODELETE b3Value() const
+    NODELETE B3::Value* b3Value() const
     {
         ASSERT(!isMaterialized());
         // No need to mask in this common case since the isMaterialized bit will be 0
         return reinterpret_cast<B3::Value*>(m_storage);
     }
 
-    B3::Variable* LEGACY_NODELETE b3Variable() const
+    NODELETE B3::Variable* b3Variable() const
     {
         ASSERT(isMaterialized());
         return reinterpret_cast<B3::Variable*>(m_storage & ~isMaterializedMask);
     }
 
-    B3::Type LEGACY_NODELETE type() const
+    NODELETE B3::Type type() const
     {
         if (isMaterialized()) [[unlikely]]
             return b3Variable()->type();
@@ -208,7 +217,7 @@ public:
     using WasmConstRefValue = Const64Value;
 
     static constexpr bool shouldFuseBranchCompare = false;
-    static constexpr bool LEGACY_NODELETE tierSupportsSIMD() { return true; }
+    NODELETE static constexpr bool tierSupportsSIMD() { return true; }
     static constexpr bool validateFunctionBodySize = true;
 
     struct ControlData {
@@ -246,15 +255,15 @@ public:
         {
         }
 
-        static bool LEGACY_NODELETE isIf(const ControlData& control) { return control.blockType() == BlockType::If; }
-        static bool LEGACY_NODELETE isElse(const ControlData& control) { return control.blockType() == BlockType::Else; }
-        static bool LEGACY_NODELETE isTry(const ControlData& control) { return control.blockType() == BlockType::Try; }
-        static bool LEGACY_NODELETE isTryTable(const ControlData& control) { return control.blockType() == BlockType::TryTable; }
-        static bool LEGACY_NODELETE isAnyCatch(const ControlData& control) { return control.blockType() == BlockType::Catch; }
-        static bool LEGACY_NODELETE isTopLevel(const ControlData& control) { return control.blockType() == BlockType::TopLevel; }
-        static bool LEGACY_NODELETE isLoop(const ControlData& control) { return control.blockType() == BlockType::Loop; }
-        static bool LEGACY_NODELETE isBlock(const ControlData& control) { return control.blockType() == BlockType::Block; }
-        static bool LEGACY_NODELETE isCatch(const ControlData& control)
+        NODELETE static bool isIf(const ControlData& control) { return control.blockType() == BlockType::If; }
+        NODELETE static bool isElse(const ControlData& control) { return control.blockType() == BlockType::Else; }
+        NODELETE static bool isTry(const ControlData& control) { return control.blockType() == BlockType::Try; }
+        NODELETE static bool isTryTable(const ControlData& control) { return control.blockType() == BlockType::TryTable; }
+        NODELETE static bool isAnyCatch(const ControlData& control) { return control.blockType() == BlockType::Catch; }
+        NODELETE static bool isTopLevel(const ControlData& control) { return control.blockType() == BlockType::TopLevel; }
+        NODELETE static bool isLoop(const ControlData& control) { return control.blockType() == BlockType::Loop; }
+        NODELETE static bool isBlock(const ControlData& control) { return control.blockType() == BlockType::Block; }
+        NODELETE static bool isCatch(const ControlData& control)
         {
             if (control.blockType() != BlockType::Catch)
                 return false;
@@ -296,27 +305,29 @@ public:
                 out.print("None");
         }
 
-        BlockType LEGACY_NODELETE blockType() const { return controlBlockType; }
+        NODELETE BlockType blockType() const { return controlBlockType; }
 
-        const BlockSignature& LEGACY_NODELETE signature() const { return m_signature; }
+        NODELETE const BlockSignature& signature() const { return m_signature; }
 
         bool hasNonVoidresult() const { return m_signature.returnCount() > 0; }
 
-        BasicBlock* LEGACY_NODELETE targetBlockForBranch()
+        NODELETE BasicBlock* targetBlockForBranch()
         {
-            if (blockType() == BlockType::Loop)
+            if (blockType() == BlockType::Loop) {
+                m_hasBranchToHeader = true;
                 return special;
+            }
             return continuation;
         }
 
-        void LEGACY_NODELETE convertIfToBlock()
+        NODELETE void convertIfToBlock()
         {
             ASSERT(blockType() == BlockType::If);
             controlBlockType = BlockType::Block;
             special = nullptr;
         }
 
-        void LEGACY_NODELETE convertTryToCatch(unsigned tryEndCallSiteIndex, Variable* exception)
+        NODELETE void convertTryToCatch(unsigned tryEndCallSiteIndex, Variable* exception)
         {
             ASSERT(blockType() == BlockType::Try);
             controlBlockType = BlockType::Catch;
@@ -325,7 +336,7 @@ public:
             m_exception = exception;
         }
 
-        void LEGACY_NODELETE convertTryToCatchAll(unsigned tryEndCallSiteIndex, Variable* exception)
+        NODELETE void convertTryToCatchAll(unsigned tryEndCallSiteIndex, Variable* exception)
         {
             ASSERT(blockType() == BlockType::Try);
             controlBlockType = BlockType::Catch;
@@ -347,7 +358,7 @@ public:
             m_tryTableTargets = WTF::move(targets);
         }
 
-        void LEGACY_NODELETE endTryTable(unsigned tryEndCallSiteIndex)
+        NODELETE void endTryTable(unsigned tryEndCallSiteIndex)
         {
             ASSERT(blockType() == BlockType::TryTable);
             m_tryEnd = tryEndCallSiteIndex;
@@ -368,31 +379,31 @@ public:
             return m_signature.returnType(i);
         }
 
-        unsigned LEGACY_NODELETE tryStart() const
+        NODELETE unsigned tryStart() const
         {
             ASSERT(controlBlockType == BlockType::Try || controlBlockType == BlockType::TryTable || controlBlockType == BlockType::Catch);
             return m_tryStart;
         }
 
-        unsigned LEGACY_NODELETE tryEnd() const
+        NODELETE unsigned tryEnd() const
         {
             ASSERT(controlBlockType == BlockType::Catch || controlBlockType == BlockType::TryTable);
             return m_tryEnd;
         }
 
-        unsigned LEGACY_NODELETE tryDepth() const
+        NODELETE unsigned tryDepth() const
         {
             ASSERT(controlBlockType == BlockType::Try || controlBlockType == BlockType::TryTable || controlBlockType == BlockType::Catch);
             return m_tryCatchDepth;
         }
 
-        CatchKind LEGACY_NODELETE catchKind() const
+        NODELETE CatchKind catchKind() const
         {
             ASSERT(controlBlockType == BlockType::Catch);
             return m_catchKind;
         }
 
-        Variable* LEGACY_NODELETE exception() const
+        NODELETE Variable* exception() const
         {
             ASSERT(controlBlockType == BlockType::Catch || controlBlockType == BlockType::TryTable);
             return m_exception;
@@ -413,6 +424,12 @@ public:
         CatchKind m_catchKind;
         Variable* m_exception;
         TargetList m_tryTableTargets;
+        bool m_hasBranchToHeader { false };
+        unsigned m_numberProvenInOuterScopes { 0 };
+        unsigned m_firstIndexInOuterLoop { 0 };
+        BasicBlock* m_ifBranch { nullptr };
+        unsigned m_callCountAtIf { 0 };
+        bool m_thenArmMakesCalls { false };
     };
 
     using ControlType = ControlData;
@@ -432,7 +449,7 @@ public:
     typedef std::expected<std::unique_ptr<InternalFunction>, ErrorType> Result;
     typedef std::expected<void, ErrorType> PartialResult;
 
-    static ExpressionType LEGACY_NODELETE emptyExpression() { return { }; };
+    NODELETE static ExpressionType emptyExpression() { return { }; };
 
     enum class CastKind { Cast, Test };
 
@@ -446,15 +463,19 @@ public:
         if (condition) [[unlikely]]                  \
             return fail(__VA_ARGS__);             \
     } while (0)
+#define WASM_DECLINE_FOR_IMAGE_IF(condition) do { \
+        if (m_context.codeForImage && (condition)) [[unlikely]] \
+            return declineForImage(); \
+    } while (0)
 
-    unsigned LEGACY_NODELETE advanceCallSiteIndex()
+    NODELETE unsigned advanceCallSiteIndex()
     {
         if (m_inlineParent)
             return m_inlineRoot->advanceCallSiteIndex();
         return ++m_callSiteIndex;
     }
 
-    unsigned LEGACY_NODELETE callSiteIndex() const
+    NODELETE unsigned callSiteIndex() const
     {
         if (m_inlineParent)
             return m_inlineRoot->callSiteIndex();
@@ -466,12 +487,12 @@ public:
 
     void computeStackCheckSize(bool& needsOverflowCheck, int32_t& checkSize);
 
-    Value* LEGACY_NODELETE wasmRefOfCell(Value* cell)
+    NODELETE Value* wasmRefOfCell(Value* cell)
     {
         return cell;
     }
 
-    Value* LEGACY_NODELETE pointerOfWasmRef(Value* ref)
+    NODELETE Value* pointerOfWasmRef(Value* ref)
     {
         return ref;
     }
@@ -497,8 +518,8 @@ public:
     }
 
     // SIMD
-    bool LEGACY_NODELETE usesSIMD() const { return m_info.usesSIMD(m_functionIndex); }
-    void LEGACY_NODELETE notifyFunctionUsesSIMD()
+    NODELETE bool usesSIMD() const { return m_info.usesSIMD(m_functionIndex); }
+    NODELETE void notifyFunctionUsesSIMD()
     {
         ASSERT(m_info.usesSIMD(m_functionIndex));
         m_proc.setUsesSIMD();
@@ -766,6 +787,7 @@ public:
     [[nodiscard]] PartialResult addMemoryFill(ExpressionType dstAddress, ExpressionType targetValue, ExpressionType count, uint8_t memoryIndex);
     [[nodiscard]] PartialResult addMemoryCopy(ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType count, uint8_t dstMemoryIndex, uint8_t srcMemoryIndex);
     void emitMemoryFill(Value* dstAddress, Value* targetValue, Value* count, uint8_t memoryIndex);
+    Value* isRangeOutOfBounds(Value* start, Value* count, Value* memorySize);
     void emitMemoryCopy(Value* dstAddress, Value* srcAddress, Value* count, uint8_t dstMemoryIndex, uint8_t srcMemoryIndex);
     [[nodiscard]] PartialResult addMemoryInit(unsigned, ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType length, uint8_t memoryIndex);
     [[nodiscard]] PartialResult addDataDrop(unsigned);
@@ -862,10 +884,10 @@ public:
     [[nodiscard]] PartialResult endTopLevel(std::span<const TypedExpression>) { return { }; }
 
     // Fused comparison stubs (B3 will do this for us later).
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedBranchCompare(OpType, ControlType&, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedBranchCompare(OpType, ControlType&, ExpressionType, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedIfCompare(OpType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedIfCompare(OpType, ExpressionType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedBranchCompare(OpType, ControlType&, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedBranchCompare(OpType, ControlType&, ExpressionType, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedIfCompare(OpType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedIfCompare(OpType, ExpressionType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
 
     // Calls
     [[nodiscard]] PartialResult addCall(unsigned, FunctionSpaceIndex functionIndexSpace, const RTT&, ArgumentList& args, ResultList& results, CallType = CallType::Call);
@@ -877,21 +899,21 @@ public:
     using ValueResults = Vector<Value*, 16>;
     void fillCallResults(Value* callResult, const RTT& signature, ValueResults&);
     [[nodiscard]] PartialResult emitDirectCall(unsigned, FunctionSpaceIndex functionIndexSpace, const RTT&, const ArgumentList& args, ValueResults&, CallType = CallType::Call);
-    [[nodiscard]] PartialResult emitIndirectCall(Value* calleeInstance, Value* calleeCode, Value* boxedCalleeCallee, const RTT&, const ArgumentList& args, ValueResults&, CallType = CallType::Call);
+    [[nodiscard]] PartialResult emitIndirectCall(Value* calleeInstance, Value* calleeCode, Value* calleeCodeLocation, Value* boxedCalleeCallee, const RTT&, const ArgumentList& args, ValueResults&, CallType = CallType::Call);
 
     Vector<ConstrainedValue> createCallConstrainedArgs(BasicBlock*, const CallInformation& wasmCalleeInfo, const ArgumentList&);
-    auto createCallPatchpoint(BasicBlock*, const RTT&, const CallInformation&, const ArgumentList& tmpArgs) -> CallPatchpointData;
+    auto createCallPatchpoint(BasicBlock*, const RTT&, const CallInformation&, const ArgumentList& tmpArgs, Value* passedGlobal = nullptr) -> CallPatchpointData;
     auto createTailCallPatchpoint(BasicBlock*, const RTT&, const CallInformation& wasmCallerInfoAsCallee, const CallInformation& wasmCalleeInfoAsCallee, const ArgumentList& tmpArgSourceLocations, Value* boxedCalleeCallee = nullptr) -> CallPatchpointData;
 
     InliningNode* canInline(FunctionSpaceIndex functionIndexSpace, unsigned callProfileIndex) const;
     [[nodiscard]] PartialResult emitInlineDirectCall(InliningNode*, FunctionCodeIndex calleeIndex, const RTT&, const ArgumentList& args, ValueResults&);
 
     void dump(const ControlStack&, const Stack* expressionStack);
-    void LEGACY_NODELETE setParser(FunctionParser<OMGIRGenerator>* parser) { m_parser = parser; };
+    NODELETE void setParser(FunctionParser<OMGIRGenerator>* parser) { m_parser = parser; };
     ALWAYS_INLINE void willParseOpcode() { }
     ALWAYS_INLINE void willParseExtendedOpcode() { }
     ALWAYS_INLINE void didParseOpcode() { }
-    void LEGACY_NODELETE didFinishParsingLocals() { }
+    NODELETE void didFinishParsingLocals() { }
     void didPopValueFromStack(ExpressionType expr, ASCIILiteral message)
     {
         TRACE_VALUE(Wasm::Types::Void, get(expr), "pop at height: ", m_parser->expressionStack().size() + 1, " site: [", message, "], ", expr);
@@ -907,6 +929,7 @@ public:
     void insertConstants();
 
     B3::Type toB3ResultType(const RTT*);
+    B3::Type resultTypeWithGlobal(const RTT&);
 
     void addStackMap(unsigned callSiteIndex, StackMap&& stackmap)
     {
@@ -917,20 +940,20 @@ public:
         m_stackmaps.add(CallSiteIndex(callSiteIndex), WTF::move(stackmap));
     }
 
-    StackMaps&& LEGACY_NODELETE takeStackmaps()
+    NODELETE StackMaps&& takeStackmaps()
     {
         RELEASE_ASSERT(m_inlineRoot == this);
         return WTF::move(m_stackmaps);
     }
 
-    Vector<UnlinkedHandlerInfo>&& LEGACY_NODELETE takeExceptionHandlers()
+    NODELETE Vector<UnlinkedHandlerInfo>&& takeExceptionHandlers()
     {
         RELEASE_ASSERT(m_inlineRoot == this);
         return WTF::move(m_exceptionHandlers);
     }
 
 private:
-    void LEGACY_NODELETE emitPrepareWasmOperation(BasicBlock*)
+    NODELETE void emitPrepareWasmOperation(BasicBlock*)
     {
     }
 
@@ -939,9 +962,18 @@ private:
     {
         emitPrepareWasmOperation(block);
         static_assert(FunctionTraits<OperationType>::cCallArity() == sizeof...(Args), "Sanity check");
-        Value* operationValue = block->appendNew<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(operation));
+        Value* operationValue = processPointer(block, ProcessPointerKind::Operation, std::bit_cast<void*>(tagCFunction<OperationPtrTag>(operation)));
         return block->appendNew<CCallValue>(m_proc, resultType, origin(), operationValue, std::forward<Args>(args)...);
     }
+
+    enum class ProcessPointerKind : uint8_t { Operation, TypeDefinition, OwnCallee, InterpreterCallee };
+    [[nodiscard]] UnexpectedResult declineForImage();
+    std::optional<uint32_t> imagePointerSlot(ProcessPointerKind, const void*);
+    Value* processPointer(BasicBlock*, ProcessPointerKind, const void*);
+    void moveProcessPointer(CCallHelpers&, ProcessPointerKind, const void*, GPRReg dest);
+    static constexpr GPRReg passedGlobalGPR = CodeForImage::passedGlobalGPR;
+    void emitCallInImage(CCallHelpers&, uint32_t symbol, ImageEntry = ImageEntry::Primary);
+    void emitCallToThrowStub(CCallHelpers&);
 
     void emitExceptionCheck(CCallHelpers&, Origin, ExceptionType);
 
@@ -977,7 +1009,7 @@ private:
     [[nodiscard]] bool emitStructSet(bool canTrap, Value*, uint32_t, const RTT&, Value*);
     using ArraySegmentOperation = EncodedJSValue SYSV_ABI (&)(JSC::JSWebAssemblyInstance*, uint32_t, uint32_t, uint32_t, uint32_t);
     [[nodiscard]] ExpressionType pushArrayNewFromSegment(ArraySegmentOperation, TypeSignatureIndex typeIndex, uint32_t segmentIndex, ExpressionType arraySize, ExpressionType offset, ExceptionType);
-    void emitRefTestOrCast(CastKind, TypedExpression, bool, int32_t, bool, ExpressionType&);
+    [[nodiscard]] PartialResult emitRefTestOrCast(CastKind, TypedExpression, bool, int32_t, bool, ExpressionType&);
 
     MemoryValue* loadGCObjectStructureID(TypeSignatureIndex typeIndex)
     {
@@ -1040,6 +1072,40 @@ private:
 
     void unify(Value* phi, const ExpressionType& source);
     void unifyValuesWithBlock(std::span<const TypedExpression> resultStack, const ControlData& block);
+    BasicBlock* targetBlockForBranch(ControlData&);
+
+    // An earlier access succeeded up to this offset from the local, so accesses below it neither wrap nor trap.
+    struct ProvenBytes {
+        uint32_t end { 0 };
+        unsigned index { 0 };
+    };
+    struct LocalAddress {
+        Variable* local;
+        Value* base;
+        uint32_t offset;
+    };
+    std::optional<LocalAddress> addressInLocal(Value* pointer);
+    Variable* currentLocal(Value*) const;
+    ProvenBytes provenBytes(Variable*) const;
+    void foldProvenSum(LocalAddress&, Value*& pointer, uint64_t& offset);
+    bool isProvenInBounds(const LocalAddress&, uint64_t end) const;
+    void didAccess(const LocalAddress&, uint64_t end, Value* access);
+    void didSetLocal(Value* set);
+    void enterScope(ControlData&, BlockType);
+    void leaveScope(const ControlData&);
+    bool emitsShrinkWrappedFrame() const { return m_proc.policy().air.frame.emitsFrame; }
+    bool isPassedGlobal(uint32_t index) const { return m_passedGlobal && m_context.codeForImage->passedGlobal == index; }
+    Value* loadPassedGlobal();
+    void reloadPassedGlobal();
+    Value* passedGlobalAtReturn();
+    Value* zeroExtendedPassedGlobal();
+    void emitDirectEntry(CCallHelpers&, B3::Air::GenerationContext&);
+    void emitZeroEntry(CCallHelpers&, B3::Air::GenerationContext&, const Box<CCallHelpers::Label>& zeroSuccessor);
+    void storeInstanceAndCallee(CCallHelpers&, GPRReg scratch);
+    void finishFrameSetup(CCallHelpers&, B3::Air::GenerationContext&, const B3::Air::StackCheckSite&);
+    CCallHelpers::JumpList emitStackCheck(CCallHelpers&, const B3::Air::StackCheckSite&, int32_t checkSize);
+    static SwitchValue* stateMachineDispatch(BasicBlock* loopHeader);
+    void emitFirstStateTest(const ControlData& loop);
 
     void emitChecksForModOrDiv(B3::Opcode, Value* left, Value* right);
 
@@ -1048,6 +1114,7 @@ private:
 
     void restoreWasmContextInstance(BasicBlock*, Value*);
     void restoreWebAssemblyGlobalState(const Vector<MemoryInformation>&, Value* instance, BasicBlock*);
+    bool callsRestorePinnedRegisters() const;
     void reloadMemoryRegistersFromInstance(const MemoryInformation&, Value* instance, BasicBlock*);
 
     void materializeExpressionStackIntoVariables();
@@ -1097,7 +1164,9 @@ private:
 
     Value* set(BasicBlock* block, Variable* dst, Value* src)
     {
-        return block->appendNew<VariableValue>(m_proc, B3::Set, origin(), dst, src);
+        Value* result = block->appendNew<VariableValue>(m_proc, B3::Set, origin(), dst, src);
+        didSetLocal(result);
+        return result;
     }
 
     Value* set(Variable* dst, Value* src)
@@ -1105,7 +1174,7 @@ private:
         return set(m_currentBlock, dst, src);
     }
 
-    bool LEGACY_NODELETE useSignalingMemory0() const
+    NODELETE bool useSignalingMemory0() const
     {
         return m_mode == MemoryMode::Signaling;
     }
@@ -1153,10 +1222,25 @@ private:
     unsigned* m_osrEntryScratchBufferSize;
     UncheckedKeyHashMap<ValueKey, Value*> m_constantPool;
     UncheckedKeyHashMap<const RTT*, B3::Type> m_tupleMap;
+    UncheckedKeyHashMap<const RTT*, B3::Type> m_tupleWithPassedGlobalMap;
     B3::Type m_int64PairTupleType { };
     InsertionSet m_constantInsertionValues;
+    // Indexed by local. Entries are restored at the end of the scope that proved them.
+    Vector<ProvenBytes> m_provenBytes;
+    Vector<unsigned> m_lastSetIndex;
+    Vector<std::pair<unsigned, ProvenBytes>> m_provenInScopes;
+    bool m_nextAccessIsInBounds { false };
+    // Facts proven before a loop do not hold in its body.
+    unsigned m_firstIndexInLoop { 0 };
     Value* m_framePointer { nullptr };
     bool m_makesCalls { false };
+    unsigned m_callCount { 0 };
+    Variable* m_passedGlobal { nullptr };
+    bool m_accessesPassedGlobal { false };
+    bool m_isResumable { false };
+    bool m_isFirstParameterI32 { false };
+    bool m_hasLoop { false };
+    Box<CCallHelpers::JumpList> m_stackOverflows;
     bool m_makesTailCalls { false };
 
     // This tracks the maximum stack offset for a tail call, to be used in the stack overflow check.
@@ -1169,22 +1253,22 @@ private:
     Value* m_baseMemoryValue { nullptr };
     Value* m_boundsCheckingSizeValue { nullptr };
 
-    Value* LEGACY_NODELETE instanceValue()
+    NODELETE Value* instanceValue()
     {
         return m_instanceValue;
     }
 
-    Value* LEGACY_NODELETE vmValue()
+    NODELETE Value* vmValue()
     {
         return m_vmValue;
     }
 
-    Value* LEGACY_NODELETE baseMemoryValue()
+    NODELETE Value* baseMemoryValue()
     {
         return m_baseMemoryValue;
     }
 
-    Value* LEGACY_NODELETE boundsCheckingSizeValue()
+    NODELETE Value* boundsCheckingSizeValue()
     {
         return m_boundsCheckingSizeValue;
     }
@@ -1204,6 +1288,46 @@ private:
 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(OMGIRGenerator);
+
+// A resumable function takes its resume point, switches on it first, and returns whether it suspended.
+// Without calls it has no switch, but it still copies the stack pointer global into a local first.
+bool isResumable(const ModuleInformation& info, FunctionCodeIndex functionIndex, uint32_t passedGlobal)
+{
+    const RTT& signature = info.rtt(info.internalFunctionTypeSignatureIndices[functionIndex]);
+    if (signature.argumentCount() != 1 || !signature.argumentType(0).isI32() || signature.returnCount() != 1 || !signature.returnType(0).isI32())
+        return false;
+
+    std::span<const uint8_t> body = info.functions[functionIndex].data.span();
+    size_t offset = 0;
+    uint32_t value = 0;
+    uint32_t numberOfLocalGroups = 0;
+    if (!WTF::LEBDecoder::decodeUInt32(body, offset, numberOfLocalGroups))
+        return false;
+    for (uint32_t group = 0; group < numberOfLocalGroups; ++group) {
+        constexpr uint8_t lowestNumberType = 0x7c;
+        constexpr uint8_t highestNumberType = 0x7f;
+        if (!WTF::LEBDecoder::decodeUInt32(body, offset, value) || offset >= body.size() || body[offset] < lowestNumberType || body[offset] > highestNumberType)
+            return false;
+        ++offset;
+    }
+    constexpr uint8_t emptyBlock = 0x40;
+    while (offset < body.size()) {
+        switch (static_cast<OpType>(body[offset++])) {
+        case OpType::Block:
+        case OpType::Loop:
+            if (offset >= body.size() || body[offset++] != emptyBlock)
+                return false;
+            break;
+        case OpType::GetGlobal:
+            return WTF::LEBDecoder::decodeUInt32(body, offset, value) && value == passedGlobal && offset < body.size() && static_cast<OpType>(body[offset]) == OpType::SetLocal;
+        case OpType::GetLocal:
+            return WTF::LEBDecoder::decodeUInt32(body, offset, value) && !value && offset < body.size() && static_cast<OpType>(body[offset]) == OpType::BrTable;
+        default:
+            return false;
+        }
+    }
+    return false;
+}
 
 // Memory accesses in WebAssembly have unsigned 32-bit offsets (unsigned 64-bit offsets in memory64), whereas they have signed 32-bit offsets in B3.
 int32_t OMGIRGenerator::fixupPointerPlusOffset(Value*& ptr, uint64_t offset)
@@ -1364,6 +1488,8 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
         getInstance->effects.writesPinned = false;
         getInstance->effects.readsPinned = true;
         getInstance->resultConstraints = { ValueRep::reg(GPRInfo::wasmContextInstancePointer) };
+        getInstance->setRunsWithoutFrame(true);
+        getInstance->emitsNoCode = true;
         getInstance->setGenerator([=] (CCallHelpers&, const B3::StackmapGenerationParams&) { });
         m_instanceValue = getInstance;
         m_vmValue = m_topLevelBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfVM()));
@@ -1386,6 +1512,8 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
                 getBaseMemory->effects.writesPinned = false;
                 getBaseMemory->effects.readsPinned = true;
                 getBaseMemory->resultConstraints = { ValueRep::reg(GPRInfo::wasmBaseMemoryPointer) };
+                getBaseMemory->setRunsWithoutFrame(true);
+                getBaseMemory->emitsNoCode = true;
                 getBaseMemory->setGenerator([=] (CCallHelpers&, const B3::StackmapGenerationParams&) { });
                 m_baseMemoryValue = getBaseMemory;
             }
@@ -1404,12 +1532,25 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
         }
 
         code.emitDefaultPrologue(jit, context);
-        GPRReg scratchGPR = wasmCallingConvention().prologueScratchGPRs[0];
-        jit.move(CCallHelpers::TrustedImmPtr(CalleeBits::boxNativeCallee(m_callee)), scratchGPR);
-        static_assert(CallFrameSlot::codeBlock + 1 == CallFrameSlot::callee);
-        jit.storePairPtr(GPRInfo::wasmContextInstancePointer, scratchGPR, GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(CallFrameSlot::codeBlock * sizeof(Register)));
+        if (m_passedGlobal)
+            emitDirectEntry(jit, context);
+        if (!emitsShrinkWrappedFrame())
+            storeInstanceAndCallee(jit, wasmCallingConvention().prologueScratchGPRs[0]);
     });
-    {
+    if (m_context.codeForImage && m_context.codeForImage->passedGlobal && emitsShrinkWrappedFrame()) {
+        m_passedGlobal = m_proc.addVariable(Int32);
+        m_isResumable = isResumable(m_info, FunctionCodeIndex(m_functionIndex), *m_context.codeForImage->passedGlobal);
+        const RTT& signature = m_info.rtt(m_info.internalFunctionTypeSignatureIndices[m_functionIndex]);
+        m_isFirstParameterI32 = signature.argumentCount() && signature.argumentType(0).isI32();
+        Value* argument = m_topLevelBlock->appendNew<ArgumentRegValue>(m_proc, Origin(), passedGlobalGPR);
+        m_topLevelBlock->appendNew<VariableValue>(m_proc, Set, Origin(), m_passedGlobal, m_topLevelBlock->appendNew<Value>(m_proc, Trunc, Origin(), argument));
+    }
+
+    if (emitsShrinkWrappedFrame()) {
+        m_proc.code().setStackCheckGenerator(createSharedTask<B3::Air::StackCheckGeneratorFunction>([this](CCallHelpers& jit, B3::Air::GenerationContext& context, const B3::Air::StackCheckSite& site) {
+            finishFrameSetup(jit, context, site);
+        }));
+    } else {
         B3::PatchpointValue* stackOverflowCheck = m_currentBlock->appendNew<B3::PatchpointValue>(m_proc, Void, Origin());
         stackOverflowCheck->appendSomeRegister(instanceValue());
         stackOverflowCheck->appendSomeRegister(framePointer());
@@ -1433,13 +1574,13 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
                 else {
                     auto failure = jit.checkWasmStackOverflow(contextInstance, CCallHelpers::TrustedImm32(checkSize), fp);
                     params.addLatePath(
-                        [=](CCallHelpers& jit) {
+                        [=, this](CCallHelpers& jit) {
                             failure.link(jit);
                             int32_t stackSpace = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(RegisterSet::calleeSaveRegisters().numberOfSetRegisters() * sizeof(Register));
                             ASSERT(static_cast<unsigned>(stackSpace) < Options::softReservedZoneSize());
                             jit.addPtr(CCallHelpers::TrustedImm32(-stackSpace), GPRInfo::callFrameRegister, MacroAssembler::stackPointerRegister);
                             jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(ExceptionType::StackOverflow)), GPRInfo::argumentGPR1);
-                            jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwExceptionFromOMGThunkGenerator).code()));
+                            emitCallToThrowStub(jit);
                         });
                 }
             }
@@ -1483,6 +1624,46 @@ void OMGIRGenerator::restoreWebAssemblyGlobalState(const Vector<MemoryInformatio
     }
 }
 
+// The frame header holds the instance, and a signaling memory does not move.
+bool OMGIRGenerator::callsRestorePinnedRegisters() const
+{
+    return emitsShrinkWrappedFrame() && m_info.memoryCount() && useSignalingMemory0();
+}
+
+static void prepareToRestorePinnedRegisters(PatchpointValue* patchpoint)
+{
+    patchpoint->clobber(RegisterSet { GPRInfo::wasmBoundsCheckingSizeRegister });
+#if GIGACAGE_ENABLED
+    patchpoint->numGPScratchRegisters = 1;
+#endif
+}
+
+static GPRReg scratchForCaging(const B3::StackmapGenerationParams& params)
+{
+#if GIGACAGE_ENABLED
+    return params.gpScratch(0);
+#else
+    UNUSED_PARAM(params);
+    return InvalidGPRReg;
+#endif
+}
+
+static void emitPinnedRegistersSwitch(CCallHelpers& jit, GPRReg calleeInstance, GPRReg scratch)
+{
+    emitPrepareToCageMemoryBase(jit, GPRInfo::wasmContextInstancePointer, scratch);
+    jit.storeWasmContextInstance(calleeInstance);
+    jit.loadPairPtr(calleeInstance, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
+    emitCageMemoryBase(jit, scratch);
+}
+
+static void emitPinnedRegistersRestore(CCallHelpers& jit, GPRReg scratch)
+{
+    jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), GPRInfo::wasmContextInstancePointer);
+    emitPrepareToCageMemoryBase(jit, GPRInfo::wasmContextInstancePointer, scratch);
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer);
+    emitCageMemoryBase(jit, scratch);
+}
+
 void OMGIRGenerator::reloadMemoryRegistersFromInstance(const MemoryInformation& memory, Value* instance, BasicBlock* block)
 {
     if (!!memory) {
@@ -1503,16 +1684,370 @@ void OMGIRGenerator::reloadMemoryRegistersFromInstance(const MemoryInformation& 
         patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             GPRReg scratch = params.gpScratch(0);
+            emitPrepareToCageMemoryBase(jit, params[0].gpr(), scratch);
             jit.loadPairPtr(params[0].gpr(), CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
-            jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, scratch);
+            emitCageMemoryBase(jit, scratch);
         });
     }
+}
+
+auto OMGIRGenerator::declineForImage() -> UnexpectedResult
+{
+    auto& failure = m_context.codeForImage->failure;
+    if (failure == ImageCodeFailure::None)
+        failure = ImageCodeFailure::ProcessAddressInCode;
+    return UnexpectedResult(String());
+}
+
+std::optional<uint32_t> OMGIRGenerator::imagePointerSlot(ProcessPointerKind kind, const void* pointer)
+{
+    auto& code = *m_context.codeForImage;
+    auto decline = [&]() -> std::optional<uint32_t> {
+        (void)declineForImage();
+        return std::nullopt;
+    };
+
+    switch (kind) {
+    case ProcessPointerKind::Operation:
+        if (auto slot = ImagePointerTable::slotOfOperation(pointer))
+            return slot;
+        return decline();
+    case ProcessPointerKind::TypeDefinition:
+        if (auto typeIndex = code.typeIndices.getOptional(static_cast<const RTT*>(pointer)))
+            return code.pointers.rtt(TypeSignatureIndex(*typeIndex));
+        return decline();
+    case ProcessPointerKind::OwnCallee:
+        return code.pointers.callee(m_inlineRoot->m_functionIndex);
+    case ProcessPointerKind::InterpreterCallee:
+        return decline();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+Value* OMGIRGenerator::processPointer(BasicBlock* block, ProcessPointerKind kind, const void* pointer)
+{
+    if (auto* code = m_context.codeForImage) {
+        auto slot = imagePointerSlot(kind, pointer);
+        if (!slot)
+            return constant(pointerType(), 0);
+        return block->appendNew<B3::RelocatableValue>(m_proc, origin(), B3::RelocationSymbol { code->pointerSpace, *slot }, 0);
+    }
+
+    switch (kind) {
+    case ProcessPointerKind::Operation:
+        return block->appendNew<ConstPtrValue>(m_proc, origin(), pointer);
+    case ProcessPointerKind::TypeDefinition:
+    case ProcessPointerKind::OwnCallee:
+    case ProcessPointerKind::InterpreterCallee:
+        return constant(pointerType(), std::bit_cast<uintptr_t>(pointer));
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void OMGIRGenerator::moveProcessPointer(CCallHelpers& jit, ProcessPointerKind kind, const void* pointer, GPRReg dest)
+{
+    if (!m_context.codeForImage) {
+        jit.move(CCallHelpers::TrustedImmPtr(pointer), dest);
+        return;
+    }
+
+    auto slot = imagePointerSlot(kind, pointer);
+    if (!slot) {
+        jit.move(CCallHelpers::TrustedImm32(0), dest);
+        return;
+    }
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfImageCodePointers()), dest);
+    jit.loadPtr(CCallHelpers::Address(dest, safeCast<int32_t>(*slot * sizeof(void*))), dest);
+}
+
+void OMGIRGenerator::emitCallInImage(CCallHelpers& jit, uint32_t symbol, ImageEntry entry)
+{
+#if ENABLE(AOT)
+    ASSERT_UNUSED(jit, &jit == m_context.wasmEntrypointJIT.get());
+    auto& code = *m_context.codeForImage;
+    code.recorder.call({ AOT::SymbolSpace::WebAssembly, symbol, static_cast<uint16_t>(entry) });
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(symbol);
+    UNUSED_PARAM(entry);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
+void OMGIRGenerator::emitCallToThrowStub(CCallHelpers& jit)
+{
+#if ENABLE(AOT)
+    if (m_context.codeForImage) {
+        m_context.codeForImage->recorder.jump({ AOT::SymbolSpace::WebAssembly, imageSymbolOf(ImageStub::ThrowException) });
+        return;
+    }
+#endif
+    jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwExceptionFromOMGThunkGenerator).code()));
+}
+
+enum class AccessKind : uint8_t { None, Read, Write };
+
+// Whether a path from the head of the block reads what is there before it writes it.
+static bool mayRead(B3::Air::BasicBlock* start, NOESCAPE const Invocable<AccessKind(B3::Air::Inst&)> auto& findAccess)
+{
+    IndexSet<B3::Air::BasicBlock*> seen;
+    Vector<B3::Air::BasicBlock*, 8> worklist { start };
+    seen.add(start);
+    while (!worklist.isEmpty()) {
+        B3::Air::BasicBlock* block = worklist.takeLast();
+        AccessKind access = AccessKind::None;
+        for (B3::Air::Inst& inst : *block) {
+            access = findAccess(inst);
+            if (access != AccessKind::None)
+                break;
+        }
+        if (access == AccessKind::Read)
+            return true;
+        if (access == AccessKind::Write)
+            continue;
+        for (B3::Air::BasicBlock* successor : block->successorBlocks()) {
+            if (seen.add(successor))
+                worklist.append(successor);
+        }
+    }
+    return false;
+}
+
+static bool mayReadRegister(B3::Air::BasicBlock* start, Reg reg)
+{
+    return mayRead(start, [&](B3::Air::Inst& inst) {
+        bool isRead = false;
+        bool isWritten = inst.kind.opcode == B3::Air::Patch && inst.extraClobberedRegs().contains(reg, IgnoreVectors);
+        inst.forEach<Reg>([&](Reg& used, B3::Air::Arg::Role role, Bank, Width) {
+            if (used != reg)
+                return;
+            isRead |= B3::Air::Arg::isAnyUse(role);
+            isWritten |= B3::Air::Arg::isAnyDef(role);
+        });
+        return isRead ? AccessKind::Read : isWritten ? AccessKind::Write : AccessKind::None;
+    });
+}
+
+static bool mayReadFlags(B3::Air::BasicBlock* start)
+{
+    return mayRead(start, [](B3::Air::Inst& inst) {
+        if (B3::Air::usesFlags(inst.kind.opcode))
+            return AccessKind::Read;
+        return B3::Air::preservesFlags(inst.kind.opcode) || B3::Air::isFlagPreservingMove(inst) ? AccessKind::None : AccessKind::Write;
+    });
+}
+
+struct ZeroTest {
+    unsigned index;
+    B3::Air::BasicBlock* zeroSuccessor;
+};
+
+// The instructions from the index to the end of the block branch on whether the register is zero and do nothing else.
+static std::optional<ZeroTest> findZeroTest(B3::Air::BasicBlock* block, Reg reg)
+{
+    using B3::Air::Arg;
+    const Arg tested { B3::Air::Tmp(reg) };
+    auto isTest = [&](const Arg& value, const Arg& mask) {
+        return value == tested && (mask == tested || mask == Arg::bitImm(-1));
+    };
+    auto isComparison = [&](const Arg& left, const Arg& right) {
+        return left == tested && right == Arg::imm(0);
+    };
+    unsigned index = block->size() - 1;
+    std::span<const Arg> args = block->last().args();
+    switch (block->last().kind.opcode) {
+    case B3::Air::BranchTest32:
+        if (!isTest(args[1], args[2]))
+            return std::nullopt;
+        break;
+    case B3::Air::Branch32:
+        if (!isComparison(args[1], args[2]))
+            return std::nullopt;
+        break;
+    case B3::Air::BranchOnFlags: {
+        if (!index)
+            return std::nullopt;
+        B3::Air::Inst& definer = block->at(--index);
+        bool testsRegister = definer.kind.opcode == B3::Air::TestOnFlags32 && isTest(definer.args()[0], definer.args()[1]);
+        bool comparesRegister = definer.kind.opcode == B3::Air::CompareOnFlags32 && isComparison(definer.args()[0], definer.args()[1]);
+        if (!testsRegister && !comparesRegister)
+            return std::nullopt;
+        break;
+    }
+    default:
+        return std::nullopt;
+    }
+    if (args[0] == Arg::resCond(MacroAssembler::Zero) || args[0] == Arg::relCond(MacroAssembler::Equal))
+        return ZeroTest { index, block->successorBlock(0) };
+    if (args[0] == Arg::resCond(MacroAssembler::NonZero) || args[0] == Arg::relCond(MacroAssembler::NotEqual))
+        return ZeroTest { index, block->successorBlock(1) };
+    return std::nullopt;
+}
+
+// The successor taken for zero, if the block ends in a test of the register before which it only moves others, and the successor does not read the flags of the test.
+static B3::Air::BasicBlock* findZeroSuccessor(B3::Air::BasicBlock* block, Reg reg)
+{
+    std::optional<ZeroTest> test = findZeroTest(block, reg);
+    if (!test || test->zeroSuccessor == block || mayReadFlags(test->zeroSuccessor))
+        return nullptr;
+    for (unsigned index = 0; index < test->index; ++index) {
+        B3::Air::Inst& inst = block->at(index);
+        auto* patchpoint = inst.kind.opcode == B3::Air::Patch ? inst.origin->as<PatchpointValue>() : nullptr;
+        bool isMove = inst.isMoveBetweenRegisters() && inst.args()[1] != B3::Air::Arg(B3::Air::Tmp(reg));
+        if (!isMove && (!patchpoint || !patchpoint->emitsNoCode))
+            return nullptr;
+    }
+    return test->zeroSuccessor;
+}
+
+static bool movesRegister(B3::Air::BasicBlock* block, Reg reg)
+{
+    return std::ranges::any_of(*block, [&](const B3::Air::Inst& inst) {
+        return inst.isMoveBetweenRegisters() && inst.args()[0] == B3::Air::Arg(B3::Air::Tmp(reg));
+    });
+}
+
+void OMGIRGenerator::emitZeroEntry(CCallHelpers& jit, B3::Air::GenerationContext& context, const Box<CCallHelpers::Label>& zeroSuccessor)
+{
+    auto isMove = [](const B3::Air::Inst& inst) {
+        return inst.isMoveBetweenRegisters();
+    };
+    if (std::ranges::none_of(*context.currentBlock, isMove)) {
+        m_context.directEntryWithZero = zeroSuccessor;
+        return;
+    }
+    auto hasState = jit.jump();
+    m_context.directEntryWithZero = Box<CCallHelpers::Label>::create(jit.label());
+    for (B3::Air::Inst& inst : *context.currentBlock) {
+        if (isMove(inst))
+            inst.generate(jit, context);
+    }
+    auto toBlock = jit.jump();
+    context.addLatePath(Origin(), [toBlock, zeroSuccessor](CCallHelpers& jit) {
+        toBlock.linkTo(*zeroSuccessor, &jit);
+    });
+    hasState.link(&jit);
+}
+
+// Direct callers pass the global and enter at directEntry. Others enter before it, at the load from the instance.
+void OMGIRGenerator::emitDirectEntry(CCallHelpers& jit, B3::Air::GenerationContext& context)
+{
+    jit.load32(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, *m_context.codeForImage->passedGlobal))), passedGlobalGPR);
+    GPRReg firstParameter = wasmCallingConvention().gprArgs[0];
+    B3::Air::BasicBlock* zeroSuccessor = m_isFirstParameterI32 ? findZeroSuccessor(context.currentBlock, firstParameter) : nullptr;
+    auto labelOf = [&](B3::Air::BasicBlock* block) -> const Box<CCallHelpers::Label>& {
+        auto& label = context.blockLabels[block];
+        if (!label)
+            label = Box<CCallHelpers::Label>::create();
+        return label;
+    };
+    if (m_isResumable) {
+        // The callers that enter there omit the argument.
+        if (zeroSuccessor && !movesRegister(context.currentBlock, firstParameter) && !mayReadRegister(zeroSuccessor, firstParameter))
+            emitZeroEntry(jit, context, labelOf(zeroSuccessor));
+        else if (mayReadRegister(context.currentBlock, firstParameter)) {
+            auto hasState = jit.jump();
+            m_context.directEntryWithZero = Box<CCallHelpers::Label>::create(jit.label());
+            jit.move(CCallHelpers::TrustedImm32(0), firstParameter);
+            hasState.link(&jit);
+        }
+    } else if (zeroSuccessor && std::ranges::none_of(*context.currentBlock, &B3::Air::Inst::isMoveBetweenRegisters))
+        m_context.directEntryWithZero = labelOf(zeroSuccessor);
+    m_context.directEntry = jit.label();
+    if (!m_context.directEntryWithZero)
+        m_context.directEntryWithZero = Box<CCallHelpers::Label>::create(m_context.directEntry);
+}
+
+// The instance always holds the value, so calls that leave the module's code only have to reload it.
+Value* OMGIRGenerator::loadPassedGlobal()
+{
+    uint32_t index = *m_context.codeForImage->passedGlobal;
+    auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_i32[index], value);
+    return value;
+}
+
+void OMGIRGenerator::reloadPassedGlobal()
+{
+    if (m_passedGlobal)
+        m_currentBlock->appendNew<VariableValue>(m_proc, Set, origin(), m_passedGlobal, loadPassedGlobal());
+}
+
+Value* OMGIRGenerator::passedGlobalAtReturn()
+{
+    // Keeps the global out of registers across loops that do not use it.
+    if (m_hasLoop && !m_accessesPassedGlobal)
+        return m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), loadPassedGlobal());
+    return zeroExtendedPassedGlobal();
+}
+
+Value* OMGIRGenerator::zeroExtendedPassedGlobal()
+{
+    Value* global = m_currentBlock->appendNew<VariableValue>(m_proc, B3::Get, origin(), m_passedGlobal);
+    return m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), global);
+}
+
+void OMGIRGenerator::storeInstanceAndCallee(CCallHelpers& jit, GPRReg scratch)
+{
+    moveProcessPointer(jit, ProcessPointerKind::OwnCallee, CalleeBits::boxNativeCallee(m_callee), scratch);
+    static_assert(CallFrameSlot::codeBlock + 1 == CallFrameSlot::callee);
+    jit.storePairPtr(GPRInfo::wasmContextInstancePointer, scratch, GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(CallFrameSlot::codeBlock * sizeof(Register)));
+}
+
+CCallHelpers::JumpList OMGIRGenerator::emitStackCheck(CCallHelpers& jit, const B3::Air::StackCheckSite& site, int32_t checkSize)
+{
+#if CPU(X86_64)
+    // After the frame is allocated, the extra bytes of the check may lie in the reserved zone.
+    constexpr int32_t maxBytesInReservedZone = 16 * KB;
+    bool isAllocated = site.bytesAllocatedBelowFrameRecord == site.bytesBelowFrameRecord;
+    if (isAllocated && checkSize - static_cast<int32_t>(m_proc.frameSize()) <= maxBytesInReservedZone)
+        return jit.branchPtr(CCallHelpers::Below, MacroAssembler::stackPointerRegister, CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfSoftStackLimit()));
+#else
+    UNUSED_PARAM(site);
+#endif
+    return jit.checkWasmStackOverflow(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(checkSize), GPRInfo::callFrameRegister);
+}
+
+// Runs wherever Air sets up the frame, so only the macro scratch registers are free.
+void OMGIRGenerator::finishFrameSetup(CCallHelpers& jit, B3::Air::GenerationContext& context, const B3::Air::StackCheckSite& site)
+{
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+#if CPU(X86_64)
+    storeInstanceAndCallee(jit, MacroAssembler::s_scratchRegister);
+#else
+    storeInstanceAndCallee(jit, MacroAssembler::dataTempRegister);
+#endif
+    int32_t checkSize = 0;
+    bool needsOverflowCheck = false;
+    computeStackCheckSize(needsOverflowCheck, checkSize);
+    if (!needsOverflowCheck)
+        return;
+    bool isFirstCheck = !m_stackOverflows;
+    if (isFirstCheck)
+        m_stackOverflows = Box<CCallHelpers::JumpList>::create();
+    m_stackOverflows->append(emitStackCheck(jit, site, checkSize));
+    if (!isFirstCheck)
+        return;
+    context.addLatePath(Origin(), [this](CCallHelpers& jit) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        m_stackOverflows->link(&jit);
+        B3::Air::Code& code = m_proc.code();
+        RegisterAtOffsetList saves = code.calleeSaveRegisterAtOffsetList();
+        int32_t stackSpace = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(saves.registerCount() * sizeof(Register));
+        for (const RegisterAtOffset& save : saves)
+            RELEASE_ASSERT(save.offset() >= -stackSpace);
+        jit.addPtr(CCallHelpers::TrustedImm32(-stackSpace), GPRInfo::callFrameRegister, MacroAssembler::stackPointerRegister);
+        if (code.frameLayout().calleeSaveForm == B3::Air::CalleeSaveForm::Stored)
+            jit.emitSave(saves);
+        jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(ExceptionType::StackOverflow)), GPRInfo::argumentGPR1);
+        emitCallToThrowStub(jit);
+    });
 }
 
 void OMGIRGenerator::emitExceptionCheck(CCallHelpers& jit, Origin, ExceptionType type)
 {
     jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(type)), GPRInfo::argumentGPR1);
-    jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(throwExceptionFromOMGThunkGenerator).code()));
+    emitCallToThrowStub(jit);
 }
 
 Value* OMGIRGenerator::constant(B3::Type type, uint64_t bits, std::optional<Origin> maybeOrigin)
@@ -1572,6 +2107,19 @@ void OMGIRGenerator::insertEntrySwitch()
 void OMGIRGenerator::insertConstants()
 {
     m_constantInsertionValues.execute(m_proc.at(0));
+}
+
+B3::Type OMGIRGenerator::resultTypeWithGlobal(const RTT& signature)
+{
+    if (signature.returnsVoid())
+        return B3::Int32;
+    return m_tupleWithPassedGlobalMap.ensure(&signature, [&] {
+        Vector<B3::Type> result;
+        for (unsigned i = 0; i < signature.returnCount(); ++i)
+            result.append(toB3Type(signature.returnType(i)));
+        result.append(B3::Int32);
+        return m_proc.addTuple(WTF::move(result));
+    }).iterator->value;
 }
 
 B3::Type OMGIRGenerator::toB3ResultType(const RTT* returnType)
@@ -2009,7 +2557,8 @@ void OMGIRGenerator::fillCallResults(Value* callResult, const RTT& signature, Va
 static void emitWasmCallStackResultsAndSPRestore(CCallHelpers& jit,
     const B3::StackmapGenerationParams& params,
     const RTT& signature,
-    const CallInformation& wasmCalleeInfo)
+    const CallInformation& wasmCalleeInfo,
+    bool needsSPRestore = true)
 {
     auto frameSize = params.code().frameSize();
 
@@ -2045,11 +2594,13 @@ static void emitWasmCallStackResultsAndSPRestore(CCallHelpers& jit,
         }
     }
 
-    jit.addPtr(CCallHelpers::TrustedImm32(-frameSize), GPRInfo::callFrameRegister, MacroAssembler::stackPointerRegister);
+    if (needsSPRestore)
+        jit.addPtr(CCallHelpers::TrustedImm32(-frameSize), GPRInfo::callFrameRegister, MacroAssembler::stackPointerRegister);
 }
 
-auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, Value* boxedCalleeCallee, const RTT& signature, const ArgumentList& args, ValueResults& results, CallType callType) -> PartialResult
+auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, Value* calleeCodeLocation, Value* boxedCalleeCallee, const RTT& signature, const ArgumentList& args, ValueResults& results, CallType callType) -> PartialResult
 {
+    WASM_DECLINE_FOR_IMAGE_IF(callType == CallType::TailCall);
     const bool isTailCallRootCaller = callType == CallType::TailCall && !m_inlineParent;
 
     m_makesCalls = true;
@@ -2065,18 +2616,33 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
 
     m_proc.requestCallArgAreaSizeInBytes(calleeStackSize);
 
-    // Tail call patchpoint is emitted before the B3-level context switch so
-    // wasmContextInstancePointer still holds the caller's instance.
+    // Both paths below install a cross-instance callee's pinned registers from inside their call
+    // patchpoint's own generator, immediately before transferring to the callee. The callee code
+    // pointer is the only input consumed after that switch, so it gets a fixed register the switch
+    // does not write. Air cannot express this as a rep constraint: an input rep is an early use,
+    // which by design does not interfere with a patchpoint's late clobbers, and a late use would
+    // interfere with all of them, which for a call patchpoint means every caller-save register.
+    // FIXME: B3 has no way to declare a clobber internal to a patchpoint:
+    //   see https://bugs.webkit.org/show_bug.cgi?id=151823
+    static_assert(noOverlap(GPRInfo::nonPreservedNonArgumentGPR0, GPRInfo::wasmContextInstancePointer, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister));
+
     if (isTailCallRootCaller) {
         const TypeSignatureIndex callerTypeSignatureIndex = m_info.internalFunctionTypeSignatureIndices[m_functionIndex];
         const RTT& callerType = m_info.rtt(callerTypeSignatureIndex);
         CallInformation wasmCallerInfoAsCallee = callingConvention.callInformationFor(callerType, CallRole::Callee);
 
         auto [patchpoint, _, prepareForCall] = createTailCallPatchpoint(m_currentBlock, signature, wasmCallerInfoAsCallee, wasmCalleeInfoAsCallee, args, boxedCalleeCallee);
-        unsigned patchArgsIndex = patchpoint->reps().size();
-        patchpoint->append(calleeCode, ValueRep(GPRInfo::nonPreservedNonArgumentGPR0));
-        patchpoint->append(calleeInstance, ValueRep::SomeRegister);
+        unsigned patchArgsIndex = patchpoint->reps().size() + m_proc.resultCount(patchpoint->type());
+        // See the static_assert above for why the code pointer needs a fixed register.
+        patchpoint->append(calleeCode, ValueRep(GPRInfo::nonPreservedNonArgumentGPR0)); // patchArgsIndex
+        patchpoint->append(calleeInstance, ValueRep::SomeRegister); // patchArgsIndex + 1
+        // The callee test guarding the restore frame below needs boxedCalleeCallee in a register; the rep
+        // createTailCallPatchpoint already appends is LateColdAny and may be on the stack.
+        ASSERT(boxedCalleeCallee);
+        patchpoint->append(boxedCalleeCallee, ValueRep::SomeRegister); // patchArgsIndex + 2
         // Cross-instance setup below reloads pinned registers before the tail-call shuffle consumes late inputs.
+        // FIXME: We should not have to do this, but the wasm->wasm stub assumes it can
+        // use all the pinned registers as scratch: https://bugs.webkit.org/show_bug.cgi?id=172181
         patchpoint->clobberLate(RegisterSet::wasmPinnedRegisters());
         // emitRestoreInstanceFrameIfNeeded needs two scratches. wasmBaseMemoryPointer is
         // always pinned so B3 won't allocate it. wasmBoundsCheckingSizeRegister
@@ -2084,14 +2650,24 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
         // scratch that avoids the inputs.
         if (m_mode == MemoryMode::Signaling)
             patchpoint->numGPScratchRegisters = 1;
-        patchArgsIndex += m_proc.resultCount(patchpoint->type());
         Checked<int32_t> callerStackSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(wasmCallerInfoAsCallee.headerAndArgumentStackSizeInBytes);
         patchpoint->setGenerator([prepareForCall = prepareForCall, patchArgsIndex, callerStackSize = static_cast<int32_t>(callerStackSize), mode = m_mode](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+            GPRReg calleeCode = params[patchArgsIndex].gpr();
             GPRReg calleeInstanceGPR = params[patchArgsIndex + 1].gpr();
             GPRReg scratch2 = mode == MemoryMode::Signaling ? params.gpScratch(0) : GPRInfo::wasmBoundsCheckingSizeRegister;
-            auto sameInstance = jit.branchPtr(CCallHelpers::Equal, calleeInstanceGPR, GPRInfo::wasmContextInstancePointer);
+            ASSERT_WITH_MESSAGE(calleeInstanceGPR != GPRInfo::wasmContextInstancePointer, "Cross-instance check is broken");
+            // We need a restore frame if the wasm instance is different or if the call goes out to JS.
+            // In the latter case JS can grow wasm memory, invalidating memory base cached in a callee save register.
+            auto needsRestoreFrame = jit.branchPtr(CCallHelpers::NotEqual, calleeInstanceGPR, GPRInfo::wasmContextInstancePointer);
+            // FIXME: consider overloading WasmCallableFunction::targetInstance to hold a JSFunction when the
+            // callee exits to JS. The instance comparison above would then fail for a JS import on its own and
+            // this second test could go away. See also BBQJIT::emitIndirectTailCall().
+            GPRReg calleeCalleeGPR = params[patchArgsIndex + 2].gpr();
+            CCallHelpers::Jump skipRestoreFrame;
             {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
+                skipRestoreFrame = branchIfCalleeNotWasmToJS(jit, calleeCalleeGPR);
+                needsRestoreFrame.link(&jit);
                 int32_t topSource = -static_cast<int32_t>(params.code().frameSize());
                 for (unsigned i = 0; i < params.size(); ++i) {
                     if (params[i].isStack())
@@ -2103,54 +2679,66 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
                 emitRestoreInstanceFrameIfNeeded(jit, GPRInfo::wasmContextInstancePointer, callerStackSize, params.code().frameSize(), topSourceOffsetFromFP, GPRInfo::wasmBaseMemoryPointer, scratch2);
                 jit.move(calleeInstanceGPR, GPRInfo::wasmContextInstancePointer);
                 jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
-                jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, calleeInstanceGPR);
+                // cageConditionally clobbers its scratch, so the scratch must not be one of the registers we
+                // just loaded, nor the jump target we still have to consume. In BoundsChecking mode
+                // wasmBoundsCheckingSizeRegister is pinned, so the callee instance (dead by now) cannot be
+                // it. In Signaling mode it is not pinned, clobberLate(wasmPinnedRegisters()) prevents
+                // scratch from overlapping.
+                GPRReg cageScratch = mode == MemoryMode::Signaling ? scratch2 : calleeInstanceGPR;
+                ASSERT(noOverlap(cageScratch, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, calleeCode));
+                jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, cageScratch);
             }
-            sameInstance.link(&jit);
+            skipRestoreFrame.link(&jit);
             prepareForCall->run(jit, params);
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            jit.farJump(params[patchArgsIndex].gpr(), WasmEntryPtrTag);
+            jit.farJump(calleeCode, WasmEntryPtrTag);
         });
         return { };
     }
 
-    // Do a context switch if needed.
-    {
-        BasicBlock* continuation = m_proc.addBlock();
-        BasicBlock* doContextSwitch = m_proc.addBlock();
-
-        Value* isSameContextInstance = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(),
-            calleeInstance, instanceValue());
-        m_currentBlock->setSuccessors(FrequentedBlock(continuation), FrequentedBlock(doContextSwitch));
-        m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), isSameContextInstance);
-
-        PatchpointValue* patchpoint = doContextSwitch->appendNew<PatchpointValue>(m_proc, B3::Void, origin());
-        patchpoint->effects.writesPinned = true;
-        // We pessimistically assume we're calling something with BoundsChecking memory.
-        // FIXME: We shouldn't have to do this: https://bugs.webkit.org/show_bug.cgi?id=172181
-        patchpoint->clobber(RegisterSet::wasmPinnedRegisters());
-        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    if (callsRestorePinnedRegisters()) {
+        auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, args);
+        prepareToRestorePinnedRegisters(patchpoint);
+        unsigned patchArgsIndex = patchpoint->reps().size();
         patchpoint->append(calleeInstance, ValueRep::SomeRegister);
-        patchpoint->numGPScratchRegisters = 1;
-
-        patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        patchpoint->append(calleeCodeLocation, ValueRep::SomeRegister);
+        patchpoint->append(boxedCalleeCallee, ValueRep::SomeRegister);
+        patchArgsIndex += m_proc.resultCount(patchpoint->type());
+        patchpoint->setGenerator([this, handle = handle, prepareForCall = prepareForCall, patchArgsIndex, signature = Ref<const RTT>(signature), wasmCalleeInfo = WTF::move(wasmCalleeInfo)](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            GPRReg calleeInstance = params[0].gpr();
-            ASSERT(calleeInstance != GPRInfo::wasmBaseMemoryPointer);
-            jit.storeWasmContextInstance(calleeInstance);
-            static_assert(GPRInfo::wasmBoundsCheckingSizeRegister != GPRInfo::wasmBaseMemoryPointer);
-            // FIXME: We should support more than one memory size register
-            //   see: https://bugs.webkit.org/show_bug.cgi?id=162952
-            ASSERT(GPRInfo::wasmBoundsCheckingSizeRegister != calleeInstance);
-            GPRReg scratch = params.gpScratch(0);
-            jit.loadPairPtr(calleeInstance, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
-            jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, scratch);
-        });
-        doContextSwitch->setSuccessors(continuation);
-        doContextSwitch->appendNew<Value>(m_proc, Jump, origin());
+            if (prepareForCall)
+                prepareForCall->run(jit, params);
+            if (handle)
+                handle->collectStackMap(this, params);
 
-        m_currentBlock = continuation;
+            GPRReg calleeInstanceGPR = params[patchArgsIndex].gpr();
+            GPRReg calleeCodeLocationGPR = params[patchArgsIndex + 1].gpr();
+            GPRReg scratch = scratchForCaging(params);
+            auto leavesInstance = jit.branchPtr(CCallHelpers::NotEqual, calleeInstanceGPR, GPRInfo::wasmContextInstancePointer);
+            auto pinnedRegistersAreSet = jit.label();
+            params.addLatePath([calleeInstanceGPR, scratch, leavesInstance, pinnedRegistersAreSet](CCallHelpers& jit) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                leavesInstance.link(&jit);
+                emitPinnedRegistersSwitch(jit, calleeInstanceGPR, scratch);
+                jit.jump().linkTo(pinnedRegistersAreSet, &jit);
+            });
+
+            jit.storeWasmCalleeToCalleeCallFrame(params[patchArgsIndex + 2].gpr());
+            GPRReg functionInfo = jit.scratchRegister();
+            jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(OBJECT_OFFSETOF(WasmOrJSImportableFunction, importFunctionStub))), calleeCodeLocationGPR, functionInfo);
+            jit.storePtr(functionInfo, CCallHelpers::calleeFrameCodeBlockBeforeCall());
+            jit.call(CCallHelpers::Address(calleeCodeLocationGPR, WasmCallableFunction::offsetOfValueOfLoadLocation()), WasmEntryPtrTag);
+            emitWasmCallStackResultsAndSPRestore(jit, params, signature, wasmCalleeInfo);
+            emitPinnedRegistersRestore(jit, scratch);
+        });
+        fillCallResults(patchpoint, signature, results);
+        reloadPassedGlobal();
+        return { };
     }
 
+    Value* functionInfo = nullptr;
+    if (m_context.codeForImage)
+        functionInfo = m_currentBlock->appendNew<Value>(m_proc, Sub, origin(), calleeCodeLocation, constant(pointerType(), OBJECT_OFFSETOF(WasmOrJSImportableFunction, importFunctionStub)));
     auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, args);
     // We need to clobber all potential pinned registers since we might be leaving the instance.
     // We pessimistically assume we're always calling something that is bounds checking so
@@ -2159,25 +2747,61 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
     // use all the pinned registers as scratch: https://bugs.webkit.org/show_bug.cgi?id=172181
     patchpoint->clobberLate(RegisterSet::wasmPinnedRegisters());
 
-    unsigned patchArgsIndex = patchpoint->reps().size();
-    patchpoint->append(calleeCode, ValueRep::SomeRegister);
-    patchpoint->append(boxedCalleeCallee, ValueRep::SomeRegister);
-    patchArgsIndex += m_proc.resultCount(patchpoint->type());
-    patchpoint->setGenerator([this, handle = handle, prepareForCall = prepareForCall, patchArgsIndex, signature = Ref<const RTT>(signature), wasmCalleeInfo = WTF::move(wasmCalleeInfo)](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    unsigned patchArgsIndex = patchpoint->reps().size() + m_proc.resultCount(patchpoint->type());
+    // See the static_assert above for why the code pointer needs a fixed register.
+    patchpoint->append(calleeCode, ValueRep(GPRInfo::nonPreservedNonArgumentGPR0)); // patchArgsIndex
+    patchpoint->append(boxedCalleeCallee, ValueRep::SomeRegister); // patchArgsIndex + 1
+    patchpoint->append(calleeInstance, ValueRep::SomeRegister); // patchArgsIndex + 2
+    if (functionInfo)
+        patchpoint->append(functionInfo, ValueRep::SomeRegister); // patchArgsIndex + 3
+    // cageConditionally clobbers its scratch, so the scratch must not be one of the registers we
+    // just loaded, nor the jump target we still have to consume. In BoundsChecking mode
+    // wasmBoundsCheckingSizeRegister is pinned, so the callee instance (dead by now) cannot be
+    // it. In Signaling mode it is not pinned, clobberLate(wasmPinnedRegisters()) prevents the
+    // scratch from overlapping.
+    if (m_mode == MemoryMode::Signaling)
+        patchpoint->numGPScratchRegisters = 1;
+    patchpoint->setGenerator([this, handle = handle, prepareForCall = prepareForCall, patchArgsIndex, signature = Ref<const RTT>(signature), wasmCalleeInfo = WTF::move(wasmCalleeInfo), mode = m_mode](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         if (prepareForCall)
             prepareForCall->run(jit, params);
         if (handle)
             handle->collectStackMap(this, params);
 
-        jit.storeWasmCalleeToCalleeCallFrame(params[patchArgsIndex + 1].gpr());
-        jit.call(params[patchArgsIndex].gpr(), WasmEntryPtrTag);
+        GPRReg calleeCodeGPR = params[patchArgsIndex].gpr();
+        GPRReg boxedCalleeCalleeGPR = params[patchArgsIndex + 1].gpr();
+        jit.storeWasmCalleeToCalleeCallFrame(boxedCalleeCalleeGPR);
+        if (m_context.codeForImage)
+            jit.storePtr(params[patchArgsIndex + 3].gpr(), CCallHelpers::calleeFrameCodeBlockBeforeCall());
+        GPRReg calleeInstanceGPR = params[patchArgsIndex + 2].gpr();
+        // Safe to reuse the callee instance in BoundsChecking mode: it is dead once
+        // storeWasmContextInstance below has copied it, and the caging happens after that.
+        // Code for an image loads the base of the cage into the scratch before that store, while the callee instance is still needed.
+        // It takes the register of the boxed callee, which is dead since the store above: with six arguments in registers x86-64 has no other one left.
+        GPRReg cageScratch = mode == MemoryMode::Signaling ? params.gpScratch(0) : m_context.codeForImage ? boxedCalleeCalleeGPR : calleeInstanceGPR;
+
+        // Do a context switch if needed. We pessimistically assume we're calling something with
+        // BoundsChecking memory.
+        // FIXME: We shouldn't have to do this: https://bugs.webkit.org/show_bug.cgi?id=172181
+        ASSERT(noOverlap(cageScratch, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, GPRInfo::wasmContextInstancePointer));
+        // The code pointer is still live at the call below, so the scratch must not be it.
+        ASSERT(cageScratch != calleeCodeGPR);
+
+        auto isSameContextInstance = jit.branchPtr(CCallHelpers::Equal, calleeInstanceGPR, GPRInfo::wasmContextInstancePointer);
+        emitPrepareToCageMemoryBase(jit, GPRInfo::wasmContextInstancePointer, cageScratch);
+        jit.storeWasmContextInstance(calleeInstanceGPR);
+        jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
+        emitCageMemoryBase(jit, cageScratch);
+        isSameContextInstance.link(&jit);
+
+        jit.call(calleeCodeGPR, WasmEntryPtrTag);
         emitWasmCallStackResultsAndSPRestore(jit, params, signature, wasmCalleeInfo);
     });
     fillCallResults(patchpoint, signature, results);
 
     // The call could have been to another WebAssembly instance, and / or could have modified our Memory.
     restoreWebAssemblyGlobalState(m_info.memories, instanceValue(), m_currentBlock);
+    reloadPassedGlobal();
     return { };
 }
 
@@ -2186,7 +2810,8 @@ auto OMGIRGenerator::addGrowMemory(ExpressionType delta, ExpressionType& result,
     result = push(callWasmOperation(m_currentBlock, m_info.memory(memoryIndex).addressType().asB3TypeKind(), operationGrowMemory,
         instanceValue(), addressOperand(m_info.memory(memoryIndex).isMemory64(), delta), constant(Int32, memoryIndex)));
 
-    restoreWebAssemblyGlobalState(m_info.memories, instanceValue(), m_currentBlock);
+    if (!callsRestorePinnedRegisters())
+        restoreWebAssemblyGlobalState(m_info.memories, instanceValue(), m_currentBlock);
 
     return { };
 }
@@ -2216,6 +2841,17 @@ auto OMGIRGenerator::addCurrentMemory(ExpressionType& result, uint8_t memoryInde
     return { };
 }
 
+// Checks a range of memory 0.
+Value* OMGIRGenerator::isRangeOutOfBounds(Value* start, Value* count, Value* memorySize)
+{
+    auto* sum = m_currentBlock->appendNew<Value>(m_proc, Add, origin(), start, count);
+    // A 64-bit sum of two zero-extended words does not overflow.
+    if (m_context.codeForImage && !m_info.memory(0).isMemory64())
+        return m_currentBlock->appendNew<Value>(m_proc, Above, origin(), sum, memorySize);
+    auto* sumOverflowed = m_currentBlock->appendNew<Value>(m_proc, Below, origin(), sum, start);
+    return m_currentBlock->appendNew<Value>(m_proc, BitOr, origin(), sumOverflowed, m_currentBlock->appendNew<Value>(m_proc, Above, origin(), sum, memorySize));
+}
+
 auto OMGIRGenerator::addMemoryFill(ExpressionType dstAddress, ExpressionType target, ExpressionType count, uint8_t memoryIndex) -> PartialResult
 {
     bool is64Bit = m_info.memory(memoryIndex).isMemory64();
@@ -2229,10 +2865,7 @@ void OMGIRGenerator::emitMemoryFill(Value* dstAddressValue, Value* targetValue, 
         auto* memorySize = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfCachedMemory0Size()));
         m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_cachedMemory0Size, memorySize);
 
-        auto* sum = m_currentBlock->appendNew<Value>(m_proc, Add, origin(), dstAddressValue, countValue);
-        auto* sumOverflowed = m_currentBlock->appendNew<Value>(m_proc, Below, origin(), sum, dstAddressValue);
-        Value* outOfBounds = m_currentBlock->appendNew<Value>(m_proc, BitOr, origin(), sumOverflowed, m_currentBlock->appendNew<Value>(m_proc, Above, origin(), sum, memorySize));
-        CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), outOfBounds);
+        CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), isRangeOutOfBounds(dstAddressValue, countValue, memorySize));
         check->setGenerator([=, this, origin = this->origin()](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             this->emitExceptionCheck(jit, origin, ExceptionType::OutOfBoundsMemoryAccess);
         });
@@ -2293,19 +2926,13 @@ void OMGIRGenerator::emitMemoryCopy(Value* dstAddressValue, Value* srcAddressVal
         auto* memorySize = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfCachedMemory0Size()));
         m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_cachedMemory0Size, memorySize);
         {
-            auto* dstSum = m_currentBlock->appendNew<Value>(m_proc, Add, origin(), dstAddressValue, countValue);
-            auto* dstSumOverflowed = m_currentBlock->appendNew<Value>(m_proc, Below, origin(), dstSum, dstAddressValue);
-            Value* outOfBounds = m_currentBlock->appendNew<Value>(m_proc, BitOr, origin(), dstSumOverflowed, m_currentBlock->appendNew<Value>(m_proc, Above, origin(), dstSum, memorySize));
-            CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), outOfBounds);
+            CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), isRangeOutOfBounds(dstAddressValue, countValue, memorySize));
             check->setGenerator([=, this, origin = this->origin()](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
                 this->emitExceptionCheck(jit, origin, ExceptionType::OutOfBoundsMemoryAccess);
             });
         }
         {
-            auto* srcSum = m_currentBlock->appendNew<Value>(m_proc, Add, origin(), srcAddressValue, countValue);
-            auto* srcSumOverflowed = m_currentBlock->appendNew<Value>(m_proc, Below, origin(), srcSum, srcAddressValue);
-            Value* outOfBounds = m_currentBlock->appendNew<Value>(m_proc, BitOr, origin(), srcSumOverflowed, m_currentBlock->appendNew<Value>(m_proc, Above, origin(), srcSum, memorySize));
-            CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), outOfBounds);
+            CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), isRangeOutOfBounds(srcAddressValue, countValue, memorySize));
             check->setGenerator([=, this, origin = this->origin()](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
                 this->emitExceptionCheck(jit, origin, ExceptionType::OutOfBoundsMemoryAccess);
             });
@@ -2423,11 +3050,109 @@ void OMGIRGenerator::traceCF(Args&&... info)
         return;
 }
 
+// Values are only appended, so their indices follow program order.
+void OMGIRGenerator::didSetLocal(Value* set)
+{
+    if (!m_context.codeForImage)
+        return;
+    unsigned variable = set->as<VariableValue>()->variable()->index();
+    while (variable >= m_lastSetIndex.size())
+        m_lastSetIndex.append(0);
+    m_lastSetIndex[variable] = set->index();
+}
+
+// The local that the value was read from, unless it was set since.
+Variable* OMGIRGenerator::currentLocal(Value* value) const
+{
+    if (value->opcode() != B3::Get || m_locals.isEmpty())
+        return nullptr;
+    Variable* variable = value->as<VariableValue>()->variable();
+    unsigned local = variable->index() - m_locals[0]->index();
+    if (local >= m_locals.size() || m_locals[local] != variable)
+        return nullptr;
+    if (variable->index() < m_lastSetIndex.size() && m_lastSetIndex[variable->index()] > value->index())
+        return nullptr;
+    return variable;
+}
+
+auto OMGIRGenerator::provenBytes(Variable* local) const -> ProvenBytes
+{
+    if (local->index() >= m_provenBytes.size())
+        return { };
+    ProvenBytes proven = m_provenBytes[local->index()];
+    bool wasSetSince = local->index() < m_lastSetIndex.size() && m_lastSetIndex[local->index()] > proven.index;
+    return wasSetSince || proven.index < m_firstIndexInLoop ? ProvenBytes() : proven;
+}
+
+auto OMGIRGenerator::addressInLocal(Value* pointer) -> std::optional<LocalAddress>
+{
+    if (!m_context.codeForImage || pointer->type() != Int32)
+        return std::nullopt;
+    Value* sum = pointer->opcode() == Trunc ? pointer->child(0) : pointer;
+    if (Variable* local = currentLocal(sum))
+        return LocalAddress { local, sum, 0 };
+
+    if (sum->opcode() != Add || !sum->child(1)->hasInt())
+        return std::nullopt;
+    int64_t offset = sum->child(1)->asInt();
+    if (offset <= 0 || offset > std::numeric_limits<int32_t>::max())
+        return std::nullopt;
+    Value* base = sum->child(0);
+    if (base->opcode() == ZExt32 || base->opcode() == SExt32)
+        base = base->child(0);
+    Variable* local = currentLocal(base);
+    if (!local)
+        return std::nullopt;
+    return LocalAddress { local, base, static_cast<uint32_t>(offset) };
+}
+
+void OMGIRGenerator::foldProvenSum(LocalAddress& address, Value*& pointer, uint64_t& offset)
+{
+    if (!address.offset || address.offset >= provenBytes(address.local).end || offset + address.offset > std::numeric_limits<int32_t>::max())
+        return;
+    pointer = address.base->type() == Int64 ? m_currentBlock->appendNew<Value>(m_proc, Trunc, origin(), address.base) : address.base;
+    offset += address.offset;
+    address.offset = 0;
+}
+
+bool OMGIRGenerator::isProvenInBounds(const LocalAddress& address, uint64_t end) const
+{
+    return !address.offset && end <= provenBytes(address.local).end;
+}
+
+void OMGIRGenerator::didAccess(const LocalAddress& address, uint64_t end, Value* access)
+{
+    unsigned local = address.local->index();
+    if (address.offset || end <= provenBytes(address.local).end || end > std::numeric_limits<int32_t>::max())
+        return;
+    if (local >= m_provenBytes.size())
+        m_provenBytes.grow(local + 1);
+    m_provenInScopes.append({ local, m_provenBytes[local] });
+    m_provenBytes[local] = { static_cast<uint32_t>(end), access->index() };
+}
+
+void OMGIRGenerator::enterScope(ControlData& data, BlockType type)
+{
+    data.m_numberProvenInOuterScopes = m_provenInScopes.size();
+    data.m_firstIndexInOuterLoop = m_firstIndexInLoop;
+    if (type == BlockType::Loop)
+        m_firstIndexInLoop = m_proc.values().size();
+}
+
+void OMGIRGenerator::leaveScope(const ControlData& data)
+{
+    while (m_provenInScopes.size() > data.m_numberProvenInOuterScopes) {
+        auto [local, proven] = m_provenInScopes.takeLast();
+        m_provenBytes[local] = proven;
+    }
+    m_firstIndexInLoop = data.m_firstIndexInOuterLoop;
+}
+
 auto OMGIRGenerator::setLocal(uint32_t index, ExpressionType value) -> PartialResult
 {
     ASSERT(m_locals[index]);
     m_localConstants[index] = nullptr;
-    m_currentBlock->appendNew<VariableValue>(m_proc, B3::Set, origin(), m_locals[index], get(value));
+    set(m_locals[index], get(value));
     TRACE_VALUE(m_parser->typeOfLocal(index), get(value), "set_local ", index);
     return { };
 }
@@ -2437,7 +3162,7 @@ auto OMGIRGenerator::teeLocal(uint32_t index, ExpressionType value, ExpressionTy
     ASSERT(m_locals[index]);
     m_localConstants[index] = nullptr;
     Value* input = get(value);
-    m_currentBlock->appendNew<VariableValue>(m_proc, B3::Set, origin(), m_locals[index], input);
+    set(m_locals[index], input);
     result = push(input);
     TRACE_VALUE(m_parser->typeOfLocal(index), input, "tee_local ", index);
     return { };
@@ -2448,6 +3173,11 @@ auto OMGIRGenerator::getGlobal(uint32_t index, ExpressionType& result) -> Partia
     const Wasm::GlobalInformation& global = m_info.globals[index];
     switch (global.bindingMode) {
     case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance: {
+        if (isPassedGlobal(index)) {
+            m_accessesPassedGlobal = true;
+            result = push(m_currentBlock->appendNew<VariableValue>(m_proc, B3::Get, origin(), m_passedGlobal));
+            break;
+        }
         auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(global.type), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
         switch (global.type.kind()) {
         case TypeKind::I32:
@@ -2504,6 +3234,10 @@ auto OMGIRGenerator::setGlobal(uint32_t index, ExpressionType value) -> PartialR
     switch (global.bindingMode) {
     case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance: {
         auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, Store, origin(), get(value), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
+        if (isPassedGlobal(index)) {
+            m_accessesPassedGlobal = true;
+            m_currentBlock->appendNew<VariableValue>(m_proc, Set, origin(), m_passedGlobal, get(value));
+        }
         switch (global.type.kind()) {
         case TypeKind::I32:
             m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_i32[index], store);
@@ -2718,8 +3452,11 @@ inline uint32_t sizeOfLoadOp(LoadOpType op)
 
 inline B3::Kind OMGIRGenerator::memoryKind(B3::Opcode memoryOp, uint8_t memoryIndex)
 {
-    if (memoryIndex || useSignalingMemory0() || m_info.memory(0).isShared())
+    if (memoryIndex || useSignalingMemory0() || m_info.memory(0).isShared()) {
+        if (m_nextAccessIsInBounds)
+            return memoryOp;
         return trapping(memoryOp);
+    }
     return memoryOp;
 }
 
@@ -2854,8 +3591,18 @@ auto OMGIRGenerator::load(LoadOpType op, ExpressionType pointerVar, ExpressionTy
             break;
         }
 
-    } else
-        result = push(emitLoadOp(op, emitCheckAndPreparePointer(pointer, offset, sizeOfLoadOp(op), memoryIndex), offset, memoryIndex));
+    } else {
+        std::optional<LocalAddress> address = memoryIndex ? std::nullopt : addressInLocal(pointer);
+        if (address) {
+            foldProvenSum(*address, pointer, offset);
+            m_nextAccessIsInBounds = isProvenInBounds(*address, offset + sizeOfLoadOp(op));
+        }
+        Value* preparedPointer = emitCheckAndPreparePointer(pointer, offset, sizeOfLoadOp(op), memoryIndex);
+        result = push(emitLoadOp(op, preparedPointer, offset, memoryIndex));
+        m_nextAccessIsInBounds = false;
+        if (address)
+            didAccess(*address, offset + sizeOfLoadOp(op), preparedPointer);
+    }
 
     return { };
 }
@@ -2937,8 +3684,18 @@ auto OMGIRGenerator::store(StoreOpType op, ExpressionType pointerVar, Expression
         throwException->setGenerator([this, origin = this->origin()] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             this->emitExceptionCheck(jit, origin, ExceptionType::OutOfBoundsMemoryAccess);
         });
-    } else
-        emitStoreOp(op, emitCheckAndPreparePointer(pointer, offset, sizeOfStoreOp(op), memoryIndex), value, offset, memoryIndex);
+    } else {
+        std::optional<LocalAddress> address = memoryIndex ? std::nullopt : addressInLocal(pointer);
+        if (address) {
+            foldProvenSum(*address, pointer, offset);
+            m_nextAccessIsInBounds = isProvenInBounds(*address, offset + sizeOfStoreOp(op));
+        }
+        Value* preparedPointer = emitCheckAndPreparePointer(pointer, offset, sizeOfStoreOp(op), memoryIndex);
+        emitStoreOp(op, preparedPointer, value, offset, memoryIndex);
+        m_nextAccessIsInBounds = false;
+        if (address)
+            didAccess(*address, offset + sizeOfStoreOp(op), preparedPointer);
+    }
 
     return { };
 }
@@ -3969,7 +4726,7 @@ void OMGIRGenerator::emitNullCheck(Value* ref, ExceptionType exceptionType)
 
 bool OMGIRGenerator::emitNullCheckBeforeAccess(Value* ref, ptrdiff_t offset)
 {
-    if (Options::useWasmFaultSignalHandler()) {
+    if (m_proc.policy().upstream.usesWasmFaultSignalHandler) {
         if (offset <= maxAcceptableOffsetForNullReference())
             return true;
     }
@@ -4361,18 +5118,19 @@ auto OMGIRGenerator::addStructSet(TypedExpression structReference, const RTT& rt
 
 auto OMGIRGenerator::addRefTest(TypedExpression reference, bool allowNull, int32_t heapType, bool shouldNegate, ExpressionType& result) -> PartialResult
 {
-    emitRefTestOrCast(CastKind::Test, reference, allowNull, heapType, shouldNegate, result);
+    WASM_FAIL_IF_HELPER_FAILS(emitRefTestOrCast(CastKind::Test, reference, allowNull, heapType, shouldNegate, result));
     return { };
 }
 
 auto OMGIRGenerator::addRefCast(TypedExpression reference, bool allowNull, int32_t heapType, ExpressionType& result) -> PartialResult
 {
-    emitRefTestOrCast(CastKind::Cast, reference, allowNull, heapType, false, result);
+    WASM_FAIL_IF_HELPER_FAILS(emitRefTestOrCast(CastKind::Cast, reference, allowNull, heapType, false, result));
     return { };
 }
 
-void OMGIRGenerator::emitRefTestOrCast(CastKind castKind, TypedExpression reference, bool allowNull, int32_t toHeapType, bool shouldNegate, ExpressionType& result)
+auto OMGIRGenerator::emitRefTestOrCast(CastKind castKind, TypedExpression reference, bool allowNull, int32_t toHeapType, bool shouldNegate, ExpressionType& result) -> PartialResult
 {
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     Value* value = get(reference);
 
     RefPtr<const Wasm::RTT> targetRTT;
@@ -4406,11 +5164,12 @@ void OMGIRGenerator::emitRefTestOrCast(CastKind castKind, TypedExpression refere
 
         auto* castValue = m_currentBlock->appendNew<B3::WasmRefTypeCheckValue>(m_proc, kind, type, origin(), toHeapType, flags, WTF::move(targetRTT), value, targetStructureID);
         result = push(castValue);
-        return;
+        return { };
     }
 
     auto* castValue = m_currentBlock->appendNew<B3::WasmRefTypeCheckValue>(m_proc, kind, type, origin(), toHeapType, flags, WTF::move(targetRTT), value);
     result = push(castValue);
+    return { };
 }
 
 void OMGIRGenerator::mutatorFence()
@@ -4921,6 +5680,7 @@ auto OMGIRGenerator::addLoop(BlockSignature&& signature, std::span<TypedExpressi
 {
     auto enclosingStack = m_parser->expressionStack();
     TRACE_CF("LOOP: entering loop index: ", loopIndex, " signature: ", signature);
+    m_hasLoop = true;
     m_localConstants.fill(nullptr);
     BasicBlock* body = m_proc.addBlock();
     BasicBlock* continuation = m_proc.addBlock();
@@ -4933,6 +5693,7 @@ auto OMGIRGenerator::addLoop(BlockSignature&& signature, std::span<TypedExpressi
     BasicBlock* entry = idiom ? m_proc.addBlock() : body;
 
     block = ControlData(m_proc, origin(), WTF::move(signature), BlockType::Loop, continuation, body);
+    enterScope(block, BlockType::Loop);
 
     for (unsigned i = 0; i < block.signature().argumentCount(); ++i) {
         TypedExpression value = args[i];
@@ -5012,6 +5773,7 @@ auto OMGIRGenerator::addBlock(BlockSignature&& signature, std::span<TypedExpress
     BasicBlock* continuation = m_proc.addBlock();
 
     newBlock = ControlData(m_proc, origin(), WTF::move(signature), BlockType::Block, continuation);
+    enterScope(newBlock, BlockType::Block);
     return { };
 }
 
@@ -5048,14 +5810,19 @@ auto OMGIRGenerator::addIf(ExpressionType condition, BlockSignature&& signature,
         m_currentBlock->setSuccessors(FrequentedBlock(taken, takenFrequency), FrequentedBlock(notTaken, notTakenFrequency));
     }
 
+    BasicBlock* branch = conditionValue->hasInt() ? nullptr : m_currentBlock;
     m_currentBlock = taken;
     TRACE_CF("IF");
     result = ControlData(m_proc, origin(), WTF::move(signature), BlockType::If, continuation, notTaken);
+    result.m_ifBranch = branch;
+    result.m_callCountAtIf = m_callCount;
+    enterScope(result, BlockType::If);
     return { };
 }
 
 auto OMGIRGenerator::addElse(ControlData& data, std::span<const TypedExpression> currentStack) -> PartialResult
 {
+    data.m_thenArmMakesCalls = m_callCount > data.m_callCountAtIf;
     unifyValuesWithBlock(currentStack, data);
     m_currentBlock->setSuccessors(data.continuation);
     m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
@@ -5066,6 +5833,7 @@ auto OMGIRGenerator::addElseToUnreachable(ControlData& data) -> PartialResult
 {
     ASSERT(data.blockType() == BlockType::If);
     m_currentBlock = data.special;
+    leaveScope(data);
     data.convertIfToBlock();
     TRACE_CF("ELSE");
     return { };
@@ -5073,6 +5841,7 @@ auto OMGIRGenerator::addElseToUnreachable(ControlData& data) -> PartialResult
 
 auto OMGIRGenerator::addTry(BlockSignature&& signature, std::span<TypedExpression> args, ControlType& result) -> PartialResult
 {
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     UNUSED_PARAM(args);
     ++m_tryCatchDepth;
     TRACE_CF("TRY");
@@ -5085,6 +5854,7 @@ auto OMGIRGenerator::addTry(BlockSignature&& signature, std::span<TypedExpressio
 
 auto OMGIRGenerator::addTryTable(BlockSignature&& signature, std::span<TypedExpression> args, const Vector<CatchHandler>& targets, ControlType& result) -> PartialResult
 {
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     UNUSED_PARAM(args);
     ++m_tryCatchDepth;
     TRACE_CF("TRY");
@@ -5421,6 +6191,7 @@ auto OMGIRGenerator::addDelegateToUnreachable(ControlType& target, ControlType& 
 
 auto OMGIRGenerator::addThrow(unsigned exceptionIndex, ArgumentList& args, std::span<const TypedExpression>) -> PartialResult
 {
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     TRACE_CF("THROW");
 
     advanceCallSiteIndex();
@@ -5449,6 +6220,7 @@ auto OMGIRGenerator::addThrow(unsigned exceptionIndex, ArgumentList& args, std::
 
 [[nodiscard]] auto OMGIRGenerator::addThrowRef(TypedExpression exnref, std::span<const TypedExpression>) -> PartialResult
 {
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     TRACE_CF("THROW_REF");
 
     Value* exception = get(exnref);
@@ -5475,6 +6247,7 @@ auto OMGIRGenerator::addThrow(unsigned exceptionIndex, ArgumentList& args, std::
 
 auto OMGIRGenerator::addRethrow(unsigned, ControlType& data) -> PartialResult
 {
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     TRACE_CF("RETHROW");
 
     advanceCallSiteIndex();
@@ -5515,6 +6288,25 @@ auto OMGIRGenerator::addInlinedReturn(const auto& returnValues) -> PartialResult
     return { };
 }
 
+static constexpr bool resumablesSetZeroFlag = isX86();
+
+// The flags reach the branch of the caller unchanged.
+static void emitResumableResult(CCallHelpers& jit, GPRReg result, std::optional<int32_t> constant)
+{
+#if CPU(X86_64)
+    if (constant)
+        jit.move(CCallHelpers::TrustedImm32(*constant), result);
+    // A move of zero is emitted as an xor, which sets the flags.
+    if (constant != 0)
+        jit.m_assembler.testl_rr(result, result);
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(result);
+    UNUSED_PARAM(constant);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
 auto OMGIRGenerator::addReturn(const ControlData&, std::span<const TypedExpression> returnValues) -> PartialResult
 {
     TRACE_CF("RETURN");
@@ -5527,15 +6319,29 @@ auto OMGIRGenerator::addReturn(const ControlData&, std::span<const TypedExpressi
 
     CallInformation wasmCallInfo = wasmCallingConvention().callInformationFor(functionSignature, CallRole::Callee);
     PatchpointValue* patch = m_proc.add<PatchpointValue>(B3::Void, origin());
-    patch->setGenerator([] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        params.code().emitEpilogue(jit);
+    bool tearsDownFrame = !emitsShrinkWrappedFrame();
+    patch->setRunsWithoutFrame(!tearsDownFrame);
+
+    RELEASE_ASSERT(returnValues.size() >= wasmCallInfo.results.size());
+    unsigned offset = returnValues.size() - wasmCallInfo.results.size();
+    bool returnsWithFlags = m_isResumable && resumablesSetZeroFlag;
+    std::optional<int32_t> constantResult;
+    if (returnsWithFlags && get(returnValues[offset])->hasInt32())
+        constantResult = get(returnValues[offset])->asInt32();
+    GPRReg resultGPR = returnsWithFlags ? B3::ValueRep(wasmCallInfo.results[0].location).gpr() : InvalidGPRReg;
+    patch->setGenerator([tearsDownFrame, resultGPR, constantResult] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        if (tearsDownFrame) {
+            params.code().emitEpilogue(jit);
+            return;
+        }
+        if (resultGPR != InvalidGPRReg)
+            emitResumableResult(jit, resultGPR, constantResult);
+        jit.ret();
     });
     patch->effects.terminal = true;
     patch->clobber(RegisterSet::macroClobberedGPRs());
 
-    RELEASE_ASSERT(returnValues.size() >= wasmCallInfo.results.size());
-    unsigned offset = returnValues.size() - wasmCallInfo.results.size();
-    for (unsigned i = 0; i < wasmCallInfo.results.size(); ++i) {
+    for (unsigned i = 0; i < wasmCallInfo.results.size() && !constantResult; ++i) {
         B3::ValueRep rep = wasmCallInfo.results[i].location;
         if (rep.isStack()) {
             m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, Origin(), get(returnValues[offset + i]), framePointer(), safeCast<int32_t>(rep.offsetFromFP()));
@@ -5546,9 +6352,66 @@ auto OMGIRGenerator::addReturn(const ControlData&, std::span<const TypedExpressi
 
         TRACE_VALUE(functionSignature.returnType(i), get(returnValues[offset + i]), "put to return value ", i);
     }
+    if (m_passedGlobal)
+        patch->append(passedGlobalAtReturn(), ValueRep::reg(passedGlobalGPR));
 
     m_currentBlock->append(patch);
     return { };
+}
+
+// A loop whose header only switches on a local is a state machine.
+SwitchValue* OMGIRGenerator::stateMachineDispatch(BasicBlock* loopHeader)
+{
+    if (loopHeader->size() != 2)
+        return nullptr;
+    auto* dispatch = loopHeader->last()->as<SwitchValue>();
+    if (!dispatch || dispatch->child(0) != loopHeader->at(0) || dispatch->child(0)->opcode() != B3::Get)
+        return nullptr;
+    return dispatch;
+}
+
+BasicBlock* OMGIRGenerator::targetBlockForBranch(ControlData& data)
+{
+    auto* dispatch = ControlData::isLoop(data) ? stateMachineDispatch(data.special) : nullptr;
+    if (!dispatch)
+        return data.targetBlockForBranch();
+
+    // A branch from a block that has stored a constant in the local goes directly to its case.
+    Variable* state = dispatch->child(0)->as<VariableValue>()->variable();
+    for (unsigned index = m_currentBlock->size(); index--;) {
+        auto* store = m_currentBlock->at(index)->as<VariableValue>();
+        if (!store || store->opcode() != B3::Set || store->variable() != state)
+            continue;
+        if (!store->child(0)->hasInt32())
+            break;
+        // addSwitch() appends the case for each index in order. The fall-through is the last successor.
+        uint32_t selected = store->child(0)->asInt32();
+        if (auto* code = m_context.codeForImage)
+            ++code->threadedJumps;
+        return data.special->successorBlock(std::min<uint32_t>(selected, dispatch->numCaseValues()));
+    }
+    return data.targetBlockForBranch();
+}
+
+// When every branch went straight to its case, the switch runs once, on the way in, mostly in its first state.
+void OMGIRGenerator::emitFirstStateTest(const ControlData& loop)
+{
+    BasicBlock* header = loop.special;
+    auto* dispatch = stateMachineDispatch(header);
+    if (!dispatch || loop.m_hasBranchToHeader || !dispatch->numCaseValues())
+        return;
+
+    if (auto* code = m_context.codeForImage)
+        ++code->firstStateTests;
+    Value* state = dispatch->child(0);
+    BasicBlock* table = m_proc.addBlock();
+    header->values().removeLast();
+    dispatch->child(0) = table->appendNew<VariableValue>(m_proc, B3::Get, dispatch->origin(), state->as<VariableValue>()->variable());
+    table->append(dispatch);
+    table->successors() = header->successors();
+    header->appendNew<Value>(m_proc, B3::Branch, dispatch->origin(),
+        header->appendNew<Value>(m_proc, B3::Equal, dispatch->origin(), state, constant(Int32, 0)));
+    header->setSuccessors(table->successor(0), FrequentedBlock(table, FrequencyClass::Unlikely));
 }
 
 auto OMGIRGenerator::addBranch(ControlData& data, ExpressionType condition, std::span<const TypedExpression> returnValues) -> PartialResult
@@ -5559,7 +6422,7 @@ auto OMGIRGenerator::addBranch(ControlData& data, ExpressionType condition, std:
 
     unifyValuesWithBlock(returnValues, data);
 
-    BasicBlock* target = data.targetBlockForBranch();
+    BasicBlock* target = targetBlockForBranch(data);
     FrequencyClass targetFrequency = FrequencyClass::Normal;
     FrequencyClass continuationFrequency = FrequencyClass::Normal;
 
@@ -5610,7 +6473,7 @@ auto OMGIRGenerator::addBranchNull(ControlData& data, ExpressionType reference, 
 auto OMGIRGenerator::addBranchCast(ControlData& data, TypedExpression reference, std::span<const TypedExpression> returnValues, bool allowNull, int32_t heapType, bool shouldNegate) -> PartialResult
 {
     ExpressionType condition;
-    emitRefTestOrCast(CastKind::Test, reference, allowNull, heapType, shouldNegate, condition);
+    WASM_FAIL_IF_HELPER_FAILS(emitRefTestOrCast(CastKind::Test, reference, allowNull, heapType, shouldNegate, condition));
 
     WASM_FAIL_IF_HELPER_FAILS(addBranch(data, condition, returnValues));
 
@@ -5652,6 +6515,11 @@ auto OMGIRGenerator::endBlock(ControlEntry& entry, std::span<TypedExpression> en
     ASSERT(enclosedStack.size() >= returnCount);
     auto blockResults = enclosedStack.last(returnCount);
 
+    // Without a profile, an arm that calls is unlikely if the other arm is empty.
+    bool hasEmptyElseArm = data.m_ifBranch && m_currentBlock == data.m_ifBranch->successorBlock(1) && !m_currentBlock->size();
+    if (m_context.codeForImage && data.m_thenArmMakesCalls && hasEmptyElseArm && data.m_ifBranch->successor(0).isLikely())
+        data.m_ifBranch->successor(0).frequency() = FrequencyClass::Unlikely;
+
     if (data.blockType() != BlockType::Loop)
         unifyValuesWithBlock(blockResults, data);
 
@@ -5659,8 +6527,11 @@ auto OMGIRGenerator::endBlock(ControlEntry& entry, std::span<TypedExpression> en
     m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
     m_currentBlock = data.continuation;
+    leaveScope(data);
 
-    if (data.blockType() == BlockType::If) {
+    if (data.blockType() == BlockType::Loop)
+        emitFirstStateTest(data);
+    else if (data.blockType() == BlockType::If) {
         data.special->setSuccessors(m_currentBlock);
         data.special->appendNew<Value>(m_proc, Jump, origin());
     } else if (data.blockType() == BlockType::Try || data.blockType() == BlockType::Catch)
@@ -5699,8 +6570,11 @@ auto OMGIRGenerator::addEndToUnreachable(ControlEntry& entry, std::span<TypedExp
     auto resultSlots = enclosedStack.last(returnCount);
 
     m_currentBlock = data.continuation;
+    leaveScope(data);
 
-    if (data.blockType() == BlockType::If) {
+    if (data.blockType() == BlockType::Loop)
+        emitFirstStateTest(data);
+    else if (data.blockType() == BlockType::If) {
         data.special->setSuccessors(m_currentBlock);
         data.special->appendNew<Value>(m_proc, Jump, origin());
     } else if (data.blockType() == BlockType::Try || data.blockType() == BlockType::Catch)
@@ -5748,9 +6622,9 @@ Vector<ConstrainedValue> OMGIRGenerator::createCallConstrainedArgs(BasicBlock* b
 }
 
 
-auto OMGIRGenerator::createCallPatchpoint(BasicBlock* block, const RTT& signature, const CallInformation& wasmCalleeInfo, const ArgumentList& tmpArgs) -> CallPatchpointData
+auto OMGIRGenerator::createCallPatchpoint(BasicBlock* block, const RTT& signature, const CallInformation& wasmCalleeInfo, const ArgumentList& tmpArgs, Value* passedGlobal) -> CallPatchpointData
 {
-    auto returnType = toB3ResultType(&signature);
+    auto returnType = passedGlobal ? resultTypeWithGlobal(signature) : toB3ResultType(&signature);
 
     auto constrainedPatchArgs = createCallConstrainedArgs(block, wasmCalleeInfo, tmpArgs);
 
@@ -5764,6 +6638,8 @@ auto OMGIRGenerator::createCallPatchpoint(BasicBlock* block, const RTT& signatur
     patchpoint->clobberEarly(RegisterSet::macroClobberedGPRs());
     patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(m_proc.usesSIMD() ? RegisterSet::allRegisters() : RegisterSet::allScalarRegisters()));
     patchpoint->appendVector(constrainedPatchArgs);
+    if (passedGlobal)
+        patchpoint->append(passedGlobal, ValueRep::reg(passedGlobalGPR));
     auto handle = preparePatchpointForExceptions(block, patchpoint);
     const Vector<ArgumentLocation, 1>& constrainedResultLocations = wasmCalleeInfo.results;
     if (returnType != B3::Void) {
@@ -5775,6 +6651,8 @@ auto OMGIRGenerator::createCallPatchpoint(BasicBlock* block, const RTT& signatur
             } else
                 resultConstraints.append(B3::ValueRep(valueLocation.location));
         }
+        if (passedGlobal)
+            resultConstraints.append(B3::ValueRep::reg(passedGlobalGPR));
         patchpoint->resultConstraints = WTF::move(resultConstraints);
     }
     block->append(patchpoint);
@@ -5929,8 +6807,7 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
         Width width { Width64 };
     };
 
-    Vector<ShuffleEntry> entries;
-    entries.reserveInitialCapacity(calleeSaves.registerCount() + functionSignature.argumentCount() + 1);
+    Vector<ShuffleEntry> entries(ReserveCapacityTag { }, calleeSaves.registerCount() + functionSignature.argumentCount() + 1);
 
     for (const auto& regAtOffset : calleeSaves) {
         // Don't restore wasmBoundsCheckingSizeRegister since we may have set it when checking for
@@ -6531,6 +7408,7 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
 
     const bool isTailCallRootCaller = callType == CallType::TailCall && !m_inlineParent;
     ASSERT(signature.argumentCount() == args.size());
+    WASM_DECLINE_FOR_IMAGE_IF(callType == CallType::TailCall);
 
     const auto& callingConvention = wasmCallingConvention();
     Checked<int32_t> tailCallStackOffsetFromFP;
@@ -6547,6 +7425,7 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
     Value* jumpDestination = nullptr;
 
     m_makesCalls = true;
+    ++m_callCount;
     if (callType == CallType::TailCall)
         m_makesTailCalls = true;
 
@@ -6554,19 +7433,21 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
 
     if (m_info.isImportedFunctionFromFunctionIndexSpace(functionIndexSpace)) {
         auto emitCallToImport = [&, this](PatchpointValue* patchpoint, RefPtr<PatchpointExceptionHandle> handle, RefPtr<B3::StackmapGenerator> prepareForCall) -> void {
-            unsigned patchArgsIndex = patchpoint->reps().size();
-            patchpoint->append(jumpDestination, ValueRep(GPRInfo::nonPreservedNonArgumentGPR0));
+            unsigned patchArgsIndex = patchpoint->reps().size() + m_proc.resultCount(patchpoint->type());
+            patchpoint->append(jumpDestination, ValueRep(GPRInfo::nonPreservedNonArgumentGPR0)); // patchArgsIndex
             // We need to clobber all potential pinned registers since we might be leaving the instance.
             // We pessimistically assume we could be calling to something that is bounds checking.
             // FIXME: We shouldn't have to do this: https://bugs.webkit.org/show_bug.cgi?id=172181
-            patchpoint->clobberLate(RegisterSet::wasmPinnedRegisters());
+            if (callsRestorePinnedRegisters())
+                prepareToRestorePinnedRegisters(patchpoint);
+            else
+                patchpoint->clobberLate(RegisterSet::wasmPinnedRegisters());
             // emitRestoreInstanceFrameIfNeeded needs two scratches. wasmBaseMemoryPointer is
             // always pinned so B3 won't allocate it. wasmBoundsCheckingSizeRegister
             // is only pinned in BoundsChecking mode, so in Signaling mode we need B3 to give us a
             // scratch that avoids the inputs.
             if (isTailCallRootCaller && m_mode == MemoryMode::Signaling)
                 patchpoint->numGPScratchRegisters = 1;
-            patchArgsIndex += m_proc.resultCount(patchpoint->type());
             patchpoint->setGenerator([this, patchArgsIndex, handle, isTailCallRootCaller, tailCallStackOffsetFromFP, prepareForCall, signature = Ref<const RTT>(signature), wasmCalleeInfo, callerStackSize = static_cast<int32_t>(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(wasmCallerInfoAsCallee.headerAndArgumentStackSizeInBytes)), mode = m_mode](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 if (isTailCallRootCaller) {
@@ -6592,6 +7473,8 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
                 else {
                     jit.call(params[patchArgsIndex].gpr(), WasmEntryPtrTag);
                     emitWasmCallStackResultsAndSPRestore(jit, params, signature, wasmCalleeInfo);
+                    if (callsRestorePinnedRegisters())
+                        emitPinnedRegistersRestore(jit, scratchForCaging(params));
                 }
             });
         };
@@ -6618,14 +7501,21 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
             fillCallResults(patchpoint, signature, results);
 
         // The call could have been to another WebAssembly instance, and / or could have modified our Memory.
-        restoreWebAssemblyGlobalState(m_info.memories, instanceValue(), m_currentBlock);
+        if (!callsRestorePinnedRegisters())
+            restoreWebAssemblyGlobalState(m_info.memories, instanceValue(), m_currentBlock);
+        reloadPassedGlobal();
         return { };
     } // isImportedFunctionFromFunctionIndexSpace
 
     Vector<UnlinkedWasmToWasmCall>* unlinkedWasmToWasmCalls = &m_unlinkedWasmToWasmCalls;
+    ImageEntry entry = ImageEntry::Primary;
+    if (m_passedGlobal)
+        entry = args.size() && get(args[0])->isInt32(0) ? ImageEntry::DirectWithZero : ImageEntry::Direct;
+    bool calleeIsResumable = m_passedGlobal && isResumable(m_info, m_info.toCodeIndex(functionIndexSpace), *m_context.codeForImage->passedGlobal);
+    bool omitsArgument = calleeIsResumable && entry == ImageEntry::DirectWithZero;
 
     auto emitUnlinkedWasmToWasmCall = [&, this](PatchpointValue* patchpoint, RefPtr<PatchpointExceptionHandle> handle, RefPtr<B3::StackmapGenerator> prepareForCall) -> void {
-        patchpoint->setGenerator([this, handle, unlinkedWasmToWasmCalls, functionIndexSpace, isTailCallRootCaller, tailCallStackOffsetFromFP, prepareForCall, signature = Ref<const RTT>(signature), wasmCalleeInfo](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        patchpoint->setGenerator([this, handle, unlinkedWasmToWasmCalls, functionIndexSpace, entry, isTailCallRootCaller, tailCallStackOffsetFromFP, prepareForCall, signature = Ref<const RTT>(signature), wasmCalleeInfo](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             if (prepareForCall)
                 prepareForCall->run(jit, params);
@@ -6638,23 +7528,30 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
             // Since the OMG function prologue will put callee, the caller does not need to place it.
             // For tail calls, the shuffle already placed the callee.
             bool selfRecursion = &m_inlineRoot->m_info == &m_info && m_info.toCodeIndex(functionIndexSpace) == m_inlineRoot->m_functionIndex;
-            if (!isTailCallRootCaller && !selfRecursion) {
+            if (!isTailCallRootCaller && !selfRecursion && !m_context.codeForImage) {
                 Ref<IPIntCallee> callee = m_calleeGroup.ipintCalleeFromFunctionIndexSpace(functionIndexSpace);
                 jit.storeWasmCalleeToCalleeCallFrame(CCallHelpers::TrustedImmPtr(CalleeBits::boxNativeCallee(callee.ptr())));
             }
-            auto call = isTailCallRootCaller ? jit.threadSafePatchableNearTailCall() : jit.threadSafePatchableNearCall();
+            if (m_context.codeForImage)
+                emitCallInImage(jit, imageSymbolOf(m_info.toCodeIndex(functionIndexSpace)), entry);
+            else {
+                auto call = isTailCallRootCaller ? jit.threadSafePatchableNearTailCall() : jit.threadSafePatchableNearCall();
 
-            jit.addLinkTask([unlinkedWasmToWasmCalls, call, functionIndexSpace](LinkBuffer& linkBuffer) {
-                unlinkedWasmToWasmCalls->append({ linkBuffer.locationOfNearCall<WasmEntryPtrTag>(call), functionIndexSpace });
-            });
-            if (!isTailCallRootCaller)
-                emitWasmCallStackResultsAndSPRestore(jit, params, signature, wasmCalleeInfo);
+                jit.addLinkTask([unlinkedWasmToWasmCalls, call, functionIndexSpace](LinkBuffer& linkBuffer) {
+                    unlinkedWasmToWasmCalls->append({ linkBuffer.locationOfNearCall<WasmEntryPtrTag>(call), functionIndexSpace });
+                });
+            }
+            if (!isTailCallRootCaller) {
+                // A callee in the image changes the stack pointer only by a tail call.
+                bool needsSPRestore = !m_context.codeForImage || m_info.m_usesTailCalls.loadRelaxed();
+                emitWasmCallStackResultsAndSPRestore(jit, params, signature, wasmCalleeInfo, needsSPRestore);
+            }
         });
     };
 
     if (isTailCallRootCaller) {
         Ref<IPIntCallee> ipintCallee = m_calleeGroup.ipintCalleeFromFunctionIndexSpace(functionIndexSpace);
-        auto* boxedCallee = constant(pointerType(), std::bit_cast<uintptr_t>(CalleeBits::boxNativeCallee(ipintCallee.ptr())));
+        auto* boxedCallee = processPointer(m_currentBlock, ProcessPointerKind::InterpreterCallee, CalleeBits::boxNativeCallee(ipintCallee.ptr()));
         auto [patchpoint, handle, prepareForCall] = createTailCallPatchpoint(m_currentBlock, signature, wasmCallerInfoAsCallee, wasmCalleeInfoAsCallee, args, boxedCallee);
         emitUnlinkedWasmToWasmCall(patchpoint, handle, prepareForCall);
         return { };
@@ -6672,14 +7569,25 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
     // 1. It is not tail-call. So this does not clobber the arguments of this function.
     // 2. We are not changing instance. Thus, |this| of this function's arguments are the same and OK.
 
-    auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, args);
+    Value* passedGlobal = m_passedGlobal ? zeroExtendedPassedGlobal() : nullptr;
+    const ArgumentList noArguments;
+    auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, omitsArgument ? noArguments : args, passedGlobal);
     emitUnlinkedWasmToWasmCall(patchpoint, handle, prepareForCall);
+    patchpoint->zeroFlagReflectsFirstResult = calleeIsResumable && resumablesSetZeroFlag && !m_info.m_usesTailCalls.loadRelaxed();
     // We need to clobber the size register since the IPInt always bounds checks
     if (useSignalingMemory0() || (m_info.memoryCount() && m_info.memory(0).isShared()))
         patchpoint->clobberLate(RegisterSet { GPRInfo::wasmBoundsCheckingSizeRegister });
 
-    fillCallResults(patchpoint, signature, results);
+    if (!passedGlobal) {
+        fillCallResults(patchpoint, signature, results);
+        return { };
+    }
 
+    unsigned returnCount = signature.returnCount();
+    for (unsigned i = 0; i < returnCount; ++i)
+        results.append(m_currentBlock->appendNew<ExtractValue>(m_proc, origin(), toB3Type(signature.returnType(i)), patchpoint, i));
+    Value* returnedGlobal = returnCount ? m_currentBlock->appendNew<ExtractValue>(m_proc, origin(), Int32, patchpoint, returnCount) : static_cast<Value*>(patchpoint);
+    m_currentBlock->appendNew<VariableValue>(m_proc, Set, origin(), m_passedGlobal, returnedGlobal);
     return { };
 }
 
@@ -6711,7 +7619,7 @@ auto OMGIRGenerator::tryInliningPolymorphicCalls(unsigned callProfileIndex, Valu
 
         m_currentBlock = calleeCheck;
         ValueResults fastValues;
-        Value* isSameCallee = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeCallee, constant(pointerType(), std::bit_cast<uintptr_t>(CalleeBits::boxNativeCallee(&const_cast<IPIntCallee&>(callee)))));
+        Value* isSameCallee = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeCallee, processPointer(m_currentBlock, ProcessPointerKind::InterpreterCallee, CalleeBits::boxNativeCallee(&const_cast<IPIntCallee&>(callee))));
         m_currentBlock->setSuccessors(
             FrequentedBlock(directCall),
             FrequentedBlock(nextCase, nextCase == slowCase ? FrequencyClass::Rare : FrequencyClass::Normal));
@@ -6853,7 +7761,7 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
     Value* calleeRTT = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), callableFunction, safeCast<int32_t>(FuncRefTable::Function::offsetOfRTT()));
     m_heaps.decorateMemory(&m_heaps.WasmFuncRefTableFunction_rtt, calleeRTT);
 
-    Value* expectedRTT = constant(pointerType(), std::bit_cast<uintptr_t>(&signature));
+    Value* expectedRTT = processPointer(m_currentBlock, ProcessPointerKind::TypeDefinition, &signature);
 
     if (signature.isFinalType()) {
         CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), m_currentBlock->appendNew<Value>(m_proc, NotEqual, origin(), calleeRTT, expectedRTT));
@@ -6887,7 +7795,7 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
         displayEntry->setReadsMutability(B3::Mutability::Immutable);
         displayEntry->setControlDependent(false);
 
-        CheckValue* checkRTTDisplayEntry = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), m_currentBlock->appendNew<Value>(m_proc, NotEqual, origin(), displayEntry, constant(pointerType(), std::bit_cast<uintptr_t>(&signature))));
+        CheckValue* checkRTTDisplayEntry = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), m_currentBlock->appendNew<Value>(m_proc, NotEqual, origin(), displayEntry, expectedRTT));
         checkRTTDisplayEntry->setGenerator([=, this, origin = this->origin()](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             this->emitExceptionCheck(jit, origin, ExceptionType::BadSignature);
         });
@@ -6902,7 +7810,7 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
     m_heaps.decorateMemory(&m_heaps.WasmWasmCallableFunctionLocation_value, calleeCode);
 
     ValueResults slowValues;
-    auto result = emitIndirectCall(calleeInstance, calleeCode, calleeCallee, signature, args, slowValues, callType);
+    auto result = emitIndirectCall(calleeInstance, calleeCode, calleeCodeLocation, calleeCallee, signature, args, slowValues, callType);
     if (!result.has_value()) [[unlikely]]
         return result;
 
@@ -6937,6 +7845,7 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
 
 auto OMGIRGenerator::addCallRef(unsigned callProfileIndex, const RTT& signature, ArgumentList& args, ResultList& results, CallType callType) -> PartialResult
 {
+    WASM_DECLINE_FOR_IMAGE_IF(true);
     UNUSED_PARAM(callProfileIndex);
     TypedExpression calleeArg = args.takeLast();
     Value* callee = get(calleeArg);
@@ -6984,7 +7893,7 @@ auto OMGIRGenerator::addCallRef(unsigned callProfileIndex, const RTT& signature,
     m_heaps.decorateMemory(&m_heaps.WasmWasmCallableFunctionLocation_value, calleeCode);
 
     ValueResults slowValues;
-    auto result = emitIndirectCall(calleeInstance, calleeCode, calleeCallee, signature, args, slowValues, callType);
+    auto result = emitIndirectCall(calleeInstance, calleeCode, calleeCodeLocation, calleeCallee, signature, args, slowValues, callType);
     if (!result.has_value()) [[unlikely]]
         return result;
 
@@ -7100,7 +8009,8 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
 {
     CompilerTimingScope totalScope("B3"_s, "Total OMG compilation"_s);
 
-    Wasm::Thunks::singleton().stub(Wasm::catchInWasmThunkGenerator);
+    if (!compilationContext.codeForImage)
+        Wasm::Thunks::singleton().stub(Wasm::catchInWasmThunkGenerator);
 
     RefPtr<JSON::Object> ionGraphFunction;
     RefPtr<JSON::Array> ionGraphPasses;
@@ -7118,12 +8028,16 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
     InliningDecision inliningDecision(module, profiledCallee);
     inliningDecision.expand();
 
-    compilationContext.wasmEntrypointJIT = makeUnique<CCallHelpers>();
-    compilationContext.procedure = makeUniqueWithoutFastMallocCheck<Procedure>(info.usesSIMD(functionIndex));
+    if (!compilationContext.wasmEntrypointJIT)
+        compilationContext.wasmEntrypointJIT = makeUnique<CCallHelpers>();
+    if (auto* codeForImage = compilationContext.codeForImage)
+        compilationContext.procedure = makeUniqueWithoutFastMallocCheck<Procedure>(*codeForImage->policy, codeForImage->scratch, info.usesSIMD(functionIndex));
+    else
+        compilationContext.procedure = makeUniqueWithoutFastMallocCheck<Procedure>(info.usesSIMD(functionIndex));
 
     Procedure& procedure = *compilationContext.procedure;
     procedure.setIsWasm(true);
-    procedure.setName(callee.nameWithHash());
+    procedure.setName(compilationContext.codeForImage ? makeString(callee.indexOrName()) : callee.nameWithHash());
     if (shouldDumpIRFor(functionIndex + info.importFunctionCount()))
         procedure.setShouldDumpIR();
 
@@ -7139,12 +8053,15 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
     // StackmapGenerationParams::unavailableRegisters(), which OMG does not use.
     procedure.setNeedsUsedRegisters(false);
     
-    procedure.setOptLevel(Options::wasmOMGOptimizationLevel());
+    if (!compilationContext.codeForImage)
+        procedure.setOptLevel(Options::wasmOMGOptimizationLevel());
 
     result->outgoingJITDirectCallees = FixedBitVector(info.internalFunctionCount());
     OMGIRGenerator irGenerator(procedure.heaps(), compilationContext, module, calleeGroup, info, profiledCallee, inliningDecision.root(), callee, procedure, unlinkedWasmToWasmCalls, result->outgoingJITDirectCallees, result->osrEntryScratchBufferSize, mode, compilationMode, functionIndex, loopIndexForOSREntry);
     FunctionParser<OMGIRGenerator> parser(irGenerator, function.data, signature, info);
     WASM_FAIL_IF_HELPER_FAILS(parser.parse());
+    if (compilationContext.codeForImage && compilationContext.codeForImage->failure != ImageCodeFailure::None)
+        return makeUnexpected(String());
 
     irGenerator.insertEntrySwitch();
     irGenerator.insertConstants();
@@ -7334,7 +8251,7 @@ auto OMGIRGenerator::addI64Ctz(ExpressionType argVar, ExpressionType& result) ->
 auto OMGIRGenerator::addI32Popcnt(ExpressionType argVar, ExpressionType& result) -> PartialResult
 {
     Value* arg = get(argVar);
-    if (MacroAssembler::supportsCountPopulation(CPUFeatureSet::host())) {
+    if (MacroAssembler::supportsCountPopulation(m_proc.policy().targetFeatures)) {
         PatchpointValue* patchpoint = m_currentBlock->appendNew<PatchpointValue>(m_proc, Int32, origin());
         patchpoint->append(arg, ValueRep::SomeRegister);
 #if CPU(X86_64)
@@ -7353,7 +8270,7 @@ auto OMGIRGenerator::addI32Popcnt(ExpressionType argVar, ExpressionType& result)
     }
 
     // Pure math function does not need to call emitPrepareWasmOperation.
-    Value* funcAddress = m_currentBlock->appendNew<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(operationPopcount32));
+    Value* funcAddress = processPointer(m_currentBlock, ProcessPointerKind::Operation, std::bit_cast<void*>(tagCFunction<OperationPtrTag>(operationPopcount32)));
     result = push(m_currentBlock->appendNew<CCallValue>(m_proc, Int32, origin(), Effects::none(), funcAddress, arg));
     return { };
 }
@@ -7361,7 +8278,7 @@ auto OMGIRGenerator::addI32Popcnt(ExpressionType argVar, ExpressionType& result)
 auto OMGIRGenerator::addI64Popcnt(ExpressionType argVar, ExpressionType& result) -> PartialResult
 {
     Value* arg = get(argVar);
-    if (MacroAssembler::supportsCountPopulation(CPUFeatureSet::host())) {
+    if (MacroAssembler::supportsCountPopulation(m_proc.policy().targetFeatures)) {
         PatchpointValue* patchpoint = m_currentBlock->appendNew<PatchpointValue>(m_proc, Int64, origin());
         patchpoint->append(arg, ValueRep::SomeRegister);
 #if CPU(X86_64)
@@ -7380,7 +8297,7 @@ auto OMGIRGenerator::addI64Popcnt(ExpressionType argVar, ExpressionType& result)
     }
 
     // Pure math function does not need to call emitPrepareWasmOperation.
-    Value* funcAddress = m_currentBlock->appendNew<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(operationPopcount64));
+    Value* funcAddress = processPointer(m_currentBlock, ProcessPointerKind::Operation, std::bit_cast<void*>(tagCFunction<OperationPtrTag>(operationPopcount64)));
     result = push(m_currentBlock->appendNew<CCallValue>(m_proc, Int64, origin(), Effects::none(), funcAddress, arg));
     return { };
 }

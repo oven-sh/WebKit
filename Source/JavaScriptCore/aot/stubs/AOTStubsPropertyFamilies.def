@@ -62,7 +62,7 @@ v(GetSuperBaseOfClass, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice,
 v(CallMethodById, CalledByCode, (), CountAxis, 0, N, AllISAs, NoISA, NoChoice, InThunk, MayCall, ClobbersLikeCall, AsOperation, CallMethodById)
 v(CallMethodByIdLending, CalledByCode, (First, Second, FirstAndSecond), FormAxis | CountAxis, 1, N, AllISAs, NoISA, NoChoice, InThunk, MayCall, ClobbersLikeCall, AsOperation, CallMethodByIdLending)
 
-v(InstanceOf, CalledByCode, (Constructor, Prototype, PrototypeUnlessTrapped, NameSeenByScripts, NameOfGlobalObject, PrototypeThatIsBuiltin), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, InstanceOf)
+v(InstanceOf, CalledByCode, (Constructor, Prototype, PrototypeWithoutTraps, NameSeenByScripts, NameOfGlobalObject, PrototypeThatIsBuiltin), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, InstanceOf)
 
 v(PutById, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutById)
 v(PutByIdAfterFrontProbe, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutById)

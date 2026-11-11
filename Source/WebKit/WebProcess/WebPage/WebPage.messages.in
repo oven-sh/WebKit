@@ -58,6 +58,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #endif
 
     SetNeedsFixedContainerEdgesUpdate()
+    SetFixedContainerEdgeSamplingSides(WebCore::FrameIdentifier frameID, WebCore::RectEdges<bool> sides)
 
     ViewWillStartLiveResize()
     ViewWillEndLiveResize()
@@ -219,7 +220,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     ApplyMonitorUnloadToIFrameElement(WebCore::FrameIdentifier frameID, enum:bool WebCore::IFrameUnloadReason reason)
 
     LoadRequest(struct WebKit::LoadParameters loadParameters)
-    LoadDidCommitInAnotherProcess(WebCore::FrameIdentifier frameID, WebCore::ProcessIdentifier hostingProcessID, std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier, RefPtr<WebCore::DocumentSyncData> topDocumentSyncData) -> ()
+    LoadDidCommitInAnotherProcess(WebCore::FrameIdentifier frameID, WebCore::ProcessIdentifier hostingProcessID, std::optional<WebCore::LayerHostingContextIdentifier> layerHostingContextIdentifier, RefPtr<WebCore::DocumentSyncData> topDocumentSyncData, struct std::optional<WebKit::BackForwardItemIdentifiers> cacheIdentifiers) -> (enum:bool WebKit::DidCacheOutgoingDocument didCache)
     LoadRequestWaitingForProcessLaunch(struct WebKit::LoadParameters loadParameters, URL resourceDirectoryURL, WebKit::WebPageProxyIdentifier pageID, bool checkAssumedReadAccessToResourceURL)
     LoadData(struct WebKit::LoadParameters loadParameters)
     LoadSimulatedRequestAndResponse(struct WebKit::LoadParameters loadParameters, WebCore::ResourceResponse simulatedResponse)
@@ -425,10 +426,10 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #endif
 
 #if ENABLE(MODEL_PROCESS)
-    RequestInteractiveModelElementAtPoint(WebCore::IntPoint clientPosition)
-    StageModeSessionDidBegin(WebCore::NodeIdentifier nodeID, WebCore::TransformationMatrix transform)
-    StageModeSessionDidUpdate(std::optional<WebCore::NodeIdentifier> nodeID, WebCore::TransformationMatrix transform)
-    StageModeSessionDidEnd(std::optional<WebCore::NodeIdentifier> nodeID)
+    RequestInteractiveModelElementAtPoint(std::optional<WebCore::FrameIdentifier> frameID, WebCore::IntPoint clientPosition, WebCore::IntPoint interactionLocation) -> (WebCore::InteractiveModelElementHitTestResult result)
+    StageModeSessionDidBegin(std::optional<WebCore::FrameIdentifier> frameID, WebCore::NodeIdentifier nodeID, WebCore::TransformationMatrix transform)
+    StageModeSessionDidUpdate(std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::NodeIdentifier> nodeID, WebCore::TransformationMatrix transform)
+    StageModeSessionDidEnd(std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::NodeIdentifier> nodeID)
 #endif
 
 #if ENABLE(MODEL_PROCESS) && ENABLE(DRAG_SUPPORT)
@@ -546,7 +547,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     DrawPrintingPagesToSnapshot(WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint32_t first, uint32_t count) -> (bool success) ReplyCanDispatchOutOfOrder
     DrawPrintingPagesToSnapshotDuringDOMPrintOperation(WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint32_t first, uint32_t count) -> (bool success) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
 #if PLATFORM(IOS_FAMILY)
-    ComputePagesForPrintingiOS(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo) -> (uint64_t pageCount) Synchronous
+    ComputePagesForPrintingiOS(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo) -> (uint64_t pageCount, WebCore::FloatBoxExtent computedPageMargin) Synchronous
     DrawToPDFiOS(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint64_t pageCount) -> (RefPtr<WebCore::SharedBuffer> data) ReplyCanDispatchOutOfOrder
     DrawToImage(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo) -> (std::optional<WebCore::ShareableBitmapHandle> data) ReplyCanDispatchOutOfOrder
 
@@ -916,6 +917,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 
     RequestTargetedElement(struct WebCore::TargetedElementRequest request) -> (Vector<WebCore::TargetedElementInfo> elements)
     RequestTargetedElementsForText(struct WebCore::TargetedElementRequest request) -> (struct WebCore::TargetedTextSearchResult result)
+    RequestTargetedFrameContent(Vector<WebCore::FrameIdentifier> frameIDs) -> (HashMap<WebCore::FrameIdentifier, WebCore::TargetedFrameContent> contentByFrame)
 
     RequestAllTargetableElements(float hitTestInterval) -> (Vector<Vector<WebCore::TargetedElementInfo>> elements)
 

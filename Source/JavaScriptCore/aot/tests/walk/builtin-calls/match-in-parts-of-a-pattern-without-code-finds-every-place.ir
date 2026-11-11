@@ -3,8 +3,8 @@
 # That output is sized by every literal that has a record, and what does not fit stops the program.
 # No pattern of this file may have code and as many groups: it alone would make the output large enough.
 # DIAGNOSTIC: RegExpWithoutCode
-# RUN(COUNTED): compile MatchesTakenInParts mechanisms=all
-# COUNTED: statistic MatchesTakenInParts 2
+# RUN(COUNTED): compile RegExpMatchAllocationsElided mechanisms=all
+# COUNTED: statistic RegExpMatchAllocationsElided 2
 # RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
 # SHELL: o,p,z,M,N o,p,z,M,N
 # SHELL: exited with 0

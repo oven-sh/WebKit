@@ -117,6 +117,8 @@ private:
     uint32_t rootOf(uint32_t node);
     void unite(uint32_t, uint32_t);
     void addSource(uint32_t node, uint32_t source);
+    static bool agrees(TypesOfCapture ofSource, TypesOfCapture ofReader) { return ofSource.established == ofReader.established && (!ofReader.proven || ofSource.proven == ofReader.proven); }
+    static void noteReader(Source&, FunctionID reader, uint32_t capture, TypesOfCapture);
     bool mayLieInFrameOfCaller(FunctionID, const BodyIndex&, ValueID) const;
     void followCapturedValues(FunctionID, const ThinSummary&, const BodyIndex&, bool serves);
     bool goThroughWhatStandsInFunctionsThatRunOnce();
@@ -131,6 +133,7 @@ private:
     bool isExportsObjectThatStays(LayoutID) const;
     bool isEnteredUnderNoHandler(FunctionID, unsigned stepsLeft = 8) const;
     bool storesForGood(FunctionID maker, const BodyIndex&, ValueID closure, FunctionID holder, BlockID lastBlockOnEveryWayToReturn) const;
+    bool isClassToken(TypeID type) const { return type && m_program.at(type).isOpaque(OpaqueKind::ClassToken); }
     bool listFunctionsWhoseClosuresAreHeld(Candidate, TypesOfCapture, bool& holdsClosures);
     void strike(Candidate);
     void noteThatFunctionHoldsWord(uint32_t function);
@@ -318,9 +321,20 @@ void PlannerOfPromotedEnvironments::unite(uint32_t first, uint32_t second)
     addSource(first, m_sourcesOfClasses[second]);
 }
 
+void PlannerOfPromotedEnvironments::noteReader(Source& source, FunctionID reader, uint32_t capture, TypesOfCapture types)
+{
+    if (!source.types.proven && types.proven && source.types.established == types.established) {
+        source.firstReader = reader;
+        source.captureOfFirstReader = capture;
+        source.types = types;
+        return;
+    }
+    source.readersAgree &= agrees(source.types, types);
+}
+
 bool PlannerOfPromotedEnvironments::mayLieInFrameOfCaller(FunctionID id, const BodyIndex& index, ValueID value) const
 {
-    while (!index.isParameter(value) && inputOperationsThatHandOn.contains(index.opcodeOf(value)) && index.value(value).operand(0))
+    while (!index.isParameter(value) && inputPassThroughOpcodes.contains(index.opcodeOf(value)) && index.value(value).operand(0))
         value = index.value(value).operand(0);
     if (!index.isParameter(value))
         return false;
@@ -341,7 +355,7 @@ static ValueID valueReturnedOnEveryWayForPromotedEnvironments(const BodyIndex& i
         if (end.kind() != TerminatorKind::Return)
             continue;
         ValueID value = end.as<TerminatorKind::Return>().valueOperand();
-        while (value && !index.isParameter(value) && inputOperationsThatOnlyHandOn.contains(index.opcodeOf(value)))
+        while (value && !index.isParameter(value) && inputIdentityOpcodes.contains(index.opcodeOf(value)))
             value = index.value(value).operand(0);
         if (!value || (returned && returned != value))
             return { };
@@ -428,7 +442,7 @@ void PlannerOfPromotedEnvironments::followCapturedValues(FunctionID id, const Th
                 m_sources.append(Source { id, handed, callee, capture, types, true, mayLieInFrameOfCaller(id, index, handed), { } });
                 source = firstSource + static_cast<uint32_t>(m_sources.size()) - 1;
             } else
-                m_sources[source - firstSource].readersAgree &= m_sources[source - firstSource].types == types;
+                noteReader(m_sources[source - firstSource], callee, capture, types);
             addSource(node, source);
         }
     }
@@ -470,7 +484,7 @@ std::optional<PlannerOfPromotedEnvironments::Candidate> PlannerOfPromotedEnviron
     }
     auto node = m_nodesOfCaptures.find(m_facts.linked().firstCaptureOfFunction[id.index()] + capture);
     uint32_t found = node == m_nodesOfCaptures.end() ? noSource : m_sourcesOfClasses[rootOf(node->value)];
-    if (found < firstSource || m_sources[found - firstSource].types != typesOfCapture(id, capture))
+    if (found < firstSource || !agrees(m_sources[found - firstSource].types, typesOfCapture(id, capture)))
         return std::nullopt;
     return found - firstSource;
 }
@@ -523,7 +537,7 @@ bool PlannerOfPromotedEnvironments::isKeptByVariableThatStays(FunctionID maker, 
             if (kept)
                 return false;
             std::optional<BodyUser> user = index->onlyUser(call.site);
-            while (user && user->kind == BodyUseKind::Operand && inputOperationsThatOnlyHandOn.contains(index->opcodeOf(user->value)))
+            while (user && user->kind == BodyUseKind::Operand && inputIdentityOpcodes.contains(index->opcodeOf(user->value)))
                 user = index->onlyUser(user->value);
             if (!user || user->kind != BodyUseKind::Operand || index->opcodeOf(user->value) != Opcode::PutModuleVariable)
                 return false;
@@ -637,6 +651,8 @@ FunctionID PlannerOfPromotedEnvironments::makerThatMakesOnEveryWay(FunctionID ho
 
 bool PlannerOfPromotedEnvironments::listFunctionsWhoseClosuresAreHeld(Candidate candidate, TypesOfCapture types, bool& holdsClosures)
 {
+    if (isClassToken(types.established))
+        return m_isCapturedByClosureThatNeverDies.quickGet(candidate);
     for (TypeID id : { types.proven, types.established }) {
         if (!id)
             continue;
@@ -716,7 +732,7 @@ void PlannerOfPromotedEnvironments::keepWhatCouldBeLetGo()
             return type && (m_program.at(type).primitives & Primitive::Absent);
         };
         bool holdsClosures = false;
-        bool serves = source.readersAgree && m_program.at(source.types.established).isJavaScriptValue() && !mayBeAbsent(source.types.established) && !mayBeAbsent(source.types.proven)
+        bool serves = source.readersAgree && (m_program.at(source.types.established).isJavaScriptValue() || isClassToken(source.types.established)) && !mayBeAbsent(source.types.established) && !mayBeAbsent(source.types.proven)
             && listFunctionsWhoseClosuresAreHeld(candidate, source.types, holdsClosures);
         if (!serves || (holdsClosures && source.mayLieInFrameOfCaller))
             struckFromStart.append(candidate);

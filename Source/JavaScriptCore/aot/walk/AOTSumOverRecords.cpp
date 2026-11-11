@@ -17,7 +17,7 @@ static constexpr OpcodeSet relationsInSumOverRecords { Opcode::Less, Opcode::Les
 
 static ValueID rootInSumOverRecords(const Code& code, ValueID value)
 {
-    while (opcodesThatGiveSameCell.contains(code.at(value).opcode))
+    while (cellPreservingOpcodes.contains(code.at(value).opcode))
         value = code.at(value).operand(0);
     return value;
 }
@@ -77,7 +77,7 @@ bool SumOverRecords::add(ValueID value, int64_t times)
                 range = range.intersectWith(type.integers);
                 someNameIsInteger = true;
             }
-            if (!opcodesThatGiveSameCell.contains(m_code.at(root).opcode))
+            if (!cellPreservingOpcodes.contains(m_code.at(root).opcode))
                 break;
         }
         const Operation& record = m_code.at(root);
@@ -104,13 +104,13 @@ bool SumOverRecords::add(ValueID value, int64_t times)
     return true;
 }
 
-bool SumOverRecords::takeAwayWhatIsFromZeroUp(ValueID each, bool answersYes)
+bool SumOverRecords::takeAwayWhatIsFromZeroUp(ValueID each, bool testResult)
 {
     const Operation& record = m_code.at(each);
     if (!relationsInSumOverRecords.contains(record.opcode))
-        return answersYes && isIntegerInSumOverRecords(m_code, m_types, each) && m_types.at(record.type).integers.minimum >= 0 && add(each, -1);
-    bool leftIsGreater = (record.opcode == Opcode::Greater || record.opcode == Opcode::GreaterEq) == answersYes;
-    bool isStrict = (record.opcode == Opcode::Less || record.opcode == Opcode::Greater) == answersYes;
+        return testResult && isIntegerInSumOverRecords(m_code, m_types, each) && m_types.at(record.type).integers.minimum >= 0 && add(each, -1);
+    bool leftIsGreater = (record.opcode == Opcode::Greater || record.opcode == Opcode::GreaterEq) == testResult;
+    bool isStrict = (record.opcode == Opcode::Less || record.opcode == Opcode::Greater) == testResult;
     m_number += static_cast<int64_t>(isStrict);
     return add(record.operand(!leftIsGreater), -1) && add(record.operand(leftIsGreater), 1);
 }
@@ -175,11 +175,11 @@ bool SumOverRecords::isFromZeroUp(size_t firstTerm, unsigned& sumsLeft) const
     return false;
 }
 
-bool everyWayStepsUpFrom(const Code& code, const TypeArena& types, ValueID value, ValueID from, ValueID stepIsFromZeroUp, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough)
+bool everyWayStepsUpFrom(const Code& code, const TypeArena& types, ValueID value, ValueID from, ValueID stepNonNegativeCheck, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough, NOESCAPE const ScopedLambda<bool(BlockID)>& isReached)
 {
     auto isFromZeroUp = [&](ValueID by) {
         SumOverRecords sum(code, types);
-        return sum.add(by, 1) && (sum.isFromZeroUp() || (stepIsFromZeroUp && sum.takeAwayWhatIsFromZeroUp(stepIsFromZeroUp) && sum.isFromZeroUp()));
+        return sum.add(by, 1) && (sum.isFromZeroUp() || (stepNonNegativeCheck && sum.takeAwayWhatIsFromZeroUp(stepNonNegativeCheck) && sum.isFromZeroUp()));
     };
     auto age = [&](ValueID each) {
         ValueID root = rootInSumOverRecords(code, each);
@@ -215,6 +215,8 @@ bool everyWayStepsUpFrom(const Code& code, const TypeArena& types, ValueID value
         std::span<const ValueID> parameters = code.at(record.block()).parameters();
         size_t position = std::ranges::find(parameters, each) - parameters.begin();
         for (EdgeID edge = code.at(record.block()).firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
+            if (!isReached(code.at(edge).from))
+                continue;
             if (position >= code.at(edge).arguments().size())
                 return false;
             waiting.append(code.at(edge).arguments()[position]);
@@ -223,10 +225,10 @@ bool everyWayStepsUpFrom(const Code& code, const TypeArena& types, ValueID value
     return true;
 }
 
-bool groundsShowPositionInside(const Code& code, const TypeArena& types, ValueID position, const GroundsOfPosition& grounds, NOESCAPE const ScopedLambda<bool(ValueID, bool answersYes)>& holds)
+bool groundsShowPositionInside(const Code& code, const TypeArena& types, ValueID position, const GroundsOfPosition& grounds, NOESCAPE const ScopedLambda<bool(ValueID, bool testResult)>& holds)
 {
-    auto mayBeTaken = [&](ValueID each, bool answersYes = true) {
-        return each && (!relationsInSumOverRecords.contains(code.at(each).opcode) || holds(each, answersYes));
+    auto mayBeTaken = [&](ValueID each, bool testResult = true) {
+        return each && (!relationsInSumOverRecords.contains(code.at(each).opcode) || holds(each, testResult));
     };
     SumOverRecords fromZero(code, types);
     SumOverRecords belowLength(code, types, -1);
@@ -235,14 +237,14 @@ bool groundsShowPositionInside(const Code& code, const TypeArena& types, ValueID
     bool isFromZeroUp = (isIntegerInSumOverRecords(code, types, position) && types.at(code.at(position).type).integers.minimum >= 0) || fromZero.isFromZeroUp();
     if (!isFromZeroUp && grounds.counter && !(fromZero.add(grounds.counter, -1) && fromZero.add(grounds.start, 1)))
         return false;
-    isFromZeroUp = isFromZeroUp || fromZero.isFromZeroUp() || (mayBeTaken(grounds.isFromZeroUp) && fromZero.takeAwayWhatIsFromZeroUp(grounds.isFromZeroUp) && fromZero.isFromZeroUp());
+    isFromZeroUp = isFromZeroUp || fromZero.isFromZeroUp() || (mayBeTaken(grounds.isFromZeroUp, grounds.isFromZeroUpResult) && fromZero.takeAwayWhatIsFromZeroUp(grounds.isFromZeroUp, grounds.isFromZeroUpResult) && fromZero.isFromZeroUp());
     auto isShownBelow = [&](const SumOverRecords& sum) {
         SumOverRecords behindTest(sum);
-        bool isBehindTest = mayBeTaken(grounds.isBelow, grounds.isBelowAnswersYes) && behindTest.takeAwayWhatIsFromZeroUp(grounds.isBelow, grounds.isBelowAnswersYes);
+        bool isBehindTest = mayBeTaken(grounds.isBelow, grounds.isBelowResult) && behindTest.takeAwayWhatIsFromZeroUp(grounds.isBelow, grounds.isBelowResult);
         if ((isBehindTest && behindTest.isFromZeroUp()) || sum.isFromZeroUp())
             return true;
         SumOverRecords withinLength(isBehindTest ? behindTest : sum);
-        return mayBeTaken(grounds.lengthHoldsBound) && withinLength.takeAwayWhatIsFromZeroUp(grounds.lengthHoldsBound) && withinLength.isFromZeroUp();
+        return mayBeTaken(grounds.limitWithinLengthCheck) && withinLength.takeAwayWhatIsFromZeroUp(grounds.limitWithinLengthCheck) && withinLength.isFromZeroUp();
     };
     int64_t most = isIntegerInSumOverRecords(code, types, position) ? types.at(code.at(position).type).integers.maximum : Range::full().maximum;
     SumOverRecords wholePosition(code, types, -1 - most);
@@ -252,7 +254,7 @@ bool groundsShowPositionInside(const Code& code, const TypeArena& types, ValueID
 bool testsShowElementPresent(const Code& code, ValueID list, ValueID position, std::span<const PassedTest::Side> sides)
 {
     auto behindNames = [&](ValueID record) {
-        while (opcodesThatGiveSameCell.contains(code.at(record).opcode))
+        while (cellPreservingOpcodes.contains(code.at(record).opcode))
             record = code.at(record).operand(0);
         return record;
     };
@@ -263,7 +265,7 @@ bool testsShowElementPresent(const Code& code, ValueID list, ValueID position, s
     };
     return std::ranges::all_of(sides, [&](const PassedTest::Side& side) {
         const Operation& test = code.at(side.test);
-        return side.answersYes && test.opcode == Opcode::IsElementPresent && isSame(test.arrayOperand(), list) && isSame(test.positionOperand(), position);
+        return side.testResult && test.opcode == Opcode::IsElementPresent && isSame(test.arrayOperand(), list) && isSame(test.positionOperand(), position);
     });
 }
 

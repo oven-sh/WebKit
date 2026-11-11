@@ -62,11 +62,11 @@ Operand StaticsEmitter::loadVariable(VariableID id)
     return emitter<SlotEmitter>().load(addressOf(id), m_plan.variable(id).representation);
 }
 
-void StaticsEmitter::storeVariable(VariableID id, Operand stored, bool isPutBackWhereTurnBeginsAgain)
+void StaticsEmitter::storeVariable(VariableID id, Operand stored, bool isUndoneAtRestart)
 {
     PlannedVariable variable = m_plan.variable(id);
     emitter<SlotEmitter>().store(addressOf(id), variable.representation, stored);
-    if (!isPutBackWhereTurnBeginsAgain)
+    if (!isUndoneAtRestart)
         emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::VariablesOfModulesStored);
     if (traitsOf(variable.representation).holdsCell)
         emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));

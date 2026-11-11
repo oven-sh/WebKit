@@ -81,7 +81,7 @@ JSONRuntime::JSONRuntime(Instance& instance, CacheRegistry& registry, ZeroedTabl
     , m_learnedNames(arena)
 {
     instance.json.runtime = this;
-    m_hasParsedRecords = instance.state && !instance.state->tables.parsedRecordFields().empty();
+    m_hasParsedRecords = instance.state && !instance.state->tables.parsedRecordShapes().empty();
     registry.add(CacheKind::ClearedEachCollection, "JSON source copy"_s, *this);
 }
 
@@ -105,7 +105,7 @@ void JSONRuntime::forgetRecordPlansNotFoundLately(VM& vm)
         return plansUnderHash.value.isEmpty();
     });
     if (m_numberOfRecordPlans != numberOfRecordPlansBefore)
-        countEvent(vm, RuntimeCounterID::RecordPlansForgotten, numberOfRecordPlansBefore - m_numberOfRecordPlans);
+        countEvent(vm, RuntimeCounterID::RecordPlansEvicted, numberOfRecordPlansBefore - m_numberOfRecordPlans);
 }
 
 auto JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* structure) -> RecordPlanFound
@@ -122,7 +122,7 @@ auto JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* structure) -> Record
     if (structureOfNamesInRecord && structureOfNamesInRecord != structure && m_structuresThatNoPlanFits && m_structuresThatNoPlanFits->get(structureOfNamesInRecord))
         return { };
     std::optional<uint32_t> lastNameNumber = lastNameThatProgramSpells ? identifiersOf(m_instance).numberOf(lastNameThatProgramSpells) : std::nullopt;
-    if (!lastNameNumber || std::ranges::equal_range(m_instance.state->tables.parsedRecordFields(), *lastNameNumber, { }, &ParsedRecordFieldData::nameNumber).empty())
+    if (!lastNameNumber || m_instance.state->tables.parsedRecordShapesWithName(*lastNameNumber).empty())
         return { };
 
     unsigned inlineCapacity = structure->inlineCapacity();
@@ -178,7 +178,7 @@ auto JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* structure) -> Record
     plansUnderHash.append({ { }, WTF::move(plan), m_numberOfCollections, m_numberOfTimesAskedForRecordPlan });
     if (++m_numberOfRecordPlans > m_mostRecordPlansHeld) {
         m_mostRecordPlansHeld = m_numberOfRecordPlans;
-        countEvent(vm, RuntimeCounterID::MostRecordPlansHeld);
+        countEvent(vm, RuntimeCounterID::PeakRecordPlansCached);
     }
     plansUnderHash.last().names.appendContainerWithMapping(namesInRecord, [](UniquedStringImpl* name) {
         return RefPtr { name };
@@ -944,7 +944,7 @@ static ALWAYS_INLINE JSValue tryParse(JSGlobalObject* globalObject, size_t lengt
     JSONValueParser parser(*instance, vm, globalObject);
     ParsedJSONValue parsed = parser.parseWholeSource(sourceScope.start());
     CLEAR_AND_RETURN_IF_EXCEPTION(scope, { });
-    countEvent(vm, RuntimeCounterID::TextsParsedByOwnParser);
+    countEvent(vm, RuntimeCounterID::JSONParseFastPaths);
     countEvent(vm, RuntimeCounterID::ObjectsParsedIntoRecords, parser.numberOfRecordsMade());
     countEvent(vm, RuntimeCounterID::ObjectsParsedIntoOrdinaryObjects, parser.numberOfOrdinaryObjectsMade());
     countEvent(vm, RuntimeCounterID::TransitionsCachedForParsedNames, parser.numberOfTransitionsCached());

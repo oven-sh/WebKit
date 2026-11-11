@@ -55,7 +55,7 @@ struct PausedFrame {
     FrameIdentifier frameID;
 };
 
-static std::optional<PausedFrame>& LEGACY_NODELETE pausedFrame()
+NODELETE static std::optional<PausedFrame>& pausedFrame()
 {
     static NeverDestroyed<std::optional<PausedFrame>> frame;
     return frame;
@@ -88,7 +88,7 @@ void DebuggerSuspensionController::frameDebuggerDidPause(LocalFrame& frame)
     auto previous = std::exchange(pausedFrame(), std::nullopt);
 
     RefPtr page = frame.page();
-    if (page && page->settings().siteIsolationGlobalDebuggerPauseEnabled()) {
+    if (page && page->settings().siteIsolationEnabled()) {
         pausedFrame() = PausedFrame { page.get(), frame.frameID() };
         if (auto* client = page->inspectorController().inspectorBackendClient())
             client->frameDebuggerDidPause(frame.frameID());
@@ -116,6 +116,11 @@ void DebuggerSuspensionController::frameDebuggerDidContinue()
         updateHeldDocumentsInAllPages();
         reportFrameDebuggerDidContinue(std::exchange(pausedFrame(), std::nullopt));
     });
+}
+
+bool DebuggerSuspensionController::isFrameDebuggerPaused()
+{
+    return s_isFrameDebuggerPaused;
 }
 
 bool DebuggerSuspensionController::addSessionHold(DebuggerPauseSessionIdentifier sessionID)

@@ -1,4 +1,4 @@
-# Two to four closures that meet at a place are still named there. If a call of what lies at such a place counted as "lost functions are called", one callback parameter with two callers would bring in the body of every function of the program that has ever met another.
+# Two to eight closures that meet at a place are still named there. If a call of what lies at such a place counted as "lost functions are called", one callback parameter with two callers would bring in the body of every function of the program that has ever met another.
 # function run(f) { return f(); }  function look(f) { return typeof f; }  run(one); run(two); look(three); look(four);
 # RUN: link functions mechanisms=all
 # CHECK: function f3
