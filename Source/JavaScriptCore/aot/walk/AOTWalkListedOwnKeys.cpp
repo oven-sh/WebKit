@@ -238,8 +238,8 @@ void noteListedOwnKeys(Walker& walker, ValueID id)
     Reference object = walker.referenceOf(call.argumentsOperands()[0]);
     if (!list || !list.isValue() || !object || !object.isValue())
         return;
-    static constexpr AbstractHeapSet heapsThatTellOwnKeys { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
-    noteKnown(walker, KnownNote::ListedOwnKeys, object, list, 0, LocationMasks(heapsThatTellOwnKeys), 1, true);
+    static constexpr AbstractHeapSet ownKeysHeaps { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
+    noteKnown(walker, KnownNote::ListedOwnKeys, object, list, 0, LocationMasks(ownKeysHeaps), 1, true);
 }
 
 bool buildOwnKeyListOfItsOpcodes(Walker& walker, const BodyValue& value)

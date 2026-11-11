@@ -26,7 +26,7 @@ class BuildContext;
 class StubCatalog;
 
 static constexpr unsigned minCodeGranuleShift = 6;
-static constexpr unsigned maxCodeGranuleShift = 12;
+static constexpr unsigned maxCodeGranuleShift = 16;
 
 struct StubPlacement {
     StubKey key;

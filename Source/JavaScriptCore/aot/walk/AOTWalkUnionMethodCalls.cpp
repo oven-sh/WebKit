@@ -20,7 +20,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr size_t mostArmsInUnionMethodCalls = 8;
-static constexpr size_t mostArmsThatAreNoSmallLeaves = 4;
+static constexpr size_t maxNonLeafArms = 4;
 
 constinit const OpcodeSet opcodesThatCallMethodsBehindTestsOfShapeTakes { Opcode::PropGet };
 
@@ -32,7 +32,7 @@ static ValueID findCallOfMethodReadInUnionMethodCalls(const BodyIndex& index, co
         callee = call;
         call = index.onlyUsingValue(call);
     }
-    if (!call || index.blockOf(call) != index.blockOf(read.id()))
+    if (!call || !index.isInBlock(call, index.blockOf(read.id())))
         return { };
     if (index.opcodeOf(call) == Opcode::Construct) {
         auto written = index.value(call).as<Opcode::Construct>();
@@ -85,11 +85,13 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
         return false;
 
     bool mayBeNothing = types.at(proven).primitives;
+    if (call && !isOnlyExpected && !mayBeNothing && findsOneMethodThroughLookups(walker, read, proven))
+        return false;
     bool somethingIsLeft = isOnlyExpected;
     bool someAnswerByGetter = false;
     Vector<TypeID, mostArmsInUnionMethodCalls> arms;
     Vector<TypeID, mostArmsInUnionMethodCalls> armsThatFindNeitherGetterNorField;
-    bool isOfTwoLayouts = false;
+    bool hasTwoLayouts = false;
     LayoutID classAboveBoth;
     if (!call) {
         size_t numberInUse = 0;
@@ -97,8 +99,8 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
             if (plan.isInUse(member) && ++numberInUse > mostArmsInUnionMethodCalls)
                 return false;
         }
-        isOfTwoLayouts = standsForGuess && numberInUse == 2;
-        bool someClassHasAccessor = walker.isInLoop() || isOfTwoLayouts || std::ranges::any_of(membersOf(types, types.at(proven)), [&](LayoutID member) {
+        hasTwoLayouts = standsForGuess && numberInUse == 2;
+        bool someClassHasAccessor = walker.isInLoop() || hasTwoLayouts || std::ranges::any_of(membersOf(types, types.at(proven)), [&](LayoutID member) {
             return plan.isInUse(member) && walker.facts().linked().findMember(program, member, ClassSide::Prototype, lookup.key()).kind == MemberFound::Kind::Accessor;
         });
         if (!someClassHasAccessor)
@@ -116,9 +118,9 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
         };
         TypedForm form = typedFormOf(walker, read, TypesOfInputs(typeBehindTest));
         someAnswerByGetter |= form == TypedForm::BuiltAsCall;
-        if (isOfTwoLayouts) {
+        if (hasTwoLayouts) {
             LayoutID above = declaredLayoutOf(program, member) ? program.at(declaredLayoutOf(program, member)).base : LayoutID();
-            isOfTwoLayouts = form == TypedForm::Built && findField(program, member, lookup.key()) && program.at(member).kind == LayoutKind::Instance && above && (!classAboveBoth || above == classAboveBoth);
+            hasTwoLayouts = form == TypedForm::Built && findField(program, member, lookup.key()) && program.at(member).kind == LayoutKind::Instance && above && (!classAboveBoth || above == classAboveBoth);
             classAboveBoth = above;
         }
         if (form == TypedForm::None) {
@@ -139,7 +141,7 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
             return found.kind == MemberFound::Kind::Method && found.method && isSmallLeaf(walker, found.method, index.value(called).argumentsOperands().size());
         });
     };
-    if (arms.size() > mostArmsThatAreNoSmallLeaves && !(call && walker.isInLoop() && callsSmallLeaves(lookup.key(), call)))
+    if (arms.size() > maxNonLeafArms && !(call && walker.isInLoop() && callsSmallLeaves(lookup.key(), call)))
         return false;
     auto mayTake = [&](const BodyValue& operation) {
         if (operation.opcode() == Opcode::PropGet && walker.referenceOf(operation.as<Opcode::PropGet>().objectOperand()) == receiver) {
@@ -150,7 +152,7 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
             return handed && walker.referenceOf(handed) == receiver;
         });
     };
-    if (arms.isEmpty() || (!call && !someAnswerByGetter && !walker.isInLoop() && !isOfTwoLayouts))
+    if (arms.isEmpty() || (!call && !someAnswerByGetter && !walker.isInLoop() && !hasTwoLayouts))
         return false;
     if (call && walker.isInLoop())
         end = findArmStretchEnd(walker, index.value(call), end - 1, limitOfStretchOfArms(walker, block), receiver, scopedLambda<bool(const BodyValue&)>(mayTake));
@@ -273,13 +275,13 @@ bool callMethodsOfExpectedReceiversBehindTestsOfShape(Walker& walker, const Body
     if (!walker.isInLoop() || !walker.opensGuesses() || !walker.facts().layoutsByNames().severalLayoutsHold(read.as<Opcode::PropGet>().key()) || walker.isNestedTooDeeply())
         return false;
     Reference receiver = walker.referenceOf(read.as<Opcode::PropGet>().objectOperand());
-    if (!receiver || !receiver.isValue() || !walker.code().at(walker.code().blockOf(receiver.id())).isInLoop)
+    if (!receiver || !receiver.isValue())
         return false;
     ValueID call = findCallOfMethodReadInUnionMethodCalls(walker.currentBodyIndex(), read);
     return call && walkBehindTestsOfShapeInUnionMethodCalls(walker, read, call, true);
 }
 
-static bool readBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyValue& read, bool standsForGuess)
+static bool readAfterShapeTests(Walker& walker, const BodyValue& read, bool standsForGuess)
 {
     ValueID object = read.as<Opcode::PropGet>().objectOperand();
     TypeID proven = object ? walker.typeOf(walker.referenceOf(object)) : TypeID();
@@ -292,12 +294,12 @@ static bool readBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
 
 bool readBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& read)
 {
-    return readBehindTestsOfShapeInUnionMethodCalls(walker, read, false);
+    return readAfterShapeTests(walker, read, false);
 }
 
-bool readOfTwoLayoutsBehindTestsOfShape(Walker& walker, const BodyValue& read)
+bool readTwoLayoutsAfterShapeTests(Walker& walker, const BodyValue& read)
 {
-    return readBehindTestsOfShapeInUnionMethodCalls(walker, read, true);
+    return readAfterShapeTests(walker, read, true);
 }
 
 } } } // namespace JSC::AOT::Typed

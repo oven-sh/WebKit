@@ -101,7 +101,9 @@ private:
     void recordBuiltinName(StringID);
     void appendBuiltinNames();
     using CodeUnitSet = std::array<uint64_t, 1024>;
-    static void addCodeUnitsOf(std::span<const uint8_t>, CodeUnitSet&);
+    using ASCIIUnits = std::array<uint8_t, 256>;
+    static void addCodeUnitsOf(std::span<const uint8_t>, ASCIIUnits&, CodeUnitSet&);
+    static void addASCIIUnits(const ASCIIUnits&, CodeUnitSet&);
     void internCodeUnitsIn(const CodeUnitSet&);
     void internCodeUnitsOf(std::span<const uint8_t>, size_t numberOfBytesLookedAt = 0);
     StringID internCodeUnit(char16_t);

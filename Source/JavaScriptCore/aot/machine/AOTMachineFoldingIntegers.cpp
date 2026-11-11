@@ -128,6 +128,8 @@ static ALWAYS_INLINE IntegerRange computeIntegerRange(const Operation* operation
     }
 
     case Add: {
+        if (isDecodedReference(operation))
+            return { int64_t { 1 } << 32, static_cast<int64_t>(bitsOfDecodedReference) };
         IntegerRange left = rangeOfChild(0);
         IntegerRange right = rangeOfChild(1);
         return integerRangeOrWidest(type, CheckedInt64(left.min) + CheckedInt64(right.min), CheckedInt64(left.max) + CheckedInt64(right.max));

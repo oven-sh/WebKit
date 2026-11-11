@@ -19,10 +19,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-bool stepsOfPatternStandInRow(const BodyIndex&, const BodyValue& open);
-
 static constexpr uint32_t closedOperationsOfProtocolForGenerators = 3;
-static constexpr uint32_t mostStepsOfPatternOverGenerator = 4;
 
 std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex& index, ValueID open)
 {
@@ -89,9 +86,13 @@ static bool isConstantLocationForGenerators(const Walker& walker, BuiltinID memb
 
 std::optional<BuiltinID> findMemberAboveForIteration(const Walker& walker, BuiltinID start, BuiltinName name, MembersBehindWatch watch)
 {
+    return findMemberUnderKey(walker, start, walker.program().keyOf(name), watch);
+}
+
+std::optional<BuiltinID> findMemberUnderKey(const Walker& walker, BuiltinID start, PropertyKeyID key, MembersBehindWatch watch)
+{
     const Program& program = walker.program();
     const BuiltinTable& table = program.builtins();
-    PropertyKeyID key = program.keyOf(name);
     if (!start || !key)
         return std::nullopt;
     MembersUnderKey members(program, key);
@@ -414,7 +415,7 @@ static bool takePatternOverGenerator(Walker& walker, const BodyValue& open)
     if (!proven || !walker.types().isSubset(proven, typeOfGenerators(walker)) || !walker.has(Mechanism::Guesses) || !walker.opensGuesses())
         return false;
     uint32_t numberOfSteps = written.elementCount().value_or(0);
-    if (!numberOfSteps || numberOfSteps > mostStepsOfPatternOverGenerator || !engineAnswersForGenerators(walker) || !stepsOfPatternStandInRow(walker.currentBodyIndex(), open))
+    if (!numberOfSteps || numberOfSteps > maxGeneratorPatternSteps || !engineAnswersForGenerators(walker) || !stepsOfPatternStandInRow(walker.currentBodyIndex(), open))
         return false;
 
     BuilderForGenerators builder(walker, walker.originOf(open));

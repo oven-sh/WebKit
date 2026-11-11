@@ -9,7 +9,7 @@
 # NEVER-NOT: OwnerIsYoung
 # Link says of the callee that it neither collects nor runs other code. It polls where it sets up its frame all the same
 # what the call gives is stored, or the sweep would drop a call that does nothing, and the poll with it
-# function called(v) { const o = { x: v }; o.y = leaf(v); return o; }  function leaf(a) { return a === null; }
+# function called(v) { const o = { x: v }; o.y = leaf(v); kept = o; }  function leaf(a) { return a === null; }
 # RUN(LEAF): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+DirectCalls
 # LEAF-LABEL: code f2:Body
 # LEAF: = NewObject
@@ -19,6 +19,7 @@
 # LEAFNOT-NOT: OwnerIsYoung
 
 layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything}}] ownFieldCount=2
+variable g0 name="kept" module=m0 declared={type=anything}
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -49,7 +50,8 @@ function f2 name="called" module=m0 length=1 thisType={type=anything} parameters
     v3 = FinishObject v2
     v4 = Call v1, -, v0 calleeName="leaf"
     PropSet v3, v4 key="y" mode=Strict
-    Return v3
+    PutModuleVariable v3 variable=g0
+    Return v0
 }
 function f3 name="leaf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

@@ -277,7 +277,7 @@ bool scaledSumAcceptsBase(const Operation& base)
 unsigned numberOfScratchGPRsOf(const ProcedureTraits& traits, const Operation& operation)
 {
     if (operation.opcode() == Switch)
-        return operation.switchData().caseValues.size() >= minCasesForJumpTable ? 1 : 0;
+        return operation.switchData().caseValues.size() >= minCasesForSwitchWindow ? 1 : 0;
     if (operation.opcode() == PopCount)
         return MacroAssembler::supportsCountPopulation(traits.features) ? 0 : 1;
     return 0;

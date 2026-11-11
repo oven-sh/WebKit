@@ -37,8 +37,11 @@ inline constexpr OpcodeSet opcodesThatCallStepsGeneratorTakes { Opcode::Call };
 AOT_LINK_OF_WALK(callStepsGenerator, opcodesThatCallStepsGeneratorTakes)
 
 std::optional<Vector<Reference, 8>> layOutEntryOperandsOfCall(Walker&, const BodyValue& call, FunctionID callee, CodeUnit entered);
+bool awaitsInSomeIteration(const BodyIndex&, ValueID suspension);
+std::optional<Vector<Reference, 8>> buildProtocolCallOperands(Walker&, FunctionID callee, CodeUnit entered, Reference thisValue, Reference closure, Origin);
 
 FunctionID findCoroutineCalledBy(Walker&, const BodyValue& call);
+uint32_t findEndOfAwaitedCall(Walker&, BodyBlock, ValueID call);
 Reference buildStartOfBodyOfCoroutine(Walker&, const BodyValue& call, FunctionID callee, std::span<const Reference> entryOperands, Reference driver);
 ValueID findOnlyTakerBehindCasts(const BodyIndex&, ValueID);
 bool takeWhatCallInCopyHasAwaited(Walker&, const BodyValue& await);

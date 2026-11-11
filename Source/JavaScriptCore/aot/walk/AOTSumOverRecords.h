@@ -42,9 +42,32 @@ private:
     Vector<Term, 4> m_terms;
 };
 
+enum class StepsAreExact : bool { ByTheirTypes, AsAssumed };
+std::optional<Range> findStepsFrom(const Code&, const TypeArena&, ValueID, ValueID from, StepsAreExact = StepsAreExact::ByTheirTypes);
+
+struct SecondCounter {
+    ValueID counter;
+    ValueID stepped;
+    Range steps;
+    bool counterRises { true };
+};
+
+struct EnteringCounters {
+    Range counter { Range::empty() };
+    Range stepped { Range::empty() };
+    bool operator==(const EnteringCounters&) const = default;
+};
+std::optional<Range> rangeOfSecondCounter(const Code&, const TypeArena&, const SecondCounter&, const EnteringCounters&, const Operation& test, uint32_t operandIndex, bool testIsTrue);
+std::optional<EnteringCounters> findEnteringCounters(const Code&, const TypeArena&, const SecondCounter&);
+bool stepsSecondCounter(const Code&, const TypeArena&, const SecondCounter&, ValueID stepped, ValueID counter);
+bool secondCounterStaysWithin(const Code&, const TypeArena&, const GroundsOfPosition&);
+SecondCounter secondCounterOf(const SteppedWithCounter&);
+bool isSteppedWithCounter(const Code&, const TypeArena&, const SteppedWithCounter&);
 bool everyWayStepsUpFrom(const Code&, const TypeArena&, ValueID, ValueID from, ValueID stepNonNegativeCheck, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough, NOESCAPE const ScopedLambda<bool(BlockID)>& isReached);
+bool everyWayStepsDownFrom(const Code&, const TypeArena&, ValueID, ValueID from, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough, NOESCAPE const ScopedLambda<bool(BlockID)>& isReached);
 bool groundsShowPositionInside(const Code&, const TypeArena&, ValueID position, const GroundsOfPosition&, NOESCAPE const ScopedLambda<bool(ValueID, bool testResult)>& holds);
 bool testsShowElementPresent(const Code&, ValueID list, ValueID position, std::span<const PassedTest::Side>);
+bool testsProveElementAtOrAfter(const Code&, const TypeArena&, ValueID list, ValueID position, std::span<const PassedTest::Side>);
 
 } } } // namespace JSC::AOT::Typed
 

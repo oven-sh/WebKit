@@ -107,11 +107,11 @@ void generateStepAsyncGenerator(StubAssembler& jit)
         Jump hasDriver = jit.jump();
 
         hasNoSavedFrame.link(&jit);
-        Jump hasNoRightToContinue = jit.branchTest32(CCallHelpers::Zero, consumer, TrustedImm32(consumerMayContinue));
+        Jump hasNoResumptionRight = jit.branchTest32(CCallHelpers::Zero, consumer, TrustedImm32(consumerMayContinue));
         jit.and32(TrustedImm32(~(bodyMayContinue | consumerMayContinue)), consumer);
         jit.orPtr(TrustedImm32(mustSuspendAtNextAwaitBit), fp, word);
-        jit.storePtr(word, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue)));
-        hasNoRightToContinue.link(&jit);
+        jit.storePtr(word, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.resumableFrame)));
+        hasNoResumptionRight.link(&jit);
         refill = emitAllocateSavedFrame(jit, CoroutineKind::AsyncFunction, siteWord, { driver, saved, word, other }, isNotAllocatedHere);
         jit.or32(TrustedImm32(consumerOfStepHasNewSavedFrame), consumer);
         hasDriver.link(&jit);
@@ -194,7 +194,7 @@ static void emitGiveBackRightToContinue(StubAssembler& jit, GPRReg consumer, GPR
     Jump mustSuspendAtAwaits = jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(awaitMustSuspend)));
     jit.loadPtr(Address(fp), stored);
     mustSuspendAtAwaits.link(&jit);
-    jit.storePtr(stored, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue)));
+    jit.storePtr(stored, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.resumableFrame)));
     mayNotContinue.link(&jit);
 }
 
@@ -268,6 +268,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     emitNoteAwaitPassedOnStack(jit, consumer, word);
     jit.move(TrustedImm32(static_cast<int32_t>(AsyncGeneratorStepStatus::Yielded)), status);
     jit.emitFunctionEpilogue();
+    emitSiteContinuationNote(jit);
     jit.returnToCaller();
 
     finishesInEngine.link(&jit);
@@ -290,6 +291,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     suspendsConsumer.append(jit.branchTest32(CCallHelpers::Zero, status));
     emitNoteAwaitPassedOnStack(jit, consumer, word);
     jit.emitFunctionEpilogue();
+    emitSiteContinuationNote(jit);
     jit.returnToCaller();
 
     suspendsConsumer.link(&jit);
@@ -476,6 +478,7 @@ void generateNewHeapFrame(StubAssembler& jit)
     const GPRReg numberOfWords = jit.operand(0);
     const GPRReg resumeAddress = jit.operand(1);
     const GPRReg frame = jit.result();
+    const FPRReg zeros = jit.allocateScratch(FPRInfo::fpRegT0);
     const GPRReg allocator = jit.allocateScratch(StubRegister::T9);
     const GPRReg index = jit.allocateScratch(StubRegister::T10);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
@@ -485,7 +488,19 @@ void generateNewHeapFrame(StubAssembler& jit)
     RELEASE_ASSERT(noOverlap(numberOfWords, resumeAddress, frame, allocator, index, scratch, instanceGPR));
     constexpr ptrdiff_t offsetOfAllocatorWithoutWords = CompleteSubspace::offsetOfAllocatorForSizeStep() + sizeof(SavedFrame) / MarkedSpace::sizeStep * sizeof(Allocator);
 
+    static_assert(hasOneBitSet(numberOfReleasedHeapFrames));
+    const BaseIndex releasedHeapFrame(instanceGPR, index, CCallHelpers::TimesEight, AOT_INSTANCE_OFFSET(coroutines.releasedHeapFrames));
     JumpList slowCases;
+    JumpList allocates;
+    jit.and32(TrustedImm32(numberOfReleasedHeapFrames - 1), numberOfWords, index);
+    jit.loadPtr(releasedHeapFrame, frame);
+    allocates.append(jit.branchTestPtr(CCallHelpers::Zero, frame));
+    allocates.append(jit.branch64(CCallHelpers::NotEqual, numberOfWords, Address(frame, SavedFrame::offsetOfCapacityOfHeapFrame())));
+    allocates.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))));
+    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), releasedHeapFrame);
+    Jump reusesFrame = jit.jump();
+
+    allocates.link(&jit);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
     jit.add32(TrustedImm32(1), numberOfWords, index);
     jit.urshift32(TrustedImm32(1), index);
@@ -495,18 +510,19 @@ void generateNewHeapFrame(StubAssembler& jit)
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader)), scratch);
     jit.store64(scratch, Address(frame));
     jit.store64(TrustedImm32(0), Address(frame, JSObject::butterflyOffset()));
+    jit.store64(frame, Address(frame, SavedFrame::offsetOfPromiseOrWaiter()));
+    jit.store64(numberOfWords, Address(frame, SavedFrame::offsetOfCapacityOfHeapFrame()));
+    reusesFrame.link(&jit);
+    jit.store64(TrustedImm32(0), Address(frame, SavedFrame::offsetOfAsyncContext()));
     jit.store64(numberOfWords, Address(frame, SavedFrame::offsetOfNumberOfWords()));
     jit.move(TrustedImm64(static_cast<int64_t>(static_cast<uint64_t>(SavedFrame::liesOnHeapBit) << 48 | static_cast<uint64_t>(SavedFrame::isSuspendedAtYieldFlag) << 56)), scratch);
     jit.store64(scratch, Address(frame, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
     jit.store64(resumeAddress, Address(frame, SavedFrame::offsetOfResumeAddress()));
-    jit.store64(frame, Address(frame, SavedFrame::offsetOfPromiseOrWaiter()));
-    jit.store64(TrustedImm32(0), Address(frame, SavedFrame::offsetOfPreservedRegister()));
-    jit.store64(TrustedImm32(0), Address(frame, SavedFrame::offsetOfAsyncContext()));
     jit.add32(TrustedImm32(1), numberOfWords, index);
     jit.and32(TrustedImm32(~1), index);
+    jit.moveZeroToDouble(zeros);
     Label next = jit.label();
-    jit.store64(TrustedImm32(0), BaseIndex(frame, index, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - static_cast<int32_t>(sizeof(uint64_t))));
-    jit.store64(TrustedImm32(0), BaseIndex(frame, index, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - 2 * static_cast<int32_t>(sizeof(uint64_t))));
+    jit.storeVector(zeros, BaseIndex(frame, index, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - 2 * static_cast<int32_t>(sizeof(uint64_t))));
     jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), index).linkTo(next, &jit);
     fenceAfterAllocation(jit);
     jit.returnToCaller();

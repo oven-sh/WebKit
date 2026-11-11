@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
@@ -19,7 +20,6 @@
 #include <optional>
 #include <span>
 #include <tuple>
-#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Int128.h>
 

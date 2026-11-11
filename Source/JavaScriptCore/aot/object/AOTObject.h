@@ -106,6 +106,8 @@ private:
     uint32_t m_count { 0 };
 };
 
+inline bool CompiledStructure::hasSpareWord() const { return m_extraPropertiesSlot.offset && !m_layout->hasExtraPropertiesSlot; }
+
 class Object final : public JSObject {
 public:
     using Base = JSObject;
@@ -117,7 +119,7 @@ public:
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> ALWAYS_INLINE static void visitFields(Object*, Visitor&);
+    template<typename Visitor> ALWAYS_INLINE static void visitFields(Object*, const CompiledStructure&, Visitor&);
     static size_t estimatedSize(JSCell*, VM&);
     static void analyzeHeap(JSCell*, HeapAnalyzer&);
 
@@ -493,10 +495,12 @@ void Object::forEachFieldInKeyOrder(State& state, const Invocable<void(uint16_t)
 }
 
 template<typename Visitor>
-ALWAYS_INLINE void Object::visitFields(Object* object, Visitor& visitor)
+ALWAYS_INLINE void Object::visitFields(Object* object, const CompiledStructure& structure, Visitor& visitor)
 {
-    const LayoutData& layout = object->layout();
+    const LayoutData& layout = structure.layout();
     visitReferences(object, layout, layout.hasExtension(), visitor);
+    if (object->hasExtraProperties() && structure.hasSpareWord()) [[unlikely]]
+        visitReferenceAt(object, *structure.extraPropertiesSlot(), visitor);
 }
 
 } } // namespace JSC::AOT

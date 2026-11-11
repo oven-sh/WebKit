@@ -173,7 +173,7 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
     if (code.functionsEnd > header.codeSize || code.codeGranuleShift >= 32)
         return false;
     uint64_t granuleSize = 1ull << code.codeGranuleShift;
-    if (numberOfElements(ImageSection::CodeGranules) < (code.functionsEnd + granuleSize - 1) >> code.codeGranuleShift)
+    if (numberOfElements(ImageSection::CodeGranules) < ((code.functionsEnd + granuleSize - 1) >> code.codeGranuleShift) + 1)
         return false;
 
     std::span copies { reinterpret_cast<const uint32_t*>(bytes.data() + rangeOf(ImageSection::SharedCodeCopies).offset), static_cast<size_t>(numberOfElements(ImageSection::SharedCodeCopies)) };
@@ -210,7 +210,8 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
         && closures.omittedWordCount <= closures.first
         && closures.first <= closures.end
         && numberOfElements(ImageSection::ClosureWords) == closures.end - closures.omittedWordCount
-        && numberOfElements(ImageSection::StringConstants) == tables.instanceSizes.numberOfStringCells
+        && header.numbers.numberOfPlacedConstants <= tables.instanceSizes.numberOfStringCells
+        && numberOfElements(ImageSection::StringConstants) == tables.instanceSizes.numberOfStringCells + header.numbers.numberOfPlacedConstants
         && numberOfElements(ImageSection::NamesOfSites) == tables.instanceSizes.numberOfSiteCaches
         && tables.globalBindings().size() == tables.instanceSizes.numberOfGlobalBindings
         && tables.instanceSizes.sizeOfMethodTable <= rangeOf(ImageSection::MethodTable).size
@@ -371,11 +372,10 @@ CodeLocation Image::locate(const void* pc) const
         }
     }
     const FunctionStarts& starts = m_functionStarts;
-    uint32_t index = m_codeGranules[offset >> header.code.codeGranuleShift];
-    if (offset < starts[index])
+    if (offset < starts[0])
         return { };
-    while (starts[index + 1] <= offset)
-        ++index;
+    const uint32_t* granule = m_codeGranules + (offset >> header.code.codeGranuleShift);
+    uint32_t index = starts.find(offset, granule[0], granule[1]);
     return { CodeKind::Function, StubFrameKind::Plain, index, offset - starts[index] };
 }
 

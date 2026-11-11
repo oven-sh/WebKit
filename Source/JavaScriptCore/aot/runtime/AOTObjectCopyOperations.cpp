@@ -31,6 +31,7 @@
 #include "ButterflyInlines.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
+#include "ErrorInstance.h"
 #include "JSCInlines.h"
 #include "MarkedSpace.h"
 #include "ObjectAllocationProfileInlines.h"
@@ -145,9 +146,13 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
         }, PropertyWalk::Elements::NeedGenericPath, PropertyWalk::Preparations::AreDone);
         return walkResult == PropertyWalk::Result::Completed;
     }
+    bool isMaterializedError = source->structure()->classInfoForCells() == ErrorInstance::info() && uncheckedDowncast<ErrorInstance>(source)->hasMaterializedErrorInfo();
+    if (isMaterializedError)
+        uncheckedDowncast<ErrorInstance>(source)->materializeErrorInfoIfNeeded(vm);
     Structure* structure = source->structure();
     TypeInfo info = structure->typeInfo();
-    if (source->hasNonReifiedStaticProperties() || info.overridesGetOwnPropertySlot() || info.overridesAnyFormOfGetOwnPropertyNames() || structure->hasUnderscoreProtoPropertyExcludingOriginalProto() || hasIndexedProperties(structure->indexingType()))
+    bool overridesLookups = !isMaterializedError && (info.overridesGetOwnPropertySlot() || info.overridesAnyFormOfGetOwnPropertyNames());
+    if (source->hasNonReifiedStaticProperties() || overridesLookups || structure->hasUnderscoreProtoPropertyExcludingOriginalProto() || hasIndexedProperties(structure->indexingType()))
         return false;
     bool symbolsComeLast = !structure->canPerformFastPropertyEnumerationCommon();
     Vector<std::pair<UniquedStringImpl*, PropertyOffset>, 4> symbols;

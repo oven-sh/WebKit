@@ -21,6 +21,8 @@ bool lookMayFinishBirthOf(Walker&, Reference object);
 void finishBirthAtReturnOfClassConstructor(Walker&, Reference returned, Origin);
 void showWhatIsHeldFilledWhereConstructionEnds(Walker&, FunctionID constructor, Reference object, Origin);
 void showWhatIsHeldFilledAtReturnOfClassConstructor(Walker&, Reference returned, Origin);
+Reference allocateFilledObject(Walker&, Reference object, Origin);
+Reference allocateFilledObjectAtReturn(Walker&, Reference returned, Origin);
 
 struct StoresListedAtBirth {
     Vector<FieldIndex, 16> fields;
@@ -36,11 +38,18 @@ void checkGuardsThatAreRemembered(Walker&, std::span<const MemberConditionRecord
 void askWholeSideWhereGuardsMayNotHaveBegun(Walker&, LayoutID classLayout, Vector<MemberConditionRecord, 8>& conditions);
 std::optional<MemberConditionRecord> findGuardOfCallOffConstructorFunction(Walker&, FunctionID);
 
+struct InitializerMethod {
+    FunctionID function;
+    std::optional<MemberConditionRecord> guard;
+};
+InitializerMethod findInitializerMethod(Walker&, LayoutID, PropertyKeyID);
+
 struct GuardOfPrototypeAtConstruction {
     MemberConditionRecord condition;
     bool isKnownToHold { false };
 };
-std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction(Walker&, FunctionID constructor, bool newCellIsLookedAt, bool guardsAreAskedAtBirth, Origin);
+bool isPrototypeAtConstructionProven(const Walker&, FunctionID constructor);
+std::optional<GuardOfPrototypeAtConstruction> findGuardOfPrototypeAtConstruction(Walker&, ValueID construction, FunctionID constructor, bool newCellIsLookedAt, bool guardsAreAskedAtBirth, Origin);
 void checkPrototypeOfCellMadeBehindGuard(Walker&, Reference object, Reference constructor, LayoutID constructed, Origin);
 
 } } } // namespace JSC::AOT::Typed

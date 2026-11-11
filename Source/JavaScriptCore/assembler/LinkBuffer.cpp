@@ -703,13 +703,17 @@ void LinkBuffer::takeRecords(MacroAssembler& macroAssembler)
     m_records->linkedSites.grow(jumps.size());
     LinkedSite* site = m_records->linkedSites.mutableSpan().data();
     for (const X86LinkedJump& jump : jumps) {
+        if (jump.lengthOfReturn)
+            continue;
         bool isConditional = jump.kind == X86JumpKind::Conditional;
-        RelocationKind kind = jump.isShort
+        bool isShort = jump.savings;
+        RelocationKind kind = isShort
             ? (isConditional ? RelocationKind::ShortConditionalJump : RelocationKind::ShortJump)
             : (isConditional ? RelocationKind::ConditionalJump : RelocationKind::Jump);
-        uint32_t length = jump.isShort ? X86JumpShortener::shortJumpLength : X86JumpShortener::longJumpLength(jump.kind);
+        uint32_t length = isShort ? X86JumpShortener::shortJumpLength : X86JumpShortener::longJumpLength(jump.kind);
         *site++ = LinkedSite { jump.from - length, jump.to, kind };
     }
+    m_records->linkedSites.shrink(static_cast<size_t>(site - m_records->linkedSites.mutableSpan().data()));
 #endif
 }
 

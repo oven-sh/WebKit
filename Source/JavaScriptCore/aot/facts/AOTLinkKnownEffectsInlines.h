@@ -300,7 +300,7 @@ bool CalleeSummarizerForLinkEffects::mergeKnownEffectsOfCodeOutside(const CodeEn
     return everythingStandsOutside;
 }
 
-std::optional<uint16_t> CalleeSummarizerForLinkEffects::primitivesExpectedOfParameter(FunctionID id, uint32_t entryParameter) const
+std::optional<uint16_t> CalleeSummarizerForLinkEffects::expectedParameterPrimitives(FunctionID id, uint32_t entryParameter) const
 {
     std::span<const LinkedParameter> parameters = m_tables.parametersOf(id);
     TypeID expected = entryParameter < parameters.size() ? parameters[entryParameter].writtenOrSeenToArrive() : TypeID();
@@ -310,24 +310,24 @@ std::optional<uint16_t> CalleeSummarizerForLinkEffects::primitivesExpectedOfPara
     return LinkType::closed(LinkType::primitivesOf(type.primitives, type.integers));
 }
 
-uint32_t CalleeSummarizerForLinkEffects::parametersExpectedPrimitiveThatBringObjectsAlone(FunctionID id, const ThinSummary& summary, uint32_t node, GivenArgumentsInKnownEffects& given) const
+uint32_t CalleeSummarizerForLinkEffects::findSoleObjectParameters(FunctionID id, const ThinSummary& summary, uint32_t node, GivenArgumentsInKnownEffects& given) const
 {
     if (node == noSummaryNode || summary.nodes[node].kind != SummaryNode::Kind::Join)
         return 0;
     static constexpr uint32_t othersBringObjects = ~0u;
-    if (given.parametersThatBringObjectsAlone.isEmpty()) {
-        given.parametersThatBringObjectsAlone.fill(0, summary.nodes.size());
+    if (given.soleObjectParameters.isEmpty()) {
+        given.soleObjectParameters.fill(0, summary.nodes.size());
         for (const SummaryEdge& edge : summary.edges) {
             if (edge.to >= summary.nodes.size() || summary.nodes[edge.to].kind != SummaryNode::Kind::Join)
                 continue;
-            uint32_t& parameters = given.parametersThatBringObjectsAlone[edge.to];
+            uint32_t& parameters = given.soleObjectParameters[edge.to];
             if (parameters == othersBringObjects)
                 continue;
             std::optional<uint32_t> parameter = edge.passes == TypeTable::object ? entryParameterAt(summary, edge.from) : std::nullopt;
-            parameters = parameter && primitivesExpectedOfParameter(id, *parameter) ? parameters | 1u << *parameter : othersBringObjects;
+            parameters = parameter && expectedParameterPrimitives(id, *parameter) ? parameters | 1u << *parameter : othersBringObjects;
         }
     }
-    uint32_t parameters = given.parametersThatBringObjectsAlone[node];
+    uint32_t parameters = given.soleObjectParameters[node];
     return parameters == othersBringObjects ? 0 : parameters;
 }
 
@@ -344,7 +344,7 @@ void CalleeSummarizerForLinkEffects::addEffectsOfOperatorsLeftApart(FunctionID i
         LinkType type = typeAt(id, summary, node);
         if (type.isNever() || mayBeObjectForLinkEffects(type) || (type.primitives & ~plainPrimitives)) {
             std::optional<uint32_t> parameter = type.isNever() ? std::nullopt : entryParameterAt(summary, node);
-            std::optional<uint16_t> expected = parameter ? primitivesExpectedOfParameter(id, *parameter) : std::nullopt;
+            std::optional<uint16_t> expected = parameter ? expectedParameterPrimitives(id, *parameter) : std::nullopt;
             if (expected && !(*expected & ~plainPrimitives)) {
                 given.parametersTakenAsExpected |= 1u << *parameter;
                 mayTakeStrings |= !!(*expected & ~whatBecomesNumber);
@@ -512,7 +512,7 @@ bool CalleeSummarizerForLinkEffects::judgeCallGivenArguments(FunctionID id, cons
         return true;
     }
     case SummaryCall::Callee::Name: {
-        if (uint32_t bringers = call.isMadeByProtocol ? parametersExpectedPrimitiveThatBringObjectsAlone(id, summary, call.receiver, given) : 0) {
+        if (uint32_t bringers = call.isMadeByProtocol ? findSoleObjectParameters(id, summary, call.receiver, given) : 0) {
             given.parametersTakenAsExpected |= bringers;
             return true;
         }

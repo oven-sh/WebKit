@@ -82,9 +82,14 @@ inline bool x86TargetAddressAcceptsBase(const Operation& access, const Operation
     return distance >= -x86TargetMaxDistanceFromFrameAddress && distance <= x86TargetMaxDistanceFromFrameAddress;
 }
 
-ALWAYS_INLINE bool comparesConstantInMemory(const Operation& user, unsigned childIndex, const Operation& constant)
+ALWAYS_INLINE bool readsConstantInMemory(const Operation& user, unsigned childIndex, const Operation& constant)
 {
-    return childIndex == 1 && (user.opcode() == Equal || user.opcode() == NotEqual) && constant.hasInt() && !isX86TargetImmediate(constant);
+    if (childIndex != 1)
+        return false;
+    Opcode opcode = user.opcode();
+    if (constant.hasInt())
+        return isComparison(opcode) && opcode != EqualOrUnordered && !isX86TargetImmediate(constant);
+    return constant.hasDouble() && constant.constantBits() >> 32 && (opcode == Add || opcode == Sub || opcode == Mul || opcode == Div);
 }
 
 ALWAYS_INLINE bool acceptsImmediate(const Operation& user, unsigned childIndex, const Operation& constant)
@@ -192,7 +197,7 @@ ALWAYS_INLINE bool acceptsImmediate(const Operation& user, unsigned childIndex, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 #else
-constexpr bool comparesConstantInMemory(const Operation&, unsigned, const Operation&) { return false; }
+constexpr bool readsConstantInMemory(const Operation&, unsigned, const Operation&) { return false; }
 JS_EXPORT_PRIVATE bool acceptsImmediate(const Operation& user, unsigned childIndex, const Operation& constant);
 #endif
 
@@ -343,6 +348,21 @@ constexpr bool resultOverwritesFirstChild(Opcode opcode)
         || opcode == BitAnd || opcode == BitOr || opcode == BitXor || opcode == Shl || opcode == SShr || opcode == ZShr || opcode == RotR;
 }
 
+inline bool hasThreeAddressFormWithConstant(const Operation& operation)
+{
+    switch (operation.opcode()) {
+    case Add:
+    case Mul:
+        return true;
+    case BitAnd:
+        return operation.child(1)->isInt(0xff) || operation.child(1)->isInt(0xffff);
+    case Shl:
+        return operation.child(1)->isInt(1);
+    default:
+        return false;
+    }
+}
+
 constexpr bool clearsUpperHalf(Opcode opcode)
 {
     switch (opcode) {
@@ -387,20 +407,42 @@ constexpr bool clearsUpperHalf(Opcode opcode)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-inline bool handsOnClearUpperHalf(const Operation* value, const Operation* phi)
+inline bool handsOnClearUpperHalf(const Operation* value)
 {
-    return value == phi || (value->hasInt32() ? value->asInt32() >= 0 : clearsUpperHalf(value->opcode()));
+    if (value->opcode() == Patch)
+        return static_cast<const PatchOperation*>(value)->clearsUpperHalf();
+    return value->hasInt32() ? value->asInt32() >= 0 : clearsUpperHalf(value->opcode());
+}
+
+ALWAYS_INLINE void Procedure::noteUpperHalfHandedOn(Operation* upsilon)
+{
+    const Operation* value = upsilon->child(0);
+    Operation* phi = upsilon->phi();
+    if (value->opcode() == Phi) {
+        if (value != phi && value->type() == Int32)
+            m_upsilonsOfWordsBetweenPhis.append(m_arena, upsilon);
+    } else if (!handsOnClearUpperHalf(value))
+        phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
 }
 
 inline bool clearsUpperHalf(const Operation* value)
 {
-    return value->opcode() == Phi ? !value->has(OperationFlag::UpperHalfMayBeSet) : clearsUpperHalf(value->opcode());
+    if (value->opcode() == Phi)
+        return !value->has(OperationFlag::UpperHalfMayBeSet);
+    return value->opcode() == Patch ? static_cast<const PatchOperation*>(value)->clearsUpperHalf() : clearsUpperHalf(value->opcode());
+}
+
+ALWAYS_INLINE void Procedure::noteWordName(Operation* extension)
+{
+    if (extension->opcode() == Trunc || clearsUpperHalf(extension->child(0)))
+        m_namesOfWords.append(m_arena, extension);
 }
 
 JS_EXPORT_PRIVATE unsigned numberOfScratchGPRsOf(const ProcedureTraits&, const Operation&);
 
-inline constexpr unsigned minCasesForJumpTable = 4;
-inline constexpr uint64_t maxEntriesOfJumpTablePerCase = 16;
+inline constexpr unsigned minCasesForJumpTable = 7;
+inline constexpr uint64_t maxEntriesOfJumpTablePerCase = 4;
+inline constexpr unsigned minCasesForSwitchWindow = 4;
 inline constexpr uint64_t valuesInSwitchWindow = 64;
 inline constexpr unsigned maxPlacesToldByBitsOfSwitchWindow = 3;
 

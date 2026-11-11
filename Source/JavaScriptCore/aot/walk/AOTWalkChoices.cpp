@@ -645,8 +645,16 @@ static void chooseWhatListTakesFromItsSiteInChoices(Walker& walker, Draft& list)
 {
     bool isEmpty = !list.numberOfVariadicOperands() && list.holes().empty();
     bool kindIsWritten = list.contents() && !walker.types().at(list.contents()).isAnything() && arrayStorageHolding(walker.types(), list.contents()) == ArrayStorage::Contiguous;
-    if (isEmpty && !kindIsWritten && list.storage() == AllocationStorage::Heap && list.arrayStorage() == ArrayStorage::Other && (walker.isInLoop() || !walker.program().at(walker.unit().function).isModuleBody()))
+    if (isEmpty && (!kindIsWritten || walker.isInLoop()) && list.storage() == AllocationStorage::Heap && list.arrayStorage() == ArrayStorage::Other && (walker.isInLoop() || !walker.program().at(walker.unit().function).isModuleBody()))
         list.setLiteralStorage(ArrayLiteralStorage::Profiled);
+}
+
+static bool elementsMayBeInt32(const Walker& walker, const Draft& list)
+{
+    return list.numberOfVariadicOperands() <= maxArrayLengthInStubKey && std::ranges::all_of(list.variadicOperands(), [&](Reference element) {
+        TypeID type = walker.typeOf(element);
+        return type && !isNeverType(type) && (walker.types().at(type).primitives & Primitive::Integer);
+    });
 }
 
 static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
@@ -677,8 +685,11 @@ static void nameStorageOfLiteralOfNumbersInChoices(Walker& walker, Draft& list)
     bool mayHaveFraction = false;
     for (Reference element : list.variadicOperands()) {
         TypeID proven = walker.typeOf(element);
-        if (!proven || !walker.types().at(proven).isNumber())
+        if (!proven || !walker.types().at(proven).isNumber()) {
+            if (numbersAreWritten && elementsMayBeInt32(walker, list))
+                list.setLiteralStorage(ArrayLiteralStorage::ByElements);
             return;
+        }
         areInt32 &= walker.types().at(proven).isInt32();
         mayHaveFraction |= !!(walker.types().at(proven).primitives & Primitive::Number & ~Primitive::NumberWithoutFraction);
     }
@@ -866,7 +877,7 @@ static bool holdsNothingYetInChoices(const DataNode& element)
     return element.is<DataNode::Undefined>() || element.is<DataNode::Null>();
 }
 
-static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array& array)
+static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array& array, DataID data)
 {
     if (std::ranges::all_of(array.elements, holdsNothingYetInChoices))
         return false;
@@ -874,11 +885,11 @@ static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array&
         return true;
     FunctionID function = walker.currentFunction();
     if (walker.program().at(function).isModuleBody() && !walker.isInLoop())
-        return false;
+        return isShortStringList(array) && walker.facts().summaries().at(function).holdsWrittenList(data);
     return std::ranges::all_of(array.elements, canLieInSharedStorageInChoices);
 }
 
-static bool isBornToBeFilledInChoices(const DataNode::Array& array)
+static bool isZeroFilledArray(const DataNode::Array& array)
 {
     return array.elements.size() > 1 && std::ranges::all_of(array.elements, [](const DataNode& element) {
         const auto* number = element.tryAs<DataNode::Number>();
@@ -903,13 +914,19 @@ static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
     }
     SetForScope makingObjectsOfConstant = walker.makingObjectsOfConstant();
     const DataNode& root = walker.program().at(data.data()).root;
-    if (const auto* array = root.tryAs<DataNode::Array>(); array && sharesStorageOfArrayInChoices(walker, *array)) {
-        if (array->elements.size() <= maxNodesOfExpandedData && isBornToBeFilledInChoices(*array) && !variableHoldsListInChoices(walker, data.data())) {
+    if (const auto* array = root.tryAs<DataNode::Array>(); array && sharesStorageOfArrayInChoices(walker, *array, data.data())) {
+        if (array->elements.size() <= maxNodesOfExpandedData && isZeroFilledArray(*array) && !variableHoldsListInChoices(walker, data.data())) {
             becomeNodeOfDataInChoices(walker, data, root);
             return;
         }
-        bool isStoredIntoInLoop = data.inputValueGiven && walker.facts().summaries().at(walker.currentFunction()).constantListIsStoredIntoInLoop(data.inputValueGiven) && surveyDataInChoices(walker, data.data()).tableOfImageHoldsIt;
-        data.setEncoding(isStoredIntoInLoop ? DataEncoding::TreeWithOwnStorage : DataEncoding::CopyOnWriteArray);
+        bool isStoredInto = ((data.inputValueGiven && walker.facts().summaries().at(walker.currentFunction()).constantListIsStoredIntoInLoop(data.inputValueGiven)) || walker.facts().summaries().storesElementInto(data.data())) && surveyDataInChoices(walker, data.data()).tableOfImageHoldsIt;
+        if (isStoredInto)
+            walker.count(StatisticID::ArrayLiteralsWithOwnStorage);
+        if (isStoredInto && array->elements.size() <= maxNodesOfExpandedData && walker.runsInIterations()) {
+            becomeNodeOfDataInChoices(walker, data, root);
+            return;
+        }
+        data.setEncoding(isStoredInto ? DataEncoding::TreeWithOwnStorage : DataEncoding::CopyOnWriteArray);
         return;
     }
     data.setEncoding(DataEncoding::ReadOnlyTree);

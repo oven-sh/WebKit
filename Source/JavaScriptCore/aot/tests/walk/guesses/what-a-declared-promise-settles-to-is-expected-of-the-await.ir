@@ -10,8 +10,9 @@
 # CHECK: = GetSlot {{*}}key="y" receivers=[L0]
 # CHECK-LABEL: code f2:CoroutineBody
 # CHECK: = AwaitBySavingFrame
-# CHECK-NOT: GetSlot
 # CHECK: = PropGet {{*}}key="x"
+# RUN(ONE): walk f2:CoroutineBody mechanisms=none+TypedOperations+Guesses
+# ONE-NOT: GetSlot
 
 layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
 module m0 path="main.ts" displayPath="main.ts" body=f0

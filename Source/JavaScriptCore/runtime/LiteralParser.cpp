@@ -2988,7 +2988,7 @@ JSValue JSONParse(JSGlobalObject* globalObject, std::span<const char8_t> utf8)
         return { };
 #if ENABLE(AOT)
     if (globalObject->aotInstance()) [[unlikely]] {
-        if (JSValue parsed = AOT::tryParseJSON(globalObject, StringView { byteCast<Latin1Character>(utf8) }))
+        if (JSValue parsed = AOT::tryParseJSON(globalObject, StringView { byteCast<Latin1Character>(utf8) }, AOT::JSONTextMemory::MayChange))
             return parsed;
     }
 #endif

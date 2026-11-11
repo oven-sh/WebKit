@@ -203,11 +203,10 @@ static JSArray* tryCreateEntry(VM& vm, Structure* structure, JSValue key, JSValu
     return entry;
 }
 
-static JSArray* tryCreateEntriesArray(JSGlobalObject* globalObject, JSCellButterfly* keys, const Invocable<JSValue(unsigned)> auto& valueAt)
+static JSArray* tryCreateEntriesArray(JSGlobalObject* globalObject, unsigned count, const Invocable<JSValue(unsigned)> auto& keyAt, const Invocable<JSValue(unsigned)> auto& valueAt)
 {
     VM& vm = globalObject->vm();
     Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
-    unsigned count = keys->length();
     JSArray* entries = JSArray::tryCreate(vm, structure, count);
     if (!entries)
         return nullptr;
@@ -216,12 +215,11 @@ static JSArray* tryCreateEntriesArray(JSGlobalObject* globalObject, JSCellButter
         JSValue value = valueAt(index);
         if (!value)
             return nullptr;
-        JSArray* entry = tryCreateEntry(vm, structure, keys->get(index), value);
+        JSArray* entry = tryCreateEntry(vm, structure, keyAt(index), value);
         if (!entry)
             return nullptr;
         elements.at(entries, index).set(vm, entries, entry);
     }
-    ensureStillAliveHere(keys);
     return entries;
 }
 
@@ -231,17 +229,64 @@ static JSArray* tryCreateList(JSGlobalObject* globalObject, OwnPropertyList list
         return tryCreateValuesArray(globalObject, count, valueAt);
     if (!keys || keys->length() != count)
         return nullptr;
-    if (list == OwnPropertyList::FlatEntries) {
-        JSArray* entries = tryCreateFlatEntriesArray(globalObject, count, [&](unsigned index) { return keys->get(index); }, valueAt);
-        ensureStillAliveHere(keys);
-        return entries;
+    auto keyAt = [&](unsigned index) { return keys->get(index); };
+    JSArray* entries = list == OwnPropertyList::FlatEntries ? tryCreateFlatEntriesArray(globalObject, count, keyAt, valueAt) : tryCreateEntriesArray(globalObject, count, keyAt, valueAt);
+    ensureStillAliveHere(keys);
+    return entries;
+}
+
+static constexpr uint16_t flagsBarringListing = fieldIsNotEnumerable | fieldIsAccessor;
+
+static JSArray* tryListElementsAndFields(JSGlobalObject* globalObject, const Object& compiled, JSObject* extra, OwnPropertyList list)
+{
+    VM& vm = globalObject->vm();
+    if (extra->type() != FinalObjectType || isValidOffset(extra->structure()->maxOffset()) || extra->hasNonReifiedStaticProperties() || extra->canHaveExistingOwnIndexedGetterSetterProperties())
+        return nullptr;
+    if (compiled.orderWord() & orderWordHasFieldOutsideSlot || compiled.hasKeyOrderOfItsOwn())
+        return nullptr;
+    bool listsKeys = list != OwnPropertyList::Values;
+    State& state = compiled.state();
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    std::span<const FieldData> fields = compiled.layout().fields();
+    MarkedArgumentBuffer keys;
+    MarkedArgumentBuffer values;
+    extra->forEachOwnElement<JSObject::SortMode::Ascending>([&](unsigned index, JSValue value) {
+        if (listsKeys)
+            keys.append(jsString(vm, String::number(index)));
+        values.append(value);
+        return IterationStatus::Continue;
+    });
+    bool isListed = true;
+    compiled.forEachFieldInKeyOrder(state, [&](uint16_t index) {
+        const FieldData& field = fields[index];
+        if (!layouts.hasStringKey(field))
+            return;
+        isListed &= !(field.flags & flagsBarringListing);
+        JSValue value = isListed ? compiled.read(field) : JSValue();
+        if (!value)
+            return;
+        if (listsKeys)
+            keys.append(jsOwnedString(vm, String(layouts.nameOf(vm, field))));
+        values.append(value);
+    });
+    if (!isListed || keys.hasOverflowed() || values.hasOverflowed() || values.size() >= MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH)
+        return nullptr;
+    unsigned count = static_cast<unsigned>(values.size());
+    auto keyAt = [&](unsigned index) { return keys.at(index); };
+    auto valueAt = [&](unsigned index) { return values.at(index); };
+    switch (list) {
+    case OwnPropertyList::Values:
+        return tryCreateValuesArray(globalObject, count, valueAt);
+    case OwnPropertyList::FlatEntries:
+        return tryCreateFlatEntriesArray(globalObject, count, keyAt, valueAt);
+    case OwnPropertyList::Entries:
+        return tryCreateEntriesArray(globalObject, count, keyAt, valueAt);
     }
-    return tryCreateEntriesArray(globalObject, keys, valueAt);
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static JSArray* tryListOwnProperties(JSGlobalObject* globalObject, const Object& compiled, OwnPropertyList list)
 {
-    constexpr uint16_t flagsBarringListing = fieldIsNotEnumerable | fieldIsAccessor;
     VM& vm = globalObject->vm();
     bool listsKeys = list != OwnPropertyList::Values;
     if (!compiled.hasExtraProperties()) {
@@ -256,6 +301,9 @@ static JSArray* tryListOwnProperties(JSGlobalObject* globalObject, const Object&
         };
         return tryCreateList(globalObject, list, static_cast<unsigned>(fields->size()), listsKeys ? compiled.keys(vm) : nullptr, valueAt);
     }
+
+    if (JSObject* extra = compiled.extraProperties(); extra && hasIndexedProperties(extra->indexingType()))
+        return tryListElementsAndFields(globalObject, compiled, extra, list);
 
     DeferGC deferGC(vm);
     const Vector<PropertyListEntry>* properties = compiled.fieldsAndExtraPropertiesInKeyOrder(vm);
@@ -577,10 +625,13 @@ static bool tryReadBySlots(VM& vm, JSObject* cell, PropertiesInSlots& properties
         return false;
     const LayoutData& layout = source->layout();
     if (source->hasExtraProperties()) {
-        auto result = PropertyWalk::forEachOwnPropertyInline(vm, source, PropertyWalk::Filter::StringsAndSymbols, [&](const PropertyWalk::OwnProperty& property) {
+        auto append = [&](const PropertyWalk::OwnProperty& property) {
             properties.append(property.name, property.value, property.attributes);
             return IterationStatus::Continue;
-        });
+        };
+        auto result = PropertyWalk::forEachOwnPropertyInline(vm, source, PropertyWalk::Filter::StringsAndSymbols, append);
+        if (result == PropertyWalk::Result::NeedsGenericPath)
+            result = PropertyWalk::forEachOwnDescriptor(vm, source, append);
         return result == PropertyWalk::Result::Completed;
     }
 

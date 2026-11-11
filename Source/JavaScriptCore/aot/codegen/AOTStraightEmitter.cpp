@@ -35,6 +35,7 @@ static bool crossesEntryOfStraightUnit(Representation representation)
     case Representation::JSValue:
     case Representation::Cell:
     case Representation::Int32:
+    case Representation::Int64:
     case Representation::Boolean:
     case Representation::Double:
         return true;
@@ -720,6 +721,10 @@ void StraightEmitter::boxInForm(Representation representation, GPRReg word)
             m_jit->or64(tag, word);
         });
         return;
+    case Representation::Int64:
+        m_jit->convertInt64ToDouble(word, conversionFPR);
+        boxDouble(conversionFPR, word);
+        return;
     case Representation::Boolean:
         m_jit->or32(CCallHelpers::TrustedImm32(JSValue::ValueFalse), word);
         return;
@@ -741,6 +746,16 @@ void StraightEmitter::unboxIntoForm(Representation representation, GPRReg word)
         m_jit->truncateDoubleToInt32(conversionFPR, word);
         isInt32.link(m_jit);
         m_jit->zeroExtend32ToWord(word, word);
+        return;
+    }
+    case Representation::Int64: {
+        CCallHelpers::Jump isInt32 = m_jit->branchIfInt32(word);
+        m_jit->unboxDoubleWithoutAssertions(word, word, conversionFPR);
+        m_jit->truncateDoubleToInt64(conversionFPR, word);
+        CCallHelpers::Jump done = m_jit->jump();
+        isInt32.link(m_jit);
+        m_jit->signExtend32ToPtr(word, word);
+        done.link(m_jit);
         return;
     }
     case Representation::Boolean:
@@ -1133,7 +1148,7 @@ void StraightEmitter::generate(CCallHelpers& jit, const ArgumentLocations& locat
             return;
         if (Vector<ImportCheck, 8> checks = importChecksFrom(block); checks.size() >= fewestImportChecksInList) {
             endOfImportChecks = block.id().index() + 2 * static_cast<uint32_t>(checks.size());
-            generateImportChecks(block, WTF::move(checks));
+            generateImportChecks(block, checks.span());
             return;
         }
         generateBlock(block);
@@ -1144,7 +1159,6 @@ void StraightEmitter::generate(CCallHelpers& jit, const ArgumentLocations& locat
         return;
     for (JumpToBlock& jump : m_jumps)
         jump.jump.linkTo(m_labels[jump.block.index()], &jit);
-    writeListsOfImportChecks();
 }
 
 std::optional<StraightEmitter::ImportCheck> StraightEmitter::importCheckIn(BodyBlock block) const
@@ -1197,16 +1211,18 @@ Vector<StraightEmitter::ImportCheck, 8> StraightEmitter::importChecksFrom(BodyBl
     return checks;
 }
 
-void StraightEmitter::generateImportChecks(BodyBlock first, Vector<ImportCheck, 8>&& checks)
+void StraightEmitter::generateImportChecks(BodyBlock first, std::span<const ImportCheck> checks)
 {
     uint32_t numberOfChecks = static_cast<uint32_t>(checks.size());
     m_block = first;
     m_landingPadOfBlockPlusOne = 0;
     m_valueCopiedInRegister = { };
     m_labels[first.id().index()] = m_jit->label();
-    ListOfImportChecks list;
-    list.entry = static_cast<uint16_t>(firstEntryOfListOfImportChecks + m_listsOfImportChecks.size());
-    list.checks = WTF::move(checks);
+    Vector<uint32_t, 16> variablesAndFailures;
+    for (const ImportCheck& check : checks) {
+        variablesAndFailures.append(check.variable.index());
+        variablesAndFailures.append(check.failure.index());
+    }
     Origin origin;
     for (uint32_t index = 0; index < numberOfChecks; ++index) {
         BodyBlock block = m_index.block(BlockID(first.id().index() + 2 * index));
@@ -1215,22 +1231,8 @@ void StraightEmitter::generateImportChecks(BodyBlock first, Vector<ImportCheck, 
         if (!index)
             origin = m_index.value(m_index.block(BlockID(block.id().index() + 1)).firstValue()).origin();
     }
-    GPRReg pairs = operationArgumentGPR(1);
-    m_records.stubCalls.moveAddressOfFunction(m_unit, list.entry, pairs);
-    StraightArgument arguments[] { StraightArgument::inRegister(pairs), StraightArgument::word(numberOfChecks) };
+    StraightArgument arguments[] { StraightArgument::number(m_records.mentions.request(RequestKind::ImportChecks, variablesAndFailures)) };
     callOperation(origin, RuntimeOperation::ThrowIfImportIsMissing, arguments, { });
-    m_listsOfImportChecks.append(WTF::move(list));
-}
-
-void StraightEmitter::writeListsOfImportChecks()
-{
-    for (const ListOfImportChecks& list : m_listsOfImportChecks) {
-        m_records.entries.append(RecordedEntry { list.entry, m_jit->label() });
-        for (const ImportCheck& check : list.checks) {
-            m_records.relocations.emitNumber32({ SymbolSpace::Number, m_records.mentions.add(NumberSpace::Variable, check.variable) });
-            m_jit->m_assembler.buffer().putInt(static_cast<int32_t>(check.failure.index()));
-        }
-    }
 }
 
 void StraightEmitter::generateBlock(BodyBlock block)
@@ -1445,7 +1447,11 @@ void StraightEmitter::jumpTo(CCallHelpers::Jump jump, BlockID to)
 void StraightEmitter::tearDownFrame()
 {
     RELEASE_ASSERT(!m_valueInRegister);
+#if CPU(X86_64)
+    m_jit->m_assembler.leave();
+#else
     m_jit->emitFunctionEpilogue();
+#endif
 }
 
 void StraightEmitter::branchOnCondition(ValueID condition, bool jumpsIfTrue, BlockID target)

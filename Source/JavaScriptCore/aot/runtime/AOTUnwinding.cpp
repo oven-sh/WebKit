@@ -173,7 +173,7 @@ static void finishAtEndOfRun(CompiledUnwindResult& result, Instance* instance, C
     if (result.runEnd.adapterFrame) {
         copyStubSavedRegisters(record, bufferSlots, result.runEnd.adapterFrame, AdapterFrame::savedRegisters);
         if (leftFrame)
-            instance->coroutines.frameThatMayContinue = nullptr;
+            instance->coroutines.resumableFrame = nullptr;
     }
 
     result.hasLeftRun = true;
@@ -222,7 +222,7 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
                     finishInAwaitedCall(result, *instance, callFrame, *site);
                     return result;
                 }
-                if (const HandlerRecord* handler = site->exceptionHandler()) {
+                if (const HandlerRecord* handler = site->exceptionHandler(image)) {
                     void* code = const_cast<uint8_t*>(image.codeOf(site->code.index())) + handler->codeOffset;
                     finishAtHandler(result, *instance, { callFrame, code, kindOf(handler->type), place.framePointer }, site->frame.frameSizeInBytes());
                     result.siteOfHandler = place;
@@ -368,7 +368,7 @@ static bool findCatchInRun(CompiledFrameIterator& frames)
         if (frames.asyncGeneratorStubFrameLeft())
             return true;
         const auto& site = frames.callSite();
-        const HandlerRecord* handler = site.exceptionHandler();
+        const HandlerRecord* handler = frames.exceptionHandler();
         if (handler && kindOf(handler->type) == CompiledHandlerKind::Catch)
             return true;
         if (site.rejectsOnThrow || site.site.isAwaited())
@@ -414,7 +414,7 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
         } else {
             if (site->site.isAwaited())
                 return HandlerType::Catch;
-            const HandlerRecord* handler = site->exceptionHandler();
+            const HandlerRecord* handler = site->exceptionHandler(*state.image);
             if (handler && (search == HandlerSearch::Nearest || handler->type != HandlerType::Finally))
                 return handler->type;
             if (site->rejectsOnThrow)

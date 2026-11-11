@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArrivals.h"
+#include "AOTBitVector.h"
 #include "AOTCallingConventions.h"
 #include "AOTFacts.h"
 #include "AOTIRProgram.h"
@@ -24,7 +25,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <optional>
-#include <wtf/BitVector.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/StringPrintStream.h>
 
@@ -546,7 +546,7 @@ TypeID CodeTypeVerifier::typeByResultRule(ValueID id, const Operation& operation
 }
 
 static constexpr OpcodeSet opcodesWhosePayloadIsHeldByTypeVerifier {
-    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetStaticFieldOrAbsent, Opcode::GetValueAtSiteOrAbsent, Opcode::GetOwnValueUnderKeyOrAbsent, Opcode::GetElementInStorageOrAbsent, Opcode::GetWatchedBuiltinValueOrAbsent, Opcode::EmptyArgumentList, Opcode::NewFormatterWithPattern
+    Opcode::Unspecified, Opcode::GetHeapFrameWord, Opcode::GetStaticFieldOrAbsent, Opcode::GetValueAtSiteOrAbsent, Opcode::GetOwnValueUnderKeyOrAbsent, Opcode::GetKeyedValueOrAbsent, Opcode::GetValueUnderKeyOrAbsent, Opcode::GetElementInStorageOrAbsent, Opcode::GetWatchedBuiltinValueOrAbsent, Opcode::EmptyArgumentList, Opcode::NewFormatterWithPattern
 };
 static_assert([]() consteval {
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -566,6 +566,8 @@ void CodeTypeVerifier::verifyTypeReadFromPayload(BlockID block, ValueID id, cons
     case Opcode::GetStaticFieldOrAbsent:
     case Opcode::GetValueAtSiteOrAbsent:
     case Opcode::GetOwnValueUnderKeyOrAbsent:
+    case Opcode::GetKeyedValueOrAbsent:
+    case Opcode::GetValueUnderKeyOrAbsent:
     case Opcode::GetElementInStorageOrAbsent:
     case Opcode::GetWatchedBuiltinValueOrAbsent:
         if (!m_types.isSubset(m_types.withPrimitives(TypeTable::anything, Primitive::Absent), stated))

@@ -162,7 +162,10 @@ void RuntimeIntrinsicEmitter::generatePutInternalField(const ValueContext& value
     m_out.store64(boxedValue.value(), internalField(value.value()));
     CellPointer object = cellOperand(value->objectOperand());
     barrierAfterStore(value, object, typeOf(stored));
-    defineAs(value, get(stored), typeOf(stored));
+    if (m_code.useCountOf(value.id()))
+        defineAs(value, get(stored), typeOf(stored));
+    else
+        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
 }
 
 } } } // namespace JSC::AOT::Typed

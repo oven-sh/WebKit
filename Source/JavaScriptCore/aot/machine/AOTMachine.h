@@ -278,6 +278,8 @@ enum class OperationFlag : uint16_t {
     ReadsWordFilledOnce = 1 << 8,
     ExtendsWordThatIsNotNegative = 1 << 9,
     UpperHalfMayBeSet = 1 << 10,
+    HasOpaqueReader = 1 << 11,
+    ScalesIndexOfSum = 1 << 12,
 };
 
 struct SwitchData {
@@ -319,9 +321,11 @@ public:
     void markAsNarrowReference() { m_flags |= static_cast<uint16_t>(OperationFlag::IsNarrowReference); }
 
     unsigned useCount() const { return m_useCount; }
-    ALWAYS_INLINE void gainUse()
+    static constexpr uint16_t opaqueReadFlags = static_cast<uint16_t>(OperationFlag::UpperHalfIsRead) | static_cast<uint16_t>(OperationFlag::HasOpaqueReader);
+
+    ALWAYS_INLINE void gainUse(uint16_t flagsOfRead = opaqueReadFlags)
     {
-        if (gainUseLeavingChildrenUncounted())
+        if (gainUseLeavingChildrenUncounted(flagsOfRead))
             countChildrenAtFirstUse();
     }
     JS_EXPORT_PRIVATE void loseUse();
@@ -451,9 +455,9 @@ protected:
     {
     }
 
-    ALWAYS_INLINE bool gainUseLeavingChildrenUncounted()
+    ALWAYS_INLINE bool gainUseLeavingChildrenUncounted(uint16_t flagsOfRead = opaqueReadFlags)
     {
-        m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfIsRead);
+        m_flags |= flagsOfRead;
         if (m_useCount) {
             if (m_useCount != std::numeric_limits<uint16_t>::max())
                 ++m_useCount;
@@ -658,6 +662,8 @@ public:
     void setSharesLatePath(bool value) { setBit(SharesLatePath, value); }
     bool sharesLatePath() const { return bit(SharesLatePath); }
     bool failsWhenPredicateIsZero() const { return bit(FailsWhenPredicateIsZero); }
+    void setClearsUpperHalf(bool value) { setBit(ClearsUpperHalf, value); }
+    bool clearsUpperHalf() const { return bit(ClearsUpperHalf); }
     void setBringsOperandsToTheirRegisters(bool value) { setBit(BringsOperandsToTheirRegisters, value); }
     bool bringsOperandsToTheirRegisters() const { return bit(BringsOperandsToTheirRegisters); }
     JS_EXPORT_PRIVATE void leaveOperandsWhereTheyLie();
@@ -691,6 +697,7 @@ private:
         TestsStackAheadOfFramedPart = 1 << 10,
         FailsWhenPredicateIsZero = 1 << 11,
         ShowsRegistersToCollector = 1 << 12,
+        ClearsUpperHalf = 1 << 13,
     };
 
     struct SuccessorClobber {
@@ -930,6 +937,7 @@ struct ProcedureTraits {
     bool fallsIntoWhatLiesBehind { false };
     bool chargesForCalleeSaves { false };
     bool mayOmitFrameRecord { false };
+    bool mayJumpOverUnlikelySides { false };
     bool checksAllocation { false };
     bool shouldUseFallbackBlockOrder { false };
     bool shouldDropPatchOnlySaves { false };
@@ -1043,6 +1051,13 @@ public:
     COLD void stopAtStoreOverLoadThatStands(const Operation* store);
     COLD void stopAtStoresThatWayLeadsToAfterAll();
     bool keepsStoresToLookAtAgain() const { return !m_storesOverLoadsWhereNoWayLed.isEmpty(); }
+
+    ALWAYS_INLINE void noteWordName(Operation* extension);
+    std::span<Operation* const> namesOfWords() const { return m_namesOfWords.span(); }
+    void noteOwnShiftOfSum(Operation* sum, Operation* shift) { m_ownShiftsOfSums.append(m_arena, { sum, shift }); }
+    void separateShiftsOfSums();
+    ALWAYS_INLINE void noteUpperHalfHandedOn(Operation* upsilon);
+    void settleUpperHalvesOfPhis();
 
     JS_EXPORT_PRIVATE Block* addEntrypoint(uint16_t id);
     std::span<const Entrypoint> entrypoints() const { return m_entrypoints.span(); }
@@ -1169,6 +1184,9 @@ private:
     ArenaVector<Block*> m_blocksBegunBeforeAnythingLedToThem;
     ArenaVector<const Operation*> m_storesOverLoadsWhereNoWayLed;
     ArenaVector<Operation*> m_operations;
+    ArenaVector<Operation*> m_upsilonsOfWordsBetweenPhis;
+    ArenaVector<Operation*> m_namesOfWords;
+    ArenaVector<std::pair<Operation*, Operation*>> m_ownShiftsOfSums;
     ArenaVector<Entrypoint> m_entrypoints;
     ArenaVector<std::span<const Type>> m_tuples;
     ArenaVector<StackSlot*> m_stackSlots;

@@ -300,6 +300,26 @@ TypeID wholeRemainderType(TypeArena& types, Range dividends, Range divisors)
     return naturalTypeOfIntegers(types, remainders.isEmpty() ? Range::one(0) : remainders);
 }
 
+std::optional<Range> rangeOfProduct(Range multiplicands, Range multipliers)
+{
+    Range products = Range::empty();
+    for (int64_t multiplicand : { multiplicands.minimum, multiplicands.maximum }) {
+        for (int64_t multiplier : { multipliers.minimum, multipliers.maximum }) {
+            CheckedInt64 product = CheckedInt64(multiplicand) * multiplier;
+            if (product.hasOverflowed())
+                return std::nullopt;
+            products = products.unionWith(Range::one(product.value()));
+        }
+    }
+    return products;
+}
+
+TypeID wholeProductType(TypeArena& types, Range multiplicands, Range multipliers)
+{
+    std::optional<Range> products = rangeOfProduct(multiplicands, multipliers);
+    return products && products->isSubsetOf(Range::exact()) ? naturalTypeOfIntegers(types, *products) : TypeID();
+}
+
 static int64_t floorOfIntegerQuotient(int64_t dividend, int64_t divisor)
 {
     int64_t quotient = dividend / divisor;
@@ -330,6 +350,8 @@ TypeID integerQuotientType(TypeArena& types, Range dividends, Range divisors, Qu
     if (divisors.contains(0) && !convertsToInt32)
         return { };
     Range quotients = divisors.contains(0) ? quotientsConvertedToInt32WhereDivisorMayBeZero(dividends, divisors) : quotientsRoundedEitherWay(dividends, divisors);
+    if (rounding == QuotientRounding::Floor && divisors.isSingleValue() && divisors.minimum > 0 && !dividends.isSubsetOf(Range::exact()))
+        quotients = { floorOfIntegerQuotient(dividends.minimum, divisors.minimum), floorOfIntegerQuotient(dividends.maximum, divisors.minimum) };
     if (convertsToInt32 && !quotients.isSubsetOf(Range::int32()))
         return TypeTable::int32;
     if (!quotients.isSubsetOf(Range::exact()))

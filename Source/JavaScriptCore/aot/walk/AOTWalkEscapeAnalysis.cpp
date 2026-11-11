@@ -16,8 +16,11 @@
 #include "AOTOpcodeSets.h"
 #include "AOTOperandKinds.h"
 #include "AOTRepresentation.h"
+#include "AOTSlotPlan.h"
 #include "AOTSweep.h"
+#include "AOTWalkBirths.h"
 #include "AOTWalkKnown.h"
+#include "AOTWalkTextBuilders.h"
 #include <algorithm>
 #include <optional>
 
@@ -152,7 +155,7 @@ static void noteWhatNewObjectFillsIn(Walker& walker, Reference object, const Ope
         walker.noteThatUnitMakesScope();
     state.noteShape(object, isEnvironment ? walker.types().forEnvironment(layout) : walker.types().forLayout(layout));
     if (!isEnvironment) {
-        OptionSet<CellFact> facts { CellFact::NotFrozen };
+        OptionSet<CellFact> facts { CellFact::NotFrozen, CellFact::IsExtensible };
         if (!made.prototypeOperand())
             facts.add(CellFact::HasLayoutPrototype);
         if (isAsAllocated)
@@ -199,6 +202,12 @@ static Reference keyOfLengthOfFreshList(Walker& walker)
     Draft key(Opcode::String);
     key.setString(walker.program().stringOf(BuiltinNames::length));
     return walker.constant(WTF::move(key));
+}
+
+bool isListOfKnownLength(Walker& walker, const WalkState& state, Reference list)
+{
+    Reference length = state.element(list, keyOfLengthOfFreshList(walker));
+    return length ? length.isConstant() : lengthOfListMadeInSight(walker, state, list).has_value();
 }
 
 static void noteWhatNewArrayFillsIn(Walker& walker, Reference object, const Operation& made)
@@ -348,6 +357,16 @@ static std::optional<std::span<const FieldIndex>> fieldsListedByOrderWordInEscap
     return orders.order(layout, orderOf(orderWord)).first(count);
 }
 
+bool orderWordContainsField(const Walker& walker, Reference object, uint32_t orderWord, FieldIndex field)
+{
+    const Operation& made = walker.code().at(object.id());
+    std::optional<PlacedAllocation> placed = walker.plan().allocation(walker.program(), made.layout(), made.fields());
+    if (placed && orderWord == placed->orderWord && std::ranges::contains(made.fields(), field))
+        return true;
+    std::optional<std::span<const FieldIndex>> listed = fieldsListedByOrderWordInEscapeAnalysis(walker, made.layout(), orderWord);
+    return listed && std::ranges::contains(*listed, field);
+}
+
 std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfFreshObject(Walker& walker, Reference name)
 {
     Reference object = freshObjectNamedBy(walker, name);
@@ -383,11 +402,140 @@ std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfFreshObject(Walker& 
     return properties;
 }
 
+Reference allocateFilledObject(Walker& walker, Reference returned, Origin origin)
+{
+    if (!returned || !returned.isValue() || walker.isUnreachable() || !walker.has(Mechanism::EscapeAnalysis) || !walker.has(Mechanism::TypedOperations))
+        return returned;
+    const Program& program = walker.program();
+    const Plan& plan = walker.plan();
+    const Code& code = walker.code();
+    const WalkState& state = walker.state();
+    ValueID cell = underlyingCellOf(code, returned.id());
+    if (code.isConstant(cell) || code.at(cell).opcode != Opcode::NewObject || !walker.wasBuiltInCurrentFrame(cell))
+        return returned;
+    Reference object = Reference::value(cell);
+    const Operation& made = code.at(cell);
+    LayoutID layout = made.layout();
+    const PlannedLayout& planned = plan.layout(layout);
+    LayoutKind kind = program.at(layout).kind;
+    if ((kind != LayoutKind::Instance && kind != LayoutKind::Record) || !planned.holdsCompiledObjects() || planned.environmentOfDeferredClosures || planned.cellsAreHandedBack)
+        return returned;
+    ValueID prototype = made.prototypeOperand();
+    if (!state.isFresh(object) || (prototype && program.prototypeMaySelectOtherClass(layout)) || made.storage() != AllocationStorage::Heap || !walker.fillersOfAllocation(object).empty())
+        return returned;
+    std::optional<uint32_t> orderWord = state.orderWordOf(object);
+    OptionSet<CellFact> known = state.cellFacts(object);
+    if (!orderWord || !known.containsAll({ CellFact::NotFrozen, CellFact::IsExtensible, CellFact::NoFieldOutsideSlot }) || (!prototype && !known.contains(CellFact::HasLayoutPrototype)))
+        return returned;
+    std::optional<std::span<const FieldIndex>> fields = fieldsListedByOrderWordInEscapeAnalysis(walker, layout, *orderWord);
+    if (!fields || fields->size() <= made.fields().size())
+        return returned;
+
+    Vector<Reference, 16> values;
+    for (FieldIndex field : *fields) {
+        Reference value = state.slot(object, { layout, field });
+        TypeID type = value && value.isRecord() && !isClosureLeftUnmade(walker, value) ? walker.typeOf(value) : TypeID();
+        if (!type || (walker.types().at(type).primitives & Primitive::Absent) || planned.slots[field].storage != SlotStorage::Inline || !valueFitsSlot(walker, { layout, field }, value))
+            return returned;
+        if (walker.hasStringsInBuilders() && isStringInBuilder(walker, value))
+            return returned;
+        values.append(value);
+    }
+    static constexpr ptrdiff_t mostWaitingValues = 16;
+    if (std::ranges::count_if(values, [](Reference value) { return value.isValue(); }) > mostWaitingValues)
+        return returned;
+    std::optional<PlacedAllocation> placed = plan.allocation(program, layout, *fields);
+    if (!placed || placed->orderWord != *orderWord)
+        return returned;
+    bool bearsNoMark = !placed->isBornUnfinished && known.contains(CellFact::BearsNoMark);
+    bool hasLayoutPrototype = known.contains(CellFact::HasLayoutPrototype);
+
+    origin.isTailCall = false;
+    Draft allocation(Opcode::NewObject, origin);
+    allocation.standsForNoValueOfInput = true;
+    allocation.setLayout(layout);
+    if (prototype)
+        allocation.setPrototypeOperand(code.isConstant(prototype) ? Reference::constant(prototype) : Reference::value(prototype));
+    allocation.setFields(*fields);
+    allocation.setValuesOperands(values.span());
+    walker.chooseConservativeFields(allocation);
+    allocation.setEndsNoGuards(made.endsNoGuards());
+    if (walker.makerLacksWhatIsHeldFilled(allocation))
+        return returned;
+    Reference filled = walker.build(WTF::move(allocation));
+    if (!filled)
+        return returned;
+    noteFreshObject(walker, filled, fields->size());
+    if (bearsNoMark)
+        walker.state().recordCellFacts(filled, CellFact::BearsNoMark);
+    if (hasLayoutPrototype)
+        walker.state().recordCellFacts(filled, CellFact::HasLayoutPrototype);
+    return filled;
+}
+
+Reference allocateFilledObjectAtReturn(Walker& walker, Reference returned, Origin origin)
+{
+    const Function& maker = walker.program().at(walker.currentFunction());
+    return maker.isCoroutine() || maker.isModuleBody() ? returned : allocateFilledObject(walker, returned, origin);
+}
+
 static constexpr OpcodeSet readsThatProveNoSlotFilledInEscapeAnalysis { Opcode::GetSlotOrUndefined, Opcode::GetDeferredClosureSlotOrUndefined };
+
+static bool mayMeetAsSlot(Walker& walker, Reference value, Reference holder)
+{
+    const Code& code = walker.code();
+    TypeID type = value && value.isRecord() && !isClosureLeftUnmade(walker, value) ? walker.typeOf(value) : TypeID();
+    return type && !(walker.types().at(type).primitives & Primitive::Absent)
+        && !(value.isValue() && (readsThatProveNoSlotFilledInEscapeAnalysis.contains(code.at(value.id()).opcode) || underlyingCellOf(code, value.id()) == holder.id()));
+}
+
+static constexpr OpcodeSet opcodesOfListsThatMeet { Opcode::NewArray, Opcode::Data };
+
+static std::optional<ObjectsThatMeet> findListsThatMeetAsOne(Walker& walker, std::span<const WalkState* const> ways, std::span<const Reference> arguments, uint32_t firstRecordBehindParting)
+{
+    const Code& code = walker.code();
+    ObjectsThatMeet met;
+    Vector<Reference, 4> lists;
+    for (size_t way = 0; way < ways.size(); ++way) {
+        ValueID cell = arguments[way] && arguments[way].isValue() ? underlyingCellOf(code, arguments[way].id()) : ValueID();
+        if (!cell || code.isConstant(cell) || cell.index() < firstRecordBehindParting || !opcodesOfListsThatMeet.contains(code.at(cell).opcode))
+            return std::nullopt;
+        Reference list = Reference::value(cell);
+        const WalkState& state = *ways[way];
+        TypeID shape = state.isFresh(list) ? state.shapeOf(list) : TypeID();
+        Reference length = shape ? state.element(list, keyOfLengthOfFreshList(walker)) : Reference();
+        if (std::optional<uint32_t> written = shape && !length ? lengthOfListMadeInSight(walker, state, list) : std::nullopt)
+            length = positionInFreshList(walker, *written);
+        if (!length || !length.isConstant() || code.at(length.id()).opcode != Opcode::Integer || (way && length != met.lengthOfLists))
+            return std::nullopt;
+        met.lengthOfLists = length;
+        met.shape = !way || shape == met.shape ? shape : walker.types().unionOf(met.shape, shape);
+        met.facts = way ? met.facts & state.cellFacts(list) : state.cellFacts(list);
+        lists.append(list);
+    }
+
+    uint32_t length = static_cast<uint32_t>(code.at(met.lengthOfLists.id()).integer());
+    for (uint32_t position = 0; position < length; ++position) {
+        ObjectsThatMeet::Slot slot { { }, positionInFreshList(walker, position), { }, { } };
+        for (size_t way = 0; way < ways.size(); ++way) {
+            Reference value = ways[way]->element(lists[way], slot.position);
+            if (!value)
+                value = elementWrittenInListMadeInSight(walker, *ways[way], lists[way], position);
+            if (!mayMeetAsSlot(walker, value, lists[way]))
+                return std::nullopt;
+            slot.valueOnEveryWay = !way || value == slot.valueOnEveryWay ? value : Reference();
+            slot.valuesOfWays.append(value);
+        }
+        met.slots.append(WTF::move(slot));
+    }
+    return met;
+}
 
 std::optional<ObjectsThatMeet> findObjectsThatMeetAsOne(Walker& walker, std::span<const WalkState* const> ways, std::span<const Reference> arguments, uint32_t firstRecordBehindParting)
 {
     const Code& code = walker.code();
+    if (ValueID cell = arguments[0] && arguments[0].isValue() ? underlyingCellOf(code, arguments[0].id()) : ValueID(); cell && !code.isConstant(cell) && opcodesOfListsThatMeet.contains(code.at(cell).opcode))
+        return findListsThatMeetAsOne(walker, ways, arguments, firstRecordBehindParting);
     ObjectsThatMeet met;
     LayoutID layout;
     Vector<Reference, 4> cells;
@@ -419,13 +567,11 @@ std::optional<ObjectsThatMeet> findObjectsThatMeetAsOne(Walker& walker, std::spa
     }
 
     for (const WalkState::SlotOfObject& first : ways[0]->listSlotsOf(cells[0])) {
-        ObjectsThatMeet::Slot slot { first.field, first.value, { } };
+        ObjectsThatMeet::Slot slot { first.field, { }, first.value, { } };
         bool everyWayKnowsIt = true;
         for (size_t way = 0; way < ways.size() && everyWayKnowsIt; ++way) {
             Reference value = ways[way]->slot(cells[way], first.field);
-            TypeID type = value && value.isRecord() && !isClosureLeftUnmade(walker, value) ? walker.typeOf(value) : TypeID();
-            everyWayKnowsIt = type && !(walker.types().at(type).primitives & Primitive::Absent)
-                && !(value.isValue() && (readsThatProveNoSlotFilledInEscapeAnalysis.contains(code.at(value.id()).opcode) || underlyingCellOf(code, value.id()) == cells[way].id()));
+            everyWayKnowsIt = mayMeetAsSlot(walker, value, cells[way]);
             if (value != first.value)
                 slot.valueOnEveryWay = { };
             slot.valuesOfWays.append(value);
@@ -441,10 +587,18 @@ void noteObjectsThatHaveMetAsOne(Walker& walker, Reference parameter, const Obje
     WalkState& state = walker.state();
     state.noteShape(parameter, met.shape);
     state.recordCellFacts(parameter, met.facts);
-    state.noteOrderWord(parameter, met.orderWord);
+    if (met.lengthOfLists)
+        state.noteElement(parameter, keyOfLengthOfFreshList(walker), met.lengthOfLists);
+    else
+        state.noteOrderWord(parameter, met.orderWord);
     size_t numberOfParametersTaken = 0;
-    for (const ObjectsThatMeet::Slot& slot : met.slots)
-        state.noteSlot(parameter, slot.field, slot.valueOnEveryWay ? slot.valueOnEveryWay : parametersOfSlots[numberOfParametersTaken++]);
+    for (const ObjectsThatMeet::Slot& slot : met.slots) {
+        Reference value = slot.valueOnEveryWay ? slot.valueOnEveryWay : parametersOfSlots[numberOfParametersTaken++];
+        if (met.lengthOfLists)
+            state.noteElement(parameter, slot.position, value);
+        else
+            state.noteSlot(parameter, slot.field, value);
+    }
     state.noteFresh(parameter);
     walker.recordMergedFreshObject(parameter.id());
 }
@@ -691,7 +845,7 @@ static Reference freshRecordThatHoldsNothingButFields(Walker& walker, Reference 
         return { };
     if (!orderWordTellsOwnKeysOf(walker, made.layout()))
         return { };
-    return state.cellFacts(object).containsAll({ CellFact::NotFrozen, CellFact::NoFieldOutsideSlot }) ? object : Reference();
+    return state.cellFacts(object).containsAll({ CellFact::NotFrozen, CellFact::IsExtensible, CellFact::NoFieldOutsideSlot }) ? object : Reference();
 }
 
 static bool followDeleteOffFreshObject(Walker& walker, const BodyValue& removal)
@@ -868,6 +1022,8 @@ static bool followStoreIntoFreshObject(Walker& walker, const Draft& store, const
     if (!field)
         return false;
     state.noteSlot(written.object, *field, value);
+    if (walker.code().at(written.object.id()).opcode == Opcode::NewObject && walker.runsInIterations())
+        walker.noteStoreIntoUnmadeRecord();
     if (opcode == Opcode::PutSlotOrAdd)
         state.noteOrderWord(written.object, store.orderWordAfter() ? std::optional<uint32_t>(store.orderWordAfter()->value()) : std::nullopt);
     return true;

@@ -10,6 +10,7 @@
 #include "AOTOperationEmitter.h"
 #include "AOTRepresentationRules.h"
 #include "AOTStubsStringLiterals.h"
+#include "AOTStubsStrings.h"
 #include <initializer_list>
 #include <optional>
 #include <span>
@@ -23,6 +24,7 @@ struct CharacterView {
     Condition is8Bit;
     CellPointer owner;
     ValueID possibleRope { };
+    const OperationContext* resolvesAt { nullptr };
     Word32 implFlags { };
 };
 
@@ -77,6 +79,8 @@ public:
     void generateBoundsOfStringSplit(const ValueContext&);
     void generateNewStringSplitArray(const ValueContext&);
     void generateFlattenString(const ValueContext&);
+    void generateTryResolveRope(const ValueContext&);
+    void generateOpenString(const ValueContext&);
     void generateStringRange(const ValueContext&);
     void generateStringOrder(const ValueContext&);
     void generateStringOrderToCharacter(const ValueContext&);
@@ -99,6 +103,8 @@ public:
 
     Word32 word32Of(ValueID);
     String textOf(StringID) const;
+    void recordInlined(StringID);
+    void recordInlined(char16_t codeUnit);
 
     Word32 lengthOf(ValueID string);
     Word32 lengthOf(CellPointer string);
@@ -118,6 +124,7 @@ public:
 
     Word32 codeUnitAt(const CharacterView&, Word32 index, std::optional<Integer> indexInWholeNumber = std::nullopt);
     Word32 codeUnitOfPossibleRope(const CharacterView&, Word32 index);
+    CharacterView viewForReadOfCodeUnit(const OperationContext&, ValueID string);
     void passOpenedRope(ValueID string, BlockID from, LValue characters, LValue implFlags);
     Word32 codePointAt(const CharacterView&, Word32 index);
     CellPointer stringFromCodeUnit(const OperationContext&, Word32 codeUnit);
@@ -134,6 +141,10 @@ public:
     Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, std::optional<FlatStringCell> flatSubject = std::nullopt, bool everyCellIsString = false, std::optional<Word32> lengthOfSubject = std::nullopt);
     void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets, std::optional<FlatStringCell> flatSubject = std::nullopt, bool everyCellIsString = false, std::optional<Word32> lengthOfSubject = std::nullopt);
     void branchOnEqualsLiteralByStub(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets);
+    bool mayBeNameInLoop(const OperationContext&, const String& text);
+    Condition holdsHeaderOf(CellPointer, StringID);
+    void branchOnHeaderOf(CellPointer, StringID, BlockEdge isEqual);
+    Condition holdsName(CellPointer);
     void makeCellsHoldAtomOf(StringID);
     void makeCellsHoldAtomOf(StringID, const String& text);
     void branchOnTextAt(const CharacterView&, Word32 offset, StringID, BranchTargets);
@@ -152,10 +163,26 @@ public:
             : constant(constant)
         {
         }
+        static StringPart toConvert(Boxed value)
+        {
+            StringPart part { StringID() };
+            part.unconverted = value;
+            return part;
+        }
+        static StringPart ofInteger(Integer value)
+        {
+            StringPart part { StringID() };
+            part.integer = value;
+            return part;
+        }
+        bool isConstant() const { return !cell && !unconverted && !integer; }
 
         std::optional<CellPointer> cell { };
+        std::optional<Boxed> unconverted { };
+        std::optional<Integer> integer { };
         StringID constant { };
     };
+    static std::optional<ConstantsOfConcatenation> chooseConstants(std::span<const StringPart>);
     StringID findNumberedStringConstant(const OperationContext&, ValueID);
     CellPointer concatenate(const OperationContext&, std::span<const StringPart>);
     CellPointer concatenate(const OperationContext& context, std::initializer_list<StringPart> parts) { return concatenate(context, std::span<const StringPart>(parts.begin(), parts.size())); }
@@ -169,16 +196,18 @@ private:
     static constexpr unsigned maxLengthComparedInPlace = maxLengthOfTextComparedInPlace;
 
     CellPointer cellOf(const OperationContext&, const StringPart&);
+    std::optional<CellPointer> tryConcatenateInteger(const OperationContext&, std::span<const StringPart>);
     CellPointer concatenateTwoOrThree(const OperationContext&, std::span<const StringPart>);
     Word32 flagsInImpl(Pointer impl);
     CharacterSource sourceInImpl(Pointer impl);
-    CharacterSource sourceOfRope(const OperationContext&, CellPointer rope, Pointer fiber);
+    CharacterSource sourceOfRope(const OperationContext&, CellPointer rope);
     CharacterView viewOfSource(const CharacterSource&, CellPointer owner);
-    CellPointer substringBaseOf(CellPointer rope);
     Word32 loadCodeUnit(Pointer characters, Word32 index, bool is8Bit, std::optional<Integer> indexInWholeNumber = std::nullopt);
 
     void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, const String& text, BranchTargets, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, std::optional<Word32> lengthOfSubject);
     void branchOnEqualsLiteralByStub(const OperationContext&, ComparedOperand, LValue subject, StringID, const String& text, BranchTargets);
+    bool expectsName(const OperationContext&, const String& text);
+    void continueUnlessHoldsName(CellPointer, StringID, BranchTargets, bool isString);
     void generateEqualsLiteral(const ValueContext&, ComparedOperand, LValue subject, std::optional<FlatStringCell> flatSubject, bool everyCellIsString = false);
     void generateEndsLiteral(const ValueContext&, LiteralEnd);
     void generateFindLiteral(const ValueContext&, SearchDirection);
@@ -200,8 +229,11 @@ private:
         BlockID block;
         Pointer characters;
         Word32 implFlags;
+        bool isRead { false };
     };
     const OpenedRope& openedRopeAt(ValueID string, BlockID) const;
+    CellPointer openPossibleRope(const ValueContext&, CellPointer string);
+    CharacterView viewOfPossibleRope(ValueID string, BlockID, CellPointer);
     Vector<OpenedRope, 4> m_openedRopes;
     UncheckedKeyHashMap<LValue, OpenedString> m_openedStrings;
     Vector<LValue, 2> m_flagsFoundNarrow;

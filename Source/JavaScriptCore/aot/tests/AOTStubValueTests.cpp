@@ -146,7 +146,7 @@ static void testSubstringsFromEveryStateOfTheFreeList()
     AOT_TEST_CHECK(ropes.runner.run(substring(), { string.address(), 2, 5 }).calledOperation);
 }
 
-static void testOneCharacterOfJoinedText()
+static void testJoinedTextCharacter()
 {
     RopeAllocation ropes;
     std::array<uint64_t, maxSingleCharacterString + 1> singleCharacterStrings;
@@ -170,7 +170,7 @@ static void testOneCharacterOfJoinedText()
     AOT_TEST_CHECK(!run.calledOperation && run.result == singleCharacterStrings['y']);
 }
 
-static void testLongKeyOfPairIsJoinedAsText()
+static void testLongPairKeyJoined()
 {
     RopeAllocation ropes;
     std::array<Latin1Character, StringKeyCache::maxCachedKeyLength + 1> letters;
@@ -478,8 +478,24 @@ static void testStrictEqualityInBothForms()
         }
     }
 
-    FakeFlatString bigInt = cellOfType(HeapBigIntType);
-    FakeFlatString otherBigInt = cellOfType(HeapBigIntType);
+    const FakeBigInt zero({ });
+    const FakeBigInt otherZero({ });
+    const FakeBigInt five({ 5 });
+    const FakeBigInt otherFive({ 5 });
+    const FakeBigInt six({ 6 });
+    const FakeBigInt negativeFive({ 5 }, true);
+    const FakeBigInt fiveAndHighDigit({ 5, 1 });
+    const FakeBigInt sixAndHighDigit({ 6, 1 });
+    check(zero.address(), otherZero.address(), true);
+    check(five.address(), otherFive.address(), true);
+    check(five.address(), zero.address(), false);
+    check(five.address(), six.address(), false);
+    check(five.address(), negativeFive.address(), false);
+    check(five.address(), fiveAndHighDigit.address(), false);
+    check(fiveAndHighDigit.address(), sixAndHighDigit.address(), false);
+
+    FakeBigInt bigInt({ 5, 1 });
+    FakeBigInt otherBigInt({ 5, 2 });
     runner.recordCallsOf(Entry::operationAOTCompareStrictEq);
     for (uint64_t answer : { 0, 1 }) {
         runner.setResultOfRecordedOperation(answer);
@@ -518,7 +534,7 @@ static void testMovesOfFewBytes()
     }
 }
 
-static void testMovesOfElementsDown()
+static void testMoveElementsDown()
 {
     StubRunner runner;
     runner.install(Entry::operationAOTMoveBytes, operationAOTMoveBytes);
@@ -537,10 +553,10 @@ std::span<const NativeTest> stubValueTests()
 {
     static constexpr NativeTest tests[] = {
         { "stubs/move-few-bytes/every-length-and-overlap"_s, ImageTests::whenExecutable<testMovesOfFewBytes> },
-        { "stubs/move-elements-down/every-count"_s, ImageTests::whenExecutable<testMovesOfElementsDown> },
+        { "stubs/move-elements-down/every-count"_s, ImageTests::whenExecutable<testMoveElementsDown> },
         { "stubs/concatenate/ropes-from-every-state-of-the-free-list"_s, ImageTests::whenExecutable<testRopesFromEveryStateOfTheFreeList> },
-        { "stubs/concatenate/long-key-of-pair"_s, ImageTests::whenExecutable<testLongKeyOfPairIsJoinedAsText> },
-        { "stubs/substring/one-character-of-joined-text"_s, ImageTests::whenExecutable<testOneCharacterOfJoinedText> },
+        { "stubs/concatenate/long-key-of-pair"_s, ImageTests::whenExecutable<testLongPairKeyJoined> },
+        { "stubs/substring/one-character-of-joined-text"_s, ImageTests::whenExecutable<testJoinedTextCharacter> },
         { "stubs/substring/ropes-from-every-state-of-the-free-list"_s, ImageTests::whenExecutable<testSubstringsFromEveryStateOfTheFreeList> },
         { "stubs/to-boolean/doubles"_s, ImageTests::whenExecutable<testTruthinessOfDoubles> },
         { "stubs/check-proof-of-kinds/a-value-passes-where-its-kind-is-among-them-and-nowhere-else"_s, ImageTests::whenExecutable<testKindsThatPassTheCheckOfAProof> },

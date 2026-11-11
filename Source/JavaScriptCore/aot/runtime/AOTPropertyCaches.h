@@ -184,6 +184,18 @@ private:
     Vector<std::pair<JSType, BuiltinClassID>, 2> m_classes;
 };
 
+class ErrorsWithMessage final {
+    WTF_MAKE_NONCOPYABLE(ErrorsWithMessage);
+public:
+    explicit ErrorsWithMessage(State&);
+
+    size_t removeDeadEntries(VM&, CollectionScope);
+    void keepIfRead(Structure*, UniquedStringImpl* uid);
+
+private:
+    State& m_state;
+};
+
 class AnswersAtSites final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(AnswersAtSites);
 public:
@@ -259,7 +271,7 @@ private:
     Vector<uint16_t> m_numbersOfWideAnswersGivenBack;
     uint32_t m_nextStructureToForget { 0 };
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_visitorsPutOut;
-    static constexpr uint8_t requestsThatOpenPage = 3;
+    static constexpr uint8_t requestsThatOpenPage = 8;
     unsigned m_placesInPageShift { 0 };
     uint8_t* m_requestsOfPages { nullptr };
     ChainDependentOwnerID m_ownerID;
@@ -395,7 +407,7 @@ public:
     bool wasChangedOnSomeChain(uint32_t identifierNumber) const { return m_namesChangedOnChains[identifierNumber / 64] >> identifierNumber % 64 & 1; }
     bool storeCreatesOwnField(const Object&, uint32_t identifierNumber) const;
     void didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull);
-    bool mayBeNameOfObjectPrototype(uint32_t identifierNumber) const { return m_namesOfObjectPrototypes[identifierNumber / 64] >> identifierNumber % 64 & 1; }
+    bool mayObjectPrototypeStopStore(uint32_t identifierNumber) const { return m_objectPrototypeStoreStoppers[identifierNumber / 64] >> identifierNumber % 64 & 1; }
     const AbsenceFilter& absenceFilterFor(StructureID id) const { return m_absenceFilters[AbsenceFilter::indexFor(id.bits())]; }
     void rememberNameOfText(UniquedStringImpl*);
     const JSCell*& lastKeyWithoutAtomLike(const JSCell* key) { return m_tables.keysThatCameWithoutAtom[std::bit_cast<uintptr_t>(key) / MarkedBlock::atomSize % std::tuple_size_v<decltype(Tables::keysThatCameWithoutAtom)>]; }
@@ -410,11 +422,13 @@ private:
     using BitPerName = std::array<uint64_t, (FieldTableEntry::maxName + 1) / 64>;
 
     void didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull);
+    void forgetCreations();
 
     struct Tables {
         std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
         BitPerName namesChangedOnChains;
         BitPerName namesOfObjectPrototypes;
+        BitPerName objectPrototypeStoreStoppers;
         std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
         std::array<NameOfText, NameOfText::numberOfEntries> namesOfTexts;
         std::array<const JSCell*, 256> keysThatCameWithoutAtom;
@@ -429,9 +443,11 @@ private:
     std::array<AbsenceFilter, AbsenceFilter::numberOfFilters>& m_absenceFilters { m_tables.absenceFilters };
     uint32_t m_absenceFilterGenerationForStores { 1 };
     uint32_t m_changesUnderNamesOnChains { 0 };
+    uint32_t m_creationGeneration { 1 };
     ObjectsSeen m_filteredObjects;
     BitPerName& m_namesChangedOnChains { m_tables.namesChangedOnChains };
     BitPerName& m_namesOfObjectPrototypes { m_tables.namesOfObjectPrototypes };
+    BitPerName& m_objectPrototypeStoreStoppers { m_tables.objectPrototypeStoreStoppers };
     std::array<uint8_t, MissesOfPairs::numberOfCounters>& m_missesOfPairs { m_tables.missesOfPairs };
     std::array<NameOfText, NameOfText::numberOfEntries>& m_namesOfTexts { m_tables.namesOfTexts };
     bool m_hasInstance { false };
@@ -510,7 +526,7 @@ public:
     void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse, bool stubFollowsFurtherAnswers = false, bool stubJumpsToArmOfAnswer = false);
     void fileOwnPlainValueUnlessFiled(JSObject*, uint32_t identifierNumber);
     static ReadGroupCache::Row* claimReadGroupRow(JSValue, ReadGroupCache&);
-    void fillReadGroupOffset(JSCell*, uint32_t identifierNumber, ReadGroupCache::Row&, uint32_t index);
+    JSValue fillReadGroupOffset(JSCell*, uint32_t identifierNumber, ReadGroupCache::Row&, uint32_t index);
     bool fillAboveFieldLeftOut(uint32_t place, SiteUse, Object&, const CachedName&);
     JSCell* keyForTraps(UniquedStringImpl*);
     void prepareHoldersBeforeLookupsUnder(Symbol*, JSObject* function);
@@ -547,6 +563,7 @@ private:
     SiteCaches m_siteCaches;
     AnswersAtSites m_answersAtSites;
     StructuresBelowBuiltinClasses m_structuresBelowBuiltinClasses;
+    ErrorsWithMessage m_errorsWithMessage;
     uint32_t m_stateOfPeriodsOfSamples { 0 };
     Vector<Addition> m_additionsSinceCollection;
     UncheckedKeyHashMap<UniquedStringImpl*, JSCell*> m_keysForTraps;
@@ -601,8 +618,9 @@ public:
 
     bool shouldMakeStructure(Structure*, UniquedStringImpl*);
     void didMakeStructure(Structure* made) { m_structureMade = made->id(); }
-    void didBeginToFill(VM&, JSObject*);
+    void didBeginToFill(VM&, JSObject*, Structure* structureBefore);
     void finishFilling(VM&);
+    void adoptSharedStructure(VM&, JSObject*);
     bool forget(JSObject*);
     bool mayBeginToFill(JSObject*) const;
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -612,10 +630,17 @@ private:
     static constexpr uint32_t pairsPerSet = 8;
     static constexpr uint32_t numberOfObjectsBeingFilled = 8;
 
+    struct ObjectBeingFilled {
+        JSObject* object { nullptr };
+        StructureID sharedStructure;
+    };
+    static bool adoptSharedStructure(VM&, ObjectBeingFilled&);
+    static void finishFilling(VM&, ObjectBeingFilled);
+
     std::span<uint32_t, numberOfPairs> m_pairs;
     uint32_t m_evictionSeed { 0 };
     StructureID m_structureMade;
-    std::array<JSObject*, numberOfObjectsBeingFilled> m_objectsBeingFilled { };
+    std::array<ObjectBeingFilled, numberOfObjectsBeingFilled> m_objectsBeingFilled { };
     uint32_t m_numberOfObjectsFilled { 0 };
     static constexpr uint32_t numberOfObjectsCounted = 64;
     static constexpr uintptr_t timesMask = 15;

@@ -228,6 +228,7 @@ public:
         return use;
     }
     uint32_t findReadFromInList(const Operation* value, Position) const;
+    uint32_t findReadOutsideUnlikelyRegions(const Operation* value, Position) const;
     ALWAYS_INLINE uint32_t findReadFromAmongLaterReads(const Operation* value, uint32_t use, Position position) const
     {
         const Use* const uses = m_uses;
@@ -570,6 +571,8 @@ public:
     ArenaVector<FirstReadFromHead> m_firstReadsFromHeads;
     mutable ArenaVector<uint32_t> m_numbersOfListsOfReads;
     mutable ArenaVector<std::span<const uint32_t>> m_listsOfReads;
+    mutable ArenaVector<uint32_t> m_numbersOfListsOutsideRareRegions;
+    mutable ArenaVector<std::span<const uint32_t>> m_listsOutsideRareRegions;
     ArenaVector<uint32_t> m_lastSearchThatReachedBlock;
     ArenaVector<const Block*> m_blocksReachedBySearchForWays;
     uint32_t m_numberOfSearchesForWays { 0 };

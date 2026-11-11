@@ -34,6 +34,13 @@ public:
         return result;
     }
 
+    static constexpr ThrowEffect stopsProgram()
+    {
+        ThrowEffect result(false);
+        result.m_mayThrowByRule = true;
+        return result;
+    }
+
     constexpr operator bool() const { return m_mayThrow; }
     constexpr bool otherThanStackOverflow() const { return m_mayThrowOtherThanStackOverflow; }
     constexpr bool byRule() const { return m_mayThrowByRule; }
@@ -178,9 +185,7 @@ public:
             | (effects.mayCallUnknownCode ? callsUnknownCode : 0)
             | (effects.maySuspend ? suspends : 0)
             | (effects.mayBeTerminated ? isTerminated : 0)
-            | (effects.writes.containsOnly(unobservableWriteHeaps) ? 0 : writesObservableState)
-            | (effects.reads.isEmpty() && effects.writes.isEmpty() ? 0 : touchesMemory)
-            | (effects.writes.containsOnly(perObjectHeaps | unobservableWriteHeaps) ? 0 : writesOutsideObjects))
+            | (effects.writes.isEmpty() ? (effects.reads.isEmpty() ? 0 : touchesMemory) : traitsOfWrites(effects)))
     {
     }
 
@@ -220,6 +225,13 @@ public:
     friend constexpr bool operator==(EffectTraits, EffectTraits) = default;
 
 private:
+    static constexpr uint16_t traitsOfWrites(const Effects& effects)
+    {
+        return touchesMemory
+            | (effects.writes.containsOnly(unobservableWriteHeaps) ? 0 : writesObservableState)
+            | (effects.writes.containsOnly(perObjectHeaps | unobservableWriteHeaps) ? 0 : writesOutsideObjects);
+    }
+
     static constexpr uint16_t throws = 1 << 0;
     static constexpr uint16_t throwsByRule = 1 << 1;
     static constexpr uint16_t collects = 1 << 2;

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
@@ -23,6 +24,7 @@
 #include "GetterSetter.h"
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
+#include "JSFunction.h"
 #include "JSLock.h"
 #include "JSMap.h"
 #include "JSMapIterator.h"
@@ -37,7 +39,6 @@
 #include "YarrFlags.h"
 #include "YarrPattern.h"
 #include <optional>
-#include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/AdaptiveStringSearcher.h>
@@ -79,6 +80,7 @@ enum class GrowthOfWork : uint32_t {
     AsksIdentityOfWhatIsHeld = 1 << 14,
     MakesCellsOfCharactersHanded = 1 << 15,
     TouchesOnePlaceOfWhatIsHanded = 1 << 16,
+    RepeatsText = 1 << 17,
 };
 
 static constexpr ASCIILiteral builtinsWhoseWorkGrowsWithWhatIsHanded[] = {
@@ -101,7 +103,13 @@ static constexpr ASCIILiteral builtinsWhoseWorkGrowsWithWhatIsHanded[] = {
     "MathPow"_s, "MathImul"_s, "MathRound"_s, "ArrayPrototypeIndexOf"_s, "ArrayPrototypeFind"_s, "ArrayPrototypeEvery"_s, "ArrayPrototypeReduceRight"_s,
     "ArrayPrototypeFindIndex"_s, "ArrayPrototypeFindLastIndex"_s, "ArrayPrototypeToSorted"_s, "ArrayPrototypeToReversed"_s, "MapPrototypeHas"_s, "WeakSet"_s,
     "WeakSetPrototypeAdd"_s, "WeakSetPrototypeHas"_s, "WeakSetPrototypeDelete"_s, "EncodeURIComponent"_s, "EncodeURI"_s, "DecodeURI"_s, "DecodeURIComponent"_s,
-    "RegExpPrototypeExec"_s, "JSONParse"_s,
+    "RegExpPrototypeExec"_s, "JSONParse"_s, "StringPrototypeRepeat"_s, "StringPrototypePadStart"_s, "StringPrototypePadEnd"_s, "StringPrototypeSubstr"_s,
+    "StringPrototypeCodePointAt"_s, "StringPrototypeConcat"_s, "RegExpPrototypeToString"_s, "ArrayPrototypeFlat"_s, "ArrayPrototypeLastIndexOf"_s,
+    "ArrayPrototypeFindLast"_s,
+};
+
+static constexpr ASCIILiteral textRepeatingBuiltins[] = {
+    "StringPrototypeRepeat"_s, "StringPrototypePadStart"_s, "StringPrototypePadEnd"_s,
 };
 
 static constexpr ASCIILiteral builtinsThatCopyWhatIsHeld[] = {
@@ -117,7 +125,7 @@ static constexpr ASCIILiteral builtinsThatGoThroughWhatIsHandedByItsLength[] = {
     "ArrayPrototypeMap"_s, "ArrayPrototypeFilter"_s, "ArrayPrototypeSort"_s, "ArrayPrototypeForEach"_s, "ArrayPrototypeSome"_s, "ArrayPrototypeReduce"_s, "ArrayPrototypeFlatMap"_s,
     "ArrayFrom"_s, "StringRaw"_s, "ArrayPrototypePop"_s, "ArrayPrototypeShift"_s, "ArrayPrototypeSplice"_s, "ArrayPrototypeReverse"_s, "ArrayPrototypeFill"_s,
     "ArrayPrototypeToString"_s, "ArrayPrototypeIndexOf"_s, "ArrayPrototypeFind"_s, "ArrayPrototypeEvery"_s, "ArrayPrototypeReduceRight"_s, "ArrayPrototypeFindIndex"_s,
-    "ArrayPrototypeFindLastIndex"_s, "ArrayPrototypeToSorted"_s, "ArrayPrototypeToReversed"_s,
+    "ArrayPrototypeFindLastIndex"_s, "ArrayPrototypeToSorted"_s, "ArrayPrototypeToReversed"_s, "ArrayPrototypeFlat"_s, "ArrayPrototypeLastIndexOf"_s, "ArrayPrototypeFindLast"_s,
 };
 
 static constexpr ASCIILiteral builtinsThatTouchOnePlaceOfWhatTheyAreHanded[] = {
@@ -130,7 +138,7 @@ static constexpr ASCIILiteral builtinsThatGoOverTheirArguments[] = {
 };
 
 static constexpr ASCIILiteral builtinsThatAskWhetherWhatIsGivenBackIsTrue[] = {
-    "ArrayPrototypeEvery"_s, "ArrayPrototypeSome"_s, "ArrayPrototypeFind"_s, "ArrayPrototypeFindIndex"_s, "ArrayPrototypeFindLastIndex"_s, "ArrayPrototypeFilter"_s,
+    "ArrayPrototypeEvery"_s, "ArrayPrototypeSome"_s, "ArrayPrototypeFind"_s, "ArrayPrototypeFindIndex"_s, "ArrayPrototypeFindLastIndex"_s, "ArrayPrototypeFindLast"_s, "ArrayPrototypeFilter"_s,
 };
 
 static constexpr ASCIILiteral builtinsThatGoIntoWhatTheyAreHandedFirst[] = {
@@ -140,7 +148,7 @@ static constexpr ASCIILiteral builtinsThatGoIntoWhatTheyAreHandedFirst[] = {
 };
 
 static constexpr ASCIILiteral builtinsThatAskIdentityOfWhatIsHeld[] = {
-    "ArrayPrototypeIncludes"_s, "ArrayPrototypeIndexOf"_s,
+    "ArrayPrototypeIncludes"_s, "ArrayPrototypeIndexOf"_s, "ArrayPrototypeLastIndexOf"_s,
 };
 
 static constexpr ASCIILiteral builtinsThatMakePatternOfTextHanded[] = {
@@ -549,6 +557,88 @@ private:
     Vector<RegExpTextWorkedOut> m_found;
 };
 
+static JSC_DECLARE_HOST_FUNCTION(checkedArrayLength);
+static JSC_DECLARE_HOST_FUNCTION(arrayOfUndefined);
+static JSC_DECLARE_HOST_FUNCTION(filledArray);
+static JSC_DECLARE_HOST_FUNCTION(arrayFromLength);
+static JSC_DECLARE_HOST_FUNCTION(arrayFromList);
+
+template<typename Functor>
+static EncodedJSValue constructArrayOfElements(JSGlobalObject* realm, JSValue length, const Functor& elementAt)
+{
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    if (!length.isUInt32())
+        return throwVMTypeError(realm, scope, "the length is no whole number"_s);
+    JSArray* array = constructEmptyArray(realm, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (unsigned index = 0; index < length.asUInt32(); ++index) {
+        JSValue element = elementAt(index);
+        RETURN_IF_EXCEPTION(scope, { });
+        array->putDirectIndex(realm, index, element);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(array);
+}
+
+static JSValue callMapper(JSGlobalObject* realm, JSValue mapper, JSValue element, unsigned index)
+{
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    CallData callData = getCallData(mapper);
+    if (callData.type == CallData::Type::None) {
+        throwTypeError(realm, scope, "the mapper is no function"_s);
+        return { };
+    }
+    MarkedArgumentBuffer arguments;
+    arguments.append(element);
+    arguments.append(jsNumber(index));
+    ASSERT(!arguments.hasOverflowed());
+    RELEASE_AND_RETURN(scope, JSC::call(realm, mapper, callData, jsUndefined(), arguments));
+}
+
+JSC_DEFINE_HOST_FUNCTION(checkedArrayLength, (JSGlobalObject* realm, CallFrame* frame))
+{
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    JSValue length = frame->argument(0);
+    if (!length.isUInt32())
+        return throwVMTypeError(realm, scope, "the length is no whole number"_s);
+    return JSValue::encode(length);
+}
+
+JSC_DEFINE_HOST_FUNCTION(arrayOfUndefined, (JSGlobalObject* realm, CallFrame* frame))
+{
+    return constructArrayOfElements(realm, frame->argument(0), [](unsigned) {
+        return jsUndefined();
+    });
+}
+
+JSC_DEFINE_HOST_FUNCTION(filledArray, (JSGlobalObject* realm, CallFrame* frame))
+{
+    JSValue value = frame->argument(1);
+    return constructArrayOfElements(realm, frame->argument(0), [&](unsigned) {
+        return value;
+    });
+}
+
+JSC_DEFINE_HOST_FUNCTION(arrayFromLength, (JSGlobalObject* realm, CallFrame* frame))
+{
+    JSValue mapper = frame->argument(1);
+    return constructArrayOfElements(realm, frame->argument(0), [&](unsigned index) {
+        return callMapper(realm, mapper, jsUndefined(), index);
+    });
+}
+
+JSC_DEFINE_HOST_FUNCTION(arrayFromList, (JSGlobalObject* realm, CallFrame* frame))
+{
+    auto* list = dynamicDowncast<JSArray>(frame->argument(0));
+    JSValue mapper = frame->argument(1);
+    return constructArrayOfElements(realm, list ? jsNumber(list->length()) : JSValue(jsUndefined()), [&](unsigned index) -> JSValue {
+        auto scope = DECLARE_THROW_SCOPE(realm->vm());
+        JSValue element = list->getIndex(realm, index);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, callMapper(realm, mapper, element, index));
+    });
+}
+
 RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries)
     : m_program(program)
     , m_bodies(bodies)
@@ -639,6 +729,7 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
     mark(builtinsThatAskWhetherWhatIsGivenBackIsTrue, GrowthOfWork::AsksWhetherWhatIsGivenBackIsTrue);
     mark(builtinsThatGoIntoWhatTheyAreHandedFirst, GrowthOfWork::GoesIntoWhatItIsHandedFirst);
     mark(builtinsThatAskIdentityOfWhatIsHeld, GrowthOfWork::AsksIdentityOfWhatIsHeld);
+    mark(textRepeatingBuiltins, GrowthOfWork::RepeatsText);
     m_objectSetPrototypeOf = inRealmByToken("ObjectSetPrototypeOf"_s);
     for (auto [token, growth] : { std::pair { "ArrayPrototypeJoin"_s, GrowthOfWork::LaysTextBetweenPlaces }, std::pair { "StringPrototypeReplace"_s, GrowthOfWork::LaysTextOverFind }, std::pair { "StringPrototypeReplaceAll"_s, GrowthOfWork::LaysTextOverEveryFind }, std::pair { "JSONParse"_s, GrowthOfWork::MakesCellsOfCharactersHanded } })
         mark(std::span(&token, 1), growth);
@@ -660,6 +751,21 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
         if (JSValue function = builtinInRealm(id); isKnown(function) && function.isCell())
             m_functionsThatAskTheWorld.add(function.asCell());
     }
+
+    auto addHelper = [&](ASCIILiteral token, NativeFunction function, OptionSet<GrowthOfWork> work) {
+        BuiltinID helper = table.builtinFromToken(token);
+        if (!helper)
+            return;
+        JSFunction* made = JSFunction::create(vm, realm, 2, String(), function, ImplementationVisibility::Public);
+        m_builtins[helper.index()] = made;
+        m_workOfBuiltins.add(made, work);
+    };
+    constexpr OptionSet<GrowthOfWork> growsWithLength { GrowthOfWork::WithWhatIsHanded, GrowthOfWork::WithNumbersHanded };
+    addHelper("CompilerHelpersCheckedArrayLength"_s, checkedArrayLength, growsWithLength);
+    addHelper("CompilerHelpersArrayOfUndefined"_s, arrayOfUndefined, growsWithLength);
+    addHelper("CompilerHelpersFilledArray"_s, filledArray, growsWithLength);
+    addHelper("CompilerHelpersArrayFromLength"_s, arrayFromLength, growsWithLength);
+    addHelper("CompilerHelpersArrayFromList"_s, arrayFromList, { GrowthOfWork::WithWhatIsHanded, GrowthOfWork::WithLengthOfWhatIsHanded });
 }
 
 String RehearsalOfRegExpTexts::charactersOf(StringID id) const
@@ -1013,18 +1119,19 @@ JSValue RehearsalOfRegExpTexts::namespaceOf(ModuleID id)
     JSObject* made = constructEmptyObject(m_realm.get());
     uint64_t numberOfExports = module.exports.size() + module.syntheticExports.size();
     payForPlacesMadeOutOfCharacters(numberOfExports, numberOfExports);
-    auto define = [&](StringID name, VariableID exported) {
-        JSValue value = variable(exported);
+    auto define = [&](StringID name, JSValue value) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         made->putDirectMayBeIndex(m_realm.get(), Identifier::fromString(vm, charactersOf(name)), value);
         return !hasThrown(scope);
     };
     for (const ModuleExport& exported : module.exports) {
-        if (exported.kind == ModuleExportKind::Variable && exported.variable && !define(exported.name, exported.variable))
+        if (exported.kind == ModuleExportKind::Variable && exported.variable && !define(exported.name, variable(exported.variable)))
+            return unknown();
+        if (exported.kind == ModuleExportKind::Field && !define(exported.name, unknown()))
             return unknown();
     }
     for (const SyntheticExport& synthetic : module.syntheticExports) {
-        if (synthetic.variable && !define(synthetic.name, synthetic.variable))
+        if (synthetic.variable && !define(synthetic.name, variable(synthetic.variable)))
             return unknown();
     }
     if (m_statesOfModules[id.index()] == StateOfModule::HasRun)
@@ -1104,6 +1211,13 @@ std::optional<bool> RehearsalOfRegExpTexts::isOfType(JSValue value, TypeID id) c
         return true;
     if (!isCallable && !type.anyObject && !type.objects && !type.unnamedLayouts && !type.unnamedClasses)
         return false;
+    const ClassPart* onlyClass = singleBuiltinClassOf(m_program, type);
+    if (onlyClass && onlyClass->builtinClass == BuiltinClasses::Array && asObject(value)->type() != ProxyObjectType) {
+        if (!isJSArray(value))
+            return false;
+        if (asObject(value)->type() == ArrayType && !onlyClass->hasWrittenContents())
+            return true;
+    }
     return std::nullopt;
 }
 
@@ -1718,6 +1832,10 @@ bool RehearsalOfRegExpTexts::wouldMakeMoreThanAnybodyKeeps(OptionSet<GrowthOfWor
         auto* list = dynamicDowncast<JSArray>(thisValue);
         uint64_t places = list ? list->length() : elementsOfObjectHandedToBuiltin(asObject(thisValue), true).value_or(m_longestText + 1);
         return price.characters + places * (!arguments.empty() && arguments[0].isString() ? asString(arguments[0])->length() : 1) > m_longestText;
+    }
+    if (work.contains(GrowthOfWork::RepeatsText)) {
+        bool hasLength = thisValue.isString() && !arguments.empty() && arguments[0].isNumber();
+        return !hasLength || !(std::max(asString(thisValue)->length(), 1u) * arguments[0].asNumber() <= m_longestText);
     }
     if (!work.containsAny({ GrowthOfWork::LaysTextOverFind, GrowthOfWork::LaysTextOverEveryFind }) || !thisValue.isString() || arguments.size() < 2 || !arguments[1].isString())
         return false;
@@ -3366,7 +3484,7 @@ void workOutRegExpTexts(const Program& program, const BodyIndexTable& bodies, co
     if (functions.isEmpty())
         return;
     RuntimeHooks::NoHelperThreadsScope noHelperThreads;
-    RefPtr<VM> vm = VM::create(HeapType::Small);
+    RefPtr<VM> vm = VM::create(HeapType::Large);
     {
         JSLockHolder locker(*vm);
         {

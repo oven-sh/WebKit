@@ -106,14 +106,14 @@ Reference buildTestOfNumber(Walker& walker, Reference value, TypeID tested, Orig
     return walker.build(WTF::move(test));
 }
 
-Reference buildProofOfNumber(Walker& walker, Reference value, Reference test, Origin origin)
+Reference buildProofOfNumber(Walker& walker, Reference value, Reference test, Origin origin, bool passes)
 {
     Draft narrowed(Opcode::Narrowed, origin);
     walker.chooseConservativeFields(narrowed);
     narrowed.setValueOperand(value);
     narrowed.setTestOperand(test);
     narrowed.setOperandIndex(test.isValue() && walker.code().at(test.id()).opcode == Opcode::ShapeTest ? OperandIndex::ShapeTest::object : OperandIndex::TypeTest::value);
-    narrowed.setIsOnTakenEdge(true);
+    narrowed.setIsOnTakenEdge(passes);
     return walker.build(WTF::move(narrowed));
 }
 
@@ -162,7 +162,7 @@ static bool isReturnedAtOnceInNumberArms(const BodyIndex& index, BlockID block, 
     return end.kind() == TerminatorKind::ReturnCall && end.operand(0) == value;
 }
 
-bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumber> tests, BlockID inputBlock, uint32_t begin, uint32_t end, BlockFrequency ofOtherArm)
+bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumber> tests, BlockID inputBlock, uint32_t begin, uint32_t end, BlockFrequency ofOtherArm, EndOfNumberArms ending)
 {
     if (begin >= end || walker.isUnreachable() || !walker.has(Mechanism::Guesses) || !walker.has(Mechanism::TypedOperations))
         return false;
@@ -189,6 +189,15 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
     }
     if (numbers.isEmpty())
         return false;
+    bool mayTakeBranch = ending == EndOfNumberArms::MayTakeBranch && walker.armsMayTakeBranchOf(inputBlock, end, numbers[0].value);
+    bool takesInBranch = mayTakeBranch && std::ranges::any_of(numbers, [&](const NumberTestedInArms& number) {
+        return walker.armsTakeBranchForProofOf(inputBlock, begin, end, number.value, BitVector());
+    });
+    auto armKnowsAnswer = [&] {
+        Reference answer = mayTakeBranch && !walker.isUnreachable() ? walker.referenceOf(ValueID(first + size - 1)) : Reference();
+        TypeID type = answer && answer.isRecord() ? walker.typeOf(answer) : TypeID();
+        return type && (type == TypeArena::fromPrimitives(Primitive::True) || type == TypeArena::fromPrimitives(Primitive::False));
+    };
 
     Vector<uint32_t, 32> mentions;
     mentions.fill(0, size);
@@ -217,8 +226,10 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
     origin.isTailCall = false;
 
     BlockID otherBlock;
+    Reference onlyTest;
     for (NumberTestedInArms& number : numbers) {
         Reference test = buildTestOfNumber(walker, number.value, number.tested, origin);
+        onlyTest = mayTakeBranch && numbers.size() == 1 ? test : Reference();
         if (!test)
             break;
         BlockID passed = walker.addBlock();
@@ -229,6 +240,13 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
         number.proven = buildProofOfNumber(walker, number.value, test, origin);
         if (!number.proven)
             break;
+        if (mayTakeBranch && !walker.isUnreachable() && number.proven.isValue()) {
+            Reference last = number.value;
+            while (Reference checked = walker.state().checkedNameOf(last))
+                last = checked;
+            if (last != number.proven)
+                walker.state().noteCheckedName(last, number.proven);
+        }
     }
     if (walker.hasFailed() || !otherBlock)
         return true;
@@ -238,6 +256,8 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
 
     Vector<Walker::JoinArm, 2> arms;
     auto endArm = [&] {
+        if (takesInBranch || armKnowsAnswer())
+            walker.threadBranchOf(inputBlock);
         if (walker.isUnreachable())
             return;
         Walker::JoinArm arm { walker.currentBlock(), { } };
@@ -253,10 +273,18 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
     walker.continueIn(otherBlock);
     {
         Walker::ClosedArm otherArm(walker);
+        Reference refused = onlyTest && !walker.isUnreachable() ? buildProofOfNumber(walker, numbers[0].value, onlyTest, origin, false) : Reference();
+        for (ValueID name : refused ? numbers[0].names.span() : std::span<const ValueID>()) {
+            numbers[0].boundBefore.append(walker.referenceBoundTo(name));
+            walker.bind(name, refused);
+        }
         walker.walkStretch(inputBlock, begin, end);
         if (takesInCallReturnedAtOnce)
             walker.threadReturnOf(inputBlock);
         endArm();
+        for (size_t place = 0; place < numbers[0].boundBefore.size(); ++place)
+            walker.bind(numbers[0].names[place], numbers[0].boundBefore[place]);
+        numbers[0].boundBefore.shrink(0);
     }
     if (walker.hasFailed())
         return true;

@@ -11,12 +11,15 @@
 #include "AOTCurrentWork.h"
 #include "AOTThreads.h"
 #include <array>
+#include <errno.h>
 #include <stdlib.h>
+#include <wtf/OSAllocator.h>
 #include <wtf/StackAllocation.h>
 
 #if OS(WINDOWS)
 #include <io.h>
 #else
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -54,6 +57,28 @@ void exitIfBuildIsOutOfMemory()
     writeToStandardError("error: Out of memory while compiling\n"_s.span());
     writeToStandardError(std::span<const char>(place).first(length));
     _exit(1);
+}
+
+void* tryReserveAddresses(size_t bytes)
+{
+#if OS(LINUX)
+    void* addresses = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (addresses == MAP_FAILED)
+        return nullptr;
+    while (madvise(addresses, bytes, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+    return addresses;
+#else
+    return OSAllocator::tryReserveUncommitted(bytes);
+#endif
+}
+
+void releaseAddresses(void* addresses, size_t bytes)
+{
+#if OS(WINDOWS)
+    OSAllocator::releaseDecommitted(addresses, bytes);
+#else
+    munmap(addresses, bytes);
+#endif
 }
 
 } } // namespace JSC::AOT

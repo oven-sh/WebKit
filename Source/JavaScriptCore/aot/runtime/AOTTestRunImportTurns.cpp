@@ -10,11 +10,14 @@
 
 #include "AOTInstance.h"
 #include "AOTModuleNamespace.h"
+#include "AOTModuleRecord.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
+#include "InternalFieldTuple.h"
 #include "JSCInlines.h"
 #include "JSMicrotask.h"
 #include "JSModuleLoader.h"
+#include "ModuleLoaderPayload.h"
 #include "MicrotaskQueueInlines.h"
 #include "ModuleRegistryEntry.h"
 #include "TopExceptionScope.h"
@@ -71,6 +74,17 @@ bool Modules::hasTextAtHand() const
     return !m_innermostEagerLoad && m_queuedFetches.isEmpty() && hostHasProgramSources() && (!isTestRun() || m_isDrainingDeferredFetchJobs);
 }
 
+bool Modules::isFetchedBesideFactory(ModuleID module)
+{
+    if (!isTestRun() || !host().hasRunningFactory(m_instance.globalObject) || isLinkedAndUnevaluated(module)) [[likely]]
+        return false;
+    for (size_t index : modulesInLoadGraph(module)) {
+        if (isPatchPending(fileOf(ModuleID(index))))
+            return true;
+    }
+    return false;
+}
+
 bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
 {
     ModuleID file = fileOf(module);
@@ -105,8 +119,25 @@ void Modules::holdTextOfCall(JSPromise* promise, ModuleID module, ModuleRecord* 
         queueJobOfRound(module);
     }
     uint64_t place = static_cast<uint64_t>(m_sourceArrivalCount) << 32 | m_numberOfTextsAskedFor++;
-    m_batchedFetches.append(BatchedFetch { place, m_currentBatchNumber, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, caller, m_jobsBehindFirstCall, vm.aotState().momentOfLoads });
-    m_batchedFetches.last().precedingDiskReads = host().scheduleFetchFulfillment(m_instance.globalObject);
+    uint32_t batchNumber = m_batchBeingFulfilled.value_or(m_currentBatchNumber);
+    bool hasImportsToFetch = isTestRun() && !requested && this->hasImportsToFetch(module);
+    size_t position = m_batchedFetches.size();
+    while (!hasImportsToFetch && position > m_fulfilledBatchedFetchCount && m_batchedFetches[position - 1].batchNumber == batchNumber && m_batchedFetches[position - 1].hasImportsToFetch)
+        --position;
+    m_batchedFetches.insert(position, BatchedFetch { place, batchNumber, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, caller, m_jobsBehindFirstCall, vm.aotState().momentOfLoads });
+    m_batchedFetches[position].hasImportsToFetch = hasImportsToFetch;
+    m_batchedFetches[position].precedingDiskReads = host().scheduleFetchFulfillment(m_instance.globalObject);
+}
+
+bool Modules::hasImportsToFetch(ModuleID module, std::optional<ModuleID> arrived)
+{
+    for (const ModuleRequestData& request : m_table.requests(module)) {
+        if (arrived && fileOf(request.targetModule()) == fileOf(*arrived))
+            continue;
+        if (!request.isDeferred && !request.isRequire && !request.isHoisted && textOfImportComesInLaterTurn(request.targetModule(), AskedBy::Import))
+            return true;
+    }
+    return false;
 }
 
 bool Modules::hasDeferredFetchOf(ModuleID file)
@@ -164,16 +195,47 @@ void Modules::clearBatchedFetches()
 
 bool Modules::tryFulfillFirstBatchedFetch()
 {
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     BatchedFetch text = WTF::move(m_batchedFetches[m_fulfilledBatchedFetchCount]);
-    if (++m_fulfilledBatchedFetchCount == m_batchedFetches.size()) {
+    ++m_fulfilledBatchedFetchCount;
+    Vector<BatchedFetch, 1> joined;
+    if (isTestRun()) {
+        m_batchedFetches.removeAllMatching([&](BatchedFetch& other) {
+            if (other.batchNumber != text.batchNumber || fileOf(other.module) != fileOf(text.module))
+                return false;
+            joined.append(WTF::move(other));
+            return true;
+        }, m_fulfilledBatchedFetchCount);
+    }
+    if (m_fulfilledBatchedFetchCount == m_batchedFetches.size()) {
         m_batchedFetches.clear();
         m_fulfilledBatchedFetchCount = 0;
     }
     if (m_instance.globalObject->microtaskRunnability() == QueuedTaskResult::Discard)
         return false;
-    m_isDrainingDeferredFetchJobs = true;
-    if (!text.jobsBehindFirstCall) {
+    bool isFollowedInBatch = isTestRun() && !text.hasImportsToFetch && firstBatchNumber() == text.batchNumber;
+    m_batchBeingFulfilled = isFollowedInBatch ? std::optional(text.batchNumber) : std::nullopt;
+    m_isDrainingDeferredFetchJobs = !isFollowedInBatch;
+    m_fulfillsBatchTogether = !isTestRun() || text.hasImportsToFetch;
+    if ((isTestRun() && !text.hasImportsToFetch) || !text.jobsBehindFirstCall) {
         makeCallAgain(text);
+        RETURN_IF_EXCEPTION(scope, true);
+        for (BatchedFetch& call : joined) {
+            makeCallAgain(call);
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        while (isFollowedInBatch && firstBatchNumber() == text.batchNumber && isFetchedBesideFactory(m_batchedFetches[m_fulfilledBatchedFetchCount].module)) {
+            BatchedFetch& next = m_batchedFetches[m_fulfilledBatchedFetchCount];
+            if (!next.hasImportsToFetch || next.place > text.place || hasImportsToFetch(next.module, text.module))
+                break;
+            BatchedFetch call = WTF::move(next);
+            if (++m_fulfilledBatchedFetchCount == m_batchedFetches.size()) {
+                m_batchedFetches.clear();
+                m_fulfilledBatchedFetchCount = 0;
+            }
+            makeCallAgain(call);
+            RETURN_IF_EXCEPTION(scope, true);
+        }
         return true;
     }
     if (m_callsToMakeAgain.isEmpty()) {
@@ -229,11 +291,34 @@ void Modules::makeCallAgain(BatchedFetch& text)
 
 void Modules::forgetMockLaidBehindCallWhoseTextHasCome(ModuleID file)
 {
-    std::optional<uint32_t> callSequenceNumber = std::exchange(m_resumingCallSequenceNumber, std::nullopt);
-    if (!callSequenceNumber || !m_modulesWithPendingMock.get(file.index()))
+    if (std::optional<uint32_t> callSequenceNumber = std::exchange(m_resumingCallSequenceNumber, std::nullopt))
+        forgetMockRegisteredAfter(file, *callSequenceNumber);
+}
+
+bool hasBatchedFetches(JSGlobalObject* realm)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->hasBatchedFetches();
+}
+
+uint32_t momentOfLoads(JSGlobalObject* realm)
+{
+    return realm->vm().aotState().momentOfLoads;
+}
+
+void forgetMockRegisteredAfter(JSGlobalObject* realm, ModuleID module, uint32_t moment)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->forgetMockRegisteredAfter(module, moment);
+}
+
+void Modules::forgetMockRegisteredAfter(ModuleID module, uint32_t moment)
+{
+    ModuleID file = fileOf(module);
+    if (!m_modulesWithPendingMock.get(file.index()))
         return;
     auto laid = m_pendingMockCalls.find(file);
-    if (laid == m_pendingMockCalls.end() || laid->value.moment <= *callSequenceNumber)
+    if (laid == m_pendingMockCalls.end() || laid->value.moment <= moment || pendingFactoryCallID(file))
         return;
     if (m_importsAwaitingSource.containsIf([&](const ImportAwaitingSource& each) { return each.isMockImport && !each.missingMockFailure && fileOf(each.module) == file; }))
         return;
@@ -241,6 +326,7 @@ void Modules::forgetMockLaidBehindCallWhoseTextHasCome(ModuleID file)
         return;
     forgetMockThatWaits(file);
     forgetCallOfMock(file);
+    m_unseenMocks.set(file.index());
 }
 
 void Modules::addImportAwaitingSource(ModuleID module)
@@ -581,6 +667,43 @@ void Modules::runJobOfRound(ModuleID moduleOfJob)
         queueJobOfRound(moduleOfJob);
 }
 
+static JSC_DECLARE_HOST_FUNCTION(resumeLoadAfterFactory);
+
+JSC_DEFINE_HOST_FUNCTION(resumeLoadAfterFactory, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    auto* load = uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1));
+    auto* root = uncheckedDowncast<ModuleRecord>(load->getInternalField(0));
+    auto* payload = uncheckedDowncast<ModuleLoaderPayload>(load->getInternalField(1));
+    root->setMayMeetNewMocks();
+    InternalMicrotask job = payload->deferred() ? InternalMicrotask::DynamicImportDeferLoadSettled : InternalMicrotask::DynamicImportLoadSettled;
+    realm->queueMicrotask(realm->vm(), job, static_cast<uint8_t>(JSPromise::Status::Fulfilled), root, jsUndefined(), payload);
+    return JSValue::encode(jsUndefined());
+}
+
+bool Modules::tryDeferForFactories(ModuleRecord& root, JSCell* payload)
+{
+    if (status(root.module()) > ModuleStatus::Linked)
+        return false;
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue state;
+    bool factoryHasNotSettled = runMocksInGraph(root.module());
+    JSPromise* factory = factoryHasNotSettled && !scope.exception() ? pendingFactoryInGraph(root.module(), PendingFactoryRequester::ImportCall, state) : nullptr;
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        JSValue error = exception->value();
+        if (scope.tryClearException())
+            uncheckedDowncast<ModuleLoaderPayload>(payload)->promise()->reject(vm, error);
+        return true;
+    }
+    if (!factory)
+        return false;
+    auto* load = InternalFieldTuple::create(vm, realm->internalFieldTupleStructure(), &root, payload);
+    JSFunction* resume = JSFunction::create(vm, realm, 2, String(), resumeLoadAfterFactory, ImplementationVisibility::Private);
+    factory->performPromiseThenWithContext(vm, realm, resume, resume, jsUndefined(), load);
+    return true;
+}
+
 static Modules* modulesIfInitialized(Instance* instance)
 {
     return instance->state ? instance->state->modules.get() : nullptr;
@@ -618,13 +741,22 @@ bool fulfillDeferredFetches(VM& vm, uint64_t completedDiskReads)
         isDelivered = batchNumber ? first->tryFulfillFirstBatchedFetch() : first->tryFulfillFirstQueuedFetch();
         if (scope.exception()) [[unlikely]]
             return true;
-        while (batchNumber && first->firstBatchNumber() == batchNumber) {
+        while (first->fulfillsBatchTogether() && batchNumber && first->firstBatchNumber() == batchNumber) {
             isDelivered |= first->tryFulfillFirstBatchedFetch();
             if (scope.exception()) [[unlikely]]
                 return true;
         }
     }
     return true;
+}
+
+std::optional<uint32_t> firstDeferredBatchNumber(VM& vm)
+{
+    for (Instance* instance : vm.aotState().instances) {
+        if (Modules* modules = modulesIfInitialized(instance); modules && modules->hasDeferredFetches())
+            return modules->firstBatchNumber();
+    }
+    return std::nullopt;
 }
 
 void didDrainDeferredFetchJobs(VM& vm)
@@ -641,6 +773,91 @@ bool shouldDeferFetchFulfillment(JSGlobalObject* realm, ModuleID module)
         return false;
     Modules* modules = modulesOf(realm);
     return modules && modules->isTestRun() && !modules->hasTextAtHand() && modules->textOfImportComesInLaterTurn(module, Modules::AskedBy::Loader);
+}
+
+bool tryEvictRequirerOfOriginal(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->tryEvictRequirerOfOriginal(module);
+}
+
+bool takeRequirerOfOwnOriginal(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->takeRequirerOfOwnOriginal(module);
+}
+
+void didRequireOwnOriginal(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->didRequireOwnOriginal(module);
+}
+
+void willEndMocksOfTestFile(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->willEndMocksOfTestFile();
+}
+
+void didEndMocksOfTestFile(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->didEndMocksOfTestFile();
+}
+
+bool isOriginalEvicted(JSGlobalObject* realm, ModuleID mocked)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isOriginalEvicted(mocked);
+}
+
+bool wasEvictedOnceLoaded(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasEvictedOnceLoaded(module);
+}
+
+void didPatchPendingMock(JSGlobalObject* realm, ModuleID mocked)
+{
+    Modules* modules = modulesOf(realm);
+    if (modules && modules->isAwaitedByDetachedLoad(mocked) && !modules->hasIntactOriginal(mocked))
+        modules->didPatchPendingMock(mocked);
+}
+
+void evictAbandonedModules(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->evictAbandonedModules();
+}
+
+void evictAtNextLoad(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->evictAtNextLoad(module);
+}
+
+void evictLoadedModules(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->evictLoadedModules();
+}
+
+bool wasOriginalRequiredFirst(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasOriginalRequiredFirst(file);
+}
+
+bool isMockUnseen(JSGlobalObject* realm, ModuleID mocked)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isMockUnseen(mocked);
+}
+
+void didFetch(JSGlobalObject* realm, AbstractModuleRecord* record)
+{
+    if (auto* compiled = dynamicDowncast<ModuleRecord>(record))
+        compiled->setMomentFetched(realm->vm().aotState().momentOfLoads);
 }
 
 void deferFetchFulfillment(JSGlobalObject* realm, ModuleID module, JSPromise* fetched, AbstractModuleRecord* record)

@@ -5,12 +5,11 @@
 # Link makes a call only when its operands have types, and what never comes back gives none: nobody else calls f4, so it is not reached and the plan has no unit of it to enter.
 # RUN(LINK): link functions mechanisms=all
 # LINK: function f4 unreached
-# The walk does not know that boom() never comes back and arrives at the call. The place is dead by Link's proof: it gets the trap that a failed proof gets, and the block ends. It was an internal compiler error.
+# boom() never returns by its own text, so the block ends behind its call and the walk does not arrive at the helper's. It was an internal compiler error once.
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
-# CHECK: [[made]]: {{*}} = CallDirect {{*}}function=f1
-# CHECK: CheckProof [[made]] checkedType=never
-# CHECK: Unreachable
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK-NEXT: Unreachable
 # RUN(RUNS): run-in-shell mechanisms=all
 # RUNS: RangeError
 # RUNS-NEXT: exited with 0

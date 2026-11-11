@@ -83,7 +83,7 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
 
     exit.isDefinition = reason == SlotExitReason::Redefinition;
     exit.attributes = static_cast<uint8_t>(leaving.attributes);
-    if (reason == SlotExitReason::Delete || (!exit.isDefinition && leaving.attributes) || exit.attributes != leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot())
+    if (reason == SlotExitReason::Delete || (!exit.isDefinition && leaving.attributes) || exit.attributes != leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !compiledStructure().extraPropertiesSlot())
         return;
     Structure* extraStructure = extra->structure();
     if (structure()->mayBePrototype() || extraStructure->isDictionary())
@@ -96,7 +96,7 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     exit.extraPropertiesAfter = extraStructure->id();
     exit.orderWordAfter = orderWord();
     exit.extraPropertiesCellSize = JSFinalObject::allocationSize(extraStructure->inlineCapacity());
-    exit.offsetOfExtraPropertiesWord = layout().extraPropertiesSlot()->offset;
+    exit.offsetOfExtraPropertiesWord = compiledStructure().extraPropertiesSlot()->offset;
     SlotTraits traits = traitsOf(field.slot.representation());
     if (!exit.isDefinition && !field.isOutOfLine() && absentPatternOf(field.slot.representation()) && traits.width >= sizeof(uint32_t)) {
         exit.absentBits = traits.absentBits;
@@ -184,10 +184,10 @@ bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name);
     if (!isUndone || attributes || field.isPrivate() || field.isAccessor() || structure()->mayBePrototype() || orderWord() != back.orderWord)
         return true;
-    if (!layout().extraPropertiesSlot() || orderOf(orderWord()) >= layout().numberOfOrders)
+    if (!compiledStructure().extraPropertiesSlot() || orderOf(orderWord()) >= layout().numberOfOrders)
         return true;
     back.markedCopyOfField.flags |= fieldRecordIsCopyInFieldReturn;
-    back.offsetOfExtraPropertiesWord = layout().extraPropertiesSlot()->offset;
+    back.offsetOfExtraPropertiesWord = compiledStructure().extraPropertiesSlot()->offset;
     back.structureAfter = structureID();
     back.extraPropertiesAfter = extra->structureID();
     state().propertyCaches->remember(back);
@@ -292,9 +292,6 @@ static void createField(VM& vm, Object& object, const FieldData& field, Object::
     object.moveFieldToExtraProperties(vm, field, created, fitsSlot ? SlotExitReason::StoreOfOtherType : SlotExitReason::Redefinition);
 }
 
-// A definition that gives a value and changes no attribute hands the value to the setter of a custom value, as a definition on an ordinary
-// object does (validateAndApplyPropertyDescriptor()). The setter of an extra property gets the object: the extra properties are nobody's holder.
-// Answers nothing where the definition is for the extra properties to apply.
 static std::optional<bool> tryHandValueToSetterOfExtraProperty(JSGlobalObject* globalObject, Object* object, PropertyName name, const PropertyDescriptor& descriptor)
 {
     JSObject* extra = object->extraProperties();
@@ -314,7 +311,6 @@ static std::optional<bool> tryHandValueToSetterOfExtraProperty(JSGlobalObject* g
     if (!setter || changesAttribute)
         return std::nullopt;
     JSGlobalObject* realm = object->structure()->realm();
-    // A definition of the value that the property has changes nothing.
     if (GetValueFunc getter = custom->getter()) {
         JSValue current = JSValue::decode(getter(realm, JSValue::encode(object), name));
         RETURN_IF_EXCEPTION(scope, false);
@@ -687,7 +683,7 @@ bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueO
         didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name.uid());
 
-    if (!followsEarlierObject || attributes & PropertyAttribute::CustomAccessorOrValue || hadOtherCellInPlaceOfExtraProperties || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot() || isInFrame())
+    if (!followsEarlierObject || attributes & PropertyAttribute::CustomAccessorOrValue || hadOtherCellInPlaceOfExtraProperties || hasOutOfLineKeyOrder() || !compiledStructure().extraPropertiesSlot() || isInFrame())
         return true;
     Structure* extraStructure = extra->structure();
     if (orderWord() != (added.orderWordBefore | orderWordHasExtraProperties) || structure()->mayBePrototype() || extraStructure->isDictionary() || extraStructure->transitionPropertyName() != name.uid())

@@ -202,7 +202,8 @@ void MathBuiltinEmitter::generateMathPow(const InlineCall& call)
 {
     Number base = numberOperand(call.argument(0));
     Number exponent = numberOperand(call.argument(1));
-    finish(call, emitter<OperatorEmitter>().pow(base, exponent));
+    BlockID block = call.context().block();
+    finish(call, emitter<OperatorEmitter>().pow(base, exponent, block && generator().usesLoopForms(block)));
 }
 
 void MathBuiltinEmitter::extremum(const InlineCall& call, Extremum kind)

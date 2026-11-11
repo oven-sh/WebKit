@@ -32,11 +32,32 @@ export function fromEntries(iterable)
 
     var object: Record<PropertyKey, unknown> = {};
 
-    for (var entry of iterable) {
+    // The same loop for what is known: it is stepped in place, and nobody makes the pairs of a map.
+    if ($isMap(iterable)) {
+        for (var entry of iterable) {
+            if (!$isObject(entry))
+                $throwTypeError("Object.fromEntries requires the first iterable parameter yields objects");
+            var key: any = entry[0];
+            var value = entry[1];
+            $putByValDirect(object, key, value);
+        }
+        return object;
+    }
+    if ($isJSArray(iterable)) {
+        for (entry of iterable) {
+            if (!$isObject(entry))
+                $throwTypeError("Object.fromEntries requires the first iterable parameter yields objects");
+            key = entry[0];
+            value = entry[1];
+            $putByValDirect(object, key, value);
+        }
+        return object;
+    }
+    for (entry of iterable) {
         if (!$isObject(entry))
             $throwTypeError("Object.fromEntries requires the first iterable parameter yields objects");
-        var key = entry[0];
-        var value = entry[1];
+        key = entry[0];
+        value = entry[1];
         $putByValDirect(object, key, value);
     }
 

@@ -14,6 +14,7 @@
 #include <span>
 #include <type_traits>
 #include <wtf/Assertions.h>
+#include <wtf/BitVector.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/SegmentedVector.h>
@@ -62,6 +63,7 @@ private:
         void* owner { nullptr };
         size_t size { 0 };
         const uint8_t* mayBeFilled { nullptr };
+        BitVector writtenPages { };
         void (*visitWithSlotVisitor)(Entry&, SlotVisitor&) { nullptr };
         void (*visitWithAbstractSlotVisitor)(Entry&, AbstractSlotVisitor&) { nullptr };
         size_t (*removeDeadEntries)(Entry&, VM&, CollectionScope) { nullptr };

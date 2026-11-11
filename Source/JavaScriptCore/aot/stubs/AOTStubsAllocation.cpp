@@ -159,6 +159,26 @@ static void zeroBehindFirstChunk(StubAssembler& jit, const AllocationSiteRegiste
     jit.branchSub64(CCallHelpers::PositiveOrZero, TrustedImm32(2 * copyChunkBytes), scratch).linkTo(loop, &jit);
 }
 
+static void allocateGrownCell(StubAssembler& jit, const AllocationSiteRegisters& registers, int32_t distanceToRecord, unsigned size, Label initialize)
+{
+    const auto [cell, allocation, record, allocator, scratch] = registers;
+    JumpList cannot;
+    jit.loadPtr(Address(record, distanceToRecord + AllocationSiteRecord::offsetOfAllocator()), scratch);
+    jit.loadPtr(Address(scratch, GrownCells::offsetOfAllocatorAndMark()), allocator);
+    cannot.append(jit.branchTestPtr(CCallHelpers::Zero, allocator, TrustedImm32(GrownCells::isArmed)));
+    jit.subPtr(TrustedImm32(GrownCells::isArmed), allocator);
+    jit.addPtr(TrustedImm32(GrownCells::offsetOfRecord() - distanceToRecord), scratch, record);
+    allocateCell(jit, cell, allocator, scratch, cannot);
+#if CPU(X86_64)
+    jit.moveZeroToDouble(CCallHelpers::fpTempRegister);
+    storeChunk(jit, cell, size);
+#else
+    jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, cell, TrustedImm32(size));
+#endif
+    jit.jump().linkTo(initialize, &jit);
+    cannot.link(&jit);
+}
+
 StubSignature signatureOfAllocateCell(StubKey key)
 {
     return StubSignature::withGPRResult({ gprOf(shortStubImmediateRegister) }).withResultIn(key.operandRegister()).fillingOperandInFront(0);
@@ -173,6 +193,7 @@ void generateAllocateCell(StubAssembler& jit)
     const unsigned steps = jit.key().count();
     const std::optional<unsigned> cellSize = steps ? std::optional<unsigned>(steps * cellSizeStep) : std::nullopt;
     const AssemblyHelpers::FreeListRefill refill = allocateAtSite(jit, registers, slowPath, cellSize);
+    Label initialize = jit.label();
     const auto initialization = static_cast<CellInitialization>(jit.key().form());
     if (zeroesBody(initialization))
         zeroBehindFirstChunk(jit, registers, cellSize);
@@ -187,6 +208,8 @@ void generateAllocateCell(StubAssembler& jit)
 
     emitLateRefill(jit, refill, slowPath);
     slowPath.link(&jit);
+    if (storesWords(initialization) && cellSize)
+        allocateGrownCell(jit, registers, distanceLeftToOffsets, *cellSize, initialize);
     jit.callOperationAndReturn(Entry::operationAOTAllocateSlow, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = allocation });
 }
 
@@ -208,6 +231,7 @@ void generateAllocateCellFromTemplate(StubAssembler& jit)
     const std::optional<unsigned> cellSize = size <= maxCellSizeInKey ? std::optional<unsigned>(size) : std::nullopt;
     JumpList slowPath;
     const AssemblyHelpers::FreeListRefill refill = allocateAtSite(jit, registers, slowPath, cellSize);
+    Label initialize = jit.label();
     for (unsigned offset = copyChunkBytes; offset < size; offset += copyChunkBytes)
         copyChunk(jit, Address(body, offset - offsetOfTemplateInCell(initialization)), Address(cell, offset), allocator, scratch);
     if (storesWords(initialization))
@@ -222,6 +246,8 @@ void generateAllocateCellFromTemplate(StubAssembler& jit)
 
     emitLateRefill(jit, refill, slowPath);
     slowPath.link(&jit);
+    if (storesWords(initialization))
+        allocateGrownCell(jit, registers, distanceLeftToOffsets, size, initialize);
     jit.callOperationAndReturn(Entry::operationAOTAllocateSlowFromTemplate, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = allocation, .thirdArgumentIn = body });
 }
 
@@ -285,12 +311,17 @@ void generateAllocateInstance(StubAssembler& jit)
     loadAllocationSiteRecord(jit, allocation, record, allocator);
     isOutOfLine.append(jit.branchPtr(CCallHelpers::NotEqual, Address(record, AllocationSiteRecord::offsetOfPrototype()), prototype));
     jit.loadPtr(Address(record, AllocationSiteRecord::offsetOfAllocator()), allocator);
-    const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, scratch, isOutOfLine, cellSize);
+    JumpList slowPath;
+    const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, scratch, slowPath, cellSize);
+    Label initialize = jit.label();
     zeroBehindFirstChunk(jit, site, cellSize);
     copyChunk(jit, Address(record, AllocationSiteRecord::offsetOfHeader()), Address(cell), allocator, scratch);
     jit.returnToCaller();
 
-    emitLateRefill(jit, refill, isOutOfLine);
+    emitLateRefill(jit, refill, slowPath);
+    slowPath.link(&jit);
+    if (cellSize)
+        allocateGrownCell(jit, site, 0, *cellSize, initialize);
     isOutOfLine.link(&jit);
     jit.jumpToStub(StubKey(StubFamily::AllocateInstanceOutOfLine));
 }
@@ -397,22 +428,14 @@ void generateAllocateExtension(StubAssembler& jit)
     const BaseIndex extensionWord(owner, wordOffset, CCallHelpers::TimesOne);
     const bool isNarrow = traitsOf(hiddenReferenceRepresentation(jit.options().useWideReferences)).isNarrowReference;
     JumpList slowPath;
-    Jump hasNone;
+    Jump hasExtension;
     if (isNarrow) {
         jit.load32(extensionWord, storage);
-        hasNone = jit.branchTest32(CCallHelpers::Zero, storage);
-        decodeCell32(jit, storage, storage);
-        jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), storage);
+        hasExtension = jit.branchTest32(CCallHelpers::NonZero, storage);
     } else {
         jit.load64(extensionWord, storage);
-        hasNone = jit.branchTest64(CCallHelpers::Zero, storage);
+        hasExtension = jit.branchTest64(CCallHelpers::NonZero, storage);
     }
-    jit.load64(Address(storage, offsetOfExtensionGranuleBits), temporary);
-    jit.not64(temporary);
-    jit.and64(temporary, granuleBits);
-    appendGranule(jit, storage, granuleBits, temporary, allocator, slowPath);
-    jit.returnToCaller();
-    hasNone.link(&jit);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cagedAuxiliarySpace)), allocator);
     jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(size) * sizeof(Allocator)), allocator);
     slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
@@ -430,6 +453,17 @@ void generateAllocateExtension(StubAssembler& jit)
         jit.store32(storage, extensionWord);
     } else
         jit.store64(storage, extensionWord);
+    jit.returnToCaller();
+
+    hasExtension.link(&jit);
+    if (isNarrow) {
+        decodeCell32(jit, storage, storage);
+        jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), storage);
+    }
+    jit.load64(Address(storage, offsetOfExtensionGranuleBits), temporary);
+    jit.not64(temporary);
+    jit.and64(temporary, granuleBits);
+    appendGranule(jit, storage, granuleBits, temporary, allocator, slowPath);
     jit.returnToCaller();
 
     emitLateRefill(jit, refill, slowPath);

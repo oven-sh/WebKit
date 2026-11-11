@@ -202,7 +202,7 @@ static bool tryAddExtraProperty(Instance& instance, const Slot& slot, Object& ob
     PropertyOffset offset = Slot::offsetFor(slot.extraPropertyAddition.wordIndex);
     JSObject* extraProperties = object.extraProperties();
     if (!extraProperties) {
-        if (!object.layout().extraPropertiesSlot())
+        if (!object.compiledStructure().extraPropertiesSlot())
             return false;
         extraProperties = constructEmptyObject(vm, newStructure->extraPropertiesStructure());
         extraProperties->putDirectOffset(vm, offset, value);

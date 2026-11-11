@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArgumentLocations.h"
+#include "AOTBitVector.h"
 #include "AOTBody.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinIDTypes.h"
@@ -16,6 +17,7 @@
 #include "AOTEffects.h"
 #include "AOTFacts.h"
 #include "AOTFunctionKinds.h"
+#include "AOTHeldRegExps.h"
 #include "AOTID.h"
 #include "AOTKeyOrders.h"
 #include "AOTMemoryLocation.h"
@@ -30,7 +32,6 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 
@@ -81,8 +82,20 @@ struct GlobalNameUse {
     bool isStoredThroughBinding { false };
 };
 
+struct StoredGlobalValue {
+    PropertyKeyID key;
+    LayoutID layout;
+    FunctionID function;
+    BuiltinClassID builtinClass;
+    TypeID type;
+
+    bool isUnknown() const { return !layout && !function && !builtinClass && !type; }
+    bool isSameAs(const StoredGlobalValue& other) const { return layout == other.layout && function == other.function && builtinClass == other.builtinClass && type == other.type; }
+};
+
 struct PlanParts {
     DeferredDefinitions deferredDefinitions;
+    HeldRegExps heldRegExps;
     PromotedEnvironments promotedEnvironments;
     ModuleEvaluationPlan moduleEvaluation;
     SlotPlan slots;
@@ -105,6 +118,7 @@ struct PlanParts {
     BitVector globalNamesNeverStoredByName;
     BitVector namesOfFieldsWrittenAsOneFunction;
     BitVector globalNamesNeverStoredThroughBinding;
+    Vector<StoredGlobalValue> storedGlobalValues;
 
     bool hasOneInstance { false };
     FunctionsThatEndTheirTailCalls functionsThatEndTheirTailCalls;
@@ -115,6 +129,7 @@ struct PlanParts {
 class Plan {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Plan);
     WTF_MAKE_NONCOPYABLE(Plan);
+    friend class FactMisstater;
 public:
     explicit Plan(PlanParts&& parts)
         : m_parts(WTF::move(parts))
@@ -122,6 +137,7 @@ public:
     }
 
     const DeferredDefinitions& deferredDefinitions() const { return m_parts.deferredDefinitions; }
+    const HeldRegExps& heldRegExps() const { return m_parts.heldRegExps; }
     const PromotedEnvironments& promotedEnvironments() const { return m_parts.promotedEnvironments; }
     const ModuleEvaluationPlan& moduleEvaluation() const { return m_parts.moduleEvaluation; }
 
@@ -191,6 +207,12 @@ public:
 
     bool someFieldUnderNameIsWrittenAsOneFunction(PropertyKeyID key) const { return m_parts.namesOfFieldsWrittenAsOneFunction.get(key.index()); }
     GlobalNameUse globalName(PropertyKeyID key) const { return { !m_parts.globalNamesNeverStoredByName.get(key.index()), !m_parts.globalNamesNeverStoredThroughBinding.get(key.index()) }; }
+
+    const StoredGlobalValue* findStoredGlobalValue(PropertyKeyID key) const LIFETIME_BOUND
+    {
+        auto found = std::ranges::lower_bound(m_parts.storedGlobalValues, key.index(), { }, [](const StoredGlobalValue& stored) { return stored.key.index(); });
+        return found != m_parts.storedGlobalValues.end() && found->key == key ? &*found : nullptr;
+    }
 
     bool hasOneInstance() const { return m_parts.hasOneInstance; }
     bool endsItsTailCalls(FunctionID id) const { return m_parts.functionsThatEndTheirTailCalls.whateverArrives.get(id.index()); }

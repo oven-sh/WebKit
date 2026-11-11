@@ -37,11 +37,19 @@ struct WalkNote {
     ObjectBuiltCause objectBuilt { ObjectBuiltCause::None };
     AccessCost cost { AccessCost::ByName };
     uint16_t loopDepth { 0 };
+    bool isOnUsualPath { true };
     Origin origin;
     FunctionID writtenIn;
     LayoutID layout;
     Origin neededAt;
     FunctionID neededIn;
+    Wire::TypeOriginReason reason { Wire::TypeOriginReason::Unknown };
+    Origin sourceAt;
+    FunctionID sourceIn;
+    BuiltinID sourceBuiltin;
+    FunctionID sourceFunction;
+    bool sourceIsCall { false };
+    bool sourceIsOnUsualPath { true };
 };
 
 struct WalkNotes {

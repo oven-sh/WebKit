@@ -35,7 +35,7 @@ bool buildTypedOperationOnStringsOfItsOpcodes(Walker& walker, const BodyValue& v
     if (opcode == Opcode::PropGet)
         return buildLengthOfPieceInSight(walker, value, inputs);
     if (opcode == Opcode::ElemGet) {
-        return buildReadByPartsOfKey(walker, value, inputs) || buildCharacterByIndex(walker, value, inputs) || buildLookupUnderAnyKeyOnPlainRecords(walker, value, inputs);
+        return buildElementOfMatchInFrame(walker, value, inputs) || buildReadByPartsOfKey(walker, value, inputs) || buildCharacterByIndex(walker, value, inputs) || buildLookupUnderAnyKeyOnPlainRecords(walker, value, inputs);
     }
     if (inputs.areOnlyTypes())
         return false;
@@ -55,7 +55,7 @@ bool buildTypedOperationOnStringsOfItsOpcodes(Walker& walker, const BodyValue& v
     if (allRelations.contains(opcode))
         return buildRelationOnStrings(walker, value, inputs);
     if (opcode == Opcode::ToBoolean)
-        return buildTruthinessOfLengthOfString(walker, value, inputs);
+        return buildTruthinessOfPieceInSight(walker, value, inputs) || buildTruthinessOfLengthOfString(walker, value, inputs);
     if (conversionsToNumbersInWalkStrings.contains(opcode))
         return buildNumberOfPiece(walker, value, inputs);
     return false;
@@ -382,7 +382,7 @@ std::optional<bool> relationDecidedForStrings(const Walker& walker, Opcode relat
     return std::nullopt;
 }
 
-Opcode relationWithSidesSwappedForStrings(Opcode relation)
+Opcode relationWithOperandsSwappedForStrings(Opcode relation)
 {
     switch (relation) {
     case Opcode::Less:
@@ -405,6 +405,12 @@ std::optional<uint32_t> operandsNarrowedBehindTestForStrings(const Walker& walke
         return 0;
     std::optional<BodyUser> user = index.onlyUser(test);
     if (!user) {
+        bool hasUnsharedOperands = true;
+        index.value(test).forEachOperand([&](ValueID operand, uint32_t) {
+            hasUnsharedOperands &= index.hasOneUse(operand);
+        });
+        if (hasUnsharedOperands)
+            return 0;
         std::optional<BodyUser> first = index.firstUser(test);
         ValueID truth = first && first->kind == BodyUseKind::Operand && index.opcodeOf(first->value) == Opcode::ToBoolean ? first->value : ValueID();
         std::optional<BodyUser> asker = truth ? index.onlyUser(truth) : std::nullopt;
@@ -552,8 +558,11 @@ Reference buildCodeUnitOfString(Walker& walker, Reference string, Reference posi
     if (walker.isUnreachable() || !string || !position)
         return { };
     Reference read = string;
-    if (nameProvesPositionBelowLengthForStrings(walker, position, string)) {
-        if (Reference flat = flatStringForReaderOfCharacters(walker, string, origin))
+    if (string.isConstant() && !position.isConstant()) {
+        if (Reference flat = flatLiteralBeforeLoop(walker, string, origin))
+            read = flat;
+    } else if (nameProvesPositionBelowLengthForStrings(walker, position, string)) {
+        if (Reference flat = flatStringForReaderOfCharacters(walker, string, origin, true))
             read = flat;
     }
     if (walker.isUnreachable())

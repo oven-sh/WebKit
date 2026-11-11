@@ -274,6 +274,8 @@ void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArraySt
         rawElement = emitter<ConversionEmitter>().inFormOfType(rawElement, typeOf(stored));
     if (elements().checksBounds())
         elements().stopUnlessInside(value, logicalOr(isInt32(rawElement.as<Boxed>()), elements().hasArrayStorage(elements().askedAnew(array), ArrayStorage::Contiguous)));
+    if (value.opcode() == Opcode::PutContiguousIndex && elements().updateInt32InPlace(value, storage, position, rawElement.as<Boxed>()))
+        return;
     elements().storeWordOfOperand(value, stored, rawElement.as<Boxed>(), storage, position);
     barrierAfterStore(value, array, typeOf(stored));
 }

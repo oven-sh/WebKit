@@ -264,8 +264,16 @@ struct ReadGroupCache {
 
     struct Row {
         uint32_t structure;
+        uint32_t structureThatHoldsAll;
         int16_t places[numberOfPlaces];
+        uint32_t numberOfReads;
+
+        void claim(uint32_t claimedBy);
+        void hide();
+        void show();
     };
+
+    void giveUp();
 
     uint32_t hasGivenUp;
     uint32_t missesLeft;
@@ -276,7 +284,36 @@ struct ReadGroupCache {
     uint8_t samplesThatHadRow;
     uint8_t cameInLastSample[numberOfRows];
 };
-static_assert(sizeof(ReadGroupCache::Row) == 16 && sizeof(ReadGroupCache) == 80 && !OBJECT_OFFSETOF(ReadGroupCache, hasGivenUp));
+static_assert(sizeof(ReadGroupCache::Row) == 24 && sizeof(ReadGroupCache) == 112 && !OBJECT_OFFSETOF(ReadGroupCache, hasGivenUp));
+
+inline void ReadGroupCache::Row::claim(uint32_t claimedBy)
+{
+    structure = claimedBy;
+    structureThatHoldsAll = 0;
+    std::ranges::fill(places, placeIsNotKnown);
+}
+
+inline void ReadGroupCache::Row::hide()
+{
+    structure |= markOfHiddenRow;
+    structureThatHoldsAll = 0;
+}
+
+inline void ReadGroupCache::Row::show()
+{
+    structure &= ~markOfHiddenRow;
+    bool holdsAll = numberOfReads;
+    for (unsigned index = 0; index < numberOfReads; ++index)
+        holdsAll &= places[index] > 0;
+    structureThatHoldsAll = holdsAll ? structure : 0;
+}
+
+inline void ReadGroupCache::giveUp()
+{
+    hasGivenUp = 1;
+    for (Row& row : rows)
+        row.structureThatHoldsAll = 0;
+}
 
 struct FrontWords {
     const uint32_t* rowsForStructureIDZero;
@@ -299,7 +336,9 @@ struct PropertyCacheWords {
     AbsenceFilter* absenceFilters;
     uint32_t absenceFilterGenerationForStores;
     uint32_t changesUnderNamesOnChains;
+    uint32_t creationGeneration;
     const uint64_t* namesOfObjectPrototypes;
+    const uint64_t* objectPrototypeStoreStoppers;
     const uint64_t* namesChangedOnChains;
     uint8_t* missesOfPairs;
     const NameOfText* namesOfTexts;
@@ -343,6 +382,11 @@ struct PropertyCacheWords {
     static constexpr unsigned numberOfStructuresBelowBuiltinClasses = 64;
     uint32_t structuresBelowBuiltinClasses[numberOfStructuresBelowBuiltinClasses];
 
+    static constexpr unsigned shiftOfErrorWithMessage = 4;
+    static constexpr unsigned numberOfErrorsWithMessage = 64;
+    uint32_t errorsWithMessage[numberOfErrorsWithMessage];
+
+    uint32_t& placeOfErrorWithMessage(uint32_t structureID) { return errorsWithMessage[structureID >> shiftOfErrorWithMessage & (numberOfErrorsWithMessage - 1)]; }
     uint32_t& placeOfStructureBelowBuiltinClass(uint32_t structureID) { return structuresBelowBuiltinClasses[structureID >> shiftOfPlaceOfStructureBelowBuiltinClass & (numberOfStructuresBelowBuiltinClasses - 1)]; }
     static constexpr ptrdiff_t offsetOfFront(SlotAccess access) { return OBJECT_OFFSETOF(PropertyCacheWords, front) + static_cast<ptrdiff_t>(static_cast<unsigned>(access) * sizeof(FrontWords)); }
 };

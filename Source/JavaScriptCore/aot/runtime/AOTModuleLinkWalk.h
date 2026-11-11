@@ -11,6 +11,7 @@
 #include "AOTModules.h"
 #include "AOTVector.h"
 #include "ThrowScope.h"
+#include <algorithm>
 #include <span>
 #include <type_traits>
 #include <wtf/FastMalloc.h>
@@ -18,10 +19,10 @@
 
 namespace JSC { namespace AOT {
 
-struct WalksOfOneLink final : RefCounted<WalksOfOneLink> {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(WalksOfOneLink);
+struct LinkWalks final : RefCounted<LinkWalks> {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LinkWalks);
 
-    explicit WalksOfOneLink(const VisitedModuleRecords& visited)
+    explicit LinkWalks(const VisitedModuleRecords& visited)
         : visited(&visited)
     {
     }
@@ -37,7 +38,7 @@ class ModuleLinkWalk {
 public:
     enum class Leaf : uint8_t { CapturesExports, IsUncompiled };
 
-    ModuleLinkWalk(const Modules&, ModuleID root, RefPtr<WalksOfOneLink>&& earlier = nullptr);
+    ModuleLinkWalk(const Modules&, ModuleID root, RefPtr<LinkWalks>&& earlier = nullptr);
 
     ModuleID root() const { return m_root; }
     bool bringUpToDate(const Modules&);
@@ -46,6 +47,14 @@ public:
 
     template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>
     bool replay(ThrowScope&, const ShouldEnterFunctor&, const VisitLeafFunctor&, const DidLeaveFunctor&) const;
+
+    bool hasCaptureAfterEvaluation(const Modules& modules) const
+    {
+        return std::ranges::any_of(m_steps, [&](const Step& step) {
+            ModuleID module(step.module);
+            return static_cast<StepKind>(step.kind) == StepKind::CapturesExports && module != m_root && modules.data(module).capturesExportsBehindEvaluation();
+        });
+    }
 
     void forEachModuleOfProgram(NOESCAPE const Invocable<void(ModuleID)> auto& functor) const
     {
@@ -69,11 +78,13 @@ private:
     static_assert(std::is_trivially_copyable_v<Step> && sizeof(Step) == 8);
 
     void append(ModuleID, StepKind, bool resolvesNames = false);
+    bool goesPastModulesLinkedAlone(const Modules&, std::span<const ModuleID>) const;
 
     ModuleID m_root;
-    RefPtr<WalksOfOneLink> m_earlier;
+    RefPtr<LinkWalks> m_earlier;
     size_t m_numberOfEarlierRoots { 0 };
     unsigned m_linkEpoch;
+    size_t m_numberOfModulesLinkedAlone { 0 };
     std::span<const LinkPlanStepData> m_plan;
     Vector<Step, 64> m_steps;
     Vector<uint32_t, 64> m_modulesThatOnlyBecomeLinked;

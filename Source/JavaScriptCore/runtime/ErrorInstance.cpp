@@ -209,6 +209,10 @@ NEVER_INLINE bool ErrorInstance::tryRetainReturnAddresses(VM& vm, bool useCurren
     std::optional<unsigned> stackTraceLimit = realm()->stackTraceLimit();
     if (!stackTraceLimit)
         return false;
+    if (!*stackTraceLimit) {
+        otherFrames = makeUnique<Vector<StackFrame>>();
+        return true;
+    }
     auto* returnAddresses = AOT::tryCaptureStackTrace(vm, this, *stackTraceLimit, otherFrames, subclassCaller, useCurrentFrame ? AOT::TopFramePolicy::Include : AOT::TopFramePolicy::Skip);
     if (!returnAddresses)
         return false;

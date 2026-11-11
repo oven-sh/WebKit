@@ -524,6 +524,44 @@ static void testHeapFrameIsBornWithEveryWordZeroAndNothingWrittenBesideIt()
     }
 }
 
+static void testReleasedHeapFrameIsReused()
+{
+    constexpr uint64_t header = 0x0102030405060708ULL;
+    constexpr uint64_t resumeAddress = 0x7654321000ULL;
+    constexpr uint32_t numberOfWords = 5;
+    constexpr size_t cellSize = roundUpToMultipleOf<MarkedSpace::sizeStep>(SavedFrame::allocationSize(numberOfWords));
+    constexpr size_t numberOfSizeSteps = cellSize / MarkedSpace::sizeStep + 1;
+    StubRunner runner;
+    FakeObject<CompleteSubspace::offsetOfAllocatorForSizeStep() + numberOfSizeSteps * sizeof(void*)> cellSpace;
+    runner.instance().allocation.cellSpace = cellSpace.bytes.data();
+    runner.instance().coroutines.savedFrameHeader = header;
+    auto run = [&](uint64_t capacity, bool collectorMarks) {
+        FakeObject<cellSize> released;
+        released.bytes.fill(0xab);
+        released.at<uint64_t>(0) = header;
+        released.at<uint64_t>(SavedFrame::offsetOfCapacityOfHeapFrame()) = capacity;
+        auto* cell = std::bit_cast<JSCell*>(released.address());
+        for (JSCell*& place : runner.instance().coroutines.releasedHeapFrames)
+            place = nullptr;
+        JSCell*& releasedHeapFrame = runner.instance().coroutines.releasedHeapFrames[capacity % numberOfReleasedHeapFrames];
+        releasedHeapFrame = cell;
+        runner.instance().mutatorShouldBeFenced = collectorMarks;
+        StubRun run = runner.run(newHeapFrame(), { numberOfWords, resumeAddress });
+        bool isBornAgain = !run.calledOperation;
+        AOT_TEST_CHECK(releasedHeapFrame == (isBornAgain ? nullptr : cell));
+        if (!isBornAgain)
+            return false;
+        AOT_TEST_CHECK(run.result == released.address() && released.at<uint64_t>(0) == header && released.at<uint64_t>(SavedFrame::offsetOfResumeAddress()) == resumeAddress);
+        AOT_TEST_CHECK(released.at<uint64_t>(SavedFrame::offsetOfNumberOfWords()) == numberOfWords && released.at<uint64_t>(SavedFrame::offsetOfCapacityOfHeapFrame()) == numberOfWords);
+        for (uint32_t word = 0; word < numberOfWords; ++word)
+            AOT_TEST_CHECK(!released.at<uint64_t>(SavedFrame::offsetOfWords() + word * sizeof(uint64_t)));
+        return true;
+    };
+    AOT_TEST_CHECK(run(numberOfWords, false));
+    AOT_TEST_CHECK(!run(numberOfWords - 1, false) && !run(numberOfWords + 1, false) && !run(numberOfWords + numberOfReleasedHeapFrames, false));
+    AOT_TEST_CHECK(!run(numberOfWords, true));
+}
+
 static void checkThatIntegersAreWidened(Append append)
 {
     constexpr uint32_t capacity = 4;
@@ -811,6 +849,7 @@ std::span<const NativeTest> stubVectorGrowthTests()
         { "stubs/vector-growth/what-is-no-number-widens-integers-where-it-stands"_s, ImageTests::whenExecutable<testWhatIsNoNumberWidensIntegers> },
         { "stubs/definition-under-an-index/is-stored-in-place-or-left-whole-to-the-operation"_s, ImageTests::whenExecutable<testDefinitionUnderIndexIsStoredInPlaceOrLeftWhole> },
         { "stubs/heap-frame/is-born-with-every-word-zero-and-nothing-written-beside-it"_s, ImageTests::whenExecutable<testHeapFrameIsBornWithEveryWordZeroAndNothingWrittenBesideIt> },
+        { "stubs/heap-frame/released-frame-is-born-again"_s, ImageTests::whenExecutable<testReleasedHeapFrameIsReused> },
         { "stubs/literal-born-holding-list/its-storage-goes-by-what-it-holds"_s, ImageTests::whenExecutable<testStorageOfLiteralBornHoldingListGoesByWhatItHolds> },
         { "stubs/literal-born-holding-list/fractions-are-held-raw-and-as-values-where-a-hole-is-among-them"_s, ImageTests::whenExecutable<testLiteralBornHoldingFractions> },
         { "stubs/literal-born-holding-list/other-lists-are-not-served-and-a-dry-allocator-calls-the-operation"_s, ImageTests::whenExecutable<testListsThatNoLiteralIsBornHolding> },

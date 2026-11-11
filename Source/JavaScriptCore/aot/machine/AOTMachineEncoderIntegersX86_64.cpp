@@ -163,7 +163,7 @@ static NEVER_INLINE X86IntegerOperand takeX86IntegerOperandFromFusedLoad(Encoder
 static ALWAYS_INLINE X86IntegerOperand takeX86IntegerOperand(Encoder& encoder, const Operation* user, unsigned childIndex, LeafCursor& cursor)
 {
     const Operation* child = inlineChildWithoutCheck(user, childIndex);
-    if (encoder.isFused(child) && child->opcode() != Trunc)
+    if (encoder.isFused(child) && child->opcode() != Trunc && child->opcode() != ZExt32)
         return takeX86IntegerOperandFromFusedLoad(encoder, child, cursor);
 
     Location location = cursor.take();

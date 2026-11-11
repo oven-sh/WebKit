@@ -16,6 +16,7 @@
 
 namespace JSC {
 
+class JSModuleRecord;
 class ModuleGraphLoadingState;
 class ModuleLoadingContext;
 
@@ -47,6 +48,7 @@ public:
     static ModuleRecord* create(Instance&, Structure*, JSModuleLoader*, const Identifier& moduleKey, ModuleID);
 
     DECLARE_EXPORT_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     ModuleID module() const { return m_module; }
     bool isMocked() const;
@@ -67,9 +69,12 @@ public:
 
     unsigned innerModuleEvaluation(JSGlobalObject*, ModuleEvaluationStack&, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
     void recordTerminationAfterEvaluation(VM&, Exception*);
+    void didChangeStatus();
     void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
     void willLoadRequests(ModuleGraphLoadingState&);
     void countLoaderStep();
+    void setMomentFetched(uint32_t moment) { m_momentFetched = moment; }
+    void setMayMeetNewMocks() { m_mayMeetNewMocks = true; }
     void didResumeLoadReentrantly(ModuleGraphLoadingState& load) { m_reentrantlyResumedLoad = &load; }
     bool takeReentrantlyResumedLoad(ModuleGraphLoadingState& load)
     {
@@ -78,6 +83,13 @@ public:
         m_reentrantlyResumedLoad = nullptr;
         return true;
     }
+    void setWasReleasedDuringFetch(bool isFetchedByOwnFactory)
+    {
+        m_wasReleasedDuringFetch = true;
+        m_isFetchedByOwnFactory = isFetchedByOwnFactory;
+    }
+    JSPromise* sourceAfterRelease(JSGlobalObject*);
+    AbstractModuleRecord* recordToLoad(JSGlobalObject*);
     void didLoad();
     static void didFailToLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
@@ -98,7 +110,11 @@ public:
     bool takeMainPromiseSplit();
     JSPromise* evaluateMainModule(JSPromise* evaluation);
     static void didEvaluateModulesInJob(JSGlobalObject*);
+    static bool wasRequireRefused(CyclicModuleRecord*);
+    bool wasRequireRefused() const { return m_wasRequireRefused; }
+    void setWasRequireRefused() { m_wasRequireRefused = true; }
     static void didFailModulesInJob(JSGlobalObject*);
+    static void didFailLink(JSGlobalObject*);
     void setExtraLoadSteps(uint32_t steps) { m_extraLoadSteps = steps; }
     bool takeExtraLoadStep() { return m_extraLoadSteps && m_extraLoadSteps--; }
     bool tryDeferForEarlierImports(JSCell* payload, bool isDeferred);
@@ -107,6 +123,9 @@ public:
     bool keepsToModule() const { return m_keepsToModule; }
     bool takesNamesFromModuleItself();
     void setKeepsToModule(bool keepsToModule = true) { m_keepsToModule = keepsToModule; }
+    void bindModuleInstance(VM& vm, JSCell* instance) { m_moduleInstance.set(vm, this, instance); }
+    bool belongsToReleasedInstance() const { return !!m_moduleInstance; }
+    JSCell* moduleInstance() const { return m_moduleInstance.get(); }
     void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
     bool runsWhenLoaded() const { return m_runsWhenLoaded; }
     void setRunsInItsTurn() { m_runsInItsTurn = true; }
@@ -180,6 +199,10 @@ private:
     unsigned m_nextCompiledRequest { 0 };
     ModuleGraphLoadingState* m_reentrantlyResumedLoad { nullptr };
     uint32_t m_extraLoadSteps { 0 };
+    std::optional<uint32_t> m_momentFetched;
+    bool m_wasReleasedDuringFetch { false };
+    bool m_isFetchedByOwnFactory { false };
+    bool m_mayMeetNewMocks { false };
     bool m_ownsStatus { false };
     bool m_isRetained { false };
     bool m_isHeldByLoader { false };
@@ -189,7 +212,15 @@ private:
     bool m_isRequestedByWalkedModule { false };
     bool m_hasUnresolvableRequest { false };
     bool m_keepsToModule { false };
+    bool m_wasRequireRefused { false };
+    WriteBarrier<JSCell> m_moduleInstance;
 };
+
+void tryBindOriginal(JSGlobalObject*, JSModuleRecord*);
+void linkOriginal(JSGlobalObject*, JSModuleRecord*);
+JSValue evaluateOriginal(JSGlobalObject*, JSModuleRecord*);
+void evaluateOriginalAsync(JSGlobalObject*, JSModuleRecord*);
+void didFailOriginal(JSGlobalObject*, JSModuleRecord*);
 
 } } // namespace JSC::AOT
 

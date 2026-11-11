@@ -868,24 +868,27 @@ static void testWhetherLengthIsWrittenInteger()
     instance.receiverStructureID(Receiver::Buffer) = 0;
 
     constexpr uint32_t numberOfClosure = 5;
-    auto memoryOfTables = std::make_unique<uint64_t[]>(sizeof(ProgramTables) / sizeof(uint64_t) + 2);
-    auto* tables = reinterpret_cast<ProgramTables*>(memoryOfTables.get());
-    uint8_t* lengthsOfFunctions = reinterpret_cast<uint8_t*>(memoryOfTables.get()) + sizeof(ProgramTables);
-    tables->ranges[static_cast<unsigned>(ProgramTableIndex::functionLengths)] = { static_cast<uint32_t>(sizeof(ProgramTables)), 8 };
-    const ProgramTables* tablesBefore = std::exchange(instance.image.tables, tables);
+    constexpr uint16_t numberOfFacts = 3;
+    std::array<ClosureFacts, numberOfFacts + 1> facts { };
+    std::array<uint16_t, numberOfClosure + 1> factNumbers { };
+    factNumbers[numberOfClosure] = numberOfFacts;
+    uint8_t& lengthOfFunction = facts[numberOfFacts].length;
+    const uint16_t* factNumbersBefore = std::exchange(instance.image.closureFactNumbers, factNumbers.data());
+    const ClosureFacts* factsBefore = std::exchange(instance.image.closureFacts, facts.data());
     FakeObject<16> closure;
     closure.setHeader(PropertyReads::structureID, SlimClosureType);
     closure.at<uint64_t>(offsetOfSlimClosureWord) = static_cast<uint64_t>(numberOfClosure) << ClosureWord::functionShift | 0x1234;
     for (uint32_t length : lengths) {
-        lengthsOfFunctions[numberOfClosure] = length;
+        lengthOfFunction = length;
         AOT_TEST_CHECK(holdsForEveryInteger(closure.address(), length));
     }
-    lengthsOfFunctions[numberOfClosure] = countsAreListed;
+    lengthOfFunction = countsAreListed;
     AOT_TEST_CHECK(isLeftToRoadByName(closure.address()));
-    lengthsOfFunctions[numberOfClosure] = 1;
+    lengthOfFunction = 1;
     closure.setHeader(PropertyReads::structureID, SlimClosureWithPropertiesType);
     AOT_TEST_CHECK(isLeftToRoadByName(closure.address()));
-    instance.image.tables = tablesBefore;
+    instance.image.closureFactNumbers = factNumbersBefore;
+    instance.image.closureFacts = factsBefore;
 
     reads.file(Slot::createWithoutPayload(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::TypedArrayLength, 0));
     FakeObject<sizeof(JSArrayBufferView)> other;
@@ -1782,9 +1785,8 @@ public:
         field() = FieldData {
             .name = PropertyReads::name,
             .flags = 0,
-            .operandIndex = 0,
+            .typeNumber = 0,
             .slot = SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::DeferredClosure),
-            .type = 0,
         };
         m_structure.at<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &m_record.layout;
         instance.prefix().structureIDBase = m_structure.address() - PropertyReads::structureID;

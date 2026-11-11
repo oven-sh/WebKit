@@ -32,7 +32,12 @@ public:
         bool isStubReturnSite() const { return !code; }
         ALWAYS_INLINE std::optional<unsigned> shownFrameCountFor(bool hasShownFrame, bool calleeWasEntered) const;
         bool isOfEntrypointAtTailCall() const { return outermostVisibleFunction == OutermostVisibleFunction::None && site.isTailCall(); }
-        const HandlerRecord* exceptionHandler() const { return handler ? &*handler : nullptr; }
+        ALWAYS_INLINE const HandlerRecord* exceptionHandler(const Image& image) const
+        {
+            if (mayHaveHandler) [[unlikely]]
+                findHandler(image);
+            return handler ? &*handler : nullptr;
+        }
 
         const void* address { nullptr };
         CompiledFunctionID code;
@@ -43,6 +48,7 @@ public:
         bool innermostIsAsync : 1 { false };
         bool namesConstructedCallee : 1 { false };
         bool namesTailCallingBuiltin : 1 { false };
+        mutable bool mayHaveHandler : 1 { false };
         OutermostVisibleFunction outermostVisibleFunction : 2 { OutermostVisibleFunction::Listed };
         TraceVisibility innermostVisibility { TraceVisibility::Visible };
         StubFrameKind stubFrameKind { StubFrameKind::Plain };
@@ -51,8 +57,11 @@ public:
         static constexpr uint8_t tooManyFramesToCount = UINT8_MAX;
         uint8_t shownFrameCountOnTop { 0 };
         uint8_t shownFrameCountOnTopBehindTailCall { 0 };
-        std::optional<HandlerRecord> handler;
+        mutable std::optional<HandlerRecord> handler;
         ImageFrame frame { };
+
+    private:
+        NEVER_INLINE void findHandler(const Image&) const;
     };
 
     ALWAYS_INLINE const Entry* find(const void* returnAddress) const;
@@ -60,15 +69,28 @@ public:
     std::optional<SourcePosition> positionOf(const Image&, CompiledFunctionID, CallSiteIndex);
     InlineFrameReader& inlineFrames() { return m_inlineFrames; }
 
+    struct ConstructorFrames {
+        const void* address { nullptr };
+        uint32_t closureNumber { 0 };
+        uint16_t numberOmitted { 0 };
+        uint16_t numberShown { 0 };
+        bool calleeWasEntered { false };
+        bool isInnermostOfRun { false };
+        bool hasConstructor { false };
+    };
+    ConstructorFrames& constructorFramesAt(const void* returnAddress) { return m_constructorFrames[secondaryHash(returnAddress) >> (64 - std::countr_zero(numberOfConstructorFrames))]; }
+
     static constexpr size_t initialNumberOfEntries = 128;
     static constexpr size_t maxNumberOfEntries = 2048;
     static constexpr unsigned numberOfPositions = 16;
+    static constexpr unsigned numberOfConstructorFrames = 32;
 
 private:
     friend struct CallSiteCacheSlots;
 
     size_t primaryIndex(const void* address) const { return (std::bit_cast<uintptr_t>(address) >> 2) & m_indexMask; }
-    size_t secondaryIndex(const void* address) const { return std::bit_cast<uintptr_t>(address) * 0x9e3779b97f4a7c15ull >> m_secondaryIndexShift; }
+    static uint64_t secondaryHash(const void* address) { return std::bit_cast<uintptr_t>(address) * 0x9e3779b97f4a7c15ull; }
+    size_t secondaryIndex(const void* address) const { return secondaryHash(address) >> m_secondaryIndexShift; }
 
     void setNumberOfEntries(size_t);
     Entry* findEmptySlot(const void* address);
@@ -90,7 +112,9 @@ private:
     DecodedInlineFrames m_decodedInlineFrames;
     InlineFrameReader m_inlineFrames { m_decodedInlineFrames };
     std::array<Position, numberOfPositions> m_positions;
+    std::array<ConstructorFrames, numberOfConstructorFrames> m_constructorFrames;
 };
+static_assert(std::has_single_bit(CallSiteCache::numberOfConstructorFrames));
 static_assert(sizeof(CallSiteCache::Entry) <= 64);
 static_assert(std::has_single_bit(CallSiteCache::initialNumberOfEntries) && std::has_single_bit(CallSiteCache::maxNumberOfEntries));
 static_assert(CallSiteCache::initialNumberOfEntries <= CallSiteCache::maxNumberOfEntries);

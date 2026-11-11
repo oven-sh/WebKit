@@ -20,7 +20,7 @@ struct ARM64NumberOperands {
 static Reg takeARM64NumberSource(Encoder& encoder, const Operation* user, unsigned childIndex, Type type, LeafCursor& leaves)
 {
     const Operation* child = user->child(childIndex);
-    RELEASE_ASSERT(child->type() == type && (!encoder.m_liveness.isFused(child) || child->opcode() == Trunc));
+    RELEASE_ASSERT(child->type() == type && (!encoder.m_liveness.isFused(child) || child->opcode() == Trunc || namesWord(child)));
     Bank bank = bankOf(type);
 
     Location source = leaves.take();

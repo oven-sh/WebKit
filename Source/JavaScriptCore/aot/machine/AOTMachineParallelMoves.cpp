@@ -401,6 +401,7 @@ ALWAYS_INLINE void ParallelMoveResolver::breakCycle(uint32_t first)
 {
     uint32_t last = first;
     uint32_t memoryToMemoryMove = none;
+    uint32_t numberOfMoves = 1;
     bool passesThroughMemory = false;
     for (;;) {
         const PendingMove& move = moveAt(last);
@@ -414,9 +415,12 @@ ALWAYS_INLINE void ParallelMoveResolver::breakCycle(uint32_t first)
         if (source.writer == first)
             break;
         last = source.writer;
+        ++numberOfMoves;
     }
 
-    if (!passesThroughMemory) {
+    bool swapsInOneInstruction = isX86_64() && !passesThroughMemory && bankOf(moveAt(first).destination.reg()) == Bank::GP;
+    bool rotatesThroughScratch = !swapsInOneInstruction && numberOfMoves > 2;
+    if (!passesThroughMemory && !rotatesThroughScratch) {
         const PendingMove& lastMove = moveAt(last);
         for (uint32_t index = first; index != last; index = sourceOf(index).writer) {
             const PendingMove& move = moveAt(index);

@@ -54,6 +54,7 @@ bool defersWatchpoints(JSGlobalObject*);
 bool deferWatchpoint(JSGlobalObject*, const ObjectPropertyCondition&, InlineWatchpointSet&, DeferredWatchpointKind);
 void installDeferredWatchpoints(JSGlobalObject*);
 [[noreturn]] void crashOnHavingABadTime();
+[[noreturn]] void stopAtHostResult(Instance&, CallerFrameAndPC* operationFrameRecord, JSValue found, JSCell* function, uint32_t kinds);
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
 bool shouldUseDictionaryForAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);
 void didCreateAdditionTransition(VM&, Structure* made);
@@ -62,6 +63,7 @@ void finishFillingObjects(VM&);
 void transferEagerLoadsToLoader(VM&);
 void didStartWatchingReplacements(VM&);
 void didChangeMicrotaskQueueing(VM&);
+void willRecompileRegExp(VM&);
 void didChangeGlobalLexicalBindings(JSGlobalObject*);
 void setLoopPollsEnabled(VM&, bool);
 JSObject* proxyDefinePropertyTarget(VM&, JSValue receiver);

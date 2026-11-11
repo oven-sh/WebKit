@@ -77,7 +77,7 @@ Reference buildTruthinessOfStringInBuilder(Walker& walker, StringInBuilder& text
     return buildTestOfLengthInTextBuilderReads(walker, WTF::move(hasCodeUnits));
 }
 
-static bool buildEqualityBehindLengthInTextBuilderReads(Walker& walker, const BodyValue& reader, StringInBuilder& text, Reference name, Reference written, Origin origin)
+static bool buildEqualityAfterLengthCheck(Walker& walker, const BodyValue& reader, StringInBuilder& text, Reference name, Reference written, Origin origin)
 {
     StringID known = written ? textKnownForStrings(walker, written) : StringID();
     if (!known || operandsNarrowedBehindTestForStrings(walker, reader.id()) != std::optional<uint32_t>(0))
@@ -138,7 +138,7 @@ bool readsTextWithoutString(Walker& walker, const BodyValue& reader, StringInBui
         if (!comparesWithEmptyText) {
             if (namesText(left) == namesText(right))
                 return false;
-            return buildEqualityBehindLengthInTextBuilderReads(walker, reader, text, name, walker.referenceOf(namesText(left) ? right : left), origin);
+            return buildEqualityAfterLengthCheck(walker, reader, text, name, walker.referenceOf(namesText(left) ? right : left), origin);
         }
         Reference length = lengthOfTextInTextBuilderReads(walker, text, name, origin);
         if (!length)

@@ -102,7 +102,8 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     Integer position = integerOf(value->positionOperand());
     LBasicBlock isOwnNameToCheck = newBlock();
     LBasicBlock isNotStructureName = newBlock();
-    LBasicBlock isPastEnd = newBlock();
+    std::optional<BlockEdge> end = generator().edgeAfterLastStep(value, static_cast<uint32_t>(ForInStepResult::Done));
+    LBasicBlock isPastEnd = end ? nullptr : newBlock();
     LBasicBlock slowPath = newBlock();
     ResultsJoin<Condition, CellPointer, Integer, Integer> join(m_out);
     Join<Integer> isStructureName(m_out);
@@ -137,19 +138,30 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     join.add(isNotDone, name, position, numberOfNamesCurrentAtName);
 
     m_out.appendTo(isNotStructureName);
-    branch(greaterThanOrEqual(nameIndex, zeroExtended(fields.endGenericPropertyIndex)), { normalEdge(isPastEnd), unlikelyEdge(slowPath) });
+    branch(greaterThanOrEqual(nameIndex, zeroExtended(fields.endGenericPropertyIndex)), { end ? *end : normalEdge(isPastEnd), unlikelyEdge(slowPath) });
 
-    m_out.appendTo(isPastEnd);
-    Condition hasEnded = boolean(true);
-    join.add(hasEnded, emptyString(), position, numberOfCurrentNames);
+    if (!end) {
+        m_out.appendTo(isPastEnd);
+        Condition hasEnded = boolean(true);
+        join.add(hasEnded, emptyString(), position, numberOfCurrentNames);
+    }
 
     m_out.appendTo(slowPath);
     Operand arguments[] = { enumerator, object, position };
     StubCallResult next = emitter<RuntimeCallEmitter>().callOperationReturningPair(value, RuntimeOperation::EnumeratorNext, arguments);
     Condition isDone = isZero(Integer(next.first));
-    join.add(isDone, select(isDone, emptyString(), CellPointer(next.first)), Integer(next.second), integer(0));
+    if (end) {
+        LBasicBlock goesOn = newBlock();
+        branch(isDone, { *end, normalEdge(goesOn) });
+        m_out.appendTo(goesOn);
+        join.add(isNotDone, CellPointer(next.first), Integer(next.second), integer(0));
+    } else
+        join.add(isDone, select(isDone, emptyString(), CellPointer(next.first)), Integer(next.second), integer(0));
 
-    defineResults(value, join.finish());
+    auto results = join.finish();
+    if (end)
+        results[static_cast<size_t>(ForInStepResult::Done)] = isNotDone;
+    defineResults(value, results);
 }
 
 ForInEmitter::EnumeratorFields ForInEmitter::loadFields(CellPointer enumerator)

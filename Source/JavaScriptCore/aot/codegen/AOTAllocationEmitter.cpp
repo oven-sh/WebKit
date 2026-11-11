@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAccessEmitter.h"
+#include "AOTBarrierEmitter.h"
 #include "AOTCellFormat.h"
 #include "AOTConstantEmitter.h"
 #include "AOTEnvironmentEmitter.h"
@@ -18,6 +19,7 @@
 #include "AOTObjectWords.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTSlotAccess.h"
+#include "AOTSlotAccessEmitter.h"
 #include "AOTSlotEmitter.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTStubsAllocation.h"
@@ -89,7 +91,7 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, cons
         return cellAllocation.allocateInFrame(value, layout.size);
     }
     if (initializesFrameObjectInStub(value, allocation.placed.layout))
-        return CellPointer(callStub(value, initializeObjectInFrame(), { zeroExtended(numberOf(allocation.mention)).value(), cellAllocation.allocateInFrame(value, layout.size).value() }).first);
+        return CellPointer(callStub(value, initializeObjectInFrame(), { m_out.wideNumber(allocation.mention), cellAllocation.allocateInFrame(value, layout.size).value() }).first);
 
     LBasicBlock hasNoRecord = newBlock();
     Join<Integer> headerOfHeapCells(m_out);
@@ -316,11 +318,18 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
         m_out.appendToContinuation(next);
     };
     SlotEmitter& slots = emitter<SlotEmitter>();
-    auto finishBehindLooks = [&](bool everyFieldIsListed) {
+    constexpr unsigned maxInstructionsBeforeCall = 2;
+    auto finishBehindLooks = [&](bool everyFieldIsListed, bool mayCall) {
+        unsigned numberOfLooks = 0;
         for (const BirthFieldToCheck& checked : fields | std::views::reverse) {
             const PlacedSlot& slot = m_plan.slot(layout, checked.field);
             if (!traitsOf(slot.representation).hasAbsent || (everyFieldIsListed && !checked.holdsRawValue))
                 continue;
+            if (mayCall && numberOfLooks++ == maxInstructionsBeforeCall) {
+                callVoidOperation(value, RuntimeOperation::TryFinishBirth, { cell }, { .isOnRarePath = true });
+                m_out.jump(done);
+                return;
+            }
             MemoryLocation location = locationOfField(m_program, m_plan.slots(), layout, checked.field);
             continueIf(checked.holdsRawValue ? slots.holdsDeclaredType(cell, slot, location) : slots.holdsValue(cell, slot, location));
         }
@@ -338,11 +347,11 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
         ScopeFork byOrderWord = m_out.forkScope();
         branch(equal(orderWord, static_cast<int32_t>(*orderWordOfFinishedObject)), { normalEdge(listsThemAll), unlikelyEdge(listsOtherwise) });
         m_out.appendToArm(listsThemAll, byOrderWord);
-        finishBehindLooks(true);
+        finishBehindLooks(true, false);
         m_out.appendToArm(listsOtherwise, byOrderWord);
     }
     continueIf(hasNoBits(orderWord, orderWordHasFieldOutsideSlot));
-    finishBehindLooks(false);
+    finishBehindLooks(false, orderWordOfFinishedObject && !generator().isInLoop(value.block()));
     m_out.appendToJoin(done, fork);
 }
 
@@ -448,9 +457,10 @@ ALWAYS_INLINE_INTO_OTHER_FILES Operand AllocationEmitter::takeForSlot(const Init
     return isNarrowedWhereStored(field) ? Operand(compress(in<CellPointer>(field.value))) : get(field.value);
 }
 
-ALWAYS_INLINE_INTO_OTHER_FILES void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, const InitialFields& initialFields)
+ALWAYS_INLINE_INTO_OTHER_FILES void AllocationEmitter::storeInitialFields(const ValueContext& value, CellPointer cell, LayoutID layout, const InitialFields& initialFields, AllocationStorage storage)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
+    ConstantEmitter& constants = emitter<ConstantEmitter>();
     struct WordStoredOften {
         int64_t bits { 0 };
         unsigned numberOfStores { 0 };
@@ -491,6 +501,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES void AllocationEmitter::storeInitialFields(CellPo
         if (field.slot->isOutOfLine())
             continue;
         MemoryLocation location = locationOfField(m_program, m_plan.slots(), layout, field.field);
+        if (storage == AllocationStorage::Heap && field.slot->representation == SlotRepresentation::JSValue && constants.tryStoreStringConstantByStub(value, field.value, cell, field.slot->offset, slots.addressOf(cell, *field.slot, location)))
+            continue;
         if (SlotEmitter::storeLooksAtType(field.slot->representation))
             slots.storeSlot(cell, *field.slot, location, takeWordOrValue(field), nullptr, typeOf(field.value));
         else if (field.slot->representation != SlotRepresentation::DeferredClosure)
@@ -723,6 +735,31 @@ void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer ce
     }));
 }
 
+Vector<ValueID, 8> AllocationEmitter::collectFirstStores(const ValueContext& value)
+{
+    LayoutID layout = value->layout();
+    if (value->storage() != AllocationStorage::Heap || value->prototypeOperand() || !value->fields().empty() || generator().keepsValuesInHeapFrame() || m_program.at(layout).kind != LayoutKind::Instance || !m_plan.slots().hasDirectInstances(layout))
+        return { };
+    Vector<ValueID, 8> stores;
+    for (ValueID id : value.operationsBehind()) {
+        const Operation& operation = operationAt(id);
+        if (operation.opcode == Opcode::PutSlotOrAdd && operation.objectOperand() == value.id() && emitter<SlotAccessEmitter>().mayBeFirstStore(operation)) {
+            stores.append(id);
+            continue;
+        }
+        EffectTraits traits = operation.traits();
+        if (traits.mayCollect() || traits.mayExitSideways() || traits.mayWriteObservableState())
+            break;
+        bool namesCell = false;
+        operation.forEachChild([&](ValueID operand) {
+            namesCell |= operand && underlyingCellOf(m_code, operand) == value.id();
+        });
+        if (namesCell)
+            break;
+    }
+    return stores;
+}
+
 CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, const MentionedAllocation& allocation, std::span<const uint32_t> fields, std::span<const ValueID> values, AllocationStorage storage)
 {
     auto failWithoutCell = [&](InternalErrorKind kind) {
@@ -747,13 +784,16 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, con
             isInitialField.set(field.field);
     }
 
+    Vector<ValueID, 8> firstStores = collectFirstStores(value);
+    for (ValueID store : firstStores)
+        isInitialField.set(*m_plan.slots().findField(m_program, layoutID, operationAt(store).key()));
     EmptySlots emptySlots = collectEmptySlots(layoutID, isInitialField);
     ZeroedBy zeroedBy = whoZeroesBodyOfFreshCell(value, allocation, emptySlots.span(), storage);
     CellPointer cell = allocateCell(value, allocation, layout, storage, zeroedBy);
     {
         CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap(storage == AllocationStorage::Heap));
         initializeHiddenFields(cell, layoutID, storage, zeroedBy, storage != AllocationStorage::Heap && initializesFrameObjectInStub(value, layoutID));
-        storeInitialFields(cell, layoutID, initialFields);
+        storeInitialFields(value, cell, layoutID, initialFields, storage);
         storeEmptySlots(cell, layoutID, emptySlots.span(), zeroedBy, value.block());
     }
     // A cell that was handed back is an old one: the collector may have marked it.
@@ -766,7 +806,10 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, con
     bool keepsItsFence = layout.cellsAreHandedBack || std::ranges::any_of(initialFields, [](const InitialField& field) {
         return field.slot->isOutOfLine();
     });
-    if (storage == AllocationStorage::Heap && keepsItsFence)
+    if (!firstStores.isEmpty()) {
+        generator().noteFirstStores(value.id(), firstStores.span());
+        emitter<BarrierEmitter>().deferFenceToLastFirstStore();
+    } else if (storage == AllocationStorage::Heap && keepsItsFence)
         emitter<BarrierEmitter>().fenceAfterInitialization();
     else if (storage == AllocationStorage::Heap)
         emitter<BarrierEmitter>().fenceAfterInitialization(value);

@@ -1,6 +1,6 @@
-# `$hasContiguousIndex(array, i)` asks whether the list holds integers or values one behind the other. The two kinds lie one bit apart: the byte less the lower kind has none of the other bits of a kind set exactly for these two,
-# whatever its bits outside the kind say. So the byte is not cut down to the kind first: a load, a subtraction, a test.
+# `$hasContiguousIndex(array, i)` asks whether the list holds integers or values one behind the other. Of the kinds of a list these two alone lack one bit,
+# whatever the bits of the byte outside the kind say. So the byte is not cut down to the kind first: a load and a test of the bit.
 # RUN: emit f1 mechanisms=all
 # CHECK: @[[byte]] = Load8Z({{*}}JSArray_indexingTypeAndMisc
-# CHECK-NEXT: = Add(@[[byte]],
+# CHECK-NEXT: = BitAnd(@[[byte]],
 # PROGRAM-OF: element-that-a-test-has-found-in-a-plain-vector-is-not-loaded-again.ir

@@ -49,6 +49,7 @@ void prepareForGeneration(Procedure& procedure)
     if (procedure.m_roomsThatBuildingLeaves) [[unlikely]]
         procedure.letGoOfWhatBuildingLeaves();
 
+    procedure.separateShiftsOfSums();
     threadJumps(procedure);
     if (procedure.failure())
         return;

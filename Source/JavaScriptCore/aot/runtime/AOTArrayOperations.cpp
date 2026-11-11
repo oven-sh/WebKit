@@ -238,9 +238,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Ins
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConvertToDoubleStorage);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTConvertToDoubleStorage);
-    if (array->indexingMode() != ArrayWithInt32)
+    switch (array->indexingMode()) {
+    case ArrayWithInt32:
+    case CopyOnWriteArrayWithDouble:
+        array->tryMakeWritableDouble(vm);
         return;
-    array->tryMakeWritableDouble(vm);
+    default:
+        return;
+    }
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayCapacity, void, (Instance* instance, JSCell* cell, uint64_t room))
@@ -382,24 +387,36 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfList, JSCell*, (Instance
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* values))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArray);
-    static_assert(maxValuesInArrayLiteral < int32ValuesInArrayLiteralCount && int32ValuesInArrayLiteralCount < 1u << capacityShiftInArrayLiteralCount);
-    unsigned emptyCapacity = count >> capacityShiftInArrayLiteralCount;
+    static_assert(maxValuesInArrayLiteral < roomInArrayLiteralCount && roomInArrayLiteralCount < int32ValuesInArrayLiteralCount && int32ValuesInArrayLiteralCount < 1u << capacityShiftInArrayLiteralCount);
+    bool choosesStorage = count >= numbersInArrayLiteralCount;
+    unsigned emptyCapacity = choosesStorage ? 0 : count >> capacityShiftInArrayLiteralCount;
     bool holdsInt32 = count & int32ValuesInArrayLiteralCount;
-    count &= int32ValuesInArrayLiteralCount - 1;
+    unsigned propertyRoom = count & roomInArrayLiteralCount ? propertyRoomOfArray : 0;
+    count &= roomInArrayLiteralCount - 1;
     if (count > maxValuesInArrayLiteral || (emptyCapacity && count)) [[unlikely]]
         crashOnWrongOperand(Entry::operationAOTNewArray);
     auto valueAt = [&](uint32_t i) {
         return holdsInt32 ? jsNumber(static_cast<int32_t>(values[i])) : JSValue::decode(values[i]);
     };
-    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(holdsInt32 ? ArrayWithInt32 : ArrayWithContiguous);
+    IndexingType storage = holdsInt32 ? ArrayWithInt32 : ArrayWithContiguous;
+    if (choosesStorage) {
+        std::span written { values, count };
+        bool areInt32 = std::ranges::all_of(written, [](EncodedJSValue value) { return JSValue::decode(value).isInt32(); });
+        bool areNumbers = std::ranges::all_of(written, [](EncodedJSValue value) {
+            JSValue number = JSValue::decode(value);
+            return number.isNumber() && !std::isnan(number.asNumber());
+        });
+        storage = areInt32 ? ArrayWithInt32 : areNumbers ? ArrayWithDouble : ArrayWithContiguous;
+    }
+    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(storage);
     unsigned vectorLength = emptyCapacity ? emptyCapacity : arrayLiteralVectorLength(count);
-    bool hasWantedStorage = holdsInt32 ? hasInt32(structure->indexingType()) : hasContiguous(structure->indexingType());
+    bool hasWantedStorage = storage == ArrayWithInt32 ? hasInt32(structure->indexingType()) : storage == ArrayWithContiguous && hasContiguous(structure->indexingType());
     if (hasWantedStorage && !structure->outOfLineCapacity()) {
-        if (JSArray* array = vectorLength <= maxHoleArrayCapacity ? tryCreateArrayWithStorage(vm, structure, count, vectorLength) : nullptr) {
+        if (JSArray* array = vectorLength <= maxHoleArrayCapacity ? tryCreateArrayWithStorage(vm, structure, count, vectorLength, propertyRoom) : nullptr) {
             for (uint32_t i = 0; i < count; ++i)
                 array->butterfly()->contiguous().atUnsafe(i).setWithoutWriteBarrier(valueAt(i));
             vm.mutatorFence();
-            instance->findMissingShortArrayAllocator(vectorLength);
+            instance->findMissingShortArrayAllocator(vectorLength + propertyRoom / sizeof(EncodedJSValue));
             OPERATION_RETURN(scope, array);
         }
         if (void* storage = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull)) {

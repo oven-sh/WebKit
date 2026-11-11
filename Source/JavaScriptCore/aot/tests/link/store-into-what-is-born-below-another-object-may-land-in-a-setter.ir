@@ -16,7 +16,7 @@
 # kept[0].x = "s";
 # kept[1].x = "s";
 # RUN: link fields mechanisms=all
-# CHECK: field L3.0 "x" proven=i32 writers-known
+# CHECK: field L3.0 "x" proven=int[0, 2147483647] writers-known
 # CHECK: field L6.0 "slot" proven=L3
 # RUN(KEPT): link fields mechanisms=all
 # KEPT-NOT: field L1.0 "x" proven

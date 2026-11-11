@@ -37,9 +37,16 @@ bool hasCellOfVM(std::span<const uint8_t> bytes)
 Vector<char16_t> decodeProgramString(std::span<const uint8_t> bytes)
 {
     Vector<char16_t> units;
-    units.reserveInitialCapacity(bytes.size());
+    units.grow(bytes.size());
+    std::span<char16_t> room = units.mutableSpan();
+    size_t numberOfUnits = 0;
     for (size_t i = 0; i < bytes.size();) {
         uint8_t lead = bytes[i];
+        if (lead < 0x80) {
+            room[numberOfUnits++] = lead;
+            ++i;
+            continue;
+        }
         unsigned length = lead < 0xc0 || lead >= 0xf8 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
         char32_t character = length == 1 ? lead : lead & (0x7f >> length);
         bool isWhole = i + length <= bytes.size();
@@ -53,12 +60,13 @@ Vector<char16_t> decodeProgramString(std::span<const uint8_t> bytes)
         }
         i += length;
         if (character < 0x10000)
-            units.append(static_cast<char16_t>(character));
+            room[numberOfUnits++] = static_cast<char16_t>(character);
         else {
-            units.append(static_cast<char16_t>(0xd7c0 + (character >> 10)));
-            units.append(static_cast<char16_t>(0xdc00 | (character & 0x3ff)));
+            room[numberOfUnits++] = static_cast<char16_t>(0xd7c0 + (character >> 10));
+            room[numberOfUnits++] = static_cast<char16_t>(0xdc00 | (character & 0x3ff));
         }
     }
+    units.shrink(numberOfUnits);
     return units;
 }
 
@@ -119,6 +127,11 @@ bool isCanonicalProgramString(std::span<const uint8_t> bytes)
     bool isAfterLeadSurrogate = false;
     for (size_t i = 0; i < bytes.size();) {
         uint8_t lead = bytes[i];
+        if (lead < 0x80) {
+            isAfterLeadSurrogate = false;
+            ++i;
+            continue;
+        }
         if ((lead >= 0x80 && lead < 0xc2) || lead > 0xf4)
             return false;
         unsigned length = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
@@ -156,10 +169,13 @@ void StringTable::initialize(const BuiltinTable& builtins, const ParallelLoops& 
 
     constexpr size_t stringsPerTask = 1024;
     Vector<uint64_t> hashes(numberOfStrings);
+    Vector<uint32_t> stringsInOrderOfShards(numberOfStrings);
+    Vector<std::array<uint16_t, numberOfShards + 1>> firstsOfShardsByTask((numberOfStrings + stringsPerTask - 1) / stringsPerTask);
     CodeUnitSet codeUnits { };
     Lock codeUnitsLock;
     forEachIndexInParallel(loops, static_cast<unsigned>((numberOfStrings + stringsPerTask - 1) / stringsPerTask), [&](unsigned task) {
         CodeUnitSet codeUnitsOfTask { };
+        ASCIIUnits asciiUnitsOfTask { };
         size_t end = std::min(numberOfStrings, (static_cast<size_t>(task) + 1) * stringsPerTask);
         for (size_t i = static_cast<size_t>(task) * stringsPerTask; i < end; ++i) {
             const StringAsRead& string = strings[i];
@@ -167,20 +183,35 @@ void StringTable::initialize(const BuiltinTable& builtins, const ParallelLoops& 
             m_nameClasses[i] = string.nameClass;
             m_builtinNames[i] = string.builtinName;
             hashes[i] = hashOf(string.bytes);
-            addCodeUnitsOf(string.bytes, codeUnitsOfTask);
+            addCodeUnitsOf(string.bytes, asciiUnitsOfTask, codeUnitsOfTask);
         }
+        addASCIIUnits(asciiUnitsOfTask, codeUnitsOfTask);
+        size_t begin = static_cast<size_t>(task) * stringsPerTask;
+        auto& firstsOfShards = firstsOfShardsByTask[task];
+        firstsOfShards.fill(0);
+        for (size_t i = begin; i < end; ++i)
+            ++firstsOfShards[shardIndexOf(hashes[i]) + 1];
+        for (unsigned shardIndex = 0; shardIndex < numberOfShards; ++shardIndex)
+            firstsOfShards[shardIndex + 1] += firstsOfShards[shardIndex];
+        auto nextsOfShards = firstsOfShards;
+        for (size_t i = begin; i < end; ++i)
+            stringsInOrderOfShards[begin + nextsOfShards[shardIndexOf(hashes[i])]++] = static_cast<uint32_t>(i);
         Locker locker { codeUnitsLock };
         for (size_t word = 0; word < codeUnits.size(); ++word)
             codeUnits[word] |= codeUnitsOfTask[word];
     });
 
     forEachIndexInParallel(loops, numberOfShards, [&](unsigned shardIndex) {
-        size_t numberInShard = std::ranges::count(hashes, shardIndex, shardIndexOf);
+        size_t numberInShard = 0;
+        for (const auto& firstsOfShards : firstsOfShardsByTask)
+            numberInShard += firstsOfShards[shardIndex + 1] - firstsOfShards[shardIndex];
         Shard shard;
         reserve(shard, numberInShard);
-        for (size_t i = 0; i < numberOfStrings; ++i) {
-            if (shardIndexOf(hashes[i]) == shardIndex)
-                insert(shard, hashes[i], StringID(i));
+        for (size_t task = 0; task < firstsOfShardsByTask.size(); ++task) {
+            for (size_t place = firstsOfShardsByTask[task][shardIndex]; place < firstsOfShardsByTask[task][shardIndex + 1]; ++place) {
+                uint32_t string = stringsInOrderOfShards[task * stringsPerTask + place];
+                insert(shard, hashes[string], StringID(string));
+            }
         }
         m_shards[shardIndex] = WTF::move(shard);
     });
@@ -195,30 +226,28 @@ void StringTable::initialize(const BuiltinTable& builtins, const ParallelLoops& 
     m_textOfTrue = intern(StringView("true"_s));
     m_textOfFalse = intern(StringView("false"_s));
     appendBuiltinNames();
+    ASCIIUnits asciiUnits { };
     for (size_t i = numberOfStrings; i < m_strings.size(); ++i)
-        addCodeUnitsOf(m_strings[i], codeUnits);
+        addCodeUnitsOf(m_strings[i], asciiUnits, codeUnits);
+    addASCIIUnits(asciiUnits, codeUnits);
     internCodeUnitsIn(codeUnits);
 }
 
-void StringTable::addCodeUnitsOf(std::span<const uint8_t> bytes, CodeUnitSet& codeUnits)
+void StringTable::addCodeUnitsOf(std::span<const uint8_t> bytes, ASCIIUnits& asciiUnits, CodeUnitSet& codeUnits)
 {
-    auto add = [&](char16_t unit) {
-        codeUnits[unit / 64] |= 1ull << (unit % 64);
-    };
     if (charactersAreAllASCII(byteCast<Latin1Character>(bytes))) {
-        uint64_t unitsBelow64 = 0;
-        uint64_t unitsFrom64 = 0;
-        for (uint8_t byte : bytes) {
-            uint64_t bit = 1ull << (byte % 64);
-            unitsBelow64 |= byte < 64 ? bit : 0;
-            unitsFrom64 |= byte < 64 ? 0 : bit;
-        }
-        codeUnits[0] |= unitsBelow64;
-        codeUnits[1] |= unitsFrom64;
+        for (uint8_t byte : bytes)
+            asciiUnits[byte] = 1;
         return;
     }
     for (char16_t unit : decodeProgramString(bytes))
-        add(unit);
+        codeUnits[unit / 64] |= 1ull << (unit % 64);
+}
+
+void StringTable::addASCIIUnits(const ASCIIUnits& asciiUnits, CodeUnitSet& codeUnits)
+{
+    for (unsigned unit = 0; unit < asciiUnits.size(); ++unit)
+        codeUnits[unit / 64] |= static_cast<uint64_t>(asciiUnits[unit]) << (unit % 64);
 }
 
 StringID StringTable::internCodeUnit(char16_t unit)

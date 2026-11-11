@@ -1,4 +1,4 @@
-# class P { #x = 1; open = 2; sum() { return this.#x + this.open; } bump() { this.#x = this.#x + 1; } static get(o: any) { return o.#x; } static has(o: any) { return #x in o; } }
+# class P { #x = 1.5; open = 2; sum() { return this.#x + this.open; } bump() { this.#x = this.#x + 1; } static get(o: any) { return o.#x; } static has(o: any) { return #x in o; } }
 # const p = new P();
 # p.bump();
 # report(p.sum());
@@ -121,7 +121,7 @@ function f6 module=m0 position=53 kind=Initializer flags=[HasThis, IsChecked, Is
     v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @53
     v2 = GetModuleVariable variable=g1 @53
     PrivateDefine v1, v2, v2 layout=L0 @53
-    v4 = Integer integer=1 @62
+    v4 = Double number=1.5 @62
     v5 = GetModuleVariable variable=g1 @57
     PrivateDefine v1, v5, v4 layout=L0 field=1 @57
     v7 = Integer integer=2 @72

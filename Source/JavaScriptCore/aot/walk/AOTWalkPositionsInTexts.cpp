@@ -66,8 +66,11 @@ struct TestOfPositionInText {
     std::tuple<uint32_t, uint32_t, uint32_t> order() const { return { position.index(), text.index(), firstDominatorNumber }; }
 };
 
+enum class BoundOfPositionInText : uint8_t { BelowLength, AtMostLength };
+
 struct TestsOfPositionsInTexts final : Walker::KeptForBuild {
-    UncheckedKeyHashMap<const BodyIndex*, Vector<TestOfPositionInText>> ofBodies;
+    UncheckedKeyHashMap<const BodyIndex*, Vector<TestOfPositionInText>> belowLengths;
+    UncheckedKeyHashMap<const BodyIndex*, Vector<TestOfPositionInText>> atMostLengths;
 };
 
 } // anonymous namespace
@@ -90,6 +93,9 @@ static std::optional<LengthOfTextAsWritten> findLengthOfTextAsWritten(const Prog
         if (found.distanceBelowLength < 0)
             return std::nullopt;
         bound = index.stripCasts(difference.operand(0));
+    } else if (bound && !index.isParameter(bound) && index.opcodeOf(bound) == Opcode::Decrement) {
+        found.distanceBelowLength = 1;
+        bound = index.stripCasts(index.value(bound).operand(0));
     }
     if (!bound || index.isParameter(bound) || index.opcodeOf(bound) != Opcode::PropGet)
         return std::nullopt;
@@ -102,8 +108,9 @@ static std::optional<LengthOfTextAsWritten> findLengthOfTextAsWritten(const Prog
     return found;
 }
 
-static Vector<TestOfPositionInText> collectTestsOfPositionsInTexts(const Program& program, const BodyIndex& index)
+static Vector<TestOfPositionInText> collectTestsOfPositionsInTexts(const Program& program, const BodyIndex& index, BoundOfPositionInText bound)
 {
+    int64_t distanceGranted = bound == BoundOfPositionInText::AtMostLength ? 1 : 0;
     Vector<TestOfPositionInText> tests;
     for (BlockID entered : index.blocksInDominatorOrder()) {
         std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(entered);
@@ -128,12 +135,12 @@ static Vector<TestOfPositionInText> collectTestsOfPositionsInTexts(const Program
 
         BodyValue relation = index.value(test);
         for (uint32_t placeOfPosition = 0; placeOfPosition < 2; ++placeOfPosition) {
-            std::optional<LengthOfTextAsWritten> bound = findLengthOfTextAsWritten(program, index, relation.operand(1 - placeOfPosition));
-            if (!bound || !relationHoldsPositionBelowLength(relation.opcode(), holds, placeOfPosition, bound->distanceBelowLength))
+            std::optional<LengthOfTextAsWritten> length = findLengthOfTextAsWritten(program, index, relation.operand(1 - placeOfPosition));
+            if (!length || !relationHoldsPositionBelowLength(relation.opcode(), holds, placeOfPosition, length->distanceBelowLength + distanceGranted))
                 continue;
             ValueID position = index.stripCasts(relation.operand(placeOfPosition));
             if (position)
-                tests.append(TestOfPositionInText { position, bound->text, index.dominatorNumber(entered), index.lastDominatorNumberBelow(entered) });
+                tests.append(TestOfPositionInText { position, length->text, index.dominatorNumber(entered), index.lastDominatorNumberBelow(entered) });
         }
     }
 
@@ -149,7 +156,7 @@ static Vector<TestOfPositionInText> collectTestsOfPositionsInTexts(const Program
     return tests;
 }
 
-bool testOfBodyHoldsPositionBelowLengthOfText(Walker& walker, const BodyIndex& index, BlockID block, ValueID text, ValueID position)
+static bool testOfBodyHoldsPositionInText(Walker& walker, const BodyIndex& index, BlockID block, ValueID text, ValueID position, BoundOfPositionInText bound)
 {
     text = textAsAskedAboutInPositionsInTexts(index, text);
     position = index.stripCasts(position);
@@ -159,8 +166,10 @@ bool testOfBodyHoldsPositionBelowLengthOfText(Walker& walker, const BodyIndex& i
     std::unique_ptr<Walker::KeptForBuild>& kept = walker.keptByPositionsInTexts();
     if (!kept)
         kept = makeUniqueWithoutFastMallocCheck<TestsOfPositionsInTexts>();
-    const Vector<TestOfPositionInText>& tests = static_cast<TestsOfPositionsInTexts&>(*kept).ofBodies.ensure(&index, [&] {
-        return collectTestsOfPositionsInTexts(walker.program(), index);
+    TestsOfPositionsInTexts& testsKept = static_cast<TestsOfPositionsInTexts&>(*kept);
+    auto& ofBodies = bound == BoundOfPositionInText::AtMostLength ? testsKept.atMostLengths : testsKept.belowLengths;
+    const Vector<TestOfPositionInText>& tests = ofBodies.ensure(&index, [&] {
+        return collectTestsOfPositionsInTexts(walker.program(), index, bound);
     }).iterator->value;
 
     uint32_t number = index.dominatorNumber(block);
@@ -171,30 +180,188 @@ bool testOfBodyHoldsPositionBelowLengthOfText(Walker& walker, const BodyIndex& i
     return last.position == position && last.text == text && number <= last.lastDominatorNumber;
 }
 
-bool testOfBodyHoldsPositionOfCharacterReadBelowLength(Walker& walker, const BodyValue& read)
+bool testOfBodyHoldsPositionBelowLengthOfText(Walker& walker, const BodyIndex& index, BlockID block, ValueID text, ValueID position)
 {
+    return testOfBodyHoldsPositionInText(walker, index, block, text, position, BoundOfPositionInText::BelowLength);
+}
+
+namespace {
+
+enum class StepsTaken : uint8_t { Down, Both };
+
+struct SteppedValue {
+    ValueID value;
+    int64_t offset { 0 };
+};
+
+} // anonymous namespace
+
+static SteppedValue stripSteps(const BodyIndex& index, ValueID value, StepsTaken taken)
+{
+    static constexpr uint32_t maxSteps = 8;
+    SteppedValue found { index.stripCasts(value), 0 };
+    for (uint32_t depth = 0; depth < maxSteps && found.value && !index.isParameter(found.value); ++depth) {
+        BodyValue step = index.value(found.value);
+        int64_t by = 0;
+        switch (step.opcode()) {
+        case Opcode::ToNumeric:
+            break;
+        case Opcode::Decrement:
+            by = -1;
+            break;
+        case Opcode::Increment:
+            by = 1;
+            break;
+        case Opcode::Add:
+        case Opcode::Sub: {
+            ValueID written = index.stripCasts(step.operand(1));
+            if (!written || index.isParameter(written) || index.opcodeOf(written) != Opcode::Integer)
+                return found;
+            int64_t constant = index.value(written).as<Opcode::Integer>().integer();
+            if (constant != static_cast<int32_t>(constant))
+                return found;
+            by = step.opcode() == Opcode::Add ? constant : -constant;
+            break;
+        }
+        default:
+            return found;
+        }
+        if (by > 0 && taken == StepsTaken::Down)
+            return found;
+        found = { index.stripCasts(step.operand(0)), found.offset + by };
+    }
+    return found;
+}
+
+static bool bodyTestHoldsNumberAfterPosition(Walker& walker, const BodyIndex& index, BlockID block, ValueID text, ValueID position)
+{
+    static constexpr OpcodeSet stepsDown { Opcode::Decrement, Opcode::Sub, Opcode::Add };
+    if (!index.holdsAnyOf(stepsDown))
+        return false;
+    SteppedValue number = stripSteps(index, position, StepsTaken::Down);
+    if (!number.value || number.offset >= 0)
+        return false;
+    Reference built = walker.referenceOf(number.value);
+    if (!built || !built.isRecord() || !walker.types().at(walker.typeOf(built)).isNumber())
+        return false;
+    return testOfBodyHoldsPositionInText(walker, index, block, text, number.value, BoundOfPositionInText::AtMostLength);
+}
+
+static bool isLowered(Walker& walker, const BodyIndex& index, LoopID loop, ValueID counter, ValueID value, Vector<ValueID, 8>& joins)
+{
+    ValueID start = stripSteps(index, value, StepsTaken::Down).value;
+    if (start == counter || joins.contains(start))
+        return true;
+    if (!start || !index.isParameter(start) || joins.size() == 8)
+        return false;
+    BlockID block = index.blockOf(start);
+    if (index.isLoopHead(block) || index.isEnteredByHandlerEdge(block) || !index.isInLoop(block, loop))
+        return false;
+    joins.append(start);
+    uint32_t place = start.index() - index.block(block).firstParameter().index();
+    return std::ranges::all_of(walker.incomingEdgesOf(index, block), [&](const BodyIncomingEdge& edge) {
+        std::span<const ValueID> arguments = edge.target.arguments();
+        return place < arguments.size() && isLowered(walker, index, loop, counter, arguments[place], joins);
+    });
+}
+
+ValueID findLoweredCounterUnder(Walker& walker, const BodyIndex& index, ValueID value)
+{
+    static constexpr OpcodeSet stepsDown { Opcode::Decrement, Opcode::Sub };
+    if (!index.holdsAnyOf(stepsDown))
+        return { };
+    ValueID counter = stripSteps(index, value, StepsTaken::Both).value;
+    if (!counter || !index.isParameter(counter))
+        return { };
+    BlockID head = index.blockOf(counter);
+    if (!index.isLoopHead(head) || index.isEnteredByHandlerEdge(head))
+        return { };
+    LoopID loop = index.loopOf(head);
+    uint32_t place = counter.index() - index.block(head).firstParameter().index();
+    bool isStepped = false;
+    for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, head)) {
+        if (!index.isInLoop(edge.from, loop))
+            continue;
+        std::span<const ValueID> arguments = edge.target.arguments();
+        Vector<ValueID, 8> joins;
+        if (place >= arguments.size() || !isLowered(walker, index, loop, counter, arguments[place], joins))
+            return { };
+        isStepped |= index.stripCasts(arguments[place]) != counter;
+    }
+    return isStepped ? counter : ValueID();
+}
+
+static bool isLoweredCounterBelowLength(Walker& walker, const BodyIndex& index, ValueID text, ValueID position)
+{
+    text = textAsAskedAboutInPositionsInTexts(index, text);
+    ValueID counter = text ? findLoweredCounterUnder(walker, index, position) : ValueID();
+    if (!counter)
+        return false;
+    BlockID head = index.blockOf(counter);
+    int64_t offset = stripSteps(index, position, StepsTaken::Both).offset;
+    uint32_t place = counter.index() - index.block(head).firstParameter().index();
+    bool isEntered = false;
+    for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, head)) {
+        if (index.isInLoop(edge.from, index.loopOf(head)))
+            continue;
+        std::span<const ValueID> arguments = edge.target.arguments();
+        std::optional<LengthOfTextAsWritten> start = place < arguments.size() ? findLengthOfTextAsWritten(walker.program(), index, arguments[place]) : std::nullopt;
+        if (!start || start->text != text || start->distanceBelowLength - offset < 1)
+            return false;
+        isEntered = true;
+    }
+    return isEntered;
+}
+
+namespace {
+
+struct CharacterReadAsWritten {
     ValueID text;
     ValueID position;
+};
+
+} // anonymous namespace
+
+static std::optional<CharacterReadAsWritten> findCharacterReadAsWritten(Walker& walker, const BodyValue& read)
+{
+    CharacterReadAsWritten found;
     switch (read.opcode()) {
     case Opcode::Call:
         if (read.argumentsOperands().size() != 1)
-            return false;
-        text = read.thisValueOperand();
-        position = read.argumentsOperands()[0];
+            return std::nullopt;
+        found = { read.thisValueOperand(), read.argumentsOperands()[0] };
         break;
     case Opcode::ElemGet:
-        text = read.objectOperand();
-        position = read.propertyOperand();
+        found = { read.objectOperand(), read.propertyOperand() };
         break;
     default:
-        return false;
+        return std::nullopt;
     }
 
-    Reference built = walker.referenceOf(position);
+    Reference built = walker.referenceOf(found.position);
     if (!built || !built.isRecord() || !walker.types().at(walker.typeOf(built)).isInteger())
-        return false;
+        return std::nullopt;
+    return found;
+}
+
+bool testOfBodyHoldsPositionOfCharacterReadBelowLength(Walker& walker, const BodyValue& read)
+{
     const BodyIndex& index = walker.currentBodyIndex();
-    return testOfBodyHoldsPositionBelowLengthOfText(walker, index, index.blockOf(read.id()), text, position);
+    std::optional<CharacterReadAsWritten> written = findCharacterReadAsWritten(walker, read);
+    return written && testOfBodyHoldsPositionBelowLengthOfText(walker, index, index.blockOf(read.id()), written->text, written->position);
+}
+
+bool readsCharacterBeforeTestedNumber(Walker& walker, const BodyValue& read)
+{
+    std::optional<CharacterReadAsWritten> written = findCharacterReadAsWritten(walker, read);
+    const BodyIndex& index = walker.currentBodyIndex();
+    return written && bodyTestHoldsNumberAfterPosition(walker, index, index.blockOf(read.id()), written->text, written->position);
+}
+
+bool readsCharacterUnderLoweredCounter(Walker& walker, const BodyValue& read)
+{
+    std::optional<CharacterReadAsWritten> written = findCharacterReadAsWritten(walker, read);
+    return written && isLoweredCounterBelowLength(walker, walker.currentBodyIndex(), written->text, written->position);
 }
 
 } } } // namespace JSC::AOT::Typed

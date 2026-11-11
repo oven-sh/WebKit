@@ -218,7 +218,8 @@ template<typename Visitor>
 void Object::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     JSCell::visitChildren(cell, visitor);
-    visitFields(uncheckedDowncast<Object>(cell), visitor);
+    auto* object = uncheckedDowncast<Object>(cell);
+    visitFields(object, object->compiledStructure(), visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Object);
@@ -517,7 +518,8 @@ template<typename Visitor>
 void Environment::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     Base::visitChildren(cell, visitor);
-    visitFields(uncheckedDowncast<Environment>(cell), visitor);
+    auto* environment = uncheckedDowncast<Environment>(cell);
+    visitFields(environment, environment->layout(), visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Environment);

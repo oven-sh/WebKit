@@ -15,8 +15,23 @@
 
 namespace JSC {
 
-template<> struct InlineCellVisit<CellVisitKind::CompiledObject> : CellFieldsVisit<AOT::Object, AOT::Object> { };
-template<> struct InlineCellVisit<CellVisitKind::CompiledEnvironment> : CellFieldsVisit<AOT::Environment, AOT::Environment> { };
+template<> struct InlineCellVisit<CellVisitKind::CompiledObject> {
+    ALWAYS_INLINE static bool tryVisit(FastMarkAppender& appender, JSCell* cell, Structure* structure)
+    {
+        appender.appendStructure(structure);
+        SUPPRESS_MEMORY_UNSAFE_CAST AOT::Object::visitFields(static_cast<AOT::Object*>(cell), *static_cast<const AOT::CompiledStructure*>(structure), appender);
+        return true;
+    }
+};
+
+template<> struct InlineCellVisit<CellVisitKind::CompiledEnvironment> {
+    ALWAYS_INLINE static bool tryVisit(FastMarkAppender& appender, JSCell* cell, Structure* structure)
+    {
+        appender.appendStructure(structure);
+        SUPPRESS_MEMORY_UNSAFE_CAST return AOT::Environment::tryVisitFields(static_cast<AOT::Environment*>(cell), *static_cast<const AOT::CompiledStructure*>(structure), appender);
+    }
+};
+
 template<> struct InlineCellVisit<CellVisitKind::CompactTable> : CellFieldsVisit<AOT::CompactTable, AOT::CompactTable> { };
 template<> struct InlineCellVisit<CellVisitKind::CompiledClosure> : ObjectFieldsVisit<AOT::Closure, JSCallee, JSFunction, AOT::Closure> { };
 

@@ -361,6 +361,11 @@ public:
     // Must be set before anything links against the record. It can't be unset.
     bool hasLiveExports() const { return m_hasLiveExports; }
     void setHasLiveExports();
+    // The original of a module mock whose body is AOT-compiled code. Its exports resolve as those of any module, and reads of them go to liveExportsSource(), which has their values.
+    bool isCompiledOriginal() const { return m_isCompiledOriginal; }
+    void setIsCompiledOriginal(VM&, JSObject* source);
+    bool hasExportsSource() const { return m_hasLiveExports || m_isCompiledOriginal; }
+    const Identifier& bindingName(const ExportEntry& entry) const { return m_isCompiledOriginal ? entry.exportName : entry.localName; }
     // Null until the embedder sets it. Reading an export before that throws a TDZ error.
     JSObject* liveExportsSource() const { return m_liveExportsSource.get(); }
     JS_EXPORT_PRIVATE void setLiveExportsSource(VM&, JSObject*);
@@ -490,6 +495,7 @@ protected:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_prelinkedEntriesMaterialized { false };
     bool m_hasLiveExports { false };
+    bool m_isCompiledOriginal { false };
     WriteBarrier<JSObject> m_liveExportsSource;
     uint32_t m_prelinkedIndex { 0 };
     RefPtr<PrelinkedModuleGraph> m_prelinked;

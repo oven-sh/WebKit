@@ -32,20 +32,20 @@ void CastEmitter::generateNarrowed(const ValueContext& value)
     if (operand.is<Boxed>() && value->testOperand() && !value->isOnTakenEdge()) {
         const Operation& test = operationAt(value->testOperand());
         bool isNotUndefined = test.opcode == Opcode::TypeTest && test.valueOperand() == value->valueOperand() && types().isSubset(TypeTable::undefined, test.testedType());
-        if (LValue word = isNotUndefined ? emitter<SlotEmitter>().findWordOfSlot(operand.value) : nullptr)
+        if (LValue word = isNotUndefined ? emitter<SlotEmitter>().findSlotWord(operand.value) : nullptr)
             operand = Boxed(word);
     }
     defineNarrowed(value, operand);
 }
 
-bool CastEmitter::tryTestWordOfSlot(const ValueContext& test, Boxed value, const TypeTestPlan& plan)
+bool CastEmitter::tryTestSlotWord(const ValueContext& test, Boxed value, const TypeTestPlan& plan)
 {
     constexpr int64_t bitsOutsideUndefined = ~static_cast<int64_t>(JSValue::ValueUndefined);
-    LValue word = emitter<SlotEmitter>().findWordOfSlot(value.value());
+    LValue word = emitter<SlotEmitter>().findSlotWord(value.value());
     if (!word || !Machine::isEncodableBitImmediate(Width64, bitsOutsideUndefined))
         return false;
-    bool asksForNothing = plan.verdict == TypeTestVerdict::NeedsTest && (plan.passingPrimitives & Primitive::Undefined) && !(plan.passingPrimitives & ~Primitive::UndefinedOrNull) && !plan.integers && plan.stringLiterals.isEmpty() && plan.cellTests.isEmpty() && plan.objects != ObjectsVerdict::AllPass;
-    if (!asksForNothing)
+    bool isTestEmpty = plan.verdict == TypeTestVerdict::NeedsTest && (plan.passingPrimitives & Primitive::Undefined) && !(plan.passingPrimitives & ~Primitive::UndefinedOrNull) && !plan.integers && plan.stringLiterals.isEmpty() && plan.cellTests.isEmpty() && plan.objects != ObjectsVerdict::AllPass;
+    if (!isTestEmpty)
         return false;
     bool nullFails = plan.failingPrimitives & Primitive::Null;
     if (nullFails && !test.isBranchCondition())
@@ -111,21 +111,29 @@ void CastEmitter::generateRequireObject(const ValueContext& value)
     defineNarrowed(value, operand);
 }
 
+bool CastEmitter::asksForRangeOfInt32(const ValueContext& test)
+{
+    const Type& tested = types().at(test->testedType());
+    return tested.isInteger() && !tested.integers.isEmpty() && tested.integers != Range::int32() && tested.integers.isSubsetOf(Range::int32());
+}
+
 ALWAYS_INLINE_INTO_OTHER_FILES ValueID CastEmitter::unboxingBehindTestForInt32(const ValueContext& test)
 {
     const Terminator& end = m_code.at(test.block()).terminator;
-    if (test->testedType() != TypeTable::int32 || end.kind != TerminatorKind::Branch || end.conditionOperand() != test.id())
+    if ((test->testedType() != TypeTable::int32 && !asksForRangeOfInt32(test)) || end.kind != TerminatorKind::Branch || end.conditionOperand() != test.id())
         return { };
     const Edge& taken = m_code.at(end.taken());
     if (!taken.arguments().empty() || generator().singlePredecessorOf(taken.to) != test.block() || generator().leavesTurnLaidOut(taken.to))
         return { };
+    bool mayUnboxLater = !m_code.at(test.block()).isInLoop && !generator().keepsValuesInHeapFrame();
     for (ValueID id : m_code.valuesOf(taken.to)) {
-        const Operation& unboxing = m_code.at(id);
+        ValueID user = mayUnboxLater && m_code.at(id).opcode == Opcode::Narrowed ? m_code.onlyUserOf(id) : id;
+        const Operation& unboxing = m_code.at(user ? user : id);
         if (unboxing.opcode != Opcode::Unbox || (unboxing.representation != Representation::Int32 && unboxing.representation != Representation::Int64))
             continue;
         const Operation& narrowed = m_code.at(unboxing.valueOperand());
         if (narrowed.opcode == Opcode::Narrowed && narrowed.isOnTakenEdge() && narrowed.testOperand() == test.id() && narrowed.valueOperand() == test->valueOperand())
-            return id;
+            return user ? user : id;
     }
     return { };
 }
@@ -144,11 +152,12 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CastEmitter::tryBranchOnInt32AndHandItOn(con
     LBasicBlock isTagged = newBlock();
     LBasicBlock isNotTagged = newBlock();
     LBasicBlock isDouble = newBlock();
-    bool isWide = m_code.at(unboxing).representation == Representation::Int64;
-    LValue integer = m_out.phiIn(targets.taken.block(), isWide ? Machine::Int64 : Machine::Int32);
+    bool asksForRange = asksForRangeOfInt32(test);
+    BlockEdge hasInteger = asksForRange ? normalEdge(newBlock()) : targets.taken;
+    LValue integer = m_out.phiIn(hasInteger.block(), Machine::Int32);
     auto handOn = [&](Word32 word) {
-        m_out.upsilon(isWide ? signExtended(word).value() : word.value(), integer);
-        m_out.jump(targets.taken);
+        m_out.upsilon(word.value(), integer);
+        m_out.jump(hasInteger);
     };
     m_out.branch(isInt32(value).value(), normalEdge(isTagged), rareEdge(isNotTagged));
 
@@ -161,7 +170,17 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CastEmitter::tryBranchOnInt32AndHandItOn(con
     m_out.appendTo(isDouble);
     handOn(emitter<ConversionEmitter>().int32OrElse(unboxDouble(value), targets.notTaken.block()));
 
-    m_integersHandedOn.add(unboxing.index(), isWide ? Operand(Integer(integer)) : Operand(Word32(integer)));
+    if (asksForRange) {
+        m_out.appendTo(hasInteger.block());
+        Range range = types().at(test->testedType()).integers;
+        if (range.minimum == Range::length().minimum && range.maximum == Range::length().maximum)
+            m_out.branch(lessThan(Word32(integer), 0).value(), targets.notTaken, targets.taken);
+        else {
+            Word32 fromMinimum = range.minimum ? sub(Word32(integer), word32(static_cast<int32_t>(range.minimum))) : Word32(integer);
+            m_out.branch(above(fromMinimum, word32(static_cast<int32_t>(range.maximum - range.minimum))).value(), targets.notTaken, targets.taken);
+        }
+    }
+    m_integersHandedOn.add(unboxing.index(), Operand(Word32(integer)));
     build().statistics().count(StatisticID::UnboxingsFusedIntoTypeChecks);
     return true;
 }
@@ -209,7 +228,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CastEmitter::tryBranchOnNumberAndHandItOn(co
     LBasicBlock isNotTagged = newBlock();
     LBasicBlock isDouble = newBlock();
     LValue number = m_out.phiIn(targets.taken.block(), Machine::Double);
-    m_out.branch(isInt32(value).value(), normalEdge(isTagged), normalEdge(isNotTagged));
+    m_out.branch(isNotInt32(value).value(), normalEdge(isNotTagged), normalEdge(isTagged));
 
     m_out.appendTo(isTagged);
     m_out.upsilon(toNumber(unboxInt32(value)).value(), number);
@@ -227,7 +246,63 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CastEmitter::tryBranchOnNumberAndHandItOn(co
     return true;
 }
 
-ValueID CastEmitter::sumBehindTestForNumber(const ValueContext& test)
+ValueID CastEmitter::conversionAfterInt32Test(const ValueContext& test)
+{
+    ValueID truncation = test->valueOperand();
+    if (test->testedType() != TypeTable::int32 || m_code.isConstant(truncation) || generator().keepsValuesInHeapFrame())
+        return { };
+    const Operation& truncated = m_code.at(truncation);
+    if (truncated.opcode != Opcode::ToIntegerOrInfinity || truncated.representation != Representation::Double || representationOf(truncated.valueOperand()) != Representation::Double)
+        return { };
+    const Edge& taken = m_code.at(m_code.at(test.block()).terminator.taken());
+    if (!taken.arguments().empty() || generator().singlePredecessorOf(taken.to) != test.block() || generator().leavesTurnLaidOut(taken.to))
+        return { };
+    for (ValueID id : m_code.valuesOf(taken.to)) {
+        const Operation& narrowed = m_code.at(id);
+        if (narrowed.opcode != Opcode::Narrowed || !narrowed.isOnTakenEdge() || narrowed.testOperand() != test.id() || narrowed.valueOperand() != truncation)
+            continue;
+        ValueID conversion = m_code.onlyUserOf(id);
+        if (conversion && m_code.at(conversion).opcode == Opcode::NumberToInteger)
+            return conversion;
+    }
+    return { };
+}
+
+bool CastEmitter::tryBranchOnTruncatedInt32(const ValueContext& test, Operand operand)
+{
+    if (operand.representation != Representation::Double)
+        return false;
+    ValueID conversion = conversionAfterInt32Test(test);
+    if (!conversion)
+        return false;
+
+    Number number = in<Number>(m_code.at(test->valueOperand()).valueOperand());
+    Integer truncated = emitter<ConversionEmitter>().truncateUnchecked(number);
+    Word32 word = low32(truncated);
+    BranchTargets targets = test.branchTargets();
+    LBasicBlock isInt32 = newBlock();
+    LBasicBlock isOther = newBlock();
+    LBasicBlock isNaN = newBlock();
+    bool isWide = m_code.at(conversion).representation == Representation::Int64;
+    LValue integer = m_out.phiIn(targets.taken.block(), isWide ? Machine::Int64 : Machine::Int32);
+    m_out.branch(equal(signExtended(word), truncated).value(), normalEdge(isInt32), rareEdge(isOther));
+
+    m_out.appendTo(isInt32);
+    m_out.upsilon(isWide ? truncated.value() : word.value(), integer);
+    m_out.jump(targets.taken);
+
+    m_out.appendTo(isOther);
+    m_out.branch(equal(number, number).value(), targets.notTaken, rareEdge(isNaN));
+
+    m_out.appendTo(isNaN);
+    m_out.upsilon(isWide ? m_out.constInt64(0) : m_out.constInt32(0), integer);
+    m_out.jump(targets.taken);
+
+    m_integersHandedOn.set(conversion.index(), isWide ? Operand(Integer(integer)) : Operand(Word32(integer)));
+    return true;
+}
+
+ValueID CastEmitter::sumAfterNumberTest(const ValueContext& test)
 {
     if (test->testedType() != TypeTable::number || generator().keepsValuesInHeapFrame())
         return { };
@@ -235,13 +310,13 @@ ValueID CastEmitter::sumBehindTestForNumber(const ValueContext& test)
         const Operation& narrowed = m_code.at(id);
         return narrowed.opcode == Opcode::Narrowed && narrowed.isOnTakenEdge() && narrowed.testOperand() == test.id() && narrowed.valueOperand() == test->valueOperand();
     };
-    auto isTermOfBoxedSum = [&](ValueID id) {
+    auto isBoxedSumTerm = [&](ValueID id) {
         return representationOf(id) == Representation::JSValue || representationOf(id) == Representation::Int32;
     };
     ValueID number;
     BlockID from = test.block();
     ValueID condition = test.id();
-    for (bool isBehindOtherTest : { false, true }) {
+    for (bool isAfterOtherTest : { false, true }) {
         const Terminator& end = m_code.at(from).terminator;
         if (end.kind != TerminatorKind::Branch || end.conditionOperand() != condition)
             return { };
@@ -266,11 +341,11 @@ ValueID CastEmitter::sumBehindTestForNumber(const ValueContext& test)
         const Operation& operation = m_code.at(next);
         if (operation.opcode == Opcode::Add || operation.opcode == Opcode::Sub) {
             bool takesNumber = operation.leftOperand() == number || operation.rightOperand() == number;
-            bool isBoxedSum = operation.form() == OperatorForm::Numbers && operation.representation == Representation::JSValue && isTermOfBoxedSum(operation.leftOperand()) && isTermOfBoxedSum(operation.rightOperand());
+            bool isBoxedSum = operation.form() == OperatorForm::Numbers && operation.representation == Representation::JSValue && isBoxedSumTerm(operation.leftOperand()) && isBoxedSumTerm(operation.rightOperand());
             return takesNumber && isBoxedSum ? next : ValueID();
         }
-        bool isTestOfOtherOperand = operation.opcode == Opcode::TypeTest && operation.testedType() == TypeTable::number && m_code.useCountOf(number) == 1;
-        if (isBehindOtherTest || !isTestOfOtherOperand)
+        bool testsOtherOperand = operation.opcode == Opcode::TypeTest && operation.testedType() == TypeTable::number && m_code.useCountOf(number) == 1;
+        if (isAfterOtherTest || !testsOtherOperand)
             return { };
         from = passes.to;
         condition = next;
@@ -282,7 +357,7 @@ bool CastEmitter::tryDeferTestToSum(const ValueContext& test, Operand operand)
 {
     if (!operand.is<Boxed>() || !(typeOf(test->valueOperand()).primitives & Primitive::Integer) || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime))
         return false;
-    ValueID sum = sumBehindTestForNumber(test);
+    ValueID sum = sumAfterNumberTest(test);
     if (!sum)
         return false;
     BranchTargets targets = test.branchTargets();
@@ -302,7 +377,7 @@ std::optional<Operand> CastEmitter::takeIntegerHandedOnTo(ValueID unboxing)
     return m_integersHandedOn.takeOptional(unboxing.index());
 }
 
-FunctionID CastEmitter::closureThatTestAsksFor(ValueID id)
+FunctionID CastEmitter::singleTestedClosure(ValueID id)
 {
     const Operation& test = m_code.at(id);
     if (test.opcode != Opcode::TypeTest || types().at(test.testedType()).primitives)
@@ -315,13 +390,13 @@ FunctionID CastEmitter::closureThatTestAsksFor(ValueID id)
     if (mayBeHole)
         return { };
     const TypeTestPlan& plan = test.asksInFull() ? typeTestPlanFor(TypeTable::anything, representation, test.testedType()) : planFor(source, test.testedType());
-    bool asksForOneClosure = plan.verdict == TypeTestVerdict::NeedsTest && !plan.passingPrimitives && plan.stringLiterals.isEmpty() && plan.objects == ObjectsVerdict::NeedTest && plan.cellTests.size() == 1 && plan.cellTests[0].kind == CellTestKind::IsClosureOf;
-    return asksForOneClosure && emitter<ClosureTestEmitter>().closureWordNames(plan.cellTests[0].function) ? plan.cellTests[0].function : FunctionID();
+    bool testsSingleClosure = plan.verdict == TypeTestVerdict::NeedsTest && !plan.passingPrimitives && plan.stringLiterals.isEmpty() && plan.objects == ObjectsVerdict::NeedTest && plan.cellTests.size() == 1 && plan.cellTests[0].kind == CellTestKind::IsClosureOf;
+    return testsSingleClosure && emitter<ClosureTestEmitter>().closureWordNames(plan.cellTests[0].function) ? plan.cellTests[0].function : FunctionID();
 }
 
 bool CastEmitter::tryBeginClosureChain(const ValueContext& test)
 {
-    FunctionID function = closureThatTestAsksFor(test.id());
+    FunctionID function = singleTestedClosure(test.id());
     if (!function || generator().keepsValuesInHeapFrame() || generator().isLayingOutTurns() || generator().testOfBranch(test.block()) != test.id())
         return false;
     auto bringsNothing = [&](EdgeID id) {
@@ -351,10 +426,10 @@ bool CastEmitter::tryBeginClosureChain(const ValueContext& test)
             return narrowed.opcode == Opcode::Narrowed && !narrowed.isOnTakenEdge() && narrowed.testOperand() == asking && narrowed.valueOperand() == m_code.at(asking).valueOperand() && narrowed.representation == representationOf(narrowed.valueOperand());
         };
         ValueID asked = m_code.at(nextTest).opcode == Opcode::TypeTest ? m_code.at(nextTest).valueOperand() : ValueID();
-        bool asksSameValue = asked && (asked == m_code.at(asking).valueOperand() || (!m_code.isConstant(asked) && m_code.blockOf(asked) == next && isNarrowedByFailure(asked)));
-        if (!asksSameValue || !std::ranges::all_of(values.first(values.size() - 1), isNarrowedByFailure))
+        bool testsSameValue = asked && (asked == m_code.at(asking).valueOperand() || (!m_code.isConstant(asked) && m_code.blockOf(asked) == next && isNarrowedByFailure(asked)));
+        if (!testsSameValue || !std::ranges::all_of(values.first(values.size() - 1), isNarrowedByFailure))
             break;
-        function = closureThatTestAsksFor(nextTest);
+        function = singleTestedClosure(nextTest);
         if (!function || std::ranges::any_of(tests, [&](const TestInChain& earlier) { return earlier.function == function; }))
             break;
         asking = nextTest;
@@ -371,7 +446,7 @@ bool CastEmitter::tryBeginClosureChain(const ValueContext& test)
         cases.append({ tests[place].function, generator().edgeWithoutArguments(taken) });
         generator().expectOtherJumps(taken.to);
         if (place)
-            m_placesInClosureChains.set(tests[place].block.index(), PlaceInClosureChain { number, place });
+            m_closureChainPositions.set(tests[place].block.index(), ClosureChainPosition { number, place });
     }
     generator().expectOtherJumps(otherwise.to);
 
@@ -396,8 +471,8 @@ bool CastEmitter::tryContinueClosureChain(const ValueContext& test)
 {
     if (m_closureChains.isEmpty())
         return false;
-    auto place = m_placesInClosureChains.find(test.block().index());
-    if (place == m_placesInClosureChains.end() || generator().isLayingOutTurns())
+    auto place = m_closureChainPositions.find(test.block().index());
+    if (place == m_closureChainPositions.end() || generator().isLayingOutTurns())
         return false;
     const ClosureChain& chain = m_closureChains[place->value.chain];
     const ClosureTestEmitter::ClosureCase& closureCase = chain.cases[place->value.place];
@@ -413,6 +488,45 @@ bool CastEmitter::tryContinueClosureChain(const ValueContext& test)
     return true;
 }
 
+const Operation* CastEmitter::throwAfterFailedTest(const ValueContext& test)
+{
+    if (!isX86_64() || !test->asksInFull() || !test.isBranchCondition() || sourcesOfProofsCheckedUnder(build().options().testing))
+        return nullptr;
+    const Edge& failing = m_code.at(m_code.at(test.block()).terminator.notTaken());
+    std::span<const ValueID> values = m_code.valuesOf(failing.to);
+    if (!failing.arguments().empty() || generator().singlePredecessorOf(failing.to) != test.block() || m_code.at(failing.to).terminator.kind != TerminatorKind::Unreachable || values.empty())
+        return nullptr;
+    auto asksValueOfTest = [&](const Operation& operation) {
+        return operation.valueOperand() == test->valueOperand() && operation.origin().inlineFrame == test->origin().inlineFrame;
+    };
+    if (m_code.at(test.block()).handler || m_code.at(failing.to).handler)
+        return nullptr;
+    const Operation& coercion = m_code.at(values.back());
+    if (coercion.opcode != Opcode::RequireObjectCoercible || !asksValueOfTest(coercion) || coercion.origin().position != test->origin().position)
+        return nullptr;
+    bool areOthersChecks = std::ranges::all_of(values.first(values.size() - 1), [&](ValueID id) {
+        return m_code.at(id).opcode == Opcode::CheckProof && asksValueOfTest(m_code.at(id));
+    });
+    return areOthersChecks ? &coercion : nullptr;
+}
+
+bool CastEmitter::tryBranchOnTypeOfCell(const ValueContext& test, Operand operand)
+{
+    if (!operand.is<Boxed>())
+        return false;
+    const Operation* coercion = throwAfterFailedTest(test);
+    if (!coercion)
+        return false;
+    TypeID cells = types().withoutPrimitives(TypeTable::anything, static_cast<uint16_t>(~cellPrimitives));
+    const TypeTestPlan& plan = typeTestPlanFor(cells, Representation::JSValue, test->testedType());
+    if ((types().at(test->testedType()).primitives & ~cellPrimitives) || plan.verdict != TypeTestVerdict::NeedsTest || !plan.stringLiterals.isEmpty())
+        return false;
+    if (!emitter<ThrowEmitter>().trapIfNullish(test, operand.as<Boxed>(), coercion->nullishAccess(), coercion->name()))
+        return false;
+    branchOnType(operand, plan, test.branchTargets());
+    return true;
+}
+
 void CastEmitter::generateTypeTest(const ValueContext& value)
 {
     if (value.isBranchCondition() && (tryContinueClosureChain(value) || tryBeginClosureChain(value)))
@@ -421,6 +535,8 @@ void CastEmitter::generateTypeTest(const ValueContext& value)
     Operand operand = get(source);
     if (value->asksInFull())
         operand = Operand { Representation::JSValue, operand.value };
+    if (tryBranchOnTypeOfCell(value, operand))
+        return;
     bool holeIsLeftToThisTest = generator().holeIsLeftToTestBehind(definitionOf(source));
     SetForScope wordAsked(generator().wordWhoseHoleIsLeftToTestAtWork(), holeIsLeftToThisTest ? operand.value : nullptr);
     TypeID whatMayCome = hasTestedForHole(operationAt(definitionOf(source))) && !holeIsLeftToThisTest ? TypeTable::anything : TypeTable::anythingOrAbsent;
@@ -431,20 +547,20 @@ void CastEmitter::generateTypeTest(const ValueContext& value)
         passesWhateverComes = row.part == PartOfEffects::TestsOfGuard && unit.role == CodeRole::ParameterGuard && unit.function.index() == row.row;
     }
     const TypeTestPlan& plan = passesWhateverComes ? typeTestPlanFor(whatMayCome, Representation::JSValue, whatMayCome) : value->asksInFull() ? typeTestPlanFor(whatMayCome, Representation::JSValue, value->testedType()) : planFor(source, value->testedType());
-    if (!passesWhateverComes && !value->asksInFull() && operand.is<Boxed>() && tryTestWordOfSlot(value, operand.as<Boxed>(), plan))
+    if (!passesWhateverComes && !value->asksInFull() && operand.is<Boxed>() && tryTestSlotWord(value, operand.as<Boxed>(), plan))
         return;
     if (!value.isBranchCondition()) {
         define(value, hasType(operand, plan));
         return;
     }
-    if (!passesWhateverComes && !value->asksInFull() && (tryBranchOnInt32AndHandItOn(value, operand) || tryBranchOnNumberAndHandItOn(value, operand) || tryDeferTestToSum(value, operand)))
+    if (!passesWhateverComes && !value->asksInFull() && (tryBranchOnInt32AndHandItOn(value, operand) || tryBranchOnNumberAndHandItOn(value, operand) || tryBranchOnTruncatedInt32(value, operand) || tryDeferTestToSum(value, operand)))
         return;
     branchOnType(operand, plan, value.branchTargets());
 }
 
 void CastEmitter::generateIsUnlockedInstance(const ValueContext& value)
 {
-    bool mayBeLocked = instancesMayBeLocked(m_program, m_facts.linked(), value->testedType());
+    bool mayBeLocked = hasLockableInstances(m_program, m_facts.linked(), value->testedType());
     Operand operand = get(value->valueOperand());
     if (value.isBranchCondition()) {
         if (mayBeLocked)
@@ -523,6 +639,18 @@ void CastEmitter::checkBooleanOrBranch(const ValueContext& test, ValueID checkID
         m_out.appendTo(continuation);
 }
 
+TypeID CastEmitter::typeOfCellsToCheck(const ValueContext& value)
+{
+    const Type& checked = types().at(value->checkedType());
+    if (!isX86_64() || !checked.hasCells() || (checked.primitives & ~cellPrimitives))
+        return { };
+    TypeID cells = types().withoutPrimitives(value->typeWithoutProof(), static_cast<uint16_t>(~cellPrimitives));
+    if (cells == value->typeWithoutProof() || isNeverType(cells))
+        return { };
+    const TypeTestPlan& plan = typeTestPlanFor(cells, Representation::JSValue, value->checkedType());
+    return plan.verdict == TypeTestVerdict::NeedsTest && plan.stringLiterals.isEmpty() && !plan.everyCellPasses() ? cells : TypeID();
+}
+
 void CastEmitter::generateCheckProof(const ValueContext& value)
 {
     if (value->isLeftToTestBehind())
@@ -530,7 +658,18 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
     Operand source = get(value->valueOperand());
     uint32_t expectedType = FalseProofWord::summarize(types().at(value->checkedType()).primitives, types().at(value->checkedType()).hasObjects());
     if (numberRepresentations.contains(source.representation) || optionalRepresentations.contains(source.representation)) {
-        emitter<ThrowEmitter>().checkOrCrash(value, hasType(source, typeTestPlanFor(value->typeWithoutProof(), source.representation, value->checkedType())), value->source(), expectedType);
+        const TypeTestPlan& plan = typeTestPlanFor(value->typeWithoutProof(), source.representation, value->checkedType());
+        if (!optionalRepresentations.contains(source.representation) || plan.verdict != TypeTestVerdict::NeedsTest || generator().isInitializingCell()) {
+            emitter<ThrowEmitter>().checkOrCrash(value, hasType(source, plan), value->source(), expectedType);
+            return;
+        }
+        LBasicBlock stops = newBlock();
+        LBasicBlock continuation = newBlock();
+        ScopeFork fork = m_out.forkScope();
+        branchOnType(source, plan, { normalEdge(continuation), rareEdge(stops) });
+        m_out.appendToJoin(stops, fork);
+        emitter<ThrowEmitter>().crashOnFalseProof(value, std::nullopt, value->source(), expectedType);
+        m_out.appendToJoin(continuation, fork);
         return;
     }
     if (source.representation == Representation::Cell32) {
@@ -554,7 +693,7 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
     bool looksAtCell = sourcesOfProofsCheckedUnder(build().options().testing);
     if (!asksForType && !looksAtCell)
         return;
-    if (!looksAtCell && generator().leaveCheckToTruthTest(value))
+    if (!looksAtCell && generator().deferCheckToTruthTest(value))
         return;
     bool asksStub = looksAtCell && !generator().isInitializingCell();
     if (asksStub) {
@@ -568,7 +707,10 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
     ScopeFork fork = m_out.forkScope();
     if (asksForType) {
         LBasicBlock hasCheckedType = looksAtCell ? newBlock() : continuation;
-        emitter<TypeTestEmitter>().emitPerFunctionBranch(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType()), { normalEdge(hasCheckedType), rareEdge(stops) });
+        TypeID typeWithoutProof = value->typeWithoutProof();
+        if (TypeID cells = looksAtCell ? TypeID() : typeOfCellsToCheck(value); cells && emitter<ThrowEmitter>().trapUnlessCell(value, found, value->source(), expectedType))
+            typeWithoutProof = cells;
+        emitter<TypeTestEmitter>().emitPerFunctionBranch(found, typeTestPlanFor(typeWithoutProof, Representation::JSValue, value->checkedType()), { normalEdge(hasCheckedType), rareEdge(stops) });
         if (looksAtCell)
             m_out.appendToJoin(hasCheckedType, fork);
     }

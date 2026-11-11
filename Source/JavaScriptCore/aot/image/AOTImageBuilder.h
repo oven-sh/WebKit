@@ -51,6 +51,11 @@ public:
     virtual ~EarlyWasmModules() = default;
 };
 
+class PreparedFunctionSources {
+public:
+    virtual ~PreparedFunctionSources() = default;
+};
+
 struct ImageContents {
     uint32_t numberOfRegExpsWithCode { 0 };
     uint32_t numberOfRegExpsWithoutCode { 0 };
@@ -67,6 +72,7 @@ struct ImageInputs {
     BodyFactsForTables bodyFacts;
     WTF::BitSet<numberOfEntries> entriesUsedByFunctions;
     std::unique_ptr<EarlyWasmModules> earlyWasmModules { };
+    std::unique_ptr<PreparedFunctionSources> functionSources { };
 };
 
 struct BuiltImage {
@@ -101,6 +107,7 @@ SharedCode selectSharedCode(const LinkedFunctions&, const StubCatalog&, const WT
 void applyNumbersToFunctions(LinkedFunctions&, const ImageNumbers&, BuildContext&);
 void checkUncheckedStackUsage(const LinkedFunctions&, const ResolvedCallees&, BuildContext&);
 JS_EXPORT_PRIVATE WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program&, const CodeTemplates&, BuildContext&, const BitVector* stringsInImage = nullptr, std::unique_ptr<EarlyWasmModules> = nullptr, const LinkedFunctions* = nullptr);
+JS_EXPORT_PRIVATE std::unique_ptr<PreparedFunctionSources> prepareFunctionSources(const Typed::Program&, BuildContext&, uint64_t mostBytesLeftAtHost = 64 * MB);
 JS_EXPORT_PRIVATE std::unique_ptr<EarlyWasmModules> compileWebAssemblyFiles(const Typed::Program&, BuildContext&);
 Vector<uint8_t> encodeSymbols(const Typed::Program&, const BuiltImage&, BuildContext&);
 void writeMapFile(const UTF8CString& path, const Typed::Program&, const BuiltImage&, BuildContext&);

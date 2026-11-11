@@ -58,6 +58,7 @@ public:
         bool hasOtherPrototype { false };
         bool mayBePrototype { false };
         bool hasExtraProperties { false };
+        bool hasSpareWord { false };
         Structure* extraPropertiesStructure { nullptr };
         JSObject* heldExtraProperties { nullptr };
         std::optional<std::span<const uint16_t>> outOfLineKeyOrder;
@@ -121,6 +122,7 @@ public:
             return std::nullopt;
         return m_extraPropertiesSlot;
     }
+    inline bool hasSpareWord() const;
     std::optional<SlotData> extensionSlot() const
     {
         if (!m_extensionSlot.offset)

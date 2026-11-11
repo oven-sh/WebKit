@@ -17,6 +17,7 @@
 #include "AOTPlan.h"
 #include "AOTShapeTest.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsPropertyKeys.h"
 #include "JSCellButterfly.h"
 #include "StructureRareData.h"
@@ -132,12 +133,25 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
     const Type& type = typeOf(argument);
     KeyListReader reader(generator());
     ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
-    LBasicBlock outOfLine = newBlock();
-    Join<Pointer> lists(m_out);
     Join<CellPointer> results(m_out);
     bool testsForObject = !call.canMiss() && !type.isObject();
     LBasicBlock isNoObject = testsForObject ? newBlock() : nullptr;
     CellPointer object = testsForObject ? objectOrElse(argument, isNoObject) : objectOrMiss(call, argument);
+    auto finishWithResults = [&] {
+        if (testsForObject) {
+            m_out.appendTo(isNoObject);
+            results.add(callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { firstArgumentOrUndefined(call), word32(static_cast<int32_t>(kind)) }));
+        }
+        finish(call, results.finish());
+    };
+    static_assert(!static_cast<unsigned>(OwnKeysKind::Keys));
+    if (!call.canMiss() && kind == OwnKeysKind::Keys && !generator().isInLoop(call.context().block())) {
+        results.add(CellPointer(callStub(call.context(), listOwnKeys(), { boxCell(object).value() }, { .calledBuiltin = functionOf(call.overload()) }).first));
+        finishWithResults();
+        return;
+    }
+    LBasicBlock outOfLine = newBlock();
+    Join<Pointer> lists(m_out);
     KeyListKind listKind = kind == OwnKeysKind::Symbols ? KeyListKind::Symbols : kind == OwnKeysKind::All ? KeyListKind::StringsAndSymbols : KeyListKind::Strings;
 
     auto listCompiledObjectKeys = [&] {
@@ -177,12 +191,7 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
 
     m_out.appendTo(outOfLine);
     results.add(callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { boxCell(object), word32(static_cast<int32_t>(kind)) }, { .calledBuiltin = functionOf(call.overload()), .isOnRarePath = true }));
-    if (testsForObject) {
-        m_out.appendTo(isNoObject);
-        results.add(callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { firstArgumentOrUndefined(call), word32(static_cast<int32_t>(kind)) }));
-    }
-
-    finish(call, results.finish());
+    finishWithResults();
 }
 
 void OwnPropertyBuiltinEmitter::generateObjectHasOwn(const InlineCall& call)

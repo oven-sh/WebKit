@@ -9,6 +9,7 @@
 
 #include "AOTCellFormat.h"
 #include "AOTFunctionData.h"
+#include "LocalAllocator.h"
 #include "Structure.h"
 #include <span>
 #include <stddef.h>
@@ -36,6 +37,20 @@ struct AllocationSiteRecord {
     static constexpr unsigned sizeShift = 5;
 };
 static_assert(sizeof(AllocationSiteRecord) == 1u << AllocationSiteRecord::sizeShift);
+
+struct GrownCells {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(GrownCells);
+
+    static constexpr uintptr_t isArmed = 1;
+    static constexpr ptrdiff_t offsetOfAllocatorAndMark() { return 0; }
+    static constexpr ptrdiff_t offsetOfRecord() { return offsetof(GrownCells, record); }
+
+    uintptr_t allocatorAndMark { 0 };
+    uint8_t bytesBeforeFreeList[LocalAllocator::offsetOfFreeList() - sizeof(uintptr_t)] { };
+    FreeList freeList { 0 };
+    AllocationSiteRecord record;
+};
+static_assert(alignof(LocalAllocator) > GrownCells::isArmed);
 static_assert(std::is_trivially_default_constructible_v<AllocationSiteRecord> && std::is_standard_layout_v<AllocationSiteRecord>);
 
 ALWAYS_INLINE uint64_t cellHeaderFor(Structure* structure)
@@ -75,21 +90,36 @@ struct alignas(32) KeyOrderRun {
     static constexpr ptrdiff_t offsetOfOrderAndShapeWordsBefore() { return 0; }
     static constexpr ptrdiff_t offsetOfSlotKeys() { return 8; }
     static constexpr ptrdiff_t offsetOfOrderAndCountAfter() { return 16; }
+    static constexpr ptrdiff_t offsetOfCreationGeneration() { return 20; }
 
     uint64_t orderAndShapeWordsBefore;
     uint64_t slotKeys;
     uint32_t orderAndCountAfter;
+    uint32_t creationGeneration;
 };
 
 static constexpr uint64_t keysOfRunBesideExtraKeys(uint32_t slotKey, uint32_t numberOfExtraKeys) { return slotKey | static_cast<uint64_t>(numberOfExtraKeys | 1u << bitsPerSlotKey) << (2 * bitsPerSlotKey); }
 static_assert(keysOfRunBesideExtraKeys(24, 3) == 0x0001000300000018ull && noSlotKey == 0);
+static constexpr uint64_t keysOfRunOfCreation(uint32_t slotKey, uint32_t structureID) { return slotKey | static_cast<uint64_t>(structureID) << 32; }
 
-static constexpr uint32_t numberOfKeyOrderRuns = 2048;
+static constexpr unsigned logNumberOfKeyOrderRuns = 11;
+static constexpr uint32_t numberOfKeyOrderRuns = 1u << logNumberOfKeyOrderRuns;
 static constexpr unsigned logSizeOfKeyOrderRun = 5;
-static_assert(sizeof(KeyOrderRun) == 1u << logSizeOfKeyOrderRun && !(numberOfKeyOrderRuns & (numberOfKeyOrderRuns - 1)));
+static_assert(sizeof(KeyOrderRun) == 1u << logSizeOfKeyOrderRun);
+static constexpr uint32_t multiplierOfKeyOrderRun = 0x9e3779b1;
 static constexpr uint32_t indexOfKeyOrderRun(uint64_t orderAndShapeWordsBefore, uint64_t slotKeys)
 {
-    return (static_cast<uint32_t>(orderAndShapeWordsBefore >> 32) ^ static_cast<uint32_t>(orderAndShapeWordsBefore) ^ static_cast<uint32_t>(slotKeys)) % numberOfKeyOrderRuns;
+    uint32_t folded = static_cast<uint32_t>(orderAndShapeWordsBefore >> 32) ^ static_cast<uint32_t>(orderAndShapeWordsBefore) ^ static_cast<uint32_t>(slotKeys);
+    return folded * multiplierOfKeyOrderRun >> (32 - logNumberOfKeyOrderRuns);
+}
+
+static constexpr unsigned logNumberOfLatestRuns = 9;
+static constexpr uint32_t numberOfLatestRuns = 1u << logNumberOfLatestRuns;
+static constexpr uint32_t sizeOfKeyOrderRunTable = numberOfKeyOrderRuns + numberOfLatestRuns;
+static constexpr int32_t offsetOfLatestRuns = numberOfKeyOrderRuns << logSizeOfKeyOrderRun;
+static constexpr uint32_t indexOfLatestRun(uint32_t shapeWord, uint32_t slotKey)
+{
+    return numberOfKeyOrderRuns + ((shapeWord ^ slotKey) * multiplierOfKeyOrderRun >> (32 - logNumberOfLatestRuns));
 }
 
 struct KeyListCacheEntry {

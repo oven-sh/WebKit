@@ -47,6 +47,7 @@ extern "C" {
     void llint_aot_is_finite_thunk();
     void llint_aot_is_integer_thunk();
     void llint_aot_is_array_thunk();
+    void llint_aot_array_push_thunk();
 #endif
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryToNative(void*, VM*, ProtoCallFrame*);
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryCustomGetter(JSGlobalObject*, EncodedJSValue, PropertyName, void*);

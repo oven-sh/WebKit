@@ -969,7 +969,7 @@ EncodedText encodeText(const TextInputs& inputs, BuildContext& context, NOESCAPE
             encodedIdentifiers[number] = number ? encodeIdentifier(inputs.program, identifiers.at(static_cast<uint32_t>(number)), strings.measured.span()) : ImageIdentifier { 0, 0 };
     });
     size_t numberOfConstants = constants.count();
-    result.stringConstants.grow(numberOfConstants * sizeof(uint32_t));
+    result.stringConstants.grow((numberOfConstants + constants.numberOfPlaced()) * sizeof(uint32_t));
     std::span<uint32_t> stringsOfConstants = spanReinterpretCast<uint32_t>(result.stringConstants.mutableSpan());
     for (size_t number = 0; number < numberOfConstants; ++number)
         stringsOfConstants[number] = constants.stringOf(static_cast<uint32_t>(number)).index();

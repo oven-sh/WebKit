@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
@@ -29,7 +30,7 @@ LayoutID layoutKnownByStructureOfClass(const Walker& walker, TypeID type)
         return { };
     LayoutID layout(positionOf(record.layouts));
     const Layout& heir = walker.program().at(layout);
-    BuiltinClassID above = heir.writtenBuiltinBase;
+    BuiltinClassID above = builtinClassOfInstances(heir);
     const Program& program = walker.program();
     bool isArray = above == BuiltinClasses::Array;
     bool isError = above == BuiltinClasses::Error;
@@ -90,6 +91,66 @@ Reference nameBehindLookAtStructureOfClass(const Walker& walker, Reference objec
         return { };
     std::optional<uint64_t> noted = findKnown(walker, KnownNote::StructureOfClassIsSeen, { }, object, layout.index());
     return noted ? Reference::fromBits(static_cast<uint32_t>(*noted)) : Reference();
+}
+
+bool isArraySubclassInstance(const Walker& walker, TypeID type)
+{
+    if (!type || holdsOnlyPrimitives(type) || !isProvenToBeList(walker.types(), type))
+        return false;
+    LayoutID layout = layoutKnownByStructureOfClass(walker, type);
+    return layout && builtinClassOfInstances(walker.program().at(layout)) == BuiltinClasses::Array;
+}
+
+Reference arrayNameOfInstance(Walker& walker, Reference instance, Origin origin)
+{
+    if (!instance || !instance.isValue() || walker.isUnreachable())
+        return { };
+    TypeArena& types = walker.types();
+    TypeID array = types.builtinClass(BuiltinClasses::Array);
+    ValueID named = instance.id();
+    while (walker.code().at(named).opcode == Opcode::Narrowed && !types.overlap(walker.code().at(named).type, array))
+        named = walker.code().at(named).valueOperand();
+    if (walker.code().isConstant(named) || !types.overlap(walker.code().at(named).type, array))
+        return { };
+    Reference object = Reference::value(named);
+    if (std::optional<uint64_t> noted = findKnown(walker, KnownNote::ArrayNameOfInstance, object))
+        return Reference::fromBits(static_cast<uint32_t>(*noted));
+
+    origin.isTailCall = false;
+    bool isInvariant = walker.isInvariantInSpecializedVersion(object);
+    Reference isArray;
+    {
+        Walker::SpecializedPreheaderScope preheaderScope(walker, isInvariant);
+        Draft test(Opcode::TypeTest, origin);
+        test.setValueOperand(object);
+        test.setTestedType(array);
+        isArray = walker.build(WTF::move(test));
+    }
+    if (!isArray || !isArray.isValue() || walker.isUnreachable())
+        return { };
+    bool isInPreheader = isInvariant && walker.tryBranchInPreheader(isArray, true);
+    if (!isInPreheader && !walker.findPassedTest(isArray)) {
+        BlockID failed = walker.addBlock(BlockFrequency::Rare);
+        walker.continueIfCheckPasses(isArray, failed);
+        BlockID passed = walker.currentBlock();
+        walker.continueIn(failed);
+        if (!walker.isUnreachable())
+            walker.stopWhereWordOfLinkIsFalse(origin);
+        walker.continueIn(passed);
+        if (walker.isUnreachable())
+            return { };
+    }
+    Walker::SpecializedPreheaderScope preheaderScope(walker, isInPreheader);
+    Draft proof(Opcode::Narrowed, origin);
+    proof.setValueOperand(object);
+    proof.setTestOperand(isArray);
+    proof.setOperandIndex(OperandIndex::TypeTest::value);
+    proof.setIsOnTakenEdge(true);
+    Reference name = walker.build(WTF::move(proof));
+    if (name && name.isValue() && !walker.isUnreachable()) {
+        noteKnown(walker, KnownNote::ArrayNameOfInstance, object, { }, 0, LocationMasks(), name.bits());
+    }
+    return name;
 }
 
 void checkStructureOfClassThatIsRemembered(Walker& walker, Reference name, LayoutID layout, Origin origin)

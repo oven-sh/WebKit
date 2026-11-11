@@ -65,8 +65,10 @@ static CompiledStructure* structureForNewExtraProperties(VM& vm, Object& object,
 {
     StructureTable& structures = object.state().objects->structures;
     const CompiledStructure& current = object.compiledStructure();
-    if (!current.extraPropertiesSlot())
+    if (!current.extraPropertiesSlot()) {
+        structures.growFutureCells(current.layout());
         return structures.holdingExtraProperties(vm, current, extra);
+    }
     CompiledStructure* structure = namesStructure ? structures.withExtraProperties(vm, current, extra->structure()) : structures.existingWithExtraProperties(current, *extra->structure());
     return structure ? structure : structures.withExtraProperties(vm, current, nullptr);
 }
@@ -839,7 +841,7 @@ void Object::adoptExtraProperties(VM& vm, JSObject* filled)
 void Object::setExtraProperties(VM& vm, JSObject* extra, CompiledStructure* withExtraProperties)
 {
     ASSERT(!hasExtraProperties() && withExtraProperties->hasExtraProperties());
-    ASSERT(layout().extraPropertiesSlot() || withExtraProperties->heldExtraProperties() == extra);
+    ASSERT(withExtraProperties->extraPropertiesSlot() || withExtraProperties->heldExtraProperties() == extra);
     vm.mutatorFence();
     writeExtraPropertiesWord(*this, extra);
     vm.mutatorFence();
@@ -858,7 +860,7 @@ bool Object::tryCreateExtraPropertiesOfNewObject(VM& vm, std::span<const ExtraPr
 {
     ASSERT(!hasExtraProperties() && !hasFlagsInOrderWord());
     const LayoutData& layout = this->layout();
-    if (!layout.extraPropertiesSlot() || layout.impossibleMutations().contains(ObjectMutation::AddProperty))
+    if (!compiledStructure().extraPropertiesSlot() || layout.impossibleMutations().contains(ObjectMutation::AddProperty))
         return false;
     for (auto& property : inOrder)
         willAddExtraProperty(vm, property.name);

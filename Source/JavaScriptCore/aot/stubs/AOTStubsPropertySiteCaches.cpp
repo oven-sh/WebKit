@@ -16,6 +16,7 @@
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStaleAnswers.h"
+#include "AOTStubProgramTables.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsField.h"
@@ -400,7 +401,14 @@ StubSignature signatureOfLengthIs(StubKey)
     return signature;
 }
 
-static void emitLengthAtSite(StubAssembler& jit, std::optional<int32_t> asked)
+StubSignature signatureOfGetLengthRunningNoCode(StubKey)
+{
+    return signatureOf(getById());
+}
+
+enum class LengthMiss : uint8_t { ReadsProperty, GivesEmpty };
+
+static void emitLengthAtSite(StubAssembler& jit, std::optional<int32_t> asked, LengthMiss miss = LengthMiss::ReadsProperty)
 {
     static_assert(ArrayWithUndecided + 2 == ArrayWithInt32 && ArrayWithUndecided + 4 == ArrayWithDouble && ArrayWithUndecided + 6 == ArrayWithContiguous);
     constexpr int32_t bitsThatNoListWithPlainStorageHas = 0xff & ~(6 | CopyOnWrite | MayHaveIndexedAccessors);
@@ -499,17 +507,20 @@ static void emitLengthAtSite(StubAssembler& jit, std::optional<int32_t> asked)
     answer(scratch);
 
     isNotMapped.link(&jit);
-    constexpr int32_t offsetOfLengths = OBJECT_OFFSETOF(ProgramTables, ranges) + static_cast<int32_t>(ProgramTableIndex::functionLengths) * sizeof(TableRange) + OBJECT_OFFSETOF(TableRange, offset);
     goesOn.append(jit.branch32(CCallHelpers::NotEqual, key, TrustedImm32(SlimClosureType - FirstTypedArrayType)));
     jit.load64(Address(receiver, offsetOfSlimClosureWord), key);
     extractBits(jit, key, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, key);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), scratch);
-    jit.add32(Address(scratch, offsetOfLengths), key);
-    jit.load8(BaseIndex(scratch, key, CCallHelpers::TimesOne), key);
+    loadAddressOfClosureFacts(jit, key, scratch);
+    jit.load8(Address(scratch, OBJECT_OFFSETOF(ClosureFacts, length)), key);
     goesOn.append(jit.branch32(CCallHelpers::Equal, key, TrustedImm32(countsAreListed)));
     answer(key);
 
     goesOn.link(&jit);
+    if (miss == LengthMiss::GivesEmpty) {
+        jit.move(TrustedImm64(JSValue::encode(JSValue())), jit.result());
+        jit.returnToCaller();
+        return;
+    }
     if (!asked) {
         jit.jumpToStub(getByIdCheckingColumn());
         return;
@@ -538,6 +549,8 @@ static void emitLengthAtSite(StubAssembler& jit, std::optional<int32_t> asked)
 }
 
 void generateGetLengthAtSite(StubAssembler& jit) { emitLengthAtSite(jit, std::nullopt); }
+
+void generateGetLengthRunningNoCode(StubAssembler& jit) { emitLengthAtSite(jit, std::nullopt, LengthMiss::GivesEmpty); }
 
 void generateLengthIs(StubAssembler& jit) { emitLengthAtSite(jit, static_cast<int32_t>(jit.key().count())); }
 
@@ -1009,8 +1022,7 @@ static void answerWhereSlotIsEmpty(const ReadAtSiteInWork& read, GPRReg place, G
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesOfObjectPrototypes)), place);
     jit.urshift32(key, TrustedImm32(6), operand);
     jit.load64(BaseIndex(place, operand, CCallHelpers::TimesEight), place);
-    jit.urshift64(key, place);
-    isNotAsked.append(jit.branchTest64(CCallHelpers::NonZero, place, TrustedImm32(1)));
+    isNotAsked.append(branchTestBitAt(jit, CCallHelpers::NonZero, place, key));
     findsNothing.link(&jit);
     read.returnUndefined();
 

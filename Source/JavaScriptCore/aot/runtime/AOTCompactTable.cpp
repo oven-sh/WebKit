@@ -12,6 +12,7 @@
 #include "AOTInliningAcrossFiles.h"
 #include "AOTInstance.h"
 #include "AOTLimits.h"
+#include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeFunctions.h"
@@ -250,7 +251,7 @@ unsigned CompactTable::hashOfStoredKey(JSValue key)
         return asString(key)->tryGetValueImpl()->hash();
     if (key.isHeapBigInt())
         return jsMapHash(key.asHeapBigInt()) & hashMask;
-    return rapidHashMix64(JSValue::encode(key)) & hashMask;
+    return hashOfKeyBits(JSValue::encode(key));
 }
 
 uint32_t CompactTable::nextSlotWithTag(const uint8_t* tags, unsigned indexBits, uint8_t tag, uint32_t homeSlot, uint32_t previous)
@@ -377,6 +378,49 @@ void CompactTable::append(VM& vm, JSValue key, unsigned hash, JSValue value)
     m_used = entry + 1;
     ++m_alive;
     vm.writeBarrier(this);
+}
+
+template<typename KeyWord, typename Word>
+static void moveColumnOfAliveEntries(const KeyWord* keys, uint32_t used, Word* column)
+{
+    copyColumnOfAliveEntries(keys, used, column, column);
+}
+
+bool CompactTable::tryCompactInPlace(VM& vm, JSObject* owner)
+{
+    ASSERT(isLive() && !isInImage() && !(m_keysShiftAndFlags & wasWalked));
+    if (m_alive < m_capacity / 4 || capacityAfterGrowth(m_alive, m_used) > m_capacity)
+        return false;
+    ++vm.aotState().movesOfEntriesInCollections;
+    {
+        Locker locker { cellLock() };
+        auto moveColumns = [&]<typename KeyWord>(KeyWord* keys) {
+            switch (m_valueWidth) {
+            case Width::None:
+                break;
+            case Width::Narrow:
+                moveColumnOfAliveEntries(keys, m_used, at<uint32_t>(offsetOfValues()));
+                break;
+            case Width::Wide:
+                moveColumnOfAliveEntries(keys, m_used, at<EncodedJSValue>(offsetOfValues()));
+                break;
+            }
+            moveColumnOfAliveEntries(keys, m_used, keys);
+        };
+        if (keyWidth() == Width::Wide)
+            moveColumns(at<EncodedJSValue>(offsetOfKeys()));
+        else
+            moveColumns(at<uint32_t>(offsetOfKeys()));
+        if (slotKind() == SlotKind::Tag)
+            *at<uint64_t>(offsetOfIndex()) = 0;
+        else
+            zeroSpan(std::span { at<uint8_t>(offsetOfIndex()), offsetOfKeys() - offsetOfIndex() });
+        m_used = m_alive;
+        fillIndex(m_used);
+    }
+    deletedPrefixOf(owner) = 0;
+    vm.writeBarrier(this);
+    return true;
 }
 
 CompactTable* CompactTable::tryCopyWithWidths(JSGlobalObject* globalObject, Width key, Width value, std::optional<uint32_t> capacity) const
@@ -617,13 +661,38 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<unsigned> CompactTable::hashIfAbsen
     }
     if (!hasNarrowKeys() || !narrowColumnHolds(key) || key.isHeapBigInt())
         return std::nullopt;
-    unsigned hash = rapidHashMix64(JSValue::encode(key)) & hashMask;
+    unsigned hash = hashOfKeyBits(JSValue::encode(key));
     uint32_t narrowKey = encodeNarrow(key);
     const uint32_t* keys = at<uint32_t>(offsetOfKeys());
     auto found = findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
         return keys[entry] == narrowKey;
     });
     return found ? std::nullopt : std::optional(hash);
+}
+
+bool CompactTable::tryAddNumberQuickly(VM& vm, JSValue key, JSValue value)
+{
+    ASSERT(m_used != m_capacity);
+    if (keyWidth() != Width::Wide || !canHold(vm, m_valueWidth, value))
+        return false;
+    EncodedJSValue word = JSValue::encode(key);
+    EncodedJSValue* keys = at<EncodedJSValue>(offsetOfKeys());
+    unsigned hash = hashOfStoredKey(key);
+    std::optional<uint32_t> found = findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+        return keys[entry] == word;
+    });
+    uint32_t entry = found.value_or(m_used);
+    if (m_valueWidth != Width::None)
+        setValue(entry, value);
+    if (!found) {
+        keys[entry] = word;
+        addToIndex(entry, hash);
+        WTF::storeStoreFence();
+        m_used = entry + 1;
+        ++m_alive;
+    }
+    vm.writeBarrier(this);
+    return true;
 }
 
 ALWAYS_INLINE_INTO_OTHER_FILES bool CompactTable::tryAddQuickly(JSGlobalObject* globalObject, JSValue key, JSValue value)
@@ -651,7 +720,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CompactTable::tryAddQuickly(JSGlobalObject* 
     } else {
         if (key.isHeapBigInt())
             return false;
-        hash = rapidHashMix64(JSValue::encode(key)) & hashMask;
+        hash = hashOfKeyBits(JSValue::encode(key));
         found = findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
             return keys[entry] == narrowKey;
         });
@@ -732,6 +801,8 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
     auto tryAddWithoutSearch = [&] {
         if (table->tryAddQuickly(globalObject, key, value))
             return true;
+        if (table->m_used != table->m_capacity && key.isNumber() && table->tryAddNumberQuickly(vm, key, value))
+            return true;
         uint32_t count = table->m_used;
         if (count != table->m_capacity || count != table->m_alive || count >= maxCountWithGrowthPlan || !canHold(vm, table->m_valueWidth, value) || !canHold(vm, Width::Narrow, key))
             return false;
@@ -765,7 +836,8 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
     unsigned hash = hashOfStoredKey(key);
     Width keyWidth = canHold(vm, table->keyWidth(), key) ? table->keyWidth() : Width::Wide;
     Width valueWidth = canHold(vm, table->m_valueWidth, value) ? table->m_valueWidth : Width::Wide;
-    if (table->m_used == table->m_capacity || keyWidth != table->keyWidth() || valueWidth != table->m_valueWidth) {
+    const bool keepsWidths = keyWidth == table->keyWidth() && valueWidth == table->m_valueWidth;
+    if (!keepsWidths || (table->m_used == table->m_capacity && (!table->deleted() || table->m_keysShiftAndFlags & wasWalked || !table->tryCompactInPlace(vm, owner)))) {
         CompactTable* replacement = table->tryCopyWithWidths(globalObject, keyWidth, valueWidth, table->m_used < table->m_capacity ? std::optional { table->m_capacity } : std::nullopt);
         RETURN_IF_EXCEPTION(scope, false);
         replaceWith(replacement);
@@ -1040,6 +1112,35 @@ std::optional<uint32_t> CompactTable::findInImage(JSGlobalObject* globalObject, 
     return entries.find(image, StringView { impl }, impl.hash());
 }
 
+CompactTable::QuickLookup CompactTable::tryFindSubstringInImage(JSRopeString* key, StringView characters, unsigned hash, JSValue& value) const
+{
+    const TableInImage& entries = tableInImage();
+    ProgramStrings& strings = *stateOfTableInImage().strings;
+    std::optional<uint32_t> entry = entries.find(*vm().aotState().image, characters, hash);
+    JSString* equal = entry ? strings.constantIfCreated(entries.stringConstants()[*entry]) : nullptr;
+    if (!equal || !tryShareCharactersOfEqual(key, *const_cast<StringImpl*>(equal->tryGetValueImpl())))
+        key->resolveBySharing(StringImpl::createSubstringSharingImpl(*const_cast<StringImpl*>(key->substringBase()->tryGetValueImpl()), key->substringOffset(), key->length(), hash).get());
+    if (!entry)
+        return QuickLookup::Absent;
+    if (!equal)
+        return QuickLookup::Unknown;
+    if (!hasValues())
+        return QuickLookup::Found;
+    uint64_t word = entries.values()[*entry];
+    switch (DataWord::kindOf(word)) {
+    case DataWord::Kind::Immediate:
+        value = JSValue::decode(static_cast<EncodedJSValue>(word));
+        return QuickLookup::Found;
+    case DataWord::Kind::StringConstant:
+        value = strings.constantIfCreated(DataWord::operandOf(word));
+        return value ? QuickLookup::Found : QuickLookup::Unknown;
+    case DataWord::Kind::BigIntConstant:
+    case DataWord::Kind::Node:
+        return QuickLookup::Unknown;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 ALWAYS_INLINE_INTO_OTHER_FILES std::optional<uint32_t> CompactTable::findInline(std::span<const Latin1Character> characters) const
 {
     if (isInImage())
@@ -1186,6 +1287,170 @@ std::optional<uint32_t> CompactTable::findOtherKey(JSGlobalObject*, JSValue norm
             return true;
         return bigInt && candidate && candidate.isHeapBigInt() && JSBigInt::equals(candidate.asHeapBigInt(), bigInt);
     });
+}
+
+ALWAYS_INLINE bool CompactTable::hasStoredKey(JSValue key) const
+{
+    if (key.isString()) {
+        const StringImpl* impl = asString(key)->tryGetValueImpl();
+        unsigned hash = impl->existingHash();
+        return findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+            const StringImpl* other = stringImplOrNull(uncheckedKeyAt(entry));
+            return other && (other == impl || (other->existingHash() == hash && equal(other, impl)));
+        }).has_value();
+    }
+    if (key.isHeapBigInt())
+        return findOtherKey(nullptr, key).has_value();
+    unsigned hash = hashOfKeyBits(JSValue::encode(key));
+    if (keyWidth() == Width::Wide) {
+        EncodedJSValue word = JSValue::encode(key);
+        const EncodedJSValue* keys = at<EncodedJSValue>(offsetOfKeys());
+        return findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+            return keys[entry] == word;
+        }).has_value();
+    }
+    if (!canHold(vm(), Width::Narrow, key))
+        return false;
+    uint32_t word = encodeNarrow(key);
+    const uint32_t* keys = at<uint32_t>(offsetOfKeys());
+    return findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+        return keys[entry] == word;
+    }).has_value();
+}
+
+bool CompactTable::canCompareKeys(JSSet* set, JSSet* other)
+{
+    auto isInHeap = [](JSSet* asked) {
+        return asked->hasCompactStorage() && !tableOf(asked)->isInImage();
+    };
+    return isInHeap(set) && isInHeap(other);
+}
+
+bool CompactTable::hasAllKeys(JSSet* set, JSSet* other, KeyPresence presence)
+{
+    const CompactTable& table = *tableOf(set);
+    const CompactTable& otherTable = *tableOf(other);
+    for (uint32_t entry = 0; entry < table.m_used; ++entry) {
+        JSValue key = table.uncheckedKeyAt(entry);
+        if (key && otherTable.hasStoredKey(key) != (presence == KeyPresence::Present))
+            return false;
+    }
+    return true;
+}
+
+Vector<uint32_t, 64> CompactTable::selectEntries(const CompactTable& other, KeyPresence presence) const
+{
+    Vector<uint32_t, 64> entries;
+    for (uint32_t entry = 0; entry < m_used; ++entry) {
+        JSValue key = uncheckedKeyAt(entry);
+        if (key && other.hasStoredKey(key) == (presence == KeyPresence::Present))
+            entries.append(entry);
+    }
+    return entries;
+}
+
+JSSet* CompactTable::tryCreateSetOfEntries(JSGlobalObject* globalObject, const CompactTable& first, std::span<const uint32_t> entriesOfFirst, const CompactTable& second, std::span<const uint32_t> entriesOfSecond)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSSet* set = JSSet::create(vm, globalObject->setStructure());
+    size_t count = entriesOfFirst.size() + entriesOfSecond.size();
+    if (!count)
+        return set;
+    if (count > maxCapacity) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    bool isWide = (!entriesOfFirst.empty() && first.keyWidth() == Width::Wide) || (!entriesOfSecond.empty() && second.keyWidth() == Width::Wide);
+    CompactTable* table = tryCreate(globalObject, isWide ? Width::Wide : Width::Narrow, Width::None, static_cast<uint32_t>(count));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    uint32_t used = 0;
+    for (uint32_t entry : entriesOfFirst)
+        table->setKey(used++, first.uncheckedKeyAt(entry));
+    for (uint32_t entry : entriesOfSecond)
+        table->setKey(used++, second.uncheckedKeyAt(entry));
+    table->fillIndex(used);
+    WTF::storeStoreFence();
+    table->m_used = used;
+    table->m_alive = used;
+    vm.writeBarrier(table);
+    setStorage(vm, set, table);
+    return set;
+}
+
+JSSet* CompactTable::trySelectKeys(JSGlobalObject* globalObject, JSSet* set, JSSet* other, KeyPresence presence)
+{
+    const CompactTable& table = *tableOf(set);
+    auto entries = table.selectEntries(*tableOf(other), presence);
+    return tryCreateSetOfEntries(globalObject, table, entries.span(), table, { });
+}
+
+JSSet* CompactTable::trySubtractBothWays(JSGlobalObject* globalObject, JSSet* set, JSSet* other)
+{
+    const CompactTable& table = *tableOf(set);
+    const CompactTable& otherTable = *tableOf(other);
+    auto entries = table.selectEntries(otherTable, KeyPresence::Absent);
+    auto entriesOfOther = otherTable.selectEntries(table, KeyPresence::Absent);
+    return tryCreateSetOfEntries(globalObject, table, entries.span(), otherTable, entriesOfOther.span());
+}
+
+CompactTable::KeysCopied CompactTable::tryCopyKeys(JSCell* storage, std::span<EncodedJSValue> copies)
+{
+    auto* table = uncheckedDowncast<CompactTable>(storage);
+    if (!table->isLive() || table->isInImage() || table->m_alive != copies.size())
+        return KeysCopied::None;
+    uint32_t used = table->m_used;
+    if (used)
+        table->m_keysShiftAndFlags |= wasWalked;
+    EncodedJSValue* copy = copies.data();
+    EncodedJSValue* const end = copy + copies.size();
+    bool areInt32s = true;
+    auto copyEach = [&](auto keyAt) ALWAYS_INLINE_LAMBDA {
+        EncodedJSValue* next = copy;
+        bool seenInt32sAlone = true;
+        for (uint32_t entry = 0; entry < used; ++entry) {
+            JSValue key = keyAt(entry);
+            if (!key)
+                continue;
+            RELEASE_ASSERT(next != end);
+            seenInt32sAlone &= key.isInt32();
+            *next++ = JSValue::encode(key);
+        }
+        copy = next;
+        areInt32s = seenInt32sAlone;
+    };
+    if (table->m_keysShiftAndFlags & keysAreWide)
+        copyEach([keys = table->at<EncodedJSValue>(table->offsetOfKeys())](uint32_t entry) ALWAYS_INLINE_LAMBDA { return JSValue::decode(keys[entry]); });
+    else
+        copyEach([table, keys = table->at<uint32_t>(table->offsetOfKeys())](uint32_t entry) ALWAYS_INLINE_LAMBDA { return table->decodeNarrow(keys[entry]); });
+    RELEASE_ASSERT(copy == end);
+    return areInt32s ? KeysCopied::Int32s : KeysCopied::Values;
+}
+
+JSSet* CompactTable::tryUnite(JSGlobalObject* globalObject, JSSet* set, JSSet* other)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const CompactTable& table = *tableOf(set);
+    const CompactTable& otherTable = *tableOf(other);
+    auto added = otherTable.selectEntries(table, KeyPresence::Absent);
+    if (added.isEmpty())
+        RELEASE_AND_RETURN(scope, set->clone(globalObject, vm, globalObject->setStructure()));
+    uint64_t count = static_cast<uint64_t>(table.m_alive) + added.size();
+    if (count > maxCapacity) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    Width width = table.keyWidth() == Width::Wide ? Width::Wide : otherTable.keyWidth();
+    JSSet* result = JSSet::create(vm, globalObject->setStructure());
+    CompactTable* copy = table.tryCopyWithWidths(globalObject, width, Width::None, static_cast<uint32_t>(count));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (uint32_t entry : added) {
+        JSValue key = otherTable.uncheckedKeyAt(entry);
+        copy->append(vm, key, hashOfStoredKey(key), JSValue());
+    }
+    setStorage(vm, result, copy);
+    return result;
 }
 
 static ALWAYS_INLINE bool holdsSameText(uintptr_t cageBase, uint32_t narrowKey, const StringImpl* impl, unsigned hash)
@@ -1351,7 +1616,7 @@ uint32_t CompactTable::fillWithNumbers(std::span<const EncodedJSValue> numbers)
     unsigned indexBits = this->indexBits();
     uint32_t used = 0;
     for (EncodedJSValue number : numbers) {
-        unsigned hash = rapidHashMix64(number) & hashMask;
+        unsigned hash = hashOfKeyBits(number);
         bool isPresent = probeIndex<kind>(index, indexBits, used, hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
             return keys[entry] == number;
         }).has_value();
@@ -1545,6 +1810,8 @@ static ALWAYS_INLINE CompactTable::QuickLookup tryFindSubstringQuickly(JSObject*
     ASSERT(baseImpl);
     auto find = [&]<typename CharacterType>(std::span<const CharacterType> text) ALWAYS_INLINE_LAMBDA {
         unsigned hash = StringHasher::computeHashAndMaskTop8Bits(text);
+        if (table->isInImage())
+            return table->tryFindSubstringInImage(rope, text, hash, value);
         auto lookup = table->tryFindCharactersQuickly(text, hash);
         if (lookup.result == QuickLookup::Found) {
             value = table->valueAt(lookup.entry);
@@ -1781,6 +2048,41 @@ JSValue keyAt(JSCell* storage, uint32_t entry)
 JSValue valueAt(JSCell* storage, uint32_t entry)
 {
     return uncheckedDowncast<CompactTable>(storage)->valueAt(entry);
+}
+
+bool canCompareKeys(JSSet* set, JSSet* other)
+{
+    return CompactTable::canCompareKeys(set, other);
+}
+
+bool isSubset(JSSet* set, JSSet* other)
+{
+    return CompactTable::hasAllKeys(set, other, CompactTable::KeyPresence::Present);
+}
+
+bool isDisjoint(JSSet* set, JSSet* other)
+{
+    return CompactTable::hasAllKeys(set, other, CompactTable::KeyPresence::Absent);
+}
+
+JSSet* createIntersection(JSGlobalObject* globalObject, JSSet* set, JSSet* other)
+{
+    return CompactTable::trySelectKeys(globalObject, set, other, CompactTable::KeyPresence::Present);
+}
+
+JSSet* createDifference(JSGlobalObject* globalObject, JSSet* set, JSSet* other)
+{
+    return CompactTable::trySelectKeys(globalObject, set, other, CompactTable::KeyPresence::Absent);
+}
+
+JSSet* createUnion(JSGlobalObject* globalObject, JSSet* set, JSSet* other)
+{
+    return CompactTable::tryUnite(globalObject, set, other);
+}
+
+JSSet* createSymmetricDifference(JSGlobalObject* globalObject, JSSet* set, JSSet* other)
+{
+    return CompactTable::trySubtractBothWays(globalObject, set, other);
 }
 
 } // namespace AOT::CompactStorage

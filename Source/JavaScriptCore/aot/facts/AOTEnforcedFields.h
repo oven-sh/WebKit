@@ -7,12 +7,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTFamilies.h"
 #include "AOTLayout.h"
 #include "AOTMechanisms.h"
 #include "AOTTypeArena.h"
 #include "JSExportMacros.h"
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -68,7 +68,6 @@ public:
     static constexpr uint32_t capacity = (1u << bitsOfIndexInIDSetShard) - sizeOfFirstSegment;
 
     static_assert((idInIDSetTable(IDSetTable::numberOfShards - 1, capacity - 1) & idPositionMask) <= largestIDPosition);
-    static_assert(!(sizeOfFirstSegment * sizeof(Element) % alignmentInIDSetTable));
 
     IDSetTableSegments() = default;
 
@@ -76,7 +75,7 @@ public:
     {
         for (auto& segment : m_segments) {
             if (Element* elements = segment.load(std::memory_order_relaxed))
-                FastAlignedMalloc::free(elements);
+                fastFree(elements);
         }
     }
 
@@ -94,7 +93,7 @@ public:
         RELEASE_ASSERT(segment < numberOfSegments);
         if (!m_segments[segment].load(std::memory_order_relaxed)) {
             size_t bytes = (static_cast<size_t>(sizeOfFirstSegment) << segment) * sizeof(Element);
-            m_segments[segment].store(static_cast<Element*>(FastAlignedMalloc::alignedMalloc(alignmentInIDSetTable, bytes)), std::memory_order_release);
+            m_segments[segment].store(static_cast<Element*>(fastMalloc(bytes)), std::memory_order_release);
         }
         uint32_t index = m_next;
         m_next += static_cast<uint32_t>(count);

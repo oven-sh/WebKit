@@ -10,6 +10,7 @@
 #include "AOTImageForward.h"
 #include "JSExportMacros.h"
 #include <atomic>
+#include <compare>
 #include <cstddef>
 #include <optional>
 #include <span>
@@ -63,6 +64,7 @@ static_assert(sizeof(ImageString) == 8 && isImageRecord<ImageString>);
 
 struct ImageStringWord {
     static constexpr ImageStringWord ofIdentifier(uint32_t number) { return { ImageString::hasTextFlag | ImageString::isAtomFlag | ImageString::hasIdentifierNumberFlag | number }; }
+    static constexpr ImageStringWord ofPlacedConstant(uint32_t number) { return { ImageString::hasTextFlag | ImageString::hasNoHeaderFlag | ImageString::isCodedFlag | ImageString::hasListedHashFlag | number }; }
 
     bool hasText() const { return !!bits; }
     bool is16Bit() const { return bits & ImageString::is16BitFlag; }
@@ -70,7 +72,8 @@ struct ImageStringWord {
     bool hasIdentifierNumber() const { return bits & ImageString::hasIdentifierNumberFlag; }
     bool hasHeader() const { return hasText() && !(bits & ImageString::hasNoHeaderFlag); }
     bool hasListedHash() const { return bits & ImageString::hasListedHashFlag; }
-    bool isCoded() const { return bits & ImageString::isCodedFlag; }
+    bool isCoded() const { return (bits & (ImageString::isCodedFlag | ImageString::hasListedHashFlag)) == ImageString::isCodedFlag; }
+    bool isPlacedConstant() const { return (bits & (ImageString::isCodedFlag | ImageString::hasListedHashFlag)) == (ImageString::isCodedFlag | ImageString::hasListedHashFlag); }
     uint32_t number() const { return bits & ImageString::hashMask; }
 
     uint32_t bits;
@@ -108,6 +111,17 @@ struct ImageListedString {
             return { words[0] >> ImageString::lengthBits, length };
         return { words[1], words[2] };
     }
+};
+
+struct ImagePlacedString {
+    static constexpr unsigned lengthBits = 7;
+    static constexpr uint32_t lengthMask = (1u << lengthBits) - 1;
+    static constexpr uint32_t maxOffset = (1u << (32 - lengthBits)) - 1;
+
+    static constexpr bool fitsLength(size_t length) { return length >= 2 && length <= lengthMask; }
+    static constexpr bool fits(ImageLongString range) { return fitsLength(range.length) && range.offset <= maxOffset; }
+    static constexpr uint32_t wordFor(ImageLongString range) { return range.offset << lengthBits | range.length; }
+    static constexpr ImageLongString rangeOf(uint32_t word) { return { word >> lengthBits, word & lengthMask }; }
 };
 
 inline ImageLongString ImageString::range(std::span<const ImageLongString> longStrings) const
@@ -154,6 +168,11 @@ static_assert(sizeof(ImageStringHeader) == sizeof(StringImpl) && alignof(ImageSt
 static_assert(offsetof(ImageStringHeader, length) == static_cast<size_t>(StringImpl::lengthMemoryOffset()));
 static_assert(offsetof(ImageStringHeader, characters) == StringImpl::dataOffset());
 static_assert(offsetof(ImageStringHeader, hashAndFlags) == StringImpl::flagsOffset());
+
+constexpr unsigned flagIsInImage = 1u << 7;
+static_assert(StringImpl::hashAndFlagsOfStaticString(0, false, StringImpl::StringNormal) & flagIsInImage);
+static_assert(!(flagIsInImage & (StringImpl::flagIs8Bit() | StringImpl::flagIsAtom() | StringImpl::flagIsSymbol())));
+constexpr unsigned flagsOfUniqueTexts = StringImpl::flagIsAtom() | flagIsInImage;
 
 struct LazyStringHeader {
     ImageStringHeader header;
@@ -202,7 +221,7 @@ struct ImageIdentifierWord {
     static constexpr uint32_t textMask = ImageIdentifier::hashMask;
 
     uint8_t byteInImage() const { return bits >> ImageIdentifier::kindShift; }
-    static ImageIdentifierWord ofByteInImage(uint8_t byte) { return { static_cast<uint32_t>(byte) << ImageIdentifier::kindShift }; }
+    static ImageIdentifierWord fromByte(uint8_t byte) { return { static_cast<uint32_t>(byte) << ImageIdentifier::kindShift }; }
 
     StringID text() const { return bits & textMask ? StringID((bits & textMask) - 1) : StringID(); }
     PropertyKeyKind kind() const { return static_cast<PropertyKeyKind>(bits >> ImageIdentifier::kindShift & ((1u << ImageIdentifier::kindBits) - 1)); }
@@ -276,6 +295,10 @@ public:
     unsigned hash(StringID string) const { return hash(wordOf(string)); }
     JS_EXPORT_PRIVATE bool equals(StringID, StringView) const;
     String createString(StringID string) const { return createString(wordOf(string)); }
+    Vector<String> createStrings(std::span<const StringID>) const;
+    std::strong_ordering compare(StringID, StringView) const;
+    bool isCoded(StringID string) const { return string.index() >= endOfStringsWithWords(); }
+    bool isIdentifier(const StringImpl&) const;
     String createAtom(StringID string) const { return createAtom(wordOf(string)); }
     StringImpl* tryGetHeader(StringID string) const { return tryGetHeader(wordOf(string)); }
     JS_EXPORT_PRIVATE StringView view(ImageStringWord) const;
@@ -284,9 +307,10 @@ public:
     JS_EXPORT_PRIVATE String createAtom(ImageStringWord) const;
     StringImpl* tryGetHeader(ImageStringWord) const;
 
+    PropertyKeyKind kindOfIdentifier(uint32_t number) const { return ImageIdentifierWord::fromByte(m_identifiers[number]).kind(); }
     ImageIdentifierWord identifier(uint32_t number) const
     {
-        ImageIdentifierWord word = ImageIdentifierWord::ofByteInImage(m_identifiers[number]);
+        ImageIdentifierWord word = ImageIdentifierWord::fromByte(m_identifiers[number]);
         word.bits |= word.kind() == PropertyKeyKind::Text ? (number ? number + 1 : 0) : textOfListedIdentifier(number);
         return word;
     }
@@ -304,7 +328,9 @@ public:
 #else
     UniquedStringImpl* identifierAtoms() const { return reinterpret_cast<UniquedStringImpl*>(const_cast<ImageStringHeader*>(m_stringHeaders.data())); }
 #endif
-    ImageStringWord stringConstant(uint32_t number) const { return { m_stringConstants[number] }; }
+    ImageStringWord stringConstant(uint32_t number) const { return number < m_hashesOfPlacedConstants.size() ? ImageStringWord::ofPlacedConstant(number) : ImageStringWord { m_stringConstants[number] }; }
+    std::span<const uint32_t> hashesOfPlacedConstants() const { return m_hashesOfPlacedConstants; }
+    std::span<const Latin1Character> charactersAt(uint32_t place, uint32_t length) const { return byteCast<Latin1Character>(m_text.subspan(place, length)); }
     bool hasListedHash(StringID string) const { return wordOf(string).hasListedHash(); }
 
 private:
@@ -335,6 +361,7 @@ private:
     std::span<const uint8_t> m_identifiers;
     std::span<const ImageOtherIdentifier> m_otherIdentifiers;
     std::span<const uint32_t> m_stringConstants;
+    std::span<const uint32_t> m_hashesOfPlacedConstants;
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     std::span<const ImageStringRecord> m_stringRecords;
     std::atomic<uint32_t>* m_lazyHeaderOffsets { nullptr };

@@ -7,10 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTID.h"
 #include "AOTImageForward.h"
 #include "AOTVector.h"
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
 

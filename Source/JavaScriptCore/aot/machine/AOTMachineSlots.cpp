@@ -386,18 +386,22 @@ void SlotAssigner::countAccessesToFrame(FrameWords& words)
         });
     }
 
+    if (m_allocation.suspensions().empty())
+        return;
     ArenaVector<uint32_t> wordsEncodedAsIndex;
-    for (const PatchOperation* patch : m_allocation.suspensions()) {
+    size_t suspensionCount = 0;
+    for (const Step& step : steps) {
+        if (step.kind != StepKind::Execute || step.operation->opcode() != Patch)
+            continue;
+        const PatchOperation* patch = static_cast<const PatchOperation*>(step.operation);
         if (!patch->operandEncodedAsFrameWordIndex())
             continue;
-        const Step* step = m_allocation.findExecuteOf(patch);
-        if (!step)
-            step = &m_allocation.step(m_allocation.stepsOf(patch->owner()).terminator);
-        RELEASE_ASSERT(step->kind == StepKind::Execute && step->operation == patch);
-        Location location = m_allocation.patchAssignment(step->patchAssignment).locations[m_proc.resultCount(patch->type()) + *patch->operandEncodedAsFrameWordIndex()];
+        ++suspensionCount;
+        Location location = m_allocation.patchAssignment(step.patchAssignment).locations[m_proc.resultCount(patch->type()) + *patch->operandEncodedAsFrameWordIndex()];
         if (location.isSpill())
             wordsEncodedAsIndex.append(m_arena, wordOf(location.spillIndex()));
     }
+    RELEASE_ASSERT(suspensionCount >= static_cast<size_t>(std::ranges::count_if(m_allocation.suspensions(), [](const PatchOperation* patch) { return !!patch->operandEncodedAsFrameWordIndex(); })));
 
     for (uint32_t word : wordsEncodedAsIndex)
         numberOfAccesses[word] = UINT32_MAX;

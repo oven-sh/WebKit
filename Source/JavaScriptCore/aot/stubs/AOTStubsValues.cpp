@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTClosureWord.h"
+#include "AOTImageText.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubFrontEnds.h"
@@ -47,14 +48,17 @@ StubSignature signatureOfValueIsTruthy(StubKey key)
     return signatureWithFlagsResult({ key.operandRegister().value_or(gprOf(StubRegister::R0)) }, MacroAssembler::NonZero);
 }
 
+StubSignature signatureOfIsCallableCell(StubKey key)
+{
+    return signatureWithFlagsResult({ key.operandRegister().value_or(gprOf(StubRegister::R0)) }, MacroAssembler::Zero);
+}
+
 StubSignature signatureOfEqual(StubKey key)
 {
     if (static_cast<Equality>(key.form()) == Equality::StrictInFlags)
         return signatureWithFlagsResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1) }, MacroAssembler::Zero);
     return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1) });
 }
-
-StubSignature signatureOfEqualOfNullableStrings(StubKey key) { return signatureOfEqual(key); }
 
 void callBinaryOperation(StubAssembler& jit, Entry entry)
 {
@@ -154,6 +158,26 @@ static void generateTruthiness(StubAssembler& jit, bool answersInFlags)
         isCell.link(&jit);
         answerForCell();
     }
+}
+
+void generateIsCallableCell(StubAssembler& jit)
+{
+    const GPRReg cell = jit.operand(0);
+    const GPRReg scratch = jit.allocateScratch(cell == gprOf(StubRegister::T9) ? StubRegister::T10 : StubRegister::T9);
+
+    Jump isNotFunction = branchIfNotFunctionType(jit, cell, scratch);
+    jit.returnFlagsConstant(true);
+
+    isNotFunction.link(&jit);
+    Jump mayOverrideCallData = jit.branchTest8(CCallHelpers::NonZero, Address(cell, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetCallData));
+    jit.returnFlagsConstant(false);
+
+    mayOverrideCallData.link(&jit);
+    OperationCall call { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = cell };
+    call.valueDestination = scratch;
+    jit.callOperationAndReturn(Entry::operationAOTIsCallable, call, [&] {
+        jit.compareOnFlags32(scratch, TrustedImm32(1));
+    });
 }
 
 void generateToBoolean(StubAssembler& jit)
@@ -416,6 +440,7 @@ void generateEqual(StubAssembler& jit)
     JumpList isTrue;
     JumpList isFalse;
     JumpList needsContent;
+    JumpList areBigInts;
     JumpList& kindsDiffer = isStrict ? isFalse : needsContent;
 
     auto returnConstant = [&](bool answer) {
@@ -442,14 +467,24 @@ void generateEqual(StubAssembler& jit)
     JumpList flagsSayFalse;
     JumpList& isFalseWhereTestFoundBits = flagsOfLastTestAreAnswer ? flagsSayFalse : isFalse;
 
+    Jump leftIsNoInt32;
+    Jump rightIsNoInt32;
+    if (!isStrict) {
+        leftIsNoInt32 = jit.branch64(CCallHelpers::Below, left, numberTag);
+        rightIsNoInt32 = jit.branch64(CCallHelpers::Below, right, numberTag);
+        jit.compare32(CCallHelpers::Equal, left, right, result);
+        jit.returnToCaller();
+        leftIsNoInt32.link(&jit);
+    }
     Jump haveSameBits = jit.branch64(CCallHelpers::Equal, left, right);
     jit.or64(left, right, leftValue);
+    Jump oneIsNumber;
     Jump areNotBothCells;
     Jump notStrings;
     if (isStrict) {
         static_assert(StringType + 1 == HeapBigIntType && HeapBigIntType == LastValueCompareCellType);
         static_assert(JSValue::ValueNull & JSValue::OtherTag && JSValue::ValueUndefined & JSValue::OtherTag && JSValue::ValueFalse & JSValue::OtherTag && JSValue::ValueTrue & JSValue::OtherTag);
-        areNotBothCells = jit.branchTest64(CCallHelpers::NonZero, leftValue, numberTag);
+        oneIsNumber = jit.branchTest64(CCallHelpers::NonZero, leftValue, numberTag);
         isFalseWhereTestFoundBits.append(jit.branchTest64(CCallHelpers::NonZero, leftValue, TrustedImm32(JSValue::OtherTag)));
         isFalse.append(jit.branchTest64(CCallHelpers::Zero, left));
         isFalseWhereTestFoundBits.append(jit.branch8(CCallHelpers::Above, Address(left, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType)));
@@ -462,10 +497,14 @@ void generateEqual(StubAssembler& jit)
         isFalse.append(jit.branchTest64(CCallHelpers::Zero, right));
         jit.load8(Address(left, JSCell::typeInfoTypeOffset()), leftValue);
         jit.load8(Address(right, JSCell::typeInfoTypeOffset()), rightValue);
+        Jump leftIsNoObject = jit.branch32(CCallHelpers::Below, leftValue, TrustedImm32(ObjectType));
+        kindsDiffer.append(jit.branch32(CCallHelpers::Below, rightValue, TrustedImm32(ObjectType)));
+        returnConstant(false);
+
+        leftIsNoObject.link(&jit);
         kindsDiffer.append(jit.branch32(CCallHelpers::NotEqual, leftValue, rightValue));
         notStrings = jit.branch32(CCallHelpers::NotEqual, leftValue, TrustedImm32(StringType));
     }
-    Label areBothStrings = jit.label();
     jit.loadPtr(Address(left, JSString::offsetOfValue()), leftValue);
     jit.loadPtr(Address(right, JSString::offsetOfValue()), rightValue);
     jit.or64(leftValue, rightValue, length);
@@ -473,7 +512,7 @@ void generateEqual(StubAssembler& jit)
     isTrue.append(jit.branchPtr(CCallHelpers::Equal, leftValue, rightValue));
     jit.load32(Address(leftValue, StringImpl::flagsOffset()), flags);
     jit.and32(Address(rightValue, StringImpl::flagsOffset()), flags);
-    Jump areNotBothAtoms = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(StringImpl::flagIsAtom()));
+    Jump mayHaveSameText = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(flagsOfUniqueTexts));
     Label returnsFalse = jit.label();
     returnConstant(false);
 
@@ -488,34 +527,54 @@ void generateEqual(StubAssembler& jit)
     notStrings.link(&jit);
     if (isStrict) {
         isFalse.append(jit.branchTest64(CCallHelpers::Zero, right));
-        needsContent.append(jit.branch8(CCallHelpers::Equal, Address(right, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType)));
+        areBigInts.append(jit.branch8(CCallHelpers::Equal, Address(right, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType)));
     } else
-        needsContent.append(jit.branch32(CCallHelpers::Equal, leftValue, TrustedImm32(HeapBigIntType)));
+        areBigInts.append(jit.branch32(CCallHelpers::Equal, leftValue, TrustedImm32(HeapBigIntType)));
     isFalse.append(jit.jump());
 
-    areNotBothCells.link(&jit);
-    isNumber.link(&jit);
+    areBigInts.link(&jit);
+    jit.load32(Address(left, JSBigInt::offsetOfLength()), leftValue);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, leftValue, Address(right, JSBigInt::offsetOfLength())));
+    isTrue.append(jit.branchTest32(CCallHelpers::Zero, leftValue));
+    jit.load64(Address(left, JSBigInt::offsetOfData()), rightValue);
+    isFalse.append(jit.branch64(CCallHelpers::NotEqual, rightValue, Address(right, JSBigInt::offsetOfData())));
+    needsContent.append(jit.branch32(CCallHelpers::NotEqual, leftValue, TrustedImm32(1)));
+    jit.load8(Address(left, JSCell::typeInfoFlagsOffset()), leftValue);
+    jit.load8(Address(right, JSCell::typeInfoFlagsOffset()), rightValue);
+    jit.xor32(rightValue, leftValue);
+    isFalse.append(jit.branchTest32(CCallHelpers::NonZero, leftValue, TrustedImm32(TypeInfoPerCellBit)));
+    isTrue.append(jit.jump());
+
     const FPRReg leftNumber = jit.allocateScratch(FPRInfo::fpRegT0);
     const FPRReg rightNumber = jit.allocateScratch(FPRInfo::fpRegT1);
-    Jump leftNotInt32 = jit.branch64(CCallHelpers::Below, left, numberTag);
-    Jump rightNotInt32 = jit.branch64(CCallHelpers::Below, right, numberTag);
-    if (answersInFlags)
-        jit.returnFlags32(CCallHelpers::Equal, left, right);
-    else {
-        jit.compare32(CCallHelpers::Equal, left, right, result);
-        jit.returnToCaller();
+    JumpList areNumbers;
+    if (isStrict) {
+        oneIsNumber.link(&jit);
+        Jump leftIsInt32 = jit.branch64(CCallHelpers::AboveOrEqual, left, numberTag);
+        Jump rightIsInt32 = jit.branch64(CCallHelpers::AboveOrEqual, right, numberTag);
+        isFalse.append(jit.branch64(CCallHelpers::NotEqual, leftValue, TrustedImm64(JSValue::encode(jsDoubleNumber(-0.0)))));
+        areNumbers.append(jit.jump());
+        leftIsInt32.link(&jit);
+        isFalse.append(jit.branch64(CCallHelpers::AboveOrEqual, right, numberTag));
+        isFalse.append(jit.branchTest64(CCallHelpers::Zero, right, numberTag));
+        areNumbers.append(jit.jump());
+        rightIsInt32.link(&jit);
+        isFalse.append(jit.branchTest64(CCallHelpers::Zero, left, numberTag));
+    } else {
+        areNotBothCells.link(&jit);
+        isNumber.link(&jit);
+        rightIsNoInt32.link(&jit);
+        kindsDiffer.append(jit.branchTest64(CCallHelpers::Zero, left, numberTag));
+        kindsDiffer.append(jit.branchTest64(CCallHelpers::Zero, right, numberTag));
     }
-
-    leftNotInt32.link(&jit);
-    rightNotInt32.link(&jit);
-    kindsDiffer.append(jit.branchTest64(CCallHelpers::Zero, left, numberTag));
-    kindsDiffer.append(jit.branchTest64(CCallHelpers::Zero, right, numberTag));
+    areNumbers.link(&jit);
+    Label comparesNumbers = jit.label();
     toDouble(jit, left, length, leftNumber);
     toDouble(jit, right, length, rightNumber);
     isTrue.append(jit.branchDouble(CCallHelpers::DoubleEqualAndOrdered, leftNumber, rightNumber));
     isFalse.append(jit.jump());
 
-    areNotBothAtoms.link(&jit);
+    mayHaveSameText.link(&jit);
     jit.load32(Address(leftValue, StringImpl::lengthMemoryOffset()), length);
     isFalse.append(jit.branch32(CCallHelpers::NotEqual, length, Address(rightValue, StringImpl::lengthMemoryOffset())));
     JumpList needsLeaf;
@@ -536,18 +595,11 @@ void generateEqual(StubAssembler& jit)
     needsOperation.link(&jit);
     callOperationAndReturn(Entry::operationAOTStringsAreEqual, false);
 
-    if (!answersInFlags) {
-        jit.bindEntry(equalOfNullableStrings(isStrict));
-        isTrue.append(jit.branch64(CCallHelpers::Equal, left, right));
-        jit.or64(left, right, leftValue);
-        jit.branchIfCell(leftValue).linkTo(areBothStrings, &jit);
-        if (!isStrict) {
-            jit.and64(left, right, leftValue);
-            isTrue.append(jit.branchIfNotCell(leftValue));
-        }
-        isFalse.append(jit.jump());
+    if (isStrict) {
+        isNumber.link(&jit);
+        isTrue.append(jit.branch64(CCallHelpers::AboveOrEqual, left, numberTag));
+        jit.jump().linkTo(comparesNumbers, &jit);
     }
-
     isTrue.link(&jit);
     returnConstant(true);
 

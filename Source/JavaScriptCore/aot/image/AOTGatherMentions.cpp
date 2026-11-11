@@ -33,7 +33,7 @@ namespace JSC { namespace AOT {
 static constexpr std::array gatheredSpacesThatCountFunctions { NumberSpace::Name, NumberSpace::NameOfText };
 static_assert(std::ranges::all_of(gatheredSpacesThatCountFunctions, hasOneIDAsKey));
 
-static constexpr std::array gatheredSpacesThatKeepFirstFunction { NumberSpace::Name, NumberSpace::NameOfText, NumberSpace::String, NumberSpace::StringCell, NumberSpace::KeyCell };
+static constexpr std::array gatheredSpacesThatKeepFirstFunction { NumberSpace::Name, NumberSpace::NameOfText, NumberSpace::String, NumberSpace::StringCell, NumberSpace::StringCharacters, NumberSpace::KeyCell };
 static_assert(std::ranges::all_of(gatheredSpacesThatKeepFirstFunction, hasOneIDAsKey));
 static_assert(std::ranges::all_of(gatheredSpacesThatCountFunctions, [](NumberSpace space) { return std::ranges::contains(gatheredSpacesThatKeepFirstFunction, space); }), "functions are counted unit by unit");
 static_assert(FunctionByModule { .position = UINT32_MAX, .function = FunctionID(0u) } < FunctionByModule { }, "a minimum over functions starts at no function");
@@ -236,6 +236,8 @@ private:
             return;
         case NumberSpace::ShownString:
         case NumberSpace::AtomOfString:
+        case NumberSpace::NameHeader:
+        case NumberSpace::StringCharacters:
         case NumberSpace::Name:
         case NumberSpace::NameOfText:
         case NumberSpace::String:
@@ -288,8 +290,21 @@ private:
         case RequestKind::Data:
             addMentionsImpliedByDataRequest(request.subspan(1));
             return;
+        case RequestKind::ImportChecks:
+            addMentionsImpliedByImportChecks(request.subspan(1));
+            return;
         }
         reportMalformedMention("the request has no kind"_s);
+    }
+
+    void addMentionsImpliedByImportChecks(std::span<const uint32_t> variablesAndFailures)
+    {
+        if (variablesAndFailures.empty() || variablesAndFailures.size() % 2) {
+            reportMalformedMention("the request for import checks does not list variables and failures"_s);
+            return;
+        }
+        for (size_t index = 0; index < variablesAndFailures.size(); index += 2)
+            add(NumberSpace::Variable, variablesAndFailures.subspan(index, 1));
     }
 
     void addMentionsImpliedByDirectEvalRequest(std::span<const uint32_t> scopeAndModule)

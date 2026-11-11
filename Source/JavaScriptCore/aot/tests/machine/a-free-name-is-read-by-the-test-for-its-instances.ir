@@ -10,8 +10,8 @@
 # a name that is read for more than the test is read by itself
 # RUN(BOTH): bytes f2:Body
 # BOTH-LABEL: unit f2:Body
-# BOTH: Call Stub GetGlobalBinding.ScriptsAndGlobalObject
 # BOTH: InstanceOf.Constructor
+# BOTH: argument thunk {{*}} GetGlobalBinding.ScriptsAndGlobalObject
 # RUN(SHELL): run-in-shell globalThis.publish = isOne => { const attempt = x => { try { return isOne(x); } catch (error) { return error.constructor.name; } }; const warm = (...all) => { let last; for (let i = 0; i < 20; i++) last = all.map(attempt).join(); print(last); }; warm({}); globalThis.Kind = function () {}; const First = Kind, one = new Kind(); warm(one, {}, 7); globalThis.Kind = class {}; warm(one, new Kind(), null); Object.defineProperty(globalThis, "Kind", { get() { return First; }, configurable: true }); warm(one, {}); delete globalThis.Kind; warm(one); globalThis.Kind = 5; warm(one, 7); globalThis.Kind = { [Symbol.hasInstance]: x => x === 7 }; warm(7, one); globalThis.Kind = First; warm(one, {}); First.prototype = {}; warm(one, new First()); };
 # SHELL: ReferenceError
 # SHELL-NEXT: true,false,false

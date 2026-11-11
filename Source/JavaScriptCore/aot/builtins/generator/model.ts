@@ -211,6 +211,12 @@ export interface ModelType {
   parts: readonly ModelTypePart[];
 }
 
+export const resultFieldLayouts = (type: ModelType, isOfElements: boolean): ModelLayout[] =>
+  type.parts.flatMap(part => {
+    if (!isOfElements) return part.part === "Layout" ? [part.layout] : [];
+    return part.part === "Instance" ? part.contents.flatMap(contents => resultFieldLayouts(contents.type, false)) : [];
+  });
+
 export type ModelPlace =
   | { place: "None" }
   | { place: "Operand"; operand: ModelOperand }
@@ -219,7 +225,7 @@ export type ModelPlace =
   | { place: "OwnValues"; operand: ModelOperand }
   | { place: "Result" }
   | { place: "ResultSlot"; slot: ModelSlot }
-  | { place: "ResultField"; index: number; holdsOnlyWhatIsStored: boolean }
+  | { place: "ResultField"; index: number; holdsOnlyWhatIsStored: boolean; isOfElements: boolean }
   | { place: "NewValue"; type: ModelType; holdsWhatIsThrown: boolean }
   | { place: "NativeMemory" }
   | { place: "Prototype"; operand: ModelOperand }

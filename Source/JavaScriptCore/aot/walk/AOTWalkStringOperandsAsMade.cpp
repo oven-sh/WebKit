@@ -17,7 +17,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr PristineAspectSet aspectsThatLookAtCellProvesForStringOperands { PristineAspects::Storage, PristineAspects::Names, PristineAspects::NamesKeptBelow, PristineAspects::Prototype };
+static constexpr PristineAspectSet aspectsThatLookAtCellProvesForStringOperands { PristineAspects::Storage, PristineAspects::Names, PristineAspects::InheritedNamesKept, PristineAspects::Prototype };
 
 bool goesByOneRowOnOperandAsMade(Walker& walker, const BodyValue& call, BuiltinID builtin, Reference value, TypeID behindTest, BuiltinOverloadID* onlyRow)
 {
@@ -123,7 +123,7 @@ static bool passesCallbackToCopy(Walker& walker, const BodyValue& call)
     return function && walker.facts().linked().function(function).weightAsLeaf != LinkedFunction::notLeaf;
 }
 
-static bool argumentsStayInsideCall(const BodyIndex& index, ValueID read, ValueID call)
+static bool argumentsStayInCall(const BodyIndex& index, ValueID read, ValueID call)
 {
     for (uint32_t number = read.index() + 1; number < call.index(); ++number) {
         ValueID user = index.onlyUsingValue(ValueID(number));
@@ -156,7 +156,7 @@ ValueID findLastCallInMethodChain(Walker& walker, const BodyValue& firstCall, ui
         if (!callID || index.isParameter(callID) || !block.holds(callID) || index.opcodeOf(callID) != Opcode::Call || callID.index() >= behindStretch)
             return last;
         BodyValue call = index.value(callID);
-        if (call.calleeOperand() != read.id() || call.thisValueOperand() != result || !passesCallbackToCopy(walker, call) || !argumentsStayInsideCall(index, read.id(), callID))
+        if (call.calleeOperand() != read.id() || call.thisValueOperand() != result || !passesCallbackToCopy(walker, call) || !argumentsStayInCall(index, read.id(), callID))
             return last;
         last = callID;
     }
@@ -166,7 +166,7 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
 {
     if (read.isFreeName() || !walker.isInLoop() || walker.isUnreachable() || !walker.has(Mechanism::Inlining) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::EscapeAnalysis))
         return false;
-    Walker::MethodChain& chain = walker.methodChainBeingWalked();
+    Walker::MethodChain& chain = walker.currentMethodChain();
     if (walker.walksStretchInsideAnother() && (chain.depthOfCopies != walker.depthOfCopies() || !(chain.openRead < read.id()) || chain.lastCall < read.id()))
         return false;
     const Program& program = walker.program();
@@ -194,7 +194,7 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
     ValueID receiverID = read.objectOperand();
     if (call.calleeOperand() != read.id() || call.thisValueOperand() != receiverID)
         return false;
-    if ((hasLibraryImplementation && !passesCallbackToCopy(walker, call)) || !argumentsStayInsideCall(index, read.id(), callID))
+    if ((hasLibraryImplementation && !passesCallbackToCopy(walker, call)) || !argumentsStayInCall(index, read.id(), callID))
         return false;
 
     TypeID instances = types.builtinClass(builtinClass);
@@ -206,7 +206,7 @@ bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& r
     if (last == callID)
         readsOffHolders.shrink(0);
     else
-        walker.count(hasLibraryImplementation ? StatisticID::MethodChainsKeptInArm : StatisticID::CollectionCallRunsGuardedOnce);
+        walker.count(hasLibraryImplementation ? StatisticID::MethodChainsKeptInBranches : StatisticID::CollectionCallRunsGuardedOnce);
     SetForScope walksChain(chain, Walker::MethodChain { walker.depthOfCopies(), read.id(), last == callID ? read.id() : last });
     if (hasLibraryImplementation && index.opcodeOf(index.stripCasts(call.as<Opcode::Call>().argumentsOperands()[0])) == Opcode::GetModuleVariable)
         walker.count(StatisticID::ReceiversSpeculatedForNamedCallbacks);

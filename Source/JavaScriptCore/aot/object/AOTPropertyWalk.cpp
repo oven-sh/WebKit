@@ -21,6 +21,8 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesAnswers.h"
+#include "AOTPropertyCachesKeys.h"
 #include "AOTPropertyListCache.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTRuntimeFunctions.h"
@@ -313,6 +315,29 @@ Result forEachOwnProperty(VM& vm, JSObject* object, Filter filter, const Visitor
     if (auto result = tryVisitCachedList(vm, *typed, extra, visitor))
         return *result;
     return visitKeysInOrder(vm, *typed, extra, filter, visitor);
+}
+
+Result forEachOwnDescriptor(VM& vm, JSObject* object, const Visitor& visitor)
+{
+    Object* typed = compiledObjectOrNull(object);
+    if (!typed || hasFieldPreparedBeforeLookups(vm, *typed))
+        return Result::NeedsGenericPath;
+    JSObject* extra = typed->extraProperties();
+    if (!extra || extra->type() != FinalObjectType || JSC::hasIndexedProperties(extra->indexingType()) || extra->hasNonReifiedStaticProperties() || extra->structure()->isUncacheableDictionary())
+        return Result::NeedsGenericPath;
+    auto ordered = collectKeysInOrder(vm, *typed, extra);
+    if (std::ranges::any_of(ordered, [&](const OrderedKey& key) { return key.attributes & PropertyAttribute::CustomAccessorOrValue || isPreparedBeforeLookups(vm, key.name); }))
+        return Result::NeedsGenericPath;
+    for (bool visitsSymbols : { false, true }) {
+        for (auto& key : ordered) {
+            if (key.name->isSymbol() != visitsSymbols)
+                continue;
+            JSValue valueOrAccessor = key.field ? typed->read(*key.field) : extra->getDirect(key.offsetInExtraProperties);
+            if (valueOrAccessor && visitor(OwnProperty { key.name, valueOrAccessor, key.attributes }) == IterationStatus::Done)
+                return Result::Stopped;
+        }
+    }
+    return Result::Completed;
 }
 
 Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visitor, Elements elements, Preparations preparations)
@@ -1075,6 +1100,54 @@ bool tryAssign(VM& vm, JSObject* compiledTarget, JSObject* source)
 {
     bool goesOnKeyByKey = false;
     return tryAssign(vm, compiledTarget, source, goesOnKeyByKey);
+}
+
+bool tryAssignThroughCaches(JSGlobalObject* globalObject, JSObject* target, JSObject* source)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Instance* instance = Instance::of(globalObject);
+    if (!instance || source == target || isCompiledObject(target) || isProxyType(target->type()) || target->structure()->realm() != globalObject)
+        return false;
+    JSObject* elements = isCompiledObject(source) ? objectHoldingIndexedProperties(source) : source;
+    if (elements && elements->canHaveExistingOwnIndexedProperties())
+        return false;
+    Vector<UniquedStringImpl*, 8> names;
+    MarkedArgumentBuffer values;
+    bool hasRead = readPropertiesInOrderOfCreation(globalObject, source, names, values);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!hasRead)
+        return false;
+
+    Vector<RefPtr<UniquedStringImpl>, 8> heldNames = names.map<Vector<RefPtr<UniquedStringImpl>, 8>>([](UniquedStringImpl* name) {
+        return RefPtr { name };
+    });
+    if (target->type() == SlimClosureType && !names.isEmpty())
+        uncheckedDowncast<SlimClosure>(target)->reify(vm);
+    bool mayHaveRunCode = false;
+    for (bool takesSymbols : { false, true }) {
+        for (size_t index = 0; index < names.size(); ++index) {
+            UniquedStringImpl* name = names[index];
+            if (name->isSymbol() != takesSymbols || PropertyName(name).isPrivateName())
+                continue;
+            JSValue value = values.at(index);
+            if (!mayHaveRunCode && tryStoreBySlot(*instance, target, name, value))
+                continue;
+            if (mayHaveRunCode) {
+                PropertySlot slot(source, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool hasProperty = source->methodTable()->getOwnPropertySlot(source, globalObject, name, slot);
+                RETURN_IF_EXCEPTION(scope, true);
+                if (!hasProperty || slot.attributes() & PropertyAttribute::DontEnum)
+                    continue;
+                value = slot.isTaintedByOpaqueObject() ? source->get(globalObject, name) : slot.getValue(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, true);
+            }
+            putAndCache({ instance, Identifier::fromUid(vm, name), std::nullopt }, target, value, PutMode::Strict);
+            RETURN_IF_EXCEPTION(scope, true);
+            mayHaveRunCode = true;
+        }
+    }
+    return true;
 }
 
 void didBecomePrototype(VM& vm, JSObject* object)

@@ -34,7 +34,7 @@ public:
     Operand loadSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     Operand loadSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord, const Type& loadedType);
     Operand loadSlotOrUndefined(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
-    LValue findWordOfSlot(LValue loadedOrUndefined) const { return m_wordsOfSlots.get(loadedOrUndefined); }
+    LValue findSlotWord(LValue loadedOrUndefined) const { return m_wordsOfSlots.get(loadedOrUndefined); }
     Operand loadSlotThatHoldsValue(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     Operand loadSlotOrLeaveIfEmpty(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord, BlockEdge isEmpty);
     static constexpr bool storeLooksAtType(SlotRepresentation slot) { return slot == SlotRepresentation::OptionalInt32; }

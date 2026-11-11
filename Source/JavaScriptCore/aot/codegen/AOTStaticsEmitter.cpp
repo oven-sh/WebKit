@@ -47,12 +47,13 @@ Operand StaticsEmitter::loadFieldOfEnvironment(VariableID id, LayoutID layout, u
     return emitter<SlotEmitter>().load(instanceWord(m_heaps.at(m_program, MemoryLocation::environmentField(layout, field)), m_mentions.add(NumberSpace::Variable, id)), variable.representation);
 }
 
-void StaticsEmitter::storeFieldOfEnvironment(VariableID id, LayoutID layout, uint32_t field, Operand stored, const Type& storedType)
+void StaticsEmitter::storeFieldOfEnvironment(VariableID id, LayoutID layout, uint32_t field, Operand stored, const Type& storedType, bool isUndoneAtRestart)
 {
     PlannedVariable variable = m_plan.variable(id);
     RELEASE_ASSERT(variable.hasWordInStatics() && variable.encoding == VariableEncoding::Plain);
     emitter<SlotEmitter>().store(instanceWord(m_heaps.at(m_program, MemoryLocation::environmentField(layout, field)), m_mentions.add(NumberSpace::Variable, id)), variable.representation, stored);
-    emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::VariablesOfScopesInStaticsStored);
+    if (!isUndoneAtRestart)
+        emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::VariablesOfScopesInStaticsStored);
     if (traitsOf(variable.representation).holdsCell && storedType.hasCells())
         emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
 }
@@ -62,13 +63,13 @@ Operand StaticsEmitter::loadVariable(VariableID id)
     return emitter<SlotEmitter>().load(addressOf(id), m_plan.variable(id).representation);
 }
 
-void StaticsEmitter::storeVariable(VariableID id, Operand stored, bool isUndoneAtRestart)
+void StaticsEmitter::storeVariable(VariableID id, Operand stored, const Type& storedType, bool isUndoneAtRestart)
 {
     PlannedVariable variable = m_plan.variable(id);
     emitter<SlotEmitter>().store(addressOf(id), variable.representation, stored);
     if (!isUndoneAtRestart)
         emitter<RuntimeCallEmitter>().countStoreForEffectsNet(CountInEffectsNet::VariablesOfModulesStored);
-    if (traitsOf(variable.representation).holdsCell)
+    if (traitsOf(variable.representation).holdsCell && storedType.hasCells())
         emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
 }
 

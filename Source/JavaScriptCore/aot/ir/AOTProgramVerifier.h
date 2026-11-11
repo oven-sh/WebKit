@@ -7,10 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTIR.h"
 #include <compare>
 #include <utility>
-#include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 
@@ -85,6 +85,7 @@ private:
     void verifyClasses();
     bool isValidClass(LayoutID, const Layout&) const;
     void verifyVariables();
+    void verifyModuleInstances();
 
     void verifyModules();
     void verifyModule(ModuleID, const Module&);

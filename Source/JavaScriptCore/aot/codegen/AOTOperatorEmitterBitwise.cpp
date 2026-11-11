@@ -67,6 +67,8 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
         case Representation::Int32:
             return in<Word32>(id);
         case Representation::Int64:
+            if (opcodeOf(id) == Opcode::MultiplyAddIntegers)
+                return low32(in<Integer>(id));
             return low32InWords(in<Integer>(id));
         case Representation::OptionalInt64:
             static_assert(!static_cast<uint32_t>(undefinedInteger) && !static_cast<uint32_t>(nullInteger) && !static_cast<uint32_t>(absentInteger));
@@ -97,6 +99,11 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
     switch (value->form()) {
     case OperatorForm::Integers: {
         m_out.noteForm(Form::Open, StateOfKnowledge::Integers);
+        if (std::optional<Integer> extended = signExtendedBitwiseResult(value, op)) {
+            Word32 word = low32(*extended);
+            emitter<ConversionEmitter>().noteSignExtended(word, *extended);
+            return word;
+        }
         Word32 x = in<Word32>(left);
         Word32 y = in<Word32>(right);
         return onWords(x, y);
@@ -130,7 +137,7 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
             ScopeFork fork = m_out.forkScope();
             m_out.branch(areInt32.value(), normalEdge(worksOnWords), rareEdge(callsStub));
             m_out.appendToArm(worksOnWords, fork);
-            Word32 word = bitwiseOnWords(op, low32(x), low32(y));
+            Word32 word = bitwiseOnWords(op, int32InBox(x), int32InBox(y));
             if (givesWord)
                 wordJoin.add(word);
             else
@@ -170,6 +177,39 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
         break;
     }
     return failWithZero(value);
+}
+
+std::optional<Integer> OperatorEmitter::signExtendedOperand(ValueID id)
+{
+    const Operation& operation = operationAt(definitionOf(id));
+    if (operation.opcode == Opcode::Integer)
+        return integer(operation.integer());
+    if (!emittersCheckProofs() && operation.opcode == Opcode::Unbox && representationOf(operation.operand(0)) == Representation::OptionalInt64 && typeOf(operation.operand(0)).isInt32())
+        return Integer(in<OptionalInteger>(operation.operand(0)).value());
+    return emitter<ConversionEmitter>().signExtendedIntegerOf(in<Word32>(id));
+}
+
+std::optional<Integer> OperatorEmitter::signExtendedBitwiseResult(const ValueContext& value, BitwiseOperator op)
+{
+    bool isBitByBit = op == BitwiseOperator::And || op == BitwiseOperator::Or || op == BitwiseOperator::Xor;
+    if (!isBitByBit || value.operationsBehind().empty() || typeOf(value.id()).integers.minimum >= 0)
+        return std::nullopt;
+    const Operation& next = operationAt(value.operationsBehind().front());
+    bool isWidened = next.opcode == Opcode::WidenInteger || (next.opcode == Opcode::Box && next.representation == Representation::OptionalInt64);
+    if (!isWidened || next.operand(0) != value.id())
+        return std::nullopt;
+    std::optional<Integer> left = signExtendedOperand(value->leftOperand());
+    std::optional<Integer> right = left ? signExtendedOperand(value->rightOperand()) : std::nullopt;
+    if (!right)
+        return std::nullopt;
+    switch (op) {
+    case BitwiseOperator::And:
+        return bitAnd(*left, *right);
+    case BitwiseOperator::Or:
+        return bitOr(*left, *right);
+    default:
+        return bitXor(*left, *right);
+    }
 }
 
 Word32 OperatorEmitter::bitwiseOnWords(BitwiseOperator op, Word32 left, Word32 right)

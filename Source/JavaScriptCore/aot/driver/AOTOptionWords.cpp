@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTEffectsNet.h"
+#include "AOTFactFaults.h"
 #include "AOTMechanismWords.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaEnums.h"
@@ -363,6 +364,16 @@ static std::optional<String> applyTesting(Wire::CompileOptions& options, const O
     return forEachListedName(word.key, value, [&](StringView written) -> std::optional<String> {
         auto [name, numbers] = splitOptionText(written, ':');
         if (auto injectedFault = findMember<Wire::FaultInjection>(name)) {
+            if (*injectedFault == Wire::FaultInjection::MisstateFact) {
+                auto [fact, seed] = splitOptionText(numbers.value_or(""_s), ':');
+                auto number = Typed::numberOfMisstatedFact(fact);
+                if (!number)
+                    return makeString(name, " takes <fact> or <fact>:<seed>"_s);
+                options.misstatedFact = *number;
+                if (auto sentence = seed ? parseShuffleSeed(options, *seed) : std::nullopt)
+                    return sentence;
+                numbers = std::nullopt;
+            }
             if (numbers)
                 return makeString(name, " takes no number"_s);
             addFlag(options.injectedFaults, *injectedFault);
@@ -415,6 +426,7 @@ static void listTestingSwitches(PrintStream& out)
     }
     for (Wire::FaultInjection injectedFault : allMembersOf<Wire::FaultInjection>)
         listValue(out, nameOf(injectedFault));
+    Typed::listMisstatedFacts(out);
 }
 
 static bool engineHonorsCheck(Wire::CheckSet check)

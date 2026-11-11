@@ -45,7 +45,24 @@ FamiliesOfInstances::FamiliesOfInstances(const Program& program, const Families&
 bool slotsOfLayoutMayBeHeldToTypes(const Program& program, const FamiliesOfInstances& familiesOfInstances, LayoutID id)
 {
     LayoutKind kind = program.at(id).kind;
-    return kind == LayoutKind::Instance || (kind == LayoutKind::Record && familiesOfInstances.sharesFamilyWithInstance(id));
+    return kind == LayoutKind::Instance || kind == LayoutKind::Record;
+}
+
+static bool hasRoomForHiddenWord(const Program& program, const LinkTables& linked, LayoutID id)
+{
+    constexpr OptionSet<LayoutChange> changesThatMakeExtraProperties { LayoutChange::GainsProperty, LayoutChange::GetsAccessor };
+    if (id.index() >= linked.layouts.size() || linked.layout(id).possibleChanges.containsAny(changesThatMakeExtraProperties) || linked.numberOfAppendedKeysOfPlan(id))
+        return true;
+    return program.at(id).fields.size() % 2;
+}
+
+static bool holdsField(const Program& program, const LinkTables& linked, const FamiliesOfInstances& familiesOfInstances, TypeArena& types, FieldReference field, PropertyKeyID key, TypeID written)
+{
+    if (program.at(field.layout).kind == LayoutKind::Instance || familiesOfInstances.sharesFamilyWithInstance(field.layout))
+        return true;
+    Type type = types.at(written);
+    bool isNumber = (type.primitives & Primitive::Number) && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull | Primitive::Absent);
+    return isNumber && key && linked.fieldsUsedInProducts.names(program, field.layout, key) && hasRoomForHiddenWord(program, linked, field.layout);
 }
 
 static bool moreIsStoredThanIsSeenInEnforcedFields(const LinkTables& linked, const LinkTables& held, LayoutID id)
@@ -119,7 +136,7 @@ static TypeID typeWrittenInFamilyInEnforcedFields(const Program& program, TypeAr
     LayoutID declaring = declaredLayoutOf(program, layout);
     std::span<const LayoutID> views = program.viewsAbove(declaring);
     if (views.size() >= Program::fewestViewsIndexedByKey) {
-        bool isAnswered = program.visitFieldsWrittenAbove(declaring, key, [&](Program::FieldOfView listed) {
+        bool isAnswered = program.visitInheritedFields(declaring, key, [&](Program::FieldOfView listed) {
             return add(listed.view, listed.field);
         });
         if (!isAnswered)
@@ -176,18 +193,35 @@ static bool isDeclaredInCheckedCodeOfProgramInEnforcedFields(const Program& prog
     return !declaringModule.flags.contains(ModuleFlags::IsLibrary) && isCheckedCode(declaringModule.body);
 }
 
-static bool numberIsInt32ByGuessInEnforcedFields(const Program& program, const LinkTables& linked, const LinkTables& held, TypeArena& types, FieldReference reference)
+static bool isInt32InInstancesOfFamily(const Program& program, const LinkTables& linked, const Families& families, LayoutID record, PropertyKeyID key)
+{
+    FamilyID nearest = families.nearestFamilyOf(record);
+    if (!nearest || program.at(record).kind != LayoutKind::Record)
+        return false;
+    return program.at(families.layoutsOf(families.topmostFamilyAtOrAbove(nearest))).anyOf([&](LayoutID member) {
+        const Layout& layout = program.at(member);
+        return layout.kind == LayoutKind::Instance && layout.findField(key)
+            && (linked.fieldsReadAsIntegers.names(program, member, key) || linked.fieldsStoredCounts.names(program, member, key));
+    });
+}
+
+static bool numberIsInt32ByGuessInEnforcedFields(const Program& program, const LinkTables& linked, const LinkTables& held, const Families& families, TypeArena& types, FieldReference reference)
 {
     const Layout& layout = program.at(reference.layout);
     bool isAppended = reference.field >= layout.fields.size();
     PropertyKeyID key = isAppended ? keyOfAppendedFieldInEnforcedFields(linked, reference.layout, reference.field - layout.fields.size()) : layout.fields[reference.field].key;
     if (!isAppended && layout.fields[reference.field].declared.has(PositionFlags::IsInt32Promise))
         return true;
+    auto isInt32InFamily = [&] {
+        return !isAppended && key && isInt32InInstancesOfFamily(program, linked, families, reference.layout, key);
+    };
     if (const LinkedCell* seen = held.findCellOfField(reference); seen && seen->proven && !isNeverType(seen->proven)) {
         Type shown = types.at(seen->proven);
         bool showsSomething = !shown.hasUnboundedUnknown() && (shown.primitives & Primitive::All) != Primitive::All;
         bool showsNoInt32 = !!(shown.primitives & Primitive::FractionalNumber) || (shown.primitives & Primitive::Double && !(shown.primitives & Primitive::Integer));
-        if (showsSomething && (showsNoInt32 || shown.primitives & (Primitive::Boolean | Primitive::AnyString | Primitive::AnySymbol | Primitive::BigInt) || shown.hasObjects()))
+        bool showsAnyNumber = shown.isNumberOrNullish() && (shown.primitives & Primitive::Number) == Primitive::Number && shown.integers == Range::full();
+        bool showsOtherValues = shown.primitives & (Primitive::Boolean | Primitive::AnyString | Primitive::AnySymbol | Primitive::BigInt) || shown.hasObjects();
+        if (showsSomething && (showsNoInt32 || showsOtherValues) && !(showsAnyNumber && isInt32InFamily()))
             return false;
     }
     if (!key || linked.keysStoredWhatIsNoInt32.get(key.index()))
@@ -195,7 +229,9 @@ static bool numberIsInt32ByGuessInEnforcedFields(const Program& program, const L
     auto namesField = [&](const FieldsOfNumbers& fields) {
         return fields.names(program, reference.layout, key);
     };
-    if (!(namesField(linked.fieldsReadAsIntegers) || namesField(linked.fieldsStoredCounts)) || namesField(linked.fieldsStoredWhatIsNoInt32))
+    if (namesField(linked.fieldsStoredWhatIsNoInt32))
+        return false;
+    if (!namesField(linked.fieldsReadAsIntegers) && !namesField(linked.fieldsStoredCounts) && !isInt32InFamily())
         return false;
     return isDeclaredInCheckedCodeOfProgramInEnforcedFields(program, reference.layout);
 }
@@ -256,12 +292,16 @@ EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& link
 
     EnforcedField answer;
     TypeID type;
-    if (written && written != TypeTable::anything && !describesBagOfOptions(types, written))
+    PropertyKeyID key = isAppended ? keyOfAppendedFieldInEnforcedFields(linked, reference.layout, reference.field - numberDeclared) : fieldAt(program, declaration).key;
+    bool isHeld = written && holdsField(program, linked, familiesOfInstances, types, reference, key, written);
+    if (isHeld && written != TypeTable::anything && !describesBagOfOptions(types, written))
         type = typeInWordsOfTestsInEnforcedFields(families, types, written);
     if (type) {
         Type words = types.at(type);
         bool holdsFractionsOrWideIntegers = words.primitives & Primitive::Double || !words.integers.isSubsetOf(Range::int32());
-        answer.isInt32ByGuess = !moreIsStoredThanIsSeen && words.isNumberOrNullish() && holdsFractionsOrWideIntegers && numberIsInt32ByGuessInEnforcedFields(program, linked, held, types, declaration);
+        answer.isInt32ByGuess = !moreIsStoredThanIsSeen && words.isNumberOrNullish() && holdsFractionsOrWideIntegers && numberIsInt32ByGuessInEnforcedFields(program, linked, held, families, types, declaration);
+        if (answer.isInt32ByGuess && program.at(reference.layout).kind == LayoutKind::Record && !familiesOfInstances.sharesFamilyWithInstance(reference.layout))
+            return { };
         type = widenedToAllThatFormHoldsInEnforcedFields(types, type, answer.isInt32ByGuess);
     }
     if (type && source != SourceOfSlotType::Compiler) {

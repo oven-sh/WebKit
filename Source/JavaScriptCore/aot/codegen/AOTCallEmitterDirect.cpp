@@ -175,6 +175,10 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
         callStartOfModule(value, callee, locations);
         return;
     }
+    if (value.returnCall() && generator().bodyEnteredAfterNewPromise(m_code.at(value.block())) == value.id()) {
+        enterBodyAfterNewPromise(value, callee, locations);
+        return;
+    }
     Vector<Operand, 8> arguments = operandsOf(value->argumentsOperands(), locations);
     if (value.returnCall()) {
         tailCallEntry(value, callee, primaryEntry, locations, arguments.span());
@@ -201,7 +205,7 @@ void CallEmitter::generateCallTable(const ValueContext& value)
 
 bool CallEmitter::tryCallThroughMethodTable(const ValueContext& call, PropertyKeyID key)
 {
-    if (isTableRole(generator().unit().role))
+    if (isTableRole(generator().unit().role) || call->isTailCall)
         return false;
     const Type& receiver = typeOf(call->thisValueOperand());
     if (!receiver.isObject() || !receiver.layouts || !receiver.hasOnlyLayouts() || receiver.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow) || emitter<ShapeTestEmitter>().mayBeOtherThanCompiledObject(receiver))

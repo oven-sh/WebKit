@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTable.h"
 #include "AOTChainDependents.h"
@@ -98,7 +99,7 @@ Symbol* ClassTable::brandOfHeirsFor(VM& vm, JSCell* parent, JSCell* newTarget)
     uint32_t offsetOfProperties = classLayout ? classLayout->classData().propertiesOfHeirsOffset : 0;
     if (!offsetOfProperties)
         return nullptr;
-    BuiltinID constructor = BuiltinTable::singleton().at(BuiltinClassID(m_tables.at<PropertiesOfHeirsData>(offsetOfProperties)->builtinClass)).constructor;
+    BuiltinID constructor = BuiltinTable::singleton().at(BuiltinClassID(m_tables.at<PropertiesOfHeirsData>(offsetOfProperties)->builtinClass())).constructor;
     if (!constructor || m_state.builtinCells->findObject(constructor) != parent)
         return nullptr;
     uint32_t rank = m_tables.rankOfClass(classLayout->index);
@@ -116,8 +117,47 @@ Structure* ClassTable::structureWithBrandOfHeirs(VM& vm, JSCell* parent, JSCell*
     if (last.withoutBrand == structure && last.newTarget == newTarget && last.parent == parent) [[likely]]
         return last.withBrand;
     Symbol* brand = brandOfHeirsFor(vm, parent, newTarget);
-    last = { parent, newTarget, structure, brand ? Structure::setBrandTransition(vm, structure, brand) : structure };
+    bool holdsProperties = brand && m_tables.at<PropertiesOfHeirsData>(uncheckedDowncast<Closure>(newTarget)->classData()->classData().propertiesOfHeirsOffset)->numberOfNames;
+    last = { parent, newTarget, structure, brand ? Structure::setBrandTransition(vm, structure, brand) : structure, nullptr, nullptr, 0, holdsProperties };
     return last.withBrand;
+}
+
+static Structure* structureOfShape(VM& vm, Structure* structure, IndexingType shape)
+{
+    RELEASE_ASSERT(shape == Int32Shape || shape == DoubleShape || shape == ContiguousShape);
+    TransitionKind kind = shape == Int32Shape ? TransitionKind::AllocateInt32 : shape == DoubleShape ? TransitionKind::AllocateDouble : TransitionKind::AllocateContiguous;
+    DeferredStructureTransitionWatchpointFire deferred(vm, structure);
+    return Structure::nonPropertyTransition(vm, structure, kind, &deferred);
+}
+
+JSArray* ClassTable::tryCreateArrayOfHeir(VM& vm, JSCell* newTarget, Structure* structure, unsigned length)
+{
+    StructureWithBrandOfHeirs& last = m_structuresWithBrandsOfHeirs[indexOfStructureWithBrandOfHeirs(newTarget)];
+    if (structure->indexingType() != ArrayWithUndecided || last.withBrand != structure || last.newTarget != newTarget)
+        return JSArray::tryCreate(vm, structure, length);
+    if (JSArray* newest = std::exchange(last.newestArray, nullptr)) {
+        IndexingType shape = newest->indexingType() & IndexingShapeMask;
+        if (shape == Int32Shape || shape == DoubleShape || shape == ContiguousShape)
+            last.learnedShape = std::max(last.learnedShape, shape);
+    }
+    JSArray* array = nullptr;
+    if (last.learnedShape) {
+        if (!last.ofNewArrays || (last.ofNewArrays->indexingType() & IndexingShapeMask) != last.learnedShape)
+            last.ofNewArrays = structureOfShape(vm, structure, last.learnedShape);
+        array = tryCreateArrayWithStorage(vm, last.ofNewArrays, length, (length ? length : BASE_CONTIGUOUS_VECTOR_LEN_EMPTY) | 1, last.holdsProperties ? propertyRoomOfArray : 0);
+    }
+    if (!array)
+        array = JSArray::tryCreate(vm, structure, length);
+    last.newestArray = array;
+    return array;
+}
+
+JSArray* ClassTable::tryCreateRememberedHeir(VM& vm, JSCell* parent, JSCell* newTarget, unsigned length)
+{
+    const StructureWithBrandOfHeirs& last = m_structuresWithBrandsOfHeirs[indexOfStructureWithBrandOfHeirs(newTarget)];
+    if (last.newTarget != newTarget || last.parent != parent || last.withBrand == last.withoutBrand || !last.learnedShape)
+        return nullptr;
+    return tryCreateArrayOfHeir(vm, newTarget, last.withBrand, length);
 }
 
 Structure* RuntimeHooks::addBrandForSuperCall(VM& vm, JSFunction* newTarget, Structure* structure)
@@ -290,7 +330,7 @@ bool ClassTable::structureTellsInstancesOf(const LayoutData& classLayout, JSCell
 
     const PropertiesOfHeirsData& properties = *m_tables.at<PropertiesOfHeirsData>(offsetOfProperties);
     RELEASE_ASSERT(displacementsOfFields.size() == properties.numberOfNames);
-    const BuiltinClass& builtinClass = BuiltinTable::singleton().at(BuiltinClassID(properties.builtinClass));
+    const BuiltinClass& builtinClass = BuiltinTable::singleton().at(BuiltinClassID(properties.builtinClass()));
     Structure* structure = cell->structure();
     TypeInfo typeInfo = structure->typeInfo();
     if (builtinClass.instanceTest != BuiltinInstanceTest::JSTypeEquals || typeInfo.type() != builtinClass.type)
@@ -309,7 +349,7 @@ bool ClassTable::structureTellsInstancesOf(const LayoutData& classLayout, JSCell
         return false;
     BuiltinID prototypeOfBase = builtinClass.prototype ? table.canonicalID(builtinClass.prototype) : BuiltinID();
     const BuiltinCells& builtinCells = *m_state.builtinCells;
-    if (!prototypeOfBase || (builtinCells.builtinsToLock().get(prototypeOfBase.index()) && prototype->getPrototypeDirect() != JSValue(builtinCells.lockedObjects().get(prototypeOfBase.index()))))
+    if (!prototypeOfBase || (!properties.isBelowMixin() && builtinCells.builtinsToLock().get(prototypeOfBase.index()) && prototype->getPrototypeDirect() != JSValue(builtinCells.lockedObjects().get(prototypeOfBase.index()))))
         return false;
     auto mayLieOutsideStructure = [&](UniquedStringImpl* uid) {
         if (isArray)
@@ -357,7 +397,7 @@ bool ClassTable::structureTellsInstancesOf(const LayoutData& classLayout, JSCell
             return identifiers.uid(name & ~PropertiesOfHeirsData::mayBeStoredLate) == uid;
         });
     };
-    const MembersAboveHeirs& membersAbove = *m_membersAboveHeirs.ensure(properties.builtinClass, [&] {
+    const MembersAboveHeirs& membersAbove = *m_membersAboveHeirs.ensure(properties.builtinClass(), [&] {
         auto members = makeUnique<MembersAboveHeirs>();
         for (BuiltinID holder = prototypeOfBase; holder;) {
             for (const Builtin& member : table.memberEntriesOf(holder)) {
@@ -622,6 +662,7 @@ size_t ClassTable::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     forgetInstancesBelowPrototypes();
     forgetStructuresOfHeirs();
+    m_structuresWithBrandsOfHeirs.fill({ });
     endEvaluationsThatDied(vm, scope);
     size_t sizeBefore = m_classSidesByHolder.size();
     m_writes.forEachRegionToSweep(scope, [&](size_t, size_t) {
@@ -1319,6 +1360,7 @@ bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const 
         parentOfPrototype->didBecomePrototype(vm);
         createClassPrototype(vm, classLayout, parentOfPrototype);
     }
+    updateAssignedMembers(classLayout, ClassSide::Prototype);
     return true;
 }
 

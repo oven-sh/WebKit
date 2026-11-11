@@ -15,6 +15,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTCompileOptions.h"
 #include "AOTEnforcedFields.h"
+#include "AOTFactFaults.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkCoroutines.h"
 #include "AOTLinkFlow.h"
@@ -30,11 +31,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-bool instancesMayBeLocked(const Program& program, const LinkTables& linked, TypeID testedType)
+bool hasLockableInstances(const Program& program, const LinkTables& linked, TypeID testedType)
 {
     std::span<const LayoutID> layouts = program.types.listOf(program.at(testedType).layouts);
     return layouts.empty() || std::ranges::any_of(layouts, [&](LayoutID id) {
-        return linked.layout(id).instancesMayBeLocked;
+        return linked.layout(id).hasLockableInstances;
     });
 }
 
@@ -179,11 +180,46 @@ static Vector<ClassBelowBuiltinClass> findClassesBelowBuiltinClassesForFacts(con
     return classes;
 }
 
+static Vector<ClassBelowBuiltinClass> findMixedSubclasses(const Program& program, const BodyIndexTable& bodies, const ParallelLoops& loops)
+{
+    static constexpr OpcodeSet evaluationsOfClasses { Opcode::NewClass };
+    TypeReader types(program);
+    Vector<ClassBelowBuiltinClass> classes = collectInParallel<ClassBelowBuiltinClass>(loops, static_cast<unsigned>(program.functions.size()), [&](unsigned number, Vector<ClassBelowBuiltinClass>& found) {
+        const BodyIndex* index = bodies.find(FunctionID(number));
+        if (!index || !index->holdsAnyOf(evaluationsOfClasses))
+            return;
+        for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
+            for (BodyValue value : index->block(BlockID(block)).values()) {
+                if (value.opcode() != Opcode::NewClass)
+                    continue;
+                BodyOperation<Opcode::NewClass> newClass = value.as<Opcode::NewClass>();
+                ValueID heritage = newClass.heritageOperand() ? index->stripCasts(newClass.heritageOperand()) : ValueID();
+                if (!heritage || index->isParameter(heritage) || index->opcodeOf(heritage) != Opcode::Call || !writtenBaseOf(program.at(newClass.layout())))
+                    continue;
+                for (ValueID argument : index->value(heritage).as<Opcode::Call>().argumentsOperands()) {
+                    if (!argument || index->isParameter(argument))
+                        continue;
+                    BuiltinID builtin = builtinWrittenAsHeritageForFacts(types, index->value(argument));
+                    if (BuiltinClassID builtinClass = builtin ? classMadeByHeritage(program.builtins(), builtin) : BuiltinClassID(); builtinClass == BuiltinClasses::Array) {
+                        found.append(ClassBelowBuiltinClass { newClass.layout(), builtinClass });
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    AOT::sort(classes);
+    removeRepeatedElements(classes);
+    return classes;
+}
+
 static void updateProgramBehindIndexesForFacts(Program& program, BodyIndexTable& bodies, const ParallelLoops& loops)
 {
     program.setConstructionStarts(bodies.takeConstructionStarts());
     Vector<ClassBelowBuiltinClass> classes = findClassesBelowBuiltinClassesForFacts(program, bodies, loops);
     noteSubclassesOfBuiltinClasses(program, classes.span());
+    Vector<ClassBelowBuiltinClass> mixedSubclasses = findMixedSubclasses(program, bodies, loops);
+    noteSubclassesOfMixins(program, mixedSubclasses.span());
 }
 
 static void fillFunctionTablesForFacts(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, FactTables& tables)
@@ -227,16 +263,18 @@ static void fillFunctionTablesForFacts(const Program& program, const ThinSummari
     tables.entryParameters.firstRowOfOwner.append(static_cast<uint32_t>(tables.entryParameters.rows.size()));
 }
 
-static void layKeysThatHeldAloneAppendsOver(LinkTables& linked, const LinkTables& held, size_t numberOfLayouts)
+static void layKeysThatHeldAloneAppendsOver(const Program& program, LinkTables& linked, const LinkTables& held, size_t numberOfLayouts)
 {
     if (held.appendedKeys.isEmpty())
         return;
+    linked.layoutsFillingLateFieldsTogether.merge(held.layoutsFillingLateFieldsTogether);
     linked.firstKeyAppendedByHeldAloneOfLayout.reserveInitialCapacity(numberOfLayouts + 1);
     for (size_t index = 0; index < numberOfLayouts; ++index) {
         linked.firstKeyAppendedByHeldAloneOfLayout.append(static_cast<uint32_t>(linked.keysAppendedByHeldAlone.size()));
         LayoutID id(static_cast<uint32_t>(index));
         std::span<const PropertyKeyID> proven = linked.appendedKeysOf(id);
-        size_t room = maxAppendedFieldsOutOfLine - std::min<size_t>(maxAppendedFieldsOutOfLine, proven.size());
+        size_t most = maxAppendedFieldsOf(program.layouts[index].fields.size());
+        size_t room = most - std::min<size_t>(most, proven.size());
         std::span<const PropertyKeyID> keysOfHeld = held.appendedKeysOf(id);
         for (size_t place = 0; place < keysOfHeld.size(); ++place) {
             PropertyKeyID key = keysOfHeld[place];
@@ -461,7 +499,18 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
         if (variable.initialization == VariableInitialization::Function)
             noteIn(laidByProgram, index, variable.function);
     }
-    bool someVariableMayBeReplaced = !variablesThatTestsMayReplace.isEmpty();
+    std::span<const FieldReference> exportedFields = program.exportedFields();
+    auto findReplaceableField = [&](const SummaryNode& node) -> std::optional<uint32_t> {
+        if (node.kind != SummaryNode::Kind::Field || exportedFields.empty())
+            return std::nullopt;
+        FieldReference field { LayoutID(node.first), node.second };
+        auto found = std::ranges::lower_bound(exportedFields, field);
+        if (found == exportedFields.end() || *found != field || !fieldAt(program, field).flags.contains(FieldFlags::IsReplaceable))
+            return std::nullopt;
+        return static_cast<uint32_t>(found - exportedFields.begin());
+    };
+    GivenByVariable storedInFields;
+    bool someVariableMayBeReplaced = !variablesThatTestsMayReplace.isEmpty() || !exportedFields.empty();
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         FunctionID function(index);
         bool isModuleBody = program.at(function).isModuleBody();
@@ -470,6 +519,13 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
         const ThinSummary& summary = summaries.at(function);
         for (const SummaryEdge& edge : summary.edges) {
             const SummaryNode& to = summary.nodes[edge.to];
+            if (std::optional<uint32_t> field = findReplaceableField(to)) {
+                if (FunctionID stored = functionAt(summary.nodes[edge.from]))
+                    noteIn(storedInFields, *field, stored);
+                else
+                    storedInFields.add(*field, Given { }).iterator->value.areSeveral = true;
+                continue;
+            }
             if (to.kind != SummaryNode::Kind::Variable)
                 continue;
             const SummaryNode& from = summary.nodes[edge.from];
@@ -490,6 +546,11 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
             }
         }
     }
+    for (const auto& [field, stored] : storedInFields) {
+        if (stored.function && !stored.areSeveral)
+            tables.functionsStoredInFields.append({ exportedFields[field], stored.function });
+    }
+    std::ranges::sort(tables.functionsStoredInFields, { }, &FactTables::FunctionStoredInField::field);
     for (const auto& [variable, laid] : laidByProgram) {
         if (laid.function && !laid.areSeveral)
             tables.functionsGivenToVariables.append({ variable, laid.function, { } });
@@ -599,7 +660,9 @@ static void fillClassTablesForFacts(const Program& program, const BodyIndexTable
     for (uint32_t number = 0; number < program.functions.size(); ++number) {
         FunctionID id(number);
         bool runsAtMostOnce = loaderEntersOnce(id) || (number < linked.functions.size() && linked.functions[number].runsAtMostOnce);
-        if (summaries.at(id).classesEvaluated.isEmpty() || !runsAtMostOnce)
+        ModuleID module = program.at(id).module;
+        bool runsOncePerInstance = module && program.at(module).body == id && program.findModuleInstance(module);
+        if (summaries.at(id).classesEvaluated.isEmpty() || (!runsAtMostOnce && !runsOncePerInstance))
             continue;
         const BodyIndex* index = bodies.find(id);
         if (!index || index->hasIrreducibleFlow())
@@ -622,6 +685,9 @@ static void fillClassTablesForFacts(const Program& program, const BodyIndexTable
         }
         for (LayoutID evaluated : classesEvaluatedInBody) {
             if (std::exchange(numberOfEvaluationsInBody[evaluated.index()], 0) != 1 || numberOfEvaluations[evaluated.index()] != 1)
+                continue;
+            tables.classes[evaluated.index()].isEvaluatedOncePerInstance = runsOncePerInstance;
+            if (!runsAtMostOnce)
                 continue;
             tables.classes[evaluated.index()].evaluations = ExecutionCount::AtMostOnce;
             if (!loaderEntersOnce(id) || isBodyWrittenInAnotherFile(program, id))
@@ -646,12 +712,91 @@ static void fillClassTablesForFacts(const Program& program, const BodyIndexTable
     }
 }
 
+static void fillAssignedMembers(const Program& program, const LinkTables& held, FactTables& tables)
+{
+    auto isDefinedByClass = [&](LayoutID id) {
+        const Layout& layout = program.at(id);
+        return layout.kind == LayoutKind::Instance && layout.constructor && !layout.isDerived() && !layout.has(LayoutFlags::IsConstructorFunction) && !layout.has(LayoutFlags::IsOfCreatedObject);
+    };
+    auto findAssignment = [&](LayoutID classLayout, PropertyKeyID key) -> const LinkedAssignment* {
+        auto found = std::ranges::equal_range(held.lastAssignments, std::pair { classLayout, key }, { }, &LinkedAssignment::place);
+        return found.empty() ? nullptr : &found.front();
+    };
+    for (const LinkedMember& declared : held.members) {
+        if (!declared.key || declared.side != ClassSide::Prototype || declared.kind != MethodKind::Method || !isDefinedByClass(declared.classLayout))
+            continue;
+        const LinkedAssignment* assignment = held.lastAssignments.isEmpty() ? nullptr : findAssignment(declared.classLayout, declared.key);
+        if (!assignment && (!declared.isReplaced || !declared.isAssignedToClass))
+            continue;
+        FunctionID method = assignment ? assignment->method : declared.replacement;
+        if (method)
+            tables.assignedMembers.append({ declared.classLayout, declared.key, { method, { }, { }, true, !!assignment } });
+    }
+    auto placeOf = [](const LinkedNameOnPrototype& name) {
+        return std::pair { name.layout, name.key };
+    };
+    for (const LinkedNameOnPrototype& name : held.accessorsAssignedToClasses) {
+        if (!isDefinedByClass(name.layout))
+            continue;
+        AssignedMember assigned { { }, name.expectedGetter, name.expectedSetter, false, !!findAssignment(name.layout, name.key) };
+        for (uint32_t place : held.membersUnder(name.layout, ClassSide::Prototype, name.key)) {
+            assigned.isDeclared = true;
+            if (const LinkedMember& declared = held.members[place]; declared.kind == MethodKind::Getter && !assigned.getter)
+                assigned.getter = declared.written;
+            else if (declared.kind == MethodKind::Setter && !assigned.setter)
+                assigned.setter = declared.written;
+        }
+        tables.assignedMembers.append({ name.layout, name.key, assigned });
+    }
+    for (const LinkedNameOnPrototype& name : held.namesOnPrototypes) {
+        if (!name.key || !isDefinedByClass(name.layout) || !held.membersUnder(name.layout, ClassSide::Prototype, name.key).empty())
+            continue;
+        if (!name.expected && std::ranges::binary_search(held.accessorsAssignedToClasses, placeOf(name), { }, placeOf))
+            continue;
+        const LinkedAssignment* assignment = findAssignment(name.layout, name.key);
+        FunctionID method = name.expected ? name.expected : assignment && !name.mayHoldAccessor ? assignment->method : FunctionID();
+        bool isOneMember = !method || (!name.expectedGetter && !name.expectedSetter);
+        AssignedMember assigned = isOneMember ? AssignedMember { method, name.expectedGetter, name.expectedSetter } : AssignedMember();
+        assigned.holdsValue = isOneMember && !assigned && (assignment || !name.mayHoldAccessor);
+        tables.assignedMembers.append({ name.layout, name.key, assigned });
+    }
+    std::ranges::stable_sort(tables.assignedMembers, { }, &AssignedMemberOfClass::place);
+    Vector<AssignedMemberOfClass> values;
+    for (const LinkedAssignment& assignment : held.lastAssignments) {
+        bool isListed = std::ranges::binary_search(tables.assignedMembers, assignment.place(), { }, &AssignedMemberOfClass::place);
+        if (isListed || !isDefinedByClass(assignment.layout) || !held.membersUnder(assignment.layout, ClassSide::Prototype, assignment.key).empty())
+            continue;
+        values.append({ assignment.layout, assignment.key, { assignment.method, { }, { }, false, true } });
+        values.last().member.holdsValue = !assignment.method;
+    }
+    tables.assignedMembers.appendVector(values);
+    tables.assignedMembers.removeAllMatching([&](const AssignedMemberOfClass& assigned) {
+        return classHolderIsMadeWithName(program, ClassSide::Prototype, assigned.key);
+    });
+    std::ranges::stable_sort(tables.assignedMembers, { }, &AssignedMemberOfClass::place);
+    for (const AssignedMemberOfClass& assigned : tables.assignedMembers)
+        tables.assignedMemberKeys.set(assigned.key.index());
+}
+
+static constexpr uint32_t noMemberPosition = UINT32_MAX;
+
+static uint64_t wordOfMember(ClassSide side, PropertyKeyID key)
+{
+    return static_cast<uint64_t>(side) << 32 | key.bits();
+}
+
+static uint64_t memberPositionWord(std::span<const ClassMember> members, uint32_t place)
+{
+    return place == noMemberPosition ? UINT64_MAX : wordOfMember(members[place].side, members[place].key);
+}
+
 static void fillMembersOfClassesForFacts(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, FactTables& tables)
 {
     struct DefinedMember {
         LayoutID classLayout;
         uint32_t index { 0 };
         ClassMember member;
+        bool isRedefined { false };
     };
     Vector<DefinedMember> defined;
     for (uint32_t number = 0; number < program.functions.size(); ++number) {
@@ -664,7 +809,7 @@ static void fillMembersOfClassesForFacts(const Program& program, const ThinSumma
             member.kind = written.kind;
             if (value.kind == SummaryNode::Kind::Closure)
                 member.function = FunctionID(value.first);
-            defined.append({ written.classLayout, written.index, member });
+            defined.append({ written.classLayout, written.index, member, written.isRedefined });
         }
     }
     AOT::stableSort(defined, { }, [](const DefinedMember& row) {
@@ -673,6 +818,7 @@ static void fillMembersOfClassesForFacts(const Program& program, const ThinSumma
 
     size_t numberOfLayouts = program.layouts.size();
     FactRows<ClassMember>& rows = tables.membersOfClass;
+    BitVector redefinedRows;
     rows.firstRowOfOwner.reserveInitialCapacity(numberOfLayouts + 1);
     size_t next = 0;
     for (size_t layout = 0; layout < numberOfLayouts; ++layout) {
@@ -680,6 +826,8 @@ static void fillMembersOfClassesForFacts(const Program& program, const ThinSumma
         for (size_t first = next; next < defined.size() && defined[next].classLayout.index() == layout; ++next) {
             const DefinedMember& row = defined[next];
             if (next == first || row.index != defined[next - 1].index) {
+                if (row.isRedefined)
+                    redefinedRows.set(rows.rows.size());
                 rows.rows.append(row.member);
                 continue;
             }
@@ -695,34 +843,32 @@ static void fillMembersOfClassesForFacts(const Program& program, const ThinSumma
 
     for (const ClassMember& member : rows.rows) {
         if (member.key)
-            tables.keysOfMembersOfClass.set(member.key.index());
+            tables.classMemberKeys.set(member.key.index());
     }
     tables.placesOfMembersOfClassByKey.resize(rows.rows.size());
     for (uint32_t layout = 0; layout < numberOfLayouts; ++layout) {
         std::span<const ClassMember> members = rows.of(layout);
         std::span<uint32_t> places = tables.placesOfMembersOfClassByKey.mutableSpan().subspan(rows.firstRowOfOwner[layout], members.size());
-        std::iota(places.begin(), places.end(), 0);
+        for (uint32_t place = 0; place < places.size(); ++place)
+            places[place] = redefinedRows.get(rows.firstRowOfOwner[layout] + place) ? noMemberPosition : place;
         std::ranges::sort(places, { }, [&](uint32_t place) {
-            return std::tuple { members[place].side, members[place].key, place };
+            return std::pair { memberPositionWord(members, place), place };
         });
     }
 }
 
 std::span<const uint32_t> Facts::placesOfMembersUnder(LayoutID classLayout, ClassSide side, PropertyKeyID key) const
 {
-    if (key && !m_tables.keysOfMembersOfClass.get(key.index()))
+    if (key && !m_tables.classMemberKeys.get(key.index()))
         return { };
     std::span<const ClassMember> members = membersOf(classLayout);
     if (members.empty())
         return { };
     std::span<const uint32_t> places = m_tables.placesOfMembersOfClassByKey.span().subspan(m_tables.membersOfClass.firstRowOfOwner[classLayout.index()], members.size());
-    auto wordOf = [](ClassSide sideOfMember, PropertyKeyID keyOfMember) {
-        return static_cast<uint64_t>(sideOfMember) << 32 | keyOfMember.bits();
-    };
     auto wordOfPlace = [&](uint32_t place) {
-        return wordOf(members[place].side, members[place].key);
+        return memberPositionWord(members, place);
     };
-    const uint64_t word = wordOf(side, key);
+    const uint64_t word = wordOfMember(side, key);
     auto first = std::ranges::lower_bound(places, word, { }, wordOfPlace);
     auto end = first;
     while (end != places.end() && wordOfPlace(*end) == word)
@@ -1012,12 +1158,21 @@ static void fillTablesOfFieldsForFacts(Program& program, const OwnedLooksAtBodie
 {
     StepTimes steps(build, "facts"_s);
     if (parts.mechanisms.contains(Mechanism::Guesses))
-        layKeysThatHeldAloneAppendsOver(parts.linked, parts.held, program.layouts.size());
+        layKeysThatHeldAloneAppendsOver(program, parts.linked, parts.held, program.layouts.size());
     build.statistics().count(StatisticID::FlowAppendedFields, parts.linked.appendedKeys.size() + parts.linked.keysAppendedByHeldAlone.size());
     fillFieldTablesForFacts(program, parts.linked, parts.mechanisms, parts.tables);
     parts.linked.fieldsReadAsIntegers = fieldsReadAsIntegersIn(*looks);
+    parts.linked.namesReadAsIntegers = namesReadAsIntegersIn(*looks);
     parts.linked.fieldsReadForArithmetic = fieldsReadForArithmeticIn(*looks);
     parts.linked.fieldsStoredWhatIsNoInt32 = fieldsStoredWhatIsNoInt32In(*looks);
+    parts.linked.functionsCalledInLoops = functionsCalledInLoopsIn(*looks, program, *parts.summaries, parts.linked, parts.held, parts.linked.keysCalledInLoops, parts.linked.elementsAreCalledInLoops);
+    parts.linked.functionsCalledInLoopsOfOwnFile = functionsCalledInLoopsOfOwnFileIn(*looks, program, *parts.summaries, parts.linked, parts.held);
+    parts.linked.functionsInElements = functionsInElementsIn(program, *parts.summaries, parts.linked);
+    parts.linked.functionsCalledByValueInLoops = functionsCalledByValueInLoopsIn(program, *parts.summaries, parts.linked);
+    markLiteralsStoredByCallees(*parts.summaries, parts.linked, parts.held);
+    parts.linked.functionsDoneInIterations = functionsDoneInIterationsIn(program, *parts.summaries, parts.linked, parts.held);
+    parts.linked.constructorsCalledInLoops = constructorsCalledInLoopsIn(program, *parts.summaries, parts.linked, parts.held);
+    parts.linked.fieldsUsedInProducts = fieldsUsedInProductsIn(*looks, parts.linked.functionsCalledInLoops);
     parts.linked.fieldsStoredCounts = fieldsStoredCountsIn(*looks, program, parts.linked);
     parts.linked.keysStoredWhatIsNoInt32 = keysStoredWhatIsNoInt32In(*looks);
     build.statistics().count(StatisticID::FieldTypesEnforced, fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables));
@@ -1037,6 +1192,7 @@ static void fillTablesOfLayoutsAndClassesForFacts(const Program& program, BuildC
     if (parts.mechanisms.contains(Mechanism::TypedOperations))
         fillClassTablesForFacts(program, *parts.bodies, *parts.summaries, parts.linked, parts.held, parts.tables);
     fillMembersOfClassesForFacts(program, *parts.summaries, parts.held, parts.tables);
+    fillAssignedMembers(program, parts.held, parts.tables);
     steps.didFinish("tables of layouts, strings, variables, classes"_s);
 }
 
@@ -1055,6 +1211,167 @@ static void fillTablesOfProgramForFacts(const Program& program, const OwnedLooks
     parts.linked.exportsSpiedOnThatWireLeavesShut.appendVector(parts.held.exportsSpiedOnThatWireLeavesShut);
     finishFactsOfTestRun(program, build, parts.tables, WTF::move(parts.linked.exportsSpiedOnThatWireLeavesShut));
     steps.didFinish("facts of the program"_s);
+}
+
+static bool isEnteredByCallsAlone(const Function& function)
+{
+    switch (function.kind) {
+    case FunctionKind::Plain:
+    case FunctionKind::Arrow:
+    case FunctionKind::Method:
+    case FunctionKind::BaseConstructor:
+    case FunctionKind::DerivedConstructor:
+        return !function.isCoroutine();
+    case FunctionKind::Getter:
+    case FunctionKind::Setter:
+    case FunctionKind::Initializer:
+    case FunctionKind::Module:
+    case FunctionKind::CommonJsModule:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static std::optional<BitVector> findFunctionsReachingEvaluation(const Program& program, const ThinSummaries& summaries, const LinkTables& linked)
+{
+    BitVector found(program.functions.size());
+    Vector<FunctionID> pending;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (linked.functions[index].isReached && summaries.at(FunctionID(index)).has(SummaryTrait::HasDirectEval)) {
+            found.quickSet(index);
+            pending.append(FunctionID(index));
+        }
+    }
+    Vector<std::pair<FunctionID, FunctionID>> callersByCallee;
+    for (const LinkedCall& call : linked.calls)
+        callersByCallee.append({ call.callee, call.caller });
+    std::ranges::sort(callersByCallee);
+    while (!pending.isEmpty()) {
+        FunctionID id = pending.takeLast();
+        const Function& function = program.at(id);
+        if (function.isModuleBody()) {
+            if (!std::ranges::any_of(program.entries, [&](const Entry& entry) { return program.at(entry.module).body == id; }))
+                return std::nullopt;
+            continue;
+        }
+        const LinkedFunction& callee = linked.functions[id.index()];
+        bool isEnteredByListedCalls = callee.everyCallerIsKnown && callee.everyCallHasOneCallee && !isClassConstructorOf(function.kind) && isEnteredByCallsAlone(function);
+        if (!isEnteredByListedCalls)
+            return std::nullopt;
+        for (auto [called, caller] : std::ranges::equal_range(callersByCallee, id, { }, &std::pair<FunctionID, FunctionID>::first)) {
+            if (!found.quickSet(caller.index()))
+                pending.append(caller);
+        }
+    }
+    return found;
+}
+
+static void narrowToNumberStoredOnce(Program& program, const BodyIndexTable& bodies, const LinkTables& linked, BeforeEvaluation& before)
+{
+    static constexpr uint32_t storedOtherwise = UINT32_MAX;
+    Vector<uint32_t> numberOfStores;
+    Vector<int64_t> stored;
+    numberOfStores.fill(0, program.variables.size());
+    stored.fill(0, program.variables.size());
+    for (uint32_t number = 0; number < program.functions.size(); ++number) {
+        if (!linked.functions[number].isReached)
+            continue;
+        const BodyIndex* index = bodies.find(FunctionID(number));
+        if (!index && program.at(FunctionID(number)).hasBody())
+            return;
+        if (!index || !index->holdsAnyOf(OpcodeSet { Opcode::PutModuleVariable }))
+            continue;
+        for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
+            for (BodyValue store : index->block(BlockID(block)).values()) {
+                if (store.opcode() != Opcode::PutModuleVariable)
+                    continue;
+                uint32_t variable = store.variable().index();
+                ValueID value = index->stripCasts(store.valueOperand());
+                bool isWritten = value && !index->isParameter(value) && index->opcodeOf(value) == Opcode::Integer;
+                if (!isWritten || numberOfStores[variable])
+                    numberOfStores[variable] = storedOtherwise;
+                else {
+                    numberOfStores[variable] = 1;
+                    stored[variable] = index->value(value).as<Opcode::Integer>().integer();
+                }
+            }
+        }
+    }
+    TypeArena types(program.types, ArenaKeeps::InProgram);
+    for (uint32_t number = 0; number < program.variables.size(); ++number) {
+        TypeID& known = before.variables[number];
+        if (!known || numberOfStores[number] != 1 || program.variables[number].initialization != VariableInitialization::Undefined)
+            continue;
+        TypeID integer = types.integer(Range::one(stored[number]));
+        if (types.isSubset(known, types.unionOf(TypeTable::undefined, TypeTable::number)) && types.isSubset(integer, known))
+            known = types.at(known).primitives & Primitive::Undefined ? types.unionOf(TypeTable::undefined, integer) : integer;
+    }
+}
+
+static void fillBeforeEvaluation(Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries, const LinkFlow& flow, BeforeEvaluation& before)
+{
+    if (!flow.mechanisms.containsAll({ Mechanism::ParameterGuards, Mechanism::TypedOperations, Mechanism::Guesses }) || program.admitsInspector)
+        return;
+    for (uint32_t index = 0; index < program.variables.size(); ++index) {
+        if (program.variables[index].flags.contains(VariableFlags::MarksEvaluation))
+            before.marks.append(VariableID(index));
+    }
+    static constexpr size_t mostMarks = 2;
+    if (before.marks.isEmpty() || before.marks.size() > mostMarks)
+        return;
+    LinkTables linked = linkBeforeEvaluation(flow, WrappedBodies::StoreLikeModuleBodies);
+    std::optional<BitVector> leadToEvaluation = findFunctionsReachingEvaluation(program, summaries, linked);
+    if (!leadToEvaluation)
+        return;
+    bool someClaimHasNoHolder = std::ranges::any_of(linked.variablesStoredFirst, [&](const LinkedVariableStoredFirst& claim) {
+        return isBodyOfWrappedModule(program, claim.body) && leadToEvaluation->quickGet(claim.body.index());
+    });
+    if (someClaimHasNoHolder)
+        linked = linkBeforeEvaluation(flow, WrappedBodies::AreFunctions);
+    before.firstStores = LinkedFirstStores { linked.variablesStoredFirst, linked.classesInVariables, linked.methodsOnPrototypes };
+    before.variables.fill(TypeID(), program.variables.size());
+    bool someVariableIsTyped = false;
+    for (const EvalScope& scope : program.evalScopes) {
+        for (const EvalBinding& binding : scope.bindings) {
+            if (binding.variable && linked.variable(binding.variable).everyWriterIsKnown && linked.variable(binding.variable).proven) {
+                before.variables[binding.variable.index()] = linked.variable(binding.variable).proven;
+                someVariableIsTyped = true;
+            }
+            if (TypeID proven = binding.layout && binding.field ? linked.provenOfField({ binding.layout, *binding.field }) : TypeID())
+                before.fields.append({ FieldReference { binding.layout, *binding.field }, proven });
+        }
+    }
+    auto compareFields = [](const std::pair<FieldReference, TypeID>& first, const std::pair<FieldReference, TypeID>& second) { return first.first < second.first; };
+    std::ranges::sort(before.fields, compareFields);
+    before.fields.shrink(std::ranges::unique(before.fields, { }, &std::pair<FieldReference, TypeID>::first).begin() - before.fields.begin());
+    if (!someVariableIsTyped && before.fields.isEmpty())
+        return;
+    narrowToNumberStoredOnce(program, bodies, linked, before);
+    before.results.fill(TypeID(), program.functions.size());
+    before.functions = BitVector(program.functions.size());
+    for (uint32_t number = 0; number < program.functions.size(); ++number) {
+        FunctionID id(number);
+        bool mayRunBeforeEvaluation = linked.functions[number].isReached && !leadToEvaluation->quickGet(number) && isEnteredByCallsAlone(program.at(id));
+        if (mayRunBeforeEvaluation)
+            before.results[number] = linked.functions[number].result;
+        const BodyIndex* index = mayRunBeforeEvaluation ? bodies.find(id) : nullptr;
+        if (!index)
+            continue;
+        bool holdsClaims = !before.firstStores.variablesStoredFirstIn(id).empty();
+        if (!holdsClaims && !index->holdsAnyOf(OpcodeSet { Opcode::GetModuleVariable, Opcode::GetEnvironmentField }))
+            continue;
+        bool readsTypedVariable = false;
+        for (uint32_t block = 0; block < index->numberOfBlocks() && !readsTypedVariable && !holdsClaims; ++block) {
+            for (BodyValue value : index->block(BlockID(block)).values()) {
+                if (value.opcode() == Opcode::GetModuleVariable)
+                    readsTypedVariable |= !!before.typeOf(value.as<Opcode::GetModuleVariable>().variable());
+                else if (value.opcode() == Opcode::GetEnvironmentField)
+                    readsTypedVariable |= !!before.typeOf(FieldReference { value.layout(), value.field() });
+            }
+        }
+        if (readsTypedVariable || holdsClaims)
+            before.functions.quickSet(number);
+    }
 }
 
 std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const FactsRequest& request, std::unique_ptr<BodyIndexTable>&& indexesOfVerifier)
@@ -1103,6 +1420,8 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     times.didFinish("scan"_s);
     if (hasFailed())
         return nullptr;
+    if (build.options().misstatedFact) [[unlikely]]
+        misstateSummaries(program, *parts.summaries, build);
     build.statistics().count(StatisticID::ValuesScanned, parts.summaries->numberOfValuesScanned());
     steps.didFinish("scan beside families"_s);
     OwnedLooksAtBodies looks = makeEmptyLooksAtBodies(*parts.bodies);
@@ -1126,6 +1445,7 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
         },
     });
     flow->setsDeclaredInProgram = &setsDeclaredInProgram;
+    fillBeforeEvaluation(program, *parts.bodies, *parts.summaries, *flow, parts.tables.beforeEvaluation);
     times.didFinish("families"_s);
     steps.didFinish("the flow beside the look at bodies and the sets declared for families"_s);
     TurnsOfReadings turns;
@@ -1166,6 +1486,8 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     if (!parts.families)
         parts.families = makeUniqueWithoutFastMallocCheck<Families>(program, setsDeclaredInProgram.span(), std::span<const LayoutSetID>(), build.parallelLoops());
     steps.didFinish("the two readings"_s);
+    if (build.options().misstatedFact) [[unlikely]]
+        misstateLinkTables(program, *parts.summaries, parts.linked, parts.held, build);
     openNamesFoundByLink(program, build, parts.linked, parts.held);
     steps.didFinish("open names"_s);
     times.didFinish("Link"_s);
@@ -1205,11 +1527,44 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
             parts.linked.layouts[layout].prototypeObjectIsSettledAheadOfEveryObject = false;
     }
 
+    if (build.options().misstatedFact) [[unlikely]]
+        misstateFactTables(program, parts.linked, parts.tables, build);
     steps.didFinish("referrers beside tables"_s);
     times.didFinish("referrers, tables"_s);
     if (hasFailed())
         return nullptr;
     return makeUnique<Facts>(program, WTF::move(parts));
+}
+
+AssignedMember findAssignedMember(const Program& program, const Facts& facts, LayoutID classLayout, PropertyKeyID key)
+{
+    const Vector<AssignedMemberOfClass>& members = facts.tables().assignedMembers;
+    if (!key || liesInThread(key) || !facts.tables().assignedMemberKeys.get(key.index()))
+        return { };
+    size_t stepsLeft = program.layouts.size();
+    for (LayoutID current = classLayout; current && stepsLeft; --stepsLeft) {
+        const Layout& layout = program.at(current);
+        if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.isDerived() || layout.has(LayoutFlags::IsConstructorFunction) || layout.has(LayoutFlags::IsOfCreatedObject) || !facts.isEvaluatedAtMostOnce(current))
+            return { };
+        auto assigned = std::ranges::equal_range(members, std::pair { current, key }, { }, &AssignedMemberOfClass::place);
+        if (!assigned.empty())
+            return assigned.size() == 1 ? assigned.front().member : AssignedMember();
+        if (!facts.placesOfMembersUnder(current, ClassSide::Prototype, key).empty())
+            return { };
+        ClassFacts classFacts = facts.classOf(current);
+        switch (classFacts.baseState) {
+        case BaseState::Layout:
+            current = classFacts.base;
+            break;
+        case BaseState::Unknown:
+            current = writtenBaseOf(layout);
+            break;
+        case BaseState::None:
+            current = classFacts.prototypeBase;
+            break;
+        }
+    }
+    return { };
 }
 
 } } } // namespace JSC::AOT::Typed

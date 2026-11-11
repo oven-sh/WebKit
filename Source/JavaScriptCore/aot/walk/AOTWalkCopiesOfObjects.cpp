@@ -479,57 +479,149 @@ static bool isLayoutOfPlainLiteralInWalkCopies(const Program& program, LayoutID 
 namespace {
 
 struct SourceOfAssignmentInWalkCopies {
+    const CopiedOrderInWalkCopies& order() const { return orders[0]; }
+    unsigned numberOfArms() const { return isInSight ? 1 : orders.size() + !!withoutProperties; }
+
     ValueID inBody;
     Reference built;
-    CopiedOrderInWalkCopies order;
+    Vector<CopiedOrderInWalkCopies, 2> orders;
+    TypeID withoutProperties;
     bool isInSight { false };
     bool layoutIsProven { false };
 };
 
 } // anonymous namespace
 
-static bool planSourceOfAssignmentInWalkCopies(const ObjectCopyInWalkCopies& copy, SourceOfAssignmentInWalkCopies& source, bool mayAskTests = true)
+static TypeID partWithoutPropertiesInWalkCopies(Walker& walker, Reference source)
+{
+    TypeArena& types = walker.types();
+    TypeID whole = walker.typeOf(source);
+    TypeID withProperties = types.withoutPrimitives(whole, primitivesWithoutPropertiesToCopy);
+    TypeID without = types.differenceOf(whole, withProperties);
+    return types.at(withProperties).isNever() || types.at(without).isNever() || types.testablePartOf(without) != without ? TypeID() : without;
+}
+
+static bool planSourceOfAssignmentInWalkCopies(const ObjectCopyInWalkCopies& copy, SourceOfAssignmentInWalkCopies& source, unsigned mostArms, bool mayAskTests, bool mayBeEmpty)
 {
     Walker& walker = copy.walker;
     if (!source.built || !source.built.isValue())
         return false;
     if (std::optional<OwnKeyOrder> listed = ownKeysInSight(walker, source.built)) {
-        if (fillCopiedOrderInWalkCopies(copy, *listed, true, source.order)) {
+        CopiedOrderInWalkCopies order;
+        if (fillCopiedOrderInWalkCopies(copy, *listed, true, order)) {
+            source.orders.append(WTF::move(order));
             source.isInSight = true;
             return true;
         }
-        source.order = { };
     }
-    if (!mayAskTests)
+    if (!mayAskTests || !mostArms)
         return false;
-    OwnKeyPlan plan = planOwnKeyWalk(walker, source.inBody, source.built);
+    OwnKeyPlan plan = planOwnKeyWalk(walker, source.inBody, source.built, mostFieldsOfOwnKeyWalk, mostArms);
     Vector<CopiedOrderInWalkCopies, 2> orders = planCopyByLayoutsInWalkCopies(copy, plan);
     if (orders.isEmpty() || !shouldOpenGuess(walker, source.built, walker.types().forLayout(orders[0].keys.layout), plan.isDeclared, closedOperationsOfCopyInWalkCopies))
         return false;
-    source.order = WTF::move(orders[0]);
+    auto listsKeys = [](const OwnKeyOrder& listed) {
+        return !!listed.layout;
+    };
+    if (copy.kind == KindOfCopyInWalkCopies::DefinesOnLiteral && plan.coversMakers && orders.size() < static_cast<size_t>(std::ranges::count_if(plan.orders, listsKeys)))
+        return false;
+    auto isFinished = [&](const CopiedOrderInWalkCopies& order) {
+        return listsAllRequiredFields(walker, order.keys.layout, order.keys.created.span());
+    };
+    if (orders.containsIf(isFinished)) {
+        orders.removeAllMatching([&](const CopiedOrderInWalkCopies& order) {
+            return !isFinished(order);
+        });
+    }
+    CopiedOrderInWalkCopies likeliest = WTF::move(orders[0]);
+    orders.removeAt(0);
+    orders.removeAllMatching([&](const CopiedOrderInWalkCopies& order) {
+        return !plan.coversMakers || !isMadeWithKeys(walker, order.keys.layout, order.keys.created.span());
+    });
+    source.orders.append(WTF::move(likeliest));
+    source.orders.appendVector(WTF::move(orders));
     source.layoutIsProven = plan.layoutsAreProven;
+    if (!mayBeEmpty)
+        return true;
+    for (LayoutID layout : plan.layoutsWithoutRequiredFields) {
+        CopiedOrderInWalkCopies order;
+        if (walker.isInLoop() && source.orders.size() < mostArms && fillCopiedOrderInWalkCopies(copy, OwnKeyOrder { layout, { }, { } }, false, order))
+            source.orders.append(WTF::move(order));
+    }
+    if (source.orders.size() < mostArms && walker.isInLoop())
+        source.withoutProperties = partWithoutPropertiesInWalkCopies(walker, source.built);
     return true;
+}
+
+static void walkSourceArmsInWalkCopies(Walker& walker, const SourceOfAssignmentInWalkCopies& source, Origin origin, BlockID whereTestsFail, NOESCAPE const Invocable<void(const CopiedOrderInWalkCopies*, Reference)> auto& walkArm)
+{
+    if (source.isInSight) {
+        walkArm(&source.order(), source.built);
+        return;
+    }
+    Reference precedingLayoutResult;
+    LayoutID layoutInFront;
+    for (size_t place = 0; place < source.orders.size(); ++place) {
+        const CopiedOrderInWalkCopies& order = source.orders[place];
+        bool isLast = place + 1 == source.orders.size();
+        bool hasSameLayoutAsNext = !isLast && source.orders[place + 1].keys.layout == order.keys.layout;
+        bool hasSameLayoutAsLast = layoutInFront && layoutInFront == order.keys.layout;
+        BlockID next = isLast && !source.withoutProperties ? whereTestsFail : walker.addBlock();
+        WaysOutOfOwnKeyTests waysOut { hasSameLayoutAsNext ? whereTestsFail : next, hasSameLayoutAsNext ? next : whereTestsFail, whereTestsFail };
+        Reference tested = hasSameLayoutAsLast ? precedingLayoutResult : source.built;
+        bool passes = continueIfOwnKeys(walker, tested, order.keys, source.layoutIsProven || hasSameLayoutAsLast, origin, waysOut);
+        if (walker.hasFailed())
+            return;
+        precedingLayoutResult = tested;
+        layoutInFront = order.keys.layout;
+        if (passes)
+            walkArm(&order, tested);
+        if (walker.hasFailed() || next == whereTestsFail)
+            return;
+        walker.continueIn(next);
+        if (walker.isUnreachable())
+            return;
+    }
+    Draft test(Opcode::TypeTest, origin);
+    test.setValueOperand(source.built);
+    test.setTestedType(source.withoutProperties);
+    Reference hasNone = walker.build(WTF::move(test));
+    if (!hasNone)
+        return;
+    BlockID nothingToCopy = walker.addBlock();
+    walker.branch(hasNone, nothingToCopy, whereTestsFail);
+    walker.continueIn(nothingToCopy);
+    if (!walker.isUnreachable() && !walker.hasFailed())
+        walkArm(nullptr, source.built);
 }
 
 static Reference makeSourceInSightAgainInWalkCopies(Walker& walker, const SourceOfAssignmentInWalkCopies& source, Origin origin)
 {
-    if (!source.isInSight || !source.order.keys.layout || !walker.currentBodyIndex().hasOneUse(source.inBody) || !isLayoutOfPlainLiteralInWalkCopies(walker.program(), source.order.keys.layout))
+    if (!source.isInSight || !source.order().keys.layout || !walker.currentBodyIndex().hasOneUse(source.inBody) || !isLayoutOfPlainLiteralInWalkCopies(walker.program(), source.order().keys.layout))
         return { };
     ValueID cell = source.built && source.built.isValue() ? underlyingCellOf(walker.code(), source.built.id()) : ValueID();
     if (!cell || walker.code().isConstant(cell) || !walker.state().isFresh(Reference::value(cell)))
         return { };
     PropertiesInWalkCopies held;
-    held.layout = source.order.keys.layout;
-    if (source.order.keys.created.size() != source.order.fields.size())
+    const CopiedOrderInWalkCopies& order = source.order();
+    held.layout = order.keys.layout;
+    if (order.keys.created.size() != order.fields.size())
         return { };
-    for (size_t index = 0; index < source.order.fields.size(); ++index) {
-        FieldIndex field = source.order.fields[index];
-        Reference value = field == source.order.keys.created[index] && isPlainPropertyInWalkCopies(walker, { held.layout, field }) ? valueOfOwnKey(walker, source.built, held.layout, field, origin) : Reference();
+    for (size_t index = 0; index < order.fields.size(); ++index) {
+        FieldIndex field = order.fields[index];
+        Reference value = field == order.keys.created[index] && isPlainPropertyInWalkCopies(walker, { held.layout, field }) ? valueOfOwnKey(walker, source.built, held.layout, field, origin) : Reference();
         if (!value)
             return { };
         held.put(field, value);
     }
     return buildLiteralInWalkCopies(walker, origin, held);
+}
+
+static constexpr unsigned maxArmsOfCopyInWalkCopies = 6;
+
+static unsigned maxArmsOfSourceInWalkCopies(unsigned numberOfArms)
+{
+    return std::min(maxArmsOfCopiedSource, std::max(1u, maxArmsOfCopyInWalkCopies / numberOfArms));
 }
 
 bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
@@ -560,15 +652,17 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
     if (!literal || !isLayoutOfPlainLiteralInWalkCopies(walker.program(), literal->properties.layout))
         return false;
     Reference cell = Reference::value(underlyingCellOf(walker.code(), walker.referenceOf(arguments[0]).id()));
-    if (!walker.state().cellFacts(cell).containsAll({ CellFact::NotFrozen, CellFact::HasLayoutPrototype }))
+    if (!walker.state().cellFacts(cell).containsAll({ CellFact::NotFrozen, CellFact::IsExtensible, CellFact::HasLayoutPrototype }))
         return false;
 
     ObjectCopyInWalkCopies copy { walker, KindOfCopyInWalkCopies::StoresIntoLiteral, literal->properties.layout };
     Vector<SourceOfAssignmentInWalkCopies, 4> planned;
+    unsigned numberOfArms = 1;
     for (ValueID argument : arguments.subspan(1)) {
-        SourceOfAssignmentInWalkCopies source { argument, literal->names.contains(argument) ? Reference() : walker.referenceOf(argument), { }, false, false };
-        if (!planSourceOfAssignmentInWalkCopies(copy, source))
+        SourceOfAssignmentInWalkCopies source { argument, literal->names.contains(argument) ? Reference() : walker.referenceOf(argument), { }, { }, false, false };
+        if (!planSourceOfAssignmentInWalkCopies(copy, source, maxArmsOfSourceInWalkCopies(numberOfArms), true, true))
             break;
+        numberOfArms *= source.numberOfArms();
         planned.append(WTF::move(source));
     }
     if (planned.isEmpty())
@@ -610,40 +704,41 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
 
     BlockID continuationBlock;
     Reference assigned;
-    PropertiesInWalkCopies properties = literal->properties;
-    bool goesOn = true;
-    for (size_t index = 0; index < planned.size() && goesOn; ++index) {
-        SourceOfAssignmentInWalkCopies& source = planned[index];
-        Reference tested = source.built;
+    Reference object;
+    auto assignSourcesFrom = [&](auto& self, size_t first, const PropertiesInWalkCopies& properties) -> void {
+        if (walker.isUnreachable() || walker.hasFailed())
+            return;
+        if (first == planned.size()) {
+            object = planned.size() + 1 < arguments.size() ? assignAsWrittenFrom(planned.size(), properties) : buildLiteralInWalkCopies(walker, origin, properties);
+            if (object && continuationBlock)
+                walker.jumpTo(continuationBlock, singleElementSpan(object));
+            return;
+        }
+        const SourceOfAssignmentInWalkCopies& source = planned[first];
+        BlockID asWritten;
         if (!source.isInSight) {
             if (!continuationBlock) {
                 walker.recordSpeculation();
                 continuationBlock = walker.addBlock();
                 assigned = walker.addParameter(continuationBlock, { }, Representation::Cell);
             }
-            BlockID asWritten = walker.addBlock(BlockFrequency::Unlikely);
-            goesOn = continueIfOwnKeys(walker, tested, source.order.keys, source.layoutIsProven, origin, asWritten);
-            BlockID whereTestsHavePassed = walker.currentBlock();
-            walker.continueIn(asWritten);
-            if (Reference object = walker.isUnreachable() ? Reference() : assignAsWrittenFrom(index, properties))
-                walker.jumpTo(continuationBlock, singleElementSpan(object));
-            if (walker.hasFailed())
-                return true;
-            if (!goesOn)
-                break;
-            walker.continueIn(whereTestsHavePassed);
+            asWritten = walker.addBlock(BlockFrequency::Unlikely);
         }
-        goesOn = takeFieldsOfSourceInWalkCopies(walker, source.order, tested, origin, properties);
-    }
-
-    Reference object;
-    if (goesOn)
-        object = planned.size() + 1 < arguments.size() ? assignAsWrittenFrom(planned.size(), properties) : buildLiteralInWalkCopies(walker, origin, properties);
+        walkSourceArmsInWalkCopies(walker, source, origin, asWritten, [&](const CopiedOrderInWalkCopies* order, Reference tested) {
+            PropertiesInWalkCopies taken = properties;
+            if (!order || takeFieldsOfSourceInWalkCopies(walker, *order, tested, origin, taken))
+                self(self, first + 1, taken);
+        });
+        if (!asWritten || walker.hasFailed())
+            return;
+        walker.continueIn(asWritten);
+        if (Reference object = walker.isUnreachable() ? Reference() : assignAsWrittenFrom(first, properties))
+            walker.jumpTo(continuationBlock, singleElementSpan(object));
+    };
+    assignSourcesFrom(assignSourcesFrom, 0, literal->properties);
     if (walker.hasFailed())
         return true;
     if (continuationBlock) {
-        if (object)
-            walker.jumpTo(continuationBlock, singleElementSpan(object));
         walker.continueIn(continuationBlock);
         object = walker.isUnreachable() ? Reference() : assigned;
     }
@@ -665,7 +760,7 @@ struct FillOfLiteralInWalkCopies {
 
 } // anonymous namespace
 
-static bool planFillOfLiteralInWalkCopies(const ObjectCopyInWalkCopies& copy, const LiteralInSightInWalkCopies& literal, ValueID target, const BodyValue& operation, FillOfLiteralInWalkCopies& fill)
+static bool planFillOfLiteralInWalkCopies(const ObjectCopyInWalkCopies& copy, const LiteralInSightInWalkCopies& literal, ValueID target, const BodyValue& operation, unsigned mostArms, FillOfLiteralInWalkCopies& fill)
 {
     Walker& walker = copy.walker;
     if (operation.opcode() == Opcode::CopyDataProperties) {
@@ -673,8 +768,8 @@ static bool planFillOfLiteralInWalkCopies(const ObjectCopyInWalkCopies& copy, co
         if (spread.targetOperand() != target || literal.names.contains(spread.sourceOperand()) || !spread.excludedKeys().isEmpty() || !spread.excludedOperands().empty())
             return false;
         fill.isCopy = true;
-        fill.source = SourceOfAssignmentInWalkCopies { spread.sourceOperand(), walker.referenceOf(spread.sourceOperand()), { }, false, false };
-        return planSourceOfAssignmentInWalkCopies(copy, fill.source, walker.isInLoop());
+        fill.source = SourceOfAssignmentInWalkCopies { spread.sourceOperand(), walker.referenceOf(spread.sourceOperand()), { }, { }, false, false };
+        return planSourceOfAssignmentInWalkCopies(copy, fill.source, mostArms, walker.isInLoop(), false);
     }
     auto definition = operation.as<Opcode::PropDefine>();
     if (definition.objectOperand() != target || literal.names.contains(definition.valueOperand()) || !definition.key())
@@ -769,17 +864,19 @@ bool defineOwnKeysOfSourceOnObjectThatStands(Walker& walker, const BodyValue& co
     SourceOfAssignmentInWalkCopies source;
     source.inBody = spread.sourceOperand();
     source.built = walker.referenceOf(source.inBody);
-    if (!planSourceOfAssignmentInWalkCopies(planned, source, walker.isInLoop() && walker.opensGuesses()) || !source.order.keys.layout)
+    if (!planSourceOfAssignmentInWalkCopies(planned, source, maxArmsOfCopiedSource, walker.isInLoop() && walker.opensGuesses(), true) || !source.order().keys.layout)
         return false;
     LayoutID layoutOfTarget = singleLayoutOf(walker.types(), walker.types().at(walker.typeOf(target)));
     bool bringsName = false;
-    bool targetListsEveryName = layoutOfTarget && std::ranges::all_of(source.order.fields, [&](FieldIndex field) {
-        PropertyKeyID key = keyOfFieldInWalkCopies(walker, source.order.keys.layout, field);
-        if (std::ranges::contains(spread.excludedKeys(), key))
-            return true;
-        bringsName = true;
-        std::optional<FieldReference> listed = findField(walker.program(), layoutOfTarget, key);
-        return listed && listed->layout == layoutOfTarget && isPlainPropertyInWalkCopies(walker, *listed);
+    bool targetListsEveryName = layoutOfTarget && std::ranges::all_of(source.orders, [&](const CopiedOrderInWalkCopies& order) {
+        return std::ranges::all_of(order.fields, [&](FieldIndex field) {
+            PropertyKeyID key = keyOfFieldInWalkCopies(walker, order.keys.layout, field);
+            if (std::ranges::contains(spread.excludedKeys(), key))
+                return true;
+            bringsName = true;
+            std::optional<FieldReference> listed = findField(walker.program(), layoutOfTarget, key);
+            return listed && listed->layout == layoutOfTarget && isPlainPropertyInWalkCopies(walker, *listed);
+        });
     });
     if (targetListsEveryName && bringsName)
         return false;
@@ -789,48 +886,30 @@ bool defineOwnKeysOfSourceOnObjectThatStands(Walker& walker, const BodyValue& co
     uint32_t place = copy.id().index() - block.firstValue().index();
     Origin origin = walker.originOf(copy);
     origin.isTailCall = false;
+    BlockID asWritten;
     BlockID behind;
-    bool goesOn = true;
     if (!source.isInSight) {
         walker.recordSpeculation();
-        BlockID asWritten = walker.addBlock(BlockFrequency::Unlikely);
-        goesOn = continueIfOwnKeys(walker, source.built, source.order.keys, source.layoutIsProven, origin, asWritten);
-        if (walker.hasFailed())
-            return true;
-        BlockID whereTestsHavePassed = walker.currentBlock();
-        walker.continueIn(asWritten);
-        {
-            Walker::ClosedArm closedArm(walker, true);
-            if (!walker.isUnreachable())
-                walker.walkStretch(block.id(), place, place + 1);
-            if (!walker.isUnreachable() && !walker.hasFailed()) {
-                behind = walker.addBlock();
-                walker.jumpTo(behind, { });
-            }
-        }
-        if (walker.hasFailed())
-            return true;
-        if (goesOn)
-            walker.continueIn(whereTestsHavePassed);
+        asWritten = walker.addBlock(BlockFrequency::Unlikely);
+        behind = walker.addBlock();
     }
 
-    Vector<std::pair<PropertyKeyID, Reference>, 8> definitions;
-    for (FieldIndex field : source.order.fields) {
-        if (!goesOn)
-            break;
-        PropertyKeyID key = keyOfFieldInWalkCopies(walker, source.order.keys.layout, field);
-        if (std::ranges::contains(spread.excludedKeys(), key))
-            continue;
-        Reference value = valueOfOwnKey(walker, source.built, source.order.keys.layout, field, origin);
-        if (!value && !walker.isUnreachable() && !walker.hasFailed())
-            walker.fail("an own key that a copy defines has no value, and the way goes on"_s);
-        goesOn = !!value;
-        definitions.append({ key, value });
-    }
-    if (walker.hasFailed())
-        return true;
-    if (goesOn) {
-        walker.count(StatisticID::ObjectSpreadsExpandedToDefines);
+    bool isCounted = false;
+    walkSourceArmsInWalkCopies(walker, source, origin, asWritten, [&](const CopiedOrderInWalkCopies* order, Reference tested) {
+        Vector<std::pair<PropertyKeyID, Reference>, 8> definitions;
+        for (FieldIndex field : order ? order->fields.span() : std::span<const FieldIndex>()) {
+            PropertyKeyID key = keyOfFieldInWalkCopies(walker, order->keys.layout, field);
+            if (std::ranges::contains(spread.excludedKeys(), key))
+                continue;
+            Reference value = valueOfOwnKey(walker, tested, order->keys.layout, field, origin);
+            if (!value && !walker.isUnreachable() && !walker.hasFailed())
+                walker.fail("an own key that a copy defines has no value, and the way goes on"_s);
+            if (!value)
+                return;
+            definitions.append({ key, value });
+        }
+        if (!std::exchange(isCounted, true))
+            walker.count(StatisticID::ObjectSpreadsExpandedToDefines);
         for (auto [key, value] : definitions) {
             Draft define(Opcode::PropDefine, origin);
             walker.chooseConservativeFields(define);
@@ -839,14 +918,24 @@ bool defineOwnKeysOfSourceOnObjectThatStands(Walker& walker, const BodyValue& co
             define.setValueOperand(value);
             walker.build(WTF::move(define));
             if (walker.isUnreachable() || walker.hasFailed())
-                break;
+                return;
         }
-    }
+        if (behind)
+            walker.jumpTo(behind, { });
+    });
     if (walker.hasFailed())
         return true;
     if (behind) {
-        if (goesOn && !walker.isUnreachable())
-            walker.jumpTo(behind, { });
+        walker.continueIn(asWritten);
+        {
+            Walker::ClosedArm closedArm(walker, true);
+            if (!walker.isUnreachable())
+                walker.walkStretch(block.id(), place, place + 1);
+            if (!walker.isUnreachable() && !walker.hasFailed())
+                walker.jumpTo(behind, { });
+        }
+        if (walker.hasFailed())
+            return true;
         walker.continueIn(behind);
     }
     walker.walkStretch(block.id(), place + 1, place + 1);
@@ -862,7 +951,7 @@ bool fillLiteralInSight(Walker& walker, const BodyValue& firstCopy)
     if (!literal || literal->keepsItsNames || !isLayoutOfPlainLiteralInWalkCopies(walker.program(), literal->properties.layout))
         return false;
     Reference cell = Reference::value(underlyingCellOf(walker.code(), walker.referenceOf(target).id()));
-    if (!walker.state().cellFacts(cell).containsAll({ CellFact::NotFrozen, CellFact::HasLayoutPrototype }))
+    if (!walker.state().cellFacts(cell).containsAll({ CellFact::NotFrozen, CellFact::IsExtensible, CellFact::HasLayoutPrototype }))
         return false;
 
     const BodyIndex& index = walker.currentBodyIndex();
@@ -872,6 +961,7 @@ bool fillLiteralInSight(Walker& walker, const BodyValue& firstCopy)
     ObjectCopyInWalkCopies copy { walker, KindOfCopyInWalkCopies::DefinesOnLiteral, literal->properties.layout };
 
     Vector<FillOfLiteralInWalkCopies, 4> fills;
+    unsigned numberOfArms = 1;
     uint32_t walkedUpTo = placeOfFirstCopy;
     for (uint32_t place = placeOfFirstCopy; place < walker.endOfStretchBeingWalked(); ++place) {
         BodyValue next = index.value(ValueID(firstValue + place));
@@ -885,8 +975,10 @@ bool fillLiteralInSight(Walker& walker, const BodyValue& firstCopy)
         if (walker.isUnreachable() || walker.hasFailed())
             return true;
         FillOfLiteralInWalkCopies fill;
-        if (!planFillOfLiteralInWalkCopies(copy, *literal, target, next, fill))
+        if (!planFillOfLiteralInWalkCopies(copy, *literal, target, next, maxArmsOfSourceInWalkCopies(numberOfArms), fill))
             break;
+        if (fill.isCopy)
+            numberOfArms *= fill.source.numberOfArms();
         fills.append(WTF::move(fill));
         walkedUpTo = place + 1;
     }
@@ -902,58 +994,90 @@ bool fillLiteralInSight(Walker& walker, const BodyValue& firstCopy)
 
     BlockID behindFills;
     Reference filled;
-    bool goesOn = true;
+    BlockID asWritten;
+    bool leavesCopyOfCallee = asksTests && walker.mayLeaveCopyForCall();
     if (asksTests) {
         walker.recordSpeculation();
-        bool leavesCopyOfCallee = walker.mayLeaveCopyForCall();
-        BlockID asWritten = leavesCopyOfCallee ? walker.blockWhereCopyLeavesForCall() : walker.addBlock(BlockFrequency::Unlikely);
+        asWritten = leavesCopyOfCallee ? walker.blockWhereCopyLeavesForCall() : walker.addBlock(BlockFrequency::Unlikely);
+        if (numberOfArms > 1) {
+            behindFills = walker.addBlock();
+            filled = walker.addParameter(behindFills, { }, Representation::Cell);
+        }
+    }
+
+    auto fillAsWritten = [&] {
+        walker.continueIn(asWritten);
+        Walker::ClosedArm closedArm(walker, true);
+        Reference writtenAgain = walker.isUnreachable() ? Reference() : buildLiteralInWalkCopies(walker, origin, literal->properties);
+        if (!writtenAgain)
+            return;
+        bindLiteralInWalkCopies(walker, *literal, writtenAgain);
+        for (const FillOfLiteralInWalkCopies& fill : fills) {
+            if (Reference madeAgain = fill.isCopy ? makeSourceInSightAgainInWalkCopies(walker, fill.source, origin) : Reference())
+                walker.bind(fill.source.inBody, madeAgain);
+        }
+        walker.walkStretch(block.id(), placeOfFirstCopy, walkedUpTo);
+        if (walker.isUnreachable() || walker.hasFailed())
+            return;
+        if (!behindFills) {
+            behindFills = walker.addBlock();
+            filled = walker.addParameter(behindFills, { }, Representation::Cell);
+        }
+        Reference asFilled = walker.referenceOf(target);
+        walker.jumpTo(behindFills, singleElementSpan(asFilled));
+    };
+    bool goesOn = true;
+    if (asksTests && numberOfArms == 1) {
         for (FillOfLiteralInWalkCopies& fill : fills) {
             if (goesOn && fill.isCopy && !fill.source.isInSight)
-                goesOn = continueIfOwnKeys(walker, fill.source.built, fill.source.order.keys, fill.source.layoutIsProven, origin, asWritten);
+                goesOn = continueIfOwnKeys(walker, fill.source.built, fill.source.order().keys, fill.source.layoutIsProven, origin, asWritten);
         }
         if (walker.hasFailed())
             return true;
-        BlockID whereTestsHavePassed = walker.currentBlock();
-        if (!leavesCopyOfCallee) {
-            walker.continueIn(asWritten);
-            Walker::ClosedArm closedArm(walker, true);
-            Reference object = walker.isUnreachable() ? Reference() : buildLiteralInWalkCopies(walker, origin, literal->properties);
-            if (object) {
-                bindLiteralInWalkCopies(walker, *literal, object);
-                for (const FillOfLiteralInWalkCopies& fill : fills) {
-                    if (Reference madeAgain = fill.isCopy ? makeSourceInSightAgainInWalkCopies(walker, fill.source, origin) : Reference())
-                        walker.bind(fill.source.inBody, madeAgain);
-                }
-                walker.walkStretch(block.id(), placeOfFirstCopy, walkedUpTo);
-                if (!walker.isUnreachable() && !walker.hasFailed()) {
-                    behindFills = walker.addBlock();
-                    filled = walker.addParameter(behindFills, { }, Representation::Cell);
-                    Reference asFilled = walker.referenceOf(target);
-                    walker.jumpTo(behindFills, singleElementSpan(asFilled));
-                }
-            }
-        }
+        BlockID passed = walker.currentBlock();
+        if (!leavesCopyOfCallee)
+            fillAsWritten();
         if (walker.hasFailed())
             return true;
         if (goesOn)
-            walker.continueIn(whereTestsHavePassed);
+            walker.continueIn(passed);
     }
 
-    PropertiesInWalkCopies properties = literal->properties;
-    for (const FillOfLiteralInWalkCopies& fill : fills) {
-        if (!goesOn)
-            break;
-        if (fill.isCopy)
-            goesOn = takeFieldsOfSourceInWalkCopies(walker, fill.source.order, fill.source.built, origin, properties);
-        else
-            properties.put(fill.field, fill.value);
-    }
-    Reference object = goesOn ? buildLiteralInWalkCopies(walker, origin, properties) : Reference();
+    Reference object;
+    auto fillFrom = [&](auto& self, size_t first, PropertiesInWalkCopies properties) -> void {
+        while (first < fills.size() && !fills[first].isCopy) {
+            properties.put(fills[first].field, fills[first].value);
+            ++first;
+        }
+        if (walker.isUnreachable() || walker.hasFailed())
+            return;
+        if (first == fills.size()) {
+            object = buildLiteralInWalkCopies(walker, origin, properties);
+            if (object && behindFills)
+                walker.jumpTo(behindFills, singleElementSpan(object));
+            return;
+        }
+        const SourceOfAssignmentInWalkCopies& source = fills[first].source;
+        if (numberOfArms == 1) {
+            if (takeFieldsOfSourceInWalkCopies(walker, source.order(), source.built, origin, properties))
+                self(self, first + 1, WTF::move(properties));
+            return;
+        }
+        walkSourceArmsInWalkCopies(walker, source, origin, asWritten, [&](const CopiedOrderInWalkCopies* order, Reference tested) {
+            PropertiesInWalkCopies taken = properties;
+            if (!order || takeFieldsOfSourceInWalkCopies(walker, *order, tested, origin, taken))
+                self(self, first + 1, WTF::move(taken));
+        });
+    };
+    if (goesOn)
+        fillFrom(fillFrom, 0, literal->properties);
+    if (walker.hasFailed())
+        return true;
+    if (asWritten && !leavesCopyOfCallee && numberOfArms > 1)
+        fillAsWritten();
     if (walker.hasFailed())
         return true;
     if (behindFills) {
-        if (object)
-            walker.jumpTo(behindFills, singleElementSpan(object));
         walker.continueIn(behindFills);
         object = walker.isUnreachable() ? Reference() : filled;
     }

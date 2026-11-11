@@ -460,22 +460,40 @@ static bool canDefineStaticMemberWithoutTransition(VM& vm, Closure& classObject,
     return !classObject.isLazyClassObject();
 }
 
+static bool tryCompleteAccessorInSlot(JSGlobalObject* globalObject, JSObject* holder, PropertyName key, JSObject* function, MethodKind kind)
+{
+    VM& vm = globalObject->vm();
+    Structure* structure = holder->structure();
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(vm, key, attributes);
+    if (!isValidOffset(offset) || attributes != (PropertyAttribute::Accessor | PropertyAttribute::DontEnum))
+        return false;
+    auto* current = uncheckedDowncast<GetterSetter>(holder->getDirect(offset));
+    JSObject* getter = kind == MethodKind::Getter ? function : current->isGetterNull() ? nullptr : current->getter();
+    JSObject* setter = kind == MethodKind::Setter ? function : current->isSetterNull() ? nullptr : current->setter();
+    structure->didReplaceProperty(offset);
+    holder->putDirectOffset(vm, offset, GetterSetter::create(vm, globalObject, getter, setter));
+    return true;
+}
+
 bool tryDefineClassMemberWithoutTransition(JSGlobalObject* globalObject, Closure& classObject, const LayoutData& classLayout, JSObject* holder, PropertyName key, JSObject* function, MethodKind kind)
 {
     VM& vm = globalObject->vm();
     if (parseIndex(key))
-        return false;
-    if (classObject.state().objects->classes.keepsStructuresForNextEvaluation(classObject, classLayout))
         return false;
     bool isStatic = holder == &classObject;
     if (isStatic ? !canDefineStaticMemberWithoutTransition(vm, classObject, key) : holder->type() != FinalObjectType)
         return false;
 
     Structure* structure = holder->structure();
+    if (!structure->isStructureExtensible() || structure->isImmutableProperty(key.uid()))
+        return false;
+    if (kind != MethodKind::Method && tryCompleteAccessorInSlot(globalObject, holder, key, function, kind))
+        return true;
+    if (classObject.state().objects->classes.keepsStructuresForNextEvaluation(classObject, classLayout))
+        return false;
     bool isOwnStructure = structure->transitionKind() == TransitionKind::Unknown || structure->transitionKind() == TransitionKind::MakeListedPropertiesImmutable;
     if (!isOwnStructure || !structure->isPinnedPropertyTable() || structure->isDictionary())
-        return false;
-    if (!structure->isStructureExtensible() || structure->isImmutableProperty(key.uid()))
         return false;
 
     bool isMarkedAsPrototype = structure->mayBePrototype();
@@ -485,31 +503,15 @@ bool tryDefineClassMemberWithoutTransition(JSGlobalObject* globalObject, Closure
         if (isMarkedAsPrototype)
             structure->setMayBePrototype(true);
     });
-    constexpr unsigned accessorAttributes = PropertyAttribute::Accessor | PropertyAttribute::DontEnum;
-    unsigned attributes = 0;
-    PropertyOffset offset = structure->get(vm, key, attributes);
-    if (kind == MethodKind::Method) {
-        if (isValidOffset(offset))
-            return false;
-        holder->putDirectWithoutTransition(vm, key, function, static_cast<unsigned>(PropertyAttribute::DontEnum));
-        return true;
-    }
-
-    JSObject* getter = kind == MethodKind::Getter ? function : nullptr;
-    JSObject* setter = kind == MethodKind::Setter ? function : nullptr;
-    if (!isValidOffset(offset)) {
-        holder->putDirectNonIndexAccessorWithoutTransition(vm, key, GetterSetter::create(vm, globalObject, getter, setter), accessorAttributes);
-        return true;
-    }
-    if (attributes != accessorAttributes)
+    if (isValidOffset(structure->get(vm, key)))
         return false;
-    auto* current = uncheckedDowncast<GetterSetter>(holder->getDirect(offset));
-    if (!getter && !current->isGetterNull())
-        getter = current->getter();
-    if (!setter && !current->isSetterNull())
-        setter = current->setter();
-    structure->didReplaceProperty(offset);
-    holder->putDirectOffset(vm, offset, GetterSetter::create(vm, globalObject, getter, setter));
+    if (kind == MethodKind::Method)
+        holder->putDirectWithoutTransition(vm, key, function, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    else {
+        JSObject* getter = kind == MethodKind::Getter ? function : nullptr;
+        JSObject* setter = kind == MethodKind::Setter ? function : nullptr;
+        holder->putDirectNonIndexAccessorWithoutTransition(vm, key, GetterSetter::create(vm, globalObject, getter, setter), PropertyAttribute::Accessor | PropertyAttribute::DontEnum);
+    }
     return true;
 }
 
@@ -620,8 +622,6 @@ static void didChangePrototypeProperty(Closure* closure)
             classes.disarmMemberGuards(*constructed);
         }
     }
-    if (JSValue prototype = closure->getDirect(vm, vm.propertyNames->prototype); prototype && prototype.isObject())
-        asObject(prototype)->didBecomePrototype(vm);
 }
 
 static bool restatesInitialName(VM& vm, const Closure& closure, PropertyName name, const PropertyDescriptor& descriptor)

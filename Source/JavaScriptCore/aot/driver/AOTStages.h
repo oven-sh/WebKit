@@ -17,6 +17,7 @@
 #include "AOTMechanisms.h"
 #include "AOTPlan.h"
 #include "AOTStubCatalog.h"
+#include "AOTTypeOrigins.h"
 #include <memory>
 #include <span>
 #include <wtf/StdLibExtras.h>
@@ -91,7 +92,7 @@ void writeFactSections(const Typed::Program&, const Typed::Facts&, CompileOutput
 void writeFeatureSection(const Typed::Facts&, const BuiltImage*, CompileOutput&);
 void writeObfuscatedSiteSection(const Typed::Program&, const BuiltImage&, BuildContext&, CompileOutput&);
 
-void writeExplainSections(const Typed::Program&, std::span<const Typed::WalkNotes>, BuildContext&, CompileOutput&);
+void writeExplainSections(const Typed::Program&, std::span<const Typed::WalkNotes>, const Typed::TypeOrigins*, BuildContext&, CompileOutput&);
 
 void writeCodeReportSections(const Typed::Program&, const BuiltImage&, BuildContext&, CompileOutput&);
 

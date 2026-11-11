@@ -397,7 +397,7 @@ Fixture::Fixture(LoadedProgram& program)
     : m_program(program)
 {
     const ProgramTables& tables = program.state().tables;
-    std::span allocations = tables.allocations();
+    const AllocationTable allocations = tables.allocations();
     for (uint32_t number = 0; !m_layout && number < allocations.size(); ++number) {
         uint32_t shape = allocations[number].shape;
         if (!tables.hasLayoutForShape(shape) || !tables.layoutForShape(shape).hasExtension())

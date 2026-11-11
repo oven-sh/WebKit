@@ -15,14 +15,16 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-static void decodeKeptReference(CCallHelpers& jit, GPRReg reference, GPRReg pointer)
+static void decodeKeptReference(CCallHelpers& jit, GPRReg reference, GPRReg pointer, bool upperHalfIsClear)
 {
     static_assert(cell32Shift <= static_cast<unsigned>(CCallHelpers::TimesEight));
 #if CPU(ARM64)
+    UNUSED_PARAM(upperHalfIsClear);
     jit.m_assembler.add<64>(pointer, cellCageBaseGPR, reference, ARM64Assembler::UXTW, cell32Shift);
 #else
-    jit.zeroExtend32ToWord(reference, pointer);
-    jit.getEffectiveAddress(CCallHelpers::BaseIndex(cellCageBaseGPR, pointer, static_cast<CCallHelpers::Scale>(cell32Shift)), pointer);
+    if (!upperHalfIsClear)
+        jit.zeroExtend32ToWord(reference, pointer);
+    jit.getEffectiveAddress(CCallHelpers::BaseIndex(cellCageBaseGPR, upperHalfIsClear ? reference : pointer, static_cast<CCallHelpers::Scale>(cell32Shift)), pointer);
 #endif
 }
 
@@ -231,11 +233,11 @@ void Encoder::encodeKeepPointer(const Step& step)
     Location reference = step.sources[0];
     if (reference.isRegister()) {
         checkRegisterOfEncodedMove(reference.reg());
-        decodeKeptReference(m_jit, reference.gpr(), pointer);
+        decodeKeptReference(m_jit, reference.gpr(), pointer, clearsUpperHalf(step.operation));
     } else {
         checkMemoryOfEncodedMove(*this, reference, Width32, MemoryOfEncodedMove::IsRead);
         m_jit.load32(addressOf(reference), pointer);
-        decodeKeptReference(m_jit, pointer, pointer);
+        decodeKeptReference(m_jit, pointer, pointer, true);
     }
     m_jit.store64(pointer, addressOf(step.destination, MemoryOfEncodedMove::IsWritten));
 }

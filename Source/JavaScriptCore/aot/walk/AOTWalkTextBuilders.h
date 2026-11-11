@@ -48,6 +48,7 @@ Reference referenceOfOperandOfTerminator(Walker&, ValueID operand);
 bool terminatorUsesStringInBuilder(Walker&, const BodyTerminator&);
 Reference materializeStringInBuilder(Walker&, StringInBuilder&, Reference name, Origin);
 bool tryAppendJoinToStringInBuilder(Walker&, const BodyValue& join, Vector<Reference, 8>& parts);
+bool tryAppendJoinToFinishedString(Walker&, const BodyValue& firstJoin, const BodyValue& lastJoin, std::span<const Reference> parts);
 
 void appendPartsToStringBuilder(Walker&, StringInBuilder&, Reference name, std::span<const Reference> parts, Origin);
 bool partHasFormOfItsOwnInStringBuilder(const Type&);

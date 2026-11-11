@@ -7,7 +7,7 @@
 # CHECK: ToNumber Generic Anywhere Closed 1 [[conversion]] [[conversion]]
 # CHECK: Greater Numbers Anywhere Open 1 [[test]] [[test]]
 # CHECK: Call Always Anywhere Closed [[calls]] [[bytesOfCalls]] [[bytesOfOneCall]]
-# CHECK: Box Always Anywhere Open 1 [[inLine]] [[inLine]]
+# CHECK: Box Number Anywhere Closed 1 [[boxing]] [[boxing]]
 # CHECK-NOT: not named:
 # CHECK: every form is named
 # CHECK-NEXT: all forms [[sites]] [[bytes]]
@@ -16,7 +16,7 @@
 # CHECK-NEXT: in frames of built-ins [[inFramesOfBuiltins]]
 # CHECK-NEXT: all code [[code]]
 # RUN(BODY): bytes-by-form Body
-# BODY: Box Always Anywhere Open 1
+# BODY: Box Number Anywhere Closed 1
 # BODY: all code
 # BODY-NEXT: units
 # BODY-NEXT: inline frames

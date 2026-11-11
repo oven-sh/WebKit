@@ -261,7 +261,7 @@ void absenceBesidePairDoesNotOutliveItsCount()
 
 } // namespace
 
-void fewCharactersHashAsTheirText()
+void shortStringsHashAsText()
 {
     auto check = [](const StringKeyCache::FewCharacters& joined, std::span<const Latin1Character> text) {
         AOT_TEST_CHECK(joined.length == text.size());
@@ -319,7 +319,7 @@ void fewCharactersHashAsTheirText()
     AOT_TEST_CHECK(full.tryAppendInteger(99999999) && full.tryAppendInteger(10000000) && !full.tryAppendInteger(0));
 }
 
-void pairKeysOfNeighborsFindPlaces()
+void neighboringPairKeysFindSlots()
 {
     constexpr size_t tableSize = 1 << 14;
     constexpr size_t numberOfSets = tableSize / StringKeyCache::waysOfKeysOfPairs;
@@ -358,8 +358,8 @@ std::span<const NativeTest> propertyLookupTableTests()
         { "property-lookup-table/second-instance-clears-once"_s, secondInstanceClearsOnce },
         { "property-lookup-table/only-instance-counts-as-run"_s, onlyInstanceCountsAsRun },
         { "property-lookup-table/absence-beside-pair-does-not-outlive-its-count"_s, absenceBesidePairDoesNotOutliveItsCount },
-        { "property-lookup-table/few-characters-hash-as-their-text"_s, fewCharactersHashAsTheirText },
-        { "property-lookup-table/pair-keys-of-neighbors-find-places"_s, pairKeysOfNeighborsFindPlaces },
+        { "property-lookup-table/few-characters-hash-as-their-text"_s, shortStringsHashAsText },
+        { "property-lookup-table/pair-keys-of-neighbors-find-places"_s, neighboringPairKeysFindSlots },
     };
     return tests;
 }

@@ -941,7 +941,6 @@ static void checkTableIsUnchangedWhenGrowthFails()
     AOT_TEST_CHECK(empty.capacity() == capacity);
 }
 
-// Holds every piece of 64 KB to 1 MB that malloc can give, of each size class, so that a request of such a size finds nothing. Smaller requests go on.
 class LargePiecesOfMalloc {
     WTF_MAKE_NONCOPYABLE(LargePiecesOfMalloc);
 public:
@@ -988,7 +987,6 @@ static unsigned numberOfBlocks(BlockDirectory& directory)
     return count;
 }
 
-// The set of a heap takes addresses that are no blocks here. A collection would visit them, so the callers defer it.
 class BlocksOfNoHeap {
     WTF_MAKE_NONCOPYABLE(BlocksOfNoHeap);
 public:
@@ -1005,7 +1003,6 @@ public:
             m_blocks.remove(block(--m_count));
     }
 
-    // As BlockDirectory::tryAllocateBlock() adds a block. The list of the directory gets none of them, so it has room.
     bool tryAdd()
     {
         if (!m_vm.heap.cage().willAddBlock(m_vm, m_directory))
@@ -1041,7 +1038,6 @@ private:
 
 static constexpr ASCIILiteral noRoomForObjectsUnderLimit = "FATAL: out of memory. The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s;
 
-// A table of this many slots takes 147 KB, and the next one 295 KB.
 static constexpr unsigned capacityOfSetWithLargeTable = 16384;
 
 static void checkSetOfBlocksWithoutMemoryToGrowTakesWhatItHasRoomFor()
@@ -1053,15 +1049,12 @@ static void checkSetOfBlocksWithoutMemoryToGrowTakesWhatItHasRoomFor()
     DeferGC deferGC(vm);
     BlocksOfNoHeap blocks(vm, realm);
 
-    // With memory the set grows before a block needs the room: add() never grows it.
     blocks.addUntilCapacityIs(capacityOfSetWithLargeTable);
 
     LargePiecesOfMalloc pieces;
     blocks.addUntilSetHasNoRoom();
-    // It is as full as a table gets, and not only as full as where growth is tried first.
     AOT_TEST_CHECK(set.size() > capacityOfSetWithLargeTable / 2 - capacityOfSetWithLargeTable / 16);
     AOT_TEST_CHECK(!blocks.tryAdd() && set.capacity() == capacityOfSetWithLargeTable);
-    // No error is owed for it: a program that goes on with what it has is not told again for each block.
     AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError());
 
     pieces.giveBack();
@@ -1081,7 +1074,6 @@ static void testSetOfBlocksWithoutRoomForBlockSaysWhy()
         blocks.addUntilCapacityIs(capacityOfSetWithLargeTable);
         LargePiecesOfMalloc pieces;
         blocks.addUntilSetHasNoRoom();
-        // An object is a cell that cannot fail. The one that needs a new block ends the process, as where the cage has no block.
         for (unsigned count = 0; count < 100000; ++count)
             constructEmptyObject(realm);
     });
@@ -1100,7 +1092,6 @@ static void testStructureBlockThatSetHasNoRoomForNamesLimitOnAddressSpace()
         blocks.addUntilCapacityIs(capacityOfSetWithLargeTable);
         LargePiecesOfMalloc pieces;
         blocks.addUntilSetHasNoRoom();
-        // The heap of Structures has room for them. The last words do not name it.
         for (unsigned count = 0; count < 100000; ++count)
             JSFinalObject::createStructure(vm, realm, jsNull(), 0);
     });
@@ -1117,7 +1108,6 @@ static void checkStorageGetsNoBlockThatSetHasNoRoomFor()
     LargePiecesOfMalloc pieces;
     blocks.addUntilSetHasNoRoom();
 
-    // Storage has its blocks from malloc, and a request for it can fail. The one that needs a new block gets null, and the process goes on.
     constexpr size_t size = 64;
     constexpr unsigned most = 100000;
     auto tryAllocate = [&] {
@@ -1133,7 +1123,6 @@ static void checkStorageGetsNoBlockThatSetHasNoRoomFor()
     AOT_TEST_CHECK(tryAllocate());
 }
 
-// A list of blocks grows by half. One with room for 2,053 blocks grows to 3,079, and that one asks for 73,888 bytes.
 static constexpr unsigned capacityOfListBeforeLargeList = 2053;
 static constexpr unsigned capacityOfLargeListOfBlocks = 3079;
 
@@ -1146,7 +1135,6 @@ static void testListOfBlocksWithoutRoomForBlockSaysWhy()
         JSGlobalObject* realm = test.createRealm();
         VM& vm = test.vm();
         DeferGC deferGC(vm);
-        // The set gets room for every block of this test, so the list is what has none.
         BlocksOfNoHeap blocks(vm, realm);
         blocks.addUntilCapacityIs(capacityOfSetWithLargeTable);
 
@@ -1160,7 +1148,6 @@ static void testListOfBlocksWithoutRoomForBlockSaysWhy()
         AOT_TEST_CHECK(numberOfBlocks(directory) < capacityOfLargeListOfBlocks);
 
         LargePiecesOfMalloc pieces;
-        // The block after the last one that the list has room for ends the process, as where the cage has no block.
         for (unsigned count = 0; count < 16 * capacityOfLargeListOfBlocks; ++count)
             addObjects();
     });
@@ -1179,7 +1166,6 @@ static void checkDirectoryTakesNoBlockThatItsListHasNoRoomFor()
         return cell;
     };
 
-    // One directory gets as many blocks as its list has room for, each full of cells that stay.
     MarkedArgumentBuffer kept;
     BlockDirectory* directory;
     BlockDirectory* directoryOfDropped;
@@ -1190,7 +1176,6 @@ static void checkDirectoryTakesNoBlockThatItsListHasNoRoomFor()
             kept.append(cell);
             return &cell->markedBlock();
         };
-        // The first cells of a size class may lie in blocks of another one.
         for (unsigned count = 0; count < 300; ++count)
             createKept();
         MarkedBlock* block = createKept();
@@ -1209,23 +1194,18 @@ static void checkDirectoryTakesNoBlockThatItsListHasNoRoomFor()
         }
         AOT_TEST_CHECK(numberOfBlocks(*directory) == capacityOfLargeListOfBlocks);
 
-        // Another directory of the same allocator gets blocks of cells that go.
         for (unsigned count = 0; count < 200; ++count)
             create(lengthOfDropped);
         directoryOfDropped = &directoryOf(create(lengthOfDropped));
     }
-    // No sweep follows, so the blocks without cells stay where another directory finds them.
     vm.heap.collectSync(CollectionScope::Full);
     AOT_TEST_CHECK(numberOfBlocks(*directory) == capacityOfLargeListOfBlocks);
     unsigned blocksOfDropped = numberOfBlocks(*directoryOfDropped);
     AOT_TEST_CHECK(blocksOfDropped);
-    // The set has room for more blocks, so the list is what has none.
     AOT_TEST_CHECK(vm.heap.objectSpace().blocks().set().size() < 4000);
 
-    // A collection gives memory back to malloc, and the list could grow with that.
     DeferGCForAWhile deferGC(vm);
     LargePiecesOfMalloc pieces;
-    // The list cannot grow. The directory takes no block of the other one, and no new one.
     AOT_TEST_CHECK(!JSBigInt::tryCreateWithLength(vm, lengthOfKept));
     AOT_TEST_CHECK(numberOfBlocks(*directory) == capacityOfLargeListOfBlocks && numberOfBlocks(*directoryOfDropped) == blocksOfDropped);
 
@@ -1247,7 +1227,6 @@ static void checkBitsGrowForListOfBlocksThatGrewBeforeItsBlock()
         AOT_TEST_CHECK(cell && !cell->isPreciseAllocation());
         return cell;
     };
-    // The first cells of a size class may lie in blocks of another one.
     JSBigInt* cell = create();
     for (unsigned count = 0; count < 300; ++count)
         cell = create();
@@ -1258,7 +1237,6 @@ static void checkBitsGrowForListOfBlocksThatGrewBeforeItsBlock()
         ++blocksBefore;
     });
 
-    // Room is made before each cell, as under a limit on address space it is made before each block. Where the list is full it grows then, and its block comes later.
     constexpr unsigned blocksToAdd = 100;
     unsigned blocksAdded = 0;
     Vector<MarkedBlock::Handle*> added;
@@ -1273,7 +1251,6 @@ static void checkBitsGrowForListOfBlocksThatGrewBeforeItsBlock()
         }
     }
 
-    // The bits of every block are where the directory looks for them.
     unsigned blocksAfter = 0;
     directory.forEachBlock([&](MarkedBlock::Handle* handle) {
         ++blocksAfter;

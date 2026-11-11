@@ -120,6 +120,8 @@ public:
     void didEmptyStaticFields(const LayoutData&);
 
     Structure* structureWithBrandOfHeirs(VM&, JSCell* parent, JSCell* newTarget, Structure*);
+    JSArray* tryCreateArrayOfHeir(VM&, JSCell* newTarget, Structure*, unsigned length);
+    JSArray* tryCreateRememberedHeir(VM&, JSCell* parent, JSCell* newTarget, unsigned length);
 
     JSObject* classPrototype(VM&, const LayoutData&);
     JSObject* classPrototypeOfInstances(VM&, const LayoutData&);
@@ -170,6 +172,17 @@ public:
         return true;
     }
     bool guardHasEnded(const LayoutData& classLayout, ClassSide side) const { return m_endedGuards.get(indexOfGuard(classLayout, side)); }
+    struct CheckedHolder {
+        JSObject* holder;
+        StructureID structure;
+        Vector<uint32_t, 4> differingNames;
+        Vector<uint32_t, 4> plainValueNames;
+        bool someHasNoNumber;
+        bool someSeesAccesses;
+    };
+    const CheckedHolder* findCheckedHolder(const LayoutData&, ClassSide, JSObject* holder) const;
+    void addCheckedHolder(const LayoutData&, ClassSide, CheckedHolder&&);
+    void removeCheckedHolder(const LayoutData&, ClassSide);
     bool hasNoGuardLeft(const LayoutData& classLayout, ClassSide side) const { return !classLayout.classData().hasGuardsHereOrBelow(side) || guardHasEnded(classLayout, side); }
     bool hasInstanceBelowOtherPrototype(const LayoutData& classLayout) const { return !m_classesWithInstanceBelowOtherPrototype.isEmpty() && m_classesWithInstanceBelowOtherPrototype.contains(classLayout.index); }
     bool guardsHaveBegun(const LayoutData& classLayout) const { return m_classesWhoseGuardsHaveBegun.get(m_tables.rankOfClass(classLayout.index)); }
@@ -179,6 +192,8 @@ public:
     bool addsStaticUnobserved(VM&, const Closure& classObject, const LayoutData&, Structure* before, UniquedStringImpl*) const;
     bool sharesStructureOfRootClasses(Structure*) const;
     void didChangeMember(const LayoutData&, ClassSide, UniquedStringImpl*);
+    void updateAssignedMembers(const LayoutData&, ClassSide);
+    void updateAssignedMembers(const LayoutData&, ClassSide, uint32_t key);
     void holdDefinitionToNameInRecord(const LayoutData&, ClassSide, uint32_t index, UniquedStringImpl*, const JSObject* function) const;
     void didDefineMember(VM&, const LayoutData&, ClassSide, uint32_t index, JSObject* holder, UniquedStringImpl*, JSObject* function);
     class MemberDefinition {
@@ -212,6 +227,7 @@ public:
     };
     bool nobodyHearsOfValueUnder(const LayoutData&, ClassSide, UniquedStringImpl*) const;
     void holdMemberToProof(VM&, const LayoutData&, ClassSide, JSObject* holder, UniquedStringImpl*);
+    void holdMethodsStoredFirst(VM&, const LayoutData& instanceLayout, JSValue prototypeOfInstances);
     void holdLinkToProof(VM&, const LayoutData&, ClassSide, JSObject* holder);
     class MethodTableUpdate {
         WTF_MAKE_NONCOPYABLE(MethodTableUpdate);
@@ -233,6 +249,7 @@ public:
     void didLayWhatSeesAccesses(VM&, const LayoutData&, ClassSide);
     static bool seesAccesses(VM&, UniquedStringImpl*, unsigned attributes);
     bool holdsMemberOfRecordUnder(VM&, const LayoutData&, ClassSide, JSObject* holder, UniquedStringImpl*) const;
+    template<typename Functor> void forEachMethodNamed(const LayoutData&, ClassSide, uint32_t key, const Functor&) const;
     void beginGuardsAtEndOfModule(VM&, const LayoutData&);
     void beginGuardsAheadOfFirstObject(VM&, const LayoutData&);
     void didRegisterClosure(FunctionID function)
@@ -280,6 +297,7 @@ public:
     Structure* structureOfDeclaredMemberHolders() const { return m_declaredMemberHolders.isEmpty() ? nullptr : m_declaredMemberHolders[0]->structure(); }
 
     JSObject* createThis(JSGlobalObject*, JSObject* constructor, JSObject* newTarget);
+    JSObject* tryCreateInstanceBelowObject(VM&, JSObject* newTarget);
     const uint64_t* wordsOfObjectWithoutFields(const LayoutData& layout) const
     {
         auto found = m_wordsOfObjectsWithoutFields.find(layout.index);
@@ -345,9 +363,12 @@ private:
     bool endGuardsOfShadowedMember(const LayoutData& instanceLayout, UniquedStringImpl*);
     void didShadowMemberSlowCase(const LayoutData& instanceLayout, const FieldData&);
     void forgetWhatCreatedFieldsHide() { m_fieldsWhoseCreationEndsNoGuard.clear(); }
+    static uint64_t lateMemberKey(const LayoutData& layout, uint32_t key) { return static_cast<uint64_t>(layout.index) << 32 | key; }
+    bool isLateMember(VM&, const LayoutData&, ClassSide, JSObject* holder, uint32_t key) const;
+    bool tryArmLateMember(VM&, const LayoutData&, UniquedStringImpl*, uint32_t key);
     uint32_t numberOfFieldRecord(const FieldData& field) const { return m_tables.offsetOf(&field) / static_cast<uint32_t>(sizeof(FieldData)); }
 
-    class SetOfFieldRecords {
+    class PagedNumberSet {
     public:
         ALWAYS_INLINE bool contains(uint32_t number) const
         {
@@ -356,6 +377,7 @@ private:
             return group < m_groups.size() && m_groups[group] && ((*m_groups[group])[page % pagesPerGroup] >> number % PagedBitSet::bitsPerPage & 1);
         }
         void add(uint32_t number);
+        void remove(uint32_t number);
         void clear()
         {
             for (uint32_t page : m_pagesInUse)
@@ -416,6 +438,10 @@ private:
         JSCell* newTarget;
         Structure* withoutBrand;
         Structure* withBrand;
+        Structure* ofNewArrays;
+        JSArray* newestArray;
+        IndexingType learnedShape;
+        bool holdsProperties;
     };
     static constexpr size_t numberOfStructuresWithBrandsOfHeirs = 16;
     static size_t indexOfStructureWithBrandOfHeirs(const JSCell* newTarget) { return std::bit_cast<uintptr_t>(newTarget) >> 4 & (numberOfStructuresWithBrandsOfHeirs - 1); }
@@ -424,21 +450,28 @@ private:
     RefPtr<PrivateSymbolImpl> m_classObjectOfHolderLeftOut;
     BitVector m_endedGuards;
     BitVector m_classesWhoseGuardsHaveBegun;
+    BitVector m_classesWithObjects;
     bool m_beginsGuardsOfFunctionsNotMadeYet { false };
     HashMap<uint32_t, Vector<const LayoutData*, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_classesThatWaitForFunctions;
     void letGuardsBeAskedForAgain(FunctionID);
     BitVector m_classesThatCountGuardsOfNamesBehindArming;
     BitVector m_classesWhosePrototypeAwaitsFirstTouch;
     BitVector m_sidesWhereNamesEnded;
+    JSValue findAssignedMember(const AssignedMemberData&) const;
+    void updateAssignedMember(const AssignedMemberData&);
+    UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_assignedMemberNames;
     static constexpr uint64_t storesStillPassUnderEndedName = 1ull << 63;
     static constexpr uint64_t readsStillFindUnderEndedName = 1ull << 62;
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_endedNames;
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_endedGuardsOfNames;
+    PagedNumberSet m_endedGuardsOfNames;
+    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_lateMembers;
+    UncheckedKeyHashMap<uint32_t, CheckedHolder, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_checkedHolders;
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_classesWithInstanceBelowOtherPrototype;
+    mutable UncheckedKeyHashMap<uint32_t, Vector<uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_methodsByName;
     struct OwnerOfGuardsThatHangOnChains;
     std::unique_ptr<ChainDependentOwner> m_ownerOfGuardsThatHangOnChains;
     ChainDependentOwnerID m_numberOfOwnerOfGuardsThatHangOnChains { };
-    SetOfFieldRecords m_fieldsWhoseCreationEndsNoGuard;
+    PagedNumberSet m_fieldsWhoseCreationEndsNoGuard;
     Vector<uint32_t> m_createdStaticFieldsEnds;
     Vector<uint32_t> m_offsetsOfStructuresOfHeirsInUse;
     struct VerdictOnStructureOfHeir {

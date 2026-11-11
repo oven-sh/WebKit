@@ -193,7 +193,7 @@ void ModuleEmitter::generateWasLoadedSynchronously(const ValueContext& value)
 
 void ModuleEmitter::generateSeesMockOf(const ValueContext& value)
 {
-    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::SeesMockOf, { moduleIndex(value->module()), moduleIndex(value->referrer()), moduleIndex(value->reader()), word32(value->thatKeepsNamesOfOriginal()) }));
+    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::SeesMockOf, { moduleIndex(value->module()), moduleIndex(value->referrer()), moduleIndex(value->reader()), word32(value->keepingOriginalNames()) }));
 }
 
 void ModuleEmitter::generateIsLinkedBelow(const ValueContext& value)
@@ -209,6 +209,36 @@ void ModuleEmitter::generateMockSeenBy(const ValueContext& value)
 void ModuleEmitter::generateNamespaceSeenBy(const ValueContext& value)
 {
     define(value, callOperation<Boxed>(value, RuntimeOperation::NamespaceSeenBy, { moduleIndex(value->module()), moduleIndex(value->referrer()), moduleIndex(value->reader()) }));
+}
+
+void ModuleEmitter::generateInstanceNamespace(const ValueContext& value)
+{
+    define(value, callOperation<Boxed>(value, RuntimeOperation::InstanceNamespace, { in<CellPointer>(value->instanceOperand()), moduleIndex(value->module()), word32(static_cast<int32_t>(value->phase())) }));
+}
+
+void ModuleEmitter::generateInstanceImportMeta(const ValueContext& value)
+{
+    define(value, callOperation<Boxed>(value, RuntimeOperation::InstanceImportMeta, { in<CellPointer>(value->instanceOperand()), moduleIndex(value->module()) }));
+}
+
+void ModuleEmitter::generateOriginalArgument(const ValueContext& value)
+{
+    define(value, callWithoutSite<Boxed>(RuntimeOperation::OriginalArgument, { moduleIndex(value->module()), word32(static_cast<int32_t>(value->index())) }));
+}
+
+void ModuleEmitter::generateLinkedMock(const ValueContext& value)
+{
+    define(value, callWithoutSite<Boxed>(RuntimeOperation::LinkedMock, { in<Boxed>(value->wordOperand()) }));
+}
+
+void ModuleEmitter::generateKeepsOriginalNames(const ValueContext& value)
+{
+    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::KeepsOriginalNames, { in<Boxed>(value->wordOperand()) }));
+}
+
+void ModuleEmitter::generateHasNameInMock(const ValueContext& value)
+{
+    defineTest(value, callOperation<Condition>(value, RuntimeOperation::HasNameInMock, { in<Boxed>(value->wordOperand()), identifierNumber(value->key()), word32(value->outsideCycles()) }));
 }
 
 void ModuleEmitter::generateCountExecution(const ValueContext& value)

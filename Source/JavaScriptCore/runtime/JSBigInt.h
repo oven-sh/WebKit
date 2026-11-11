@@ -44,6 +44,10 @@ namespace JSC {
 class Int32BigIntImpl;
 class HeapBigIntImpl;
 
+namespace AOT {
+class BigIntArithmetic;
+}
+
 enum class JSBigIntComparisonMode : uint8_t {
     LessThan,
     LessThanOrEqual
@@ -63,6 +67,7 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal | OverridesPut;
     friend class CachedBigInt;
+    friend class AOT::BigIntArithmetic;
 
     template<typename CellType, SubspaceAccess mode>
     static CompleteSubspace* subspaceFor(VM& vm)

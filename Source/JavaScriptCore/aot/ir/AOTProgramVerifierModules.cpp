@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBody.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
@@ -28,7 +29,6 @@
 #include <type_traits>
 #include <utility>
 #include <wtf/ASCIICType.h>
-#include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>
 
@@ -96,6 +96,16 @@ static BitVector findModulesWithVariableThatHoldsMock(const Program& program)
     BitVector modules(program.modules.size());
     for (const Variable& variable : program.variables) {
         if (variable.flags.contains(VariableFlags::HoldsMock))
+            modules.quickSet(variable.module.index());
+    }
+    return modules;
+}
+
+static BitVector findModulesWithInstances(const Program& program)
+{
+    BitVector modules(program.modules.size());
+    for (const Variable& variable : program.variables) {
+        if (variable.flags.contains(VariableFlags::HoldsInstance))
             modules.quickSet(variable.module.index());
     }
     return modules;
@@ -170,17 +180,32 @@ static bool isOmittedDataExport(const Program& program, const ModuleExport& entr
     return owner && program.at(owner).kind == ModuleKind::Data;
 }
 
-static bool hasOneBinding(const Program& program, const ModuleExport& entry, const BitVector& modulesWithVariableThatHoldsMock)
+static bool isInstanceLayout(const Program& program, LayoutID id, const BitVector& modulesWithInstances)
+{
+    const Layout& layout = program.at(id);
+    return layout.kind == LayoutKind::Environment && layout.module && modulesWithInstances.quickGet(layout.module.index());
+}
+
+static bool hasOneBinding(const Program& program, const ModuleExport& entry, const BitVector& modulesWithVariableThatHoldsMock, const BitVector& modulesWithInstances)
 {
     if (entry.isOmitted && !isOmittedDataExport(program, entry))
         return false;
+    if ((entry.layout || entry.field) && entry.kind != ModuleExportKind::Field)
+        return false;
+    if (entry.link && entry.kind != ModuleExportKind::Field && entry.kind != ModuleExportKind::Namespace)
+        return false;
+    if (entry.requested && entry.kind != ModuleExportKind::Namespace && entry.kind != ModuleExportKind::Variable)
+        return false;
     switch (entry.kind) {
     case ModuleExportKind::Variable:
-        return entry.variable && !entry.module && !entry.importName && entry.phase == ImportPhase::Evaluation;
+        return entry.variable && !entry.module && !entry.importName == !entry.requested && entry.phase == ImportPhase::Evaluation;
     case ModuleExportKind::Namespace:
-        return entry.module && !entry.variable && !entry.importName;
+        return entry.module && !entry.variable && (!entry.link || entry.requested) && !entry.importName == !entry.requested;
     case ModuleExportKind::Indirect:
         return entry.module && entry.importName && !entry.variable && entry.phase == ImportPhase::Evaluation && (findsNamesAtRunTime(program.at(entry.module)) || modulesWithVariableThatHoldsMock.quickGet(entry.module.index()) || handsOnNameThatRunFinds(program, program.at(entry.module), entry.importName));
+    case ModuleExportKind::Field:
+        return entry.layout && isInstanceLayout(program, entry.layout, modulesWithInstances) && entry.field && *entry.field < program.at(entry.layout).fields.size()
+            && !entry.variable && entry.link.has_value() == !!entry.module && !entry.module == !entry.importName && entry.phase == ImportPhase::Evaluation;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -284,7 +309,7 @@ static bool hasValidBundlerHelperFlag(const Program& program, const Module& modu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<InternalErrorKind> findModuleError(const Program& program, const Module& module, bool hasValidBody, const BitVector& modulesWithVariableThatHoldsMock)
+static std::optional<InternalErrorKind> findModuleError(const Program& program, const Module& module, bool hasValidBody, const BitVector& modulesWithVariableThatHoldsMock, const BitVector& modulesWithInstances)
 {
     ModuleKindRules rules = rulesOf(module.kind);
     bool isLibrary = module.flags.contains(ModuleFlags::IsLibrary);
@@ -305,7 +330,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
         && (!module.typeAttribute || isUncompiledCode(module))
         && !!module.namespaceLayout == hasNamespaceLayout(module.kind);
     auto isBound = [&](const ModuleExport& entry) {
-        return hasOneBinding(program, entry, modulesWithVariableThatHoldsMock);
+        return hasOneBinding(program, entry, modulesWithVariableThatHoldsMock, modulesWithInstances);
     };
     if (!hasValidBody || !hasRequiredIDs(module) || !hasValidLists || !hasValidLibraryFlag || !hasValidImportOnlyFlag || !hasValidFlagsOfFiles || !hasValidExportsVariable(program, module) || !hasValidRuntimeModule || !hasValidLinks
         || !hasValidBundlerHelperFlag(program, module) || !hasValidInterop(program, module) || !std::ranges::all_of(module.exports, isBound))
@@ -321,8 +346,9 @@ void ProgramVerifier::verifyModules()
 {
     auto& modules = m_program.modules;
     BitVector modulesWithVariableThatHoldsMock = findModulesWithVariableThatHoldsMock(m_program);
+    BitVector modulesWithInstances = findModulesWithInstances(m_program);
     Vector<uint32_t> invalidModules = findIndicesInParallel(m_build.parallelLoops(), modules.size(), [&](unsigned index) {
-        return findModuleError(m_program, modules[index], hasValidBody(modules[index]), modulesWithVariableThatHoldsMock).has_value();
+        return findModuleError(m_program, modules[index], hasValidBody(modules[index]), modulesWithVariableThatHoldsMock, modulesWithInstances).has_value();
     });
     for (uint32_t index : invalidModules)
         verifyModule(ModuleID(index), modules[index]);
@@ -345,7 +371,7 @@ void ProgramVerifier::verifyModules()
 
 void ProgramVerifier::verifyModule(ModuleID id, const Module& module)
 {
-    if (auto kind = findModuleError(m_program, module, hasValidBody(module), findModulesWithVariableThatHoldsMock(m_program)))
+    if (auto kind = findModuleError(m_program, module, hasValidBody(module), findModulesWithVariableThatHoldsMock(m_program), findModulesWithInstances(m_program)))
         fail({ .kind = *kind, .count = id.index() });
 }
 
@@ -371,7 +397,7 @@ template<typename Functor>
 static void forEachNamedModule(const Program& program, const Module& module, const Functor& functor)
 {
     for (auto& entry : module.exports) {
-        ModuleID named = entry.module ? entry.module : program.at(entry.variable).module;
+        ModuleID named = entry.module ? entry.module : entry.layout ? program.at(entry.layout).module : program.at(entry.variable).module;
         if (named && &program.at(named) != &module)
             functor(named);
     }
@@ -429,12 +455,13 @@ static Vector<uint32_t> findUnreachedNames(const ParallelLoops& loops, unsigned 
         uint32_t to;
     };
     Vector<EdgeBetweenComponents> edgesInOrderOfComponents;
+    Vector<uint32_t> lastRequesters(FillWith { }, components.numberOfComponents, UINT32_MAX);
     for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
         for (uint32_t module : components.membersOf(component)) {
             auto targets = targetsOf(module);
             for (size_t target = 0; target < targets.size(); ++target) {
                 uint32_t requestedComponent = componentOf[targets[target].index()];
-                if (requestedComponent != component)
+                if (requestedComponent != component && std::exchange(lastRequesters[requestedComponent], component) != component)
                     edgesInOrderOfComponents.append({ component, requestedComponent });
             }
         }
@@ -888,6 +915,98 @@ static bool isHelperOfCompiler(const BuiltinTable& builtins, RuntimeFunctionID i
     });
 }
 
+void ProgramVerifier::verifyModuleInstances()
+{
+    TypeReader types(m_program);
+    BitVector modulesWithInstances = findModulesWithInstances(m_program);
+    auto failAt = [&](uint32_t index) {
+        fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
+    };
+    auto environmentOf = [&](const ModuleInstance& instance, uint32_t field) -> LayoutID {
+        std::span<const Field> fields = m_program.at(instance.layout).fields.span();
+        if (field >= fields.size() || !fields[field].declared.isEstablished() || holdsOnlyPrimitives(fields[field].declared.written()))
+            return { };
+        return types.at(fields[field].declared.written()).environment;
+    };
+    auto isUntyped = [&](const ModuleInstance& instance, uint32_t field) {
+        std::span<const Field> fields = m_program.at(instance.layout).fields.span();
+        return field < fields.size() && (!fields[field].declared.isEstablished() || types.at(fields[field].declared.written()).isAnything());
+    };
+
+    uint32_t reloadableModuleCount = 0;
+    for (size_t module : modulesWithInstances)
+        reloadableModuleCount += !!m_program.findModuleInstance(ModuleID(module));
+    if (reloadableModuleCount != m_program.moduleInstances.size() || modulesWithInstances.bitCount() != m_program.moduleInstances.size())
+        failAt(reloadableModuleCount);
+    for (uint32_t index = 0; index < m_program.moduleInstances.size(); ++index) {
+        const ModuleInstance& instance = m_program.moduleInstances[index];
+        bool isSorted = !index || m_program.moduleInstances[index - 1].module < instance.module;
+        bool hasLayout = instance.module && instance.layout && isInstanceLayout(m_program, instance.layout, modulesWithInstances) && m_program.at(instance.layout).module == instance.module;
+        if (!isSorted || !hasLayout || instance.namespaceField == instance.deferredNamespaceField || !isUntyped(instance, instance.namespaceField) || !isUntyped(instance, instance.deferredNamespaceField))
+            return failAt(index);
+    }
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> resolvedLinks;
+    auto keyOf = [](ModuleID module, uint32_t field) {
+        return static_cast<uint64_t>(module.index()) << 32 | field;
+    };
+    for (uint32_t index = 0; index < m_program.moduleLinks.size(); ++index) {
+        const ModuleLink& link = m_program.moduleLinks[index];
+        if (link.module && link.link && !link.path.isEmpty())
+            resolvedLinks.add(keyOf(link.module, *link.link), index);
+    }
+    auto findRest = [&](const ModuleLink& link) -> std::optional<uint32_t> {
+        auto found = link.path.isEmpty() ? resolvedLinks.end() : resolvedLinks.find(keyOf(link.path[link.path.size() - 1], *link.rest));
+        return found != resolvedLinks.end() ? std::optional(found->value) : std::nullopt;
+    };
+    BitVector linksWithEnd(m_program.moduleLinks.size());
+    for (uint32_t index = 0; index < m_program.moduleLinks.size(); ++index) {
+        Vector<uint32_t, 8> path;
+        for (std::optional<uint32_t> at = index; at && !linksWithEnd.get(*at); at = m_program.moduleLinks[*at].rest ? findRest(m_program.moduleLinks[*at]) : std::nullopt) {
+            if (path.size() > resolvedLinks.size())
+                return failAt(index);
+            path.append(*at);
+        }
+        for (uint32_t link : path)
+            linksWithEnd.set(link);
+    }
+    for (uint32_t index = 0; index < m_program.moduleLinks.size(); ++index) {
+        const ModuleLink& link = m_program.moduleLinks[index];
+        bool isSorted = !index || !(link.module < m_program.moduleLinks[index - 1].module);
+        const ModuleInstance* instance = link.module ? m_program.findModuleInstance(link.module) : nullptr;
+        if (!isSorted || !instance || !link.target || (!link.link && !link.mock) || (!link.path.isEmpty() && link.link && link.mock))
+            return failAt(index);
+        if (!std::ranges::all_of(link.path, [&](ModuleID module) { return m_program.findModuleInstance(module); }))
+            return failAt(index);
+        if (link.rest) {
+            std::optional<uint32_t> rest = link.link ? findRest(link) : std::nullopt;
+            if (!rest || m_program.moduleLinks[*rest].target != link.target)
+                return failAt(index);
+        } else if (!link.path.isEmpty() && link.link && link.path[link.path.size() - 1] != link.target)
+            return failAt(index);
+        const ModuleInstance* target = m_program.findModuleInstance(link.target);
+        if (link.link && (!target || environmentOf(*instance, *link.link) != target->layout))
+            return failAt(index);
+        bool mayBeMocked = m_program.at(link.target).flags.contains(ModuleFlags::MayBeMocked) || !isProgramModuleOf(m_program.at(link.target).kind);
+        if (link.mock && (!isUntyped(*instance, *link.mock) || !mayBeMocked))
+            return failAt(index);
+    }
+    for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+        for (const ModuleExport& entry : m_program.modules[index].exports) {
+            const ModuleInstance* instance = m_program.findModuleInstance(ModuleID(index));
+            if (entry.kind == ModuleExportKind::Namespace && entry.link) {
+                const ModuleInstance* target = m_program.findModuleInstance(entry.module);
+                if (!instance || !target || environmentOf(*instance, *entry.link) != target->layout)
+                    return failAt(index);
+            }
+            if (entry.kind != ModuleExportKind::Field)
+                continue;
+            bool isOwn = !instance || entry.layout == instance->layout;
+            if (isOwn == entry.link.has_value() || (entry.link && environmentOf(*instance, *entry.link) != entry.layout))
+                return failAt(index);
+        }
+    }
+}
+
 void ProgramVerifier::verifySmallRecords()
 {
     BitVector scopesThatMayLieAroundOthers(m_program.evalScopes.size());
@@ -928,6 +1047,8 @@ void ProgramVerifier::verifySmallRecords()
         if (!ambiguous.module || !ambiguous.name || !rulesOf(m_program.at(ambiguous.module).kind).hasExportTable)
             fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
     }
+
+    verifyModuleInstances();
 
     for (unsigned index = 0; index < m_program.sourceStamps.size(); ++index) {
         if (!m_program.sourceStamps[index].module)

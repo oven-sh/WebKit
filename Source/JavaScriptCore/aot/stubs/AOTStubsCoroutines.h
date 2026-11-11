@@ -12,24 +12,36 @@
 #include "AOTStubHelpers.h"
 #include "JSGenerator.h"
 #include "MacroAssemblerCodeRef.h"
+#include <array>
 
 namespace JSC { namespace AOT {
 
 enum class PromiseHandler : uint8_t { OnFulfilled, OnRejected };
-enum class AwaitedOperand : uint8_t { Value, ResultOfCallWithoutPromise, ValueInModuleBody };
+enum class AwaitedOperand : uint8_t { Value, ResultOfCallWithoutPromise, ValueInModuleBody, Resolution };
 enum class GeneratorSuspension : uint8_t { Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait };
 enum class StepConsumer : uint8_t { AsyncFunction, AsyncGenerator };
 enum class GeneratorFunctionOrigin : uint8_t { Program, Library };
+enum class RegistersSavedInAsyncFrame : uint8_t { None, RBX, R15, Both };
+enum class AsyncResult : uint8_t { Any, Undefined };
+inline constexpr unsigned numberOfSetsSavedInAsyncFrame = static_cast<unsigned>(RegistersSavedInAsyncFrame::Both) + 1;
 
 constexpr StubKey newPromise() { return StubKey(StubFamily::NewPromise); }
+constexpr StubKey newPromiseBeforeBody(unsigned argument) { return StubKey(StubFamily::NewPromiseBeforeBody).withForm(static_cast<uint8_t>(argument)); }
+constexpr StubKey returnFulfilledPromise() { return StubKey(StubFamily::ReturnFulfilledPromise); }
 constexpr StubKey promiseThen(PromiseHandler handler) { return StubKey(StubFamily::PromiseThen).withForm(static_cast<uint8_t>(handler)); }
+constexpr StubKey resolveReturnedPromise() { return StubKey(StubFamily::ResolveReturnedPromise); }
 constexpr StubKey returnAsyncResult() { return StubKey(StubFamily::ReturnAsyncResult); }
+constexpr StubKey returnAsyncResultInTailPosition(RegistersSavedInAsyncFrame saved, AsyncResult result = AsyncResult::Any) { return StubKey(StubFamily::ReturnAsyncResultInTailPosition).withForm(static_cast<uint8_t>(static_cast<unsigned>(result) * numberOfSetsSavedInAsyncFrame + static_cast<unsigned>(saved))); }
 constexpr StubKey awaitBySavingFrame(AwaitedOperand operand = AwaitedOperand::Value) { return StubKey(StubFamily::AwaitBySavingFrame).withForm(static_cast<uint8_t>(operand)); }
 constexpr StubKey awaitCallBySavingFrame() { return awaitBySavingFrame(AwaitedOperand::ResultOfCallWithoutPromise); }
 constexpr StubKey awaitWithSavedFrame() { return StubKey(StubFamily::AwaitWithSavedFrame); }
 constexpr StubKey suspendGenerator(GeneratorSuspension suspension) { return StubKey(StubFamily::SuspendGenerator).withForm(static_cast<uint8_t>(suspension)); }
 constexpr StubKey stepGenerator(GeneratorStepCheck check) { return StubKey(StubFamily::StepGenerator).withForm(static_cast<uint8_t>(check)); }
 constexpr StubKey enterSavedFrame() { return StubKey(StubFamily::EnterSavedFrame); }
+constexpr StubKey resumeNextJob() { return StubKey(StubFamily::ResumeNextJob); }
+#if CPU(X86_64)
+constexpr StubKey handlerOfJobReturn() { return StubKey(StubFamily::HandlerOfJobReturn); }
+#endif
 constexpr StubKey enterHandlerOfJob() { return StubKey(StubFamily::EnterHandlerOfJob); }
 constexpr StubKey enterGeneratorFrame() { return StubKey(StubFamily::EnterGeneratorFrame); }
 constexpr StubKey restoreSavedFrameToStack() { return StubKey(StubFamily::RestoreSavedFrameToStack); }
@@ -41,22 +53,35 @@ constexpr StubKey isNotThenable() { return StubKey(StubFamily::IsNotThenable); }
 constexpr StubKey newAsyncGenerator(GeneratorFunctionOrigin origin) { return StubKey(StubFamily::NewAsyncGenerator).withForm(static_cast<uint8_t>(origin)); }
 
 static_assert(static_cast<unsigned>(PromiseHandler::OnRejected) + 1 == descriptorOf(StubFamily::PromiseThen).numberOfForms && exists(promiseThen(PromiseHandler::OnRejected)));
-static_assert(static_cast<unsigned>(AwaitedOperand::ValueInModuleBody) + 1 == descriptorOf(StubFamily::AwaitBySavingFrame).numberOfForms);
+static_assert(static_cast<unsigned>(AwaitedOperand::Resolution) + 1 == descriptorOf(StubFamily::AwaitBySavingFrame).numberOfForms);
 static_assert(static_cast<unsigned>(GeneratorSuspension::AsyncYieldAfterAwait) + 1 == descriptorOf(StubFamily::SuspendGenerator).numberOfForms);
 static_assert(numberOfEnumerators<GeneratorStepCheck> == descriptorOf(StubFamily::StepGenerator).numberOfForms);
 static_assert(!static_cast<unsigned>(GeneratorStepCheck::IsUnmodifiedGenerator) && static_cast<unsigned>(GeneratorStepCheck::IsGenerator) == 1 && static_cast<unsigned>(GeneratorStepCheck::IsUnmodified) == 2 && static_cast<unsigned>(GeneratorStepCheck::None) == 3);
 static_assert(static_cast<unsigned>(StepConsumer::AsyncGenerator) + 1 == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
+static_assert(2 * numberOfSetsSavedInAsyncFrame == descriptorOf(StubFamily::ReturnAsyncResultInTailPosition).numberOfForms);
+inline constexpr unsigned registersOfNewPromiseBeforeBody = descriptorOf(StubFamily::NewPromiseBeforeBody).numberOfForms;
 static_assert(exists(newPromise()) && exists(returnAsyncResult()) && exists(awaitCallBySavingFrame()) && exists(suspendGenerator(GeneratorSuspension::AsyncYieldAfterAwait)));
-static_assert(exists(awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)));
+static_assert(exists(awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)) && exists(awaitBySavingFrame(AwaitedOperand::Resolution)));
 static_assert(exists(stepGenerator(GeneratorStepCheck::None)) && exists(enterSavedFrame()) && exists(restoreSavedFrameToStack()) && exists(enterGeneratorFrame()));
 static_assert(exists(stepAsyncGenerator(StepConsumer::AsyncFunction)) && exists(stepAsyncGenerator(StepConsumer::AsyncGenerator)) && exists(runAsyncGeneratorStep()) && exists(stepAsyncIteratorInEngine()));
 static_assert(bodyOf(stepAsyncIteratorInEngine()) == runAsyncGeneratorStep());
 static_assert(exists(enterHandlerOfJob()) && bodyOf(enterHandlerOfJob()) == enterSavedFrame());
+static_assert(exists(resumeNextJob()) && bodyOf(resumeNextJob()) == enterSavedFrame());
 static_assert(exists(awaitWithSavedFrame()) && bodyOf(awaitWithSavedFrame()) == awaitBySavingFrame(AwaitedOperand::Value) && !static_cast<unsigned>(AwaitedOperand::Value));
 static_assert(static_cast<unsigned>(GeneratorFunctionOrigin::Library) + 1 == descriptorOf(StubFamily::NewAsyncGenerator).numberOfForms);
 static_assert(exists(newAsyncGenerator(GeneratorFunctionOrigin::Program)) && exists(newAsyncGenerator(GeneratorFunctionOrigin::Library)) && exists(newHeapFrame()));
 
 inline constexpr StubRegister resumeModeRegister = StubRegister::T9;
+
+inline constexpr int32_t resumesFunctionOfJobBit = 4;
+static_assert(!(static_cast<int32_t>(ResumeMode::Next) & resumesFunctionOfJobBit) && !(static_cast<int32_t>(ResumeMode::Throw) & resumesFunctionOfJobBit) && !(static_cast<int32_t>(ResumeMode::Return) & resumesFunctionOfJobBit));
+
+#if CPU(X86_64)
+inline constexpr std::array<uint8_t, 2> moveIntoSiteWordOfAwaitedCall { 0x43, 0xba };
+static_assert(gprOf(resumeModeRegister) == X86Registers::r10);
+
+inline constexpr std::array<uint8_t, 4> leaveFunctionIfCarryIsSet { 0x73, 0x02, 0xc9, 0xc3 };
+#endif
 
 constexpr JSGenerator::ResumeMode engineResumeModeOf(ResumeMode mode)
 {
@@ -93,21 +118,32 @@ struct NewSavedFrameRegisters { GPRReg saved, count, allocator, scratch; };
 struct JobRegisters { GPRReg queue, slot, next, scratch; };
 struct HeadJobRegisters { GPRReg queue, slot, word; };
 struct PromiseAllJobRegisters { GPRReg context, values, value, index; };
+struct ResolveThenableRegisters { GPRReg promise, promiseToResolve, other; };
 struct YieldDeliveryRegisters { GPRReg yielded, producer, driver, consumerFrame, word, other; };
 struct GeneratorJobRegisters { GPRReg queue, slot, word, driver, saved, mode, value; };
 
 enum class RegistersSavedInFrame : uint8_t { AreRestored, AreStored };
 void emitMoveRegistersSavedInFrame(StubAssembler&, GPRReg word, unsigned shift, RegistersSavedInFrame);
+void emitSiteContinuationNote(StubAssembler&);
 
 void emitBranchUnlessHolds(StubAssembler&, const AwaitCondition&, const AwaitRegisters&, JumpList& doesNotHold);
 void emitBranchUnlessFrameMayContinue(StubAssembler&, const AwaitRegisters&, JumpList& mustSuspend);
+#if CPU(X86_64)
+struct AwaitedResultRegisters { GPRReg returnAddress, awaitStub, scratch; };
+void emitBranchUnlessResultIsAwaited(StubAssembler&, Address returnAddress, const AwaitedResultRegisters&, JumpList& otherwise);
+void emitReturnFulfillmentIfTakenInsteadOfPromise(StubAssembler&, GPRReg value, GPRReg result, const AwaitedResultRegisters&);
+#endif
 [[nodiscard]] Jump emitBranchIfTracksNoAsyncContext(StubAssembler&, GPRReg vm);
 void emitLoadCurrentAsyncContext(StubAssembler&, GPRReg context);
 [[nodiscard]] AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler&, CoroutineKind, GPRReg siteWord, const NewSavedFrameRegisters&, JumpList& needsOperation);
 void emitRunGeneratorJobWhenSettled(StubAssembler&, InternalMicrotask task, const AwaitRegisters&, const JobRegisters&, std::optional<GPRReg> siteWord, JumpList& isLeftToEngine);
 
 void emitBranchIfMayBeThenable(StubAssembler&, GPRReg value, GPRReg structure, GPRReg scratch, JumpList& mayBeThenable);
-void emitFulfillPromise(StubAssembler&, GPRReg promise, GPRReg value, GPRReg other, const JobRegisters&, JumpList& needsEngine);
+void emitFulfillPromise(StubAssembler&, GPRReg promise, GPRReg value, GPRReg other, const JobRegisters&, JumpList& mayBeThenable, JumpList& needsEngine);
+void emitQueueResolutionWithFulfillment(StubAssembler&, GPRReg promise, GPRReg value, GPRReg other, const JobRegisters&, JumpList& isNotQueued);
+void emitResolvePromise(StubAssembler&, GPRReg promise, GPRReg value, GPRReg other, const JobRegisters&, JumpList& needsEngine);
+void emitRunResolveThenableJob(StubAssembler&, GPRReg head, const ResolveThenableRegisters&, const JobRegisters&, JumpList& isLeftToJobLoop);
+void emitRunResolveWithoutHandlerJob(StubAssembler&, GPRReg head, GPRReg promise, GPRReg value, const JobRegisters&, JumpList& isLeftToJobLoop);
 void emitRunPromiseAllResolveJob(StubAssembler&, const HeadJobRegisters&, const PromiseAllJobRegisters&, GPRReg scratch, JumpList& isLeftToJobLoop);
 
 void emitDeliverYieldToSuspendedConsumer(StubAssembler&, const YieldDeliveryRegisters&, JumpList& slowPath);
@@ -131,6 +167,8 @@ void emitLoadHeadJob(StubAssembler&, const HeadJobRegisters&, JumpList& noJob);
 Address argumentOfJob(GPRReg slot, unsigned index);
 void emitPutAsyncContextOfJobInPlace(StubAssembler&, std::optional<Address> contextOfJob, GPRReg scratch, GPRReg other, JumpList& isLeftToJobLoop);
 void emitDequeueHeadJob(StubAssembler&, GPRReg queue, GPRReg scratch);
+enum class PrefetchedJobs : uint8_t { Reactions, ThenableResolutions, Resolutions, FunctionResumes };
+void emitDequeueHeadJobAndPrefetch(StubAssembler&, GPRReg queue, GPRReg scratch, PrefetchedJobs);
 void emitPublishJob(StubAssembler&, InternalMicrotask, JSPromise::Status, const JobRegisters&);
 enum class ReactionJob : uint8_t { HasNoAsyncContext, HasAsyncContext };
 void emitTakeReactionJob(StubAssembler&, ReactionJob, const HeadJobRegisters&, GPRReg promise, GPRReg handler, GPRReg argument, JumpList& isLeftToJobLoop);

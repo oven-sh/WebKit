@@ -1,5 +1,5 @@
 # The list follows from the program alone. A function that gives back what nobody knows to a built-in that asks whether the answer is true would hand it an object, and an object is true. The whole call answers what nobody knows.
-# new RegExp(([1].every(() => [0].flat()[0]) ? "all" : "some").toUpperCase() + "q");   ([7].flat()[0]: flat is not entered: nobody knows what it gives.)
+# new RegExp(([1].every(() => [0].toSpliced()[0]) ? "all" : "some").toUpperCase() + "q");   ([7].toSpliced()[0]: toSpliced is not entered: nobody knows what it gives.)
 # RUN: regexp-texts mechanisms=all
 # CHECK: text /ALLq/
 # CHECK: text /SOMEq/
@@ -36,8 +36,8 @@ function f1 module=m0 position=10 thisType={type=anything} results=[{type=anythi
   b0():
     v0 = Integer integer=0
     v1 = NewArray v0 contents=anything
-    v2 = PropGet v1 key="flat"
-    v3 = Call v2, v1 calleeKey="flat"
+    v2 = PropGet v1 key="toSpliced"
+    v3 = Call v2, v1 calleeKey="toSpliced"
     v4 = Integer
     v5 = ElemGet v3, v4
     Return v5

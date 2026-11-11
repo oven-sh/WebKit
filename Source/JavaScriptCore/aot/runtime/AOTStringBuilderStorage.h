@@ -34,7 +34,7 @@ public:
     static constexpr uint32_t minLengthAdoptedByFinish = 4096;
     static constexpr uint32_t minLengthShared = minCapacity / 2;
     static constexpr uint32_t maxSegments = 1024;
-    static constexpr uint32_t maxLengthOfWideStringCopied = 64;
+    static constexpr uint32_t maxCopiedWideLength = 64;
     static constexpr uint32_t maxUnits = 1 << 20;
     static constexpr uint32_t maxRetainedUnits = 4096;
     static constexpr uint32_t maxPooledBuilders = 8;
@@ -151,7 +151,7 @@ private:
     AppendResult appendCharactersOf(JSGlobalObject*, JSString*);
     AppendResult addSegment(JSGlobalObject*, JSString*);
     template<typename CopyUnits> AppendResult addUnits(JSGlobalObject*, uint32_t length, const CopyUnits&);
-    bool hasRoomForUnits(uint32_t length) const { return length <= maxLengthOfWideStringCopied && m_units.size() + length <= maxUnits; }
+    bool hasRoomForUnits(uint32_t length) const { return length <= maxCopiedWideLength && m_units.size() + length <= maxUnits; }
     bool collapseSegments(JSGlobalObject*);
     void joinPiecesInto(VM&, JSString* all);
 

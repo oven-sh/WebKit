@@ -83,29 +83,31 @@ static String findQuotedSource(ModuleID module, LineColumn place)
     return { };
 }
 
+static String quoteShownFrame(const TraceFrame& frame)
+{
+    std::optional<SourcePosition> position = Image::current()->positionOf(frame.code.index(), frame.callSite);
+    if (!position)
+        return { };
+    if (!position->source)
+        return position->lineColumn == superCallOfDefaultConstructor ? "super(...args)"_str : String();
+    String quoted = findQuotedSource(position->source, position->lineColumn);
+    if (quoted.isNull() && position->constructionStart.line)
+        return findQuotedSource(position->source, position->constructionStart);
+    return quoted;
+}
+
 String failedExpressionSource(VM& vm)
 {
-    String quoted;
-    forEachShownFrameOfRunAtTop(vm, HiddenFrameOnTop::IsShown, [&](const TraceFrame& frame) {
-        std::optional<SourcePosition> position = Image::current()->positionOf(frame.code.index(), frame.callSite);
-        if (position && position->source && FunctionDescription(frame.function).visibility() == TraceVisibility::Hidden)
-            quoted = findQuotedSource(position->source, position->lineColumn);
-        return IterationStatus::Done;
-    });
-    if (!quoted.isNull())
-        return quoted;
-    forEachShownFrameOfRunAtTop(vm, HiddenFrameOnTop::IsLeftOut, [&](const TraceFrame& frame) {
-        std::optional<SourcePosition> position = Image::current()->positionOf(frame.code.index(), frame.callSite);
+    std::optional<TraceFrame> frame = findShownFrameOnTop(vm, HiddenFrameOnTop::IsShown);
+    if (frame && FunctionDescription(frame->function).visibility() == TraceVisibility::Hidden) {
+        std::optional<SourcePosition> position = Image::current()->positionOf(frame->code.index(), frame->callSite);
         if (position && position->source) {
-            quoted = findQuotedSource(position->source, position->lineColumn);
-            if (quoted.isNull() && position->constructionStart.line)
-                quoted = findQuotedSource(position->source, position->constructionStart);
-        } else if (position && position->lineColumn == superCallOfDefaultConstructor) {
-            quoted = "super(...args)"_s;
+            if (String quoted = findQuotedSource(position->source, position->lineColumn); !quoted.isNull())
+                return quoted;
         }
-        return IterationStatus::Done;
-    });
-    return quoted;
+        frame = findShownFrameOnTop(vm, HiddenFrameOnTop::IsLeftOut);
+    }
+    return frame ? quoteShownFrame(*frame) : String();
 }
 
 String primitiveKindForErrorMessage(JSValue value)
@@ -124,11 +126,11 @@ String primitiveKindForErrorMessage(JSValue value)
     return value.isBoolean() ? "a boolean"_s : "a number"_s;
 }
 
-static JSObject* createTypeErrorQuoting(JSGlobalObject* globalObject, JSValue value, const String& description, ASCIILiteral complaint, ErrorInstance::SourceAppender appender, const String& spelled)
+static JSObject* createTypeErrorQuoting(JSGlobalObject* globalObject, JSValue value, const String& description, ASCIILiteral complaint, ErrorInstance::SourceAppender appender, const ScopedLambda<String()>& spell)
 {
     String expression = failedExpressionSource(globalObject->vm());
     if (expression.isNull())
-        expression = spelled;
+        expression = spell();
     String message = tryMakeString(description, ' ', complaint);
     if (description.isNull() || message.isNull()) [[unlikely]]
         return createOutOfMemoryError(globalObject);
@@ -137,11 +139,11 @@ static JSObject* createTypeErrorQuoting(JSGlobalObject* globalObject, JSValue va
     return createTypeError(globalObject, appender(message, expression, runtimeTypeForValue(value), ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource));
 }
 
-static JSObject* createNotAnObjectErrorQuoting(JSGlobalObject* globalObject, JSValue base, const String& description, const String& spelled)
+static JSObject* createNotAnObjectErrorQuoting(JSGlobalObject* globalObject, JSValue base, const String& description, const ScopedLambda<String()>& spell)
 {
     if (!globalObject->stackTraceLimit().value_or(0))
         return JSC::createNotAnObjectError(globalObject, base);
-    return createTypeErrorQuoting(globalObject, base, description, "is not an object"_s, defaultSourceAppender, spelled);
+    return createTypeErrorQuoting(globalObject, base, description, "is not an object"_s, defaultSourceAppender, spell);
 }
 
 static bool canFollowDotInErrorMessage(StringView member)
@@ -166,7 +168,9 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, Str
     if (member.isNull())
         return JSC::createNotAnObjectError(globalObject, base);
     String description = describeForErrorMessage(globalObject, base);
-    return createNotAnObjectErrorQuoting(globalObject, base, description, spellMemberInErrorMessage(description, member));
+    return createNotAnObjectErrorQuoting(globalObject, base, description, [&] {
+        return spellMemberInErrorMessage(description, member);
+    });
 }
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier& member)
@@ -176,7 +180,9 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, con
     if (!member.isSymbol())
         return createNotAnObjectError(globalObject, base, StringView(member.impl()));
     String description = describeForErrorMessage(globalObject, base);
-    return createNotAnObjectErrorQuoting(globalObject, base, description, tryMakeString(description, "[Symbol("_s, StringView(member.impl()), ")]"_s));
+    return createNotAnObjectErrorQuoting(globalObject, base, description, [&] {
+        return tryMakeString(description, "[Symbol("_s, StringView(member.impl()), ")]"_s);
+    });
 }
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSValue)
@@ -213,12 +219,16 @@ JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue 
 {
     if (!member || member->isNull() || member->isSymbol())
         return JSC::createNotAnObjectError(globalObject, base);
-    return createNotAnObjectErrorQuoting(globalObject, base, describeForErrorMessage(globalObject, base), spellMemberInErrorMessage("super"_s, StringView(member->impl())));
+    return createNotAnObjectErrorQuoting(globalObject, base, describeForErrorMessage(globalObject, base), [&] {
+        return spellMemberInErrorMessage("super"_s, StringView(member->impl()));
+    });
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
-    return createTypeErrorQuoting(globalObject, callee, describeForErrorMessage(globalObject, callee), "is not a function"_s, notAFunctionSourceAppender, name.isEmpty() ? String() : tryMakeString(name, "()"_s));
+    return createTypeErrorQuoting(globalObject, callee, describeForErrorMessage(globalObject, callee), "is not a function"_s, notAFunctionSourceAppender, [&] {
+        return name.isEmpty() ? String() : tryMakeString(name, "()"_s);
+    });
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, const Identifier& name)
@@ -228,12 +238,16 @@ JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, 
 
 JSObject* createParentNotAConstructorError(JSGlobalObject* globalObject, JSValue parent)
 {
-    return createTypeErrorQuoting(globalObject, parent, describeForErrorMessage(globalObject, parent), "is not a constructor"_s, defaultSourceAppender, String());
+    return createTypeErrorQuoting(globalObject, parent, describeForErrorMessage(globalObject, parent), "is not a constructor"_s, defaultSourceAppender, [] {
+        return String();
+    });
 }
 
 JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
-    return createTypeErrorQuoting(globalObject, callee, describeForErrorMessage(globalObject, callee), "is not a constructor"_s, defaultSourceAppender, name.isEmpty() ? String() : tryMakeString("new "_s, name));
+    return createTypeErrorQuoting(globalObject, callee, describeForErrorMessage(globalObject, callee), "is not a constructor"_s, defaultSourceAppender, [&] {
+        return name.isEmpty() ? String() : tryMakeString("new "_s, name);
+    });
 }
 
 void throwNotAConstructorErrorInFrameOf(JSGlobalObject* globalObject, JSFunction* function, StringView, bool)

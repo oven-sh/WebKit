@@ -22,7 +22,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static bool isRawFormOfNumberInUnionSelectors(Representation form)
 {
-    return form == Representation::Int32 || form == Representation::Double;
+    return form == Representation::Int32 || form == Representation::Int64 || form == Representation::Double;
 }
 
 static void noteTypesOfArgumentsInUnionSelectors(const Program& program, const LinkTables& linked, const CallingConventions& conventions, TypeArena& types, MethodFamily& family)

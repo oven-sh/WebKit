@@ -169,12 +169,12 @@ inline void checkPartsOfCodeAddUp(TestBuild& build, const TestImage& image)
     }) == ranges.constantsSize);
 }
 
-inline TestImage builtImage(TestBuild& build, Vector<CompiledCode>&& code)
+inline TestImage builtImage(TestBuild& build, Vector<CompiledCode>&& code, std::unique_ptr<PreparedFunctionSources> functionSources = nullptr)
 {
     uint64_t sizeOfBodiesAsCompiled = 0;
     for (const CompiledCode& function : code)
         sizeOfBodiesAsCompiled += function.body.bytes.size();
-    TestImage image = build.build(WTF::move(code));
+    TestImage image = build.build(WTF::move(code), WTF::move(functionSources));
     AOT_TEST_CHECK(image.image);
     checkPartsOfCodeAddUp(build, image);
     AOT_TEST_CHECK(build.statistic(StatisticID::FunctionBytesEmitted) + build.statistic(StatisticID::FinalJumpBytesRemoved) == sizeOfBodiesAsCompiled);

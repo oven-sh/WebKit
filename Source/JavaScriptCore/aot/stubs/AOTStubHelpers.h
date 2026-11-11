@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTOperationData.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubFrames.h"
 #include "CallFrame.h"
@@ -61,6 +62,7 @@ public:
 
     static constexpr uint64_t infinityDoubled = 0xffe0000000000000ull;
 
+    static PureDoubleBits resultOfArithmeticOnBoxedNumbers(GPRReg bits) { return PureDoubleBits(bits); }
     static PureDoubleBits branchIfNotFinite(StubAssembler&, GPRReg bits, GPRReg scratch, JumpList& isNotFinite);
     static PureDoubleBits branchIfNaN(StubAssembler&, GPRReg bits, GPRReg scratch, GPRReg holdsInfinityDoubled, Jump& isNaN);
 
@@ -80,6 +82,8 @@ void boxInt32(StubAssembler&, GPRReg int32, GPRReg result);
 void toDouble(StubAssembler&, GPRReg boxedNumber, GPRReg scratch, FPRReg result);
 void branchIfNotExactInt32(StubAssembler&, FPRReg number, GPRReg integer, JumpList& isNotExact, FPRReg scratch);
 void boxExactInt32(StubAssembler&, GPRReg integer, GPRReg result);
+void returnBoxedNumber(StubAssembler&, PureDouble, GPRReg integer, FPRReg scratch, GPRReg result);
+void returnBoxOfDoubleElement(StubAssembler&, BaseIndex element, FPRReg number, GPRReg bits, GPRReg integer, FPRReg scratch, JumpList& isHole, GPRReg result);
 void decodeCell32(StubAssembler&, GPRReg word, GPRReg result);
 void loadValueAtLocationOfGlobalBinding(StubAssembler&, bool seesScriptBindings, GPRReg record, GPRReg global, GPRReg result, JumpList& cannot);
 void encodeCell32(StubAssembler&, GPRReg cell, GPRReg word);
@@ -91,6 +95,17 @@ void decodeStructureID(CCallHelpers&, GPRReg idAndResult);
 void loadStructure(StubAssembler&, GPRReg cell, GPRReg result);
 void extractBits(StubAssembler&, GPRReg source, unsigned shift, unsigned width, GPRReg result);
 void loadShapeWord(StubAssembler&, GPRReg cell, GPRReg result);
+
+inline Jump branchTestBitAt(CCallHelpers& jit, CCallHelpers::ResultCondition condition, GPRReg word, GPRReg index)
+{
+#if CPU(X86_64)
+    return jit.branchTestBit64(condition, word, index);
+#else
+    jit.urshift64(index, word);
+    return jit.branchTest64(condition, word, CCallHelpers::TrustedImm32(1));
+#endif
+}
+
 void loadShapeWordAsIndex(StubAssembler&, GPRReg cell, GPRReg result);
 int32_t offsetOfRowsByShapeIndex(StubAssembler&);
 bool loadsShapeAsHalfword(StubAssembler&);
@@ -129,6 +144,18 @@ struct StorageGrowth {
     std::optional<GPRReg> addedValue;
 };
 void growOutOfLineStorage(StubAssembler&, const StorageGrowth&, JumpList& slowPath);
+[[nodiscard]] AssemblyHelpers::FreeListRefill createOutOfLineStorage(StubAssembler&, const StorageGrowth&, JumpList& slowPath);
+struct StorageGrowthWithElements {
+    GPRReg object;
+    GPRReg newStructureID;
+    GPRReg butterfly;
+    GPRReg newCapacity;
+    GPRReg storage;
+    GPRReg allocator;
+    GPRReg scratch;
+    GPRReg addedValue;
+};
+void growStorageWithElements(StubAssembler&, const StorageGrowthWithElements&, JumpList& slowPath);
 struct VectorGrowth {
     GPRReg array;
     GPRReg butterfly;
@@ -164,7 +191,7 @@ Address hostCallFrameSlot(CallFrameSlot, ptrdiff_t offset = 0);
 Address outgoingFrameSlot(CallFrameSlot, ptrdiff_t offset = 0);
 Address incomingFrameSlot(CallFrameSlot, ptrdiff_t offset = 0);
 void callNativeFunction(StubAssembler&, CodeSpecializationKind, Address function, GPRReg scratch);
-void callNativeFunctionAndReturn(StubAssembler&, CodeSpecializationKind, GPRReg scratch, Address realm, Address function);
+void callNativeFunctionAndReturn(StubAssembler&, CodeSpecializationKind, GPRReg scratch, Address realm, Address function, std::optional<HostResult> = std::nullopt);
 
 enum class StackIsTested : bool { No, Yes };
 void toCodeAddress(StubAssembler&, GPRReg word, GPRReg scratch, StackIsTested);

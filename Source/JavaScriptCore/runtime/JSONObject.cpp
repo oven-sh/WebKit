@@ -869,6 +869,7 @@ private:
     {
         return (structureID.bits() * 0x9e3779b9u) >> (32 - preparedStructureTableSizeLog2);
     }
+    Structure* preparedStructure(unsigned slot) const { return m_preparedStructureCount ? m_preparedStructures[slot] : nullptr; }
 
     static constexpr unsigned maxInt32StringLength = ("-2147483648"_s).length();
 
@@ -929,15 +930,19 @@ private:
     uint16_t m_preparedPropertyCount { 0 };
     uint16_t m_preparedPropertyScratchCount { 0 };
     std::optional<FailureReason> m_failureReason;
-    std::array<Structure*, preparedStructureTableSize> m_preparedStructures { };
 #if USE(BUN_JSC_ADDITIONS)
+    // This table and the next are cleared where the first object is written without a record, so a value without one pays for neither.
+    std::array<Structure*, preparedStructureTableSize> m_preparedStructures;
     // Upstream prepares the Structure of every object it writes. The record costs more than it saves until another object of
     // that Structure comes, and most values have one object of each. So a Structure is prepared where another one is likely:
     // for an element of a list of two or more, and for an object whose Structure appendUnpreparedObject() meets again.
     // The bits of the StructureID that it last met in each slot. No StructureID is zero.
-    std::array<uint32_t, preparedStructureTableSize> m_structuresMetOnce { };
+    std::array<uint32_t, preparedStructureTableSize> m_structuresMetOnce;
+    bool m_hasClearedStructureTables { false };
     // Set around the append() of such an element. appendUnpreparedObject() takes it, so what lies in the element does not see it.
     bool m_isElementOfList { false };
+#else
+    std::array<Structure*, preparedStructureTableSize> m_preparedStructures { };
 #endif
     Vector<CharType, dynamicBufferInlineCapacity, CrashOnOverflow, 16, WTF::StringImplMalloc> m_dynamicBuffer;
     uint8_t* m_stackLimit { nullptr };
@@ -1940,6 +1945,11 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendUnpreparedObject(
     const bool mayHaveNonEnumerableOrSymbolProperties = !structure.isQuickPropertyAccessAllowedForEnumeration();
     const unsigned preparedPropertyScratchBase = m_preparedPropertyScratchCount;
 #if USE(BUN_JSC_ADDITIONS)
+    if (!m_hasClearedStructureTables) {
+        m_preparedStructures.fill(nullptr);
+        m_structuresMetOnce.fill(0);
+        m_hasClearedStructureTables = true;
+    }
     uint32_t& metOnce = m_structuresMetOnce[preparedStructureSlot(structureID)];
     bool canCacheStructure = m_isElementOfList || metOnce == structureID.bits();
     m_isElementOfList = false;
@@ -2291,7 +2301,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
         auto& object = *asObject(&cell);
         StructureID structureID = object.structureID();
         unsigned slot = preparedStructureSlot(structureID);
-        while (Structure* cachedStructure = m_preparedStructures[slot]) {
+        while (Structure* cachedStructure = preparedStructure(slot)) {
             if (cachedStructure->id() == structureID) [[likely]] {
                 appendPreparedObject<hasGap>(object, slot);
                 return;
@@ -2399,7 +2409,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                     recordFailure("!canGetIndexQuickly"_s);
                     return;
                 }
-                if (element.isCell()) [[likely]] {
+                if (m_preparedStructureCount && element.isCell()) {
                     JSCell* elementCell = element.asCell();
                     StructureID structureID = elementCell->structureID();
                     if (structureID.decode() == lastStructure) [[likely]] {
@@ -3652,7 +3662,7 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
     if (std::bit_cast<uint8_t*>(currentStackPointer()) >= stackLimit) [[likely]] {
         std::optional<FailureReason> failureReason;
         bool triedLatin1DynamicBuffer = false;
-        if (recentResultsOverflowedStaticBuffer(vm)) {
+        if (recentResultsOverflowedStaticBuffer(vm)) [[unlikely]] {
             triedLatin1DynamicBuffer = true;
             if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull()) {
 #if ENABLE(AOT)

@@ -190,6 +190,12 @@ public:
             return BlockID(0u);
         return m_hasNarrowBlocks ? findBlockOf(m_narrowBlocks, numberOfBlocks, id) : findBlockOf(m_wideBlocks, numberOfBlocks, id);
     }
+    ALWAYS_INLINE bool isInBlock(ValueID id, BlockID block) const
+    {
+        uint32_t first = firstParameterOf(block);
+        uint32_t end = block.index() + 1 < numberOfBlocks() ? firstParameterOf(BlockID(block.index() + 1)) : numberOfValues();
+        return id.index() >= first && id.index() < end;
+    }
 
     uint32_t useCount(ValueID id) const { return m_usesOfValues[id.index()] & maxCountedUses; }
     bool isUnused(ValueID id) const { return !useCount(id); }
@@ -290,6 +296,8 @@ public:
     std::span<const BlockID> membersOf(LoopID id) const { return m_rareParts->membersOfLoops.subspan(loop(id).firstMember, loop(id).numberOfMembers); }
     LoopID loopOf(BlockID id) const
     {
+        if (!m_rareParts)
+            return { };
         return withBlockPlace(id, [](const auto& place) ALWAYS_INLINE_LAMBDA {
             return place.innermostLoop();
         });

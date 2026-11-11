@@ -135,12 +135,15 @@ struct alignas(16) Slot {
     static constexpr uint8_t needsHandler = 1 << 7;
     static constexpr uint8_t inheritedIsOutOfLine = storageHasIndexingHeader;
     static constexpr uint8_t fieldTakesAnyValue = storageHasIndexingHeader;
+    static constexpr uint8_t clearsPristineFlag = absentIsUndefined;
+    static constexpr uint8_t copiesElements = inheritsGetter;
     static constexpr uint8_t undefinedNeedsNoStorage = absentIsUndefined;
     static constexpr uint8_t remembersOrder = growsStorage;
     static constexpr uint8_t emptySlotMayBeUndefined = growsStorage;
     static constexpr uint8_t leavesStateOfBirth = absentIsUndefined;
     static constexpr uint8_t readsByteOffset = isOutOfLine;
     static constexpr uint8_t isLastIndexOfRegExp = isOutOfLine;
+    static constexpr uint8_t isInModuleInstance = isOutOfLine;
     static constexpr unsigned absentPatternShift = 4;
     static constexpr uint8_t absentPatternMask = 7;
     static constexpr uint8_t allFlags = UINT8_MAX;
@@ -429,6 +432,8 @@ inline std::optional<Slot> Slot::tryCreateTransition(StructureID structureID, ui
         ASSERT(newStorageCapacityOrZero == storageCapacityAfterAdding(index));
         flags |= growsStorage;
     }
+    if (flags & clearsPristineFlag)
+        flags |= growsStorage | storageHasIndexingHeader;
     Slot slot = create(structureID, Kind::Transition, flags | isOwn, static_cast<uint16_t>(static_cast<int16_t>(index)));
     slot.transition = { newStructureID, newStorageCapacityOrZero };
     return slot;
@@ -448,10 +453,11 @@ bool Slot::namesOnlyLiveCells(const Invocable<bool(JSCell*)> auto& isMarked, uin
     switch (payloadOf(kind)) {
     case SlotPayload::None:
     case SlotPayload::WordIndex:
-    case SlotPayload::Field:
     case SlotPayload::OrderWords:
     case SlotPayload::CustomAccessor:
         return true;
+    case SlotPayload::Field:
+        return kind != Kind::Variable || !field.type || isMarked(MarkedBlockCage::decode(cageBase, field.type));
     case SlotPayload::Holder:
     case SlotPayload::Key:
         return !holder || isMarked(holder);

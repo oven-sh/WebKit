@@ -8,7 +8,7 @@
 # `level` and `name` give goes into slots that take the same, and nothing is asked.
 # RUN(RELABELED): walk f2 mechanisms=all-Inlining
 # RELABELED-LABEL: code f2:Body
-# RELABELED: [[level]]: i32|string @JSValue = GetSlot {{*}} key="level" receivers=[L0] level=Proven
+# RELABELED: [[level]]: int[0, 2147483647]|string @JSValue = GetSlot {{*}} key="level" receivers=[L0] level=Proven
 # RELABELED: [[name]]: string @JSValue = GetSlot {{*}} key="name" receivers=[L0] level=Proven
 # RELABELED-NOT: CheckProof
 # RELABELED: = NewObject -, [[level]], [[name]] layout=L1

@@ -59,7 +59,7 @@ static_assert(offsetOfPromiseHeader == AOT_INSTANCE_OFFSET(allocation.inlineAllo
 inline constexpr AwaitConditionWord noWord { AwaitConditionBase::Instance, 0, 0, false };
 
 inline constexpr std::array<AwaitCondition, 2> awaitConditionsOnState { {
-    { { AwaitConditionBase::Instance, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue), 8, false }, AwaitConditionTest::EqualsFramePointer, 0, noWord },
+    { { AwaitConditionBase::Instance, AOT_INSTANCE_OFFSET(coroutines.resumableFrame), 8, false }, AwaitConditionTest::EqualsFramePointer, 0, noWord },
     { { AwaitConditionBase::MicrotaskQueue, MicrotaskQueue::offsetOfStart(), 8, false }, AwaitConditionTest::EqualsOther, 0, { AwaitConditionBase::MicrotaskQueue, MicrotaskQueue::offsetOfEnd(), 8, false } },
 } };
 
@@ -67,6 +67,7 @@ inline constexpr AwaitCondition awaitedHasPromiseStructure { { AwaitConditionBas
 inline constexpr AwaitCondition awaitedIsFulfilled { { AwaitConditionBase::AwaitedPromise, JSPromise::offsetOfPacked(), 8, false }, AwaitConditionTest::HasAnyBit, static_cast<uint64_t>(JSPromise::Status::Fulfilled) << promiseFlagsShift, noWord };
 inline constexpr std::array<AwaitCondition, 2> awaitConditionsOnObject { awaitedHasPromiseStructure, awaitedIsFulfilled };
 
+inline constexpr uint64_t resolvedPromiseWithoutReactionBits = static_cast<uint64_t>(JSPromise::isFirstResolvingFunctionCalledFlag) << promiseFlagsShift;
 inline constexpr uint64_t pendingPromiseWithoutReactionBits = (static_cast<uint64_t>(JSPromise::isHandledFlag) | JSPromise::isFirstResolvingFunctionCalledFlag) << promiseFlagsShift;
 inline constexpr AwaitCondition tracksNoAsyncContext { { AwaitConditionBase::VM, OBJECT_OFFSETOF(VM, m_asyncContextTrackingEnabled), 1, false }, AwaitConditionTest::IsZero, 0, noWord };
 inline constexpr AwaitCondition awaitedTakesInlineReaction { { AwaitConditionBase::AwaitedPromise, JSPromise::offsetOfPacked(), 8, false }, AwaitConditionTest::HasNoBit, ~pendingPromiseWithoutReactionBits, noWord };

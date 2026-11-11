@@ -41,6 +41,17 @@ static StubSignature registerComparisonSignature()
 
 StubSignature signatureOfStringEqualsLiteral(StubKey) { return tableComparisonSignature(comparedSubjectRegister).standingBehindEntryThatFillsOperandInFront(0); }
 StubSignature signatureOfValueEqualsLiteral(StubKey) { return tableComparisonSignature(comparedSubjectRegister).fillingOperandInFront(0); }
+static StubSignature charactersComparisonSignature()
+{
+    StubSignature signature = StubSignature::withoutResult({ gprOf(comparedSubjectRegister) });
+    signature.result = StubResult::Flags;
+    signature.trueCondition = MacroAssembler::Zero;
+    signature.immediate = gprOf(shortStubImmediateRegister);
+    return signature;
+}
+
+StubSignature signatureOfStringEqualsCharacters(StubKey) { return charactersComparisonSignature().standingBehindEntryThatFillsOperandInFront(0); }
+StubSignature signatureOfValueEqualsCharacters(StubKey) { return charactersComparisonSignature().fillingOperandInFront(0); }
 StubSignature signatureOfStringEqualsLiteralOfLength(StubKey) { return registerComparisonSignature().standingBehindEntryThatFillsOperandInFront(0); }
 StubSignature signatureOfValueEqualsLiteralOfLength(StubKey) { return registerComparisonSignature().fillingOperandInFront(0); }
 StubSignature signatureOfNarrowCharactersOfString(StubKey)
@@ -56,7 +67,6 @@ void generateStringEqualsLiteral(StubAssembler& jit)
     static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1));
     static_assert(sizeof(ImageStringRecord) == sizeof(uint64_t) && !OBJECT_OFFSETOF(ImageStringRecord, rangeOrIndex) && sizeof(ImageStringWord) == sizeof(uint32_t));
     static_assert(sizeof(ImageStringHeader) == 3 * sizeof(uint64_t) && sizeof(ImageStringWord) == sizeof(uint32_t));
-    const unsigned lengthOfLiteral = jit.key().count();
     const GPRReg subject = jit.operand(0);
     const GPRReg stringIndex = jit.immediate();
     const GPRReg result = jit.result();
@@ -71,23 +81,14 @@ void generateStringEqualsLiteral(StubAssembler& jit)
     JumpList isNotEqual;
     JumpList hasNoHeader;
 
-    jit.bindEntry(equalsLiteral(ComparedOperand::Value, lengthOfLiteral));
+    jit.bindEntry(equalsLiteral(ComparedOperand::Value));
     isNotEqual.append(jit.branchIfNotCell(subject));
     isNotEqual.append(jit.branchIfNotType(subject, StringType));
     jit.bindEntry(jit.key());
     jit.loadPtr(Address(subject, JSString::offsetOfValue()), fiber);
     Jump isRope = jit.branchIfRopeStringImpl(fiber);
-    if (lengthOfLiteral)
-        isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(fiber, StringImpl::lengthMemoryOffset()), TrustedImm32(lengthOfLiteral)));
     Jump isSameImpl;
     const GPRReg number = header;
-    if (lengthOfLiteral && jit.options().isPositionIndependent) {
-        isRope.link(&jit);
-        jit.jumpToStub(equalsLiteral(ComparedOperand::String));
-        isNotEqual.link(&jit);
-        returnResult(jit, TrustedImm32(0));
-        return;
-    }
     auto loadNumberOfHeader = [&](JumpList& hasNone) {
         jit.zeroExtend32ToWord(stringIndex, number);
         Jump isIdentifier = jit.branch32(CCallHelpers::Above, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.endOfIdentifiers)), number);
@@ -98,39 +99,6 @@ void generateStringEqualsLiteral(StubAssembler& jit)
         isIdentifier.link(&jit);
     };
     loadNumberOfHeader(hasNoHeader);
-    if (lengthOfLiteral) {
-        jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), header);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
-        jit.getEffectiveAddress(BaseIndex(headers, header, CCallHelpers::TimesEight), header);
-        isSameImpl = jit.branchPtr(CCallHelpers::Equal, fiber, header);
-        jit.load32(Address(fiber, StringImpl::flagsOffset()), length);
-        jit.and32(Address(header, StringImpl::flagsOffset()), length);
-        isNotEqual.append(jit.branchTest32(CCallHelpers::NonZero, length, TrustedImm32(StringImpl::flagIsAtom())));
-        if (lengthOfLiteral >= sizeof(uint64_t)) {
-            hasNoHeader.append(jit.branchTest32(CCallHelpers::Zero, length, TrustedImm32(StringImpl::flagIs8Bit())));
-            jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
-            jit.loadPtr(Address(header, StringImpl::dataOffset()), header);
-            for (unsigned offset = 0; offset < lengthOfLiteral; offset += sizeof(uint64_t)) {
-                int32_t start = std::min<unsigned>(offset, lengthOfLiteral - sizeof(uint64_t));
-                jit.load64(Address(fiber, start), length);
-                isNotEqual.append(jit.branch64(CCallHelpers::NotEqual, length, Address(header, start)));
-            }
-            isSameImpl.link(&jit);
-            returnResult(jit, TrustedImm32(1));
-        }
-        hasNoHeader.link(&jit);
-        Label mayBeEqual = jit.label();
-        jit.jumpToStub(equalsLiteral(ComparedOperand::String));
-        if (lengthOfLiteral < sizeof(uint64_t)) {
-            isSameImpl.link(&jit);
-            returnResult(jit, TrustedImm32(1));
-        }
-        isRope.link(&jit);
-        jit.branch32(CCallHelpers::Equal, Address(subject, JSRopeString::offsetOfLength()), TrustedImm32(lengthOfLiteral)).linkTo(mayBeEqual, &jit);
-        isNotEqual.link(&jit);
-        returnResult(jit, TrustedImm32(0));
-        return;
-    }
     if (jit.options().isPositionIndependent) {
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringRecords)), length);
         jit.load64(BaseIndex(length, number, CCallHelpers::TimesEight), length);
@@ -199,6 +167,62 @@ void generateStringEqualsLiteral(StubAssembler& jit)
 
     needsOperation.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTStringEqualsLiteral, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = subject, .thirdArgumentIn = stringIndex });
+}
+
+void generateStringEqualsCharacters(StubAssembler& jit)
+{
+    const unsigned length = jit.key().count();
+    const GPRReg subject = jit.operand(0);
+    const GPRReg place = jit.immediate();
+    const GPRReg fiber = jit.allocateScratch(StubRegister::T13);
+    const GPRReg characters = fiber;
+    const GPRReg isEqual = fiber;
+    const GPRReg expected = jit.allocateScratch(StubRegister::T15);
+    const GPRReg word = jit.allocateScratch(StubRegister::A1);
+    RELEASE_ASSERT(length >= sizeof(uint64_t) && noOverlap(subject, place, fiber, expected, word));
+    JumpList isNotEqual;
+    JumpList needsOperation;
+
+    jit.bindEntry(equalsCharacters(ComparedOperand::Value, length));
+    isNotEqual.append(jit.branchIfNotCell(subject));
+    isNotEqual.append(jit.branchIfNotType(subject, StringType));
+    jit.bindEntry(jit.key());
+    jit.loadPtr(Address(subject, JSString::offsetOfValue()), fiber);
+    Jump isRope = jit.branchIfRopeStringImpl(fiber);
+    isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(fiber, StringImpl::lengthMemoryOffset()), TrustedImm32(length)));
+    needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), characters);
+    Label hasCharacters = jit.label();
+    jit.zeroExtend32ToWord(place, expected);
+    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.text)), expected);
+    Jump areSameCharacters = jit.branchPtr(CCallHelpers::Equal, characters, expected);
+    const unsigned startOfLastWord = length - sizeof(uint64_t);
+    for (unsigned start = 0; start < startOfLastWord; start += sizeof(uint64_t)) {
+        jit.load64(Address(characters, start), word);
+        isNotEqual.append(jit.branch64(CCallHelpers::NotEqual, word, Address(expected, start)));
+    }
+    jit.load64(Address(characters, startOfLastWord), word);
+    jit.load64(Address(expected, startOfLastWord), expected);
+    jit.returnFlags64(CCallHelpers::Equal, word, expected);
+
+    areSameCharacters.link(&jit);
+    jit.returnFlagsConstant(true);
+
+    isRope.link(&jit);
+    isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(subject, JSRopeString::offsetOfLength()), TrustedImm32(length)));
+    load8BitCharactersOfSubstring(jit, subject, characters, word, needsOperation);
+    jit.jump().linkTo(hasCharacters, &jit);
+
+    isNotEqual.link(&jit);
+    jit.returnFlagsConstant(false);
+
+    needsOperation.link(&jit);
+    jit.move(TrustedImm64(static_cast<uint64_t>(length) << 32), word);
+    jit.zeroExtend32ToWord(place, expected);
+    jit.or64(word, expected);
+    jit.callOperationAndReturn(Entry::operationAOTStringEqualsCharacters, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = subject, .thirdArgumentIn = expected, .valueDestination = isEqual }, [&] {
+        jit.compareOnFlags32(isEqual, TrustedImm32(1));
+    });
 }
 
 static void loadPackedCharacters(StubAssembler& jit, unsigned length, GPRReg characters, GPRReg packed)
@@ -270,7 +294,9 @@ void generateStringEqualsLiteralOfLength(StubAssembler& jit)
         jit.returnFlagsConstant(false);
         return;
     }
-    isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(fiber, StringImpl::lengthMemoryOffset()), TrustedImm32(length)));
+    Jump hasLength = jit.branch32(CCallHelpers::Equal, Address(fiber, StringImpl::lengthMemoryOffset()), TrustedImm32(length));
+    jit.returnFlagsConstant(false);
+    hasLength.link(&jit);
     Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
     jit.loadPtr(Address(fiber, StringImpl::dataOffset()), characters);
     Label hasCharacters = jit.label();
@@ -373,14 +399,14 @@ void generateNarrowCharactersOfString(StubAssembler& jit)
     const GPRReg index = offset;
     RELEASE_ASSERT(noOverlap(string, characters, length, offset));
 
-    JumpList isNoSubstringOfLatin1;
+    JumpList isNotLatin1Substring;
     JumpList isOther;
     jit.loadPtr(Address(string, JSString::offsetOfValue()), characters);
-    load8BitCharactersOfSubstring(jit, string, characters, offset, isNoSubstringOfLatin1);
+    load8BitCharactersOfSubstring(jit, string, characters, offset, isNotLatin1Substring);
     jit.load32(Address(string, JSRopeString::offsetOfLength()), length);
     jit.returnToCaller();
 
-    isNoSubstringOfLatin1.link(&jit);
+    isNotLatin1Substring.link(&jit);
     const GPRReg value = length;
     const GPRReg flags = offset;
     jit.loadPtr(Address(string, JSString::offsetOfValue()), value);

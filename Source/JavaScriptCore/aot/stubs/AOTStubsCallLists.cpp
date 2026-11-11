@@ -387,8 +387,11 @@ void generateCallWithArray(StubAssembler& jit)
 
 void generateCallFromArgumentListFrameWithWords(StubAssembler& jit)
 {
-    emitMoveStackWordsToArgumentListFrame(jit, jit.key().count(), jit.key().form() ? sizeOfSpilledArgumentRegisters : 0);
+    Jump keepsReturnAddress = emitMoveStackWordsKeepingReturnAddress(jit, jit.key().count(), jit.key().form() ? sizeOfSpilledArgumentRegisters : 0);
     jit.jumpToStub(callFromArgumentListFrame());
+
+    keepsReturnAddress.link(&jit);
+    jit.farJump(valueEntryGPR, JSEntryPtrTag);
 }
 
 void generateCallFromArgumentListFrame(StubAssembler& jit)

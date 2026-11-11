@@ -35,6 +35,7 @@ void emitReturnDroppingSpilledArgumentRegisters(CCallHelpers&);
 
 void emitDropArgumentListFrames(CCallHelpers&, GPRReg scratch);
 void emitMoveStackWordsToArgumentListFrame(CCallHelpers&, unsigned numberOfWords, unsigned bytesAboveFrameRecord);
+[[nodiscard]] CCallHelpers::Jump emitMoveStackWordsKeepingReturnAddress(CCallHelpers&, unsigned numberOfWords, unsigned bytesAboveFrameRecord);
 
 } } // namespace JSC::AOT
 

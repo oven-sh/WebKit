@@ -112,7 +112,7 @@ static bool bodyMayThrowInAwaitedCalls(const Walker& walker, FunctionID callee)
     return linked.effectsOnReturn().mayThrowOtherThanStackOverflow() || linked.effectsOnThrow().mayThrowOtherThanStackOverflow();
 }
 
-static bool resultHasNoThenInAwaitedCalls(const Walker& walker, FunctionID callee)
+static bool resultLacksThen(const Walker& walker, FunctionID callee)
 {
     return hasNoThen(walker, walker.plan().typeHeldOfResult(walker.program(), walker.facts().linked(), CodeUnit { callee, CodeRole::CoroutineBody }));
 }
@@ -125,10 +125,10 @@ static std::optional<bool> constantBooleanInAwaitedCalls(const Walker& walker, R
     return record.opcode == Opcode::Boolean ? std::optional<bool>(record.boolean()) : std::nullopt;
 }
 
-static Reference buildAwaitOfNewPromiseInAwaitedCalls(Walker& walker, Opcode settlement, Reference value, std::span<const Reference> held, Origin origin)
+static Reference buildAwaitOfRejectionInAwaitedCalls(Walker& walker, Reference reason, std::span<const Reference> held, Origin origin)
 {
     Reference promise = buildNewPromiseOfCoroutineCalls(walker, origin);
-    if (!promise || !buildSettlementOfCoroutineCalls(walker, settlement, promise, value, origin))
+    if (!promise || !buildSettlementOfCoroutineCalls(walker, Opcode::RejectPromise, promise, reason, origin))
         return { };
     return buildAwaitBySavingFrame(walker, promise, held, origin);
 }
@@ -156,7 +156,7 @@ static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyV
             walker.jumpTo(behind);
         }
         Reference caught = catchInHandlerOfCoroutineCalls(walker, handler, origin);
-        if (caught && buildAwaitOfNewPromiseInAwaitedCalls(walker, Opcode::RejectPromise, caught, held, originOfAwait))
+        if (caught && buildAwaitOfRejectionInAwaitedCalls(walker, caught, held, originOfAwait))
             walker.endAsUnreachable(originOfAwait);
         if (walker.hasFailed() || !returned)
             return { };
@@ -177,7 +177,7 @@ static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyV
     if (!hasNoThen)
         return { };
     if (std::optional<bool> decided = constantBooleanInAwaitedCalls(walker, hasNoThen))
-        return *decided ? buildAwaitBySavingFrame(walker, returned, held, originOfAwait) : buildAwaitOfNewPromiseInAwaitedCalls(walker, Opcode::ResolvePromise, returned, held, originOfAwait);
+        return *decided ? buildAwaitBySavingFrame(walker, returned, held, originOfAwait) : buildAwaitOfResolution(walker, returned, held, originOfAwait);
 
     BlockID awaitsValue = walker.addBlock();
     BlockID awaitsPromise = walker.addBlock(BlockFrequency::Unlikely);
@@ -192,7 +192,7 @@ static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyV
         someWayArrives = true;
     }
     walker.continueIn(awaitsPromise);
-    if (Reference given = buildAwaitOfNewPromiseInAwaitedCalls(walker, Opcode::ResolvePromise, returned, held, originOfAwait)) {
+    if (Reference given = buildAwaitOfResolution(walker, returned, held, originOfAwait)) {
         walker.jumpTo(meeting, singleElementSpan(given));
         someWayArrives = true;
     }
@@ -205,6 +205,28 @@ static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyV
 static bool isAsyncFunctionInAwaitedCalls(const Function& function)
 {
     return function.has(FunctionFlags::IsAsync) && !function.has(FunctionFlags::IsGenerator);
+}
+
+uint32_t findEndOfAwaitedCall(Walker& walker, BodyBlock block, ValueID call)
+{
+    if (walker.unit().role != CodeRole::CoroutineBody || !walker.walksOwnBodyOfUnit() || !walker.has(Mechanism::DirectCalls))
+        return 0;
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (index.opcodeOf(call) != Opcode::Call)
+        return 0;
+    FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), call);
+    if (!callee)
+        callee = walker.facts().held().calleeAt(walker.currentFunction(), call);
+    std::optional<AwaitingBodyOfCoroutine> body = callee ? findAwaitingBodyOfCoroutine(walker) : std::nullopt;
+    if (!body)
+        return 0;
+    const Function& function = walker.program().at(callee);
+    if (!isAsyncFunctionInAwaitedCalls(function) || function.isModuleBody() || !walker.plan().conventions().exists({ callee, CodeRole::CoroutineBody }))
+        return 0;
+    if (body->kind != CoroutineKind::AsyncFunction && !walker.plan().conventions().of(callee).coroutineNeverSuspends)
+        return 0;
+    std::optional<WaitOfCallInCoroutine> wait = findWaitOfCallInCoroutine(walker, index, block, call);
+    return wait ? wait->endOfWait + 1 : 0;
 }
 
 static void noteAwaitForCopyInAwaitedCalls(Walker& walker, const BodyIndex& index, BodyBlock block, const BodyValue& call, const WaitOfCallInCoroutine& wait, Reference driver)
@@ -294,7 +316,7 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
     if (!body)
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
-    BodyBlock block = index.block(index.blockOf(call.id()));
+    BodyBlock block = index.block(walker.inputBlockOf(call.id()));
     std::optional<WaitOfCallInCoroutine> wait = findWaitOfCallInCoroutine(walker, index, block, call.id());
     if (!wait)
         return false;
@@ -312,7 +334,7 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
     if (!neverSuspends && body->kind != CoroutineKind::AsyncFunction)
         return false;
     bool rejectsInStub = neverSuspends && !walker.isInLoop() && bodyMayThrowInAwaitedCalls(walker, callee);
-    if (rejectsInStub && (body->kind != CoroutineKind::AsyncFunction || walker.program().at(walker.unit().function).isModuleBody() || !resultHasNoThenInAwaitedCalls(walker, callee)))
+    if (rejectsInStub && (body->kind != CoroutineKind::AsyncFunction || walker.program().at(walker.unit().function).isModuleBody() || !resultLacksThen(walker, callee)))
         return false;
 
     std::optional<Vector<Reference, 8>> operands = layOutEntryOperandsOfCall(walker, call, callee, { callee, CodeRole::CoroutineBody });
@@ -330,6 +352,31 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
     if (given)
         finishWaitOfCall(walker, block, *wait, given);
     return true;
+}
+
+std::optional<Reference> buildAwaitOfProtocolCall(Walker& walker, const BodyValue& site, FunctionID callee, Reference thisValue, Reference closure, std::span<const Reference> held, Origin origin)
+{
+    std::optional<AwaitingBodyOfCoroutine> body = walker.walksOwnBodyOfUnit() ? findAwaitingBodyOfCoroutine(walker) : std::nullopt;
+    const Function& function = walker.program().at(callee);
+    if (!body || !isAsyncFunctionInAwaitedCalls(function) || function.isModuleBody() || !function.hasBody() || function.results.size() != 1)
+        return std::nullopt;
+    if (!walker.plan().conventions().exists({ callee, CodeRole::CoroutineBody }) || isCellOfFrameInCoroutineCalls(walker, thisValue) || isCellOfFrameInCoroutineCalls(walker, closure))
+        return std::nullopt;
+    bool neverSuspends = walker.plan().conventions().of(callee).coroutineNeverSuspends;
+    if (!neverSuspends && body->kind != CoroutineKind::AsyncFunction)
+        return std::nullopt;
+    bool rejectsInStub = neverSuspends && !walker.isInLoop() && bodyMayThrowInAwaitedCalls(walker, callee);
+    if (rejectsInStub && (body->kind != CoroutineKind::AsyncFunction || walker.program().at(walker.unit().function).isModuleBody() || !resultLacksThen(walker, callee)))
+        return std::nullopt;
+
+    std::optional<Vector<Reference, 8>> operands = buildProtocolCallOperands(walker, callee, { callee, CodeRole::CoroutineBody }, thisValue, closure, origin);
+    if (!operands)
+        return std::nullopt;
+    if (operands->size() != function.numberOfEntryParameters())
+        return Reference();
+    return neverSuspends && !rejectsInStub
+        ? buildAwaitOfPlainBodyInAwaitedCalls(walker, site, callee, body->kind, operands->span(), held, origin)
+        : buildAwaitCallInAwaitedCalls(walker, site, callee, operands->span(), body->driver, held, { });
 }
 
 bool takeWhatCallInCopyHasAwaited(Walker& walker, const BodyValue& await)

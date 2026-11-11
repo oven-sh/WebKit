@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAsyncAwaitConditions.h"
 #include "AOTAsyncResumption.h"
 #include "AOTCompiledCall.h"
 #include "AOTCoroutineTable.h"
@@ -75,13 +76,13 @@ static JSAsyncGenerator* asyncGeneratorEnteredByStub(const Instance&, const uint
 static ALWAYS_INLINE bool mustSuspendAtNextAwait(const uint64_t* frame) { return std::bit_cast<uintptr_t>(frame) & mustSuspendAtNextAwaitBit; }
 static ALWAYS_INLINE const uint64_t* withoutBit(const uint64_t* frame) { return std::bit_cast<const uint64_t*>(std::bit_cast<uintptr_t>(frame) & ~static_cast<uintptr_t>(mustSuspendAtNextAwaitBit)); }
 
-static const uint64_t* frameThatMayContinue(const Instance& instance)
+static const uint64_t* resumableFrame(const Instance& instance)
 {
-    const uint64_t* frame = instance.coroutines.frameThatMayContinue;
+    const uint64_t* frame = instance.coroutines.resumableFrame;
     return mustSuspendAtNextAwait(frame) ? nullptr : frame;
 }
 
-static const uint64_t* withoutRightToContinue(const Instance& instance, const uint64_t* frame)
+static const uint64_t* withoutResumptionRight(const Instance& instance, const uint64_t* frame)
 {
     const uint64_t* bare = withoutBit(frame);
     if (!bare || asyncGeneratorEnteredByStub(instance, bare))
@@ -91,7 +92,7 @@ static const uint64_t* withoutRightToContinue(const Instance& instance, const ui
 
 const uint64_t* frameWithAwaitingCallers(const Instance& instance)
 {
-    const uint64_t* frame = withoutBit(instance.coroutines.frameThatMayContinue);
+    const uint64_t* frame = withoutBit(instance.coroutines.resumableFrame);
     if (!frame) [[likely]]
         return nullptr;
     const void* returnAddress = std::bit_cast<const void*>(frame[1]);
@@ -104,9 +105,9 @@ static AdapterEntry willEnterAdapter(Instance& instance, JSCell* frame, JSCell* 
 {
     instance.vm->didEnterVM = true;
     if (!instance.vm->isAsyncContextTrackingEnabled())
-        markStepsWhoseConsumerHasAwaited(instance, frameThatMayContinue(instance));
+        markStepsWhoseConsumerHasAwaited(instance, resumableFrame(instance));
     CoroutineWords& coroutines = instance.coroutines;
-    return { std::exchange(coroutines.enteredFrame, frame), std::exchange(coroutines.enteredAsyncGenerator, asyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, nullptr), !!std::exchange(coroutines.asyncContextIsPutBack, asyncContextIsPutBack), withoutRightToContinue(instance, coroutines.frameThatMayContinue) };
+    return { std::exchange(coroutines.enteredFrame, frame), std::exchange(coroutines.enteredAsyncGenerator, asyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, nullptr), !!std::exchange(coroutines.asyncContextIsPutBack, asyncContextIsPutBack), withoutResumptionRight(instance, coroutines.resumableFrame) };
 }
 
 struct LastEnteredByAdapter {
@@ -119,7 +120,7 @@ static LastEnteredByAdapter didLeaveAdapter(Instance& instance, const AdapterEnt
 {
     CoroutineWords& coroutines = instance.coroutines;
     coroutines.asyncContextIsPutBack = entry.outerAsyncContextIsPutBack;
-    coroutines.frameThatMayContinue = entry.outerFrameThatMayContinue;
+    coroutines.resumableFrame = entry.resumableOuterFrame;
     return { static_cast<SavedFrame*>(std::exchange(coroutines.enteredFrame, entry.outerFrame)), std::exchange(coroutines.enteredAsyncGenerator, entry.outerAsyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, entry.outerPromiseOfHandler) };
 }
 
@@ -170,13 +171,74 @@ static void resumeWhenCallSettles(Instance& instance, JSValue awaited, SavedFram
     waiter->queueResumeJob(globalObject, vm, awaited, false, asyncContext);
 }
 
+static bool frameEndsJob(const Instance& instance, const uint64_t* frame)
+{
+    return nextJobRunsImmediately(instance) && resumableFrame(instance) == frame;
+}
+
+static bool isUnmodifiedPromise(JSGlobalObject* globalObject, JSValue value)
+{
+    return value.isCell() && value.asCell()->structureID() == globalObject->promiseStructure()->id() && globalObject->promiseThenWatchpointSet().isStillValid()
+        && globalObject->promiseSpeciesWatchpointSet().state() == IsWatched;
+}
+
+static void resolveWithReturned(Instance& instance, VM& vm, JSPromise* promise, JSValue resolution)
+{
+    JSGlobalObject* globalObject = instance.globalObject;
+    if (!isUnmodifiedPromise(globalObject, resolution)) {
+        promise->resolve(globalObject, vm, resolution);
+        return;
+    }
+    void*& lastResolved = instance.coroutines.lastPromiseResolvedWithSettled;
+    if (nextJobRunsImmediately(instance) ? uncheckedDowncast<JSPromise>(resolution)->status() == JSPromise::Status::Fulfilled : lastResolved == resolution.asCell())
+        lastResolved = promise;
+    promise->resolve(globalObject, vm, resolution);
+}
+
+static void setResumeReaction(VM& vm, JSPromise* promise, SavedFrame* waiter)
+{
+    auto* bytes = std::bit_cast<uint8_t*>(promise);
+    *std::bit_cast<EncodedJSValue*>(bytes + JSPromise::offsetOfSlot()) = JSValue::encode(waiter);
+    *std::bit_cast<uint64_t*>(bytes + JSPromise::offsetOfPacked()) = resumeReactionBits;
+    vm.writeBarrier(promise, waiter);
+}
+
+static JSValue settledValueOf(JSGlobalObject* globalObject, JSPromise* promise)
+{
+    if (promise->status() != JSPromise::Status::Fulfilled)
+        return { };
+    JSValue value = promise->settlementValue();
+    return value.isObject() && !isDefinitelyNonThenable(asObject(value), globalObject) ? JSValue() : value;
+}
+
+static void resumeWhenResolutionSettles(Instance& instance, VM& vm, ThrowScope& scope, JSValue resolution, SavedFrame* waiter, bool isEndOfJob)
+{
+    JSGlobalObject* globalObject = instance.globalObject;
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    if (!isUnmodifiedPromise(globalObject, resolution)) [[unlikely]] {
+        promise->resolve(globalObject, vm, resolution);
+        if (scope.exception()) [[unlikely]] {
+            waiter->willBeRestoredToStack();
+            return;
+        }
+    } else if (isEndOfJob)
+        uncheckedDowncast<JSPromise>(resolution)->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promise, jsUndefined());
+    else
+        globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolution, promise, asyncContext);
+    if (promise->status() == JSPromise::Status::Pending && !vm.isAsyncContextTrackingEnabled()) [[likely]]
+        setResumeReaction(vm, promise, waiter);
+    else
+        promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, nullptr, waiter, asyncContext);
+}
+
 static bool tryScheduleImmediateResume(Instance& instance, const uint64_t* frame, JSPromise* promise, JSValue resolution)
 {
     constexpr uint16_t reactionMask = JSPromise::inlineReactionKindMask | JSPromise::inlineReactionMicrotaskMask;
     constexpr uint16_t resumeReaction = static_cast<uint16_t>(JSPromise::InlineReactionKind::InternalMicrotask) << JSPromise::inlineReactionKindShift
         | static_cast<uint16_t>(InternalMicrotask::CompiledAsyncFunctionResume) << JSPromise::inlineReactionMicrotaskShift;
     CoroutineWords& coroutines = instance.coroutines;
-    if (coroutines.waiterToResume || instance.awaitMustSuspend || coroutines.frameThatMayContinue != frame)
+    if (coroutines.waiterToResume || instance.awaitMustSuspend || coroutines.resumableFrame != frame)
         return false;
     SavedFrame* running = SavedFrame::forFrame(instance, frame);
     if (!running || running->kind() != CoroutineKind::AsyncFunction)
@@ -419,7 +481,7 @@ static AsyncGeneratorStep stepAsyncIterator(Instance& instance, const uint64_t* 
     }
 
     JSObject* driver = driverOf(instance, coroutine, frame);
-    if (instance.coroutines.frameThatMayContinue != frame)
+    if (instance.coroutines.resumableFrame != frame)
         return { asyncIteratorNextWithDriver(globalObject, iterator, driver, sent, callCache), AsyncGeneratorStepStatus::Result };
 
     AsyncGeneratorStepInProgress step(instance, driver);
@@ -478,10 +540,10 @@ static void markStepsWhoseConsumerHasAwaited(const Instance& instance, const uin
 
 void takeAwayRightToContinue(Instance& instance)
 {
-    const uint64_t* frame = frameThatMayContinue(instance);
+    const uint64_t* frame = resumableFrame(instance);
     markStepsWhoseConsumerHasAwaited(instance, frame);
     if (frame)
-        instance.coroutines.frameThatMayContinue = withoutRightToContinue(instance, frame);
+        instance.coroutines.resumableFrame = withoutResumptionRight(instance, frame);
 }
 
 static void rejectAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOfStub, JSAsyncGenerator* generator, JSValue error)
@@ -569,11 +631,11 @@ JSValue enterSavedFrame(VM& vm, Instance& instance, SavedFrame* saved, ResumeMod
     static_assert(static_cast<int32_t>(JSGenerator::Argument::Value) == 3 && static_cast<int32_t>(JSGenerator::Argument::ResumeMode) == 4);
     ASSERT(&instance == Instance::owning(saved));
     if (!instance.vm->isAsyncContextTrackingEnabled())
-        markStepsWhoseConsumerHasAwaited(instance, frameThatMayContinue(instance));
-    const uint64_t* outerFrame = withoutRightToContinue(instance, instance.coroutines.frameThatMayContinue);
+        markStepsWhoseConsumerHasAwaited(instance, resumableFrame(instance));
+    const uint64_t* outerFrame = withoutResumptionRight(instance, instance.coroutines.resumableFrame);
     CallData callData = CallData::forCompiledCode(instance.state->coroutines->savedFrameEntrypoint(), instance.globalObject);
     JSValue returned = enterCompiledCode(vm, callData, saved, jsUndefined(), saved, jsUndefined(), jsNumber(0), sent, jsNumber(static_cast<int32_t>(engineResumeModeOf(mode))));
-    instance.coroutines.frameThatMayContinue = outerFrame;
+    instance.coroutines.resumableFrame = outerFrame;
     return returned;
 }
 
@@ -689,6 +751,7 @@ NEVER_INLINE void runAsyncFunctionResumeJob(JSGlobalObject* globalObject, VM& vm
 {
     bool isRejected = static_cast<JSPromise::Status>(status) == JSPromise::Status::Rejected;
     bool isEnteredByJobLoop = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
+    vm.writeBarrier(context.asCell());
     if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
         return resumeAsyncFunctionInAsyncContext(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop, asyncContext);
     resumeAsyncFunction(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop);
@@ -785,20 +848,33 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolvePromise, void, (Instance* instance, 
 {
     constexpr Entry entry = Entry::operationAOTResolvePromise;
     AOT_OPERATION_BEGIN(instance, entry);
-    cellArgument<JSPromise>(promise, entry)->resolve(globalObject, vm, JSValue::decode(value));
+    resolveWithReturned(*instance, vm, cellArgument<JSPromise>(promise, entry), JSValue::decode(value));
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTResolvePromiseOrReturnResult, EncodedJSValue, (Instance* instance, JSCell* promise, EncodedJSValue value))
+JSC_DEFINE_JIT_OPERATION(operationAOTResolvePromiseOrReturnResult, EncodedJSValue, (Instance* instance, JSCell* promise, EncodedJSValue value, const uint64_t* frame))
 {
     constexpr Entry entry = Entry::operationAOTResolvePromiseOrReturnResult;
     AOT_OPERATION_BEGIN(instance, entry);
     JSValue resolution = JSValue::decode(value);
-    auto* frame = std::bit_cast<const uint64_t*>(callFrame->callerFrame());
+    if (isUnmodifiedPromise(globalObject, resolution) && frameEndsJob(*instance, frame)) {
+        JSPromise* inner = uncheckedDowncast<JSPromise>(resolution);
+        if (JSValue settled = settledValueOf(globalObject, inner)) {
+            inner->markAsHandled();
+            resolution = settled;
+        } else {
+            SavedFrame* saved = SavedFrame::forFrame(*instance, frame);
+            JSPromise* resolved = promise ? cellArgument<JSPromise>(promise, entry) : saved ? saved->ensurePromise(globalObject, vm) : JSPromise::create(vm, globalObject->promiseStructure());
+            if (resolved != inner) {
+                inner->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, resolved, jsUndefined());
+                OPERATION_RETURN(scope, JSValue::encode(resolved));
+            }
+        }
+    }
     if (promise) {
         JSPromise* resolved = cellArgument<JSPromise>(promise, entry);
         if (!nextJobRunsImmediately(*instance) || !tryScheduleImmediateResume(*instance, frame, resolved, resolution))
-            resolved->resolve(globalObject, vm, resolution);
+            resolveWithReturned(*instance, vm, resolved, resolution);
         OPERATION_RETURN(scope, JSValue::encode(promise));
     }
     bool isNotThenable = !resolution.isObject() || isDefinitelyNonThenable(asObject(resolution), globalObject);
@@ -806,20 +882,75 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolvePromiseOrReturnResult, EncodedJSValu
     if (isNotThenable) {
         if (saved)
             saved->fulfill(globalObject, vm, resolution);
-        OPERATION_RETURN(scope, value);
+        OPERATION_RETURN(scope, JSValue::encode(resolution));
     }
     JSPromise* created = saved ? saved->ensurePromise(globalObject, vm) : JSPromise::create(vm, globalObject->promiseStructure());
-    created->resolve(globalObject, vm, resolution);
+    resolveWithReturned(*instance, vm, created, resolution);
     OPERATION_RETURN(scope, JSValue::encode(created));
 }
 
-enum class AwaitedKind : uint8_t { Value, ValueInModuleBody, ResultOfCall };
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSettleAwaitedPromise, size_t, (uint64_t instanceWord, JSCell* awaited))
+{
+    auto& instance = *std::bit_cast<Instance*>(instanceWord);
+    JSGlobalObject* globalObject = instance.globalObject;
+    instance.coroutines.lastPromiseResolvedWithSettled = nullptr;
+    if (instance.awaitMustSuspend || !globalObject->promiseThenWatchpointSet().isStillValid() || globalObject->promiseSpeciesWatchpointSet().state() != IsWatched)
+        return false;
+    auto wordOfQueue = [&](ptrdiff_t offset) -> size_t& {
+        return *std::bit_cast<size_t*>(std::bit_cast<uint8_t*>(instance.realm.microtaskQueue) + offset);
+    };
+    auto packedOf = [](JSCell* promise) -> uint64_t& {
+        return *std::bit_cast<uint64_t*>(std::bit_cast<uint8_t*>(promise) + JSPromise::offsetOfPacked());
+    };
+    size_t& start = wordOfQueue(MicrotaskQueue::offsetOfStart());
+    const size_t end = wordOfQueue(MicrotaskQueue::offsetOfEnd());
+    const size_t mask = wordOfQueue(MicrotaskQueue::offsetOfCapacityMask());
+    const auto* jobs = std::bit_cast<const QueuedTask*>(wordOfQueue(MicrotaskQueue::offsetOfBuffer()));
+
+    const StructureID structureOfPromises = globalObject->promiseStructure()->id();
+    JSCell* resolved = awaited;
+    if (resolved->structureID() != structureOfPromises)
+        return false;
+    for (size_t index = end; index != start;) {
+        index = (index - 1) & mask;
+        const QueuedTask& job = jobs[index];
+        if (job.job() != InternalMicrotask::PromiseResolveThenableJobFast || job.globalObject() != globalObject || job.arguments()[1] != JSValue(resolved) || packedOf(resolved) != resolvedPromiseWithoutReactionBits)
+            return false;
+        if (!job.arguments()[0].isCell())
+            return false;
+        resolved = job.arguments()[0].asCell();
+        if (resolved->structureID() != structureOfPromises)
+            return false;
+    }
+    auto* settled = uncheckedDowncast<JSPromise>(resolved);
+    if (settled->status() != JSPromise::Status::Fulfilled)
+        return false;
+    JSValue value = settled->settlementValue();
+    if (value.isObject()) {
+        Structure* structure = value.asCell()->structure();
+        if (structure->definitelyNonThenableState() != Structure::DefinitelyNonThenableState::NonThenable || structure->realm() != globalObject)
+            return false;
+    }
+
+    for (size_t index = start; index != end; index = (index + 1) & mask) {
+        JSCell* promise = jobs[index].arguments()[1].asCell();
+        *std::bit_cast<EncodedJSValue*>(std::bit_cast<uint8_t*>(promise) + JSPromise::offsetOfSlot()) = JSValue::encode(value);
+        packedOf(promise) = fulfilledPromiseBits | promiseIsHandledBits;
+        instance.vm->writeBarrier(promise, value);
+    }
+    start = end;
+    wordOfQueue(MicrotaskQueue::offsetOfMarkedBefore()) = 0;
+    return true;
+}
+
+enum class AwaitedKind : uint8_t { Value, ValueInModuleBody, ResultOfCall, Resolution };
 
 static constexpr InternalMicrotask resumingTaskOf(AwaitedKind kind)
 {
     switch (kind) {
     case AwaitedKind::Value:
     case AwaitedKind::ResultOfCall:
+    case AwaitedKind::Resolution:
         return InternalMicrotask::CompiledAsyncFunctionResume;
     case AwaitedKind::ValueInModuleBody:
         return InternalMicrotask::CompiledModuleBodyResume;
@@ -828,9 +959,14 @@ static constexpr InternalMicrotask resumingTaskOf(AwaitedKind kind)
 }
 
 template<AwaitedKind kind>
-static ALWAYS_INLINE JSCell* suspendUntilSettled(Instance* instance, VM& vm, ThrowScope& scope, EncodedJSValue awaited, SavedFrame* saved)
+static ALWAYS_INLINE JSCell* suspendUntilSettled(Instance* instance, VM& vm, ThrowScope& scope, EncodedJSValue awaited, SavedFrame* saved, const uint64_t* frame)
 {
+    UNUSED_PARAM(frame);
     if constexpr (kind == AwaitedKind::ResultOfCall)
+        resumeWhenCallSettles(*instance, JSValue::decode(awaited), saved);
+    else if constexpr (kind == AwaitedKind::Resolution)
+        resumeWhenResolutionSettles(*instance, vm, scope, JSValue::decode(awaited), saved, frameEndsJob(*instance, frame));
+    else if (kind == AwaitedKind::Value && isSavedFrameOf(*instance, JSValue::decode(awaited)))
         resumeWhenCallSettles(*instance, JSValue::decode(awaited), saved);
     else {
         resumeWhenSettled(instance->globalObject, vm, JSValue::decode(awaited), saved, resumingTaskOf(kind));
@@ -845,19 +981,20 @@ static ALWAYS_INLINE JSCell* suspendUntilSettled(Instance* instance, VM& vm, Thr
     { \
         AOT_OPERATION_BEGIN(instance, Entry::saveFrameAndAwait); \
         SavedFrame* saved = SavedFrame::saveAsyncFunction(vm, *instance, { frame, bottom, resumeAddress, reinterpret_cast<const SuspensionWords*>(suspensionWords) }); \
-        OPERATION_RETURN(scope, suspendUntilSettled<kind>(instance, vm, scope, awaited, saved)); \
+        OPERATION_RETURN(scope, suspendUntilSettled<kind>(instance, vm, scope, awaited, saved, frame)); \
     } \
     JSC_DEFINE_JIT_OPERATION(awaitWithFrame, JSCell*, (Instance* instance, EncodedJSValue awaited, JSCell* savedFrame)) \
     { \
         AOT_OPERATION_BEGIN(instance, Entry::awaitWithFrame); \
         SavedFrame* saved = cellArgument<SavedFrame>(savedFrame, Entry::awaitWithFrame); \
         vm.writeBarrier(saved); \
-        OPERATION_RETURN(scope, suspendUntilSettled<kind>(instance, vm, scope, awaited, saved)); \
+        OPERATION_RETURN(scope, suspendUntilSettled<kind>(instance, vm, scope, awaited, saved, std::bit_cast<const uint64_t*>(callFrame->callerFrame()))); \
     }
 
 AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwait, operationAOTAwaitWithSavedFrame, AwaitedKind::Value)
 AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwaitInModuleBody, operationAOTAwaitWithSavedFrameInModuleBody, AwaitedKind::ValueInModuleBody)
 AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwaitCall, operationAOTAwaitCallWithSavedFrame, AwaitedKind::ResultOfCall)
+AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwaitResolution, operationAOTAwaitResolutionWithSavedFrame, AwaitedKind::Resolution)
 #undef AOT_DEFINE_AWAIT_OPERATIONS
 
 static JSObject* asyncIteratorArgument(JSCell* iterator, Entry entry)

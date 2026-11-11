@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 130 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 131 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -171,6 +171,7 @@ Rules for an edit to an upstream test:
 | `LayoutTests/.../wasm/core/js/simd/simd_f32x4_cmp.wast.js` | `skip if $asan` | `RunLoopGeneric`: the collector thread starts a timer while it is in `fired()` without the lock; `ASSERTION FAILED: !isScheduled()`. Only assertion builds see it, and of our lanes those are the asan ones |
 | `wasm/stress/memory64-overflow.js` | `slow!` | past the 300 s hard timeout under ASan in `wasm-collect-continuously` |
 | `stress/function-toString-native-one-line.js` | none; test fixed | its walker was a top-level `function`, so a property of `globalThis`, and its own source contains the `[native code]` it looks for. It is a `const` |
+| `stress/new-largeish-contiguous-array-with-size.js` | `--smallHeapRAMFraction=0.25`, `--mediumHeapRAMFraction=0.5` added to `runWithRAMSize` | it allocates 1,000 arrays of 50,000 elements and then bounds `gcHeapSize()` at 10,000,000 without asking for a collection. With `USE(MEMORY_FOOTPRINT_API)`, which Bun's builds have, the two fractions are 0.8 and 0.9, so the heap may pass the bound before a full collection; more often, the more processes share the processors. The bound holds for the values of a build without it, which the test names |
 
 `$asan` and `slow!` are fork additions to the runner, see D.
 
@@ -190,9 +191,7 @@ Rules for an edit to an upstream test:
 
 Upstream's tests as upstream has them. A failure with the message given here is not a regression.
 
-| file | message | what it depends on |
-|---|---|---|
-| `stress/new-largeish-contiguous-array-with-size.js` | `Error: heap too big before forced GC: <bytes>` | with `--forceRAMSize=10000000` it allocates 1,000 arrays of 50,000 elements in a loop and then bounds `gcHeapSize()` at 10,000,000 without asking for a collection. The bound holds if the concurrent collector gets processor time before the loop ends. Run alone it passes; the more processes share the processors, the more often it fails |
+None at present.
 
 ---
 

@@ -16,6 +16,8 @@ operation FulfillFreshPromise (promise: Object/inspects+writesContents, value: A
 family String Selected..Placed
 operation Substring (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(string) ; CreatesString ; Prepared..Placed ; interpreted = Allocation ; replaces = CallBuiltin, ElemGet ; runtime = Substring ; hasOwnFoldingRule = true ; form = Closed
 operation FlattenString (string: String/inspects+returns, isRead...: Boolean/inspects) [| engine mayStayRope] -> natural(FlatString) ; ResolvesRopes ; Prepared..Placed ; replaces = CallBuiltin, ElemGet, StrictEq, Substring, StringEqualsLiteral, StringOrderToCharacter, StringStartsWithLiteral, StringEndsWithLiteral, StringIndexOfLiteral, StringIndexOfCharacter, StringLastIndexOfLiteral, GetStringCodeUnit, GetStringLength ; runtime = Flatten ; form = Closed
+operation OpenString (string: String/inspects+returns) -> natural(string) ; reads(StringStorage) ; Prepared..Placed ; replaces = CallBuiltin, ElemGet, GetStringCodeUnit ; form = Open
+operation TryResolveRope (string: String/inspects, isRead...: Boolean/inspects) -> natural(boolean) ; reads(StringStorage) writes(StringStorage) ; Prepared..Placed ; replaces = CallBuiltin, ElemGet, GetStringCodeUnit ; runtime = TryResolveRope ; form = Open
 operation StringRange (length: Integer/inspects, first: Number/inspects, second?: Number/inspects, method: StringRangeMethod) -> results(natural(int[0, 2147483647]), natural(int[0, 2147483647])) ; none ; Prepared..Placed ; form = Open
 operation StringOrder (left: String/inspects, right: String/inspects) -> natural(int[-1, 1]) ; ResolvesRopes ; replaces = Less, LessEq, Greater, GreaterEq, CallBuiltin ; runtime = CompareStrings ; form = Closed
 operation StringOrderToCharacter (string: String/inspects, codeUnit: UInt32) -> natural(int[-1, 1]) ; ResolvesRopes ; replaces = Less, LessEq, Greater, GreaterEq ; form = Open
@@ -66,6 +68,11 @@ operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisVal
 operation RegExpMatchLiteral (overload: BuiltinOverload, string: String/inspects, regExp?: Object/inspects, pattern: String, regExpFlags: RegExpFlags, matchForm: RegExpMatchForm) -> declared(overload) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; replaces = CallBuiltin ; form = Closed
 operation RegExpMatchLiteralInParts (string: String/inspects, regExp?: Object/inspects, pattern: String, regExpFlags: RegExpFlags) -> natural(boolean) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; replaces = CallBuiltin ; form = Closed
 operation BoundsOfRegExpMatch (count: UInt32) -> results(natural(int[-1, 2147483647]), natural(int[-1, 2147483647]), ..) ; reads(RegExpState) ; replaces = CallBuiltin ; form = Open
+engine operation MatchRegExpIntoFrame (overload: BuiltinOverload, regExp: Object/inspects, string: String/inspects) -> natural(MatchRecord) ; unknownCode ; replaces = CallBuiltin ; form = Closed
+engine operation IsMatchInFrame (match: MatchRecord/inspects) -> natural(boolean) ; reads(RegExpState) ; replaces = CallBuiltin ; form = Open
+engine operation LengthOfMatchInFrame (match: MatchRecord/inspects) -> natural(int[0, 2147483647]) ; reads(RegExpState) ; replaces = CallBuiltin ; form = Open
+engine operation BoundsOfMatchInFrame (match: MatchRecord/inspects, index: Integer/inspects) -> results(natural(int[-1, 2147483647]), natural(int[-1, 2147483647])) ; reads(RegExpState) ; replaces = CallBuiltin ; form = Open
+engine operation NewArrayOfRegExpMatch (contents: Type, string: String/inspects, regExp: Object/inspects) -> allocation(Array<contents>) ; CreatesString reads(RegExpState) ; interpreted = Allocation ; replaces = CallBuiltin ; form = Runtime
 operation NewRegExpMatchArray (contents: Type, string: String/inspects, pattern: String, regExpFlags: RegExpFlags) -> allocation(Array<contents>) ; CreatesString reads(RegExpState) ; interpreted = Allocation ; replaces = CallBuiltin ; form = Runtime
 
 family InlineBuiltin Selected..Placed ; replaces = CallBuiltin

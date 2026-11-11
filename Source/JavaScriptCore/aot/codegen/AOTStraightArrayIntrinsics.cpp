@@ -28,17 +28,6 @@ OpcodeSet StraightEmitter::opcodesOfArrayIntrinsics()
     };
 }
 
-static constexpr int32_t bitsOfShapesWithoutBoxedElements = IndexingShapeMask & ~(ContiguousShape - Int32Shape);
-
-static_assert([] {
-    for (uint32_t byte = 0; byte <= 0xff; ++byte) {
-        uint32_t shape = byte & IndexingShapeMask;
-        bool passesTest = !((byte - Int32Shape) & bitsOfShapesWithoutBoxedElements);
-        if (passesTest != (shape == Int32Shape || shape == ContiguousShape))
-            return false;
-    }
-    return true;
-}());
 static_assert(!arrayStorageFormOf(ArrayStorage::Int32).hole && !arrayStorageFormOf(ArrayStorage::Contiguous).hole);
 static_assert(std::endian::native == std::endian::little);
 
@@ -67,14 +56,13 @@ static CCallHelpers::BaseIndex elementBelowLengthOfList(StraightEmitter& emitter
     GPRReg position = StraightEmitter::temporary(2);
     GPRReg word = StraightEmitter::temporary(3);
     emitter.load(value.arrayOperand(), storage);
-    jit.load8(CCallHelpers::Address(storage, JSCell::indexingTypeAndMiscOffset()), word);
+    CCallHelpers::Address mode(storage, JSCell::indexingTypeAndMiscOffset());
     if (kind == ArrayStorage::Double) {
+        jit.load8(mode, word);
         jit.and32(CCallHelpers::TrustedImm32(arrayStorageTestMask), word);
         isAbsent.append(jit.branch32(CCallHelpers::NotEqual, word, CCallHelpers::TrustedImm32(DoubleShape)));
-    } else {
-        jit.sub32(CCallHelpers::TrustedImm32(Int32Shape), word);
-        isAbsent.append(jit.branchTest32(CCallHelpers::NonZero, word, CCallHelpers::TrustedImm32(bitsOfShapesWithoutBoxedElements)));
-    }
+    } else
+        isAbsent.append(jit.branchTest8(CCallHelpers::NonZero, mode, CCallHelpers::TrustedImm32(UndecidedShape)));
     jit.loadPtr(CCallHelpers::Address(storage, JSObject::butterflyOffset()), storage);
     loadIntegerOperandOfList(emitter, value.positionOperand(), position);
     jit.load32(CCallHelpers::Address(storage, Butterfly::offsetOfPublicLength()), word);

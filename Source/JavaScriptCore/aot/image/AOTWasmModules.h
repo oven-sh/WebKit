@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTCodeTemplates.h"
 #include "AOTDiagnostics.h"
 #include "AOTImageBuilder.h"
@@ -14,7 +15,6 @@
 #include "AOTWasmInterface.h"
 #include <array>
 #include <expected>
-#include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC {

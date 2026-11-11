@@ -287,6 +287,9 @@ private:
     void finishCreation(JSGlobalObject*, VM&);
 
 #if USE(BUN_JSC_ADDITIONS)
+    template<typename Functor> bool anyEntryInGraph(AbstractModuleRecord* root, const Functor&);
+    bool importsModuleBeingMade(AbstractModuleRecord*);
+    bool takeOuterLoadStep(VM&, AbstractModuleRecord* root);
     void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
     void pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget);
 
@@ -315,9 +318,11 @@ private:
 
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
+#if USE(BUN_JSC_ADDITIONS)
+    UniquedStringImpl* m_rootBeingReloaded { nullptr };
+#endif
 #if ENABLE(AOT)
     bool m_hasAliasedLoadedModules { false };
-    UniquedStringImpl* m_rootBeingReloaded { nullptr };
     UniquedStringImpl* m_moduleBeingMadeInline { nullptr };
 #endif
 

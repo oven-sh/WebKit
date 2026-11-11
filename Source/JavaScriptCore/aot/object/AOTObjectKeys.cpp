@@ -512,6 +512,17 @@ static EntriesAddedToKeyOrder entriesCountingExtraKeys(State& state, const Objec
     return entries;
 }
 
+static std::optional<uint32_t> numberOfExtraKeysByStructures(State& state, const Object& object)
+{
+    if (std::optional<uint32_t> number = object.numberOfExtraKeysByStructure())
+        return number;
+    JSObject* extra = object.orderWord() & orderWordHasFieldOutsideSlot ? nullptr : extraPropertiesIfCreated(object);
+    Structure* structure = extra ? extra->structure() : nullptr;
+    if (!structure || structure->isDictionary() || !structure->isQuickPropertyAccessAllowedForEnumeration())
+        return std::nullopt;
+    return countExtraKeys(state, object, extra);
+}
+
 void Object::willCreateField(State&, const FieldData& field)
 {
     if (field.isOutOfLine())
@@ -527,21 +538,16 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
         state.objects->classes.didShadowMember(layout, field);
     KeyOrderTable& keyOrders = state.objects->keyOrders;
     uint16_t index = indexOf(field);
-    if (std::optional<uint32_t> after = keyOrders.stepInsideOrderOfImage(layout, orderWord(), index)) {
-        setOrderAndCount(*after);
-        return;
-    }
     uint32_t before = orderWord() & orderAndCountMask;
-    std::optional<uint32_t> numberOfExtraKeys = numberOfExtraKeysByStructure();
-    if (numberOfExtraKeys && !hasOutOfLineKeyOrder()) {
-        if (std::optional<uint32_t> after = keyOrders.publishedTransition(layout, before, field, *numberOfExtraKeys)) {
-            setOrderAndCount(*after);
-            return;
-        }
-    }
+    std::optional<uint32_t> numberOfExtraKeys = numberOfExtraKeysByStructures(state, *this);
     bool isKnownNotToBeListed = !(field.flags & fieldMayExistWithoutStorage);
-    if (isKnownNotToBeListed && !hasFlagsInOrderWord() && !hasOutOfLineKeyOrder()) {
-        if (std::optional<uint32_t> after = keyOrders.tryAppendToAddedOrder(layout, before, field)) {
+    if (numberOfExtraKeys && !hasOutOfLineKeyOrder()) {
+        std::optional<uint32_t> after = *numberOfExtraKeys ? std::nullopt : keyOrders.stepInsideOrderOfImage(layout, before, index);
+        if (!after)
+            after = keyOrders.publishedTransition(layout, before, field, *numberOfExtraKeys);
+        if (!after && isKnownNotToBeListed)
+            after = keyOrders.tryAppendToAddedOrder(layout, before, field, *numberOfExtraKeys);
+        if (after) {
             setOrderAndCount(*after);
             return;
         }
@@ -808,9 +814,11 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
     });
     if (hasSymbolKey)
         return nullptr;
+    std::span<const uint16_t> keyOrder = object.keyOrder(state);
     Vector<PropertyListEntry> properties;
+    properties.reserveInitialCapacity(keyOrder.size() + extraKeys.size());
     bool hasAllFields = true;
-    size_t nextExtraKey = Object::forEachPositionedKey(object.keyOrder(state), layout.numberOfFields, extraKeys.size(), [&](uint16_t index) {
+    size_t nextExtraKey = Object::forEachPositionedKey(keyOrder, layout.numberOfFields, extraKeys.size(), [&](uint16_t index) {
         const FieldData& field = fields[index];
         if (!layouts.hasStringKey(field)) {
             hasAllFields &= !layouts.hasSymbolKey(field);

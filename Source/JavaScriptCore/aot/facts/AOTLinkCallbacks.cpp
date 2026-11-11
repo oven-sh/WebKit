@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBodyIndex.h"
 #include "AOTHeldOperands.h"
 #include "AOTIRProgram.h"
@@ -17,7 +18,6 @@
 #include "AOTThreads.h"
 #include "AOTType.h"
 #include <algorithm>
-#include <wtf/BitVector.h>
 #include <wtf/Lock.h>
 
 namespace JSC { namespace AOT { namespace Typed {

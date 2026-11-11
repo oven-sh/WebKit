@@ -563,6 +563,13 @@ static void testMachineFoldingOfShifts()
         { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.i, 5), v.make(SShr, v.i, 27)); } },
         { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.i, 5), v.make(ZShr, v.j, 27)); } },
         { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitOr, v.make(Shl, v.a, 5), v.make(ZShr, v.a, 27)); } },
+        { "BitXor(ZShr(i, Const32(11)), RotR(i, Const32(6)))"_s, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, v.make(ZShr, v.i, 6), v.make(ZShr, v.i, 11)), v.make(Shl, v.i, 26)); } },
+        { "BitXor(RotR(i, Const32(6)), RotR(i, Const32(11)))"_s, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, v.make(BitXor, v.make(ZShr, v.i, 6), v.make(ZShr, v.i, 11)), v.make(Shl, v.i, 26)), v.make(Shl, v.i, 21)); } },
+        { "BitOr(j, RotR(i, Const32(6)))"_s, [](FoldingTest& v) { return v.make(BitOr, v.make(BitOr, v.make(ZShr, v.i, 6), v.j), v.make(Shl, v.i, 26)); } },
+        { "BitXor(b, RotR(a, Const32(14)))"_s, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, v.make(ZShr, v.a, 14), v.b), v.make(Shl, v.a, 50)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitXor, v.make(BitOr, v.make(ZShr, v.i, 6), v.j), v.make(Shl, v.i, 26)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, v.make(SShr, v.i, 6), v.j), v.make(Shl, v.i, 26)); } },
+        { foldingTestAnyText, [](FoldingTest& v) { return v.make(BitXor, v.make(BitXor, v.make(ZShr, v.i, 6), v.j), v.make(Shl, v.i, 25)); } },
         { "i"_s, [](FoldingTest& v) { return v.make(RotR, v.i, 32); }, FoldingTestAnswers::NotCompared },
         { "RotR(i, Const32(1))"_s, [](FoldingTest& v) { return v.make(RotR, v.i, 33); }, FoldingTestAnswers::NotCompared },
         { "Const32(-2147483648)"_s, [](FoldingTest& v) { return v.make(RotR, v.int32(1), 1); }, FoldingTestAnswers::NotCompared },
@@ -628,7 +635,7 @@ static void testMachineFoldingOfIntegerConversions()
         { "Trunc(Add(a, b))"_s, [](FoldingTest& v) { return v.lowWord(v.make(Add, v.a, v.b)); } },
         { "Trunc(Mul(a, b))"_s, [](FoldingTest& v) { return v.lowWord(v.make(Mul, v.a, v.b)); } },
         { "Trunc(Neg(a))"_s, [](FoldingTest& v) { return v.lowWord(v.make(Neg, v.a)); } },
-        { "Trunc(Add(b, Add(a, SExt32(i))))"_s, [](FoldingTest& v) { return v.lowWord(v.make(Add, v.make(Add, v.a, v.make(SExt32, v.i)), v.b)); } },
+        { "Add(Trunc(b), Add(Trunc(a), i))"_s, [](FoldingTest& v) { return v.lowWord(v.make(Add, v.make(Add, v.a, v.make(SExt32, v.i)), v.b)); } },
         { foldingTestAnyText, [](FoldingTest& v) {
             LValue left = v.make(Add, v.a, v.make(SExt32, v.i));
             return v.lowWord(v.make(Mul, left, v.make(Sub, v.b, v.make(SExt32, v.j))));

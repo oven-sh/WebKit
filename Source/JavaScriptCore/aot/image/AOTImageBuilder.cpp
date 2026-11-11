@@ -25,6 +25,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSectionWriter.h"
 #include "AOTSort.h"
+#include "AOTStringUses.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
 #include "AOTStubsCallAdapters.h"
@@ -291,6 +292,7 @@ struct StringHeaderNumbers {
 
     ImageForm form { ImageForm::Absolute };
     const StringNumbers* ofStrings { nullptr };
+    const StringConstantNumbering* constants { nullptr };
     Vector<uint32_t> byString;
     Vector<uint32_t> listedWordIndexes;
     Vector<uint8_t> codedTexts;
@@ -448,6 +450,7 @@ static StringHeaderNumbers numberStringHeaders(const TextRecords& text, const Im
     StringHeaderNumbers numbers;
     numbers.form = form;
     numbers.ofStrings = &imageNumbers.stringNumbers();
+    numbers.constants = &imageNumbers.stringConstants();
     numbers.byString.fill(0, text.strings.size());
     if (numbers.hasRecords())
         numbers.listedWordIndexes.fill(0, text.strings.size());
@@ -475,6 +478,8 @@ static StringHeaderNumbers numberStringHeaders(const TextRecords& text, const Im
             numbers.byString[index] = static_cast<uint32_t>(count++);
             continue;
         }
+        if (numbers.constants->isPlaced(StringID(static_cast<uint32_t>(index))))
+            continue;
         numbers.byString[index] = static_cast<uint32_t>(numberOfListedWords);
         numberOfListedWords += ImageListedString::numberOfWords(string.range(text.longStrings)) + string.hasListedHash();
     }
@@ -605,11 +610,14 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
         .endOfStringHeaders = stringHeaders.count,
         .numberOfStringWords = stringHeaders.numberOfStringWords(),
         .numberOfCodedTexts = static_cast<uint32_t>(stringHeaders.ofStrings->coded().size()),
+        .numberOfPlacedConstants = stringHeaders.constants->numberOfPlaced(),
     };
     if (Typed::reachesModuleObjects(parts.program))
         flags.add(ImageFlag::ShowsWaysBetweenModuleObjects);
     if (std::ranges::any_of(parts.program.modules, [](const Typed::Module& module) { return module.kind != Typed::ModuleKind::CommonJs && module.flags.contains(Typed::ModuleFlags::MayBeReevaluated); }))
         flags.add(ImageFlag::RunsEntryPointsAgain);
+    if (!parts.program.moduleInstances.isEmpty() || std::ranges::any_of(parts.program.modules, [](const Typed::Module& module) { return module.flags.contains(Typed::ModuleFlags::IsReloadable); }))
+        flags.add(ImageFlag::HasReloadableModules);
     if (std::ranges::any_of(parts.program.modules, [](const Typed::Module& module) { return module.flags.contains(Typed::ModuleFlags::IsExposedByRequireCache); }))
         flags.add(ImageFlag::ShowsEntriesOfRequireCache);
     header.flags = flags.toRaw();
@@ -697,6 +705,8 @@ static void writeStrings(std::span<uint8_t> image, const TextRecords& text, cons
                 continue;
             ImageLongString range = string.range(text.longStrings);
             if (!string.hasHeader()) {
+                if (numbers.constants->isPlaced(StringID(static_cast<uint32_t>(index))))
+                    continue;
                 ImageListedString::write(listedStrings.subspan(numbers.byString[index]), range);
                 if (string.hasListedHash())
                     listedStrings[numbers.byString[index] + ImageListedString::numberOfWords(range)] = string.hashOrIdentifierNumber();
@@ -728,7 +738,18 @@ static void writeStrings(std::span<uint8_t> image, const TextRecords& text, cons
 
 static void writeWordsOfStringConstants(std::span<uint8_t> image, const TextRecords& text, const StringHeaderNumbers& numbers, const ImageExtent& extent)
 {
-    for (uint32_t& constant : sectionIn<uint32_t>(image, extent, ImageSection::StringConstants))
+    std::span constants = sectionIn<uint32_t>(image, extent, ImageSection::StringConstants);
+    const uint32_t numberOfConstants = numbers.constants->count();
+    const uint32_t numberOfPlaced = numbers.constants->numberOfPlaced();
+    RELEASE_ASSERT(constants.size() == static_cast<size_t>(numberOfConstants) + numberOfPlaced);
+    for (uint32_t number = 0; number < numberOfPlaced; ++number) {
+        const ImageString& string = text.strings[constants[number]];
+        ImageLongString range = string.range(text.longStrings);
+        RELEASE_ASSERT(!string.hasHeader() && string.hasListedHash() && !string.is16Bit() && ImagePlacedString::fits(range));
+        constants[number] = ImagePlacedString::wordFor(range);
+        constants[numberOfConstants + number] = string.hashOrIdentifierNumber();
+    }
+    for (uint32_t& constant : constants.subspan(numberOfPlaced, numberOfConstants - numberOfPlaced))
         constant = wordOfString(text, numbers, constant).bits;
 }
 
@@ -782,7 +803,10 @@ static Vector<uint8_t> writeImage(const ImageWriterInputs& parts, PhaseTimes& ti
     writeRangeOfShapeSets(image.mutableSpan(), parts.linker, *extent);
     times.didFinish("write strings"_s);
 
-    linkCode(parts.linker, image.mutableSubspan(extent->codeOffset, layout.codeSize), context);
+    CodeLinkerInputs linker = parts.linker;
+    linker.strings = text.strings;
+    linker.longStrings = text.longStrings;
+    linkCode(linker, image.mutableSubspan(extent->codeOffset, layout.codeSize), context);
     times.didFinish("link code"_s);
 
     checkImageIsReadOnly(image.subspan(extent->codeOffset, layout.codeSize), parts.ffiStubs, layout, context);
@@ -810,7 +834,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     const CodeTemplates& templates = *createdTemplates;
     times.didFinish("create code templates"_s);
 
-    TableInputs tableInputs { program, inputs.facts, inputs.plan, functions, inputs.bodyFacts, context.options(), &context };
+    TableInputs tableInputs { program, inputs.facts, inputs.plan, functions, inputs.bodyFacts, context.options(), &context, inputs.functionSources.get() };
     result.numbers = makeUniqueWithoutFastMallocCheck<ImageNumbers>();
     ImageNumbers& numbers = *result.numbers;
 

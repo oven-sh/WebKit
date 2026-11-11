@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTBodyIndex.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -62,6 +63,42 @@ private:
     LoopID m_loop;
     Vector<LoopWithin, 8> m_loopsWithin;
 };
+
+template<typename MarkUses>
+BitVector findWhatEveryPathUses(const BodyIndex& index, BlockID inputHead, size_t size, const MarkUses& markUses)
+{
+    LoopID loop = index.loopOf(inputHead);
+    std::span<const BlockID> members = index.membersOf(loop);
+    auto placeOf = [&](BlockID block) {
+        return static_cast<size_t>(std::ranges::lower_bound(members, block.index(), { }, [](BlockID member) { return member.index(); }) - members.begin());
+    };
+    Vector<std::optional<BitVector>> usedFrom(members.size());
+    for (size_t place = members.size(); place--;) {
+        std::optional<BitVector>& used = usedFrom[place];
+        for (BodyTarget target : index.block(members[place]).terminator().targets()) {
+            BlockID next = target.block();
+            if (!index.isInLoop(next, loop))
+                continue;
+            size_t placeOfNext = placeOf(next);
+            if (placeOfNext <= place && next != inputHead && index.isLoopHead(next))
+                continue;
+            if (placeOfNext <= place) {
+                used = BitVector(size);
+                break;
+            }
+            if (!usedFrom[placeOfNext])
+                continue;
+            if (used)
+                used->filter(*usedFrom[placeOfNext]);
+            else
+                used = *usedFrom[placeOfNext];
+        }
+        if (used)
+            markUses(index.block(members[place]), *used);
+    }
+    const std::optional<BitVector>& usedFromHead = usedFrom[placeOf(inputHead)];
+    return usedFromHead ? *usedFromHead : BitVector(size);
+}
 
 } } } // namespace JSC::AOT::Typed
 

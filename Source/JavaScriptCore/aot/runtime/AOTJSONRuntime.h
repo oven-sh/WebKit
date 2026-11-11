@@ -44,7 +44,7 @@ public:
     JSONRuntime(Instance&, CacheRegistry&, ZeroedTableArena&);
     ~JSONRuntime();
 
-    bool open(StringView text, void* stackPointer);
+    bool open(StringView text, JSONTextMemory, void* stackPointer);
     void abandon();
 
     void clear();
@@ -52,6 +52,7 @@ public:
     const StringImpl* wideText() const { return m_wideText.get(); }
 
     JSONValueParser::LearnedNames& learnedNames();
+    JSONValueParser::LearnedStrings& learnedStrings();
 
     struct RecordPlan {
         const ObjectBuilderPlan* plan { nullptr };
@@ -109,12 +110,13 @@ private:
     void forgetRecordPlansNotFoundLately(VM&);
 
     uint8_t* begin(void* stackPointer, size_t length);
-    uint8_t* beginIn(uint8_t* start, void* stackPointer, size_t length);
+    void beginIn(const uint8_t* start, void* stackPointer, size_t length);
     void end();
     uint8_t* reserve(size_t size);
     uint8_t* replace(size_t size);
     void freeCurrent();
 
+    bool tryOpenInPlace(std::span<const Latin1Character>, void* stackPointer);
     bool openLatin1(std::span<const Latin1Character>, void* stackPointer);
     bool open16Bit(std::span<const char16_t>, void* stackPointer);
 
@@ -122,6 +124,7 @@ private:
     bool m_hasParsedRecords { false };
     MadeInArena<RecordPlanCache> m_recordPlanCache;
     MadeInArena<JSONValueParser::LearnedNames> m_learnedNames;
+    MadeInArena<JSONValueParser::LearnedStrings> m_learnedStrings;
     HashMap<uint32_t, Vector<RecordPlanForNames, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_recordPlans;
     uint64_t m_numberOfTimesAskedForRecordPlan { 0 };
     uint64_t m_numberOfTimesAskedWhenPlansWereForgotten { 0 };
@@ -130,6 +133,7 @@ private:
     uint32_t m_mostRecordPlansHeld { 0 };
     std::unique_ptr<WeakGCMap<Structure*, Structure>> m_structuresThatNoPlanFits;
     RefPtr<StringImpl> m_wideText;
+    uint8_t* m_sourceCopy { nullptr };
     size_t m_sourceCapacity { 0 };
 };
 

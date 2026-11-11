@@ -14,6 +14,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class BodyIndex;
 class Walker;
 
 using DefinitionsInScanOfStrings = ScopedLambda<BodyValue(ValueID)>;
@@ -24,6 +25,16 @@ StringID textThatValueBeginsWith(const Program&, BodyValue definition, NOESCAPE 
 void finishListsOfStringsInScan(SummaryBeingMade&);
 
 bool keyThatBeginsSoMayNamePrototypeLink(const Program&, const SummaryAccess&);
+
+struct KeyAffixes {
+    explicit operator bool() const { return !beginning.empty() || !ending.empty(); }
+    bool mayMatch(std::span<const uint8_t> name) const;
+
+    std::span<const uint8_t> beginning;
+    std::span<const uint8_t> ending;
+};
+
+KeyAffixes affixesOfKey(const Program&, const BodyIndex&, ValueID key);
 
 void fillTablesOfStringsForFacts(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held, FactTables&);
 

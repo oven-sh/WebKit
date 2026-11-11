@@ -1,9 +1,11 @@
 # `if ($hasContiguousIndex(array, i)) callback(i); else callback(i);` with i anywhere up to 2^53 - 1.
 # A yes says that i lies below the length of a plain vector, and no plain vector is longer than 2^28: behind the yes the index is boxed as an int32 without being asked whether it is one.
-# Behind the no it is asked as before: one question in the body, not two and not none. 4294967297 has the low half of 1: boxed without the question it would be called 1.
+# Behind the no the stub that boxes asks: one call of it in the body, not two and not none. 4294967297 has the low half of 1: boxed without the question it would be called 1.
 # RUN: emit f1 mechanisms=all
-# CHECK: = BelowEqual(
 # CHECK-NOT: = BelowEqual(
+# RUN(BOX): bytes f1:Body mechanisms=all
+# BOX: Call Stub BoxNumber.Integer
+# BOX-NOT: BoxNumber
 # RUN(ANSWER): run-in-shell mechanisms=all globalThis.after = () => { for (const i of [1, 2, 3, 2147483647, 2147483653, 4294967297, 9007199254740991]) each.call(["a", "b", "c"], (index, found) => print(typeof index, index, found), i); };
 # ANSWER: number 1 true
 # ANSWER-NEXT: number 2 true

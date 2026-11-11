@@ -128,9 +128,12 @@ StubSignature signatureOfGetByValAtConstantIndex(StubKey key) { return signature
 StubSignature signatureOfGetByValExpecting(StubKey key) { return signatureOfGetByVal(key); }
 StubSignature signatureOfGetByValAtIndexExpecting(StubKey key) { return signatureOfGetByVal(key); }
 
+StubSignature signatureOfGetByValAtKnownIndex(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::R0) }); }
+
 StubSignature signatureOfPutByVal(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 StubSignature signatureOfPutByValAtIndex(StubKey key) { return signatureOfPutByVal(key); }
 StubSignature signatureOfPutByValAtConstantIndex(StubKey key) { return signatureOfPutByVal(key); }
+StubSignature signatureOfPutByValAtKnownIndex(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A2) }); }
 StubSignature signatureOfPutByValExpecting(StubKey key) { return signatureOfPutByVal(key); }
 StubSignature signatureOfPutByValAtIndexExpecting(StubKey key) { return signatureOfPutByVal(key); }
 
@@ -146,11 +149,16 @@ static ElementRegisters allocateElementRegisters(StubAssembler& jit)
     return registers;
 }
 
-static void checkTypedArrayAccess(StubAssembler& jit, const ElementRegisters& registers, JumpList& slow, JumpList* isOutside = nullptr, JumpList* isNoTypedArray = nullptr)
+static Jump branchIfNoView(StubAssembler& jit, const ElementRegisters& registers)
 {
     jit.load8(Address(registers.base, JSCell::typeInfoTypeOffset()), registers.type);
     jit.sub32(registers.type, TrustedImm32(FirstTypedArrayType), registers.storage);
-    (isNoTypedArray ? *isNoTypedArray : slow).append(jit.branch32(CCallHelpers::AboveOrEqual, registers.storage, TrustedImm32(NumberOfTypedArrayTypesExcludingDataView)));
+    return jit.branch32(CCallHelpers::AboveOrEqual, registers.storage, TrustedImm32(NumberOfTypedArrayTypesExcludingDataView));
+}
+
+static void checkTypedArrayAccess(StubAssembler& jit, const ElementRegisters& registers, JumpList& slow, JumpList* isOutside = nullptr, JumpList* isNoTypedArray = nullptr)
+{
+    (isNoTypedArray ? *isNoTypedArray : slow).append(branchIfNoView(jit, registers));
     slow.append(jit.branchTest8(CCallHelpers::NonZero, Address(registers.base, JSArrayBufferView::offsetOfMode()), TrustedImm32(isResizableOrGrowableSharedMode)));
     // A length may exceed 31 bits, so a negative key must not look like an index.
     jit.signExtend32ToPtr(registers.key, registers.index);
@@ -167,12 +175,12 @@ static void returnBoxedInt32(StubAssembler& jit, const ElementRegisters& registe
 
 static void returnBoxedDouble(StubAssembler& jit, const ElementRegisters& registers, PureDouble number, FPRReg numberScratch)
 {
-    JumpList notInt32;
-    branchIfNotExactInt32(jit, number.fpr(), registers.storage, notInt32, numberScratch);
-    returnBoxedInt32(jit, registers);
-    notInt32.link(&jit);
-    boxDouble(jit, number, jit.result());
-    jit.returnToCaller();
+    returnBoxedNumber(jit, number, registers.storage, numberScratch, jit.result());
+}
+
+static void returnDoubleUnlessHole(StubAssembler& jit, const ElementRegisters& registers, BaseIndex element, FPRReg numberScratch, JumpList& isHole)
+{
+    returnBoxOfDoubleElement(jit, element, registers.number, registers.storage, registers.type, numberScratch, isHole, jit.result());
 }
 
 static void returnValueUnlessHole(StubAssembler& jit, const ElementRegisters& registers, BaseIndex element, JumpList& isHole)
@@ -195,7 +203,7 @@ static void loadExtraPropertiesOfCompiledObject(StubAssembler& jit, const Elemen
     loadExtraProperties(jit, base, hiddenWordOffset, extraProperties, hasNone);
 }
 
-static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& isNeitherStringNorCompiledObject)
+static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& isNeitherStringNorCompiledObject, JumpList& isInsideView)
 {
     const auto [base, index, storage, length, shape, number] = registers;
     const BaseIndex element(storage, index, CCallHelpers::TimesEight);
@@ -227,6 +235,15 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
     jit.returnToCaller();
 
     isNotString.link(&jit);
+    Jump isNoView = branchIfNoView(jit, registers);
+    notHandled.append(jit.branchTest8(CCallHelpers::NonZero, Address(base, JSArrayBufferView::offsetOfMode()), TrustedImm32(isResizableOrGrowableSharedMode)));
+    jit.loadPtr(Address(base, JSArrayBufferView::offsetOfLength()), storage);
+    notHandled.append(jit.branchPtr(CCallHelpers::AboveOrEqual, index, storage));
+    jit.move(index, registers.index);
+    jit.loadPtr(Address(base, JSArrayBufferView::offsetOfVector()), storage);
+    isInsideView.append(jit.jump());
+
+    isNoView.link(&jit);
     JumpList isNotCompiledObject = branchIfNotCompiledObject(jit, base);
     loadExtraPropertiesOfCompiledObject(jit, registers, notHandled);
     jit.load8(Address(storage, JSCell::indexingTypeAndMiscOffset()), shape);
@@ -243,8 +260,7 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
     jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
     jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), length);
     notHandled.append(jit.branch64(CCallHelpers::AboveOrEqual, index, length));
-    jit.loadDouble(element, number);
-    returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, notHandled), numberScratch);
+    returnDoubleUnlessHole(jit, registers, element, numberScratch, notHandled);
 
     isNotCompiledObject.link(&jit);
     jit.signExtend32ToPtr(index, storage);
@@ -264,9 +280,8 @@ static void loadArrayStorageElementAndReturn(StubAssembler& jit, const ElementRe
     JumpList isOutsideVector;
     JumpList isAbsentInMap;
 
-    static_assert(ArrayStorageShape > DoubleShape && ArrayStorageShape > ContiguousShape && SlowPutArrayStorageShape > ArrayStorageShape && SlowPutArrayStorageShape == IndexingShapeMask - 2);
+    static_assert(ArrayStorageShape > DoubleShape && ArrayStorageShape > ContiguousShape && SlowPutArrayStorageShape > ArrayStorageShape && SlowPutArrayStorageShape == IndexingShapeMask);
     slow.append(jit.branch32(CCallHelpers::Below, shape, TrustedImm32(ArrayStorageShape)));
-    slow.append(jit.branch32(CCallHelpers::Above, shape, TrustedImm32(SlowPutArrayStorageShape)));
     isOutsideVector.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, ArrayStorage::vectorLengthOffset())));
     returnValueUnlessHole(jit, registers, BaseIndex(storage, index, CCallHelpers::TimesEight, ArrayStorage::vectorOffset()), isOutsideVector);
 
@@ -344,7 +359,9 @@ static void loadStringCharacterAndReturn(StubAssembler& jit, const ElementRegist
     jit.jump().linkTo(charactersReady, &jit);
 }
 
-static void loadTypedArrayElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& slow, Label isAbsent, JumpList& isNoView)
+static_assert(Int8ArrayType + 1 == Uint8ArrayType && Uint8ArrayType + 1 == Uint8ClampedArrayType && Uint8ClampedArrayType + 1 == Int16ArrayType && Int16ArrayType + 1 == Uint16ArrayType && Uint16ArrayType + 1 == Int32ArrayType && Int32ArrayType + 1 == Uint32ArrayType && Uint32ArrayType < Float32ArrayType && Float32ArrayType + 1 == Float64ArrayType);
+
+static void loadTypedArrayElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& slow, Label isAbsent, JumpList& isNoView, JumpList& isInsideView)
 {
     const auto [base, key, storage, index, type, number] = registers;
     const BaseIndex in8Bits(storage, index, CCallHelpers::TimesOne);
@@ -355,36 +372,57 @@ static void loadTypedArrayElementAndReturn(StubAssembler& jit, const ElementRegi
 
     checkTypedArrayAccess(jit, registers, slow, &isOutsideTypedArray, &isNoView);
     isOutsideTypedArray.linkTo(isAbsent, &jit);
-    auto returnInt32Of = [&](JSType viewType, const auto& load) {
-        Jump other = jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(viewType));
-        load();
-        returnBoxedInt32(jit, registers);
-        other.link(&jit);
-    };
-    auto returnDoubleOf = [&](JSType viewType, const auto& load) {
-        Jump other = jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(viewType));
-        load();
+    isInsideView.link(&jit);
+    auto returnDouble = [&] {
         returnBoxedDouble(jit, registers, PureDouble::purify(jit, number, number), numberScratch);
-        other.link(&jit);
     };
-    returnInt32Of(Uint8ArrayType, [&] { jit.load8(in8Bits, storage); });
-    returnDoubleOf(Float64ArrayType, [&] { jit.loadDouble(in64Bits, number); });
-    returnDoubleOf(Float32ArrayType, [&] {
-        jit.loadFloat(in32Bits, number);
-        jit.convertFloatToDouble(number, number);
-    });
-    returnInt32Of(Int32ArrayType, [&] { jit.load32(in32Bits, storage); });
-    returnInt32Of(Uint8ClampedArrayType, [&] { jit.load8(in8Bits, storage); });
-    returnInt32Of(Uint16ArrayType, [&] { jit.load16(in16Bits, storage); });
-    returnInt32Of(Int16ArrayType, [&] { jit.load16SignedExtendTo32(in16Bits, storage); });
-    returnInt32Of(Int8ArrayType, [&] { jit.load8SignedExtendTo32(in8Bits, storage); });
-    returnInt32Of(Uint32ArrayType, [&] {
-        jit.load32(in32Bits, storage);
-        Jump isInt32 = jit.branch32(CCallHelpers::GreaterThanOrEqual, storage, TrustedImm32(0));
-        returnBoxedDouble(jit, registers, PureDouble::convertInt64(jit, storage, number), numberScratch);
-        isInt32.link(&jit);
-    });
+
+    Jump hasNoBytes = jit.branch32(CCallHelpers::Above, type, TrustedImm32(Uint8ClampedArrayType));
+    Jump hasSignedBytes = jit.branch32(CCallHelpers::Equal, type, TrustedImm32(Int8ArrayType));
+    jit.load8(in8Bits, storage);
+    returnBoxedInt32(jit, registers);
+
+    hasSignedBytes.link(&jit);
+    jit.load8SignedExtendTo32(in8Bits, storage);
+    returnBoxedInt32(jit, registers);
+
+    hasNoBytes.link(&jit);
+    Jump hasHalfWords = jit.branch32(CCallHelpers::Below, type, TrustedImm32(Int32ArrayType));
+    Jump hasOtherWords = jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(Int32ArrayType));
+    jit.load32(in32Bits, storage);
+    returnBoxedInt32(jit, registers);
+
+    hasHalfWords.link(&jit);
+    Jump hasSignedHalfWords = jit.branch32(CCallHelpers::Equal, type, TrustedImm32(Int16ArrayType));
+    jit.load16(in16Bits, storage);
+    returnBoxedInt32(jit, registers);
+
+    hasSignedHalfWords.link(&jit);
+    jit.load16SignedExtendTo32(in16Bits, storage);
+    returnBoxedInt32(jit, registers);
+
+    hasOtherWords.link(&jit);
+    Jump hasNoDoubles = jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(Float64ArrayType));
+    jit.loadDouble(in64Bits, number);
+    returnDouble();
+
+    hasNoDoubles.link(&jit);
+    Jump hasNoFloats = jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(Float32ArrayType));
+    jit.loadFloat(in32Bits, number);
+    jit.convertFloatToDouble(number, number);
+    returnDouble();
+
+    hasNoFloats.link(&jit);
+    Jump hasUint32s = jit.branch32(CCallHelpers::Equal, type, TrustedImm32(Uint32ArrayType));
+    jit.boxInt52(index, key, storage, number);
     slow.append(jit.jump());
+
+    hasUint32s.link(&jit);
+    jit.load32(in32Bits, storage);
+    Jump isInt32 = jit.branch32(CCallHelpers::GreaterThanOrEqual, storage, TrustedImm32(0));
+    returnBoxedDouble(jit, registers, PureDouble::convertInt64(jit, storage, number), numberScratch);
+    isInt32.link(&jit);
+    returnBoxedInt32(jit, registers);
 }
 
 static void answerWhereNoObjectOfChainHasElements(StubAssembler& jit, const ElementRegisters& registers, JumpList& slow, Label isAbsent, JumpList& compiledObjectHasNone)
@@ -424,7 +462,7 @@ static void answerWhereNoObjectOfChainHasElements(StubAssembler& jit, const Elem
     jit.jump().linkTo(asksStorage, &jit);
 }
 
-static void loadCompiledObjectElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& slow, JumpList& isAbsent)
+static void loadCompiledObjectElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, GPRReg probe, JumpList& slow, JumpList& isAbsent)
 {
     const auto [base, key, storage, index, shape, number] = registers;
     const BaseIndex element(storage, index, CCallHelpers::TimesEight);
@@ -435,15 +473,42 @@ static void loadCompiledObjectElementAndReturn(StubAssembler& jit, const Element
     jit.loadPtr(Address(storage, JSObject::butterflyOffset()), storage);
     Jump isDouble = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape));
     Jump isContiguous = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(ContiguousShape));
-    slow.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(Int32Shape)));
+    Jump isArrayStorage = jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(Int32Shape));
     isContiguous.link(&jit);
     isAbsent.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
     returnValueUnlessHole(jit, registers, element, isAbsent);
 
     isDouble.link(&jit);
     isAbsent.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
-    jit.loadDouble(element, number);
-    returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, isAbsent), numberScratch);
+    returnDoubleUnlessHole(jit, registers, element, numberScratch, isAbsent);
+
+    isArrayStorage.link(&jit);
+    static_assert(ArrayStorageShape > DoubleShape && ArrayStorageShape > ContiguousShape && SlowPutArrayStorageShape > ArrayStorageShape);
+    slow.append(jit.branch32(CCallHelpers::Below, shape, TrustedImm32(ArrayStorageShape)));
+    JumpList isOutsideVector;
+    isOutsideVector.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, ArrayStorage::vectorLengthOffset())));
+    returnValueUnlessHole(jit, registers, BaseIndex(storage, index, CCallHelpers::TimesEight, ArrayStorage::vectorOffset()), isOutsideVector);
+
+    isOutsideVector.link(&jit);
+    slow.append(jit.branch32(CCallHelpers::LessThan, key, TrustedImm32(0)));
+    loadExtraPropertiesOfCompiledObject(jit, registers, slow);
+    const GPRReg owner = shape;
+    const GPRReg entry = base;
+    JumpList isAbsentInMap;
+    jit.move64ToDouble(base, number);
+    jit.move(storage, owner);
+    emitFindSparseElement(jit, { owner, index, entry, probe, storage }, isAbsentInMap);
+    Jump isAccessor = jit.branchTest32(CCallHelpers::NonZero, Address(entry, SparseArrayEntry::offsetOfAttributes()), TrustedImm32(static_cast<int32_t>(PropertyAttribute::Accessor)));
+    jit.load64(Address(entry, SparseArrayEntry::offsetOfValue()), jit.result());
+    jit.returnToCaller();
+
+    isAccessor.link(&jit);
+    jit.moveDoubleTo64(number, base);
+    slow.append(jit.jump());
+
+    isAbsentInMap.link(&jit);
+    jit.moveDoubleTo64(number, base);
+    isAbsent.append(jit.jump());
 }
 
 void loadTextOfIndexForTrap(StubAssembler& jit, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText)
@@ -489,6 +554,34 @@ static Jump emitGetByValAtConstantIndexEntry(StubAssembler& jit, const ElementRe
     return jit.jump();
 }
 
+static Address loadPlainArrayElementAddress(StubAssembler& jit, GPRReg base, GPRReg storage, unsigned index, JumpList& notHandled)
+{
+    notHandled.append(jit.branchIfNotCell(base));
+    notHandled.append(jit.branch8(CCallHelpers::NotEqual, Address(base, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(ArrayWithContiguous)));
+    jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
+    notHandled.append(jit.branch32(CCallHelpers::BelowOrEqual, Address(storage, Butterfly::offsetOfPublicLength()), TrustedImm32(static_cast<int32_t>(index))));
+    return Address(storage, static_cast<int32_t>(index * sizeof(EncodedJSValue)));
+}
+
+void generateGetByValAtKnownIndex(StubAssembler& jit)
+{
+    const unsigned index = jit.key().count();
+    const GPRReg base = jit.operand(0);
+    const GPRReg key = jit.allocateScratch(StubRegister::A1);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T11);
+    JumpList notHandled;
+    Address element = loadPlainArrayElementAddress(jit, base, storage, index, notHandled);
+    jit.load64(element, storage);
+    notHandled.append(jit.branchTest64(CCallHelpers::Zero, storage));
+    jit.move(storage, jit.result());
+    jit.returnToCaller();
+
+    notHandled.link(&jit);
+    jit.move(TrustedImm32(static_cast<int32_t>(index)), key);
+    checkStubOperands(getByValAtConstantIndex(), { base, key });
+    jit.jumpToStub(getByValAtConstantIndex());
+}
+
 static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCaller)
 {
     const ElementRegisters registers = allocateElementRegisters(jit);
@@ -500,9 +593,10 @@ static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCa
     JumpList absent;
 
     JumpList isNeitherStringNorCompiledObject;
+    JumpList isInsideView;
     Jump isConstantIndex;
     if (registersOfCaller == RegistersOfCaller::AreLost)
-        emitGetByValAtIndexEntry(jit, registers, numberScratch, isNeitherStringNorCompiledObject);
+        emitGetByValAtIndexEntry(jit, registers, numberScratch, isNeitherStringNorCompiledObject, isInsideView);
     else
         isConstantIndex = emitGetByValAtConstantIndexEntry(jit, registers);
     jit.bindEntry(jit.key());
@@ -521,17 +615,19 @@ static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCa
 
     isNoPlainList.link(&jit);
     jit.load8(Address(base, JSCell::indexingTypeAndMiscOffset()), shape);
+    Jump noButterfly = jit.branchTest32(CCallHelpers::Zero, shape, TrustedImm32(IndexingShapeMask));
+    jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(ArrayWithInt32)).linkTo(hasContiguousShape, &jit);
+    Jump isNoListOfDoubles = jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(ArrayWithDouble));
+    Label hasDoubleShape = jit.label();
+    absent.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
+    returnDoubleUnlessHole(jit, registers, element, numberScratch, absent);
+
+    isNoListOfDoubles.link(&jit);
     jit.and32(TrustedImm32(IndexingShapeMask), shape);
     jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(ContiguousShape)).linkTo(hasContiguousShape, &jit);
-    Jump noButterfly = jit.branchTest32(CCallHelpers::Zero, shape);
     jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(Int32Shape)).linkTo(hasContiguousShape, &jit);
     absent.append(jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(UndecidedShape)));
-    Jump isArrayStorage = jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(DoubleShape));
-    absent.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
-    jit.loadDouble(element, number);
-    returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, absent), numberScratch);
-
-    isArrayStorage.link(&jit);
+    jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape)).linkTo(hasDoubleShape, &jit);
     loadArrayStorageElementAndReturn(jit, registers, probe, absent, slow);
 
     absent.link(&jit);
@@ -542,16 +638,16 @@ static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCa
     loadStringCharacterAndReturn(jit, registers, slow, isAbsent);
 
     notString.link(&jit);
+    JumpList isNoView;
+    loadTypedArrayElementAndReturn(jit, registers, numberScratch, slow, isAbsent, isNoView, isInsideView);
+
+    isNoView.link(&jit);
     JumpList isNotCompiledObject = branchIfNotCompiledObject(jit, base);
     JumpList compiledObjectHasNone;
-    loadCompiledObjectElementAndReturn(jit, registers, numberScratch, slow, compiledObjectHasNone);
+    loadCompiledObjectElementAndReturn(jit, registers, numberScratch, probe, slow, compiledObjectHasNone);
 
     isNotCompiledObject.link(&jit);
     isNeitherStringNorCompiledObject.link(&jit);
-    JumpList isNoView;
-    loadTypedArrayElementAndReturn(jit, registers, numberScratch, slow, isAbsent, isNoView);
-
-    isNoView.link(&jit);
     Jump isNotMapped = jit.branch32(CCallHelpers::NotEqual, registers.type, TrustedImm32(DirectArgumentsType));
     Jump isOverridden = jit.branchTestPtr(CCallHelpers::NonZero, Address(base, DirectArguments::offsetOfMappedArguments()));
     jit.zeroExtend32ToWord(key, index);
@@ -632,6 +728,25 @@ static Jump emitPutByValAtConstantIndexEntry(StubAssembler& jit, const ElementRe
     return jit.jump();
 }
 
+void generatePutByValAtKnownIndex(StubAssembler& jit)
+{
+    const unsigned index = jit.key().count();
+    const ECMAMode mode = ecmaModeOf(static_cast<ElementStoreMode>(jit.key().form()));
+    const GPRReg base = jit.clobberOperand(0);
+    const GPRReg value = jit.operand(1);
+    const GPRReg key = jit.allocateScratch(StubRegister::A1);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T11);
+    JumpList notHandled;
+    Address element = loadPlainArrayElementAddress(jit, base, storage, index, notHandled);
+    jit.store64(value, element);
+    returnAfterStoring(jit, base, value);
+
+    notHandled.link(&jit);
+    jit.move(TrustedImm32(static_cast<int32_t>(index)), key);
+    checkStubOperands(putByValAtConstantIndex(mode), { base, key, value });
+    jit.jumpToStub(putByValAtConstantIndex(mode));
+}
+
 static void emitPutByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers, GPRReg value, ECMAMode mode)
 {
     const auto [base, index, storage, length, type, number] = registers;
@@ -672,16 +787,29 @@ static void storeTypedArrayElementAndReturn(StubAssembler& jit, const ElementReg
         jit.convertDoubleToFloat(number, number);
         jit.storeFloat(number, BaseIndex(storage, index, CCallHelpers::TimesFour));
     };
-    forJSType(Int32ArrayType, store32);
-    forJSType(Uint8ArrayType, store8);
-    forJSType(Uint32ArrayType, store32);
-    forJSType(Uint16ArrayType, store16);
-    forJSType(Int16ArrayType, store16);
-    forJSType(Int8ArrayType, store8);
+    jit.sub32(type, TrustedImm32(Int32ArrayType), doubleBits);
+    Jump hasNoWords = jit.branch32(CCallHelpers::Above, doubleBits, TrustedImm32(Uint32ArrayType - Int32ArrayType));
+    store32();
+    jit.returnToCaller();
+
+    hasNoWords.link(&jit);
+    Jump hasNoBytes = jit.branch32(CCallHelpers::Above, type, TrustedImm32(Uint8ArrayType));
+    store8();
+    jit.returnToCaller();
+
+    hasNoBytes.link(&jit);
+    Jump clampsInt32 = jit.branch32(CCallHelpers::Equal, type, TrustedImm32(Uint8ClampedArrayType));
+    Jump hasNoHalfWords = jit.branch32(CCallHelpers::Above, type, TrustedImm32(Uint16ArrayType));
+    store16();
+    jit.returnToCaller();
+
+    hasNoHalfWords.link(&jit);
     jit.convertInt32ToDouble(value, number);
     forJSType(Float64ArrayType, storeDouble);
     forJSType(Float32ArrayType, storeFloat);
-    slow.append(jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(Uint8ClampedArrayType)));
+    slow.append(jit.jump());
+
+    clampsInt32.link(&jit);
     jit.zeroExtend32ToWord(value, doubleBits);
     Jump int32FitsByte = jit.branch32(CCallHelpers::BelowOrEqual, doubleBits, TrustedImm32(UINT8_MAX));
     jit.rshift32(TrustedImm32(31), doubleBits);
@@ -695,7 +823,6 @@ static void storeTypedArrayElementAndReturn(StubAssembler& jit, const ElementReg
     unboxDouble(jit, value, doubleBits, number);
     forJSType(Float64ArrayType, storeDouble);
     forJSType(Float32ArrayType, storeFloat);
-    static_assert(Int8ArrayType + 1 == Uint8ArrayType && Uint8ArrayType + 1 == Uint8ClampedArrayType && Uint8ClampedArrayType + 1 == Int16ArrayType && Int16ArrayType + 1 == Uint16ArrayType && Uint16ArrayType + 1 == Int32ArrayType && Int32ArrayType + 1 == Uint32ArrayType);
     Jump isClamped = jit.branch32(CCallHelpers::Equal, type, TrustedImm32(Uint8ClampedArrayType));
     slow.append(jit.branch32(CCallHelpers::Above, type, TrustedImm32(Uint32ArrayType)));
 #if CPU(ARM64)
@@ -727,7 +854,6 @@ static void storeTypedArrayElementAndReturn(StubAssembler& jit, const ElementReg
     jit.returnToCaller();
 
     valueIsNoNumber.link(&jit);
-    static_assert(Int8ArrayType + 1 == Uint8ArrayType && Uint8ArrayType + 1 == Uint8ClampedArrayType && Uint8ClampedArrayType + 1 == Int16ArrayType && Uint32ArrayType < Float32ArrayType && Float32ArrayType + 1 == Float64ArrayType);
     const GPRReg converted = doubleBits;
     slow.append(jit.branchIfCell(value));
     jit.compare64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueTrue), converted);
@@ -774,12 +900,15 @@ static void storeOrAppendAndReturn(StubAssembler& jit, const ElementRegisters& r
     Label loadStorage = jit.label();
     jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
     jit.zeroExtend32ToWord(key, index);
-    Jump isWithinLength = jit.branch32(CCallHelpers::Below, index, Address(storage, Butterfly::offsetOfPublicLength()));
+    Jump isPastLength = jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength()));
+    Label stores = jit.label();
+    storeAndReturn(BaseIndex(storage, index, CCallHelpers::TimesEight));
+
+    isPastLength.link(&jit);
     Jump isBeyondVector = jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfVectorLength()));
     jit.add32(TrustedImm32(1), index, newLength);
     jit.store32(newLength, Address(storage, Butterfly::offsetOfPublicLength()));
-    isWithinLength.link(&jit);
-    storeAndReturn(BaseIndex(storage, index, CCallHelpers::TimesEight));
+    jit.jump().linkTo(stores, &jit);
 
     isBeyondVector.link(&jit);
     slow.append(jit.branch32(CCallHelpers::NotEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
@@ -795,14 +924,15 @@ static void storeDoubleElementAndReturn(StubAssembler& jit, const ElementRegiste
     slow.append(jit.branchTest64(CCallHelpers::Zero, value, numberTag));
     unboxDouble(jit, value, doubleBits, number);
     slow.append(jit.branchIfNaN(number));
-    Jump isReady = jit.jump();
-    isInt32.link(&jit);
-    jit.convertInt32ToDouble(value, number);
-    isReady.link(&jit);
+    Label isReady = jit.label();
     storeOrAppendAndReturn(jit, registers, allocator, doubleBits, slow, [&](BaseIndex element) {
         jit.storeDouble(number, element);
         jit.returnToCaller();
     });
+
+    isInt32.link(&jit);
+    jit.convertInt32ToDouble(value, number);
+    jit.jump().linkTo(isReady, &jit);
 }
 
 StubSignature signatureOfStoreElementOfCompiledObject(StubKey key) { return signatureOfPutByVal(key); }
@@ -984,10 +1114,18 @@ void generatePutByVal(StubAssembler& jit)
     slow.append(jit.branchIfNotCell(base));
     jit.load8(Address(base, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask | CopyOnWrite), shape);
-    Jump isContiguous = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(ContiguousShape));
+    Jump isNotContiguous = jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(ContiguousShape));
+    Label storesValue = jit.label();
+    storeOrAppendAndReturn(jit, registers, valueArgument, doubleBits, slow, [&](BaseIndex element) {
+        jit.store64(value, element);
+        returnAfterStoring(jit, base, value);
+    });
+
+    isNotContiguous.link(&jit);
     Jump isNotInt32Shape = jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(Int32Shape));
     slow.append(jit.branch64(CCallHelpers::Below, value, numberTag));
-    Jump staysInt32Shape = jit.jump();
+    jit.jump().linkTo(storesValue, &jit);
+
     isNotInt32Shape.link(&jit);
     Jump isDoubleShape = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape));
     slow.append(jit.branchTest32(CCallHelpers::NonZero, shape));
@@ -1002,13 +1140,6 @@ void generatePutByVal(StubAssembler& jit)
 
     isDoubleShape.link(&jit);
     storeDoubleElementAndReturn(jit, registers, value, valueArgument, doubleBits, slow);
-
-    isContiguous.link(&jit);
-    staysInt32Shape.link(&jit);
-    storeOrAppendAndReturn(jit, registers, valueArgument, doubleBits, slow, [&](BaseIndex element) {
-        jit.store64(value, element);
-        returnAfterStoring(jit, base, value);
-    });
 
     slow.link(&jit);
     {

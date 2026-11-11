@@ -16,9 +16,14 @@ enum class ComparedOperand : uint8_t { Value, String };
 constexpr StubRegister comparedSubjectRegister = StubRegister::T11;
 constexpr StubRegister comparedTextRegister = StubRegister::T9;
 
-constexpr StubKey equalsLiteral(ComparedOperand operand, unsigned length = 0)
+constexpr StubKey equalsLiteral(ComparedOperand operand)
 {
-    return StubKey(operand == ComparedOperand::Value ? StubFamily::ValueEqualsLiteral : StubFamily::StringEqualsLiteral).withCount(length <= StubKey::maxCount ? length : 0);
+    return StubKey(operand == ComparedOperand::Value ? StubFamily::ValueEqualsLiteral : StubFamily::StringEqualsLiteral);
+}
+
+constexpr StubKey equalsCharacters(ComparedOperand operand, unsigned length)
+{
+    return StubKey(operand == ComparedOperand::Value ? StubFamily::ValueEqualsCharacters : StubFamily::StringEqualsCharacters).withCount(length);
 }
 
 constexpr StubKey equalsLiteralOfLength(ComparedOperand operand, unsigned length, CallerFrame frame = CallerFrame::HasFrame)
@@ -29,8 +34,8 @@ constexpr StubKey equalsLiteralOfLength(ComparedOperand operand, unsigned length
 constexpr StubKey narrowCharactersOfString() { return StubKey(StubFamily::NarrowCharactersOfString); }
 
 static_assert(bodyOf(equalsLiteral(ComparedOperand::Value)) == equalsLiteral(ComparedOperand::String));
-static_assert(bodyOf(equalsLiteral(ComparedOperand::Value, 9)) == equalsLiteral(ComparedOperand::String, 9));
-static_assert(exists(equalsLiteral(ComparedOperand::String, StubKey::maxCount)) && equalsLiteral(ComparedOperand::String, StubKey::maxCount + 1) == equalsLiteral(ComparedOperand::String));
+static_assert(bodyOf(equalsCharacters(ComparedOperand::Value, 9)) == equalsCharacters(ComparedOperand::String, 9));
+static_assert(exists(equalsCharacters(ComparedOperand::String, StubKey::maxCount)) && exists(equalsCharacters(ComparedOperand::String, 9)) && !exists(equalsCharacters(ComparedOperand::String, 8)));
 static_assert(bodyOf(equalsLiteralOfLength(ComparedOperand::Value, 1)) == equalsLiteralOfLength(ComparedOperand::String, 1));
 static_assert(exists(equalsLiteralOfLength(ComparedOperand::String, 0)) && exists(equalsLiteralOfLength(ComparedOperand::String, 8)) && !exists(equalsLiteralOfLength(ComparedOperand::String, 9)));
 static_assert(exists(narrowCharactersOfString()));

@@ -318,6 +318,14 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
     // 6. Set the VariableEnvironment of moduleContext to module.[[Environment]].
     // 7. Set the LexicalEnvironment of moduleContext to module.[[Environment]].
     // 8. Suspend the running execution context.
+#if ENABLE(AOT)
+    if (isCompiledOriginal()) [[unlikely]] {
+        ASSERT(!capability);
+        scope.release();
+        AOT::evaluateOriginal(globalObject, this);
+        return;
+    }
+#endif
     // 9. If module.[[HasTLA]] is false, then
     if (!hasTLA()) {
         // 9.a. Assert: capability is not present.

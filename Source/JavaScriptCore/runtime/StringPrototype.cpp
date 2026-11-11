@@ -75,7 +75,7 @@ JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSlice);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSubstr);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLowerCase);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToUpperCase);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLocaleCompare);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLocaleCompare);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLocaleLowerCase);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLocaleUpperCase);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrim);

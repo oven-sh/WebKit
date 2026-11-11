@@ -11,6 +11,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+struct FieldAccess;
+
 class GuardEmitter final : public OperationEmitter {
 public:
     explicit GuardEmitter(CodeGenerator& generator)
@@ -20,6 +22,7 @@ public:
 
     void generateShapeTest(const ValueContext&);
     void generateIsSlotFilled(const ValueContext&);
+    bool isImpliedByNumberTest(const ValueContext& isSlotFilled, const FieldAccess&);
     void generateHasNoExtraProperties(const ValueContext&);
     void generateHasNoFieldOutsideSlot(const ValueContext&);
     void generateHasKeyOrder(const ValueContext&);
@@ -34,7 +37,9 @@ public:
     void generateAreMembersUnchanged(const ValueContext&);
     void generateIsMemberAsBuilt(const ValueContext&);
     void generateHasNumberOfBoundArguments(const ValueContext&);
+    void generateMakesPlainGenerators(const ValueContext&);
     void generateGetWordOfBoundFunction(const ValueContext&);
+    void generateGetAssignedMember(const ValueContext&);
     void generateIsHolderWithoutAddedNames(const ValueContext&);
     void defineWhetherDeclaredMemberIsFound(const ValueContext&);
     void defineWhetherObjectIsPlainInstance(const ValueContext&);
@@ -50,16 +55,20 @@ public:
     bool testsMayAddNamesToObjectPrototype() const;
     Condition noNameWasAddedToObjectPrototype();
     Condition areMembersUnchanged(PayloadListView<MemberConditionRecord>);
+    Condition objectPrototypePassesStores();
     Condition areMembersUnchanged(std::span<const MemberConditionRecord>);
+    Condition areClassMembersUnchanged(std::span<const MemberConditionRecord>);
     Condition isClosureAsCreated(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
     Condition isNotThenable(const OperationContext&, Boxed, const Type&);
     Condition realmWatchesSpeciesOfLists();
     Pointer structuresOfHeir(LayoutID classLayout);
 
 private:
+    Boxed assignedMember(const MemberConditionRecord&);
     Word32 offsetOfStructuresOfHeir(LayoutID classLayout);
     void failAndDefineFalse(const ValueContext&, InternalErrorKind);
     Condition guardInByteHolds(LayoutID classLayout, ClassSide, TypedPointer byteOfGuard);
+    Condition isMemberAssigned(const MemberConditionRecord&);
     struct GuardLeftToAsk {
         LayoutID classLayout;
         ClassSide side;

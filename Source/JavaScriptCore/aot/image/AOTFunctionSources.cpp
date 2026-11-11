@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImageBuilder.h"
 #include "AOTIRProgram.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSort.h"
@@ -127,21 +128,6 @@ static void writeSourceRuns(const ParallelLoops& loops, std::span<const std::spa
     });
 }
 
-static Vector<Vector<uint8_t>> compressSourceBlocks(const ParallelLoops& loops, const HostFunctionSources& host, std::span<const uint8_t> text)
-{
-    Vector<Vector<uint8_t>> blocks((text.size() + sourceBlockSize - 1) / sourceBlockSize);
-    forEachIndexInParallel(loops, static_cast<unsigned>(blocks.size()), [&](unsigned index) {
-        size_t offset = static_cast<size_t>(index) * sourceBlockSize;
-        std::span<const uint8_t> block = text.subspan(offset, std::min<size_t>(sourceBlockSize, text.size() - offset));
-        Vector<uint8_t>& compressed = blocks[index];
-        compressed.grow(host.maxCompressedSize(block.size()));
-        size_t written = host.compress(compressed.mutableSpan(), block);
-        RELEASE_ASSERT_RESOURCE_AVAILABLE(written, MemoryExhaustion, "The host could not compress a block of source.");
-        compressed.shrink(written);
-    });
-    return blocks;
-}
-
 struct CompressedSourceBlocks {
     bool isCompressed() const { return !blocks.isEmpty(); }
     size_t storedSize(const SourceRunLayout& runLayout) const { return isCompressed() ? blockEnds.last() : runLayout.size; }
@@ -155,10 +141,39 @@ static CompressedSourceBlocks compressSourceRuns(const ParallelLoops& loops, con
     CompressedSourceBlocks stored;
     if (!host.maxCompressedSize || !host.compress)
         return stored;
-    Vector<uint8_t> text;
-    text.grow(runLayout.size);
-    writeSourceRuns(loops, runs, runLayout, text.mutableSpan());
-    stored.blocks = compressSourceBlocks(loops, host, text.span());
+    Vector<uint32_t> runsWithSeparateBytes;
+    for (size_t run = 0; run < runs.size(); ++run) {
+        if (runLayout.storesOwnBytes(run) && !runs[run].empty())
+            runsWithSeparateBytes.append(static_cast<uint32_t>(run));
+    }
+    auto copySource = [&](uint64_t offset, std::span<uint8_t> destination) {
+        auto next = std::ranges::upper_bound(runsWithSeparateBytes, offset, { }, [&](uint32_t run) -> uint64_t { return runLayout.offsets[run]; }) - 1;
+        while (!destination.empty()) {
+            std::span<const uint8_t> source = runs[*next].subspan(offset - runLayout.offsets[*next]);
+            source = source.first(std::min(source.size(), destination.size()));
+            memcpySpan(destination, source);
+            destination = destination.subspan(source.size());
+            offset += source.size();
+            ++next;
+        }
+    };
+    struct Room {
+        Vector<uint8_t> text;
+        Vector<uint8_t> compressed;
+    };
+    Vector<Room> rooms(loops.width());
+    stored.blocks.grow((runLayout.size + sourceBlockSize - 1) / sourceBlockSize);
+    forEachIndexInParallel(loops, static_cast<unsigned>(stored.blocks.size()), [&](unsigned index, unsigned thread) {
+        Room& room = rooms[thread];
+        room.text.grow(sourceBlockSize);
+        room.compressed.grow(host.maxCompressedSize(sourceBlockSize));
+        uint64_t offset = static_cast<uint64_t>(index) * sourceBlockSize;
+        std::span<uint8_t> block = room.text.mutableSpan().first(std::min<uint64_t>(sourceBlockSize, runLayout.size - offset));
+        copySource(offset, block);
+        size_t written = host.compress(room.compressed.mutableSpan(), block);
+        RELEASE_ASSERT_RESOURCE_AVAILABLE(written, MemoryExhaustion, "The host could not compress a block of source.");
+        stored.blocks[index] = Vector<uint8_t>(room.compressed.span().first(written));
+    });
     uint64_t end = 0;
     for (const Vector<uint8_t>& block : stored.blocks) {
         end += block.size();
@@ -319,11 +334,25 @@ static std::optional<QuotedSourceLocations> findQuotedSourceLocations(const Tabl
     result.isReportable.grow(count);
     std::atomic<bool> areLocationsSorted { true };
     forEachIndexInParallel(loops, static_cast<unsigned>(numberOfModules), [&](unsigned index) {
-        std::span quotedSources = program.modules[index].positions.quotedSources.span();
+        const Typed::SourcePositions& positions = program.modules[index].positions;
+        std::span quotedSources = positions.quotedSources.span();
+        std::span adjustments = positions.columnAdjustments.span();
         std::span<uint64_t> locations = result.locations.mutableSpan().subspan(result.firstOfModule[index], quotedSources.size());
         zeroSpan(result.isReportable.mutableSpan().subspan(result.firstOfModule[index], quotedSources.size()));
+        size_t numberOfLines = 0;
+        size_t numberOfAdjustments = 0;
+        uint32_t last = 0;
         for (size_t text = 0; text < quotedSources.size(); ++text) {
-            LineColumn lineColumn = program.lineColumnFor(ModuleID(index), quotedSources[text].position);
+            uint32_t position = quotedSources[text].position;
+            if (position < std::exchange(last, position)) [[unlikely]] {
+                numberOfLines = 0;
+                numberOfAdjustments = 0;
+            }
+            while (numberOfLines < positions.lineStarts.size() && positions.lineStarts[numberOfLines] <= position)
+                ++numberOfLines;
+            while (numberOfAdjustments < adjustments.size() && adjustments[numberOfAdjustments].offset <= position)
+                ++numberOfAdjustments;
+            LineColumn lineColumn = Typed::Program::lineColumnAfter(positions, numberOfLines, numberOfAdjustments, position);
             locations[text] = QuotedSourceLocations::locationOf(lineColumn.line, lineColumn.column);
         }
         if (std::ranges::is_sorted(locations))
@@ -408,6 +437,7 @@ static void collectModuleQuotedSources(const TableEncoder& encoder, const Quoted
     const Typed::SourcePositions& positions = encoder.program.modules[index].positions;
     std::span quotedSources = positions.quotedSources.span();
     std::span<const uint8_t> isReportable = sources.isReportable.span().subspan(sources.firstOfModule[index], quotedSources.size());
+    std::span<const uint64_t> locations = sources.locationsOf(index);
     for (size_t text = 0; text < quotedSources.size(); ++text) {
         const Typed::QuotedSource& quoted = quotedSources[text];
         if (quoted.start > quoted.end || quoted.end > positions.quotedSourceText.size()) {
@@ -416,8 +446,8 @@ static void collectModuleQuotedSources(const TableEncoder& encoder, const Quoted
         }
         if (!isReportable[text])
             continue;
-        LineColumn lineColumn = encoder.program.lineColumnFor(ModuleID(index), quoted.position);
-        result.quoted.append({ lineColumn.line, lineColumn.column, quoted.start, quoted.end });
+        uint64_t location = locations[text];
+        result.quoted.append({ static_cast<uint32_t>(location >> 32), static_cast<uint32_t>(location), quoted.start, quoted.end });
     }
     result.outermost = Vector<OutermostQuotedSource>(result.quoted.size(), [&](size_t number) {
         return OutermostQuotedSource { result.quoted[number].start, result.quoted[number].end };
@@ -571,6 +601,83 @@ static void encodeQuotedSources(TableEncoder& encoder, StepTimes& times)
     times.didFinish("write quoted sources"_s);
 }
 
+namespace {
+
+struct StoredFunctionSources final : PreparedFunctionSources {
+    Vector<size_t> sizesOfModules;
+    Vector<RetainedSourceRange> retained;
+    uint64_t size { 0 };
+    Vector<uint32_t> blockEnds;
+    Vector<uint8_t> bytes;
+};
+
+} // anonymous namespace
+
+static Vector<std::span<const uint8_t>> findRetainedSources(const Typed::Program& program, const HostFunctionSources& host, std::span<const size_t> functionSourceSizes, std::span<const RetainedSourceRange> retained, Vector<Vector<uint8_t>>& copies, const ParallelLoops& loops)
+{
+    Vector<ModuleRetainedRanges> modules = groupRetainedRangesByModule(retained);
+    copies.grow(modules.size());
+    Vector<std::span<const uint8_t>> runs;
+    runs.grow(retained.size());
+    forEachIndexInParallel(loops, static_cast<unsigned>(modules.size()), [&](unsigned index) {
+        const ModuleRetainedRanges& module = modules[index];
+        size_t size = functionSourceSizes[module.module.index()];
+        std::span<const uint8_t> text = program.at(module.module).functionSource;
+        if (const uint8_t* held = text.empty() && host.view ? host.view(host.owner, module.module.index()) : nullptr)
+            text = unsafeMakeSpan(held, size);
+        if (text.empty()) {
+            copies[index].grow(size);
+            host.copy(host.owner, module.module.index(), copies[index].mutableSpan().data());
+            text = copies[index].span();
+        }
+        for (uint32_t range = module.first; range < module.end; ++range)
+            runs[range] = text.subspan(retained[range].start, retained[range].size());
+    });
+    return runs;
+}
+
+static void setOffsetsInRetainedSource(Vector<RetainedSourceRange>& retained, const SourceRunLayout& runLayout)
+{
+    for (size_t range = 0; range < retained.size(); ++range)
+        retained[range].offsetInRetainedSource = runLayout.offsets[range];
+}
+
+std::unique_ptr<PreparedFunctionSources> prepareFunctionSources(const Typed::Program& program, BuildContext& build, uint64_t mostBytesLeftAtHost)
+{
+    const HostFunctionSources& host = build.functionSources();
+    if (!program.admitsReplacedBuiltins || build.options().obfuscates() || build.recordedOptions().omitsFunctionSource || !host.compress || !host.maxCompressedSize || !host.release)
+        return nullptr;
+
+    StepTimes times(build, "image: function sources"_s);
+    const ParallelLoops& loops = build.parallelLoops();
+    auto result = makeUniqueWithoutFastMallocCheck<StoredFunctionSources>();
+    result->sizesOfModules = measureModuleFunctionSources(program, host);
+    result->retained = collectInParallel<RetainedSourceRange>(loops, static_cast<unsigned>(program.functions.size()), [&](unsigned index, Vector<RetainedSourceRange>& retained) {
+        const Typed::Function& function = program.functions[index];
+        if (function.sourceRange.start < function.sourceRange.end && shouldEmbedFunctionSource(program, function) && function.sourceRange.end <= result->sizesOfModules[function.module.index()])
+            retained.append({ function.module, function.sourceRange.start, function.sourceRange.end });
+    });
+    mergeRetainedSourceRanges(loops, result->retained);
+    uint64_t sizeBeforeSharing = 0;
+    for (const RetainedSourceRange& range : result->retained)
+        sizeBeforeSharing += range.size();
+    if (sizeBeforeSharing <= mostBytesLeftAtHost || sizeBeforeSharing > std::numeric_limits<uint32_t>::max())
+        return nullptr;
+
+    Vector<Vector<uint8_t>> copies;
+    Vector<std::span<const uint8_t>> runs = findRetainedSources(program, host, result->sizesOfModules.span(), result->retained.span(), copies, loops);
+    SourceRunLayout runLayout = computeSourceRunLayout(loops, runs.span());
+    setOffsetsInRetainedSource(result->retained, runLayout);
+    CompressedSourceBlocks stored = compressSourceRuns(loops, host, runs.span(), runLayout);
+    result->size = runLayout.size;
+    result->bytes.grow(stored.storedSize(runLayout));
+    writeStoredSource(loops, runs.span(), runLayout, stored, result->bytes.mutableSpan());
+    result->blockEnds = WTF::move(stored.blockEnds);
+    host.release(host.owner);
+    times.didFinish("compress function sources ahead of Link"_s);
+    return result;
+}
+
 void encodeFunctionSources(TableEncoder& encoder)
 {
     StepTimes times(encoder.build, "image: function sources"_s);
@@ -583,44 +690,39 @@ void encodeFunctionSources(TableEncoder& encoder)
     const Typed::Program& program = encoder.program;
     const ParallelLoops& loops = encoder.build.parallelLoops();
     const HostFunctionSources& host = encoder.build.functionSources();
-    Vector<size_t> functionSourceSizes = measureModuleFunctionSources(program, host);
+    const auto* prepared = static_cast<const StoredFunctionSources*>(encoder.inputs.functionSources);
+    Vector<size_t> functionSourceSizes = prepared ? prepared->sizesOfModules : measureModuleFunctionSources(program, host);
     Vector<ClosureFunctionWithSource> functions = collectClosureFunctionsWithSource(encoder, functionSourceSizes.span());
-    Vector<RetainedSourceRange> retained(functions.size(), [&](size_t index) {
-        const Typed::Function& function = program.at(functions[index].function);
-        return RetainedSourceRange { function.module, function.sourceRange.start, function.sourceRange.end };
-    });
-    mergeRetainedSourceRanges(loops, retained);
+    Vector<RetainedSourceRange> retainedByClosures;
+    if (!prepared) {
+        retainedByClosures = Vector<RetainedSourceRange>(functions.size(), [&](size_t index) {
+            const Typed::Function& function = program.at(functions[index].function);
+            return RetainedSourceRange { function.module, function.sourceRange.start, function.sourceRange.end };
+        });
+        mergeRetainedSourceRanges(loops, retainedByClosures);
+    }
 
     uint64_t sizeBeforeSharing = 0;
-    for (const RetainedSourceRange& range : retained)
+    for (const RetainedSourceRange& range : retainedByClosures)
         sizeBeforeSharing += range.size();
     times.didFinish("collect the functions with source"_s);
-    if (functions.isEmpty() || !checkSectionSize(sizeBeforeSharing, encoder.build)) {
+    if (functions.isEmpty() || !checkSectionSize(prepared ? prepared->size : sizeBeforeSharing, encoder.build)) {
         setEmptyFunctionSources(encoder);
         return;
     }
 
-    Vector<ModuleRetainedRanges> modules = groupRetainedRangesByModule(retained.span());
-    Vector<Vector<uint8_t>> hostFunctionSources(modules.size());
+    Vector<Vector<uint8_t>> copies;
     Vector<std::span<const uint8_t>> runs;
-    runs.grow(retained.size());
-    forEachIndexInParallel(loops, static_cast<unsigned>(modules.size()), [&](unsigned index) {
-        const ModuleRetainedRanges& module = modules[index];
-        std::span<const uint8_t> text = program.at(module.module).functionSource;
-        if (text.empty()) {
-            hostFunctionSources[index].grow(functionSourceSizes[module.module.index()]);
-            host.copy(host.owner, module.module.index(), hostFunctionSources[index].mutableSpan().data());
-            text = hostFunctionSources[index].span();
-        }
-        for (uint32_t range = module.first; range < module.end; ++range)
-            runs[range] = text.subspan(retained[range].start, retained[range].size());
-    });
-    times.didFinish("copy the function sources of modules"_s);
-    SourceRunLayout runLayout = computeSourceRunLayout(loops, runs.span());
-    for (size_t range = 0; range < retained.size(); ++range)
-        retained[range].offsetInRetainedSource = runLayout.offsets[range];
-    times.didFinish("lay out function sources"_s);
+    SourceRunLayout runLayout;
+    if (!prepared) {
+        runs = findRetainedSources(program, host, functionSourceSizes.span(), retainedByClosures.span(), copies, loops);
+        times.didFinish("copy the function sources of modules"_s);
+        runLayout = computeSourceRunLayout(loops, runs.span());
+        setOffsetsInRetainedSource(retainedByClosures, runLayout);
+        times.didFinish("lay out function sources"_s);
+    }
 
+    const Vector<RetainedSourceRange>& retained = prepared ? prepared->retained : retainedByClosures;
     Vector<FunctionSourceEntry> entries;
     entries.grow(functions.size());
     forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
@@ -636,24 +738,32 @@ void encodeFunctionSources(TableEncoder& encoder)
     if (!std::ranges::is_sorted(entries, { }, [](const FunctionSourceEntry& entry) -> uint32_t { return entry.function; }))
         encoder.fail("TableNotSorted"_s, { }, "functionSources"_s);
 
-    CompressedSourceBlocks stored = compressSourceRuns(loops, host, runs.span(), runLayout);
-    if (host.maxCompressedSize && host.compress)
-        times.didFinish("compress function sources"_s);
-    const Vector<uint32_t>& blockEnds = stored.blockEnds;
-    size_t storedSize = stored.storedSize(runLayout);
+    CompressedSourceBlocks stored;
+    if (!prepared) {
+        stored = compressSourceRuns(loops, host, runs.span(), runLayout);
+        if (host.maxCompressedSize && host.compress)
+            times.didFinish("compress function sources"_s);
+    }
+    const Vector<uint32_t>& blockEnds = prepared ? prepared->blockEnds : stored.blockEnds;
+    size_t storedSize = prepared ? prepared->bytes.size() : stored.storedSize(runLayout);
+    uint64_t sourceSize = prepared ? prepared->size : runLayout.size;
 
     encoder.part.reserveRoomFor(entries.sizeInBytes() + blockEnds.sizeInBytes() + storedSize + sizeof(FunctionSources) + 4 * sizeof(uint64_t));
     uint32_t entriesOffset = encoder.part.appendUnshared(asBytes(entries.span()), alignof(FunctionSourceEntry));
-    uint32_t blockEndsOffset = !stored.isCompressed() ? 0 : encoder.part.appendUnshared(asBytes(blockEnds.span()), alignof(uint32_t));
+    uint32_t blockEndsOffset = blockEnds.isEmpty() ? 0 : encoder.part.appendUnshared(asBytes(blockEnds.span()), alignof(uint32_t));
     uint32_t sourceOffset = encoder.part.allocateUnfilled(storedSize, 1);
-    writeStoredSource(loops, runs.span(), runLayout, stored, encoder.part.bytesAt(sourceOffset, storedSize));
-    uint32_t record = encoder.part.setTable(ProgramTableIndex::functionSources, Vector<FunctionSources, 1> { FunctionSources { static_cast<uint32_t>(entries.size()), entriesOffset, sourceOffset, static_cast<uint32_t>(stored.blocks.size()), blockEndsOffset, static_cast<uint32_t>(runLayout.size) } });
+    std::span<uint8_t> source = encoder.part.bytesAt(sourceOffset, storedSize);
+    if (prepared)
+        memcpySpan(source, prepared->bytes.span());
+    else
+        writeStoredSource(loops, runs.span(), runLayout, stored, source);
+    uint32_t record = encoder.part.setTable(ProgramTableIndex::functionSources, Vector<FunctionSources, 1> { FunctionSources { static_cast<uint32_t>(entries.size()), entriesOffset, sourceOffset, static_cast<uint32_t>(blockEnds.size()), blockEndsOffset, static_cast<uint32_t>(sourceSize) } });
     encoder.part.link(record, &FunctionSources::entriesOffset);
     encoder.part.link(record, &FunctionSources::sourceOffset);
-    if (stored.isCompressed())
+    if (!blockEnds.isEmpty())
         encoder.part.link(record, &FunctionSources::blockEndsOffset);
-    forEachIndexInParallel(loops, static_cast<unsigned>(hostFunctionSources.size()), [&](unsigned index) {
-        hostFunctionSources[index] = { };
+    forEachIndexInParallel(loops, static_cast<unsigned>(copies.size()), [&](unsigned index) {
+        copies[index] = { };
     });
     times.didFinish("write function sources"_s);
 }

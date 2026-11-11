@@ -23,7 +23,7 @@ public:
     {
     }
 
-    ALWAYS_INLINE void reads(const MemoryLocation& location) { m_effects.reads.add(m_program, location); }
+    ALWAYS_INLINE void reads(const MemoryLocation& location) { m_effects.reads.addRead(m_program, location); }
     ALWAYS_INLINE void writes(const MemoryLocation& location) { m_effects.writes.add(m_program, location); }
     void readsAllHeaps() { m_effects.reads = LocationMasks::top(); }
     void throws() { m_effects.mayThrow = true; }
@@ -63,7 +63,7 @@ inline constexpr OpcodeSet opcodesThrowingOnlyForLackOfMemory {
     Opcode::GetStringCodeUnit, Opcode::Substring, Opcode::FlattenString, Opcode::StringOrder, Opcode::StringStartsWithLiteral, Opcode::StringEndsWithLiteral,
     Opcode::StringOrderToCharacter, Opcode::StringIndexOfLiteral, Opcode::StringIndexOfCharacter, Opcode::StringLastIndexOfLiteral,
     Opcode::StringRangeEqualsLiteral, Opcode::StringRangeToNumber, Opcode::StringRangeParseInt, Opcode::FindStringRangeInMap,
-    Opcode::SubstringOrUndefined, Opcode::NewRegExpMatchArray, Opcode::BoundsOfStringSplit, Opcode::NewStringSplitArray
+    Opcode::SubstringOrUndefined, Opcode::NewRegExpMatchArray, Opcode::NewArrayOfRegExpMatch, Opcode::BoundsOfStringSplit, Opcode::NewStringSplitArray
 };
 
 constexpr Effects withDeclaredKindOfThrow(Opcode opcode, Effects effects)

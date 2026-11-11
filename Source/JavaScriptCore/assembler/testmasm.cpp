@@ -11873,6 +11873,101 @@ void checkShorteningWithoutRecords()
     CHECK_EQ(invoke<int>(FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm late jump after a shortened jump")), 1);
 }
 
+struct ShortReturnProgram {
+    static constexpr unsigned numberOfBlocks = 150;
+
+    struct Return {
+        CCallHelpers::Label label;
+        unsigned length;
+    };
+    Vector<Return> returns;
+    unsigned numberOfJumps { 0 };
+};
+
+ShortReturnProgram emitShortReturnProgram(CCallHelpers& jit, unsigned seed)
+{
+    constexpr GPRReg accumulator = GPRInfo::returnValueGPR;
+    constexpr GPRReg fuel = GPRInfo::regT1;
+    constexpr unsigned maxPadding = 60;
+    constexpr unsigned maxReturnLength = X86Assembler::maxShortReturnLength + 1;
+
+    WeakRandom random(seed);
+    ShortReturnProgram program;
+    Vector<CCallHelpers::Label> blocks;
+    Vector<CCallHelpers::JumpList> forwardJumps(ShortReturnProgram::numberOfBlocks);
+    auto linkToAnyBlock = [&](CCallHelpers::Jump jump) {
+        ++program.numberOfJumps;
+        unsigned target = random.getUint32(ShortReturnProgram::numberOfBlocks);
+        if (target < blocks.size())
+            jump.linkTo(blocks[target], &jit);
+        else
+            forwardJumps[target].append(jump);
+    };
+
+    jit.move(GPRInfo::argumentGPR0, accumulator);
+    jit.move(CCallHelpers::TrustedImm32(100), fuel);
+    for (unsigned block = 0; block < ShortReturnProgram::numberOfBlocks; ++block) {
+        forwardJumps[block].link(&jit);
+        blocks.append(jit.label());
+        if (block % 3 == 2) {
+            unsigned length = 1 + random.getUint32(maxReturnLength);
+            jit.emitNops(length - 1);
+            jit.ret();
+            if (length <= X86Assembler::maxShortReturnLength)
+                jit.m_assembler.noteShortReturnEndingHere(length);
+            program.returns.append({ blocks.last(), length });
+            continue;
+        }
+        jit.mul32(CCallHelpers::TrustedImm32(31), accumulator, accumulator);
+        jit.add32(CCallHelpers::TrustedImm32(block), accumulator);
+        CCallHelpers::Jump goesOn = jit.branchSub32(CCallHelpers::NonZero, CCallHelpers::TrustedImm32(1), fuel);
+        ++program.numberOfJumps;
+        jit.ret();
+        goesOn.link(&jit);
+        jit.emitNops(random.getUint32(maxPadding));
+        linkToAnyBlock(jit.branchTest32(CCallHelpers::NonZero, accumulator, CCallHelpers::TrustedImm32(1)));
+        jit.emitNops(random.getUint32(maxPadding));
+        linkToAnyBlock(jit.jump());
+    }
+    return program;
+}
+
+void testShortReturnCopies()
+{
+    for (unsigned seed = 1; seed <= 40; ++seed) {
+        ShortReturnProgram program;
+        size_t sizeWithLongJumps = 0;
+        Vector<std::pair<uint32_t, unsigned>> placesOfReturns;
+        LinkedCode shortened = linkIntoStorage([&](CCallHelpers& jit) {
+            program = emitShortReturnProgram(jit, seed);
+            sizeWithLongJumps = jit.m_assembler.codeSize();
+        }, [&](LinkBuffer& linkBuffer) {
+            for (const ShortReturnProgram::Return& shortReturn : program.returns)
+                placesOfReturns.append({ linkBuffer.offsetOf(shortReturn.label), shortReturn.length });
+        });
+        LinkedCode unshortened = linkIntoStorage([&](CCallHelpers& jit) {
+            emitShortReturnProgram(jit, seed);
+        }, [&](LinkBuffer&) { }, JumpShortening::No);
+
+        for (const auto& [offset, length] : placesOfReturns) {
+            CHECK_EQ(static_cast<unsigned>(shortened.bytes()[offset + length - 1]), 0xc3u);
+            for (const LinkedSite& site : shortened.sites) {
+                if (site.target == offset && (site.kind == RelocationKind::Jump || site.kind == RelocationKind::ShortJump))
+                    CHECK_EQ(MacroAssembler::relocationSize(site.kind) < length, true);
+            }
+        }
+        CHECK_EQ(shortened.size < sizeWithLongJumps, true);
+        CHECK_EQ(unshortened.size, sizeWithLongJumps);
+        CHECK_EQ(shortened.sites.size() < program.numberOfJumps, true);
+        CHECK_EQ(unshortened.sites.size(), static_cast<size_t>(program.numberOfJumps));
+
+        auto executable = makeExecutable(shortened.bytes());
+        auto executableWithLongJumps = makeExecutable(unshortened.bytes());
+        for (int32_t argument : { 0, 1, 2, 3, 12345, 99999 })
+            CHECK_EQ(invokeAt<int32_t>(startOfCopiedCode(executable.code(), 0), argument), invokeAt<int32_t>(startOfCopiedCode(executableWithLongJumps.code(), 0), argument));
+    }
+}
+
 void testJumpShorteningBounds()
 {
     struct JumpKinds {
@@ -14160,6 +14255,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 #if CPU(X86_64)
     RUN(testJumpShortening());
     RUN(testJumpShorteningBounds());
+    RUN(testShortReturnCopies());
     RUN(testX86NamedInstructions());
     RUN(testAddOrFromMemoryAliasing());
 #endif

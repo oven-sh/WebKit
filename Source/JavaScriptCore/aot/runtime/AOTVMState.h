@@ -23,6 +23,7 @@
 namespace JSC {
 
 class CallFrame;
+class IdentifierArena;
 class JSGlobalObject;
 class JSObject;
 class JSString;
@@ -140,6 +141,7 @@ public:
     std::unique_ptr<FunctionTables> functionTables;
     std::unique_ptr<CyclesOfImports> cyclesOfImports;
     std::unique_ptr<ImportersOfModules> importersOfModules;
+    std::optional<Vector<uint32_t>> modulesWithQuery;
     std::unique_ptr<ReexportedNames> reexportedNames;
     PlacesSeenByPlans placesSeenByPlans;
     std::unique_ptr<RegExpLiterals> regExpLiterals;
@@ -189,6 +191,9 @@ public:
     bool isResolvingImportCallWithoutAttributes { false };
     bool requireRunsMocks { false };
     std::unique_ptr<ProgramIdentifiers> identifiers;
+    std::unique_ptr<IdentifierArena> identifiersOfLastSource;
+    size_t lengthOfSourcesSincePrune { 0 };
+    void didParseSource(VM&, size_t length, std::unique_ptr<IdentifierArena>&&);
     CountedFiles countedFiles;
     struct ComputedFunctionName {
         Weak<JSString> name;

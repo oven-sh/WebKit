@@ -133,7 +133,7 @@ private:
 
     bool beginLookingForBirthsToMove();
     void noteIfBirthMayMove(ValueID, const Operation&);
-    bool isWhereBirthMayMove(ValueID, const Operation&) const;
+    bool canMoveAllocation(ValueID, const Operation&) const;
     bool moveBirthsToWhereCellsAreNeeded();
     SweepTotals sweepAgainBehindMovedBirths(const SweepInputs&, Code&);
 
@@ -277,9 +277,16 @@ bool staysInSweptCodeByItself(const Operation&);
 
 bool objectOfLayoutMayLieInFrame(const PlannedLayout&);
 
-inline ValueID underlyingCellOf(const Code& code, ValueID cell)
+NEVER_INLINE inline ValueID cellBehindNames(const Code& code, ValueID name)
 {
-    return code.valueBehindNames<cellPreservingOpcodes>(cell);
+    return code.valueBehindNames<cellPreservingOpcodes>(name);
+}
+
+ALWAYS_INLINE ValueID underlyingCellOf(const Code& code, ValueID cell)
+{
+    if (!cellPreservingOpcodes.contains(code.at(cell).opcode)) [[likely]]
+        return cell;
+    return cellBehindNames(code, cell);
 }
 
 template<typename Functor>

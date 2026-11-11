@@ -2,7 +2,7 @@
 # The literal is a constant of the program. It is made where its operation stands: the scan lays its tree out as it does for any allocation, so its layout does not escape because it is a constant.
 # What the constant fills the field with and what the store brings are both in the field's type, and a store into one object shows in no other
 # RUN(LINK): link fields layouts mechanisms=all
-# LINK: field L0.0 "line" proven=i32|string writers-known
+# LINK: field L0.0 "line" proven=int[0, 2147483647]|string writers-known
 # LINK: layout L0 changes=[]
 # RUN: run-in-shell globalThis.report = value => print(String(value));
 # CHECK: string

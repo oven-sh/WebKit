@@ -18,7 +18,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-ALWAYS_INLINE JSObject* ObjectBuilder::tryBuild(VM& vm, const ObjectBuilderPlan& plan, Structure* structure, const EncodedJSValue* values)
+ALWAYS_INLINE JSObject* ObjectBuilder::tryBuild(VM& vm, const ObjectBuilderPlan& plan, Structure* structure, const EncodedJSValue* values, const uint8_t* kinds, uint8_t kindsOfAll)
 {
     using Plan = ObjectBuilderPlan;
     static_assert(sizeof(Plan::FastField) == sizeof(uint32_t) && !OBJECT_OFFSETOF(Plan::FastField, offset) && OBJECT_OFFSETOF(Plan::FastField, representation) == 2 && OBJECT_OFFSETOF(Plan::FastField, acceptedValues) == 3);
@@ -36,6 +36,13 @@ ALWAYS_INLINE JSObject* ObjectBuilder::tryBuild(VM& vm, const ObjectBuilderPlan&
     const Plan::FastField* fields = plan.m_fastFields.span().data();
     const uint32_t* acceptedStructureIDs = plan.m_acceptedStructureIDs.span().data();
     size_t numberOfFields = plan.m_fastFields.size();
+    if (!(kindsOfAll & ~plan.m_acceptedByConsecutiveWords)) [[likely]] {
+        auto* words = reinterpret_cast<EncodedJSValue*>(cell + fields->offset);
+#pragma clang loop unroll(disable)
+        for (size_t index = 0; index < numberOfFields; ++index)
+            WTF::atomicStore<MemoryOrder::Relaxed>(&words[index], values[index]);
+        numberOfFields = 0;
+    }
 #pragma clang loop unroll(disable)
     for (size_t index = 0; index < numberOfFields; ++index) {
         uint32_t field = WTF::unalignedLoad<uint32_t>(fields + index);
@@ -43,47 +50,43 @@ ALWAYS_INLINE JSObject* ObjectBuilder::tryBuild(VM& vm, const ObjectBuilderPlan&
         uint32_t acceptedValues = field >> 24;
         void* slot = cell + static_cast<uint16_t>(field);
         JSValue value = JSValue::decode(values[index]);
-        uint32_t kind;
-        if (value.isInt32())
-            kind = Plan::AcceptsInt32;
-        else if (value.isCell())
-            kind = value.asCell()->isString() ? Plan::AcceptsString : Plan::AcceptsObject;
-        else if (value.isDouble())
-            kind = Plan::AcceptsDouble;
-        else if (value.isBoolean())
-            kind = Plan::AcceptsBoolean;
-        else {
-            kind = Plan::AcceptsNull;
+        uint32_t kind = kinds[index];
+        if (kind == Plan::AcceptsNull) [[unlikely]]
             hasEveryFieldOfBirth &= !(acceptedValues & Plan::HoldsRawValueFromBirth);
-        }
-        bool isAccepted = acceptedValues & kind;
-        if (!isAccepted && value.isCell())
-            isAccepted = value.asCell()->structureID().bits() == acceptedStructureIDs[index];
-        if (isAccepted) [[likely]] {
-            if (representation == SlotRepresentation::JSValue || (representation == SlotRepresentation::Cell && value.isCell())) {
+        bool isCell = kind & (Plan::AcceptsString | Plan::AcceptsObject);
+        if (acceptedValues & kind || (isCell && value.asCell()->structureID().bits() == acceptedStructureIDs[index])) [[likely]] {
+            if (representation == SlotRepresentation::JSValue) {
                 *static_cast<EncodedJSValue*>(slot) = values[index];
                 continue;
             }
-            if (value.isCell() && (representation == SlotRepresentation::OptionalCell32 || representation == SlotRepresentation::Cell32)) {
-                *static_cast<uint32_t*>(slot) = MarkedBlockCage::encode(plan.m_state.instance.cellCageBase, value.asCell());
-                continue;
-            }
-            if (value.isNumber()) {
-                if (representation == SlotRepresentation::Double || representation == SlotRepresentation::OptionalDouble) {
-                    *static_cast<double*>(slot) = value.asNumber();
+            if (isCell) {
+                if (representation == SlotRepresentation::OptionalCell32 || representation == SlotRepresentation::Cell32) {
+                    *static_cast<uint32_t*>(slot) = MarkedBlockCage::encode(plan.m_state.instance.cellCageBase, value.asCell());
                     continue;
                 }
-                if (value.isInt32()) {
-                    if (representation == SlotRepresentation::Int32 || (representation == SlotRepresentation::OptionalInt32 && value.asInt32() >= minInlineInt32)) {
-                        *static_cast<int32_t*>(slot) = value.asInt32();
-                        continue;
-                    }
-                    if (representation == SlotRepresentation::Int64 || representation == SlotRepresentation::OptionalInt64) {
-                        *static_cast<int64_t*>(slot) = value.asInt32();
-                        continue;
-                    }
+                if (representation == SlotRepresentation::Cell) {
+                    *static_cast<EncodedJSValue*>(slot) = values[index];
+                    continue;
                 }
-            } else if (value.isBoolean()) {
+            } else if (kind == Plan::AcceptsInt32) {
+                if (representation == SlotRepresentation::Int32 || (representation == SlotRepresentation::OptionalInt32 && value.asInt32() >= minInlineInt32)) {
+                    *static_cast<int32_t*>(slot) = value.asInt32();
+                    continue;
+                }
+                if (representation == SlotRepresentation::Double || representation == SlotRepresentation::OptionalDouble) {
+                    *static_cast<double*>(slot) = value.asInt32();
+                    continue;
+                }
+                if (representation == SlotRepresentation::Int64 || representation == SlotRepresentation::OptionalInt64) {
+                    *static_cast<int64_t*>(slot) = value.asInt32();
+                    continue;
+                }
+            } else if (kind == Plan::AcceptsDouble) {
+                if (representation == SlotRepresentation::Double || representation == SlotRepresentation::OptionalDouble) {
+                    *static_cast<double*>(slot) = value.asDouble();
+                    continue;
+                }
+            } else if (kind == Plan::AcceptsBoolean) {
                 if (representation == SlotRepresentation::Boolean) {
                     *static_cast<uint8_t*>(slot) = value.asBoolean();
                     continue;

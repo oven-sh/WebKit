@@ -7,8 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBitVector.h"
 #include "AOTNativeTest.h"
 #include "AOTSharedArray.h"
+#include <array>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -93,8 +95,90 @@ static void sharedArraySaysWhereTwoHoldTheSame()
     }
 }
 
+static void bitVectorAgreesWithWTF()
+{
+    uint32_t state = 4711;
+    auto next = [&](uint32_t bound) {
+        state = state * 1664525 + 1013904223;
+        return (state >> 8) % bound;
+    };
+    constexpr uint32_t numberOfVectors = 3;
+    std::array<BitVector, numberOfVectors> vectors;
+    std::array<WTF::BitVector, numberOfVectors> expected;
+    for (uint32_t step = 0; step < 4000; ++step) {
+        uint32_t one = next(numberOfVectors);
+        uint32_t other = next(numberOfVectors);
+        size_t bit = next(1u << next(11));
+        switch (next(14)) {
+        case 0:
+        case 1:
+        case 2:
+            AOT_TEST_CHECK(vectors[one].set(bit) == expected[one].set(bit));
+            break;
+        case 3:
+            AOT_TEST_CHECK(vectors[one].add(bit) == expected[one].add(bit));
+            break;
+        case 4:
+            AOT_TEST_CHECK(vectors[one].clear(bit) == expected[one].clear(bit));
+            break;
+        case 5:
+            vectors[one].merge(vectors[other]);
+            expected[one].merge(expected[other]);
+            break;
+        case 6:
+            vectors[one].filter(vectors[other]);
+            expected[one].filter(expected[other]);
+            break;
+        case 7:
+            vectors[one].exclude(BitVector(vectors[other]));
+            expected[one].exclude(WTF::BitVector(expected[other]));
+            break;
+        case 8:
+            vectors[one] = vectors[other];
+            expected[one] = expected[other];
+            break;
+        case 9:
+            vectors[one] = std::exchange(vectors[other], BitVector());
+            expected[one] = std::exchange(expected[other], WTF::BitVector());
+            break;
+        case 10:
+            vectors[one].ensureSize(bit);
+            expected[one].ensureSize(bit);
+            break;
+        case 11:
+            vectors[one].clearAll();
+            expected[one].clearAll();
+            break;
+        default:
+            vectors[one] = BitVector(bit + 1);
+            expected[one] = WTF::BitVector(bit + 1);
+            AOT_TEST_CHECK(!vectors[one].quickSet(bit) && vectors[one].quickGet(bit));
+            expected[one].quickSet(bit);
+            break;
+        }
+        for (uint32_t index = 0; index < numberOfVectors; ++index) {
+            AOT_TEST_CHECK(vectors[index].bitCount() == expected[index].bitCount() && vectors[index].isEmpty() == expected[index].isEmpty());
+            AOT_TEST_CHECK(vectors[index].get(bit) == expected[index].get(bit) && vectors[index].contains(bit + 64) == expected[index].contains(bit + 64));
+            AOT_TEST_CHECK((vectors[index] == vectors[other]) == (expected[index] == expected[other]));
+            Vector<size_t> members;
+            for (size_t member : vectors[index])
+                members.append(member);
+            size_t place = 0;
+            for (size_t member : expected[index])
+                AOT_TEST_CHECK(place < members.size() && members[place++] == member);
+            AOT_TEST_CHECK(place == members.size());
+            place = 0;
+            vectors[index].forEachSetBit([&](size_t member) {
+                AOT_TEST_CHECK(members[place++] == member);
+            });
+            AOT_TEST_CHECK(place == members.size());
+        }
+    }
+}
+
 #define FOR_EACH_AOT_SHARED_ARRAY_TEST(v) \
-    v(sharedArrayOfZerosIsWrittenWithoutTouchingItsCopies) v(sharedArrayTakesStretchesOfAnother) v(sharedArraySaysWhereTwoHoldTheSame)
+    v(sharedArrayOfZerosIsWrittenWithoutTouchingItsCopies) v(sharedArrayTakesStretchesOfAnother) v(sharedArraySaysWhereTwoHoldTheSame) \
+    v(bitVectorAgreesWithWTF)
 
 std::span<const NativeTest> sharedArrayTests()
 {

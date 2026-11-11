@@ -29,6 +29,8 @@ static uint64_t bitFoldPossibleBits(const Operation* value)
 {
     if (isBoolean(value))
         return 1;
+    if (isDecodedReference(value))
+        return bitsOfDecodedReference;
     IntegerRange range = rangeOf(value);
     if (range.min < 0)
         return std::numeric_limits<uint64_t>::max();
@@ -197,7 +199,7 @@ static Operation* foldMachineBitCount(Builder& builder, Opcode opcode, Type type
     return nullptr;
 }
 
-Operation* foldMachineRotationOutOfShifts(Builder& builder, Type type, Operation* left, Operation* right)
+static Operation* rotationOfShifts(Builder& builder, Type type, Operation* left, Operation* right)
 {
     if (left->opcode() == ZShr)
         std::swap(left, right);
@@ -209,6 +211,33 @@ Operation* foldMachineRotationOutOfShifts(Builder& builder, Type type, Operation
     if (!toLeft || toLeft + toRight != width)
         return nullptr;
     return builder.binary(RotR, left->child(0), builder.const32(toRight));
+}
+
+static constexpr unsigned maxRotationTerms = 12;
+
+static Operation* foldRotationIntoTerms(Builder& builder, Opcode opcode, Type type, Operation* terms, Operation* shift, unsigned& termsLeft)
+{
+    if (Operation* rotation = rotationOfShifts(builder, type, terms, shift))
+        return rotation;
+    if (terms->opcode() != opcode)
+        return nullptr;
+    for (unsigned index : { 1u, 0u }) {
+        if (!termsLeft)
+            return nullptr;
+        --termsLeft;
+        if (Operation* rotated = foldRotationIntoTerms(builder, opcode, type, terms->child(index), shift, termsLeft))
+            return builder.binary(opcode, terms->child(1 - index), rotated);
+    }
+    return nullptr;
+}
+
+Operation* foldMachineRotationOutOfShifts(Builder& builder, Opcode opcode, Type type, Operation* left, Operation* right)
+{
+    ASSERT(opcode == BitOr || opcode == BitXor);
+    if (!right->child(1)->hasInt32())
+        return nullptr;
+    unsigned termsLeft = maxRotationTerms;
+    return foldRotationIntoTerms(builder, opcode, type, left, right, termsLeft);
 }
 
 static Operation* foldMachineRotation(Builder& builder, Type type, Operation* value, Operation* amountOperand)
@@ -316,7 +345,7 @@ Operation* foldLowWord(Builder& builder, Operation* root)
     auto costOf = [&](Operation* wide) {
         Opcode opcode = wide->opcode();
         if (opcode == SExt32 || opcode == ZExt32)
-            return -1;
+            return -2;
         if (wide->hasInt64())
             return 0;
         return readsLowWords(wide) ? costs.get(wide) : 1;

@@ -33,7 +33,7 @@ static_assert(perObjectHeaps.containsAll(heapsOfObjectsJudgedInKnownWriters));
 static_assert(!perObjectHeaps.contains(AbstractHeap::MemberGuards));
 
 static constexpr OptionSet<CellFact> handledCellFacts {
-    CellFact::NotFrozen, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::HasLayoutPrototype, CellFact::OrderWordIsKnown, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent, CellFact::BearsNoMark
+    CellFact::NotFrozen, CellFact::IsExtensible, CellFact::NoFieldOutsideSlot, CellFact::NoExtraProperties, CellFact::HasLayoutPrototype, CellFact::OrderWordIsKnown, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent, CellFact::BearsNoMark
 };
 
 static_assert(handledCellFacts.toRaw() == (1u << numberOfCellFacts) - 1);
@@ -482,12 +482,31 @@ static ALWAYS_INLINE bool writesObjectsOfTurnAloneInKnownWriters(Walker& walker,
 
 static std::optional<Vector<uint32_t, 2>> objectsMadeHereInKnownWriters(Walker& walker, const ObjectsWrittenAloneInKnownWriters& written)
 {
+    const Code& code = walker.code();
     Vector<uint32_t, 2> made;
+    auto append = [&](Reference object) {
+        Reference root = rootInKnownWriters(code, object);
+        if (!root.isValue() || !allocatesNewCell(code.at(root.id())))
+            return false;
+        if (!made.contains(root.id().index()))
+            made.append(root.id().index());
+        return true;
+    };
     for (Reference object : written) {
-        Reference root = rootInKnownWriters(walker.code(), object);
-        if (!root.isValue() || !allocatesNewCell(walker.code().at(root.id())))
+        if (append(object))
+            continue;
+        Reference root = rootInKnownWriters(code, object);
+        if (!root.isValue() || code.at(root.id()).opcode != Opcode::Parameter || code.at(code.at(root.id()).block()).isLoopHead)
             return std::nullopt;
-        made.append(root.id().index());
+        BlockID block = code.at(root.id()).block();
+        std::span<const ValueID> parameters = code.at(block).parameters();
+        size_t position = std::ranges::find(parameters, root.id()) - parameters.begin();
+        bool areAllocatedHere = position < parameters.size() && code.at(block).firstEdgeIn();
+        code.forEachIncomingEdgeUnsealed(block, [&](const Edge& edge) {
+            areAllocatedHere = areAllocatedHere && position < edge.arguments().size() && append(Reference::value(edge.arguments()[position]));
+        });
+        if (!areAllocatedHere)
+            return std::nullopt;
     }
     return made;
 }
@@ -498,7 +517,7 @@ static std::optional<Vector<uint32_t, 2>> listMadeHereThatLoopOnlyFillsInKnownWr
         return Vector<uint32_t, 2> { };
     std::optional<BlockID> head = walker.innermostTrialVisitHeader();
     std::optional<Vector<uint32_t, 2>> made = head ? objectsMadeHereInKnownWriters(walker, ObjectsWrittenAloneInKnownWriters { receiver }) : std::nullopt;
-    if (!made || !hasOnlyOtherArrayReads(walker, *head, ValueID(made->first())) || (!walker.hasElementArithmeticInLoop(*head) && !walker.hasElementComparisonInLoop(*head)))
+    if (!made || !std::ranges::all_of(*made, [&](uint32_t array) { return hasOnlyOtherArrayReads(walker, *head, ValueID(array)); }) || (!walker.hasElementArithmeticInLoop(*head) && !walker.hasElementComparisonInLoop(*head) && !readsNumericArray(walker, *head)))
         return std::nullopt;
     return made;
 }
@@ -700,7 +719,17 @@ ALWAYS_INLINE_INTO_OTHER_FILES void endWhatOperationWritesOrRuns(Walker& walker,
         noteThatGuardsOfRowHaveBegunInKnownWriters(walker, declaredLayoutOf(walker.program(), draft.layout()));
     }
     static_assert(!declaredBoundOf(Opcode::PutSlot).writes.contains(AbstractHeap::NamedProperties) && !declaredBoundOf(Opcode::PutSlotOrAdd).writes.contains(AbstractHeap::NamedProperties));
-    if (draft.opcode == Opcode::PutDoubleIndex || draft.opcode == Opcode::PutPropertyOfHeir) {
+    if (draft.opcode == Opcode::PutEnvironmentField || (draft.opcode == Opcode::PutModuleVariable && !isUndoableVariableStore)) {
+        uint32_t undoableStore = walker.takePendingUndoableStore();
+        if (undoableStore && !writesWhatTurnHasMade) {
+            walker.state().recordUndoableStore(walker.iterationRestartPoint(), undoableStore);
+            walker.saveUndoableStoreState(undoableStore);
+        }
+        if (walker.netOfEffectsWatchesTurns() && (undoableStore || walker.isUndoingStores())) [[unlikely]]
+            walker.noteWhetherOperationWritesWhatTurnHasMade(true);
+        return;
+    }
+    if (draft.opcode == Opcode::PutDoubleIndex || draft.opcode == Opcode::PutContiguousIndex || draft.opcode == Opcode::PutPropertyOfHeir || draft.opcode == Opcode::PutGlobalBinding || draft.opcode == Opcode::PutKeyedProperty) {
         if (uint32_t undoableStore = walker.takePendingUndoableStore(); undoableStore && !writesWhatTurnHasMade) {
             walker.state().recordUndoableStore(walker.iterationRestartPoint(), undoableStore);
             walker.saveUndoableStoreState(undoableStore);
@@ -712,6 +741,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES void endWhatOperationWritesOrRuns(Walker& walker,
     if (uint32_t undoableStore = walker.takePendingUndoableStore(); undoableStore && !writesWhatTurnHasMade) {
         walker.state().recordUndoableStore(walker.iterationRestartPoint(), undoableStore);
         walker.saveUndoableStoreState(undoableStore);
+        if (walker.netOfEffectsWatchesTurns() && walker.isUndoableStoreIntoIterationObject(undoableStore)) [[unlikely]]
+            walker.noteWhetherOperationWritesWhatTurnHasMade(true);
     }
     if (testsItsOwnGuess(draft) || !effects.writes.contains(AbstractHeap::NamedProperties))
         return;

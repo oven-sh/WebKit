@@ -10,6 +10,7 @@
 
 #include "AOTEffectsDeclared.h"
 #include "AOTOpcodeSets.h"
+#include "AOTWalkStrings.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -127,7 +128,7 @@ void Walker::noteRecordBuiltForPolls(ValueID id, const Draft& draft, const Effec
     build(WTF::move(poll));
 }
 
-void Walker::buildPollInFrontOfLoop(BlockID inputHead, const LoopPreview& preview)
+void Walker::buildPollInFrontOfLoop(BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering)
 {
     m_pollInFrontOfLoopBeingEntered = { };
     if (!has(Mechanism::Handlers) || preview.effects.maySuspend || m_coldCopyDepth || isUnreachable() || !isUnderHandler())
@@ -141,6 +142,9 @@ void Walker::buildPollInFrontOfLoop(BlockID inputHead, const LoopPreview& previe
 
     if (head.hasHandler())
         noteStateAtHeadForHandler();
+    flattenStringsReadByLoop(*this, inputHead, entering, m_origin);
+    if (m_hasFailed || isUnreachable())
+        return;
     Draft poll(Opcode::LoopHint, m_origin);
     poll.setThrowsOwedError(true);
     Reference built = build(WTF::move(poll));

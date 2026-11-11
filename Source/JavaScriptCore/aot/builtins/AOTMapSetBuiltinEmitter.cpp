@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTStubsCollections.h"
 #include "IterationKind.h"
 #include "JSCJSValueInlines.h"
 #include "JSWeakMap.h"
@@ -52,9 +53,9 @@ void MapSetBuiltinEmitter::clear(const InlineCall& call, HashTableOwner owner)
 void MapSetBuiltinEmitter::createIterator(const InlineCall& call, HashTableOwner owner)
 {
     CellPointer table = cellOperand(call.receiver());
-    Word32 kind = word32(static_cast<int32_t>(call.parameter<IterationKind>(0)));
-    RuntimeOperation operation = owner == HashTableOwner::Map ? RuntimeOperation::NewMapIterator : RuntimeOperation::NewSetIterator;
-    finish(call, callOperation<CellPointer>(call.context(), operation, { table, kind }));
+    LValue kind = m_out.constInt64(static_cast<int64_t>(call.parameter<IterationKind>(0)));
+    IteratedClass iterated = owner == HashTableOwner::Map ? IteratedClass::Map : IteratedClass::Set;
+    finish(call, CellPointer(callStub(call.context(), newIterator(iterated), { table.value(), kind }).first));
 }
 
 void MapSetBuiltinEmitter::lookUpWeakTable(const InlineCall& call, WeakLookup lookup)

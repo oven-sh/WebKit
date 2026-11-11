@@ -146,6 +146,7 @@ struct ShapeTestsOfSets {
 };
 
 class ShapeTable {
+    friend class FactMisstater;
 public:
     using ShapeList = Vector<uint32_t, 16>;
 

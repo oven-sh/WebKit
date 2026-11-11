@@ -27,7 +27,7 @@ struct HashTableRegisterPlan {
 
 inline constexpr HashTableRegisterPlan hashTableRegisterPlan =
 #if CPU(X86_64)
-    { StubRegister::R0, StubRegister::A2, StubRegister::A3, StubRegister::T13, StubRegister::T11, StubRegister::T9, StubRegister::T10 };
+    { StubRegister::R0, StubRegister::T9, StubRegister::A3, StubRegister::T13, StubRegister::T11, StubRegister::A2, StubRegister::T10 };
 #else
     { StubRegister::T13, StubRegister::T11, StubRegister::T12, StubRegister::T15, StubRegister::T14, StubRegister::T9, std::nullopt };
 #endif
@@ -69,6 +69,8 @@ struct HashTableExits {
     JumpList hasNoStorage;
     InsertionPointExits insertionPoints;
     JumpList unknown;
+    const ScopedLambda<void()>* emitFoundAmongNarrowKeys { nullptr };
+    const ScopedLambda<void()>* emitAbsent { nullptr };
 };
 
 ptrdiff_t offsetOfHashTableStorage();
@@ -77,6 +79,7 @@ void emitFindLatin1CharactersInHashTable(StubAssembler&, const HashTableRegister
 void emitLoadTagOfSlot(StubAssembler&, GPRReg hash);
 void emitMarkThatKeyLeftHomeSlot(StubAssembler&, BaseIndex tagAtHome);
 void emitHashOfBits(StubAssembler&, GPRReg key, GPRReg hash, GPRReg scratch, GPRReg scratch2);
+void emitHashOfKeyBits(StubAssembler&, GPRReg key, GPRReg hash, GPRReg scratch);
 void emitLoadValuesOfCompactTable(StubAssembler&, const HashTableRegisters&, GPRReg values, JumpList* keysAreNarrow = nullptr, JumpList* keysAreWide = nullptr, bool everyoneKnowsTheWidth = false);
 
 } } // namespace JSC::AOT

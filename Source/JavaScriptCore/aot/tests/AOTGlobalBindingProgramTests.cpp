@@ -462,6 +462,39 @@ static void testStorageGrowthKeepsLocation()
     CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_THAT_GROW_THE_STORAGE, OUTPUT_WHILE_THE_STORAGE_GROWS, "c...."_s);
 }
 
+#define STATEMENTS_THAT_STORE_AFTER_AN_ABSENT_READ R"JS(
+globalThis.publish = (read, store, storeSloppy, readOfGlobalObject, storeToGlobalObject) => {
+    measure("absent", readOfGlobalObject);
+    globalThis.shared = 1;
+    measure("stores", () => { store(2); return read(); });
+    measure("sloppy stores", () => { storeSloppy(3); return read(); });
+    measure("stores to the global object", () => { storeToGlobalObject(4); return readOfGlobalObject(); });
+    print("read by other code: " + globalThis.shared);
+    Object.defineProperty(globalThis, "shared", { configurable: true, get: () => 5, set: value => { print("setter: " + value); } });
+    storeToGlobalObject(6);
+    print("accessor: " + readOfGlobalObject());
+    Object.defineProperty(globalThis, "shared", { value: 7, writable: false });
+    describeError("store into a property that is not writable", () => storeToGlobalObject(8));
+    print("not writable: " + readOfGlobalObject());
+};
+)JS"
+
+#define OUTPUT_OF_STORES_AFTER_AN_ABSENT_READ \
+    "absent: undefined\n" \
+    "stores: 2\n" \
+    "sloppy stores: 3\n" \
+    "stores to the global object: 4\n" \
+    "read by other code: 4\n" \
+    "setter: 6\n" \
+    "accessor: 5\n" \
+    "store into a property that is not writable: TypeError\n" \
+    "not writable: 7\n"
+
+static void testStoresAfterAbsentRead()
+{
+    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_THAT_STORE_AFTER_AN_ABSENT_READ, OUTPUT_OF_STORES_AFTER_AN_ABSENT_READ, "cccc....."_s);
+}
+
 #define STATEMENTS_WITH_A_LAZY_GLOBAL R"JS(
 globalThis.publish = readLazy => {
     const first = readLazy();
@@ -599,6 +632,7 @@ std::span<const NativeTest> globalBindingProgramTests()
         { "global-bindings/programs/typeof-absent-name-follows-the-global-object"_s, testTypeOfAbsentNameFollowsTheGlobalObject },
         { "global-bindings/programs/typeof-absent-name-sees-let-of-script"_s, testTypeOfAbsentNameSeesLetOfScript },
         { "global-bindings/programs/storage-growth-keeps-location"_s, testStorageGrowthKeepsLocation },
+        { "global-bindings/programs/stores-after-absent-read"_s, testStoresAfterAbsentRead },
         { "global-bindings/programs/lazy-global-is-created-once"_s, testLazyGlobalIsCreatedOnce },
         { "global-bindings/programs/store-through-binding-then-native-read"_s, testStoreThroughBindingThenNativeRead },
         { "global-bindings/programs/many-names-have-their-own-records"_s, testManyNamesHaveTheirOwnRecords },

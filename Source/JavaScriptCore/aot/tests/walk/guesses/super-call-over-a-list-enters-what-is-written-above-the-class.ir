@@ -29,7 +29,7 @@
 # BODY-NEXT: [[test]]: {{*}} = TypeTest [[parent]] testedType=f1
 # BODY: [[element]]: {{*}} = GetArrayElement {{*}} level=Proven
 # BODY: = GetArrayLength
-# BODY: = CallDirect {{*}}, [[element]] function=f1 [isConstruction]
+# BODY: = CallDirect {{*}}, [[element]] function=f1 role=ParameterGuard [isConstruction]
 # RUN(CLOSED): walk f2 mechanisms=none
 # CLOSED-NOT: TypeTest
 # CLOSED: = SuperConstructList

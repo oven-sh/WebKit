@@ -139,13 +139,13 @@ Vector<uint8_t> ImageFunctions::encode(std::span<const uint32_t> sideTables, std
     Vector<uint16_t> steps;
     Vector<uint32_t> listedPlaces;
     UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> entryOfPlace;
-    uint32_t firstPlaceBehind = 0;
+    uint32_t firstPlaceAfter = 0;
     for (size_t index = 0; index < numbers.size(); ++index) {
         size_t entry = index % functionsInGroup;
         if (!entry) {
             groups.append(0);
             groups.append(static_cast<uint32_t>(listedNumbers.size()));
-            groups.append(firstPlaceBehind);
+            groups.append(firstPlaceAfter);
         }
         if (entry && numbers[index] == numbers[index - 1] + 1)
             groups[groups.size() - wordsOfGroup] |= 1u << entry;
@@ -153,7 +153,7 @@ Vector<uint8_t> ImageFunctions::encode(std::span<const uint32_t> sideTables, std
             listedNumbers.append(Number24(numbers[index]));
 
         uint32_t place = sideTables[index];
-        firstPlaceBehind = std::max(firstPlaceBehind, place + 1);
+        firstPlaceAfter = std::max(firstPlaceAfter, place + 1);
         if (uint32_t placeOfGroup = groups.last(); place >= placeOfGroup && place - placeOfGroup < isListedPlace)
             steps.append(static_cast<uint16_t>(place - placeOfGroup));
         else {
@@ -226,13 +226,14 @@ static Vector<uint32_t> encodeCodeGranules(const CodeLayout& layout)
     const Vector<uint32_t>& bodyStarts = layout.bodyStarts;
     size_t granuleSize = static_cast<size_t>(1) << layout.codeGranuleShift;
     Vector<uint32_t> codeGranules;
-    codeGranules.reserveInitialCapacity((layout.functionsEnd + granuleSize - 1) / granuleSize);
+    codeGranules.reserveInitialCapacity((layout.functionsEnd + granuleSize - 1) / granuleSize + 1);
     uint32_t function = 0;
     for (size_t start = 0; start < layout.functionsEnd; start += granuleSize) {
         while (function + 1 < bodyStarts.size() && bodyStarts[function + 1] <= start)
             ++function;
-        codeGranules.append(function);
+        codeGranules.append(function >> FunctionStarts::groupShift);
     }
+    codeGranules.append(static_cast<uint32_t>(FunctionStarts::numberOfGroupsFor(bodyStarts.size()) - 1));
     return codeGranules;
 }
 
@@ -394,6 +395,28 @@ std::span<const uint32_t> Image::frameMapWords(uint32_t function) const
         return { };
     SideTableParts parts = SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables));
     return section<uint32_t>(ImageSection::FrameMaps).subspan(parts.firstFrameMapWord, parts.numberOfFrameMapWords);
+}
+
+std::span<const uint32_t> Image::frameMapWordsAt(const void* returnAddress) const
+{
+    std::span<const uint32_t> maps = section<uint32_t>(ImageSection::FrameMaps);
+    uint64_t offset = std::bit_cast<uintptr_t>(returnAddress) - std::bit_cast<uintptr_t>(m_code);
+    if (!offset || offset > header().codeSize)
+        return { };
+    ASSERT(offset <= std::numeric_limits<uint32_t>::max());
+    std::atomic<uint64_t>& entry = m_frameMapCache[static_cast<uint32_t>(offset) * 0x9e3779b1u >> (32 - frameMapCacheBits)];
+    uint64_t cached = entry.load(std::memory_order_relaxed);
+    if (cached >> 32 == offset) [[likely]]
+        return maps.subspan(static_cast<uint32_t>(cached));
+    CodeLocation where = locate(static_cast<const uint8_t*>(returnAddress) - 1);
+    if (where.kind != CodeKind::Function)
+        return { };
+    std::span<const uint32_t> words = frameMapWords(where.function);
+    if (words.empty())
+        return { };
+    uint32_t firstWord = static_cast<uint32_t>(words.data() - maps.data());
+    entry.store(offset << 32 | firstWord, std::memory_order_relaxed);
+    return maps.subspan(firstWord);
 }
 
 } } // namespace JSC::AOT

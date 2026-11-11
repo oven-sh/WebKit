@@ -577,6 +577,23 @@ bool BuilderOfEntries::buildParameterGuard()
     BlockID failing;
     if (!m_cannotGoOn)
         m_walker.letGuessFailUnasked(failing, m_origin);
+    const BeforeEvaluation& beforeEvaluation = m_walker.facts().beforeEvaluation();
+    for (VariableID mark : beforeEvaluation.holdsIn(m_unit.function) ? beforeEvaluation.marks.span() : std::span<const VariableID>()) {
+        Draft read = draft(Opcode::GetModuleVariable);
+        read.setVariable(mark);
+        Reference marked = m_cannotGoOn ? Reference() : build(WTF::move(read));
+        if (!marked || m_types.isSubset(m_walker.typeOf(marked), TypeTable::undefined))
+            continue;
+        Draft test = draft(Opcode::TypeTest);
+        test.setValueOperand(marked);
+        test.setTestedType(TypeTable::undefined);
+        Reference passes = build(WTF::move(test));
+        BlockID passing = m_walker.addBlock();
+        if (!failing)
+            failing = m_walker.addBlock(BlockFrequency::Rare);
+        branch(passes, passing, failing);
+        continueIn(passing);
+    }
     Vector<Reference, 16> passed(m_parameters.span());
     for (unsigned index = 0; index < m_parameters.size() && !m_cannotGoOn; ++index) {
         TypeID tested = m_conventions.typeBehindGuard(m_unit.function, index);

@@ -44,6 +44,27 @@ void BufferBuiltinEmitter::generateDataViewByteLength(const InlineCall& call)
     finish(call, length, Range { 1, maxByteLengthOfBuffer });
 }
 
+void BufferBuiltinEmitter::generateArrayBufferIsView(const InlineCall& call)
+{
+    ValueID argument = call.argumentOrNull(0);
+    if (!argument || !typeOf(argument).hasObjects()) {
+        finishInlineCall(call, boolean(false));
+        return;
+    }
+    LBasicBlock isCellCase = newBlock();
+    LBasicBlock isNotCell = newBlock();
+    Join<Condition> join(m_out);
+    Boxed value = in<Boxed>(argument);
+    branch(isCell(value), { normalEdge(isCellCase), normalEdge(isNotCell) });
+
+    m_out.appendTo(isCellCase);
+    join.add(hasCellTypeIn(unboxCell(value), { static_cast<JSType>(FirstTypedArrayType), static_cast<JSType>(LastTypedArrayType) }));
+
+    m_out.appendTo(isNotCell);
+    join.add(boolean(false));
+    finishInlineCall(call, join.finish());
+}
+
 void BufferBuiltinEmitter::generateArrayBufferByteLength(const InlineCall& call)
 {
     CellPointer cell = cellOperand(call.receiver());

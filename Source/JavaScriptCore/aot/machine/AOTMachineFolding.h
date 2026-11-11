@@ -8,6 +8,8 @@
 #if ENABLE(AOT)
 
 #include "AOTMachineBuilder.h"
+#include "AOTMachineTarget.h"
+#include "AOTSlotRepresentation.h"
 
 namespace JSC { namespace AOT { namespace Machine {
 
@@ -15,11 +17,13 @@ Operation* foldIntegerArithmetic(Builder&, Opcode, Type, Operation* left, Operat
 Operation* foldMachineBitAndOfBoundedValue(Builder&, Type, Operation* left, Operation* right);
 Operation* foldMachineBitOrOfBoundedValue(Builder&, Type, Operation* left, Operation* right);
 Operation* foldMachineShiftOrBitCount(Builder&, Opcode, Type, Operation* left, Operation* rightOrNull);
-Operation* foldMachineRotationOutOfShifts(Builder&, Type, Operation* left, Operation* right);
+Operation* foldMachineRotationOutOfShifts(Builder&, Opcode, Type, Operation* left, Operation* right);
 Operation* foldConversionOtherThanOfWords(Builder&, Opcode, Type result, Operation*);
 Operation* foldLowWord(Builder&, Operation* wide);
 Operation* foldFloatingPoint(Builder&, Opcode, Type, Operation* left, Operation* rightOrNull);
 Operation* foldMachineComparisonOfNumbers(Builder&, Opcode, Operation* left, Operation* right);
+bool isExactConvertedInteger(const Operation* number);
+Operation* wideConvertedInteger(Builder&, Operation* number);
 Operation* foldMachineOrderWithZeroOrOne(Builder&, Opcode, Operation* left, bool isZero, bool isOne);
 Operation* foldMachineComparisonOfBoundedIntegers(Builder&, Opcode, Operation* left, Operation* right);
 Operation* foldSelect(Builder&, Operation* predicate, Operation* whenNotZero, Operation* whenZero);
@@ -46,6 +50,15 @@ constexpr std::array<uint8_t, sizeOfTableByOpcode> listFoldTraitsOfOpcodes()
 inline constexpr std::array<uint8_t, sizeOfTableByOpcode> foldTraitsOfOpcodes = listFoldTraitsOfOpcodes();
 
 constexpr bool hasFoldTrait(Opcode opcode, uint8_t trait) { return foldTraitsOfOpcodes[opcode] & trait; }
+
+inline bool isDecodedReference(const Operation* operation)
+{
+    if (operation->opcode() != Add || !operation->child(0)->isArgumentReg(cellCageBaseGPR))
+        return false;
+    const Operation* scaled = operation->child(1);
+    return scaled->opcode() == Shl && scaled->child(1)->isInt(cell32Shift) && scaled->child(0)->opcode() == ZExt32;
+}
+inline constexpr uint64_t bitsOfDecodedReference = ((uint64_t { 1 } << 48) - 1) & ~((uint64_t { 1 } << cell32Shift) - 1);
 
 struct SimplifiedPredicate {
     Operation* predicate;
@@ -211,7 +224,7 @@ ALWAYS_INLINE Operation* foldMachineBitOr(Builder& builder, Type type, Operation
     if (left == right)
         return left;
     if (!right->hasInt())
-        return right->opcode() == Shl || right->opcode() == ZShr ? foldMachineRotationOutOfShifts(builder, type, left, right) : nullptr;
+        return right->opcode() == Shl || right->opcode() == ZShr ? foldMachineRotationOutOfShifts(builder, BitOr, type, left, right) : nullptr;
 
     int64_t bits = right->asInt();
     if (left->hasInt())
@@ -230,7 +243,7 @@ ALWAYS_INLINE Operation* foldMachineBitXor(Builder& builder, Type type, Operatio
     if (left == right)
         return builder.constantOfType(type, 0);
     if (!right->hasInt())
-        return right->opcode() == Shl || right->opcode() == ZShr ? foldMachineRotationOutOfShifts(builder, type, left, right) : nullptr;
+        return right->opcode() == Shl || right->opcode() == ZShr ? foldMachineRotationOutOfShifts(builder, BitXor, type, left, right) : nullptr;
 
     int64_t bits = right->asInt();
     if (left->hasInt())

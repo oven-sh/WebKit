@@ -84,6 +84,47 @@ static bool isResultOfCodeInLineInNumberBuiltins(Walker& walker, Reference refer
     return record.opcode == Opcode::CallInline && record.inlineBuiltin() == builtin;
 }
 
+static bool isUnitFractionInNumberBuiltins(Walker& walker, Reference number)
+{
+    if (!number || !number.isValue())
+        return false;
+    const Code& code = walker.code();
+    const Operation& record = code.at(recordBehindNamesInNumberBuiltins(code, number.id()));
+    if (record.opcode == Opcode::CallInline)
+        return record.inlineBuiltin() == InlineBuiltin::MathRandom;
+    if (record.opcode != Opcode::Div)
+        return false;
+    constexpr Range unsignedRange { 0, std::numeric_limits<uint32_t>::max() };
+    auto referenceTo = [&](ValueID operand) {
+        return code.isConstant(operand) ? Reference::constant(operand) : Reference::value(operand);
+    };
+    Type dividend = typeOfBuiltInNumberBuiltins(walker, referenceTo(record.operand(0)));
+    Type divisor = typeOfBuiltInNumberBuiltins(walker, referenceTo(record.operand(1)));
+    return dividend.isInteger() && dividend.integers.isSubsetOf(unsignedRange) && divisor.isInteger() && divisor.integers.isSubsetOf({ unsignedRange.maximum + 1, unsignedRange.maximum + 1 });
+}
+
+static Reference buildIntegerPartOfScaledFractionInNumberBuiltins(Walker& walker, Reference number, Origin origin)
+{
+    if (!number.isValue())
+        return { };
+    const Code& code = walker.code();
+    const Operation& product = code.at(recordBehindNamesInNumberBuiltins(code, number.id()));
+    if (product.opcode != Opcode::Mul)
+        return { };
+    auto referenceTo = [&](ValueID operand) {
+        return code.isConstant(operand) ? Reference::constant(operand) : Reference::value(operand);
+    };
+    Reference operands[] { referenceTo(product.operand(0)), referenceTo(product.operand(1)) };
+    for (unsigned place = 0; place < 2; ++place) {
+        Type count = typeOfBuiltInNumberBuiltins(walker, operands[1 - place]);
+        if (!count.isInteger() || !count.integers.isSubsetOf({ 0, int64_t { 1 } << 32 }) || !isUnitFractionInNumberBuiltins(walker, operands[place]))
+            continue;
+        bool isInt32 = count.integers.maximum <= int64_t { 1 } << 31;
+        return buildOperatorInNumberForms(walker, isInt32 ? Opcode::BitOr : Opcode::URShift, number, integerInNumberForms(walker, 0), origin);
+    }
+    return { };
+}
+
 static std::optional<QuotientRounding> roundingOfBuiltinInNumberBuiltins(BuiltinID builtin)
 {
     if (builtin == Builtins::MathFloor)
@@ -125,7 +166,7 @@ static Reference buildRoundedQuotientInNumberBuiltins(Walker& walker, const Call
     std::optional<RoundedQuotientInNumberBuiltins> quotient = findRoundedQuotientInNumberBuiltins(walker, call.builtin, call.call, InputsOfTypedOperation(walker, nullptr));
     if (!quotient)
         return { };
-    return buildDivisionOfIntegers(walker, call.origin, walker.referenceOf(quotient->division.dividend), walker.referenceOf(quotient->division.divisor), quotient->rounding);
+    return buildDivisionOfIntegers(walker, call.origin, quotient->division.dividend, quotient->division.divisor, quotient->rounding);
 }
 
 static Reference buildExtremumInNumberBuiltins(Walker& walker, const CallByOneRow& call)
@@ -258,8 +299,11 @@ static Reference buildFunctionOfOneNumberInNumberBuiltins(Walker& walker, const 
 
     switch (*call.codeInLine) {
     case InlineBuiltin::MathFloor:
-    case InlineBuiltin::MathCeil:
     case InlineBuiltin::MathTrunc:
+        if (!mayHandOn || type.isNumberWithoutFraction())
+            return mayHandOn ? number : Reference();
+        return buildIntegerPartOfScaledFractionInNumberBuiltins(walker, number, call.origin);
+    case InlineBuiltin::MathCeil:
     case InlineBuiltin::MathRound:
         return mayHandOn && type.isNumberWithoutFraction() ? number : Reference();
     case InlineBuiltin::MathAbs:

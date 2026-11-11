@@ -1,5 +1,6 @@
 // We only need one run of this with any GC or JIT strategy. This test is not particularly fast.
 // Unfortunately, it needs to run for a while to test the thing it's testing.
+// Bun: upstream runs runWithRAMSize(10000000) alone. Bun's builds use the memory footprint API, whose smallHeapRAMFraction of 0.8 lets the heap pass the bound before a full collection.
 //@ runWithRAMSize(10000000, "--smallHeapRAMFraction=0.25", "--mediumHeapRAMFraction=0.5")
 //@ slow!
 

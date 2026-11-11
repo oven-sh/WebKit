@@ -357,6 +357,31 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchLiteralWithoutObject, EncodedJSV
     OPERATION_RETURN(scope, JSValue::encode(createMatchValue(instance, static_cast<RegExpMatchForm>(form), regExp, subject, result, offsets)));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchArray, EncodedJSValue, (Instance* instance, JSCell* regExp, JSCell* string))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRegExpMatchArray);
+    RegExp* cell = cellArgument<RegExpObject>(regExp, Entry::operationAOTRegExpMatchArray)->regExp();
+    auto* subject = cellArgument<JSString>(string, Entry::operationAOTRegExpMatchArray);
+    std::span<int> offsets = matchOutput(vm, cell);
+    OPERATION_RETURN(scope, JSValue::encode(createMatchValue(instance, RegExpMatchForm::Exec, cell, subject, MatchResult(offsets[0], offsets[1]), offsets)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCopyRegExpMatch, void*, (Instance* instance, uint32_t count))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyRegExpMatch);
+    size_t bytes = sizeof(uint64_t) * (1 + static_cast<size_t>(count));
+    RELEASE_ASSERT(bytes - sizeof(uint64_t) <= vm.aotState().sizeOfRegExpMatchOutput * sizeof(int));
+    auto* record = static_cast<uint64_t*>(vm.auxiliarySpace().allocate(vm, bytes, nullptr, AllocationFailureMode::ReturnNull));
+    if (!record) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        OPERATION_RETURN(scope, nullptr);
+    }
+    record[0] = count;
+    memcpy(record + 1, vm.aotState().regExpMatchOutput.get(), bytes - sizeof(uint64_t));
+    vm.mutatorFence();
+    OPERATION_RETURN(scope, record);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchInParts, EncodedJSValue, (Instance* instance, JSCell* regExp, JSCell* string))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRegExpMatchInParts);
@@ -630,6 +655,35 @@ static JSString* removeEveryMatch(JSGlobalObject* globalObject, VM& vm, JSString
     RELEASE_AND_RETURN(scope, jsSpliceSubstrings(globalObject, string, source, kept.span()));
 }
 
+static constexpr ASCIILiteral patternOfAnySurroundingSpaces = "^\\s*|\\s*$"_s;
+static constexpr ASCIILiteral patternOfSurroundingSpaces = "^\\s+|\\s+$"_s;
+
+static bool matchesSurroundingSpaces(RegExp* regExp)
+{
+    const String& pattern = regExp->pattern();
+    return pattern.length() == patternOfSurroundingSpaces.length() && regExp->flags() == OptionSet<Yarr::Flags> { Yarr::Flags::Global }
+        && (pattern == patternOfSurroundingSpaces || pattern == patternOfAnySurroundingSpaces);
+}
+
+static JSString* removeSurroundingSpaces(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExp* regExp)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto source = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    const unsigned length = source->length();
+    unsigned start = 0;
+    unsigned end = length;
+    while (start < length && isStrWhiteSpace(source[start]))
+        ++start;
+    while (end > start && isStrWhiteSpace(source[end - 1]))
+        --end;
+    MatchResult last = regExp->pattern() == patternOfAnySurroundingSpaces ? MatchResult(length, length) : end < length ? MatchResult(end, length) : MatchResult(0, start);
+    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, last, false);
+    if (!start && end == length)
+        return string;
+    RELEASE_AND_RETURN(scope, jsSubstringOfResolved(vm, string, start, end - start));
+}
+
 static JSString* replaceEveryMatchWithPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, StringView source, RegExp* regExp, JSString* replacement, const String& replacementText, MatchResult match)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -725,6 +779,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpString, JSCell*, (Instan
     auto replacementText = replacement->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     RegExp* pattern = regExpObject->regExp();
+    if (startOfFirstMatchPlusOne && replacementText->isEmpty() && matchesSurroundingSpaces(pattern))
+        OPERATION_RETURN(scope, removeSurroundingSpaces(globalObject, vm, subject, pattern));
     bool isAtom = pattern->hasValidAtom();
     if (!startOfFirstMatchPlusOne) {
         bool hasReplaced;

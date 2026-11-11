@@ -36,8 +36,8 @@ struct WayInNumberForms {
 Reference meetInNumberForms(Walker&, BlockID meeting, std::span<const WayInNumberForms>, Reference* metBeside = nullptr);
 
 struct DivisionAsWritten {
-    ValueID dividend;
-    ValueID divisor;
+    Reference dividend;
+    Reference divisor;
 };
 std::optional<DivisionAsWritten> findQuotientOfIntegers(Walker&, ValueID number, const InputsOfTypedOperation&);
 struct WholeRemainder {
@@ -57,6 +57,9 @@ struct BitsOfDividendCompared {
 std::optional<BitsOfDividendCompared> tryCompareBitsOfDividend(Walker&, Origin, const WholeRemainder&, int64_t comparedWith);
 Reference buildComparisonWhereDivisorsAreNotZero(Walker&, Draft&& comparison, std::span<const ValueID> divisorsThatMayBeZero);
 bool buildNumberRemainderWithItsTest(Walker&, const BodyValue& remainder);
+Reference buildWideProduct(Walker&, const BodyValue& sum);
+std::optional<unsigned> widthOfCarriedDigit(const BodyIndex&, ValueID carried, ValueID parameter);
+Reference buildLowBitsOfWideProduct(Walker&, Reference narrow, Reference mask, Origin);
 ValueID findTestOfRemainder(Walker&, const BodyValue& remainder);
 
 inline constexpr OpcodeSet opcodesThatBuildNumberFormTakes = allBitwiseOperators | allEqualities | allRelations | OpcodeSet { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow,

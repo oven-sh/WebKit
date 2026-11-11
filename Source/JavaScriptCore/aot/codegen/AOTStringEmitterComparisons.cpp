@@ -8,10 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTControlEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringTable.h"
 #include "AOTStubsStrings.h"
 #include "AOTVector.h"
+#include "Identifier.h"
 #include <wtf/text/ASCIIFastPath.h>
 
 #if COMPILER(CLANG)
@@ -26,6 +28,12 @@ static_assert(descriptorOf(StubFamily::ValueEqualsLiteralOfLength).maxCount == s
 static bool comparedTextFitsInRegister(const String& text)
 {
     const StubDescriptor& descriptor = descriptorOf(StubFamily::StringEqualsLiteralOfLength);
+    return text.is8Bit() && text.length() >= descriptor.minCount && text.length() <= descriptor.maxCount;
+}
+
+static bool comparedByCharacters(const String& text)
+{
+    const StubDescriptor& descriptor = descriptorOf(StubFamily::StringEqualsCharacters);
     return text.is8Bit() && text.length() >= descriptor.minCount && text.length() <= descriptor.maxCount;
 }
 
@@ -103,7 +111,9 @@ void StringEmitter::generateStringOrder(const ValueContext& value)
 
 void StringEmitter::generateStringOrderToCharacter(const ValueContext& value)
 {
-    define(value, orderToCharacter(viewOf(value, value->stringOperand()), static_cast<char16_t>(value->codeUnit())));
+    auto codeUnit = static_cast<char16_t>(value->codeUnit());
+    recordInlined(codeUnit);
+    define(value, orderToCharacter(viewOf(value, value->stringOperand()), codeUnit));
 }
 
 bool StringEmitter::comparesLiteralInPlace(const String& text) const
@@ -118,15 +128,22 @@ void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context,
 
 void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, const String& text, BranchTargets targets)
 {
-    if (!comparedTextFitsInRegister(text)) {
-        branch(Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand, text.length()), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first)), targets);
+    if (comparedByCharacters(text)) {
+        LValue operands[] = { subject };
+        emitter<RuntimeCallEmitter>().callStubAndBranch(context, equalsCharacters(operand, text.length()), operands, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::StringCharacters, literal) } }, targets);
         return;
     }
+    if (!comparedTextFitsInRegister(text)) {
+        branch(Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first)), targets);
+        return;
+    }
+    recordInlined(literal);
     LValue operands[] = { subject, m_out.constInt64(static_cast<int64_t>(packStringIntoRegister(text))) };
     emitter<RuntimeCallEmitter>().callStubAndBranch(context, equalsLiteralOfLength(operand, text.length()), operands, { }, targets);
 }
 
 static constexpr OpcodeSet comparisonsWithLiteral { Opcode::StringEqualsLiteral, Opcode::ValueEqualsLiteral };
+static constexpr unsigned maxCharactersNextToName = 4;
 
 void StringEmitter::makeCellsHoldAtomOf(StringID literal)
 {
@@ -139,6 +156,62 @@ void StringEmitter::makeCellsHoldAtomOf(StringID literal, const String& text)
         m_mentions.add(NumberSpace::AtomOfString, literal);
 }
 
+bool StringEmitter::mayBeNameInLoop(const OperationContext& context, const String& text)
+{
+    return context.block() && (generator().usesLoopForms(context.block()) || generator().isInRecursion(context.block())) && !text.isEmpty() && !parseIndex(*text.impl());
+}
+
+bool StringEmitter::expectsName(const OperationContext& context, const String& text)
+{
+    if (!context.valueID() || !mayBeNameInLoop(context, text))
+        return false;
+    const Operation& comparison = generator().code().at(context.valueID());
+    return comparison.opcode == Opcode::StrictEq && comparison.expectsLiteral();
+}
+
+Condition StringEmitter::holdsHeaderOf(CellPointer string, StringID literal)
+{
+    build().statistics().count(StatisticID::LiteralHeadersCompared);
+    Integer header(m_out.wideNumber(m_mentions.add(NumberSpace::NameHeader, literal)));
+    bool isMadeAtRunTime = m_options.recorded.form() == ImageForm::PositionIndependent;
+    Pointer headers = loadImmutablePointer(isMadeAtRunTime ? AOT_INSTANCE_OFFSET(lazyStrings.headers) : AOT_INSTANCE_OFFSET(image.programIdentifiers));
+    Integer distance(m_out.sub(m_out.load64(string.value(), m_heaps.JSString_word), headers.value()));
+    if (isMadeAtRunTime) {
+        Pointer offsets = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets));
+        m_out.forgetLoadsFrom(m_heaps.AOTImage_offsetsOfHeaders);
+        header = zeroExtended(Word32(m_out.load32(m_out.address(m_heaps.AOTImage_offsetsOfHeaders, m_out.add(offsets.value(), header.value())))));
+    }
+    return equal(distance, header);
+}
+
+void StringEmitter::branchOnHeaderOf(CellPointer string, StringID literal, BlockEdge isEqual)
+{
+    LBasicBlock differs = newBlock();
+    m_out.branch(holdsHeaderOf(string, literal).value(), isEqual, normalEdge(differs));
+    m_out.appendToContinuation(differs);
+}
+
+Condition StringEmitter::holdsName(CellPointer string)
+{
+    return hasBits(loadByte(string, m_heaps.JSCell_typeInfoFlags), ConstantCellWords::flagsOfNamedText);
+}
+
+void StringEmitter::continueUnlessHoldsName(CellPointer string, StringID literal, BranchTargets targets, bool isString)
+{
+    LBasicBlock named = newBlock();
+    LBasicBlock unnamed = newBlock();
+    ScopeFork fork = m_out.forkScope();
+    branch(holdsName(string), { normalEdge(named), normalEdge(unnamed) });
+    m_out.appendToArm(named, fork);
+    if (isString)
+        branch(holdsHeaderOf(string, literal), targets);
+    else {
+        continueIf(holdsHeaderOf(string, literal), targets.notTaken);
+        branch(hasCellType(string, StringType), targets);
+    }
+    m_out.appendToArm(unnamed, fork);
+}
+
 bool StringEmitter::readsCharactersInLine(const OperationContext& context)
 {
     static_assert(formDependsOnLoopOf(Opcode::ValueEqualsLiteral) && formDependsOnLoopOf(Opcode::StringEqualsLiteral));
@@ -148,7 +221,7 @@ bool StringEmitter::readsCharactersInLine(const OperationContext& context)
     static constexpr FormAtPlace namedInLoops = formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, true);
     static constexpr FormAtPlace namedOutsideLoops = formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, false);
     bool hasLeftLoop = context.valueID() && comparisonsWithLiteral.contains(generator().code().at(context.valueID()).opcode) && generator().code().at(context.valueID()).hasLeftLoop();
-    FormAtPlace named = context.block() && (generator().isInLoop(context.block()) || hasLeftLoop) ? namedInLoops : namedOutsideLoops;
+    FormAtPlace named = context.block() && (generator().usesLoopForms(context.block()) || generator().isInRecursion(context.block()) || hasLeftLoop) ? namedInLoops : namedOutsideLoops;
     m_out.noteFormOf(comparisonsWithLiteral, named.form, StateOfKnowledge::Always, named.place);
     return named.form == Form::Open;
 }
@@ -177,11 +250,17 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     StateOfKnowledge known = subjectIsFlat ? StateOfKnowledge::FlatSubject : lengthOfSubject ? StateOfKnowledge::LengthOfSubject : StateOfKnowledge::Always;
     if (!comparesLiteralInPlace(text)) {
         m_out.noteFormOf(comparisonsWithLiteral, Form::Closed, StateOfKnowledge::LiteralComparedByStub);
+        if (known == StateOfKnowledge::Always && expectsName(context, text)) {
+            if (operand == ComparedOperand::Value)
+                continueIf(isCell(Boxed(subject)), targets.notTaken);
+            continueUnlessHoldsName(operand == ComparedOperand::Value ? unboxCell(Boxed(subject)) : CellPointer(subject), literal, targets, operand == ComparedOperand::String || everyCellIsString);
+        }
         branchOnEqualsLiteralByStub(context, operand, subject, literal, text, targets);
         return;
     }
 
     CellPointer string(subject);
+    bool leavesCharactersToStub = false;
     if (known == StateOfKnowledge::Always) {
         if (!readsCharactersInLine(context)) {
             branchOnEqualsLiteralByStub(context, operand, subject, literal, text, targets);
@@ -192,6 +271,10 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
             Boxed boxed(subject);
             continueIf(isCell(boxed), targets.notTaken);
             string = unboxCell(boxed);
+        }
+        if (expectsName(context, text)) {
+            continueUnlessHoldsName(string, literal, targets, isString);
+            leavesCharactersToStub = text.length() > maxCharactersNextToName;
         }
         if (!isString)
             continueIf(hasCellType(string, StringType), targets.notTaken);
@@ -208,9 +291,14 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
         continueIf(hasNoBits(impl, JSString::isRopeInPointer), unlikelyEdge(slow));
     if (!lengthOfSubject)
         continueIf(equal(source ? source->length : loadField<Word32>(impl, m_heaps.StringImpl_length), text.length()), targets.notTaken);
-    continueIf(hasBits(source ? source->implFlags : flagsInImpl(impl), StringImpl::flagIs8Bit()), unlikelyEdge(slow));
-    Pointer characters = source ? source->characters : loadField<Pointer>(impl, m_heaps.StringImpl_data);
-    branchOnBytesAt(characters, asBytes(text.span8()), m_heaps.characters8.atAnyIndex(), string, targets);
+    if (leavesCharactersToStub)
+        m_out.jump(normalEdge(slow));
+    else {
+        continueIf(hasBits(source ? source->implFlags : flagsInImpl(impl), StringImpl::flagIs8Bit()), unlikelyEdge(slow));
+        Pointer characters = source ? source->characters : loadField<Pointer>(impl, m_heaps.StringImpl_data);
+        recordInlined(literal);
+        branchOnBytesAt(characters, asBytes(text.span8()), m_heaps.characters8.atAnyIndex(), string, targets);
+    }
 
     m_out.appendTo(slow);
     branchOnEqualsLiteralByStub(context, ComparedOperand::String, string.value(), literal, text, targets);
@@ -229,7 +317,12 @@ Condition StringEmitter::equalsLiteral(const OperationContext& context, Compared
         });
     }
     m_out.noteFormOf(comparisonsWithLiteral, Form::Closed, StateOfKnowledge::LiteralComparedByStub);
-    return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand, text.length()), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first));
+    if (comparedByCharacters(text)) {
+        return asBoolean([&](BranchTargets targets) {
+            branchOnEqualsLiteralByStub(context, operand, subject, literal, text, targets);
+        });
+    }
+    return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first));
 }
 
 void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOperand operand, LValue subject, std::optional<FlatStringCell> flatSubject, bool everyCellIsString)
@@ -246,6 +339,8 @@ void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOpe
 
 void StringEmitter::generateStringEqualsLiteral(const ValueContext& value)
 {
+    if (emitter<ControlEmitter>().tryGenerateLiteralChain(value))
+        return;
     ValueID string = value->stringOperand();
     std::optional<FlatStringCell> flat;
     if (ValueID flatString = value->flatOperand())
@@ -255,6 +350,8 @@ void StringEmitter::generateStringEqualsLiteral(const ValueContext& value)
 
 void StringEmitter::generateValueEqualsLiteral(const ValueContext& value)
 {
+    if (emitter<ControlEmitter>().tryGenerateLiteralChain(value))
+        return;
     const Type& type = typeOf(value->valueOperand());
     bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
     generateEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(value->valueOperand()).value(), std::nullopt, everyCellIsString);
@@ -307,6 +404,7 @@ void StringEmitter::branchOnTextAt(const CharacterView& view, Word32 offset, Str
         m_out.jump(targets.taken);
         return;
     }
+    recordInlined(literal);
 
     auto compare = [&](bool is8Bit) {
         if (!is8Bit) {
@@ -425,6 +523,7 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
     CharacterView view = viewOfSubject();
     if (!isForward && text.length() == 1) {
         Word32 codeUnit = word32(text[0]);
+        recordInlined(literal);
         define(value, findCodeUnit(view, codeUnit, select(lessThan(position, 0), 0, position), direction));
         return;
     }
@@ -444,6 +543,7 @@ void StringEmitter::generateStringIndexOfCharacter(const ValueContext& value)
 {
     ValueID string = value->stringOperand();
     Word32 codeUnit = word32(static_cast<int32_t>(value->codeUnit()));
+    recordInlined(static_cast<char16_t>(value->codeUnit()));
     Word32 position = word32Of(value->positionOperand());
     if (!position.value()->isInt32(0))
         holdRangeInside(value, position, position);

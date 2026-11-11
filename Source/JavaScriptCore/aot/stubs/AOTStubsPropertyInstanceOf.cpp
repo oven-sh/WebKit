@@ -14,6 +14,7 @@
 #include "AOTStubsConstants.h"
 #include "AOTStubsGlobalBindings.h"
 #include "AOTStubsValues.h"
+#include "JSGlobalProxy.h"
 #include "JSObject.h"
 #include "JSTypeInfo.h"
 #include "Structure.h"
@@ -96,10 +97,24 @@ void generateInstanceOf(StubAssembler& jit)
             Label hasPrototype;
             Jump goesOn;
         };
+        auto loadStructureOfGlobalObject = [&](GPRReg object) {
+            slowCases.append(jit.branchIfNotType(object, GlobalProxyType));
+            jit.loadPtr(Address(object, JSGlobalProxy::targetOffset()), next);
+            slowCases.append(jit.branchTest8(CCallHelpers::NonZero, Address(next, JSObject::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
+            loadStructure(jit, next, next);
+        };
         auto followLink = [&](GPRReg object, bool standsAheadOfPrototype) {
             Link link;
-            (standsAheadOfPrototype ? startsOverWithPrototype : slowCases).append(jit.branchTest8(CCallHelpers::NonZero, Address(object, JSObject::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
+            Jump overridesGetPrototype = jit.branchTest8(CCallHelpers::NonZero, Address(object, JSObject::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype));
+            if (!givesWayAtTraps)
+                (standsAheadOfPrototype ? startsOverWithPrototype : slowCases).append(overridesGetPrototype);
             loadStructure(jit, object, next);
+            if (givesWayAtTraps) {
+                Jump hasStructure = jit.jump();
+                overridesGetPrototype.link(&jit);
+                loadStructureOfGlobalObject(object);
+                hasStructure.link(&jit);
+            }
             jit.load64(Address(next, Structure::prototypeOffset()), next);
             link.hasPolyProto = jit.branchTest64(CCallHelpers::Zero, next);
             link.hasPrototype = jit.label();

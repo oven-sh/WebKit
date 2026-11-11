@@ -51,9 +51,12 @@ void noteGroupsLoadedWith(const Graph& graph, uint32_t root, Vector<uint64_t>& l
     };
     auto loadComesToImportsOf = [&](uint32_t module, bool ofUncompiledCodeAlone) {
         for (const ModuleRequestData& request : graph.requests(module)) {
-            if (request.isRequire || request.isHoisted || (ofUncompiledCodeAlone && !graph.data(request.target()).isUncompiledCode()))
+            if (request.isRequire || request.isHoisted)
                 continue;
-            if (uint32_t imported = graph.moduleLoadedBy(request); graph.data(imported).isESModuleOfProgram())
+            bool isUncompiled = graph.data(request.target()).isUncompiledCode();
+            if (ofUncompiledCodeAlone && !isUncompiled)
+                continue;
+            if (uint32_t imported = isUncompiled ? graph.moduleLoadedBy(request) : request.target(); graph.data(imported).isESModuleOfProgram())
                 loadComesTo(imported);
         }
     };
@@ -64,8 +67,10 @@ void noteGroupsLoadedWith(const Graph& graph, uint32_t root, Vector<uint64_t>& l
             continue;
         }
         uint32_t head = heads.takeLast();
-        for (uint32_t other : graph.groupsLoadedWith(head))
-            loadComesTo(other);
+        for (uint32_t other : graph.groupsLoadedWith(head)) {
+            if (!(loadedGroups[other / 64] >> (other % 64) & 1))
+                loadComesTo(other);
+        }
         if (graph.data(head).placeInLoadGroup() == Place::HeadThatRequestsUncompiledCode)
             loadComesToImportsOf(head, true);
     }
@@ -81,18 +86,19 @@ void walkModulesToLink(const World& world, uint32_t root, Steps& steps)
         uint32_t nextRequest;
         uint32_t endOfRequests;
         bool goesByAllRequests;
+        bool resolvesNames;
     };
 
     Vector<Frame, 64> path;
-    auto record = [&](uint32_t module) ALWAYS_INLINE_LAMBDA {
+    auto record = [&](uint32_t module) {
         const ModuleData& moduleData = world.data(module);
         if (moduleData.linkFollowsRequests() && world.isUnlinked(module)) {
             if (moduleData.onlyPassesLinkOn()) [[unlikely]]
                 world.didGetStateOfItsOwn(module);
             if (moduleData.onlyPassesLinkOn() || world.goesByAllRequests(module)) [[unlikely]]
-                path.append(Frame { steps.size(), moduleData.firstRequest, world.endOfRequests(module), true });
+                path.append(Frame { steps.size(), moduleData.firstRequest, world.endOfRequests(module), true, world.resolvesNames(module) });
             else
-                path.append(Frame { steps.size(), moduleData.firstLinkRequest, world.endOfLinkRequests(module), false });
+                path.append(Frame { steps.size(), moduleData.firstLinkRequest, world.endOfLinkRequests(module), false, world.resolvesNames(module) });
             steps.append(module, StepOfLinkWalk::Enter, false);
         }
         if (moduleData.capturesExports())
@@ -145,6 +151,20 @@ void walkModulesToLink(const World& world, uint32_t root, Steps& steps)
             passOverFromNowOn(target);
             if (world.isSettledForLinks(target))
                 continue;
+            const ModuleData& targetData = world.data(target);
+            if (leavesOutModulesWithNothingToDo && !targetData.capturesExports() && !targetData.isUncompiledCode() && !targetData.onlyPassesLinkOn() && !world.goesByAllRequests(target)) [[likely]] {
+                uint32_t endOfTarget = world.endOfLinkRequests(target);
+                uint32_t firstOfTarget = static_cast<uint32_t>(linkRequests.findFirstOutside(modulesPassedOver, targetData.firstLinkRequest, endOfTarget));
+                bool targetResolvesNames = world.resolvesNames(target);
+                if (firstOfTarget == endOfTarget && !targetResolvesNames) {
+                    steps.onlyBecomesLinkedAlone(target);
+                    continue;
+                }
+                path[depth - 1].nextRequest = next;
+                path.append(Frame { steps.size(), firstOfTarget, endOfTarget, false, targetResolvesNames });
+                steps.append(target, StepOfLinkWalk::Enter, false);
+                break;
+            }
             path[depth - 1].nextRequest = next;
             record(target);
             if (path.size() != depth)
@@ -154,7 +174,7 @@ void walkModulesToLink(const World& world, uint32_t root, Steps& steps)
             continue;
 
         uint32_t enter = path.last().enter;
-        bool resolvesNames = world.resolvesNames(steps.moduleAt(enter));
+        bool resolvesNames = path.last().resolvesNames;
         if (leavesOutModulesWithNothingToDo && enter && steps.size() == enter + 1 && !resolvesNames)
             steps.onlyBecomesLinked(enter);
         else

@@ -39,14 +39,24 @@ struct MentionsOfResultInParts {
     bool readsIndex { false };
     bool readsInput { false };
     bool isOnlyTakenApart { true };
+    bool isReadByIndex { false };
+    bool escapes { false };
+    bool isReturned { false };
+    Vector<uint32_t, 2> meetsOthersAt;
 };
 
 using NotesOfResultInParts = Vector<std::pair<Reference, Reference>, 8>;
+
+struct MatchInFrameForParts {
+    Reference match;
+    Reference string;
+};
 
 struct LooksAtResultsInParts final : Walker::KeptForBuild {
     template<typename Kept> using ByNumber = HashMap<uint32_t, Kept, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     ByNumber<ByNumber<MentionsOfResultInParts>> byFunction;
     ByNumber<NotesOfResultInParts> partsOfListsThatAreOnlyTakenApart;
+    ByNumber<MatchInFrameForParts> matchesInFrame;
 };
 
 struct MatchAskedForInParts {
@@ -94,9 +104,16 @@ static std::optional<uint32_t> placeWrittenInResultsInParts(const BodyIndex& ind
     return static_cast<uint32_t>(place);
 }
 
-static void lookAtResultsOfBody(Walker& walker, LooksAtResultsInParts::ByNumber<MentionsOfResultInParts>& mentions)
+static bool isHandedRegExp(const BodyIndex& index, const BodyValue& call)
 {
-    const BodyIndex& index = walker.currentBodyIndex();
+    return std::ranges::any_of(call.argumentsOperands(), [&](ValueID argument) {
+        ValueID written = argument ? index.stripCasts(argument) : ValueID();
+        return written && !index.isParameter(written) && index.opcodeOf(written) == Opcode::NewRegExp;
+    });
+}
+
+static void lookAtResultsOfBody(Walker& walker, const BodyIndex& index, LooksAtResultsInParts::ByNumber<MentionsOfResultInParts>& mentions)
+{
     const Program& program = walker.program();
     BuiltinName nameOfSplit = nameInTableForResultsInParts(walker, "split"_s);
     std::array calleeKeys { program.keyOf(BuiltinNames::exec), program.keyOf(BuiltinNames::match), nameOfSplit ? program.keyOf(nameOfSplit) : program.keyOf(BuiltinNames::match) };
@@ -120,8 +137,10 @@ static void lookAtResultsOfBody(Walker& walker, LooksAtResultsInParts::ByNumber<
         return found == mentions.end() ? nullptr : &found->value;
     };
     auto refuse = [&](ValueID mentioned) {
-        if (MentionsOfResultInParts* found = mentionsBehind(mentioned))
+        if (MentionsOfResultInParts* found = mentionsBehind(mentioned)) {
             found->isOnlyTakenApart = false;
+            found->escapes = true;
+        }
     };
     auto refuseOperandsOf = [&](const BodyValue& user) {
         user.forEachOperand([&](ValueID operand, uint32_t) {
@@ -143,29 +162,40 @@ static void lookAtResultsOfBody(Walker& walker, LooksAtResultsInParts::ByNumber<
                 refuse(user.propertyOperand());
                 if (std::optional<uint32_t> place = placeWrittenInResultsInParts(index, user.propertyOperand()))
                     read->placesRead |= uint64_t(1) << *place;
-                else
+                else {
                     read->isOnlyTakenApart = false;
+                    read->isReadByIndex = true;
+                }
             } else if (MentionsOfResultInParts* named = opcode == Opcode::PropGet && !user.isFreeName() ? mentionsBehind(user.objectOperand()) : nullptr) {
                 named->readsLength |= user.key() == length;
                 named->readsIndex |= user.key() == indexOfMatch;
                 named->readsInput |= user.key() == input;
-                if (user.key() != length && user.key() != indexOfMatch && user.key() != input)
+                if (user.key() != length && user.key() != indexOfMatch && user.key() != input) {
                     named->isOnlyTakenApart = false;
+                    named->escapes = true;
+                }
             } else if (MentionsOfResultInParts* taken = opcode == Opcode::IteratorOpen ? mentionsBehind(user.as<Opcode::IteratorOpen>().iterableOperand()) : nullptr) {
                 auto open = user.as<Opcode::IteratorOpen>();
                 if (open.isDestructuring() && !open.hasRest() && open.elementCount() && *open.elementCount() <= mostPlacesFollowedInResultsInParts)
                     taken->placesRead |= (uint64_t(1) << *open.elementCount()) - 1;
-                else
+                else {
                     taken->isOnlyTakenApart = false;
+                    taken->escapes = true;
+                }
             } else
                 refuseOperandsOf(user);
-            if (opcode == Opcode::Call && std::ranges::contains(calleeKeys, user.calleeKey())) {
+            if (opcode == Opcode::Call && (std::ranges::contains(calleeKeys, user.calleeKey()) || isHandedRegExp(index, user))) {
                 callsBehindNames[user.id().index()] = user.id().index();
                 mentions.add(user.id().index(), MentionsOfResultInParts());
             }
         }
+        const bool returns = block.terminator().kind() == TerminatorKind::Return || block.terminator().kind() == TerminatorKind::ReturnCall;
         block.terminator().forEachOperand([&](ValueID operand, uint32_t) {
-            refuse(operand);
+            MentionsOfResultInParts* found = mentionsBehind(operand);
+            if (found && returns)
+                found->isReturned = true;
+            else
+                refuse(operand);
         });
         index.forEachEdgeResult(block.id(), [&](const BodyEdgeResult& handed) {
             if (callBehind(handed.subject) == UINT32_MAX)
@@ -185,32 +215,86 @@ static void lookAtResultsOfBody(Walker& walker, LooksAtResultsInParts::ByNumber<
                 }
                 if (index.isUnused(parameter))
                     continue;
+                const uint32_t arriving = callBehind(arguments[position]);
+                const uint32_t arrivedBefore = callBehind(parameter);
                 if (!parametersArrivedAt.set(parameter.index()))
-                    callsBehindNames[parameter.index()] = callBehind(arguments[position]);
-                else if (callBehind(parameter) != callBehind(arguments[position])) {
-                    refuse(arguments[position]);
-                    refuse(parameter);
+                    callsBehindNames[parameter.index()] = arriving;
+                else if (arrivedBefore != arriving) {
+                    const bool isOfSeveral = arrivedBefore == parameter.index();
+                    if (arriving == UINT32_MAX || arrivedBefore == UINT32_MAX || (!isOfSeveral && target.block().index() <= blockIndex)) {
+                        refuse(arguments[position]);
+                        refuse(parameter);
+                        continue;
+                    }
+                    if (!isOfSeveral) {
+                        mentions.add(parameter.index(), MentionsOfResultInParts());
+                        mentions.find(arrivedBefore)->value.meetsOthersAt.append(parameter.index());
+                        callsBehindNames[parameter.index()] = parameter.index();
+                    }
+                    mentions.find(arriving)->value.meetsOthersAt.append(parameter.index());
                 }
             }
         });
     }
 }
 
-static std::optional<MentionsOfResultInParts> mentionsOfResultOnlyTakenApart(Walker& walker, const BodyValue& call)
+static const LooksAtResultsInParts::ByNumber<MentionsOfResultInParts>& mentionsOfResultsOfBody(Walker& walker, FunctionID function, const BodyIndex& index)
 {
     std::unique_ptr<Walker::KeptForBuild>& kept = notesOfStrings(walker).looksAtResultsInParts;
     if (!kept)
         kept = makeUniqueWithoutFastMallocCheck<LooksAtResultsInParts>();
-    auto added = static_cast<LooksAtResultsInParts&>(*kept).byFunction.add(walker.currentFunction().index(), LooksAtResultsInParts::ByNumber<MentionsOfResultInParts>());
+    auto added = static_cast<LooksAtResultsInParts&>(*kept).byFunction.add(function.index(), LooksAtResultsInParts::ByNumber<MentionsOfResultInParts>());
     if (added.isNewEntry)
-        lookAtResultsOfBody(walker, added.iterator->value);
-    auto found = added.iterator->value.find(call.id().index());
-    if (found == added.iterator->value.end())
+        lookAtResultsOfBody(walker, index, added.iterator->value);
+    return added.iterator->value;
+}
+
+static std::optional<MentionsOfResultInParts> mentionsOfResultOnlyTakenApart(Walker& walker, const BodyValue& call)
+{
+    auto& mentions = mentionsOfResultsOfBody(walker, walker.currentFunction(), walker.currentBodyIndex());
+    auto found = mentions.find(call.id().index());
+    if (found == mentions.end())
         return std::nullopt;
     Walker::ChoiceOfCost drawn = walker.drawChoice(DrawnFor::ResultInParts, walker.currentFunction().index(), call.id().index());
-    if (drawn == Walker::ChoiceOfCost::No || (!found->value.isOnlyTakenApart && drawn != Walker::ChoiceOfCost::Yes))
+    bool isOnlyTakenApart = found->value.isOnlyTakenApart && !found->value.isReturned && found->value.meetsOthersAt.isEmpty();
+    if (drawn == Walker::ChoiceOfCost::No || (!isOnlyTakenApart && drawn != Walker::ChoiceOfCost::Yes))
         return std::nullopt;
     return found->value;
+}
+
+static std::optional<MentionsOfResultInParts> findAllResultMentions(Walker& walker, const BodyValue& call)
+{
+    MentionsOfResultInParts all;
+    auto addMentions = [&](FunctionID function, const BodyIndex& index, uint32_t first) {
+        auto& mentions = mentionsOfResultsOfBody(walker, function, index);
+        Vector<uint32_t, 8> toLookAt { first };
+        bool isReturned = false;
+        for (size_t place = 0; place < toLookAt.size(); ++place) {
+            auto found = mentions.find(toLookAt[place]);
+            if (found == mentions.end() || !found->value.isOnlyTakenApart)
+                return std::optional<bool>();
+            all.placesRead |= found->value.placesRead;
+            all.readsLength |= found->value.readsLength;
+            all.readsIndex |= found->value.readsIndex;
+            all.readsInput |= found->value.readsInput;
+            isReturned |= found->value.isReturned;
+            for (uint32_t next : found->value.meetsOthersAt) {
+                if (!toLookAt.contains(next))
+                    toLookAt.append(next);
+            }
+        }
+        return std::optional<bool>(isReturned);
+    };
+    std::optional<bool> isReturned = addMentions(walker.currentFunction(), walker.currentBodyIndex(), call.id().index());
+    if (!isReturned || walker.drawChoice(DrawnFor::ResultInParts, walker.currentFunction().index(), call.id().index()) == Walker::ChoiceOfCost::No)
+        return std::nullopt;
+    if (*isReturned) {
+        std::optional<Walker::CallOfCopy> copied = walker.callOfCopy();
+        std::optional<bool> isReturnedAgain = copied ? addMentions(copied->caller, *copied->index, copied->call.index()) : std::nullopt;
+        if (!isReturnedAgain || *isReturnedAgain)
+            return std::nullopt;
+    }
+    return all;
 }
 
 static bool endOfBlockAsksWhetherThereIsResult(Walker& walker, const BodyValue& call)
@@ -308,11 +392,75 @@ static bool buildMatchOnTwoWaysInResultsInParts(Walker& walker, const BodyValue&
     Reference cell = Reference::value(underlyingCellOf(walker.code(), array.id()));
     for (auto& [key, value] : notes)
         walker.state().noteElement(cell, key, value);
+    walker.state().noteElementsLieOutsideViews(cell);
     walker.state().noteFresh(cell);
     walker.bind(call.id(), array);
     if (!walker.threadBranchAfter(call))
         walker.fail("the way of a match that finds something does not walk the end of its block"_s);
     return true;
+}
+
+Reference buildPlacesReadOfMatch(Walker& walker, const BodyValue& call, BuiltinOverloadID overload, const RegExpWrittenForCall& regExp, Reference objectOfCall, Reference string, Origin origin)
+{
+    if (!hasMechanismsOfResultsInParts(walker) || walker.isUnreachable() || !walker.isInLoop())
+        return { };
+    std::optional<InlineBuiltin> codeInLine = walker.program().builtins().at(overload).code.implementation.inlineBuiltin;
+    bool givesOneMatch = codeInLine == InlineBuiltin::RegExpExec || (codeInLine == InlineBuiltin::StringMatch && !regExp.flags.contains(RegExpFlags::Global));
+    if (!givesOneMatch || regExp.flags.contains(RegExpFlags::HasIndices) || !string || !isProvenString(walker, walker.typeOf(string)))
+        return { };
+    RegExpSummaries* summaries = walker.regExpSummaries();
+    std::optional<MentionsOfResultInParts> mentions = summaries ? findAllResultMentions(walker, call) : std::nullopt;
+    if (!mentions || mentions->readsLength || mentions->readsIndex || mentions->readsInput)
+        return { };
+    Vector<char16_t> buffer;
+    const RegExpSummary& summary = summaries->summaryOf(regExp.pattern, toYarrFlags(regExp.flags), walker.types().viewOf(regExp.pattern, buffer));
+    if (!summary.canBeCreated() || !summary.atom.isNull() || mentions->numberOfParts() > summary.numSubpatterns + 1)
+        return { };
+
+    Draft match(Opcode::RegExpMatchLiteralInParts, origin);
+    walker.chooseConservativeFields(match);
+    match.setStringOperand(string);
+    if (regExp.flags.containsAny(flagsOfMatchesUsingObject) || walker.facts().mayReadLegacyRegExpStatics())
+        match.setRegExpOperand(objectOfCall);
+    match.setPattern(regExp.pattern);
+    match.setRegExpFlags(regExp.flags);
+    Reference isFound = walker.build(WTF::move(match));
+    if (!isFound || walker.isUnreachable())
+        return { };
+    walker.count(StatisticID::RegExpMatchAllocationsElided);
+    BlockID present = walker.addBlock();
+    BlockID absent = walker.addBlock();
+    BlockID joined = walker.addBlock();
+    Reference result = walker.addParameter(joined, { }, Representation::JSValue);
+    walker.branch(isFound, present, absent);
+
+    walker.continueIn(absent);
+    walker.jumpTo(joined, std::array { walker.constant(PrimitiveKnownToFolding::null()) });
+
+    walker.continueIn(present);
+    NotesOfResultInParts notes;
+    const uint32_t numberOfParts = mentions->numberOfParts();
+    if (numberOfParts) {
+        Draft bounds(Opcode::BoundsOfRegExpMatch, origin);
+        walker.chooseConservativeFields(bounds);
+        bounds.setCount(numberOfParts);
+        Reference results = walker.build(WTF::move(bounds));
+        appendPiecesReadInResultsInParts(walker, notes, results, string, mentions->placesRead, summary.groupsPresentInEveryMatch | 1, origin);
+    }
+    Vector<Reference, 4> pieces;
+    for (uint32_t place = 0, read = 0; place < numberOfParts; ++place)
+        pieces.append(mentions->placesRead >> place & 1 && read < notes.size() ? notes[read++].second : walker.constant(Draft(Opcode::Undefined, origin)));
+    Draft list(Opcode::NewArray, origin);
+    walker.chooseConservativeFields(list);
+    list.standsForNoValueOfInput = true;
+    list.setContents(walker.types().withPrimitives(TypeTable::string, Primitive::Undefined));
+    list.setVariadicOperands(pieces.span());
+    Reference array = walker.build(WTF::move(list));
+    if (!array || walker.isUnreachable())
+        return { };
+    walker.jumpTo(joined, std::array { array });
+    walker.continueIn(joined);
+    return result;
 }
 
 static Draft draftOfWholeOfMatchInResultsInParts(Walker& walker, Reference string, Origin origin)
@@ -410,6 +558,7 @@ bool buildSplitInParts(Walker& walker, const CallByOneRow& call)
     Reference cell = Reference::value(underlyingCellOf(walker.code(), array.id()));
     for (auto& [key, value] : notes)
         walker.state().noteElement(cell, key, value);
+    walker.state().noteElementsLieOutsideViews(cell);
     walker.state().noteFresh(cell);
     auto& partsOfLists = static_cast<LooksAtResultsInParts&>(*notesOfStrings(walker).looksAtResultsInParts).partsOfListsThatAreOnlyTakenApart;
     if (mentions->isOnlyTakenApart)
@@ -451,6 +600,110 @@ Reference partOfListThatIsOnlyTakenApart(Walker& walker, Reference name, Referen
     return { };
 }
 
+static LooksAtResultsInParts& looksAtResultsInParts(Walker& walker)
+{
+    return static_cast<LooksAtResultsInParts&>(*notesOfStrings(walker).looksAtResultsInParts);
+}
+
+static std::optional<std::pair<Reference, Reference>> buildBoundsOfMatchInFrame(Walker& walker, const MatchInFrameForParts& found, Reference index, Origin origin)
+{
+    Draft bounds(Opcode::BoundsOfMatchInFrame, origin);
+    walker.chooseConservativeFields(bounds);
+    bounds.setMatchOperand(found.match);
+    bounds.setIndexOperand(index);
+    Reference results = walker.build(WTF::move(bounds));
+    if (!results || walker.isUnreachable())
+        return std::nullopt;
+    Reference start = buildResultOfRangeForStrings(walker, results, 0, origin);
+    Reference end = buildResultOfRangeForStrings(walker, results, 1, origin);
+    return start && end ? std::optional(std::pair(start, end)) : std::nullopt;
+}
+
+bool buildMatchIntoFrame(Walker& walker, const BodyValue& call, BuiltinOverloadID overload, Reference regExpObject, Reference string, Origin origin)
+{
+    if (!hasMechanismsOfResultsInParts(walker) || walker.isUnreachable() || walker.program().at(walker.unit().function).isCoroutine())
+        return false;
+    if (walker.program().builtins().at(overload).code.implementation.inlineBuiltin != InlineBuiltin::RegExpExec || !regExpObject || !string || !isProvenString(walker, walker.typeOf(string)))
+        return false;
+    auto& allMentions = mentionsOfResultsOfBody(walker, walker.currentFunction(), walker.currentBodyIndex());
+    auto foundMentions = allMentions.find(call.id().index());
+    if (foundMentions == allMentions.end())
+        return false;
+    const MentionsOfResultInParts mentions = foundMentions->value;
+    if (mentions.escapes || mentions.isReturned || !mentions.meetsOthersAt.isEmpty() || !mentions.isReadByIndex || mentions.numberOfParts() > 1)
+        return false;
+    TypeArena& types = walker.types();
+    Draft whole(Opcode::NewArrayOfRegExpMatch, origin);
+    walker.chooseConservativeFields(whole);
+    whole.setContents(types.withPrimitives(TypeTable::string, Primitive::Undefined));
+    whole.setStringOperand(string);
+    whole.setRegExpOperand(regExpObject);
+    TypeID typeOfWhole = walker.resultTypeOf(whole);
+    TypeID widest = walker.isInLoop() ? widestTypeOfOperation(walker, call) : TypeID();
+    if (!typeOfWhole || (widest && !types.isSubset(types.withPrimitives(typeOfWhole, Primitive::Null), widest)))
+        return false;
+    if (!endOfBlockAsksWhetherThereIsResult(walker, call) || !walker.canThreadBranchAfter(call))
+        return false;
+
+    Draft match(Opcode::MatchRegExpIntoFrame, origin);
+    walker.chooseConservativeFields(match);
+    match.setOverload(overload);
+    match.setRegExpOperand(regExpObject);
+    match.setStringOperand(string);
+    MatchInFrameForParts found { walker.build(WTF::move(match)), string };
+    if (!found.match || walker.isUnreachable())
+        return true;
+    Draft test(Opcode::IsMatchInFrame, origin);
+    walker.chooseConservativeFields(test);
+    test.setMatchOperand(found.match);
+    Reference isFound = walker.build(WTF::move(test));
+    if (!isFound || walker.isUnreachable())
+        return true;
+    walker.count(StatisticID::RegExpMatchAllocationsElided);
+    BlockID present = walker.addBlock();
+    BlockID absent = walker.addBlock();
+    walker.branch(isFound, present, absent);
+
+    walker.continueIn(absent);
+    walker.bind(call.id(), walker.constant(PrimitiveKnownToFolding::null()));
+    if (!walker.threadBranchAfter(call)) {
+        walker.fail("the way of a match that finds nothing does not walk the end of its block"_s);
+        return true;
+    }
+
+    walker.continueIn(present);
+    Draft length(Opcode::LengthOfMatchInFrame, origin);
+    walker.chooseConservativeFields(length);
+    length.setMatchOperand(found.match);
+    Reference numberOfParts = walker.build(WTF::move(length));
+    if (!numberOfParts || walker.isUnreachable())
+        return true;
+    Reference array = walker.build(WTF::move(whole));
+    NotesOfResultInParts notes;
+    if (mentions.placesRead || mentions.readsIndex) {
+        auto bounds = buildBoundsOfMatchInFrame(walker, found, integerForStrings(walker, 0), origin);
+        if (Reference piece = bounds && mentions.placesRead ? buildPieceOrUndefinedInResultsInParts(walker, string, bounds->first, bounds->second, origin) : Reference())
+            notes.append({ integerForStrings(walker, 0), piece });
+        if (Reference index = bounds && mentions.readsIndex ? buildOperatorForStrings(walker, Opcode::BitAnd, bounds->first, integerForStrings(walker, std::numeric_limits<int32_t>::max()), origin) : Reference())
+            notes.append({ keyOfNameInResultsInParts(walker, nameInTableForResultsInParts(walker, "index"_s)), index });
+    }
+    if (BuiltinName input = nameInTableForResultsInParts(walker, "input"_s))
+        notes.append({ keyOfNameInResultsInParts(walker, input), string });
+    notes.append({ keyOfNameInResultsInParts(walker, BuiltinNames::length), numberOfParts });
+    if (!array || !array.isValue() || walker.isUnreachable())
+        return true;
+    Reference cell = Reference::value(underlyingCellOf(walker.code(), array.id()));
+    for (auto& [key, value] : notes)
+        walker.state().noteElement(cell, key, value);
+    walker.state().noteElementsLieOutsideViews(cell);
+    walker.state().noteFresh(cell);
+    looksAtResultsInParts(walker).matchesInFrame.set(cell.id().index(), found);
+    walker.bind(call.id(), array);
+    if (!walker.threadBranchAfter(call))
+        walker.fail("the way of a match that finds something does not walk the end of its block"_s);
+    return true;
+}
+
 static ALWAYS_INLINE Reference wholeBesidePartsNamedBy(Walker& walker, Reference name)
 {
     if (!name || !name.isValue() || !walker.state().holdsFreshObjects())
@@ -459,7 +712,60 @@ static ALWAYS_INLINE Reference wholeBesidePartsNamedBy(Walker& walker, Reference
     ValueID cell = underlyingCellOf(code, name.id());
     if (code.isConstant(cell) || !walker.state().isFresh(Reference::value(cell)))
         return { };
-    return code.at(cell).opcode == Opcode::NewRegExpMatchArray || code.at(cell).opcode == Opcode::NewStringSplitArray ? Reference::value(cell) : Reference();
+    static constexpr OpcodeSet arraysBesideParts { Opcode::NewRegExpMatchArray, Opcode::NewStringSplitArray, Opcode::NewArrayOfRegExpMatch };
+    return arraysBesideParts.contains(code.at(cell).opcode) ? Reference::value(cell) : Reference();
+}
+
+bool buildElementOfMatchInFrame(Walker& walker, const BodyValue& read, const InputsOfTypedOperation& inputs)
+{
+    if (inputs.areOnlyTypes() || walker.isUnreachable())
+        return false;
+    Reference whole = wholeBesidePartsNamedBy(walker, walker.referenceOf(read.objectOperand()));
+    if (!whole || walker.code().at(whole.id()).opcode != Opcode::NewArrayOfRegExpMatch)
+        return false;
+    Reference index = walker.referenceOf(read.propertyOperand());
+    auto& matches = looksAtResultsInParts(walker).matchesInFrame;
+    auto match = matches.find(whole.id().index());
+    if (match == matches.end() || !walker.types().at(walker.typeOf(index)).isInteger())
+        return false;
+
+    const MatchInFrameForParts found = match->value;
+    Origin origin = walker.originOf(read);
+    origin.isTailCall = false;
+    bool testsElement = endOfBlockAsksWhetherThereIsResult(walker, read) && walker.canThreadBranchAfter(read);
+    auto bounds = buildBoundsOfMatchInFrame(walker, found, index, origin);
+    if (!bounds)
+        return true;
+    auto [start, end] = *bounds;
+    if (!testsElement) {
+        if (Reference piece = buildPieceOrUndefinedInResultsInParts(walker, found.string, start, end, origin))
+            walker.bind(read.id(), piece);
+        return true;
+    }
+
+    Reference isPresent = buildOperatorForStrings(walker, Opcode::LessEq, integerForStrings(walker, 0), start, origin);
+    if (!isPresent || walker.isUnreachable())
+        return true;
+    BlockID present = walker.addBlock();
+    BlockID absent = walker.addBlock();
+    walker.branch(isPresent, present, absent);
+
+    walker.continueIn(absent);
+    walker.bind(read.id(), walker.constant(PrimitiveKnownToFolding::undefined()));
+    if (!walker.threadBranchAfter(read)) {
+        walker.fail("the way of a group that took no part does not walk the end of its block"_s);
+        return true;
+    }
+
+    walker.continueIn(present);
+    noteOrderedPieceBounds(walker, start, end);
+    Reference piece = buildPieceOfString(walker, found.string, start, end, origin);
+    if (!piece || walker.isUnreachable())
+        return true;
+    walker.bind(read.id(), piece);
+    if (!walker.threadBranchAfter(read))
+        walker.fail("the way of a group that took part does not walk the end of its block"_s);
+    return true;
 }
 
 ALWAYS_INLINE_INTO_OTHER_FILES Reference propertyOfResultTakenInParts(Walker& walker, Reference name, PropertyKeyID key)

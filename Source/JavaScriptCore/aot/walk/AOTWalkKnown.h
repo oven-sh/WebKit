@@ -12,6 +12,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+bool callOnlyMakesGenerator(Walker&, FunctionID callee);
 Effects effectsOfDirectCall(Walker&, FunctionID callee, std::span<const Reference> entryArguments);
 bool effectsOfDirectCallHangOnArguments(Walker&, FunctionID callee);
 bool unitDoesMoreThanBodyForKnownEffects(const Plan&, FunctionID);
@@ -27,23 +28,27 @@ enum class KnownNote : uint8_t {
     ValueKeptByPlace,
     HoistedArrayGuard,
     NumberReadOutOfList,
+    HoistedFieldOfCopy,
     PassedTestOfBeingAsMade,
     AnswerOfQuestionStillStands,
     ViewOverMemoryThatNoOtherThreadGrows,
-    BoundsOfPieceAreInOrder,
+    OrderedPieceBounds,
     MemberOfBuiltinIsAsBuilt,
     HolderOfBuiltinHasNoAddedNames,
     RoomOfViewIsAsInFrontOfLoop,
+    VectorOfView,
     NoExtraPropertyUnderKey,
     IsOfNoneOfLayouts,
     StorageOfListMadeInSight,
     PlaceOfKeyInMap,
     VariableIsAsInFrontOfLoop,
     NeverLiesBelow,
+    NeverAbove,
     LengthOfViewIsFoundAbove,
     ElementReadOffFreshList,
     ElementReadUnderNumber,
     StructureOfClassIsSeen,
+    ArrayNameOfInstance,
     ValueOfFieldOfHeir,
     LoopAppendsToLiteral,
     LengthEqualsInitialCounter,
@@ -53,13 +58,20 @@ enum class KnownNote : uint8_t {
     CapacityCoversLoop,
     LoopCapacityGuard,
     ClassesThatInstanceOfDenied,
-    ClassesThatInstanceOfPassed,
+    InstanceOfPassedClasses,
     AnswerOfReadOfSlotThatMayBeEmpty,
     PieceIsStoredByBodyThatCutIt,
+    AssignedMemberClosure,
     ListedOwnKeys,
+    FieldArrayInPreheader,
+    HoistedUnknownField,
+    CarriedResult,
+    WideSum,
+    LowBitsOfWideSum,
 };
 void noteKnown(Walker&, KnownNote, Reference subject, Reference other, uint32_t word, const LocationMasks& restsOn, uint64_t noted, bool endsAtSuspension = false);
 std::optional<uint64_t> findKnown(const Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
+std::optional<uint64_t> findKnown(const Walker&, const WalkState&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
 void endKnown(Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
 constexpr bool isLookupInTable(InlineBuiltin builtin) { return builtin == InlineBuiltin::MapGet || builtin == InlineBuiltin::MapHas || builtin == InlineBuiltin::SetHas; }
 
@@ -130,11 +142,17 @@ struct WrittenListOfVariable {
     uint32_t length { 0 };
 };
 WrittenListOfVariable writtenListThatVariableHolds(Walker&, VariableID);
+WrittenListOfVariable writtenListReadBy(Walker&, ValueID input);
+Reference buildMembershipInWrittenList(Walker&, DataID, Reference sought, Origin);
+WrittenListOfVariable literalArrayInInstance(Walker&, FieldReference);
 bool isReadOutOfVariableOfFileThatStays(Walker&, ValueID input);
 void noteStorageOfWrittenList(Walker&, Reference list, const WrittenListOfVariable&);
 bool nameStorageOfListMadeInSight(Walker&, Draft& read);
 std::optional<uint32_t> lengthOfListMadeInSight(Walker&, Reference list);
+std::optional<uint32_t> lengthOfListMadeInSight(const Walker&, const WalkState&, Reference list);
 Reference elementWrittenInListMadeInSight(Walker&, Reference list, uint32_t position);
+Reference buildMembershipInListMadeInSight(Walker&, Reference list, Reference sought, Origin);
+Reference elementWrittenInListMadeInSight(Walker&, const WalkState&, Reference list, uint32_t position);
 void checkLengthOfListMadeInSight(Walker&, Reference list, uint32_t length, Origin);
 struct WhatListWasMadeWith {
     TypeID proven;

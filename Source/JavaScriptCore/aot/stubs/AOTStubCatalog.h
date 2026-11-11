@@ -37,6 +37,7 @@ struct StubOptions {
 
     bool useWideReferences { false };
     bool imageHasWebAssembly { false };
+    bool hasModuleInstances { true };
     bool hasOneInstance { false };
     bool matchesRegExps { true };
     bool recordsLastMatch { true };

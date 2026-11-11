@@ -148,6 +148,10 @@ NEVER_INLINE UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const 
     if (error.isValid())
         return nullptr;
 
+#if ENABLE(AOT)
+    if (vm.aotState().identifiers) [[unlikely]]
+        vm.aotState().didParseSource(vm, source.length(), rootNode->parserArena().takeIdentifierArena());
+#endif
     return unlinkedCodeBlock;
 }
 

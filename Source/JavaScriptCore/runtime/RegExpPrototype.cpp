@@ -22,6 +22,7 @@
 #include "RegExpPrototype.h"
 
 #include "AOTRemovableFeature.h"
+#include "AOTRuntimeHooks.h"
 #include "CachedCallInlines.h"
 #include "InterpreterInlines.h"
 #include "IntegrityInlines.h"
@@ -358,6 +359,9 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncCompile, (JSGlobalObject* globalObject, 
         return throwVMError(globalObject, scope, regExp->errorToThrow(globalObject));
 
     globalObject->regExpRecompiledWatchpointSet().fireAll(vm, "RegExp is recompiled");
+#if ENABLE(AOT)
+    AOT::RuntimeHooks::willRecompileRegExp(vm);
+#endif
 
     thisRegExp->setRegExp(vm, regExp);
     scope.release();

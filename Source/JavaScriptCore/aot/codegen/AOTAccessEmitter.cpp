@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayBuiltinEmitter.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTBuiltinCallEmitter.h"
 #include "AOTCallEmitter.h"
 #include "AOTClosuresLent.h"
@@ -26,6 +27,7 @@
 #include "AOTResultRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeWords.h"
+#include "AOTSlotAccessEmitter.h"
 #include "AOTSlotEmitter.h"
 #include "AOTState.h"
 #include "AOTStubCalls.h"
@@ -41,6 +43,7 @@
 #include "ECMAMode.h"
 #include "GetterSetter.h"
 #include "PropertyName.h"
+#include "RegExpObject.h"
 #include <limits>
 #include <wtf/StdLibExtras.h>
 
@@ -147,6 +150,45 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
     return result;
 }
 
+bool AccessEmitter::isErrorMessageRead(const OperationContext& context) const
+{
+    if (!context.valueID() || !m_generator.isInLoop(context.block()) || m_code.at(context.block()).frequency == BlockFrequency::Rare)
+        return false;
+    const Operation& read = static_cast<const Operation&>(context.instruction());
+    switch (read.opcode) {
+    case Opcode::PropGet:
+    case Opcode::GetValueAtSiteOrAbsent:
+        return read.isErrorMessageExpected();
+    case Opcode::CallBuiltin: {
+        const BuiltinOverload& overload = m_program.builtins().at(read.overload());
+        return overload.code.implementation.kind == BuiltinImplementationKind::OwnSlot && m_program.builtins().at(overload.builtin).name == BuiltinNames::message;
+    }
+    default:
+        return false;
+    }
+}
+
+Boxed AccessEmitter::loadErrorMessage(Boxed receiver, ValueID receiverID, LBasicBlock whenNotKept)
+{
+    Type known = receiverID ? typeOf(receiverID) : Type();
+    if (!receiverID || known.primitives & ~cellPrimitives) {
+        Condition isPresentCell = isCell(receiver);
+        if (!receiverID || known.primitives & Primitive::Absent)
+            isPresentCell = logicalAnd(isPresentCell, isNotEmpty(receiver));
+        branchUnless(isPresentCell, whenNotKept);
+    }
+    CellPointer object = unboxCell(receiver);
+    Machine::DeclaredAccessesSuspension suspension(m_out);
+    Word32 structure = loadStructureID(object);
+    constexpr unsigned shift = PropertyCacheWords::shiftOfErrorWithMessage;
+    LValue place = m_out.zeroExtPtr(m_out.bitAnd(m_out.lShr(structure.value(), shift), m_out.constInt32(PropertyCacheWords::numberOfErrorsWithMessage - 1)));
+    TypedPointer kept = instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(propertyCaches.errorsWithMessage));
+    Word32 structureKept(m_out.load32(m_out.baseIndex(*kept.heap(), kept.base(), place, ScaleFour, kept.offset())));
+    branchUnless(equal(structureKept, structure), whenNotKept);
+    Pointer butterfly = loadField<Pointer>(object, m_heaps.JSObject_butterfly);
+    return Boxed(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), butterfly.value(), offsetInButterfly(firstOutOfLineOffset) * sizeof(EncodedJSValue))));
+}
+
 Boxed AccessEmitter::getByIdThroughStub(const OperationContext& context, Boxed receiver, PropertyKeyID key, ValueID receiverID)
 {
     if (isSymbolOfRealm(key))
@@ -192,7 +234,15 @@ Boxed AccessEmitter::getByIdThroughStub(const OperationContext& context, Boxed r
     if (std::optional<NumberedImmediate> answers = answersOfKeyThatIsNoSymbolOfRealm(context, key, use)) {
         ReceiverAtSite receiverIs = receiverID && typeOf(receiverID).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
         StubKey stub = readsSizeOfTable ? readSizeOfTableAtSite() : asksShapeFirst ? readAtSite(receiverIs) : readAtSiteAskingStructureFirst(receiverIs, use, receiverIsNoObjectOfCompiledCode);
-        return Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = *answers }).first);
+        if (!isErrorMessageRead(context))
+            return Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = *answers }).first);
+        LBasicBlock asksStub = newBlock();
+        Join<Boxed> join(m_out);
+        join.add(loadErrorMessage(receiver, receiverID, asksStub));
+
+        m_out.appendTo(asksStub);
+        join.add(Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = *answers, .isOnRarePath = true }).first));
+        return join.finish();
     }
     if (readsSizeOfTable)
         return Boxed(callStub(context, getSizeOfTable(), { receiver.value() }, { .numberedImmediate = mention }).first);
@@ -366,7 +416,7 @@ Pointer AccessEmitter::globalBindingAddress(PropertyKeyID key, OptionSet<GlobalB
     return Pointer(m_out.valueOf(instanceWord(m_heaps.AOTInstance_globalBindings, m_mentions.globalBinding(key, flags))));
 }
 
-TypedPointer AccessEmitter::globalBindingLocationOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss)
+Pointer AccessEmitter::propertyAddressOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss)
 {
     static_assert(OBJECT_OFFSETOF(GlobalBinding, lexicalBindingEpoch) == OBJECT_OFFSETOF(GlobalBinding, structureID) + sizeof(uint32_t));
     const Machine::AbstractHeap& records = m_heaps.AOTInstance_globalBindings;
@@ -384,7 +434,12 @@ TypedPointer AccessEmitter::globalBindingLocationOrElse(Pointer record, bool see
     Integer location(m_out.load64(m_out.address(records, record.value(), OBJECT_OFFSETOF(GlobalBinding, location))));
     Integer butterfly(loadField<Pointer>(global, m_heaps.JSObject_butterfly).value());
     Integer butterflyIfNegative = bitAnd(butterfly, Integer(m_out.aShr(location.value(), m_out.constInt32(63))));
-    return TypedPointer(m_heaps.properties.atAnyNumber(), add(location, butterflyIfNegative).value());
+    return Pointer(add(location, butterflyIfNegative).value());
+}
+
+TypedPointer AccessEmitter::globalBindingLocationOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss)
+{
+    return TypedPointer(m_heaps.properties.atAnyNumber(), propertyAddressOrElse(record, seesScriptBindings, miss).value());
 }
 
 void AccessEmitter::generateGetGlobalBinding(const ValueContext& value)
@@ -435,6 +490,138 @@ void AccessEmitter::generateGetGlobalBinding(const ValueContext& value)
     join.add(callOperation<Boxed>(value, operation, { numberOf(m_mentions.globalBinding(key, flags)) }, { .isOnRarePath = true }));
 
     define(value, join.finish());
+}
+
+void AccessEmitter::generateGetGlobalPropertyAddress(const ValueContext& value)
+{
+    PropertyKeyID key = value->key();
+    OptionSet<GlobalBindingFlags> flags;
+    if (value->precedesStore())
+        flags.add(GlobalBindingFlags::IsStore);
+    if (value->seesScriptBindings())
+        flags.add(GlobalBindingFlags::SeesScriptBindings);
+    Pointer record = globalBindingAddress(key, flags);
+    LBasicBlock isNotFiled = newBlock();
+    Join<Pointer> join(m_out);
+    if (!value->precedesStore() && !m_plan.globalName(key).isStoredThroughBinding) {
+        LBasicBlock isConstant = newBlock();
+        LBasicBlock isNotConstant = newBlock();
+        Pointer constant(m_out.add(record.value(), m_out.constInt64(OBJECT_OFFSETOF(GlobalBinding, constant))));
+        branch(isNotEmpty(Boxed(m_out.load64(m_out.address(m_heaps.AOTInstance_globalBindings, constant.value(), 0)))), { normalEdge(isConstant), normalEdge(isNotConstant) });
+
+        m_out.appendTo(isConstant);
+        join.add(constant);
+
+        m_out.appendTo(isNotConstant);
+    }
+    Pointer address = propertyAddressOrElse(record, value->seesScriptBindings(), isNotFiled);
+    branchUnless(isNotEmpty(Boxed(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), address.value())))), isNotFiled);
+    join.add(address);
+
+    m_out.appendTo(isNotFiled);
+    join.add(pointerConstant(0));
+    define(value, join.finish());
+}
+
+void AccessEmitter::generateIsPropertyFiled(const ValueContext& value)
+{
+    defineTest(value, Condition(m_out.notZero64(in<Pointer>(value->addressOperand()).value())));
+}
+
+void AccessEmitter::generateGetGlobalProperty(const ValueContext& value)
+{
+    define(value, Boxed(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), in<Pointer>(value->addressOperand()).value()))));
+}
+
+void AccessEmitter::generatePutGlobalBinding(const ValueContext& value)
+{
+    Boxed stored = in<Boxed>(value->valueOperand());
+    m_out.store64(stored.value(), TypedPointer(m_heaps.properties.atAnyNumber(), in<Pointer>(value->addressOperand()).value()));
+    barrierAfterStore(value, globalObject(), typeOf(value->valueOperand()));
+}
+
+void AccessEmitter::generateGetKeyedPropertyAddress(const ValueContext& value)
+{
+    Boxed object = in<Boxed>(value->objectOperand());
+    if (PropertyKeyID key = value->key(); key && !value->findsOnlyFields()) {
+        Integer named = callOperation<Integer>(value, RuntimeOperation::OwnNamedPropertyAddress, { object, identifierNumber(key), word32(value->fitsFieldTypes()) });
+        define(value, Pointer(named.value()));
+        return;
+    }
+    Integer address = callLeaf<Integer>(RuntimeOperation::OwnPropertyAddress, { object, in<Boxed>(value->propertyOperand()), word32(value->findsOnlyFields()), word32(value->fitsFieldTypes()) });
+    define(value, Pointer(address.value()));
+}
+
+void AccessEmitter::generateGetKeyedValueOrAbsent(const ValueContext& value)
+{
+    if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::UseGenericOwnKeyReads)) {
+        define(value, getByVal(value, in<Boxed>(value->objectOperand()), in<Boxed>(value->propertyOperand())));
+        return;
+    }
+    define(value, callLeaf<Boxed>(RuntimeOperation::OwnValueByKeyOrEmpty, { in<Boxed>(value->objectOperand()), in<Boxed>(value->propertyOperand()), word32(value->findsOnlyFields()) }));
+}
+
+std::array<const Machine::AbstractHeap*, 2> AccessEmitter::heapsOfKeyedProperty() const
+{
+    return { &m_heaps.entire(AbstractHeap::ObjectFields), &m_heaps.entire(AbstractHeap::NamedProperties) };
+}
+
+void AccessEmitter::generateGetKeyedProperty(const ValueContext& value)
+{
+    CellPointer object(in<Boxed>(value->objectOperand()).value());
+    Pointer address = in<Pointer>(value->addressOperand());
+    LValue property;
+    if (operationAt(value->addressOperand()).findsOnlyFields())
+        property = m_out.load64(TypedPointer(m_heaps.entire(AbstractHeap::ObjectFields), address.value()));
+    else {
+        Machine::PatchOperation* load = m_out.patchpoint(Machine::Int64);
+        load->effects = Machine::Effects::none();
+        m_heaps.decoratePatchpointRead(heapsOfKeyedProperty(), load);
+        load->appendSomeRegister(address.value());
+        load->setRunsWithoutFrame(true);
+        load->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
+            jit.load64(CCallHelpers::Address(params[1].gpr()), params[0].gpr());
+        });
+        property = load;
+    }
+    ensureStillAliveHere(object);
+    define(value, Boxed(property));
+}
+
+void AccessEmitter::generatePutKeyedProperty(const ValueContext& value)
+{
+    Boxed object = in<Boxed>(value->objectOperand());
+    Boxed stored = in<Boxed>(value->valueOperand());
+    CellPointer cell(object.value());
+    Pointer address = in<Pointer>(value->addressOperand());
+    bool isField = operationAt(value->addressOperand()).findsOnlyFields();
+    if (isField)
+        m_out.store64(stored.value(), TypedPointer(m_heaps.entire(AbstractHeap::ObjectFields), address.value()));
+    else {
+        Machine::PatchOperation* store = m_out.patchpoint(Machine::Void);
+        store->effects = Machine::Effects::none();
+        m_heaps.decoratePatchpointWrite(heapsOfKeyedProperty(), store);
+        store->appendSomeRegister(address.value());
+        store->appendSomeRegister(stored.value());
+        store->setRunsWithoutFrame(true);
+        store->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
+            jit.store64(params[1].gpr(), CCallHelpers::Address(params[0].gpr()));
+        });
+    }
+    ensureStillAliveHere(cell);
+    if (!typeOf(value->valueOperand()).hasCells())
+        return;
+    if (isField) {
+        barrierAfterStore(value, cell, typeOf(value->valueOperand()));
+        return;
+    }
+    LBasicBlock storesCell = newBlock();
+    LBasicBlock done = newBlock();
+    branch(isCell(stored), { normalEdge(storesCell), normalEdge(done) });
+    m_out.appendTo(storesCell);
+    callLeaf(RuntimeOperation::BarrierAfterKeyedStore, std::array<Operand, 1> { object }, Representation::Void);
+    m_out.jump(done);
+    m_out.appendTo(done);
 }
 
 void AccessEmitter::generateSetGlobalBinding(const ValueContext& value)
@@ -544,7 +731,7 @@ void AccessEmitter::readGroupOffOneValue(const ValueContext& value, Boxed receiv
         for (bool goesOn = true; goesOn;) {
             for (ValueID id : behind) {
                 const Operation& operation = m_code.at(id);
-                if (operation.opcode == Opcode::GetValueAtSiteOrAbsent && operation.objectOperand() == value->objectOperand()) {
+                if (operation.opcode == Opcode::GetValueAtSiteOrAbsent && !operation.mayHoldLength() && operation.objectOperand() == value->objectOperand()) {
                     if (std::optional<NumberedImmediate> answers = answersOfReadOutOfRow(block, operation))
                         reads.append({ id, operation.key(), *answers });
                     if (reads.size() == ReadGroupCache::numberOfPlaces) {
@@ -608,13 +795,27 @@ void AccessEmitter::readGroupOffOneValue(const ValueContext& value, Boxed receiv
     {
         Machine::DeclaredAccessesSuspension suspension(m_out);
         TypedPointer wordOfGroup = instanceWord(m_heaps.entire(AbstractHeap::RuntimeState), m_mentions.add(NumberSpace::ReadGroupCache, keyOfGroup));
-        m_out.branch(m_out.isZero32(m_out.load32(wordOfGroup)), normalEdge(asksRows), unlikelyEdge(byStubs));
-
-        m_out.appendTo(asksRows);
         LValue group = m_out.valueOf(wordOfGroup);
+        LBasicBlock allLieInCell = newBlock();
+        LBasicBlock someMayBeElsewhere = newBlock();
         if (mayBeNoCell)
             branchUnless(isCell(receiver), byStubs);
         Word32 structure = loadStructureID(record);
+        constexpr ptrdiff_t offsetOfFirstRow = OBJECT_OFFSETOF(ReadGroupCache, rows);
+        Word32 structureThatHoldsAll(m_out.load32(m_out.address(m_heaps.root, group, offsetOfFirstRow + OBJECT_OFFSETOF(ReadGroupCache::Row, structureThatHoldsAll))));
+        m_out.branch(equal(structureThatHoldsAll, structure).value(), normalEdge(allLieInCell), unlikelyEdge(someMayBeElsewhere));
+
+        m_out.appendTo(allLieInCell);
+        for (unsigned index = 0; index < reads.size(); ++index) {
+            LValue place = m_out.load16SignExt32(m_out.address(m_heaps.root, group, offsetOfFirstRow + OBJECT_OFFSETOF(ReadGroupCache::Row, places) + index * sizeof(int16_t)));
+            results[index].append(m_out.anchor(m_out.load64(m_out.baseIndex(m_heaps.root, record.value(), m_out.zeroExtPtr(place), ScaleEight))));
+        }
+        m_out.jump(done);
+
+        m_out.appendTo(someMayBeElsewhere);
+        m_out.branch(m_out.isZero32(m_out.load32(wordOfGroup)), normalEdge(asksRows), unlikelyEdge(byStubs));
+
+        m_out.appendTo(asksRows);
         for (unsigned index = 0; index < ReadGroupCache::numberOfRows; ++index) {
             ptrdiff_t offset = OBJECT_OFFSETOF(ReadGroupCache, rows) + index * sizeof(ReadGroupCache::Row);
             LBasicBlock isRow = newBlock();
@@ -669,8 +870,9 @@ void AccessEmitter::readGroupOffOneValue(const ValueContext& value, Boxed receiv
             join.add(inStorage);
 
             m_out.appendTo(fills);
-            callVoidOperation(value, RuntimeOperation::FillReadGroupOffset, { record, identifierNumber(reads[index].key), Pointer(row), word32(static_cast<int32_t>(index)) }, { .isOnRarePath = true });
-            m_out.jump(asksStub);
+            Boxed filled = callOperation<Boxed>(value, RuntimeOperation::FillReadGroupOffset, { record, identifierNumber(reads[index].key), Pointer(row), word32(static_cast<int32_t>(index + reads.size() * (ReadGroupCache::numberOfPlaces + 1))) }, { .isOnRarePath = true });
+            branchUnless(isNotEmpty(filled), asksStub);
+            join.add(filled);
 
             m_out.appendTo(asksStub);
             join.add(Boxed(callStub(value, stub, { receiver.value() }, { .numberedImmediate = reads[index].answers }).first));
@@ -727,11 +929,41 @@ void AccessEmitter::generateGetValueAtSiteOrAbsent(const ValueContext& value)
     bool asksShapeFirst = !value->receiverIsNoObjectOfCompiledCode() && m_plan.slots().someLayoutWrittenInHasField(m_program.at(m_unit.function).module, key);
     build().statistics().count(StatisticID::SiteCachedReadsEmitted);
     Boxed receiver = in<Boxed>(value->objectOperand());
-    if (answersOfReadOutOfRow(value.block(), value.value())) {
+    if (isErrorMessageRead(value)) {
+        LBasicBlock asksStub = newBlock();
+        Join<Boxed> join(m_out);
+        join.add(loadErrorMessage(receiver, value->objectOperand(), asksStub));
+
+        m_out.appendTo(asksStub);
+        join.add(Boxed(callStub(value, readAtSiteRunningNoCode(receiverIs, asksShapeFirst), { receiver.value() }, { .numberedImmediate = *answers, .isOnRarePath = true }).first));
+        define(value, join.finish());
+        return;
+    }
+    if (!value->mayHoldLength() && answersOfReadOutOfRow(value.block(), value.value())) {
         readGroupOffOneValue(value, receiver, receiverIs == ReceiverAtSite::IsAnyValue, *answers);
         return;
     }
-    define(value, Boxed(callStub(value, readAtSiteRunningNoCode(receiverIs, asksShapeFirst), { receiver.value() }, { .numberedImmediate = *answers }).first));
+    auto readAtSite = [&] {
+        return Boxed(callStub(value, readAtSiteRunningNoCode(receiverIs, asksShapeFirst), { receiver.value() }, { .numberedImmediate = *answers }).first);
+    };
+    if (!value->mayHoldLength()) {
+        define(value, readAtSite());
+        return;
+    }
+    LBasicBlock isCellOfAnyKind = newBlock();
+    LBasicBlock hasOwnLength = newBlock();
+    LBasicBlock hasProperty = newBlock();
+    Join<Boxed> join(m_out);
+    branch(isCell(receiver), { normalEdge(isCellOfAnyKind), normalEdge(hasProperty) });
+    m_out.appendTo(isCellOfAnyKind);
+    branch(hasCellTypeIn(unboxCell(receiver), { ObjectType, FinalObjectType }), { normalEdge(hasProperty), normalEdge(hasOwnLength) });
+    m_out.appendTo(hasOwnLength);
+    Boxed length(callStub(value, getLengthRunningNoCode(), { receiver.value() }, { .numberedImmediate = NumberedImmediate { mentionOfName(key) } }).first);
+    branchUnless(isNotEmpty(length), hasProperty);
+    join.add(length);
+    m_out.appendTo(hasProperty);
+    join.add(readAtSite());
+    define(value, join.finish());
 }
 
 void AccessEmitter::generateGetOwnValueUnderKeyOrAbsent(const ValueContext& value)
@@ -741,6 +973,15 @@ void AccessEmitter::generateGetOwnValueUnderKeyOrAbsent(const ValueContext& valu
         return;
     }
     define(value, callLeaf<Boxed>(RuntimeOperation::OwnValueUnderKeyOrEmpty, { in<Boxed>(value->objectOperand()), in<Boxed>(value->propertyOperand()) }));
+}
+
+void AccessEmitter::generateGetValueUnderKeyOrAbsent(const ValueContext& value)
+{
+    if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::UseGenericOwnKeyReads)) {
+        define(value, getByVal(value, in<Boxed>(value->objectOperand()), in<Boxed>(value->propertyOperand())));
+        return;
+    }
+    define(value, Boxed(callStub(value, getByValRunningNoCode(), { in<Boxed>(value->objectOperand()).value(), in<Boxed>(value->propertyOperand()).value() }).first));
 }
 
 bool AccessEmitter::lookVouchesForPropertyOfHeir(const ValueContext& value) const
@@ -1254,13 +1495,55 @@ void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, Pu
     putById(value, object, key, stored, mode, site);
 }
 
+bool AccessEmitter::storeLastIndexInLine(const ValueContext& value, Boxed object, PutMode mode)
+{
+    if (!m_generator.runsRepeatedly(value.block()) && !m_facts.linked().functionsCalledInLoops.get(m_unit.function.index()))
+        return false;
+    const PropertyKey& name = types().at(value->key());
+    if (name.kind != PropertyKeyKind::Text || m_program.nameClass(name.text) != NameClass::LastIndex || !typeOf(value->valueOperand()).isNumber())
+        return false;
+    Type receiver = typeOf(value->objectOperand());
+    const ClassPart* onlyClass = receiver.isObject() ? singleBuiltinClassOf(types(), receiver) : nullptr;
+    const bool isRegExp = onlyClass && onlyClass->builtinClass == BuiltinClassID(BuiltinClasses::RegExp);
+    if (!isRegExp && (onlyClass || !receiver.hasObjects() || findStoreOfKnownField(receiver, value->key(), mode)))
+        return false;
+
+    Boxed stored = in<Boxed>(value->valueOperand());
+    const Machine::AbstractHeap& state = m_heaps.entire(AbstractHeap::RegExpState);
+    LBasicBlock isOther = newBlock();
+    LBasicBlock done = newBlock();
+    auto continueIf = [&](Condition condition) {
+        LBasicBlock continuation = newBlock();
+        m_out.branch(condition.value(), normalEdge(continuation), rareEdge(isOther));
+        m_out.appendTo(continuation);
+    };
+    LValue regExpObject = unboxCell(object).value();
+    if (!isRegExp) {
+        if (!receiver.isObject())
+            continueIf(isCell(object));
+        continueIf(equal(loadStructureID(unboxCell(object)), loadFilledOnce32(Instance::offsetOfReceiverStructureID(Receiver::RegExp))));
+    }
+    LValue regExpAndFlags = m_out.load64(m_out.address(state, regExpObject, RegExpObject::offsetOfRegExpAndFlags()));
+    continueIf(Condition(m_out.testIsZero64(regExpAndFlags, RegExpObject::lastIndexIsNotWritableFlag)));
+    m_out.store64(stored.value(), m_out.address(state, regExpObject, RegExpObject::offsetOfLastIndex()));
+    m_out.jump(done);
+    m_out.appendTo(isOther);
+    putNamedProperty(value, object, mode);
+    m_out.jump(done);
+    m_out.appendTo(done);
+    return true;
+}
+
 void AccessEmitter::generatePropSet(const ValueContext& value)
 {
     if (value->isFreeName()) {
         putFreeName(value);
         return;
     }
-    putNamedProperty(value, in<Boxed>(value->objectOperand()), putModeOf(value->mode()));
+    Boxed object = in<Boxed>(value->objectOperand());
+    PutMode mode = putModeOf(value->mode());
+    if (!storeLastIndexInLine(value, object, mode))
+        putNamedProperty(value, object, mode);
 }
 
 void AccessEmitter::generatePropDefine(const ValueContext& value)
@@ -1378,13 +1661,13 @@ static std::optional<AOT::ExpectedElements> stubFormOfExpectedElements(ExpectedE
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool AccessEmitter::readsElementsInLoop(const ValueContext& value, ValueID object)
+bool AccessEmitter::readsElementsRepeatedly(const ValueContext& value, ValueID object)
 {
     bool standsInRareBlock = m_code.at(value.block()).frequency == BlockFrequency::Rare;
-    return !standsInRareBlock && m_generator.isInLoop(value.block()) && typeOf(object).hasObjects();
+    return !standsInRareBlock && m_generator.runsRepeatedly(value.block()) && typeOf(object).hasObjects();
 }
 
-Boxed AccessEmitter::presentElementOrElse(ValueID objectOperand, const ElementKey& key, LBasicBlock outOfLine)
+Boxed AccessEmitter::presentElementOrElse(const ValueContext& value, ValueID objectOperand, const ElementKey& key, LBasicBlock outOfLine)
 {
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     Boxed object = in<Boxed>(objectOperand);
@@ -1404,13 +1687,22 @@ Boxed AccessEmitter::presentElementOrElse(ValueID objectOperand, const ElementKe
         branchUnless(isPresentCell, outOfLine);
     }
     CellPointer cell = unboxCell(object);
-    branchUnless(elements.holdsBoxedElements(cell), outOfLine);
+    bool readsArrayStorage = !m_generator.isInLoop(value.block());
+    LBasicBlock hasOtherStorage = readsArrayStorage ? newBlock() : outOfLine;
+    Join<Boxed> join(m_out);
+    branchUnless(elements.objectHoldsBoxedElements(cell), hasOtherStorage);
     ArrayElements storage = elements.elementsOf(cell);
     LengthTest test = elements.testLength(index, storage);
     branchUnless(test.isInside, outOfLine);
     Boxed element = elements.loadBoxedElement(storage, test.indexInside);
     branchUnless(isNotEmpty(element), outOfLine);
-    return element;
+    if (!readsArrayStorage)
+        return element;
+    join.add(element);
+
+    m_out.appendTo(hasOtherStorage);
+    join.add(elements.loadArrayStorageElement(cell, index, outOfLine));
+    return join.finish();
 }
 
 void AccessEmitter::generateElemGet(const ValueContext& value)
@@ -1473,10 +1765,10 @@ void AccessEmitter::generateElemGet(const ValueContext& value)
         return;
     }
     bool keyIsIndex = key->isInteger || value->keyIsIntegral() || typeOf(value->propertyOperand()).isNumber();
-    if (!extraPropertiesWord && !expected && keyIsIndex && readsElementsInLoop(value, value->objectOperand())) {
+    if (!extraPropertiesWord && !expected && keyIsIndex && readsElementsRepeatedly(value, value->objectOperand())) {
         LBasicBlock outOfLine = newBlock();
         Join<Boxed> join(m_out);
-        join.add(presentElementOrElse(value->objectOperand(), *key, outOfLine));
+        join.add(presentElementOrElse(value, value->objectOperand(), *key, outOfLine));
 
         m_out.appendTo(outOfLine);
         join.add(Boxed(callStub(value, stub, { object.value(), key->value }, { .isOnRarePath = true }).first));
@@ -1501,7 +1793,8 @@ void AccessEmitter::generateElemGet(const ValueContext& value)
     }
     {
         Machine::DeclaredAccessesSuspension suspension(m_out);
-        join.add(elements.readElementOfExtraProperties(unboxCell(object), *extraPropertiesWord, index, outOfLine));
+        bool readsArrayStorage = m_generator.runsRepeatedly(value.block()) && !m_generator.isInLoop(value.block());
+        join.add(elements.readElementOfExtraProperties(unboxCell(object), *extraPropertiesWord, index, outOfLine, readsArrayStorage));
     }
 
     m_out.appendTo(outOfLine);
@@ -1535,8 +1828,11 @@ void AccessEmitter::generateElemSet(const ValueContext& value)
     const PlacedSlot* extraPropertiesWord = elements.extraPropertiesWordOfReadByPosition(value);
     if (!extraPropertiesWord) {
         LValue constantIndex = key->isInteger || expected ? nullptr : tryUnboxConstantIndex(Boxed(key->value));
-        if (constantIndex)
-            callStub(value, putByValAtConstantIndex(forMode(value->mode(), JSC::ECMAMode::strict(), JSC::ECMAMode::sloppy())), { object.value(), constantIndex, stored.value() });
+        JSC::ECMAMode mode = forMode(value->mode(), JSC::ECMAMode::strict(), JSC::ECMAMode::sloppy());
+        if (constantIndex && isKnownIndex(constantIndex->asInt64()))
+            callStub(value, putByValAtKnownIndex(static_cast<unsigned>(constantIndex->asInt64()), mode), { object.value(), stored.value() });
+        else if (constantIndex)
+            callStub(value, putByValAtConstantIndex(mode), { object.value(), constantIndex, stored.value() });
         else
             callStub(value, stub, { object.value(), key->value, stored.value() });
         return;
@@ -1569,13 +1865,13 @@ void AccessEmitter::generateElemHas(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->objectOperand());
     Boxed key = in<Boxed>(value->propertyOperand());
-    if (!typeOf(value->propertyOperand()).isNumber() || !readsElementsInLoop(value, value->objectOperand())) {
+    if (!typeOf(value->propertyOperand()).isNumber() || !readsElementsRepeatedly(value, value->objectOperand())) {
         defineTest(value, hasByVal(value, object, key));
         return;
     }
     LBasicBlock outOfLine = newBlock();
     Join<Word32> join(m_out);
-    presentElementOrElse(value->objectOperand(), ElementKey { key.value(), false }, outOfLine);
+    presentElementOrElse(value, value->objectOperand(), ElementKey { key.value(), false }, outOfLine);
     join.add(word32(1));
 
     m_out.appendTo(outOfLine);
@@ -1600,6 +1896,7 @@ void AccessEmitter::generateElemDefine(const ValueContext& value)
     Boxed key = in<Boxed>(value->propertyOperand());
     Boxed stored = in<Boxed>(value->valueOperand());
     putByVal(value, object, key, stored, PutMode::Define);
+    emitter<SlotAccessEmitter>().noteComputedKey(value->objectOperand());
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -1,0 +1,48 @@
+# outside loops of an async body one read opens a guess at an instance of a class, and none at a record
+# function P() { this.z = 3; }  async function ofInstance(p: P, w) { await w; return p.z; }  async function ofRecord(r: { z }, w) { await w; return r.z; }
+# RUN: walk f2:CoroutineBody mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# CHECK: = GetSlot {{*}}key="z" receivers=[L1] level=Expected
+# RUN(RECORD): walk f3:CoroutineBody mechanisms=none+TypedOperations+Guesses
+# RECORD-LABEL: code f3:CoroutineBody
+# RECORD: = PropGet {{*}}key="z"
+# RUN(NONE): walk f3:CoroutineBody mechanisms=none+TypedOperations+Guesses
+# NONE-NOT: GetSlot
+
+layout L0 module=m0 position=1 fields=[{key="z" declared={type=anything}}]
+layout L1 kind=Instance name="P" module=m0 position=2 constructor=f1 fields=[{key="z" declared={type=anything}}] flags=[IsConstructorFunction]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Construct v0
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="publish" [isFreeName]
+    v6 = NewClosure function=f2
+    v7 = NewClosure function=f3
+    v8 = Call v5, -, v6, v7, v1, v3
+    Return v8
+}
+function f1 name="P" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=3
+    PropSet v0, v1 key="z"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="ofInstance" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    v2 = Await v1
+    v3 = PropGet v0 key="z"
+    Return v3
+}
+function f3 name="ofRecord" module=m0 flags=[IsAsync] length=2 thisType={type=anything} parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = Await v1
+    v3 = PropGet v0 key="z"
+    Return v3
+}

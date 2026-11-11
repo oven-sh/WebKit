@@ -431,7 +431,7 @@ bool MachineValidator::hasLegalTypes(const Operation* operation) const
         return type == Int64 && space != SymbolSpace::Number && space != SymbolSpace::InstanceWord;
     }
     case NumberOf:
-        return type == Int32 && operation->symbol().space == SymbolSpace::Number;
+        return (type == Int32 || type == Int64) && operation->symbol().space == SymbolSpace::Number;
     case InstanceAddressOf:
         return type == Int64 && operation->symbol().space == SymbolSpace::InstanceWord;
     case ArgumentReg:
@@ -582,9 +582,13 @@ bool MachineValidator::checkOperations()
             return fail(operation);
         if (countsChildrenAtFirstUse(operation->opcode()) && !operation->useCount())
             continue;
-        for (const Operation* child : operation->children()) {
+        std::span<Operation* const> children = operation->children();
+        for (unsigned childIndex = 0; childIndex < children.size(); ++childIndex) {
+            const Operation* child = children[childIndex];
             ++numberOfUses[child->index()];
             if (operation->opcode() != Trunc && !child->has(OperationFlag::UpperHalfIsRead))
+                return fail(operation);
+            if (!readsZeroExtendedWord(operation->opcode(), childIndex) && !child->has(OperationFlag::HasOpaqueReader))
                 return fail(operation);
         }
     }

@@ -22,6 +22,7 @@
 #include "AOTStubsPropertyKeys.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
+#include "AOTWalkBirths.h"
 #include "AOTWalkKnown.h"
 #include <algorithm>
 #include <limits>
@@ -264,6 +265,12 @@ static bool recordsExpectNothingUnderNameOnStaticSidesForInstanceOf(const Walker
             if (declared.side == ClassSide::Static && (!declared.key || declared.key == key))
                 return false;
         }
+        if (!layout.base && layout.writtenBuiltinBase) {
+            const BuiltinTable& table = program.builtins();
+            BuiltinID constructor = table.at(layout.writtenBuiltinBase).constructor;
+            BuiltinID found = constructor ? findConstantMemberFrom(program, walker.facts(), constructor, key) : BuiltinID();
+            return found && table.canonicalID(found) == Builtins::FunctionPrototypeSymbolHasInstance;
+        }
         LayoutID parent;
         if (!findParentNamedByClassRecordForTypedAccess(walker, current, parent))
             return false;
@@ -345,7 +352,7 @@ bool canDecideInstanceOfByHierarchy(const Walker& walker, TypeID typeOfConstruct
     return tested && !tested->isConstructorFunction && walker.plan().hasClassRecord(tested->layout) && walker.facts().families().nearestFamilyOf(tested->layout);
 }
 
-void noteWhatInstanceOfSaid(Walker& walker, const BodyValue& test, bool passed)
+void noteInstanceOfResult(Walker& walker, const BodyValue& test, bool passed)
 {
     if (!walker.has(Mechanism::Guesses) || walker.isUnreachable())
         return;
@@ -360,7 +367,7 @@ void noteWhatInstanceOfSaid(Walker& walker, const BodyValue& test, bool passed)
     Vector<LayoutID, 8> layouts { tested->layout };
     layouts.append(walker.program().layoutsExpectedBelow(tested->layout));
     TypeID asked = types.forLayouts(layouts.span());
-    KnownNote note = passed ? KnownNote::ClassesThatInstanceOfPassed : KnownNote::ClassesThatInstanceOfDenied;
+    KnownNote note = passed ? KnownNote::InstanceOfPassedClasses : KnownNote::ClassesThatInstanceOfDenied;
     if (std::optional<uint64_t> before = passed ? std::nullopt : findKnown(walker, note, value))
         asked = types.unionOf(asked, types.forLayoutSet(LayoutSetID::fromBits(static_cast<uint32_t>(*before))));
     noteKnown(walker, note, value, { }, 0, LocationMasks(), types.at(asked).layouts.bits());
@@ -764,9 +771,9 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         return false;
     bool valueHasLayoutPrototype = !inputs.areOnlyTypes() && knownCellFacts(walker, walker.referenceOf(test.valueOperand())).contains(CellFact::HasLayoutPrototype);
     valueHasLayoutPrototype |= walker.shouldAssumeLayoutPrototype() && !inputs.areOnlyTypes();
-    bool asksWhatIsExpected = !inputs.areOnlyTypes() && maySpendBytesForTimeInInstanceOf(walker);
-    TypeID expectedOfValue = asksWhatIsExpected ? findExpectation(walker, test.valueOperand()).type : TypeID();
-    TypeID expectedOfAnswer = asksWhatIsExpected ? walker.typeExpectedOfAnswerOfCopy() : TypeID();
+    bool queriesExpectations = !inputs.areOnlyTypes() && maySpendBytesForTimeInInstanceOf(walker);
+    TypeID expectedOfValue = queriesExpectations ? findExpectation(walker, test.valueOperand()).type : TypeID();
+    TypeID expectedOfAnswer = queriesExpectations ? walker.typeExpectedOfAnswerOfCopy() : TypeID();
     if (expectedOfAnswer && walker.types().at(expectedOfAnswer).hasObjects() && walker.copyHandsBack(test.valueOperand()))
         expectedOfValue = expectedOfValue ? walker.types().unionOf(expectedOfValue, expectedOfAnswer) : expectedOfAnswer;
     std::optional<FormOfInstanceOf> form = planFormOfInstanceOf(walker, typeOfValue, typeOfConstructor, valueHasLayoutPrototype, expectedOfValue);
@@ -816,7 +823,8 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
 
     Origin origin = walker.originOf(test);
     AnswersOfInstanceOf answers(walker);
-    if ((form->hierarchy || (form->hierarchyDecidesEveryShape && form->instances && !form->areAllInstances)) && walker.canThreadBranchAfter(test)) {
+    bool someArmKnowsResult = form->instances && !form->areAllInstances && (form->hierarchyDecidesEveryShape || (walker.isCurrentFrameRecursive() && !walker.isInLoop()));
+    if ((form->hierarchy || someArmKnowsResult) && walker.canThreadBranchAfter(test)) {
         answers.letArmsEndWithBranchBehind(test);
         walker.count(StatisticID::InstanceOfTestsJumpThreaded);
     }
@@ -828,7 +836,12 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         walker.count(StatisticID::InstanceOfTestsDecidedByHierarchy);
     bool hasArms = false;
     BlockID asWritten;
+    bool everyGuardIsAmongConditions = std::ranges::all_of(form->hierarchyGuards, [&](const MemberConditionRecord& guard) {
+        return form->conditions.contains(guard);
+    });
     for (std::span<const MemberConditionRecord> conditions : { std::span<const MemberConditionRecord>(form->conditions.span()), form->hierarchyGuards }) {
+        if (everyGuardIsAmongConditions && conditions.data() == form->hierarchyGuards.data())
+            continue;
         if (conditions.empty() || (walker.shouldSkipHierarchyGuards() && conditions.data() == form->hierarchyGuards.data()) || (walker.shouldSkipClassGuards() && conditions.data() == form->conditions.span().data()))
             continue;
         bool asksInFront = prototypeObjectIsInTable && !hasOneClosedArm && walker.canRestartIteration() && walker.iterationsPreserveMemberGuards();
@@ -853,6 +866,8 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
             walker.branch(areUnchanged, unchanged, asWritten);
             hasArms = true;
             walker.continueIn(unchanged);
+            if (!walker.isUnreachable())
+                noteGuardsShownByTest(walker, conditions, areUnchanged);
         }
     }
 
@@ -923,6 +938,8 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         walker.chooseConservativeFields(shapeTest);
         shapeTest.setObjectOperand(value);
         shapeTest.setLayouts(form->instances);
+        bool rejectsMarkedObjects = answers.armsEndWithBranch() && !form->missMeansFalse && !form->hierarchyDecidesEveryShape;
+        shapeTest.setRejectsMarkedObjects(rejectsMarkedObjects);
         bool shapeTestIsAnswer = form->missMeansFalse && !testsPrototype && !shouldVerifyHierarchyResults && !answers.armsEndWithBranch();
         if (!hasArms && shapeTestIsAnswer)
             shapeTest.inputValueGiven = test.id();
@@ -933,7 +950,7 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         BlockID hasShape = walker.addBlock();
         bool missIsAskedAsWritten = asWritten && (hasOneClosedArm || !prototypeObjectIsInTable);
         BlockID walksChain = missIsAskedAsWritten ? asWritten : walker.addBlock(walker.canRestartIteration() ? BlockFrequency::Normal : BlockFrequency::Rare);
-        bool asksWhetherMissIsObject = hasOneClosedArm && !form->missMeansFalse && !form->valueIsSurelyObject;
+        bool asksWhetherMissIsObject = (hasOneClosedArm || (!walker.isInLoop() && !form->hierarchy)) && !form->missMeansFalse && !form->valueIsSurelyObject;
         bool testsMissForSibling = form->hierarchy && !form->missMeansFalse && !asksWhetherMissIsObject && !missIsAskedAsWritten;
         BlockID hasOtherShape = form->missMeansFalse || asksWhetherMissIsObject || testsMissForSibling ? walker.addBlock() : walksChain;
         walker.branch(isInstance, hasShape, hasOtherShape);
@@ -968,6 +985,8 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
                 recordCheckedName(instance);
                 walker.state().recordCellFacts(value, CellFact::HasLayoutPrototype);
                 walker.state().recordCellFacts(instance, CellFact::HasLayoutPrototype);
+                if (rejectsMarkedObjects)
+                    walker.state().recordCellFacts(instance, CellFact::BearsNoMark);
             } else
                 verifyAgainstChainWalk(true);
         } else if (answers.armsEndWithBranch()) {
@@ -983,6 +1002,17 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
 
         if (testsMissForSibling) {
             walker.continueIn(hasOtherShape);
+            if (rejectsMarkedObjects) {
+                Draft markedTest(Opcode::ShapeTest, origin);
+                walker.chooseConservativeFields(markedTest);
+                markedTest.setObjectOperand(value);
+                markedTest.setLayouts(form->instances);
+                if (Reference isMarked = walker.build(WTF::move(markedTest))) {
+                    BlockID isOfOtherClass = walker.addBlock();
+                    walker.branch(isMarked, walksChain, isOfOtherClass);
+                    walker.continueIn(isOfOtherClass);
+                }
+            }
             Draft siblingTest(Opcode::ShapeTest, origin);
             walker.chooseConservativeFields(siblingTest);
             siblingTest.setObjectOperand(value);
@@ -1110,7 +1140,7 @@ static bool holdsNoObjectForInstanceOf(const Walker& walker, TypeID typeOfValue)
     return subject.isJavaScriptValue() && !subject.mayBeUnspecified() && !subject.hasObjects();
 }
 
-static bool chainsHoldNoOtherBuiltinThanObjectPrototype(const Walker& walker, TypeID typeOfValue)
+static bool onlyObjectPrototypeInChains(const Walker& walker, TypeID typeOfValue)
 {
     TypeArena& types = walker.types();
     Type subject = types.at(typeOfValue);
@@ -1156,10 +1186,15 @@ static bool classTestAnswersBuiltinInstanceOf(const Walker& walker, const Builti
 
 static Reference buildWalkOfChainToBuiltinForInstanceOf(Walker& walker, Reference value, BuiltinID prototype, Origin origin)
 {
-    Draft found(Opcode::Builtin, origin);
-    walker.chooseConservativeFields(found);
-    found.setBuiltin(prototype);
-    return buildWalkOfChainForInstanceOf(walker, value, walker.build(WTF::move(found)), origin);
+    Reference object;
+    {
+        Walker::SpecializedPreheaderScope preheaderScope(walker, walker.canRestartIteration());
+        Draft found(Opcode::Builtin, origin);
+        walker.chooseConservativeFields(found);
+        found.setBuiltin(prototype);
+        object = walker.build(WTF::move(found));
+    }
+    return walker.canRestartIteration() ? buildWalkOfChainThatGivesWayForInstanceOf(walker, value, object, origin) : buildWalkOfChainForInstanceOf(walker, value, object, origin);
 }
 
 static Reference buildClassTestsOfBuiltinInstanceOf(Walker& walker, const BuiltinTestedByInstanceOf& tested, Reference value, Origin origin)
@@ -1167,7 +1202,7 @@ static Reference buildClassTestsOfBuiltinInstanceOf(Walker& walker, const Builti
     TypeArena& types = walker.types();
     TypeID instances = types.builtinClass(tested.builtinClass);
     AnswersOfInstanceOf answers(walker);
-    BlockID walksChain = walker.addBlock(BlockFrequency::Unlikely);
+    BlockID walksChain = walker.addBlock(walker.canRestartIteration() ? BlockFrequency::Normal : BlockFrequency::Unlikely);
     walker.recordSpeculation();
 
     Reference cell = value;
@@ -1207,14 +1242,15 @@ static bool buildInstanceOfBuiltinByValue(Walker& walker, const BodyValue& test,
         return false;
 
     bool holdsNoObject = walker.has(Mechanism::Folding) && holdsNoObjectForInstanceOf(walker, typeOfValue);
-    bool isDecidedByLayouts = !holdsNoObject && walker.has(Mechanism::Folding) && tested->prototype && chainsHoldNoOtherBuiltinThanObjectPrototype(walker, typeOfValue);
+    bool isDecidedByLayouts = !holdsNoObject && walker.has(Mechanism::Folding) && tested->prototype && onlyObjectPrototypeInChains(walker, typeOfValue);
     bool testsClass = false;
     if (!holdsNoObject && !isDecidedByLayouts && tested->prototype && mayBuildArmsForInstanceOf(walker) && classTestAnswersBuiltinInstanceOf(walker, *tested, typeOfValue)) {
         TypeID expected = walker.isInLoop() ? TypeID() : findExpectation(walker, test.valueOperand()).type;
         testsClass = walker.isInLoop() || (expected && walker.types().overlap(expected, walker.types().builtinClass(tested->builtinClass)));
     }
+    bool walksChain = !holdsNoObject && !isDecidedByLayouts && !testsClass && tested->prototype && walker.isInLoop() && mayBuildArmsForInstanceOf(walker);
     if (inputs.areOnlyTypes())
-        return holdsNoObject || isDecidedByLayouts || testsClass;
+        return holdsNoObject || isDecidedByLayouts || testsClass || walksChain;
 
     Reference value = walker.referenceOf(test.valueOperand());
     Reference constructor = walker.referenceOf(test.constructorOperand());
@@ -1236,6 +1272,8 @@ static bool buildInstanceOfBuiltinByValue(Walker& walker, const BodyValue& test,
         }
         else if (testsClass && value.isValue())
             answer = buildClassTestsOfBuiltinInstanceOf(walker, *tested, value, origin);
+        else if (walksChain && value.isValue() && walker.canRestartIteration())
+            answer = buildWalkOfChainToBuiltinForInstanceOf(walker, value, tested->prototype, origin);
         else
             return false;
     }

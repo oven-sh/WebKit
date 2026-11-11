@@ -133,6 +133,7 @@ void StringBuilderPartEmitter::generateStringBuilderAppendConstant(const ValueCo
 
     Vector<Latin1Character, maxLengthOfTextWrittenByStores> characters;
     characters.append(text.span8());
+    strings.recordInlined(value->string());
     for (ValueID behind : value.operationsBehind()) {
         const Operation& next = operationAt(behind);
         if (next.opcode != Opcode::StringBuilderAppendConstant || next.builderOperand() != value->builderOperand())
@@ -141,6 +142,7 @@ void StringBuilderPartEmitter::generateStringBuilderAppendConstant(const ValueCo
         if (!nextText.is8Bit() || characters.size() + nextText.length() > maxLengthOfTextWrittenByStores)
             break;
         characters.append(nextText.span8());
+        strings.recordInlined(next.string());
         ++m_numberOfConstantsWrittenAhead;
     }
 
@@ -342,6 +344,7 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendConstant(const Va
 
     Vector<Latin1Character, maxLengthOfTextWrittenByStores> characters;
     characters.append(text.span8());
+    strings.recordInlined(value->string());
     ValueID cursorInFront = value.id();
     for (ValueID behind : value.operationsBehind()) {
         const Operation& next = operationAt(behind);
@@ -351,6 +354,7 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendConstant(const Va
         if (!nextText.is8Bit() || characters.size() + nextText.length() > maxLengthOfTextWrittenByStores)
             break;
         characters.append(nextText.span8());
+        strings.recordInlined(next.string());
         cursorInFront = behind;
         ++m_numberOfConstantsWrittenAhead;
     }

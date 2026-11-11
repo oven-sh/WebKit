@@ -1,0 +1,44 @@
+# A store of a number goes to one of two arrays that meet under one name. Each has passed a test of its own, and the verifier passes the store.
+# RUN: verify-grounds access=v12 view=v7 position=v3 length=v8 below=v10 passed=v10
+# CHECK: verified
+# -- code
+# code f1:Body {
+#   constants:
+#     v4: undefined @JSValue = Undefined
+#   b0(v0: Array @Cell, v1: Array @Cell, v2: boolean @Boolean, v3: int[0, 2147483647] @Int32) entry=0:
+#     v5: boolean @Boolean = HasArrayStorage v0 arrayStorage=Int32 [isWritable] traits=[mayTouchMemory]
+#     Branch v5 -> taken b1(), notTaken b6()
+#   b1():
+#     v6: boolean @Boolean = HasArrayStorage v1 arrayStorage=Int32 [isWritable] traits=[mayTouchMemory]
+#     Branch v6 -> taken b2(), notTaken b6()
+#   b2():
+#     Branch v2 -> taken b3(), notTaken b4()
+#   b3():
+#     Jump -> next b5(v0)
+#   b4():
+#     Jump -> next b5(v1)
+#   b5(v7: Array @Cell):
+#     v8: int[0, 4294967295] @Int64 = GetArrayLength v7 traits=[mayTouchMemory]
+#     v9: int[0, 2147483647] @Int64 = WidenInteger v3
+#     v10: boolean @Boolean = Less v9, v8 form=Integers
+#     Branch v10 -> taken b7(), notTaken b6()
+#   b6():
+#     Return v4
+#   b7():
+#     v11: int[0, 2147483647] @JSValue = Box v3
+#     v12 @Void = PutContiguousIndex v7, v3, v11 [isInBounds, hasNumericStorage] traits=[mayWriteObservableState, mayTouchMemory]
+#     Return v4
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="asked" module=m0 length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}

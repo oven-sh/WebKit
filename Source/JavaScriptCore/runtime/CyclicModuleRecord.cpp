@@ -127,6 +127,12 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
     ModuleProgramExecutable* moduleProgramExecutable = nullptr;
     JSModuleEnvironment* env = nullptr;
+#if ENABLE(AOT)
+    // Compiled code has the environment of such a module. Only the requested names are checked here.
+    const bool isCompiled = isCompiledOriginal();
+#else
+    constexpr bool isCompiled = false;
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     // A prelinked record's indirect exports were resolved by the bundler; only the ones it could not prove resolvable go
@@ -230,7 +236,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 3. Let realm be module.[[Realm]].
     // 4. Assert: realm is not undefined.
     SymbolTable* symbolTable = nullptr;
-    if (jsModule) {
+    if (jsModule && !isCompiled) {
         // 5. Let env be NewModuleEnvironment(realm.[[GlobalEnv]]).
         moduleProgramExecutable = jsModule->getOrMakeExecutable(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
@@ -255,6 +261,8 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             // 7.b.i. Let namespace be GetModuleNamespace(importedModule, in.[[Phase]]).
             JSObject* ns = importedModule->moduleNamespaceObject(globalObject, in.phase);
             RETURN_IF_EXCEPTION(scope, void());
+            if (isCompiled)
+                return;
             // 7.b.ii. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
             // 7.b.iii. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
             bool putResult = false;
@@ -324,6 +332,8 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                     // 7.c.iii.1. Let namespace be GetModuleNamespace(resolution.[[Module]]).
                     JSObject* ns = resolution.moduleRecord->moduleNamespaceObject(globalObject); // Force module namespace object materialization.
                     RETURN_IF_EXCEPTION(scope, void());
+                    if (isCompiled)
+                        return;
                     // 7.c.iii.2. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
                     // 7.c.iii.3. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
                     bool putResult = false;
@@ -455,6 +465,15 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         return;
 #endif
 
+#if ENABLE(AOT)
+    if (isCompiled) {
+        AOT::linkOriginal(globalObject, jsModule);
+        RETURN_IF_EXCEPTION(scope, void());
+        m_initialized = true;
+        return;
+    }
+#endif
+
     // 18. Let code be module.[[ECMAScriptCode]].
     UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = moduleProgramExecutable->unlinkedCodeBlock();
     // 19. Let varDeclarations be the VarScopedDeclarations of code.
@@ -547,6 +566,10 @@ void CyclicModuleRecord::setEvaluationError(VM& vm, JSValue error)
     // With an error the record never runs its body (again), whether the error is its own or came from a module it depends on.
     if (auto* jsModule = dynamicDowncast<JSModuleRecord>(this))
         jsModule->didFinishWithExecutable(vm);
+#if ENABLE(AOT)
+    if (isCompiledOriginal()) [[unlikely]]
+        AOT::didFailOriginal(realm(), uncheckedDowncast<JSModuleRecord>(this));
+#endif
 }
 
 void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher> scriptFetcher)
@@ -577,6 +600,10 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
             // 4.a.ii. Set m.[[Status]] to UNLINKED.
             m->setStatus(Status::Unlinked);
         }
+#if ENABLE(AOT)
+        if (globalObject->aotInstance())
+            AOT::ModuleRecord::didFailLink(globalObject);
+#endif
         // 4.b. Assert: module.[[Status]] is UNLINKED.
         ASSERT(status() == Status::Unlinked);
         // 4.c. Return ? result.
@@ -665,6 +692,10 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
             cyclic->setStatus(Status::Evaluated);
             // 9.a.iii. Set m.[[EvaluationError]] to result.
             cyclic->setEvaluationError(vm, exception->value());
+#if ENABLE(AOT)
+            if (auto* compiled = vm.hasCompiledCode() ? dynamicDowncast<AOT::ModuleRecord>(cyclic) : nullptr)
+                compiled->didChangeStatus();
+#endif
         }
         // 9.b. Assert: module.[[Status]] is EVALUATED.
         ASSERT(module->status() == Status::Evaluated);
@@ -742,6 +773,8 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
 #if ENABLE(AOT)
     if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
         RELEASE_AND_RETURN(scope, compiled->executeAsync(globalObject));
+    if (isCompiledOriginal())
+        RELEASE_AND_RETURN(scope, AOT::evaluateOriginalAsync(globalObject, uncheckedDowncast<JSModuleRecord>(this)));
 #endif
     // 3. Let capability be ! NewPromiseCapability(%Promise%).
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -764,7 +797,7 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, void());
 }
 
-static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicModuleRecord*, 8>& execList, size_t firstParent = 0)
+static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicModuleRecord*, 8>& execList, size_t firstParent = 0, [[maybe_unused]] bool skipsRefusedRequires = false)
 {
     // GatherAvailableAncestors(module, execList)
     // https://tc39.es/ecma262/#sec-gather-available-ancestors
@@ -784,6 +817,10 @@ static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicMo
         // 1. For each Cyclic Module Record m of module.[[AsyncParentModules]], do
         for (const WriteBarrier<AbstractModuleRecord>& barrier : record->asyncParentModules().subspan(std::exchange(firstParent, 0))) {
             auto* m = uncheckedDowncast<CyclicModuleRecord>(barrier.get());
+#if ENABLE(AOT)
+            if (skipsRefusedRequires && AOT::ModuleRecord::wasRequireRefused(m)) [[unlikely]]
+                continue;
+#endif
             // 1.a. If execList does not contain m and m.[[CycleRoot]].[[EvaluationError]] is empty, then
             // (Probable spec bug (https://github.com/tc39/ecma262/issues/3766). We need an additional check here that m.[[CycleRoot]] isn't empty.)
             ASSERT_IMPLIES(!m->cycleRoot(), m->evaluationError());
@@ -976,7 +1013,7 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
                 if (vm.hasCompiledCode() && m->asyncParentModules().size() > gatheredParents[index]) [[unlikely]] {
                     // They started after everything in the list, so they sort after it.
                     size_t sorted = execList.size();
-                    gatherAvailableAncestors(m, execList, gatheredParents[index]);
+                    gatherAvailableAncestors(m, execList, gatheredParents[index], true);
                     std::ranges::sort(execList.mutableSpan().subspan(sorted), [](CyclicModuleRecord* left, CyclicModuleRecord* right) {
                         return left->asyncEvaluationOrder().order() < right->asyncEvaluationOrder().order();
                     });

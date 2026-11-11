@@ -190,6 +190,68 @@ static bool rowTakesArgumentsOfForwardedCall(Walker& walker, const Draft& writte
     });
 }
 
+static bool callExpectedFunctionDirectly(Walker& walker, const BodyValue& call, const Draft& forwarded, ValueID input)
+{
+    if (!walker.isInLoop() || !walker.opensGuesses() || forwarded.opcode != Opcode::Call || !input)
+        return false;
+    Reference callee = forwarded.calleeOperand();
+    if (!callee.isValue() || findOnlyCallee(walker, call, callee))
+        return false;
+    FunctionID expected = functionExpectedOf(walker, input);
+    if (!expected || isClassConstructorOf(walker.program().at(expected).kind) || walker.program().at(expected).isCoroutine())
+        return false;
+    Origin origin = forwarded.origin();
+    origin.isTailCall = false;
+    Draft test(Opcode::IsClosureOf, origin);
+    walker.chooseConservativeFields(test);
+    test.setFunction(expected);
+    test.setValueOperand(callee);
+    Reference isExpected = walker.build(WTF::move(test));
+    if (!isExpected || !isExpected.isValue() || walker.isUnreachable())
+        return true;
+    walker.recordSpeculation();
+    BlockID passed = walker.addBlock();
+    BlockID failed = walker.addBlock();
+    BlockID meeting = walker.addBlock();
+    walker.branch(isExpected, passed, failed);
+    Vector<Walker::JoinArm, 2> arms;
+    auto endArm = [&](Reference result) {
+        if (walker.hasFailed() || walker.isUnreachable() || !result)
+            return;
+        Walker::JoinArm arm { walker.currentBlock(), { } };
+        arm.values.append(result);
+        arms.append(WTF::move(arm));
+    };
+    walker.continueIn(passed);
+    Draft proof(Opcode::Narrowed, origin);
+    walker.chooseConservativeFields(proof);
+    proof.setValueOperand(callee);
+    proof.setTestOperand(isExpected);
+    proof.setOperandIndex(OperandIndex::IsClosureOf::value);
+    proof.setIsOnTakenEdge(true);
+    if (Reference closure = walker.build(WTF::move(proof))) {
+        Draft direct = forwarded;
+        direct.setCalleeOperand(closure);
+        if (callForwardedDirectly(walker, call, direct))
+            endArm(walker.referenceOf(call.id()));
+        else if (!walker.hasFailed() && !walker.isUnreachable())
+            endArm(walker.build(WTF::move(direct)));
+    }
+    if (walker.hasFailed())
+        return true;
+    walker.continueIn(failed);
+    Draft closed = forwarded;
+    endArm(walker.build(WTF::move(closed)));
+    if (walker.hasFailed())
+        return true;
+    walker.bind(call.id(), Reference());
+    Vector<Reference, 1> met(1);
+    walker.joinArms(arms.span(), meeting, met.mutableSpan());
+    if (!arms.isEmpty() && !walker.hasFailed())
+        walker.bind(call.id(), met[0]);
+    return true;
+}
+
 static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draft& written, const RowOfForwardedCall& row)
 {
     TypeArena& types = walker.types();
@@ -293,6 +355,9 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
     if (constructs ? constructForwardedDirectly(walker, call, forwarded) : callForwardedDirectly(walker, call, forwarded) || callBuiltinForwarded(walker, call, forwarded))
         return true;
     if (goOverListInPlaceOfCallOfBuiltin(walker, call, forwarded))
+        return true;
+    ValueID input = row.operands.callee.isReceiver() && call.opcode() == Opcode::Call ? call.as<Opcode::Call>().thisValueOperand() : ValueID();
+    if (!constructs && callExpectedFunctionDirectly(walker, call, forwarded, input))
         return true;
     if (Reference result = walker.build(WTF::move(forwarded)))
         walker.bind(call.id(), result);

@@ -235,7 +235,7 @@ private:
     bool mayHaveAccessor(const LinkType& exports);
     void tellWhatHostFindsAtEntries();
     BitVector findFilesThatHaveRunToTheirEndWhereOthersNameThem() const;
-    BitVector findVariablesStoredFirst(Vector<LinkedVariableStoredFirst>& firstReaders) const;
+    BitVector findVariablesStoredFirst(LinkFlow&) const;
     void escapeVariable(VariableID, bool isExpectedToStayAsLaid = false);
     void escapeField(FieldReference);
 
@@ -651,7 +651,7 @@ void StateOfLinkReach::noteNamedByReachedCode(FunctionID named)
 void StateOfLinkReach::loseLayout(LayoutID id)
 {
     if (!m_flow.lostLayouts.set(id.index())) {
-        m_flow.noteInstancesMayBeLocked(id);
+        m_flow.noteLockableInstances(id);
         m_flow.noteLayoutToTie(id);
         m_steps.append(QueuedStep { Step::TieLostLayout, id.index() });
     }
@@ -681,7 +681,7 @@ void StateOfLinkReach::escapeLayout(LayoutID id)
     }
     if (m_flow.escapedLayouts.set(id.index()))
         return;
-    m_flow.noteInstancesMayBeLocked(id);
+    m_flow.noteLockableInstances(id);
     m_steps.append(QueuedStep { Step::OpenLayout, id.index() });
     if (m_program.at(id).kind == LayoutKind::ModuleNamespace) {
         m_flow.arrive(m_flow.whereInstancesLoseTheirConstructor(), LinkType::anything());
@@ -965,8 +965,11 @@ BitVector StateOfLinkReach::findFilesThatHaveRunToTheirEndWhereOthersNameThem() 
     return found;
 }
 
-BitVector StateOfLinkReach::findVariablesStoredFirst(Vector<LinkedVariableStoredFirst>& firstReaders) const
+BitVector StateOfLinkReach::findVariablesStoredFirst(LinkFlow& flow) const
 {
+    Vector<LinkedVariableStoredFirst>& firstReaders = flow.firstReadersOfVariablesStoredFirst;
+    Vector<SummaryClassInVariable>& classesInVariables = flow.classesInVariables;
+    Vector<SummaryUnitInVariable>& unitsInVariables = flow.unitsInVariables;
     BitVector isLeftOut(m_program.modules.size());
     BitVector hasRunToItsEnd = findFilesThatHaveRunToTheirEndWhereOthersNameThem();
     for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
@@ -975,6 +978,14 @@ BitVector StateOfLinkReach::findVariablesStoredFirst(Vector<LinkedVariableStored
                 isLeftOut.quickSet(module.index());
         }
     }
+    Vector<FunctionID> bodies(m_program.modules.size());
+    for (uint32_t index = 0; index < m_program.modules.size(); ++index)
+        bodies[index] = m_program.modules[index].body;
+    for (uint32_t index = 0; m_flow.listsStoresOfWrappedBodies && index < m_program.functions.size(); ++index) {
+        if (isBodyOfWrappedModule(m_program, FunctionID(index)))
+            bodies[m_program.functions[index].module.index()] = FunctionID(index);
+    }
+    auto summaryOfBody = [&](ModuleID module) -> const ThinSummary& { return m_flow.summaries.at(bodies[module.index()]); };
     BitVector bodiesSeen(m_program.functions.size());
     BitVector bodiesOfSeveralModules(m_program.functions.size());
     for (const Module& module : m_program.modules) {
@@ -987,60 +998,170 @@ BitVector StateOfLinkReach::findVariablesStoredFirst(Vector<LinkedVariableStored
         FunctionID function;
     };
     Vector<Start> starts;
+    Vector<SummaryMethodOfClass> methodsOfClasses;
+    Vector<ModuleID> modulesWithStoresOnPrototypes;
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
         FunctionID body = m_program.modules[index].body;
         if (!body || bodiesOfSeveralModules.quickGet(body.index()))
             isLeftOut.quickSet(index);
         if (isLeftOut.quickGet(index))
             continue;
-        for (SummaryPlaceInBody use : m_flow.summaries.at(body).firstUsesOfFunctions)
+        const ThinSummary& summary = summaryOfBody(ModuleID(index));
+        for (SummaryPlaceInBody use : summary.firstUsesOfFunctions)
             starts.append(Start { use.position, FunctionID(use.number) });
+        methodsOfClasses.append(summary.methodsOfClasses.span());
+        classesInVariables.append(summary.classesInVariables.span());
+        unitsInVariables.append(summary.unitsInVariables.span());
+        if (!summary.storesOnPrototypes.isEmpty())
+            modulesWithStoresOnPrototypes.append(ModuleID(index));
     }
-    std::ranges::sort(starts, { }, &Start::position);
+    std::ranges::sort(unitsInVariables);
+    std::ranges::sort(classesInVariables);
+    auto forEachFunctionHeld = [&](VariableID variable, NOESCAPE const Invocable<void(FunctionID)> auto& functor) {
+        if (FunctionID declared = m_program.at(variable).function)
+            functor(declared);
+        for (const SummaryClassInVariable& held : std::ranges::equal_range(classesInVariables, variable, { }, &SummaryClassInVariable::variable))
+            functor(held.constructor);
+    };
+    auto forEachOwner = [&](const SummaryStoreOnPrototype& store, NOESCAPE const Invocable<void(FunctionID)> auto& functor) {
+        if (store.function)
+            functor(store.function);
+        else
+            forEachFunctionHeld(store.variable, functor);
+    };
+    for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+        if (isLeftOut.quickGet(index))
+            continue;
+        for (SummaryPlaceInBody use : summaryOfBody(ModuleID(index)).firstUsesOfVariables)
+            forEachFunctionHeld(VariableID(use.number), [&](FunctionID function) { starts.append(Start { use.position, function }); });
+    }
 
-    BitVector couldRun(m_program.functions.size());
     Vector<uint32_t> placeOfFirstReader;
-    placeOfFirstReader.fill(UINT32_MAX, m_program.variables.size());
+    Vector<uint32_t> placeOfFirstRun;
     Vector<FunctionID> functionWhoseUseCounts;
-    functionWhoseUseCounts.fill(FunctionID(), m_program.variables.size());
-    Vector<FunctionID> toVisit;
-    for (const Start& start : starts) {
-        ModuleID module = m_program.at(start.function).module;
-        toVisit.append(start.function);
-        while (!toVisit.isEmpty()) {
-            FunctionID function = toVisit.takeLast();
-            if (m_program.at(function).module != module || m_moduleWithBody[function.index()] == module || couldRun.quickSet(function.index()))
-                continue;
-            const ThinSummary& summary = m_flow.summaries.at(function);
-            for (const SummaryNode& node : summary.nodes) {
-                if (node.kind == SummaryNode::Kind::Closure)
-                    toVisit.append(FunctionID(node.first));
-                if (node.kind != SummaryNode::Kind::Variable)
-                    continue;
-                if (start.position < placeOfFirstReader[node.first]) {
-                    placeOfFirstReader[node.first] = start.position;
-                    functionWhoseUseCounts[node.first] = start.function;
-                }
-                if (FunctionID declared = m_program.variables[node.first].function)
-                    toVisit.append(declared);
-            }
-            for (const SummaryCall& call : summary.calls) {
-                if (call.callee == SummaryCall::Callee::Binding && call.function)
-                    toVisit.append(call.function);
+    auto findFirstReaders = [&](std::span<const Start> startsBesideStores, std::span<const SummaryMethodOfClass> methodsBesideStores, NOESCAPE const Invocable<bool(ModuleID, const SummaryStoreOnPrototype&)> auto& makesMethod) {
+        Vector<Start> starts(startsBesideStores);
+        Vector<SummaryMethodOfClass> methods(methodsBesideStores);
+        for (ModuleID module : modulesWithStoresOnPrototypes) {
+            for (const SummaryStoreOnPrototype& store : summaryOfBody(module).storesOnPrototypes) {
+                bool isMethod = makesMethod(module, store);
+                forEachOwner(store, [&](FunctionID holder) {
+                    if (!isMethod)
+                        starts.append(Start { store.position, holder });
+                    else if (store.method)
+                        methods.append(SummaryMethodOfClass { holder, store.method });
+                });
+                if (!isMethod && store.method)
+                    starts.append(Start { store.position, store.method });
             }
         }
+        std::ranges::sort(methods);
+        std::ranges::sort(starts, { }, &Start::position);
+
+        BitVector couldRun(m_program.functions.size());
+        placeOfFirstReader.fill(UINT32_MAX, m_program.variables.size());
+        placeOfFirstRun.fill(UINT32_MAX, m_program.functions.size());
+        functionWhoseUseCounts.fill(FunctionID(), m_program.variables.size());
+        Vector<FunctionID> toVisit;
+        for (const Start& start : starts) {
+            ModuleID module = m_program.at(start.function).module;
+            toVisit.append(start.function);
+            while (!toVisit.isEmpty()) {
+                FunctionID function = toVisit.takeLast();
+                if (m_program.at(function).module != module || m_moduleWithBody[function.index()] == module || bodies[module.index()] == function || couldRun.quickSet(function.index()))
+                    continue;
+                placeOfFirstRun[function.index()] = start.position;
+                for (const SummaryMethodOfClass& defined : std::ranges::equal_range(methods, function, { }, &SummaryMethodOfClass::constructor))
+                    toVisit.append(defined.method);
+                const ThinSummary& summary = m_flow.summaries.at(function);
+                for (const SummaryNode& node : summary.nodes) {
+                    if (node.kind == SummaryNode::Kind::Closure)
+                        toVisit.append(FunctionID(node.first));
+                    if (node.kind != SummaryNode::Kind::Variable)
+                        continue;
+                    if (start.position < placeOfFirstReader[node.first]) {
+                        placeOfFirstReader[node.first] = start.position;
+                        functionWhoseUseCounts[node.first] = start.function;
+                    }
+                    forEachFunctionHeld(VariableID(node.first), [&](FunctionID held) { toVisit.append(held); });
+                }
+                for (const SummaryCall& call : summary.calls) {
+                    if (call.callee == SummaryCall::Callee::Binding && call.function)
+                        toVisit.append(call.function);
+                }
+            }
+        }
+    };
+    auto isStoredBeforeReaders = [&](SummaryPlaceInBody store) {
+        return store.position <= placeOfFirstReader[store.number] && !m_program.variables[store.number].flags.contains(VariableFlags::HoldsInstance);
+    };
+    auto isMethodOfPlainFunction = [&](const SummaryStoreOnPrototype& store) {
+        unsigned numberOfHolders = 0;
+        bool isPlain = true;
+        forEachOwner(store, [&](FunctionID holder) {
+            const Function& function = m_program.at(holder);
+            isPlain &= !function.isCoroutine() && function.kind == FunctionKind::Plain;
+            ++numberOfHolders;
+        });
+        return numberOfHolders == 1 && isPlain;
+    };
+    auto isUnderClosedName = [&](const SummaryStoreOnPrototype& store) {
+        BuiltinID objectPrototype = m_program.builtins().canonicalID(Builtins::ObjectPrototype);
+        if (m_program.nameClassOf(store.key) == NameClass::ObjectPrototypeMember)
+            return !m_program.admitsReplacedBuiltins && isLockedLocation(m_program, objectPrototype, store.key);
+        return !isOnObjectPrototype(m_program.nameClassOf(store.key)) && !findOwnMember(m_program, objectPrototype, store.key) && listsEveryMemberUnder(m_program, objectPrototype, store.key) && isClosedKey(m_program, objectPrototype, store.key);
+    };
+    auto isStoredBeforeFirstUse = [&](const SummaryStoreOnPrototype& store) {
+        bool isFirst = store.isOnEveryPath && store.method && isMethodOfPlainFunction(store);
+        if (isFirst)
+            forEachOwner(store, [&](FunctionID holder) { isFirst &= store.position <= placeOfFirstRun[holder.index()]; });
+        return isFirst;
+    };
+    findFirstReaders(starts.span(), methodsOfClasses.span(), [](ModuleID, const SummaryStoreOnPrototype&) { return false; });
+    if (!modulesWithStoresOnPrototypes.isEmpty()) {
+        BitVector moduleGains(m_program.modules.size());
+        auto forEachFirstStore = [&](NOESCAPE const Invocable<void(ModuleID, SummaryPlaceInBody)> auto& functor) {
+            for (ModuleID module : modulesWithStoresOnPrototypes) {
+                for (SummaryPlaceInBody store : summaryOfBody(module).firstStoresOfBody)
+                    functor(module, store);
+            }
+        };
+        BitVector wasStoredBeforeReaders(m_program.variables.size());
+        forEachFirstStore([&](ModuleID, SummaryPlaceInBody store) { if (isStoredBeforeReaders(store)) wasStoredBeforeReaders.quickSet(store.number); });
+        findFirstReaders(starts.span(), methodsOfClasses.span(), [&](ModuleID, const SummaryStoreOnPrototype& store) { return isMethodOfPlainFunction(store); });
+        forEachFirstStore([&](ModuleID module, SummaryPlaceInBody store) { if (isStoredBeforeReaders(store) && !wasStoredBeforeReaders.quickGet(store.number)) moduleGains.quickSet(module.index()); });
+        for (ModuleID module : modulesWithStoresOnPrototypes) {
+            FunctionID body = bodies[module.index()];
+            if (!moduleGains.quickGet(module.index()) && std::ranges::none_of(m_flow.summaries.at(body).storesOnPrototypes.span(), isStoredBeforeFirstUse))
+                continue;
+            for (const SummaryStoreOnPrototype& store : m_flow.summaries.at(body).storesOnPrototypes) {
+                if (isMethodOfPlainFunction(store) && isUnderClosedName(store))
+                    flow.methodsOnPrototypes.append(LinkedMethodOnPrototype { body, store.site });
+            }
+        }
+        std::ranges::sort(flow.methodsOnPrototypes);
+        findFirstReaders(starts.span(), methodsOfClasses.span(), [&](ModuleID module, const SummaryStoreOnPrototype& store) {
+            return std::ranges::binary_search(flow.methodsOnPrototypes, LinkedMethodOnPrototype { bodies[module.index()], store.site });
+        });
+        for (const LinkedMethodOnPrototype& method : flow.methodsOnPrototypes) {
+            for (const SummaryStoreOnPrototype& store : std::ranges::equal_range(m_flow.summaries.at(method.body).storesOnPrototypes.span(), method.site, { }, &SummaryStoreOnPrototype::site)) {
+                if (isStoredBeforeFirstUse(store))
+                    forEachOwner(store, [&](FunctionID holder) { flow.methodsStoredFirst.append(LinkedMethodStoredFirst { holder, store.key, store.method }); });
+            }
+        }
+        std::ranges::sort(flow.methodsStoredFirst);
     }
 
     BitVector found(m_program.variables.size());
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
         if (isLeftOut.quickGet(index))
             continue;
-        for (SummaryPlaceInBody store : m_flow.summaries.at(m_program.modules[index].body).firstStoresOfBody) {
-            if (store.position > placeOfFirstReader[store.number])
+        for (SummaryPlaceInBody store : summaryOfBody(ModuleID(index)).firstStoresOfBody) {
+            if (!isStoredBeforeReaders(store))
                 continue;
             found.quickSet(store.number);
             if (functionWhoseUseCounts[store.number])
-                firstReaders.append(LinkedVariableStoredFirst { m_program.modules[index].body, functionWhoseUseCounts[store.number], VariableID(store.number) });
+                firstReaders.append(LinkedVariableStoredFirst { bodies[index], functionWhoseUseCounts[store.number], VariableID(store.number) });
         }
     }
     std::ranges::sort(firstReaders);
@@ -1052,7 +1173,11 @@ void StateOfLinkReach::fillVariables()
     LinkType absent = m_flow.fromTypeID(TypeTable::absent);
     LinkType undefined = m_flow.fromTypeID(TypeTable::undefined);
     m_flow.firstReadersOfVariablesStoredFirst.shrink(0);
-    m_flow.variablesStoredFirst = findVariablesStoredFirst(m_flow.firstReadersOfVariablesStoredFirst);
+    m_flow.classesInVariables.shrink(0);
+    m_flow.unitsInVariables.shrink(0);
+    m_flow.methodsOnPrototypes.shrink(0);
+    m_flow.methodsStoredFirst.shrink(0);
+    m_flow.variablesStoredFirst = findVariablesStoredFirst(m_flow);
     const BitVector& isStoredFirst = m_flow.variablesStoredFirst;
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
         const Module& module = m_program.modules[index];
@@ -1104,7 +1229,7 @@ void StateOfLinkReach::letGoWhatDirectEvalsShowIn(FunctionID id)
     auto letGo = [&](const EvalScope& scope) {
         for (const EvalBinding& binding : scope.bindings) {
             if (binding.variable)
-                escapeVariable(binding.variable);
+                escapeVariable(binding.variable, true);
             if (binding.layout && binding.field)
                 escapeField({ binding.layout, *binding.field });
         }
@@ -1128,6 +1253,23 @@ void StateOfLinkReach::fillFields()
         uint32_t numberOfFields = baseWhoseFieldListIsCopiedWhole(m_program, LayoutID(index)) ? layout.ownFieldCount : static_cast<uint32_t>(layout.fields.size());
         for (uint32_t field = 0; field < numberOfFields; ++field)
             arriveWhatNoNodeBrings(m_flow.field({ LayoutID(index), field }), layout.fields[field].declared);
+    }
+    for (FieldReference exported : m_program.exportedFields()) {
+        if (fieldAt(m_program, exported).flags.contains(FieldFlags::IsReplaceable))
+            escapeField(exported);
+    }
+    if (m_program.moduleInstances.isEmpty())
+        return;
+    Vector<VariableID> instanceVariables(m_program.modules.size());
+    for (uint32_t index = 0; index < m_program.variables.size(); ++index) {
+        if (m_program.variables[index].flags.contains(VariableFlags::HoldsInstance))
+            instanceVariables[m_program.variables[index].module.index()] = VariableID(index);
+    }
+    for (const Program::InstanceField& filled : m_program.instanceFields()) {
+        if (filled.linkTarget)
+            m_flow.addEdge(m_flow.variable(instanceVariables[filled.linkTarget.index()]), m_flow.field(filled.field));
+        else
+            escapeField(filled.field);
     }
 }
 
@@ -1190,6 +1332,8 @@ void StateOfLinkReach::escapeExportsOf(ModuleID first)
                 m_flow.note(LinkFlow::Note::ExportIsShown, exported.variable.index());
                 m_flow.addEdge(m_flow.variable(exported.variable), m_flow.unseen());
             }
+            if (exported.kind == ModuleExportKind::Field && exported.field)
+                m_flow.addEdge(m_flow.field({ exported.layout, *exported.field }), m_flow.unseen());
             if (exported.kind == ModuleExportKind::Namespace && exported.module)
                 m_flow.noteLossOfObjectOfBuiltinModule(exported.module);
             if (exported.kind == ModuleExportKind::Indirect && exported.module && exported.importName)
@@ -1836,8 +1980,10 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             escapeValueOf(module);
         }
     }
-    if (summary.has(SummaryTrait::HasDirectEval)) {
+    if (summary.has(SummaryTrait::HasDirectEval) && !m_flow.leavesOutDirectEvals) {
         LinkFlow::LockerOfWhatIsShared locker(m_flow);
+        for (uint32_t handed : summary.nodesHandedToEvals)
+            m_flow.addEdge(m_flow.nodeOf(id, handed), m_flow.unseen());
         letGoWhatDirectEvalsShowIn(id);
     }
     for (PropertyKeyID key : summary.textsThatNameEvents)
@@ -1956,8 +2102,10 @@ void StateOfLinkReach::bringAlive(FunctionID id)
     if (m_flow.isGivenMore) [[unlikely]]
         giveMoreToNodesOf(id);
 
-    for (const SummaryEdge& edge : summary.edges)
-        m_flow.addEdge(nodeAt(edge.from), nodeAt(edge.to), edge.passes);
+    for (const SummaryEdge& edge : summary.edges) {
+        if (!edge.isConversionByEquality)
+            m_flow.addEdge(nodeAt(edge.from), nodeAt(edge.to), edge.passes);
+    }
 
     for (const SummaryMember& member : summary.members) {
         if (member.key)
@@ -2472,9 +2620,15 @@ void LinkFlow::arriveFromSource(FlowNodeID node, TypeID id)
 
 void LinkFlow::noteAllocatedWithRowAbove(LayoutID id)
 {
-    BitVector& noted = layoutsNotedWithBases();
+    BitVector& noted = layoutsWithNotedBases();
     for (LayoutID current = id; current && !noted.set(current.index()); current = program.at(current).base)
         noteAllocated(current);
+}
+
+void LinkFlow::noteConstructed(LayoutID id)
+{
+    if (!constructedClasses.get(id.index()))
+        note(Note::ClassConstructed, id.index());
 }
 
 void LinkFlow::noteAllocated(LayoutID id)
@@ -2596,6 +2750,8 @@ bool LinkFlow::fillParametersThatUnseenCodeAlonePasses()
 void LinkFlow::reachEntries()
 {
     StateOfLinkReach& state = stateOfLinkReach();
+    if (leavesOutDirectEvals)
+        state.builtinsInReach().leaveOutDirectEvals();
     state.queueEntries();
     runWithDeferredUpdates(scopedLambda<void()>([&] {
         state.finish();

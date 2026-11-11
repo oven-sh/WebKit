@@ -446,7 +446,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeLoad(const Step& step)
 ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::encodeStore(const Step& step)
 {
     const Operation* store = step.operation;
-    ASSERT(isStore(store->opcode()) && !m_liveness.isFused(store->child(0)));
+    ASSERT(isStore(store->opcode()) && (!m_liveness.isFused(store->child(0)) || store->child(0)->opcode() == Trunc || namesWord(store->child(0))));
     if (factsOf(store).has(ValueFlag::WorksInMemory)) {
         encodeX86StoreInMemory(*this, step);
         return;

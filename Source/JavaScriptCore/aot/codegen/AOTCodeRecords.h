@@ -117,6 +117,29 @@ struct TrapRecords {
     Vector<StackCheckLabels, 1> stackChecks;
 };
 
+class InlinedStrings {
+public:
+    bool areRecorded() const { return m_areRecorded; }
+    void beginRecording() { m_areRecorded = true; }
+
+    void append(std::span<const uint8_t> programString)
+    {
+        m_bytes.append(programString);
+        m_ends.append(static_cast<uint32_t>(m_bytes.size()));
+    }
+    void moveTo(MeasurementsOfCode& measurements)
+    {
+        measurements.bytesOfInlinedStrings = WTF::move(m_bytes);
+        measurements.endsOfInlinedStrings = WTF::move(m_ends);
+    }
+    bool isEmpty() const { return m_ends.isEmpty(); }
+
+private:
+    Vector<uint8_t> m_bytes;
+    Vector<uint32_t> m_ends;
+    bool m_areRecorded { false };
+};
+
 struct CodeRecords {
     WTF_MAKE_NONCOPYABLE(CodeRecords);
 
@@ -137,6 +160,7 @@ struct CodeRecords {
     FrameMapRecords frameMaps;
     TrapRecords traps;
     FormsSaid formsSaid;
+    InlinedStrings inlinedStrings;
     CodeGenerationTotals& totals;
 };
 

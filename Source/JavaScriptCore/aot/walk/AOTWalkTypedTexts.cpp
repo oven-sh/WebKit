@@ -65,7 +65,7 @@ static bool takesKeyOfCollectionInWalkTexts(Walker& walker, const BodyValue& use
     return expected && holdsCollections(types.withoutNullish(expected));
 }
 
-static UseOfTextAsKey useOfParameterAsKeyInWalkTexts(Walker& walker, const BodyValue& user, ValueID text)
+static UseOfTextAsKey parameterKeyUse(Walker& walker, const BodyValue& user, ValueID text)
 {
     if (user.opcode() != Opcode::Call)
         return UseOfTextAsKey::NotKnown;
@@ -112,7 +112,7 @@ static ValueID findKeyThatIsConvertedOnceInWalkTexts(const BodyIndex& index, Val
     return place == handedOn.end() ? ValueID() : index.block(next.block()).parameter(static_cast<uint32_t>(place - handedOn.begin()));
 }
 
-static ValueID findParameterThatTakesOnJump(const BodyIndex& index, ValueID text, const BodyUser& mention)
+static ValueID findJumpTargetParameter(const BodyIndex& index, ValueID text, const BodyUser& mention)
 {
     if (mention.kind != BodyUseKind::EdgeArgument)
         return { };
@@ -143,7 +143,7 @@ static UseOfTextAsKey useAsKeyInWalkTexts(Walker& walker, const BodyIndex& index
             return sayAtEnd(walker.useOfAnswerOfCopyAsKey());
         if (end == TerminatorKind::Return && walker.facts().resultIsReadAsKey(walker.currentFunction()))
             return sayAtEnd(UseOfTextAsKey::AnyKey);
-        if (ValueID joined = mention ? findParameterThatTakesOnJump(index, text, *mention) : ValueID()) {
+        if (ValueID joined = mention ? findJumpTargetParameter(index, text, *mention) : ValueID()) {
             passed.append(text);
             text = joined;
             continue;
@@ -161,7 +161,7 @@ static UseOfTextAsKey useAsKeyInWalkTexts(Walker& walker, const BodyIndex& index
         if (!opcodesThatStateTypes.contains(user.opcode()) && user.opcode() != Opcode::ToPropertyKey && !(goesOnThroughJoinThatAloneTakesText && operationsThatJoinTexts.contains(user.opcode()) && index.onlyUsingValue(text) == user.id())) {
             if (takesKeyOfCollectionInWalkTexts(walker, user, text))
                 return sayAtEnd(UseOfTextAsKey::AnyKey);
-            if (UseOfTextAsKey use = useOfParameterAsKeyInWalkTexts(walker, user, text); use != UseOfTextAsKey::NotKnown)
+            if (UseOfTextAsKey use = parameterKeyUse(walker, user, text); use != UseOfTextAsKey::NotKnown)
                 return sayAtEnd(use);
             return sayAtEnd(isAskedOfCallBeingCopied && !operationsThatJoinTexts.contains(user.opcode()) ? UseOfTextAsKey::NotKnown : UseOfTextAsKey::None);
         }
@@ -422,9 +422,11 @@ bool buildTypedJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& first)
     }
     UseOfTextAsKey use = useAsKeyInWalkTexts(walker, index, last.id(), parts.size() == 2);
     hasWalkedOn |= holdsPartsTakenOutOfTexts(walker, last, parts.span());
-    if (!hasWalkedOn && use <= UseOfTextAsKey::None)
+    bool isAppended = use <= UseOfTextAsKey::None && tryAppendJoinToFinishedString(walker, first, last, parts.span());
+    if (!isAppended && !hasWalkedOn && use <= UseOfTextAsKey::None)
         return false;
-    bindJoinedTextInWalkTexts(walker, last, parts.span(), use);
+    if (!isAppended)
+        bindJoinedTextInWalkTexts(walker, last, parts.span(), use);
     letJoinsFailWhereReaderFailsInWalkTexts(walker, last, joinsThatFailWhereReaderFails.span());
     uint32_t behindRow = last.id().index() + 1 - firstValue;
     walker.walkStretch(block.id(), behindRow, behindRow);

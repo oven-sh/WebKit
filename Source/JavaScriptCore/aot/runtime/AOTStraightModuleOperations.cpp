@@ -10,19 +10,20 @@
 
 #include "AOTInstance.h"
 #include "AOTModules.h"
+#include "AOTOperationArguments.h"
+#include "AOTOperationData.h"
 #include "AOTOperationScope.h"
-#include <wtf/UnalignedAccess.h>
 
 namespace JSC { namespace AOT {
 
-JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfImportIsMissing, void, (Instance* instance, const uint32_t* pairs, uint32_t count))
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfImportIsMissing, void, (Instance* instance, uint32_t request))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowIfImportIsMissing);
-    for (uint32_t index = 0; index < count; ++index) {
-        uint32_t offset = WTF::unalignedLoad<uint32_t>(pairs + 2 * index);
-        if (*reinterpret_cast<const EncodedJSValue*>(instance->statics() + offset))
+    const auto& requested = requestAt<ImportChecksRequest>(instance, request);
+    for (const ImportChecksRequest::Check& check : unsafeMakeSpan(requested.checks, requested.count)) {
+        if (*reinterpret_cast<const EncodedJSValue*>(instance->statics() + check.offsetInStatics))
             continue;
-        modulesOf(*instance).throwFailure(ModuleFailureID(WTF::unalignedLoad<uint32_t>(pairs + 2 * index + 1)), false);
+        modulesOf(*instance).throwFailure(ModuleFailureID(check.failure), false);
         break;
     }
     OPERATION_RETURN(scope);

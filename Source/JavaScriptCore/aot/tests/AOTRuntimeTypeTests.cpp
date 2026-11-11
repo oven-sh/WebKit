@@ -187,7 +187,7 @@ static uint32_t shapeTestFor(LoadedProgram& program, ASCIILiteral layoutName)
     const ProgramTables& tables = program.state().tables;
     uint32_t shape = layoutNamed(program, layoutName).shape;
     for (const FieldData& field : layoutNamed(program, "Holder"_s).fields()) {
-        for (const RuntimeCellTest& test : tables.typeAt(field.type).cellTests()) {
+        for (const RuntimeCellTest& test : tables.typeAt(tables.offsetOfTypeOf(field)).cellTests()) {
             if (test.kind != CellTestKind::ShapeIn)
                 continue;
             const ShapeTestData& members = tables.shapeTestAt(test.shapeTestOffset());

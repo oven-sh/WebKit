@@ -2014,6 +2014,53 @@ aotOp(op_typeof_is_object, OpTypeofIsObject, macro (size, get, dispatch, metadat
     dispatch()
 end)
 
+# jsTypeStringForValue().
+aotOp(op_typeof, OpTypeof, macro (size, get, dispatch, metadata, return)
+    get(m_value, t1)
+    loadConstantOrVariable(size, t1, t0)
+    loadp CodeBlock[cfr], t2
+    loadp CodeBlock::m_vm[t2], t2
+    btqnz t0, notCellMask, .isNoCell
+    loadb JSCell::m_type[t0], t1
+    bbeq t1, StringType, .string
+    bbb t1, ObjectType, .slow
+    branchOnCallability(t0, t1, .function, .object, .slow)
+
+.isNoCell:
+    btqnz t0, numberTag, .number
+    bqeq t0, ValueUndefined, .undefined
+    bqeq t0, ValueNull, .object
+    bqeq t0, ValueTrue, .boolean
+    bqneq t0, ValueFalse, .slow
+.boolean:
+    loadp VM::smallStrings + SmallStrings::m_boolean[t2], t0
+    return(t0)
+
+.undefined:
+    loadp VM::smallStrings + SmallStrings::m_undefined[t2], t0
+    return(t0)
+
+.number:
+    loadp VM::smallStrings + SmallStrings::m_number[t2], t0
+    return(t0)
+
+.string:
+    loadp VM::smallStrings + SmallStrings::m_string[t2], t0
+    return(t0)
+
+.function:
+    loadp VM::smallStrings + SmallStrings::m_function[t2], t0
+    return(t0)
+
+.object:
+    loadp VM::smallStrings + SmallStrings::m_object[t2], t0
+    return(t0)
+
+.slow:
+    callSlowPath(_slow_path_typeof)
+    dispatch()
+end)
+
 # JSString::length(). The length of an array, which the ordinary handler reads under GetByIdMode::ArrayLength, is read here as well, so that
 # it does not pay for the test.
 aotOp(op_get_length, OpGetLength, macro (size, get, dispatch, metadata, return)
@@ -2153,6 +2200,30 @@ macro aotFunctionPrologue(ordinaryPrologue, checkArity)
     preserveCalleeSavesUsedByLLInt()
     move sp, t2
     move t0, sp
+
+    # The variables, which begin the frame.
+    loadi CodeBlock::m_numVars[t1], t3
+    move ValueUndefined, t5
+    subq CalleeSaveSpaceAsVirtualRegisters, t3
+    btqz t3, .variablesDone
+    btqz t3, 1, .variablesLoop
+    subp PtrSize, t2
+    storeq t5, [t2]
+    subq 1, t3
+    btqz t3, .variablesDone
+.variablesLoop:
+    subp 2 * PtrSize, t2
+    storeq t5, [t2]
+    storeq t5, PtrSize[t2]
+    subq 2, t3
+    btqnz t3, .variablesLoop
+.variablesDone:
+
+    # The rest of the frame, which is aligned to two words.
+    btpz t2, PtrSize, .isAligned
+    subp PtrSize, t2
+    storep 0, [t2]
+.isAligned:
     bpeq t0, t2, .zeroStackDone
     if ARM64
     .zeroStackLoop:
@@ -2175,17 +2246,6 @@ macro aotFunctionPrologue(ordinaryPrologue, checkArity)
     end
 .zeroStackDone:
 
-    loadi CodeBlock::m_numVars[t1], t2
-    subq CalleeSaveSpaceAsVirtualRegisters, t2
-    btqz t2, .variablesDone
-    leap -CalleeSaveSpaceAsVirtualRegisters * 8[cfr], t3
-    move ValueUndefined, t0
-    negq t2
-.variablesLoop:
-    storeq t0, [t3, t2, 8]
-    addq 1, t2
-    btqnz t2, .variablesLoop
-.variablesDone:
     loadis CodeBlock::m_scopeRegister[t1], t2
     loadp Callee[cfr], t0
     loadp JSCallee::m_scope[t0], t0
@@ -2479,6 +2539,46 @@ _llint_aot_is_array_thunk:
     ret
 .isArrayHostFunction:
     jmp _llint_native_call_trampoline
+
+# Array.prototype.push() of one value that fits behind the elements of an array of int32s or of values: JSArray::pushInline().
+global _llint_aot_array_push_thunk
+_llint_aot_array_push_thunk:
+    loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], t0
+    bineq t0, 2, .pushHostFunction
+    loadq CalleeFrameAtEntry + ThisArgumentOffset[sp], t3
+    loadq CalleeFrameAtEntry + FirstArgumentOffset[sp], t2
+    move constexpr JSValue::NotCellMask, t1
+    btqnz t3, t1, .pushHostFunction
+    bbneq JSCell::m_type[t3], ArrayType, .pushHostFunction
+    loadb JSCell::m_indexingTypeAndMisc[t3], t0
+    andi constexpr IndexingModeMask, t0
+    bieq t0, constexpr ArrayWithContiguous, .pushesValue
+    bineq t0, constexpr ArrayWithInt32, .pushHostFunction
+    move constexpr JSValue::NumberTag, t5
+    bqb t2, t5, .pushHostFunction
+    jmp .pushesNoCell
+
+.pushesValue:
+    btqnz t2, t1, .pushesNoCell
+    loadp CalleeFrameAtEntry + Callee[sp], t0
+    loadStructureWithScratch(t0, t1, t5)
+    loadp Structure::m_realm[t1], t1
+    loadp JSGlobalObject::m_vm[t1], t1
+    loadi (constexpr (VM::offsetOfHeapBarrierThreshold()))[t1], t1
+    bbbeq JSCell::m_cellState[t3], t1, .pushHostFunction
+.pushesNoCell:
+    loadp JSObjectWithButterfly::m_butterfly[t3], t5
+    loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t5], t1
+    biaeq t1, -sizeof IndexingHeader + IndexingHeader::u.lengths.vectorLength[t5], .pushHostFunction
+    storeq t2, [t5, t1, 8]
+    addi 1, t1
+    storei t1, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t5]
+    move constexpr JSValue::NumberTag, r0
+    orq t1, r0
+    ret
+
+.pushHostFunction:
+    jmp _llint_native_call_trampoline
 end
 
 if not C_LOOP
@@ -2519,6 +2619,7 @@ entry(llint_aot, macro ()
     setEntryAddresses(OpRet, op_ret)
     setEntryAddresses(OpStricteq, op_stricteq)
     setEntryAddresses(OpToThis, op_to_this)
+    setEntryAddresses(OpTypeof, op_typeof)
     setEntryAddresses(OpTypeofIsFunction, op_typeof_is_function)
     setEntryAddresses(OpTypeofIsObject, op_typeof_is_object)
 

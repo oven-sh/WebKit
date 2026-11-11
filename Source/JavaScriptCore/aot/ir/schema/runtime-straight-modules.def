@@ -1,1 +1,1 @@
-runtime ThrowIfImportIsMissing : void (const uint32_t* pairs, uint32_t count) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime ThrowIfImportIsMissing : void (uint32_t request) ; reads(all) writes(AllocatorState, RuntimeState) throws collects

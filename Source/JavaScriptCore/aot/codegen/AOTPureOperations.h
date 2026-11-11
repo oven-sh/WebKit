@@ -17,6 +17,7 @@ enum class PureOperation : uint16_t {
     BigIntConstant,
     BuiltinCell,
     ToInt32,
+    TruncateToInt32,
     TruncateToInt64,
     ExactInt32,
     NonNegativeInt32,

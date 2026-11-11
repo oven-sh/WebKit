@@ -50,7 +50,7 @@ Condition TruthinessEmitter::isTruthy(const OperationContext& context, Operand o
     case Representation::OptionalInt64: {
         ConversionEmitter& conversions = emitter<ConversionEmitter>();
         Integer integerOrMarker = conversions.withoutMarkers(operand).as<Integer>();
-        if (type.integers.isSubsetOf({ -static_cast<int64_t>(UINT32_MAX), UINT32_MAX }))
+        if (!emittersCheckProofs() && type.integers.isSubsetOf({ -static_cast<int64_t>(UINT32_MAX), UINT32_MAX }))
             return isNotZero(low32(integerOrMarker));
         Condition isMarker = conversions.isMarker(operand);
         return logicalNot(logicalOr(isMarker, isZero(integerOrMarker)));
@@ -104,7 +104,7 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
         branchInStub();
         return;
     }
-    FormAtPlace named = formByLoopAlone(Opcode::ToBoolean, StateOfKnowledge::BranchOnTestedKinds, context.block() && generator().isInLoop(context.block()));
+    FormAtPlace named = formByLoopAlone(Opcode::ToBoolean, StateOfKnowledge::BranchOnTestedKinds, context.block() && generator().usesLoopForms(context.block()));
     m_out.noteFormOf(conversionsToBoolean, named.form, StateOfKnowledge::BranchOnTestedKinds, named.place);
     if (expectsBoolean && (type.primitives & Primitive::Boolean) == Primitive::Boolean) {
         LBasicBlock isNotFalse = newBlock();
@@ -128,12 +128,12 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
         LBasicBlock isOfOtherKind = newBlock();
         m_out.branch(equal(value, undefined()).value(), targets.notTaken, normalEdge(isNotUndefined));
         m_out.appendTo(isNotUndefined);
-        m_out.branch((asksForObject ? isCell(value) : isInt32(value)).value(), normalEdge(isOfExpectedKind), normalEdge(isOfOtherKind));
+        m_out.branch((asksForObject ? isCell(value) : isInt32(value)).value(), normalEdge(isOfExpectedKind), rareEdge(isOfOtherKind));
         m_out.appendTo(isOfExpectedKind);
         if (asksForObject)
-            m_out.branch(isObjectCell(unboxCell(value)).value(), targets.taken, normalEdge(isOfOtherKind));
+            m_out.branch(isObjectCell(unboxCell(value)).value(), targets.taken, rareEdge(isOfOtherKind));
         else
-            branch(isNotZero(low32(value)), targets);
+            branch(isNotZero(int32InBox(value)), targets);
         m_out.appendTo(isOfOtherKind);
         branchInStub();
         return;
@@ -218,7 +218,7 @@ Condition TruthinessEmitter::isTruthyBoxed(const OperationContext& context, Boxe
             return fork;
         };
         ScopeFork firstFork = when(isInt32(value), [&] {
-            return isNotZero(low32(value));
+            return isNotZero(int32InBox(value));
         });
         auto doubleCase = [&] {
             return isNeitherZeroNorNaN(unboxDouble(value));

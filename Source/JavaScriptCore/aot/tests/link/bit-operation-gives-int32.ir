@@ -3,7 +3,7 @@
 # RUN: link functions mechanisms=all
 # CHECK: function f1 {{*}}result=i32 returns
 # CHECK-NEXT: parameter 0 {{*}}proven=number
-# CHECK: function f2 {{*}}result=int returns
+# CHECK: function f2 {{*}}result=int[-9007199254740992, 9007199254740992] returns
 # CHECK: function f3 {{*}}result=int[0, 4294967295] returns
 # CHECK: function f4 {{*}}result=i32 returns
 # CHECK-NEXT: parameter 0 {{*}}proven=i32

@@ -559,7 +559,7 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
     if (extraProperties && ((extraProperties->type() != FinalObjectType && !isClosure) || extraPropertiesBefore->isDictionary()))
         return;
     Vector<AssignmentPlan::FieldStore> fieldStores;
-    Vector<AssignmentPlan::ExtraPropertyStore> extraPropertyStores;
+    Vector<AssignmentPlan::ExtraPropertyStore, 16> extraPropertyStores;
     Vector<UniquedStringImpl*, 8> addedNames;
     Vector<size_t, 8> storesOfAddedNames;
     Vector<UniquedStringImpl*, 8> namesOfFields;
@@ -668,8 +668,9 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
     plan.storesOnlyFieldsThatFit = !fieldStores.isEmpty() && extraPropertyStores.isEmpty() && !extraProperties && std::ranges::all_of(fieldStores, [](const AssignmentPlan::FieldStore& store) {
         return store.sourceAlwaysFits && store.isDirect && store.from->slot.representation() != SlotRepresentation::DeferredClosure;
     });
+    fieldStores.shrinkToFit();
     plan.fieldStores = WTF::move(fieldStores);
-    plan.extraPropertyStores = WTF::move(extraPropertyStores);
+    plan.extraPropertyStores = extraPropertyStores.span();
     plan.storesInSourceOrder = WTF::move(storesInSourceOrder);
     plan.isUsable = true;
 }

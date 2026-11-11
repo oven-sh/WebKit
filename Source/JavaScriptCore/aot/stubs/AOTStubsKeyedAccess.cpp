@@ -74,6 +74,7 @@ StubSignature signatureOfGetByValCachedAtPlace(StubKey) { return signatureOfKeye
 StubSignature signatureOfGetByValCachedBehindPlaces(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedKeepingRegisters(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedOrOwnAccessor(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
+StubSignature signatureOfGetByValRunningNoCode(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedCellsKeepingRegisters(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedAtPlaceKeepingRegisters(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedBehindPlacesKeepingRegisters(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
@@ -1051,6 +1052,44 @@ void generateGetByValCachedOrOwnAccessor(StubAssembler& jit)
     isOutOfLine.link(&jit);
     jit.loadPtr(Address(base, JSObject::butterflyOffset()), base);
     jit.load64(BaseIndex(base, header, CCallHelpers::TimesEight), base);
+    jit.returnToCaller();
+}
+
+void generateGetByValRunningNoCode(StubAssembler& jit)
+{
+    const KeyedProbeRegisters registers = allocateKeyedProbeRegisters(jit);
+    const GPRReg base = registers.base;
+    const GPRReg key = registers.key;
+    const GPRReg start = jit.allocateScratch(StubRegister::T9);
+    RELEASE_ASSERT(noOverlap(base, key, start, registers.uid, registers.structureID, registers.entry, registers.header, registers.payload));
+    JumpList asksOperation;
+
+    Jump keyIsNoCell = jit.branchIfNotCell(key);
+    Jump startsAtNoCell = jit.branchIfNotCell(base);
+    jit.move(base, start);
+    Label hasHolder = jit.label();
+    const KeyedValueRead read = returnValueOfKey(jit, registers, asksOperation, asksOperation, &asksOperation);
+    auto slotOf = [&](Slot::Kind kind) {
+        return CachedSlot(read.slot.form, kind, read.slot.header, read.slot.payload);
+    };
+    Jump isNotField = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Field);
+    asksOperation.append(slotOf(Slot::Kind::Field).branchIfFlag(jit, Slot::isOutOfLine));
+    rememberFieldOfKey(jit, registers, read.slot);
+    jit.jump().linkTo(read.readFieldByPlace, &jit);
+
+    isNotField.link(&jit);
+    asksOperation.append(branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::InheritedField));
+    slotOf(Slot::Kind::InheritedField).loadHolder(jit, base);
+    jit.jump().linkTo(hasHolder, &jit);
+
+    asksOperation.link(&jit);
+    jit.move(start, base);
+    callLeafLookup(jit, Entry::operationAOTGetNamedByValGeneric, key, std::nullopt, registers.header);
+    jit.returnToCaller();
+
+    keyIsNoCell.link(&jit);
+    startsAtNoCell.link(&jit);
+    jit.move(TrustedImm64(JSValue::encode(JSValue())), base);
     jit.returnToCaller();
 }
 

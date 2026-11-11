@@ -87,7 +87,7 @@ bool acceptsEveryValue(const RuntimeType& type)
 
 static bool typeAlwaysFits(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to)
 {
-    if (from.type == to.type)
+    if (from.typeNumber == to.typeNumber)
         return true;
     const RuntimeType& fromType = layouts.typeOf(from);
     const RuntimeType& toType = layouts.typeOf(to);

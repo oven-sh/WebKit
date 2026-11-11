@@ -78,6 +78,18 @@ ImportersOfModules::ImportersOfModules(const ModuleTable& table)
         importers[--firstImporterOf[imported]] = importer;
     });
 
+    auto importersOf = [&](uint32_t module) {
+        return importers.span().subspan(firstImporterOf[module], firstImporterOf[module + 1] - firstImporterOf[module]);
+    };
+    Typed::StronglyConnectedComponents components = Typed::computeStronglyConnectedComponents(table.size(), importersOf);
+    for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
+        if (std::span<const uint32_t> members = components.membersOf(component); members.size() > std::max<size_t>(modulesOfLargestCycle.size(), 1))
+            modulesOfLargestCycle = members;
+    }
+    isInLargestCycle.ensureSize(table.size());
+    for (uint32_t module : modulesOfLargestCycle)
+        isInLargestCycle.quickSet(module);
+
     BitVector isAskedFor(table.size());
     for (const ModuleRequestData& request : table.allRequests()) {
         if (!request.isHoisted || table.data(request.targetModule()).kind == ModuleKind::SourceText)
@@ -112,6 +124,10 @@ ReexportedNames::ReexportedNames(const ModuleTable& table)
             hasExportOfOtherModule |= entry.isFromStarExport;
             switch (entry.kind()) {
             case ModuleExportKind::Variable:
+                break;
+            case ModuleExportKind::Field:
+                if (ModuleID declaring = table.exportedField(entry).declaringModule(); declaring != reexporter)
+                    edges.append({ declaring.index(), index });
                 break;
             case ModuleExportKind::Namespace:
                 edges.append({ entry.targetModule().index(), index });
@@ -193,6 +209,8 @@ static bool haveSameBinding(const ModuleExportData& a, const ModuleExportData& b
     switch (a.kind()) {
     case ModuleExportKind::Variable:
         return a.variable == b.variable;
+    case ModuleExportKind::Field:
+        return a.exportedField == b.exportedField;
     case ModuleExportKind::Namespace:
         return a.module == b.module && a.isDeferred == b.isDeferred;
     case ModuleExportKind::Indirect:
@@ -370,6 +388,15 @@ std::optional<ModuleFailureID> ModuleTable::loadFailure(ModuleID module) const
     return found->failureOfLoad();
 }
 
+bool ModuleTable::importsAbsentExport(ModuleID module) const
+{
+    return std::ranges::any_of(m_tables->moduleFailures(), [&](const ModuleFailureData& failure) {
+        if (!failure.isAbsentExport() || failure.referrerModule() != module)
+            return false;
+        return failure.isFromExportStatement() || data(failure.importerModule()).isESModuleOfProgram();
+    });
+}
+
 std::span<const AmbiguousExportData> ModuleTable::ambiguousExports(ModuleID module) const
 {
     auto ofModule = std::ranges::equal_range(m_tables->ambiguousExports(), module.index(), { }, &AmbiguousExportData::module);
@@ -527,35 +554,86 @@ bool ModuleTable::recordOfRuntimeSourceIsHandedOutFrozen(uint32_t registryID) co
 
 std::optional<unsigned> ModuleTable::findExport(ModuleID module, UniquedStringImpl* name) const
 {
-    return name->isSymbol() ? std::nullopt : findExport(module, StringView { *name });
+    return name->isSymbol() ? std::nullopt : findExport(module, StringView { *name }, Image::current()->text().isIdentifier(*name));
 }
 
-std::optional<unsigned> ModuleTable::findExport(ModuleID module, uint32_t identifier) const
+std::optional<unsigned> ModuleTable::findExport(ModuleID module, uint32_t name) const
 {
-    return findExport(module, ProgramStrings::viewInImage(*m_tables, ProgramStrings::identifierString(*m_tables, identifier)));
+    String text = ProgramStrings::text(*Image::current(), ProgramStrings::identifierString(*m_tables, name));
+    return findExport(module, StringView { text }, name < Image::current()->text().numberOfIdentifiers());
 }
 
-std::optional<unsigned> ModuleTable::findExport(ModuleID module, StringView name) const
+auto ModuleTable::findExportPlaces(ModuleID module) const -> const PlacesOfExports*
 {
+    if (m_searchedExports.isEmpty())
+        return nullptr;
+    auto searched = m_searchedExports.find(module.index());
+    return searched == m_searchedExports.end() || searched->value.places.isEmpty() ? nullptr : &searched->value.places;
+}
+
+void ModuleTable::noteDecodedNames(ModuleID module, std::span<const ModuleExportData> entries, size_t decodedNames) const
+{
+    constexpr size_t namesDecodedWithoutTable = 16;
+    constexpr size_t exportsByDecodedName = 8;
+    if (!decodedNames)
+        return;
+    SearchedExports& searched = m_searchedExports.add(module.index(), SearchedExports { }).iterator->value;
+    searched.decodedNames += decodedNames;
+    if (searched.decodedNames < namesDecodedWithoutTable + entries.size() / exportsByDecodedName)
+        return;
+    Vector<StringID> names(entries.size(), [&](size_t place) {
+        return ProgramStrings::identifierString(*m_tables, entries[place].name);
+    });
+    unsigned place = 0;
+    for (String& name : Image::current()->text().createStrings(names.span()))
+        searched.places.add(WTF::move(name), place++);
+}
+
+std::optional<unsigned> ModuleTable::findExport(ModuleID module, StringView name, bool isIdentifier) const
+{
+    if (const PlacesOfExports* places = findExportPlaces(module)) {
+        auto found = places->find<StringViewHashTranslator>(name);
+        return found == places->end() ? std::nullopt : std::optional(found->value);
+    }
+
+    constexpr unsigned mostNamesSteppedOver = 32;
+    const ImageText& text = Image::current()->text();
     std::span<const ModuleExportData> entries = exports(module);
-    auto compare = [&](const ModuleExportData& entry) {
-        StringID string = ProgramStrings::identifierString(*m_tables, entry.name);
-        ASSERT(string);
-        return codePointCompare(ProgramStrings::viewInImage(*m_tables, string), name);
-    };
+    size_t decodedNames = 0;
+    std::optional<unsigned> found;
     unsigned from = 0;
     unsigned to = static_cast<unsigned>(entries.size());
     while (from < to) {
-        unsigned middle = from + (to - from) / 2;
-        auto order = compare(entries[middle]);
-        if (order == std::strong_ordering::equal)
-            return middle;
+        unsigned start = from + (to - from) / 2;
+        unsigned middle = start;
+        StringID string = ProgramStrings::identifierString(*m_tables, entries[middle].name);
+        if (isIdentifier && text.isCoded(string)) {
+            unsigned end = std::min(to, start + mostNamesSteppedOver);
+            while (middle < end && entries[middle].name >= text.numberOfIdentifiers())
+                ++middle;
+            if (middle == to) {
+                to = start;
+                continue;
+            }
+            if (middle == end)
+                middle = start;
+            else
+                string = ProgramStrings::identifierString(*m_tables, entries[middle].name);
+        }
+        ASSERT(string);
+        decodedNames += text.isCoded(string);
+        auto order = text.compare(string, name);
+        if (order == std::strong_ordering::equal) {
+            found = middle;
+            break;
+        }
         if (order < 0)
             from = middle + 1;
         else
-            to = middle;
+            to = start;
     }
-    return std::nullopt;
+    noteDecodedNames(module, entries, decodedNames);
+    return found;
 }
 
 std::optional<ModuleID> ModuleTable::facadeOf(ModuleID file) const
@@ -648,6 +726,18 @@ bool ModuleTable::hasQueryInDirectory() const
     return std::ranges::any_of(m_tables->moduleDirectories(), [&](const ModuleDirectoryData& directory) {
         return ProgramStrings::viewInImage(*m_tables, StringID(directory.name)).contains('?');
     });
+}
+
+Vector<uint32_t> ModuleTable::modulesWithQuery() const
+{
+    bool hasQueryInDirectory = this->hasQueryInDirectory();
+    Vector<uint32_t> modules;
+    for (uint32_t index = 0; index < size(); ++index) {
+        ModuleID module(index);
+        if (hasQueryInDirectory ? fullPath(module).contains('?') : ProgramStrings::viewInImage(*m_tables, StringID(data(module).publicPathOrName)).contains('?'))
+            modules.append(index);
+    }
+    return modules;
 }
 
 bool ModuleTable::pathWithoutQueryEndsWith(ModuleID module, StringView end, bool hasQueryInDirectory) const

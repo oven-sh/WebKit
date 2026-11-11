@@ -226,6 +226,11 @@ static EncodedJSValue fastSetIntersection(JSGlobalObject* globalObject, JSSet* t
     JSSet* sourceSet = thisSet->size() <= otherSet->size() ? thisSet : otherSet;
     JSSet* targetSet = thisSet->size() <= otherSet->size() ? otherSet : thisSet;
 
+#if ENABLE(AOT)
+    if (AOT::CompactStorage::canCompareKeys(sourceSet, targetSet)) [[unlikely]]
+        return JSValue::encode(AOT::CompactStorage::createIntersection(globalObject, sourceSet, targetSet));
+#endif
+
     JSCell* sourceStorageCell = sourceSet->storageOrSentinel(vm);
     if (sourceStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(result);
@@ -339,6 +344,11 @@ static EncodedJSValue fastSetUnion(JSGlobalObject* globalObject, JSSet* thisSet,
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+    if (AOT::CompactStorage::canCompareKeys(thisSet, otherSet)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(AOT::CompactStorage::createUnion(globalObject, thisSet, otherSet)));
+#endif
+
     JSSet* result = thisSet->clone(globalObject, vm, globalObject->setStructure());
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -411,6 +421,11 @@ static EncodedJSValue fastSetIsSubsetOf(JSGlobalObject* globalObject, JSSet* thi
     if (thisSet->size() > otherSet->size())
         return JSValue::encode(jsBoolean(false));
 
+#if ENABLE(AOT)
+    if (AOT::CompactStorage::canCompareKeys(thisSet, otherSet)) [[unlikely]]
+        return JSValue::encode(jsBoolean(AOT::CompactStorage::isSubset(thisSet, otherSet)));
+#endif
+
     JSCell* thisStorageCell = thisSet->storageOrSentinel(vm);
     if (thisStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(jsBoolean(true));
@@ -434,6 +449,11 @@ static EncodedJSValue fastSetIsSubsetOf(JSGlobalObject* globalObject, JSSet* thi
 static EncodedJSValue fastSetDifference(JSGlobalObject* globalObject, JSSet* thisSet, JSSet* otherSet)
 {
     VM& vm = globalObject->vm();
+
+#if ENABLE(AOT)
+    if (AOT::CompactStorage::canCompareKeys(thisSet, otherSet)) [[unlikely]]
+        return JSValue::encode(AOT::CompactStorage::createDifference(globalObject, thisSet, otherSet));
+#endif
 
     JSSet* result = JSSet::create(vm, globalObject->setStructure());
 
@@ -584,6 +604,11 @@ static EncodedJSValue fastSetSymmetricDifference(JSGlobalObject* globalObject, J
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if ENABLE(AOT)
+    if (AOT::CompactStorage::canCompareKeys(thisSet, otherSet)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(AOT::CompactStorage::createSymmetricDifference(globalObject, thisSet, otherSet)));
+#endif
 
     JSSet* result = thisSet->clone(globalObject, vm, globalObject->setStructure());
     RETURN_IF_EXCEPTION(scope, { });
@@ -784,6 +809,11 @@ static EncodedJSValue fastSetIsSupersetOf(JSGlobalObject* globalObject, JSSet* t
     if (thisSet->size() < otherSet->size())
         return JSValue::encode(jsBoolean(false));
 
+#if ENABLE(AOT)
+    if (AOT::CompactStorage::canCompareKeys(thisSet, otherSet)) [[unlikely]]
+        return JSValue::encode(jsBoolean(AOT::CompactStorage::isSubset(otherSet, thisSet)));
+#endif
+
     JSCell* otherStorageCell = otherSet->storageOrSentinel(vm);
     if (otherStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(jsBoolean(true));
@@ -902,6 +932,11 @@ static EncodedJSValue fastSetIsDisjointFrom(JSGlobalObject* globalObject, JSSet*
         smallerSet = thisSet;
         largerSet = otherSet;
     }
+
+#if ENABLE(AOT)
+    if (AOT::CompactStorage::canCompareKeys(smallerSet, largerSet)) [[unlikely]]
+        return JSValue::encode(jsBoolean(AOT::CompactStorage::isDisjoint(smallerSet, largerSet)));
+#endif
 
     JSCell* smallerStorageCell = smallerSet->storageOrSentinel(vm);
     if (smallerStorageCell == vm.orderedHashTableSentinel())

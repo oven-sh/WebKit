@@ -90,7 +90,7 @@ PrefixCode::PrefixCode(const Counts& counts)
     }
 }
 
-unsigned PrefixCode::bitsOfShortWords(unsigned most) const
+unsigned PrefixCode::shortCodeBits(unsigned most) const
 {
     unsigned longest = 1;
     for (const Word& word : m_words)
@@ -98,30 +98,39 @@ unsigned PrefixCode::bitsOfShortWords(unsigned most) const
     return std::min(longest, most);
 }
 
-void PrefixCode::append(Vector<uint8_t>& bytes, unsigned bitsOfShortWords) const
+void PrefixCode::append(Vector<uint8_t>& bytes, unsigned shortCodeBits) const
 {
-    Vector<uint16_t> shortWords(FillWith { }, size_t { 1 } << bitsOfShortWords, 0);
+    Vector<uint16_t> shortWords(FillWith { }, size_t { 1 } << shortCodeBits, 0);
     for (unsigned byte = 0; byte < endOfStream; ++byte) {
         auto [bits, length] = m_words[byte];
-        if (!length || length > bitsOfShortWords)
+        if (!length || length > shortCodeBits)
             continue;
-        unsigned bitsBehind = bitsOfShortWords - length;
+        unsigned bitsBehind = shortCodeBits - length;
         std::fill_n(shortWords.mutableSpan().data() + (bits << bitsBehind), 1u << bitsBehind, static_cast<uint16_t>(length << 8 | byte));
     }
+    unsigned firstWord = 0;
+    unsigned numberOfShortCodes = 0;
+    for (unsigned length = 1; length <= shortCodeBits; ++length) {
+        firstWord = (firstWord + m_wordsOfLength[length - 1]) << 1;
+        numberOfShortCodes += m_wordsOfLength[length - 1];
+    }
+    LongWords longWords { static_cast<uint16_t>(firstWord), static_cast<uint16_t>(numberOfShortCodes) };
+    RELEASE_ASSERT(longWords.firstWord == firstWord);
     bytes.append(asBytes(shortWords.span()));
+    bytes.append(asByteSpan(longWords));
     bytes.append(std::span<const uint8_t>(m_wordsOfLength));
     bytes.appendVector(m_bytes);
 }
 
 namespace {
 
-constexpr uint32_t bytesAreNotCoded = 1u << 31;
+constexpr uint32_t rawBytesFlag = 1u << 31;
 constexpr unsigned numberOfVarintCodes = 16;
 using VarintCodes = PrefixCodes<numberOfVarintCodes>;
 
-constexpr unsigned codeOfVarintByte(uint8_t byteInFront, uint8_t secondByteInFront)
+constexpr unsigned codeOfVarintByte(uint8_t previousByte, uint8_t secondPreviousByte)
 {
-    return (byteInFront >> 7) << 3 | (secondByteInFront >> 7) << 2 | (byteInFront & 3);
+    return (previousByte >> 7) << 3 | (secondPreviousByte >> 7) << 2 | (previousByte & 3);
 }
 
 } // anonymous namespace
@@ -133,27 +142,27 @@ Vector<uint8_t> encodeVarintBytes(std::span<const uint8_t> bytes)
     Vector<PrefixSymbol> symbols;
     symbols.grow(bytes.size());
     PrefixSymbolWriter writer(symbols.mutableSpan().data());
-    uint8_t byteInFront = 0;
-    uint8_t secondByteInFront = 0;
+    uint8_t previousByte = 0;
+    uint8_t secondPreviousByte = 0;
     for (uint8_t byte : bytes) {
-        writer.append(codeOfVarintByte(byteInFront, secondByteInFront), byte);
-        secondByteInFront = std::exchange(byteInFront, byte);
+        writer.append(codeOfVarintByte(previousByte, secondPreviousByte), byte);
+        secondPreviousByte = std::exchange(previousByte, byte);
     }
     VarintCodes::Counts counts { };
     VarintCodes::count(counts, symbols.span());
     VarintCodes codes(counts);
 
-    RELEASE_ASSERT(bytes.size() < bytesAreNotCoded);
+    RELEASE_ASSERT(bytes.size() < rawBytesFlag);
     uint32_t size = static_cast<uint32_t>(bytes.size());
     Vector<uint8_t> result;
     result.append(asByteSpan(size));
     result.appendVector(codes.bytes());
-    size_t sizeInFront = result.size();
-    result.grow(sizeInFront + symbols.size() * PrefixCode::maxLength / 8 + 1);
-    result.shrink(codes.write(result.mutableSpan().data() + sizeInFront, symbols.span()) - result.mutableSpan().data());
+    size_t previousSize = result.size();
+    result.grow(previousSize + symbols.size() * PrefixCode::maxLength / 8 + 1);
+    result.shrink(codes.write(result.mutableSpan().data() + previousSize, symbols.span()) - result.mutableSpan().data());
     if (result.size() < bytes.size() + sizeof(size))
         return result;
-    size |= bytesAreNotCoded;
+    size |= rawBytesFlag;
     result.shrink(0);
     result.append(asByteSpan(size));
     result.append(bytes);
@@ -167,17 +176,17 @@ Vector<uint8_t> decodeVarintBytes(std::span<const uint8_t> coded)
     uint32_t size;
     memcpy(&size, coded.data(), sizeof(size));
     coded = coded.subspan(sizeof(size));
-    if (size & bytesAreNotCoded)
-        return Vector<uint8_t>(coded.first(size & ~bytesAreNotCoded));
+    if (size & rawBytesFlag)
+        return Vector<uint8_t>(coded.first(size & ~rawBytesFlag));
     PrefixCodeReader reader(VarintCodes::endOfCodes(coded.data()), coded.data() + coded.size());
     Vector<uint8_t> bytes;
     bytes.reserveInitialCapacity(size);
-    uint8_t byteInFront = 0;
-    uint8_t secondByteInFront = 0;
+    uint8_t previousByte = 0;
+    uint8_t secondPreviousByte = 0;
     for (uint32_t index = 0; index < size; ++index) {
-        unsigned byte = reader.read(VarintCodes::code(coded.data(), codeOfVarintByte(byteInFront, secondByteInFront)));
-        secondByteInFront = std::exchange(byteInFront, static_cast<uint8_t>(byte));
-        bytes.append(byteInFront);
+        unsigned byte = reader.read(VarintCodes::code(coded.data(), codeOfVarintByte(previousByte, secondPreviousByte)));
+        secondPreviousByte = std::exchange(previousByte, static_cast<uint8_t>(byte));
+        bytes.append(previousByte);
     }
     return bytes;
 }

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTBuiltinTypes.h"
@@ -232,11 +233,26 @@ bool isLeafHandedToMethodOfLists(const Walker& walker, TypeID argumentType)
     return only && walker.facts().linked().function(only).weightAsLeaf != LinkedFunction::notLeaf;
 }
 
-static bool handsOverOwnClosureForKnownRows(Walker& walker, const BodyValue& call)
+static bool passesOwnClosure(Walker& walker, const BodyValue& call)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID handed = index.stripCasts(call.argumentsOperands()[0]);
     return handed && !index.isParameter(handed) && index.opcodeOf(handed) == Opcode::NewClosure && index.hasOneUse(handed);
+}
+
+static bool chainBeginsAtKeptList(Walker& walker, ValueID list)
+{
+    static constexpr unsigned mostLinks = 8;
+    const BodyIndex& index = walker.currentBodyIndex();
+    for (unsigned link = 0; list && link < mostLinks; ++link) {
+        if (isReadOutOfVariableOfFileThatStays(walker, list))
+            return true;
+        ValueID made = index.stripCasts(list);
+        if (index.isParameter(made) || index.opcodeOf(made) != Opcode::Call)
+            return false;
+        list = index.value(made).as<Opcode::Call>().thisValueOperand();
+    }
+    return false;
 }
 
 static bool loopReadsOffResultFirstForKnownRows(Walker& walker, ValueID value)
@@ -381,6 +397,61 @@ bool buildByteLiteralOfItsOpcodes(Walker& walker, const BodyValue& call)
     walker.count(StatisticID::ByteLiteralsEncoded);
     return true;
 }
+static bool fillsArrayWithDoubles(Walker& walker, const BodyValue& call)
+{
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (arguments.size() != 2 || !arguments[0] || !arguments[1] || !walker.has(Mechanism::TypedOperations))
+        return false;
+    ValueID element = index.stripCasts(arguments[1]);
+    Reference length = walker.referenceOf(arguments[0]);
+    if (!element || index.isParameter(element) || index.opcodeOf(element) != Opcode::Integer || !length || !length.isRecord() || !walker.types().at(walker.typeOf(length)).isInteger())
+        return false;
+    if (findBuiltinCalledForKnownRows(walker, call) != walker.program().builtins().builtinFromToken("CompilerHelpersFilledArray"_s))
+        return false;
+    const LinkedContentsAtOperation* stored = walker.facts().linked().contentsAtOperation(walker.currentFunction(), call.id());
+    return stored && !isNeverType(stored->value) && arrayStorageHolding(walker.types(), stored->value) == ArrayStorage::Double && (walker.types().at(stored->value).primitives & Primitive::FractionalNumber);
+}
+
+static bool buildArrayFilledWithDoubles(Walker& walker, const BodyValue& call, FunctionID function, const Draft& written)
+{
+    Origin origin = walker.originOf(call);
+    origin.isTailCall = false;
+    Draft list(Opcode::NewArrayLike, origin);
+    walker.chooseConservativeFields(list);
+    list.setLengthOperand(walker.referenceOf(call.argumentsOperands()[0]));
+    list.setArrayStorage(ArrayStorage::Double);
+    Reference made = walker.build(WTF::move(list));
+    if (!made || !made.isValue() || walker.isUnreachable() || walker.hasFailed())
+        return true;
+    Draft fill(Opcode::TryFillNewArray, origin);
+    walker.chooseConservativeFields(fill);
+    fill.setArrayOperand(made);
+    fill.setValueOperand(walker.referenceOf(call.argumentsOperands()[1]));
+    Reference isFilled = walker.build(WTF::move(fill));
+    if (!isFilled)
+        return true;
+    BlockID filled = walker.addBlock();
+    BlockID otherwise = walker.addBlock(BlockFrequency::Rare);
+    walker.branch(isFilled, filled, otherwise);
+    Vector<Walker::JoinArm, 2> arms;
+    walker.continueIn(filled);
+    if (!walker.isUnreachable())
+        arms.append(Walker::JoinArm { filled, { made } });
+    walker.continueIn(otherwise);
+    if (!walker.isUnreachable()) {
+        if (!callFunctionDirectly(walker, call, function, written.thisValueOperand(), written.argumentsOperands(), MayCopyFunctionCalledDirectly::No))
+            return false;
+        if (Reference called = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.id()))
+            arms.append(Walker::JoinArm { walker.currentBlock(), { called } });
+    }
+    Reference array;
+    if (!arms.isEmpty() && walker.joinArms(arms.span(), walker.addBlock(), singleElementSpan(array)))
+        walker.bind(call.id(), array);
+    walker.count(StatisticID::ArraysFilledWithDoubles);
+    return true;
+}
+
 bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::BuiltinCalls))
@@ -404,9 +475,11 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             Reference firstArgument = call.argumentsOperands().empty() ? Reference() : walker.referenceOf(call.argumentsOperands()[0]);
             Reference receiver = call.thisValueOperand() ? walker.referenceOf(call.thisValueOperand()) : Reference();
             bool isListAsItWasMade = receiver && (isKnownPristine(walker, receiver) || receiverStaysAsMadeByLink(walker, call));
-            mayCopy = ((walker.isInLoop() || walker.isCurrentFrameRecursive()) ? isListAsItWasMade || walker.walksOwnBodyOfUnit() : isListAsItWasMade && isReadOutOfVariableOfFileThatStays(walker, call.thisValueOperand())) && firstArgument && (isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument)) || (walker.isInLoop() && handsOverOwnClosureForKnownRows(walker, call))) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
+            mayCopy = ((walker.isInLoop() || walker.isCurrentFrameRecursive()) ? isListAsItWasMade || walker.walksOwnBodyOfUnit() : isListAsItWasMade && chainBeginsAtKeptList(walker, call.thisValueOperand())) && firstArgument && (isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument)) || (walker.isInLoop() && passesOwnClosure(walker, call))) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
+            if (mayCopy == MayCopyFunctionCalledDirectly::Yes && fuseChainOfCallbacks(walker, call, findBuiltinCalledForKnownRows(walker, call)))
+                return true;
             if (mayCopy == MayCopyFunctionCalledDirectly::Yes && !isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument)))
-                walker.count(StatisticID::ListCallbacksCopiedWithCalls);
+                walker.count(StatisticID::ArrayCallbacksInlinedWithCalls);
         } else if (!behind.named.isEmpty())
             function = findLibraryFunctionOfRowsReachedBy(walker, call);
         isFoundByRowsReached = function && function != behind.enteredByValue;
@@ -424,6 +497,8 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             return true;
         }
     }
+    if (fillsArrayWithDoubles(walker, call) && buildArrayFilledWithDoubles(walker, call, function, written))
+        return true;
     TypeID resultByRows = loopReadsOffResultFirstForKnownRows(walker, call.id()) ? findTypeOfResultOfRowsReachedBy(walker, call) : TypeID();
     FunctionID reached = enteredByValue && mayCopy == MayCopyFunctionCalledDirectly::Yes ? findLibraryFunctionOfRowsReachedBy(walker, call) : FunctionID();
     bool makesNewList = reached && reached != function;

@@ -37,6 +37,7 @@
 #include "SyntheticModuleRecord.h"
 #endif
 #if ENABLE(AOT)
+#include "AOTModuleHost.h"
 #include "AOTModuleRecord.h"
 #endif
 #if ENABLE(WEBASSEMBLY)
@@ -215,6 +216,14 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
             JSValue value = exportEntry.localName == vm.propertyNames->starNamespacePrivateName
                 ? JSValue(compiled->moduleNamespaceObject(globalObject, AbstractModuleRecord::ModulePhase::Evaluation))
                 : compiled->readExport(globalObject, exportEntry.localName, exportEntry.compiledExportIndex);
+            RETURN_IF_EXCEPTION(scope, false);
+            slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
+            return true;
+        }
+        if (AbstractModuleRecord* original = exportEntry.moduleRecord.get(); original->isCompiledOriginal()) [[unlikely]] {
+            JSValue value = exportEntry.localName == vm.propertyNames->starNamespacePrivateName
+                ? JSValue(original->getModuleNamespace(globalObject))
+                : original->getLiveExport(globalObject, exportEntry.localName);
             RETURN_IF_EXCEPTION(scope, false);
             slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
             return true;
@@ -619,7 +628,7 @@ void JSModuleNamespaceObject::overrideExports(JSGlobalObject* globalObject, cons
         JSValue value = jsUndefined();
         const Identifier& name = pair.value.localName;
 
-        if (pair.value.moduleRecord->hasLiveExports())
+        if (pair.value.moduleRecord->hasExportsSource())
             continue;
 
         if (iter(globalObject, name, value)) {
@@ -664,10 +673,20 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     }
 
     auto* record = resolution.moduleRecord;
+#if ENABLE(AOT)
+    if (record->isCompiledOriginal())
+        RELEASE_AND_RETURN(scope, AOT::tryReplaceExport(record->liveExportsSource(), resolution.localName.impl(), value));
+#endif
     // Live exports come from liveExportsSource(). There's no binding to override.
     if (record->hasLiveExports())
         return false;
     if (isLiveBindingExport(record)) {
+#if ENABLE(AOT)
+        bool isReplaced = AOT::tryReplaceExportOfRecord(globalObject, record, resolution.localName.impl(), value);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isReplaced)
+            return true;
+#endif
         throwTypeError(globalObject, scope, "Cannot replace a module export that is a live binding"_s);
         return false;
     }

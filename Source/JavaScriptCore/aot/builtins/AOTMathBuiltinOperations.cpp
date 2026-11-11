@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTInstance.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
@@ -120,6 +121,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNumberOfAnyValue, EncodedJSValue, (Instance
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNumberOfAnyValue);
     JSValue value = JSValue::decode(encodedValue);
+    if (value.isCell() && value.asCell()->type() == CompiledObjectType) {
+        value = primitiveIfKnown(instance, value, PreferNumber);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    }
     if (value.isString()) {
         auto view = asString(value)->view(globalObject);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());

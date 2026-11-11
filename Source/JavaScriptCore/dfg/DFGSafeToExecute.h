@@ -291,7 +291,6 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case ToString:
     case FunctionToString:
     case NumberToStringWithValidRadixConstant:
-    case StrCat:
     case CallStringConstructor:
     case MakeRope:
     case MakeAtomString:
@@ -365,6 +364,15 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GlobalIsFinite:
     case GlobalIsNaN:
         return false;
+
+    case StrCat: {
+        // StrCat throws for a symbol, which a separate Check excludes.
+        bool maySeeSymbol = false;
+        graph.doToChildren(node, [&](Edge edge) {
+            maySeeSymbol |= !!(state.forNode(edge).m_type & SpecSymbol);
+        });
+        return !maySeeSymbol;
+    }
 
     case GetButterfly:
         return state.forNode(node->child1()).isType(SpecObject);

@@ -17,10 +17,12 @@
 #include "AOTCompileOptions.h"
 #include "AOTCompiledStructure.h"
 #include "AOTConstantEmitter.h"
+#include "AOTFieldTable.h"
 #include "AOTFunctionData.h"
 #include "AOTInliningAcrossFiles.h"
 #include "AOTMemberLookup.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTSavedFrameEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTSlotAccessEmitter.h"
 #include "AOTSlotEmitter.h"
@@ -139,6 +141,29 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
     });
 }
 
+bool GuardEmitter::isImpliedByNumberTest(const ValueContext& isSlotFilled, const FieldAccess& access)
+{
+    if (emittersCheckProofs() || !isSlotFilled.isBranchCondition() || isSlotFilled->holdsDeclaredType() || access.slot.representation != SlotRepresentation::JSValue || access.slot.storage != SlotStorage::Inline || access.findsOffsetByShape)
+        return false;
+    const Terminator& end = m_code.at(isSlotFilled.block()).terminator;
+    if (end.kind != TerminatorKind::Branch || end.conditionOperand() != isSlotFilled.id())
+        return false;
+    const Edge& passes = m_code.at(end.taken());
+    const Edge& fails = m_code.at(end.notTaken());
+    const Terminator& endOfNumberTest = m_code.at(passes.to).terminator;
+    std::span<const ValueID> operations = m_code.valuesOf(passes.to);
+    if (operations.size() != 2 || endOfNumberTest.kind != TerminatorKind::Branch || endOfNumberTest.conditionOperand() != operations[1])
+        return false;
+    const Operation& read = m_code.at(operations[0]);
+    const Operation& test = m_code.at(operations[1]);
+    if (read.opcode != Opcode::GetSlot || read.objectOperand() != isSlotFilled->objectOperand() || read.key() != isSlotFilled->key() || read.receivers() != isSlotFilled->receivers() || read.representation != Representation::JSValue || read.holdsDeclaredType())
+        return false;
+    if (test.opcode != Opcode::TypeTest || test.valueOperand() != operations[0] || (test.testedType() != TypeTable::number && test.testedType() != TypeTable::int32) || !types().at(read.type).hasObjects())
+        return false;
+    const Edge& failsNumberTest = m_code.at(endOfNumberTest.notTaken());
+    return failsNumberTest.to == fails.to && fails.arguments().empty() && failsNumberTest.arguments().empty();
+}
+
 void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
 {
     if (value->level() == KnowledgeLevel::Expected) {
@@ -178,7 +203,7 @@ void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
         });
         return;
     case FieldAccess::Coverage::EveryMember:
-        defineTest(value, isFilled());
+        defineTest(value, isImpliedByNumberTest(value, access) ? boolean(true) : isFilled());
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -259,7 +284,7 @@ void GuardEmitter::generateAreHeldFieldsFilled(const ValueContext& value)
 void GuardEmitter::generateIsNotFrozen(const ValueContext& value)
 {
     defineTestOfCompiledObject(value, [&] {
-        uint32_t bits = orderWordIntegrityBits;
+        uint32_t bits = value->isExtensible() ? orderWordIntegrityBits : orderWordIsFrozen;
         if (value->hasNoExtraProperties())
             bits |= orderWordHasExtraProperties;
         if (value->hasNoFieldOutsideSlot())
@@ -290,7 +315,13 @@ void GuardEmitter::generateIsPristine(const ValueContext& value)
             return;
         }
         defineTestByBranching(value, [&](BranchTargets targets) {
-            branch(isClosureAsCreated(cellOrElse(value, subject, targets.notTaken), builtinClass, value->aspects()), targets);
+            CellPointer cell = cellOrElse(value, subject, targets.notTaken);
+            if (FunctionID function = singleFunctionOf(types(), typeOf(subject)); function && conventions().exists(conventions().closureEntryOf(function))) {
+                LBasicBlock hasOtherStructure = newBlock();
+                branch(emitter<ClosureTestEmitter>().hasClosureStructure(cell, function), { targets.taken, unlikelyEdge(hasOtherStructure) });
+                m_out.appendTo(hasOtherStructure);
+            }
+            branch(isClosureAsCreated(cell, builtinClass, value->aspects()), targets);
         });
         return;
     }
@@ -309,11 +340,18 @@ void GuardEmitter::generateIsPristine(const ValueContext& value)
         defineTest(value, kindsOfViewsOfNumbersIn(m_program, types(), typeIDOf(subject)) ? isPristine() : boolean(false));
         return;
     }
+    bool branchesOnView = value->aspects().contains(PristineAspects::Storage) && isTypedView(m_builtins.typedArrayTypeOf(builtinClass));
     switch (instanceTest.verdict) {
     case TypeTestVerdict::NeverPasses:
         defineTest(value, boolean(false));
         return;
     case TypeTestVerdict::AlwaysPasses:
+        if (branchesOnView) {
+            defineTestByBranching(value, [&](BranchTargets targets) {
+                emitter<TypeTestEmitter>().branchOnPristineView(untestedCell(value, subject), builtinClass, value->aspects(), targets);
+            });
+            return;
+        }
         defineTest(value, isPristine());
         return;
     case TypeTestVerdict::NeedsTest:
@@ -321,7 +359,10 @@ void GuardEmitter::generateIsPristine(const ValueContext& value)
             LBasicBlock isInstance = newBlock();
             branchOnType(operand, instanceTest, { normalEdge(isInstance), targets.notTaken });
             m_out.appendTo(isInstance);
-            branch(isPristine(), targets);
+            if (branchesOnView)
+                emitter<TypeTestEmitter>().branchOnPristineView(untestedCell(value, subject), builtinClass, value->aspects(), targets);
+            else
+                branch(isPristine(), targets);
         });
         return;
     }
@@ -384,6 +425,15 @@ void GuardEmitter::generateHasNumberOfBoundArguments(const ValueContext& value)
 {
     CellPointer function = in<CellPointer>(value->functionOperand());
     defineTest(value, equal(loadField<Word32>(function, m_heaps.JSBoundFunction_boundArgsLength), word32(value->count())));
+}
+
+void GuardEmitter::generateMakesPlainGenerators(const ValueContext& value)
+{
+    CellPointer function = in<CellPointer>(value->functionOperand());
+    defineTestByBranching(value, [&](BranchTargets targets) {
+        emitter<SavedFrameEmitter>().branchUnlessGeneratorsPlain(function, targets.notTaken.block());
+        m_out.jump(targets.taken);
+    });
 }
 
 void GuardEmitter::generateGetWordOfBoundFunction(const ValueContext& value)
@@ -536,8 +586,78 @@ bool GuardEmitter::listGuardsAskedBy(std::span<const MemberConditionRecord> cond
     return true;
 }
 
+Condition GuardEmitter::isMemberAssigned(const MemberConditionRecord& condition)
+{
+    if (!condition.layout || !m_plan.hasClassRecord(condition.layout))
+        return boolean(false);
+    return Condition(m_out.notEqual(assignedMember(condition).value(), m_out.constInt64(JSValue::ValueUndefined)));
+}
+
+Boxed GuardEmitter::assignedMember(const MemberConditionRecord& condition)
+{
+    StaticsEmitter& statics = emitter<StaticsEmitter>();
+    return Boxed(m_out.load64(statics.guardByte(statics.keyOfGuard(condition.layout, condition.side, condition.key, AskerOfClassGuardOfName::AssignedMember))));
+}
+
+void GuardEmitter::generateGetAssignedMember(const ValueContext& value)
+{
+    for (MemberConditionRecord condition : value->conditions()) {
+        RELEASE_ASSERT(condition.kind == MemberConditionKind::MemberAssigned && condition.layout && m_plan.hasClassRecord(condition.layout));
+        define(value, assignedMember(condition));
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool asksObjectPrototype(const Program& program, const MemberConditionRecord& condition)
+{
+    return condition.kind == MemberConditionKind::MemberPassedByStores && condition.key && isOnObjectPrototype(program.nameClassOf(condition.key));
+}
+
+Condition GuardEmitter::objectPrototypePassesStores()
+{
+    static_assert(!FieldTableEntry::noName);
+    Pointer stoppers = loadImmutablePointer(AOT_INSTANCE_OFFSET(propertyCaches.objectPrototypeStoreStoppers));
+    Word32 firstNames(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_classGuards, stoppers.value(), 0)));
+    return hasNoBits(firstNames, 1);
+}
+
 Condition GuardEmitter::areMembersUnchanged(std::span<const MemberConditionRecord> conditions)
 {
+    bool someConditionChecksObjectPrototype = std::ranges::any_of(conditions, [&](const MemberConditionRecord& condition) {
+        return asksObjectPrototype(m_program, condition);
+    });
+    if (someConditionChecksObjectPrototype) {
+        Vector<MemberConditionRecord, 4> others;
+        for (const MemberConditionRecord& condition : conditions) {
+            bool isOfRecord = m_program.at(condition.layout).kind == LayoutKind::Record;
+            if (asksObjectPrototype(m_program, condition) && isOfRecord)
+                continue;
+            others.append(condition);
+        }
+        Condition passes = objectPrototypePassesStores();
+        return others.isEmpty() ? passes : logicalAnd(passes, areClassMembersUnchanged(others.span()));
+    }
+    return areClassMembersUnchanged(conditions);
+}
+
+Condition GuardEmitter::areClassMembersUnchanged(std::span<const MemberConditionRecord> conditions)
+{
+    size_t numberAssigned = std::ranges::count(conditions, MemberConditionKind::MemberAssigned, &MemberConditionRecord::kind);
+    if (numberAssigned) {
+        std::optional<Condition> allHold;
+        Vector<MemberConditionRecord, 4> unchanged;
+        for (const MemberConditionRecord& condition : conditions) {
+            if (condition.kind != MemberConditionKind::MemberAssigned) {
+                unchanged.append(condition);
+                continue;
+            }
+            Condition holds = isMemberAssigned(condition);
+            allHold = allHold ? logicalAnd(*allHold, holds) : holds;
+        }
+        return unchanged.isEmpty() ? *allHold : logicalAnd(*allHold, areClassMembersUnchanged(unchanged.span()));
+    }
+
     Vector<GuardLeftToAsk, 4> guardsLeft;
     if (!listGuardsAskedBy(conditions, guardsLeft))
         return boolean(false);
@@ -585,6 +705,10 @@ std::optional<GuardEmitter::RowOfCountsOfDoor> GuardEmitter::rowOfCountsOfDoor(c
 {
     if (value->conditions().isEmpty() || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::AssumeGuardsAndFacts))
         return std::nullopt;
+    for (MemberConditionRecord condition : value->conditions()) {
+        if (condition.kind == MemberConditionKind::MemberAssigned || asksObjectPrototype(m_program, condition))
+            return std::nullopt;
+    }
     Vector<ShapeTestEmitter::ShapesOfMember, 8> members = emitter<ShapeTestEmitter>().shapesOfMembersOf(value->receivers());
     if (members.size() < 2)
         return std::nullopt;
@@ -745,7 +869,8 @@ void GuardEmitter::branchOnOwnPropertyByCell(const ValueContext& value, BranchTa
     LayoutSetID receivers = value->receivers();
     FieldAccess access = fieldAccessFor(value->key(), receivers, false);
     bool isFieldOfAll = access.coverage == FieldAccess::Coverage::EveryMember && access.hasLocation;
-    if (access.coverage != FieldAccess::Coverage::NoMember && !isFieldOfAll) {
+    bool isFieldOfSome = access.coverage == FieldAccess::Coverage::SomeMembers && access.hasLocation && !access.findsOffsetByShape && !access.mayBeFilledWithoutStorage;
+    if (access.coverage != FieldAccess::Coverage::NoMember && !isFieldOfAll && !isFieldOfSome) {
         m_out.jump(asksRunTime);
         return;
     }
@@ -759,10 +884,22 @@ void GuardEmitter::branchOnOwnPropertyByCell(const ValueContext& value, BranchTa
     emitter<ShapeTestEmitter>().branchOnShapeIn(cell, receivers, typeOf(object), { normalEdge(hasShape), rareEdge(asksRunTime) });
     m_out.appendTo(hasShape);
     Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(cell);
-    if (!isFieldOfAll) {
+    auto finishWithoutField = [&] {
         continueIf(hasNoBits(orderWord, orderWordHasExtraProperties));
         m_out.jump(targets.notTaken);
+    };
+    if (access.coverage == FieldAccess::Coverage::NoMember) {
+        finishWithoutField();
         return;
+    }
+    if (isFieldOfSome) {
+        LBasicBlock hasField = newBlock();
+        LBasicBlock lacksField = newBlock();
+        LayoutSetID membersWithField = types().layoutSets().ofSorted(access.membersWithField.span());
+        emitter<ShapeTestEmitter>().branchOnShapeAmongReceivers(value, cell, membersWithField, { normalEdge(hasField), normalEdge(lacksField) });
+        m_out.appendTo(lacksField);
+        finishWithoutField();
+        m_out.appendTo(hasField);
     }
     continueIf(hasNoBits(orderWord, orderWordHasFieldOutsideSlot));
     CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(cell, access);
@@ -817,7 +954,7 @@ Condition GuardEmitter::isClosureAsCreated(CellPointer cell, BuiltinClassID buil
     Condition isAsCreated = logicalOr(isFullClosure, isSlimClosure);
     if (kind.isAsync)
         return isAsCreated;
-    if (aspects.contains(PristineAspects::NamesKeptBelow)) {
+    if (aspects.contains(PristineAspects::InheritedNamesKept)) {
         BuiltinClassID below = classBelowWithTestedStructure(m_builtins, builtinClass);
         RELEASE_ASSERT(below);
         isAsCreated = logicalOr(isAsCreated, isClosureAsCreated(cell, below, PristineAspects::Names));

@@ -23,7 +23,7 @@ export function at(index) {
 
     var length = $typedArrayLength(this);
 
-    var k = $toIntegerOrInfinity(index);
+    var k = typeof index === "number" && (index | 0) === index ? index | 0 : $toIntegerOrInfinity(index);
     if (k < 0)
         k += length;
 
