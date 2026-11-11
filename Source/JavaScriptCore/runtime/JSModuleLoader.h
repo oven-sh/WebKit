@@ -327,7 +327,12 @@ private:
 #endif
     ModuleMap<WriteBarrier<ModuleRegistryEntry>> m_moduleMap;
 
-    ResolutionMap<WriteBarrier<Unknown>> m_resolutionFailures;
+    struct ResolutionFailure {
+        WriteBarrier<Unknown> error;
+        RefPtr<UniquedStringImpl> referrer;
+        RefPtr<UniquedStringImpl> specifier;
+    };
+    ResolutionMap<ResolutionFailure> m_resolutionFailures;
 };
 
 // Validates the host-defined payload threaded through HostLoadImportedModule / FinishLoadingImportedModule.
