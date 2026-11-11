@@ -11013,11 +11013,13 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 }
 
                 SpeculatedType prediction = SpecNone;
-                if (bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar) {
+                if (bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar || uid == m_vm->propertyNames->builtinNames().thisPrivateName().impl()) {
                     // ResolvedClosureVar is not used normally. It is very special internal ResolveType, mainly used for generators and private fields.
                     // In these variables, it can happen that we use JSEmpty as a result of op_get_from_scope (which becomes a TDZ error in normal ClosureVar).
                     // And this JSEmpty is still legit. The problem is that ValueProfile never tells about JSEmpty since it sees no value is stored when JSEmpty
                     // is stored. We workaround this very special internal use case by explicitly setting SpecEmpty when ValueProfile tells this is SpecNone.
+                    // |this| of a derived constructor is such a variable too: an arrow function that calls super() reads it from the scope first,
+                    // to see that no super() came before, and the value is JSEmpty each time.
                     prediction = getPredictionWithoutOSRExit();
                     if (prediction == SpecNone)
                         prediction = SpecEmpty;
