@@ -76,7 +76,8 @@ InspectorDOMDebuggerAgent::InspectorDOMDebuggerAgent(WebAgentContext& context, I
 
 InspectorDOMDebuggerAgent::~InspectorDOMDebuggerAgent() = default;
 
-// FIXME: <https://webkit.org/b/298981> Remove once DOMDebugger is served by a frame target agent.
+// FIXME: <https://webkit.org/b/328683> Remove once DOM breakpoints on page-tree nodes and event breakpoints
+// are served only by frame target agents.
 // Under site isolation PageDebugger is attached to nothing, so pauses scheduled on the page's
 // debugger agent are silently dropped; the frame's FrameDebugger is the attached one.
 // The page's InstrumentingAgents never has enabledFrameDebuggerAgent set (only
@@ -461,6 +462,9 @@ void InspectorDOMDebuggerAgent::didFireAnimationFrame(Inspector::InspectorDebugg
 
 void InspectorDOMDebuggerAgent::willSendRequest(Inspector::InspectorDebuggerAgent* debuggerAgent, ResourceRequest& request)
 {
+    if (request.hiddenFromInspector())
+        return;
+
     if (request.requester() == ResourceRequestRequester::XHR || request.requester() == ResourceRequestRequester::Fetch)
         return;
 

@@ -30,7 +30,7 @@ class SVGAnimateMotionElement final : public SVGAnimationElement {
     WTF_MAKE_TZONE_ALLOCATED(SVGAnimateMotionElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(SVGAnimateMotionElement);
 public:
-    static Ref<SVGAnimateMotionElement> LEGACY_NODELETE create(const QualifiedName&, Document&);
+    NODELETE static Ref<SVGAnimateMotionElement> create(const QualifiedName&, Document&);
     void updateAnimationPath();
 
 private:
@@ -47,6 +47,7 @@ private:
     bool setFromAndByValues(const String& fromString, const String& byString) override;
     bool setToAtEndOfDurationValue(const String& toAtEndOfDurationString) override;
     void calculateAnimatedValue(float percentage, unsigned repeatCount) override;
+    static void applyResultsToTarget(SVGElement&);
     void applyResultsToTarget() override;
     std::optional<float> calculateDistance(const String& fromString, const String& toString) override;
 

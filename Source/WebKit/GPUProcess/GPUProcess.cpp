@@ -42,6 +42,7 @@
 #include "Logging.h"
 #include "RemoteMediaPlayerManagerProxy.h"
 #include "RemoteSnapshot.h"
+#include "RemoteSnapshotPDFDrawingTask.h"
 #include "SandboxExtension.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcessPoolMessages.h"
@@ -72,6 +73,15 @@
 
 #if ENABLE(MEDIA_STREAM)
 #include <WebCore/MockRealtimeMediaSourceCenter.h>
+#endif
+
+#if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
+#include "CapturePreviewManager.h"
+#include <WebCore/RealtimeMediaSourceCenter.h>
+#include <wtf/cocoa/Entitlements.h>
+#if PLATFORM(IOS_FAMILY)
+#include <WebCore/MediaSessionHelperIOS.h>
+#endif
 #endif
 
 #if PLATFORM(COCOA)
@@ -147,9 +157,9 @@ void GPUProcess::sharedPreferencesForWebProcessDidChange(WebCore::ProcessIdentif
     completionHandler();
 }
 
-void GPUProcess::securityFlagsDidChange(SecurityFlags&& securityFlags)
+void GPUProcess::securityFlagsDidChange(SecurityFlags::Storage&& securityFlags)
 {
-    m_securityFlags.replaceWith(securityFlags);
+    SecurityFlags::Storage::update(WTF::move(securityFlags));
 }
 
 void GPUProcess::removeGPUConnectionToWebProcess(GPUConnectionToWebProcess& connection)
@@ -179,6 +189,10 @@ bool GPUProcess::shouldTerminate()
 bool GPUProcess::canExitUnderMemoryPressure() const
 {
     ASSERT(isMainRunLoop());
+#if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
+    if (m_capturePreviewManager)
+        return false;
+#endif
     for (auto& webProcessConnection : m_webProcessConnections.values()) {
         if (!webProcessConnection->allowsExitUnderMemoryPressure())
             return false;
@@ -242,7 +256,7 @@ void GPUProcess::initializeGPUProcess(GPUProcessCreationParameters&& parameters,
     CompletionHandlerCallingScope callCompletionHandler(WTF::move(completionHandler));
 
     applyProcessCreationParameters(WTF::move(parameters.auxiliaryProcessParameters));
-    m_securityFlags.replaceWith(parameters.securityFlags);
+    SecurityFlags::Storage::update(WTF::move(parameters.securityFlags));
     RELEASE_LOG(Process, "%p - GPUProcess::initializeGPUProcess:", this);
     WTF::Thread::setCurrentThreadIsUserInitiated();
     WebCore::initializeCommonAtomStrings();
@@ -511,10 +525,15 @@ void GPUProcess::recomputeNowPlayingOwner()
     m_activeNowPlayingOwner = eligibleOwner;
     m_remoteCommandTarget = commandTarget;
 
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
     // The UI process owns the per-page "is the NowPlaying session" state, so it hears the election result
     // directly rather than through the content processes, none of which can see the whole picture.
     if (ownerPage != previousOwnerPage)
         protect(parentProcessConnection())->send(Messages::GPUProcessProxy::NowPlayingOwnerDidChange(ownerPage), 0);
+#else
+    UNUSED_VARIABLE(ownerPage);
+    UNUSED_VARIABLE(previousOwnerPage);
+#endif
 }
 
 void GPUProcess::setNowPlayingFallbackSession(std::optional<WebCore::QualifiedMediaSessionIdentifier> session)
@@ -736,20 +755,14 @@ void GPUProcess::takeSnapshotWhenComplete(RemoteSnapshotIdentifier identifier, F
 
 #if PLATFORM(COCOA)
 
-void GPUProcess::sinkCompletedSnapshotToPDF(RemoteSnapshotIdentifier identifier, FrameIdentifier rootFrameIdentifier, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&& completionHandler)
+void GPUProcess::sinkCompletedSnapshotToPDF(RemoteSnapshotIdentifier identifier, FrameIdentifier rootFrameIdentifier, std::optional<ProcessIdentifier> printProcessIdentifier, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&& completionHandler)
 {
-    takeSnapshotWhenComplete(identifier, rootFrameIdentifier, [rootFrameIdentifier, completionHandler = WTF::move(completionHandler)](RefPtr<RemoteSnapshot>&& snapshot) mutable {
+    takeSnapshotWhenComplete(identifier, rootFrameIdentifier, [rootFrameIdentifier, printProcessIdentifier, completionHandler = WTF::move(completionHandler)](RefPtr<RemoteSnapshot>&& snapshot) mutable {
         if (!snapshot) {
             completionHandler({ });
             return;
         }
-        auto result = snapshot->drawToPDF(snapshot->size(), rootFrameIdentifier);
-        if (!result) {
-            ASSERT_NOT_REACHED();
-            completionHandler({ });
-            return;
-        }
-        completionHandler(WTF::move(*result));
+        RemoteSnapshotPDFDrawingTask::create(snapshot.releaseNonNull(), rootFrameIdentifier, WTF::move(completionHandler))->start(printProcessIdentifier);
     });
 }
 
@@ -844,6 +857,12 @@ void GPUProcess::setMockCaptureDevicesEnabled(bool isEnabled)
 void GPUProcess::setOrientationForMediaCapture(WebCore::IntDegrees orientation)
 {
     m_orientation = orientation;
+
+#if PLATFORM(COCOA)
+    if (RefPtr manager = m_capturePreviewManager)
+        manager->setOrientation(orientation);
+#endif
+
     for (auto& connection : m_webProcessConnections.values())
         connection->setOrientationForMediaCapture(orientation);
 }
@@ -860,9 +879,166 @@ void GPUProcess::enableMicrophoneMuteStatusAPI()
 
 void GPUProcess::rotationAngleForCaptureDeviceChanged(const String& persistentId, WebCore::VideoFrameRotation rotation)
 {
+#if PLATFORM(COCOA)
+    if (RefPtr manager = m_capturePreviewManager)
+        manager->rotationAngleForCaptureDeviceChanged(persistentId, rotation);
+#endif
     for (auto& connection : m_webProcessConnections.values())
         connection->rotationAngleForCaptureDeviceChanged(persistentId, rotation);
 }
+
+#if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
+void GPUProcess::startCapturePreview(std::optional<WebCore::CaptureDevice>&& videoDevice, std::optional<WebCore::CaptureDevice>&& audioDevice, WebCore::PageIdentifier pageIdentifier, WebCore::IntSize previewSize, WebCore::IntDegrees orientation, Vector<SandboxExtension::Handle>&& sandboxExtensions, String&& applicationBundleIdentifier, WebCore::SecurityOriginData&& origin, CompletionHandler<void(WebCore::HostingContext)>&& completionHandler)
+{
+    // FIXME: The manager is per process while requests are per page, so for now fail a second page's
+    // prompt while another is up until we figure out a better solution.
+    if (m_capturePreviewPage && *m_capturePreviewPage != pageIdentifier) {
+        RELEASE_LOG_ERROR(WebRTC, "GPUProcess::startCapturePreview: a preview is already running for another page");
+        return completionHandler({ });
+    }
+
+    m_capturePreviewPage = pageIdentifier;
+
+    // Do not consumePermanently(): the preview's extensions are revoked when the prompt is dismissed. If the user
+    // gives permission to capture the sandbox will be extended as necessary.
+    for (auto& handle : sandboxExtensions) {
+        if (RefPtr extension = SandboxExtension::create(WTF::move(handle)); extension && extension->consume())
+            m_capturePreviewSandboxExtensions.append(extension.releaseNonNull());
+    }
+
+    ensureAVCaptureServerConnection();
+
+#if ENABLE(APP_PRIVACY_REPORT) && !PLATFORM(MACCATALYST)
+    bool hasCaptureIdentity = setCaptureTCCIdentity(applicationBundleIdentifier) || WebCore::RealtimeMediaSourceCenter::singleton().hasIdentity();
+
+    // Fail immediately if we don't have a capture identity as -[AVCaptureSession init] will throw.
+    if (!hasCaptureIdentity && videoDevice) {
+        RELEASE_LOG_ERROR(WebRTC, "GPUProcess::startCapturePreview: no capture identity, refusing to preview");
+        stopCapturePreviewManager();
+        return completionHandler({ });
+    }
+#else
+    UNUSED_PARAM(applicationBundleIdentifier);
+#endif
+
+    if (!setUpCapturePreviewEnvironment(pageIdentifier, origin, !!videoDevice)) {
+        stopCapturePreviewManager();
+        return completionHandler({ });
+    }
+
+    if (!m_capturePreviewManager) {
+        m_capturePreviewManager = CapturePreviewManager::create(pageIdentifier, [pageIdentifier](float level) {
+            if (RefPtr connection = GPUProcess::singleton().parentProcessConnection())
+                connection->send(Messages::GPUProcessProxy::CapturePreviewAudioLevelChanged(pageIdentifier, level), 0);
+        });
+    }
+
+    RefPtr manager = m_capturePreviewManager;
+    manager->setOrientation(orientation);
+    manager->start(WTF::move(videoDevice), WTF::move(audioDevice), previewSize, WTF::move(completionHandler));
+
+    // Nothing could be started, so don't keep the manager, and the process, around for it.
+    if (!manager->isRunning())
+        stopCapturePreviewManager();
+}
+
+bool GPUProcess::setUpCapturePreviewEnvironment(WebCore::PageIdentifier pageIdentifier, const WebCore::SecurityOriginData& origin, bool hasCamera)
+{
+    if (!setCaptureAttributionString(origin)) {
+        RELEASE_LOG_ERROR(WebRTC, "GPUProcess::startCapturePreview: unable to set capture attribution, refusing to preview");
+        return false;
+    }
+
+#if PLATFORM(IOS_FAMILY) || ENABLE(EXTENSION_CAPABILITIES)
+    auto isConnectionForPage = [&](GPUConnectionToWebProcess& connection) {
+#if HAVE(AUDIT_TOKEN)
+        if (connection.presentingApplicationAuditTokens().contains(pageIdentifier))
+            return true;
+#endif
+#if ENABLE(EXTENSION_CAPABILITIES)
+        if (!connection.mediaPlaybackEnvironment(pageIdentifier).isEmpty())
+            return true;
+#endif
+        UNUSED_PARAM(connection);
+        return false;
+    };
+    RefPtr<GPUConnectionToWebProcess> pageConnection;
+    for (Ref connection : m_webProcessConnections.values()) {
+        if (isConnectionForPage(connection)) {
+            pageConnection = connection.ptr();
+            break;
+        }
+    }
+#endif
+
+#if ENABLE(EXTENSION_CAPABILITIES) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+    String mediaEnvironment = pageConnection ? pageConnection->mediaPlaybackEnvironment(pageIdentifier) : String { };
+    bool hasMediaEnvironment = !mediaEnvironment.isEmpty();
+    WebCore::RealtimeMediaSourceCenter::singleton().setCurrentMediaEnvironment(WTF::move(mediaEnvironment));
+    if (!hasMediaEnvironment && !WebCore::RealtimeMediaSourceCenter::singleton().hasIdentity() && hasCamera
+        && WTF::processHasEntitlement("com.apple.developer.web-browser-engine.rendering"_s)) {
+        RELEASE_LOG_ERROR(WebRTC, "GPUProcess::startCapturePreview: no media environment, refusing to preview");
+        return false;
+    }
+#else
+    UNUSED_PARAM(hasCamera);
+#endif
+
+#if PLATFORM(IOS_FAMILY)
+#if HAVE(AUDIT_TOKEN)
+    bool hasPresentingApplication = pageConnection && pageConnection->presentingApplicationAuditTokens().contains(pageIdentifier);
+#else
+    bool hasPresentingApplication = false;
+#endif
+    if (hasPresentingApplication)
+        pageConnection->providePresentingApplicationPID(pageIdentifier);
+    else {
+#if ENABLE(EXTENSION_CAPABILITIES)
+        bool usesMediaCapabilityGrants = pageConnection && pageConnection->sharedPreferencesForWebProcessValue().mediaCapabilityGrantsEnabled;
+#else
+        bool usesMediaCapabilityGrants = false;
+#endif
+        if (!usesMediaCapabilityGrants) {
+            if (RefPtr connection = parentProcessConnection())
+                protect(MediaSessionHelper::sharedHelper())->providePresentingApplicationPID(connection->remoteProcessID());
+        }
+    }
+#endif
+
+    return true;
+}
+
+void GPUProcess::stopCapturePreview(WebCore::PageIdentifier pageIdentifier, CompletionHandler<void()>&& completionHandler)
+{
+    if (m_capturePreviewPage && *m_capturePreviewPage != pageIdentifier)
+        return completionHandler();
+
+    m_capturePreviewPage = { };
+    stopCapturePreviewManager();
+
+    if (m_lastCaptureEnvironment) {
+        auto [processIdentifier, capturePageIdentifier] = *m_lastCaptureEnvironment;
+        if (RefPtr connection = m_webProcessConnections.get(processIdentifier))
+            connection->reapplyCaptureEnvironment(capturePageIdentifier);
+    }
+
+    for (auto& extension : std::exchange(m_capturePreviewSandboxExtensions, { }))
+        extension->revoke();
+
+    completionHandler();
+}
+
+void GPUProcess::didApplyCaptureEnvironment(WebCore::ProcessIdentifier processIdentifier, WebCore::PageIdentifier pageIdentifier)
+{
+    m_lastCaptureEnvironment = { processIdentifier, pageIdentifier };
+}
+
+void GPUProcess::stopCapturePreviewManager()
+{
+    if (RefPtr capturePreviewManager = WTF::move(m_capturePreviewManager))
+        capturePreviewManager->stop();
+}
+#endif // ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
 
 void GPUProcess::updateCaptureAccess(bool allowAudioCapture, bool allowVideoCapture, bool allowDisplayCapture, bool willUseEchoCancellation, WebCore::ProcessIdentifier processID, CompletionHandler<void()>&& completionHandler)
 {
@@ -1042,10 +1218,17 @@ void GPUProcess::webProcessConnectionCountForTesting(CompletionHandler<void(uint
     completionHandler(GPUConnectionToWebProcess::objectCountForTesting());
 }
 
-void GPUProcess::runDisplayListDataTestsForTesting(CompletionHandler<void(Vector<String>&&)>&& completionHandler)
+void GPUProcess::runDisplayListDataTestsForTesting(Vector<Ref<WebCore::SharedBuffer>>&& webFonts, CompletionHandler<void(std::optional<Vector<String>>&&)>&& completionHandler)
 {
-    completionHandler(testDisplayListData());
+    completionHandler(testDisplayListData(webFonts));
 }
+
+#if PLATFORM(COCOA)
+void GPUProcess::printProcessDrawingCountsForTesting(CompletionHandler<void(uint64_t, uint64_t)>&& completionHandler)
+{
+    completionHandler(RemoteSnapshotPDFDrawingTask::drawnInPrintProcessCountForTesting(), RemoteSnapshotPDFDrawingTask::drawnAfterPrintProcessFailedCountForTesting());
+}
+#endif
 
 void GPUProcess::terminateWebProcess(WebCore::ProcessIdentifier identifier, IPC::MessageName invalidMessageName)
 {

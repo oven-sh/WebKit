@@ -33,12 +33,16 @@ static void callOperationAndReturn(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTGetByVal, { .returns = OperationCall::Returns::Value, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
+// The map's set is a WTF::HashTable: its slots, then a status byte for each slot. The byte of a slot that was never filled is zero,
+// and the byte of a full slot has its top bit set. While the search runs, the upper half of `index` counts the slots it looked at.
 void emitFindSparseElement(StubAssembler& jit, const SparseElementSearch& search, JumpList& isAbsent)
 {
     const auto [owner, index, entry, probe, table] = search;
+    const GPRReg mask = probe;
+    const GPRReg statusBytes = table;
     constexpr unsigned entrySizeShift = 4;
     static_assert(sizeof(SparseArrayEntry) == 1 << entrySizeShift);
-    const Address attributes(entry, SparseArrayEntry::offsetOfAttributes());
+    static_assert(!WTF::StatusByte::empty && WTF::StatusByte::isFullBit == 0x80);
 
     emitHashOfBits(jit, index, entry, probe, table);
     jit.loadPtr(Address(owner, JSObject::butterflyOffset()), table);
@@ -46,24 +50,42 @@ void emitFindSparseElement(StubAssembler& jit, const SparseElementSearch& search
     isAbsent.append(jit.branchTestPtr(CCallHelpers::Zero, table));
     jit.loadPtr(Address(table, SparseArrayValueMap::offsetOfTable()), table);
     isAbsent.append(jit.branchTestPtr(CCallHelpers::Zero, table));
-    jit.move(TrustedImm32(0), probe);
+    // The status bytes start where the slots end.
+    jit.load32(Address(table, SparseArrayValueMap::offsetOfTableSize()), mask);
+    jit.lshift64(TrustedImm32(entrySizeShift), mask);
+    jit.add64(mask, statusBytes);
+    jit.urshift64(TrustedImm32(entrySizeShift), mask);
+    jit.sub32(TrustedImm32(1), mask);
 
-    Label hasBucketNumber = jit.label();
-    jit.and32(Address(table, SparseArrayValueMap::offsetOfTableSizeMask()), entry);
+    Label hasSlotNumber = jit.label();
+    jit.and32(mask, entry);
+    Jump wasNeverFilled = jit.branchTest8(CCallHelpers::Zero, BaseIndex(statusBytes, entry, CCallHelpers::TimesOne));
+    Jump isNotFull = jit.branchTest8(CCallHelpers::Zero, BaseIndex(statusBytes, entry, CCallHelpers::TimesOne), TrustedImm32(WTF::StatusByte::isFullBit));
+    // From the number of a slot to its address, which is as many slots in front of the status bytes as there are from it to the end.
+    jit.sub64(mask, entry);
+    jit.sub64(TrustedImm32(1), entry);
     jit.lshift64(TrustedImm32(entrySizeShift), entry);
-    jit.add64(table, entry);
-    isAbsent.append(jit.branchTest32(CCallHelpers::NonZero, attributes, TrustedImm32(static_cast<int32_t>(SparseArrayEntry::isEmptyBucketFlag))));
-    Jump hasOtherIndex = jit.branch32(CCallHelpers::NotEqual, Address(entry, SparseArrayEntry::offsetOfIndex()), index);
-    Jump isFound = jit.branchTest32(CCallHelpers::Zero, attributes, TrustedImm32(SparseArrayEntry::isDeletedBucketFlag));
+    jit.add64(statusBytes, entry);
+    Jump isFound = jit.branch32(CCallHelpers::Equal, Address(entry, SparseArrayEntry::offsetOfIndex()), index);
+    jit.sub64(statusBytes, entry);
+    jit.rshift64(TrustedImm32(entrySizeShift), entry);
+    jit.add64(mask, entry);
+    jit.add64(TrustedImm32(1), entry);
 
-    hasOtherIndex.link(&jit);
-    jit.sub64(table, entry);
-    jit.urshift64(TrustedImm32(entrySizeShift), entry);
-    jit.add32(TrustedImm32(1), probe);
-    jit.add32(probe, entry);
-    jit.jump().linkTo(hasBucketNumber, &jit);
+    // The next slot is as many slots further as slots were looked at.
+    isNotFull.link(&jit);
+    jit.rotateRight64(TrustedImm32(32), index);
+    jit.add64(TrustedImm32(1), index);
+    jit.add32(index, entry);
+    jit.rotateRight64(TrustedImm32(32), index);
+    jit.jump().linkTo(hasSlotNumber, &jit);
+
+    wasNeverFilled.link(&jit);
+    jit.zeroExtend32ToWord(index, index);
+    isAbsent.append(jit.jump());
 
     isFound.link(&jit);
+    jit.zeroExtend32ToWord(index, index);
 }
 
 void generateArrayGetAtIndex(StubAssembler& jit)

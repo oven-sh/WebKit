@@ -287,8 +287,8 @@ void JSModuleLoader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Locker locker { thisObject->cellLock() };
     auto moduleMapValues = thisObject->m_moduleMap.values();
     visitor.append(moduleMapValues.begin(), moduleMapValues.end());
-    auto resolutionFailuresValues = thisObject->m_resolutionFailures.values();
-    visitor.append(resolutionFailuresValues.begin(), resolutionFailuresValues.end());
+    for (auto& failure : thisObject->m_resolutionFailures.values())
+        visitor.append(failure.error);
     for (auto& [key, loadedModule] : thisObject->m_loadedModules)
         visitor.append(loadedModule.m_module);
 #if USE(BUN_JSC_ADDITIONS)
@@ -837,8 +837,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     ResolutionMapKey resolutionKey { referrerKey.impl(), specifier.impl() };
 
-    if (auto error = m_resolutionFailures.get(resolutionKey)) {
-        JSValue errorValue = error.get();
+    if (auto iter = m_resolutionFailures.find(resolutionKey); iter != m_resolutionFailures.end()) {
+        JSValue errorValue = iter->value.error.get();
         ASSERT(errorValue);
         JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->reject(vm, errorValue);
@@ -1628,7 +1628,7 @@ void JSModuleLoader::addResolutionFailure(VM& vm, const ResolutionMapKey& key, J
     Locker locker { cellLock() };
     if (m_resolutionFailures.size() >= JSModuleLoaderInternal::maximumResolutionFailures)
         m_resolutionFailures.remove(m_resolutionFailures.begin());
-    m_resolutionFailures.add(key, WriteBarrier<Unknown>(vm, this, error));
+    m_resolutionFailures.add(key, ResolutionFailure { WriteBarrier<Unknown>(vm, this, error), key.first, key.second });
 }
 
 ProgramExecutable* JSModuleLoader::ModuleReferrer::getScript() const

@@ -36,19 +36,19 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(QualifiedNameCache);
 
 struct QNameComponentsTranslator {
-    static unsigned LEGACY_NODELETE hash(const QualifiedNameComponents& components)
+    NODELETE static unsigned hash(const QualifiedNameComponents& components)
     {
         return computeHash(components);
     }
 
-    static bool LEGACY_NODELETE equal(QualifiedName::QualifiedNameImpl* name, const QualifiedNameComponents& c)
+    NODELETE static bool equal(QualifiedName::QualifiedNameImpl* name, const QualifiedNameComponents& c)
     {
         return c.m_prefix == name->m_prefix.impl() && c.m_localName == name->m_localName.impl() && c.m_namespaceURI == name->m_namespaceURI.impl();
     }
 
-    static void translate(QualifiedName::QualifiedNameImpl*& location, const QualifiedNameComponents& components, unsigned)
+    static void translate(QualifiedName::QualifiedNameImpl** location, const QualifiedNameComponents& components, unsigned)
     {
-        location = &QualifiedName::QualifiedNameImpl::create(components.m_prefix.get(), components.m_localName.get(), components.m_namespaceURI.get()).leakRef();
+        new (NotNull, location) QualifiedName::QualifiedNameImpl*(&QualifiedName::QualifiedNameImpl::create(components.m_prefix.get(), components.m_localName.get(), components.m_namespaceURI.get()).leakRef());
     }
 };
 

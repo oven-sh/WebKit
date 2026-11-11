@@ -41,6 +41,12 @@
 
 namespace WebCore {
 
+TextStream& operator<<(TextStream& textStream, const QuirkMatchPattern& quirkMatchPattern)
+{
+    textStream << quirkMatchPattern.string();
+    return textStream;
+}
+
 const String& URLMatchContext::registrableDomain() const
 {
     if (!m_registrableDomain)
@@ -61,6 +67,12 @@ bool evaluateURLEnvironment(URLEnvironment environment)
     case URLEnvironment::SmallScreen:
 #if PLATFORM(IOS_FAMILY)
         return PAL::currentUserInterfaceIdiomIsSmallScreen();
+#else
+        return false;
+#endif
+    case URLEnvironment::Desktop:
+#if PLATFORM(IOS_FAMILY)
+        return PAL::currentUserInterfaceIdiomIsDesktop();
 #else
         return false;
 #endif

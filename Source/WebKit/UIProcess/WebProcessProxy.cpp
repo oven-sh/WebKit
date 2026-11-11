@@ -116,6 +116,7 @@
 #include <ranges>
 #include <stdio.h>
 #include <wtf/Borrow.h>
+#include <wtf/FileSystem.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessPrivilege.h>
 #include <wtf/RunLoop.h>
@@ -1092,7 +1093,8 @@ WebPageProxy* WebProcessProxy::webPageWithActiveXRSession()
 {
     for (WeakRef weakPage : globalPageMap().values()) {
         Ref page = weakPage.get();
-        if (page->xrSystem() && page->xrSystem()->hasActiveSession())
+        RefPtr xrSystem = page->xrSystem();
+        if (xrSystem && xrSystem->hasActiveSession())
             return weakPage.ptr();
     }
     return nullptr;
@@ -1481,7 +1483,7 @@ bool WebProcessProxy::hasAssumedReadAccessToURL(const URL& url) const
     auto startsWithURLPath = [&path, protectedThis = RefPtr { this }](const String& assumedAccessPath) {
         // There are no ".." components, because URL removes those.
         WEBPROCESSPROXY_RELEASE_LOG_WITH_THIS(Sandbox, protectedThis, "hasAssumedReadAccessToURL: checking if url is contained in url(%u) with assumed access", WTF::URLHash::hash(URL::fileURLWithFileSystemPath(assumedAccessPath)));
-        return path.startsWith(assumedAccessPath);
+        return FileSystem::pathIsSameOrDescendantOf(path, assumedAccessPath);
     };
 
     auto& platformPaths = platformPathsWithAssumedReadAccess();
@@ -1547,11 +1549,6 @@ bool WebProcessProxy::fullKeyboardAccessEnabled()
 {
     return false;
 }
-
-bool WebProcessProxy::shouldDisableJITCage() const
-{
-    return false;
-}
 #endif // !PLATFORM(COCOA)
 
 void WebProcessProxy::getNetworkProcessConnection(CompletionHandler<void(NetworkProcessConnectionInfo&&)>&& reply)
@@ -1602,7 +1599,7 @@ void WebProcessProxy::gpuProcessConnectionDidBecomeUnresponsive(GPUProcessConnec
 // A frame hosted in another process was painted into a snapshot here. Received by the process rather
 // than a page, because the frame may be going away along with the last of this process's frames in
 // the page, and a request that reached nothing would leave the snapshot waiting for it.
-void WebProcessProxy::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const WebCore::IntRect& rect, RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode)
+void WebProcessProxy::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode)
 {
     MESSAGE_CHECK(renderingMode == WebCore::RenderingMode::DisplayList || renderingMode == WebCore::RenderingMode::PDFDocument);
 
@@ -1639,7 +1636,7 @@ void WebProcessProxy::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, cons
     gpuProcess->snapshotFrameWillBeDrawnByProcess(snapshotIdentifier, frameID, frameProcess->coreProcessIdentifier());
     // Also while the frame's process is waiting on this one, as it does for alert(), since this
     // process may itself be blocked waiting for the snapshot.
-    frameProcess->send(Messages::WebProcess::DrawFrameToSnapshot(frameID, rect, snapshotIdentifier, renderingMode), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForUnboundedSyncReply);
+    frameProcess->send(Messages::WebProcess::DrawFrameToSnapshot(frameID, rectRelativeToVisibleContent, snapshotIdentifier, renderingMode), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForUnboundedSyncReply);
 }
 
 #if HAVE(IOSURFACE)
@@ -1707,7 +1704,7 @@ void WebProcessProxy::gpuProcessExited(ProcessTerminationReason reason)
 void WebProcessProxy::createModelProcessConnection(IPC::Connection::Handle&& connectionIdentifier)
 {
     bool anyPageHasModelProcessEnabled = false;
-    for (auto& page : m_pageMap.values())
+    for (Ref page : pages())
         anyPageHasModelProcessEnabled |= page->preferences().modelElementEnabled() && page->preferences().modelProcessEnabled();
     MESSAGE_CHECK(anyPageHasModelProcessEnabled);
 
@@ -1722,7 +1719,7 @@ void WebProcessProxy::createModelProcessConnection(IPC::Connection::Handle&& con
 
 void WebProcessProxy::modelProcessDidFinishLaunching()
 {
-    for (auto& page : m_pageMap.values())
+    for (Ref page : pages())
         page->modelProcessDidFinishLaunching();
 }
 
@@ -1730,7 +1727,7 @@ void WebProcessProxy::modelProcessExited(ProcessTerminationReason reason)
 {
     WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "modelProcessExited: reason=%" PUBLIC_LOG_STRING, processTerminationReasonToString(reason).characters());
 
-    for (auto& page : m_pageMap.values())
+    for (Ref page : pages())
         page->modelProcessExited(reason);
 }
 
@@ -2430,7 +2427,7 @@ RefPtr<API::Object> WebProcessProxy::transformHandlesToObjects(API::Object* obje
             }
         }
 
-        WebProcessProxy& LEGACY_NODELETE process() const { return m_webProcessProxy; }
+        NODELETE WebProcessProxy& process() const { return m_webProcessProxy; }
 
         WeakRef<WebProcessProxy> m_webProcessProxy;
     };
@@ -2916,6 +2913,9 @@ void WebProcessProxy::didCommitMainFrameLoad(const URL& url)
 
 void WebProcessProxy::updateSiteForMainFrameNavigation(const URL& url)
 {
+    if (firstPartyAccessIsAnswerable(*this))
+        return;
+
     // This process has been used for several registrable domains already.
     if (!m_site && m_site.error() == SiteState::MultipleSites)
         return;

@@ -29,6 +29,7 @@
 #include "ViewportArguments.h"
 
 #include "Document.h"
+#include "DocumentQuirks.h"
 #include "FrameDestructionObserverInlines.h"
 #include "IntSize.h"
 #include "LocalFrame.h"
@@ -46,7 +47,7 @@ typedef Function<void(ViewportErrorCode, StringView, StringView)> InternalViewpo
 const float ViewportArguments::deprecatedTargetDPI = 160;
 #endif
 
-static inline float LEGACY_NODELETE clampLengthValue(float value)
+NODELETE static inline float clampLengthValue(float value)
 {
     ASSERT(value != ViewportArguments::ValueDeviceWidth);
     ASSERT(value != ViewportArguments::ValueDeviceHeight);
@@ -57,7 +58,7 @@ static inline float LEGACY_NODELETE clampLengthValue(float value)
     return value;
 }
 
-static inline float LEGACY_NODELETE clampScaleValue(float value)
+NODELETE static inline float clampScaleValue(float value)
 {
     ASSERT(value != ViewportArguments::ValueDeviceWidth);
     ASSERT(value != ViewportArguments::ValueDeviceHeight);
@@ -170,7 +171,7 @@ ViewportAttributes ViewportArguments::resolve(const FloatSize& initialViewportSi
     return result;
 }
 
-static FloatSize LEGACY_NODELETE convertToUserSpace(const FloatSize& deviceSize, float devicePixelRatio)
+NODELETE static FloatSize convertToUserSpace(const FloatSize& deviceSize, float devicePixelRatio)
 {
     FloatSize result = deviceSize;
     if (devicePixelRatio != 1)
@@ -342,7 +343,7 @@ static ASCIILiteral viewportErrorMessageTemplate(ViewportErrorCode errorCode)
     return "Unknown viewport error."_s;
 }
 
-static MessageLevel LEGACY_NODELETE viewportErrorMessageLevel(ViewportErrorCode errorCode)
+NODELETE static MessageLevel viewportErrorMessageLevel(ViewportErrorCode errorCode)
 {
     switch (errorCode) {
     case ViewportErrorCode::TruncatedViewportArgumentValue:
@@ -418,7 +419,8 @@ void setViewportFeature(ViewportArguments& arguments, StringView key, StringView
 
 void setViewportFeature(ViewportArguments& arguments, Document& document, StringView key, StringView value)
 {
-    setViewportFeature(arguments, key, value, document.settings().metaViewportInteractiveWidgetEnabled(), [&](ViewportErrorCode errorCode, const String& message) {
+    bool interactiveWidgetEnabled = document.settings().metaViewportInteractiveWidgetEnabled() && !document.quirks().shouldIgnoreViewportInteractiveWidget();
+    setViewportFeature(arguments, key, value, interactiveWidgetEnabled, [&](ViewportErrorCode errorCode, const String& message) {
         reportViewportWarning(document, errorCode, message);
     });
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,10 +25,7 @@
 
 #pragma once
 
-#include <WebCore/CachedImage.h>
 #include <WebCore/LayoutBox.h>
-#include <wtf/TZoneMalloc.h>
-#include <wtf/UniqueRef.h>
 
 namespace WebCore {
 
@@ -41,84 +38,37 @@ class ComputedStyle;
 namespace Layout {
 
 class ElementBox : public Box {
-    WTF_MAKE_TZONE_ALLOCATED(ElementBox);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ElementBox);
 public:
-    ElementBox(ElementAttributes&&, Style::ComputedStyle&&, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle = nullptr, EnumSet<BaseTypeFlag> = { ElementBoxFlag });
-
-    enum class IsListMarkerImage : bool { No, Yes };
-    ElementBox(ElementAttributes&&, IsListMarkerImage, Style::ComputedStyle&&, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle = nullptr);
-
-    ~ElementBox();
-
-    const Box* firstChild() const { return m_firstChild.get(); }
-    const Box* LEGACY_NODELETE firstInFlowChild() const;
-    const Box* LEGACY_NODELETE firstInFlowOrFloatingChild() const;
-    const Box* LEGACY_NODELETE firstOutOfFlowChild() const;
-    const Box* lastChild() const { return m_lastChild.get(); }
-    const Box* LEGACY_NODELETE lastInFlowChild() const;
-    const Box* LEGACY_NODELETE lastInFlowOrFloatingChild() const;
-    const Box* LEGACY_NODELETE lastOutOfFlowChild() const;
-
-    // FIXME: This is currently needed for style updates.
-    Box* firstChild() { return m_firstChild.get(); }
+    // The render tree children, without excluded list markers. RenderView's box is the only child of the initial containing block.
+    // Defined in RenderElement.h.
+    inline const Box* firstChild() const;
+    NODELETE const Box* firstInFlowChild() const;
+    NODELETE const Box* firstInFlowOrFloatingChild() const;
+    NODELETE const Box* firstOutOfFlowChild() const;
+    inline const Box* lastChild() const;
+    NODELETE const Box* lastInFlowChild() const;
+    NODELETE const Box* lastInFlowOrFloatingChild() const;
+    NODELETE const Box* lastOutOfFlowChild() const;
 
     bool hasChild() const { return firstChild(); }
     bool hasInFlowChild() const { return firstInFlowChild(); }
     bool hasInFlowOrFloatingChild() const { return firstInFlowOrFloatingChild(); }
-    bool LEGACY_NODELETE hasOutOfFlowChild() const;
+    NODELETE bool hasOutOfFlowChild() const;
 
-    void appendChild(UniqueRef<Box>);
-    void insertChild(UniqueRef<Box>, Box* beforeChild = nullptr);
-    void destroyChildren();
-
-    void setBaselineForIntegration(LayoutUnit baseline) { m_baselineForIntegration = baseline; }
-    std::optional<LayoutUnit> baselineForIntegration() const { return m_baselineForIntegration; }
-
-    bool LEGACY_NODELETE hasIntrinsicWidth() const;
-    bool LEGACY_NODELETE hasIntrinsicHeight() const;
-    bool LEGACY_NODELETE hasIntrinsicRatio() const;
-    bool LEGACY_NODELETE hasNaturalWidth() const;
-    bool LEGACY_NODELETE hasNaturalHeight() const;
-    LayoutUnit LEGACY_NODELETE naturalWidth() const;
-    LayoutUnit LEGACY_NODELETE naturalHeight() const;
-    LayoutUnit LEGACY_NODELETE intrinsicWidth() const;
-    LayoutUnit LEGACY_NODELETE intrinsicHeight() const;
-    LayoutUnit LEGACY_NODELETE intrinsicRatio() const;
-    bool LEGACY_NODELETE hasAspectRatio() const;
-
-    void setIsListMarkerImage(IsListMarkerImage isListMarkerImage) { m_replacedData->isListMarkerImage = isListMarkerImage == IsListMarkerImage::Yes; }
-
-    bool isListMarkerImage() const { return m_replacedData && m_replacedData->isListMarkerImage; }
-
+    // From the renderer.
+    bool isListMarkerImage() const;
     // FIXME: This is temporary until after list marker content is accessible by IFC (webkit.org/b/294342)
-    void setListMarkerLayoutBounds(std::pair<float, float> layoutBounds) { m_replacedData->layoutBounds = layoutBounds; }
-    std::pair<float, float> layoutBoundsForListMarker() const { return m_replacedData ? m_replacedData->layoutBounds : std::pair<float, float>(); }
+    std::pair<float, float> layoutBoundsForListMarker() const;
 
-    // FIXME: This doesn't belong.
-    CachedImage* cachedImage() const { return m_replacedData ? m_replacedData->cachedImage : nullptr; }
+    // Null only for the initial containing block. Defined in RenderElement.h.
+    inline RenderElement* rendererForIntegration() const;
 
-    RenderElement* LEGACY_NODELETE rendererForIntegration() const;
+protected:
+    ElementBox(Style::ComputedStyle&&, ElementAttributes, EnumSet<BaseTypeFlag> = { });
+    ~ElementBox();
 
 private:
-    friend class Box;
-
-    struct ReplacedData {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ReplacedData);
-
-        bool isListMarkerImage { false };
-        std::pair<float, float> layoutBounds;
-
-        std::optional<LayoutSize> intrinsicSize;
-        std::optional<LayoutUnit> intrinsicRatio;
-        WeakPtr<CachedImage> cachedImage;
-    };
-
-    std::unique_ptr<Box> m_firstChild;
-    CheckedPtr<Box> m_lastChild;
-
-    const std::unique_ptr<ReplacedData> m_replacedData;
-    std::optional<LayoutUnit> m_baselineForIntegration;
+    NODELETE const Box& initialContainingBlockChild() const;
 };
 
 }
@@ -126,3 +76,5 @@ private:
 
 SPECIALIZE_TYPE_TRAITS_LAYOUT_BOX(ElementBox, isElementBox())
 
+// For the inline functions that read the renderer. RenderElement.h includes this header first.
+#include <WebCore/RenderElement.h>

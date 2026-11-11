@@ -44,7 +44,6 @@
 #import "TestURLSchemeHandler.h"
 #import "Helpers/cocoa/TestWKWebView.h"
 #import "UIKitSPIForTesting.h"
-#import "Helpers/cocoa/UISideCompositingScope.h"
 #import "WKPrinting.h"
 #import "Helpers/cocoa/WKWebViewConfigurationExtras.h"
 #import "Helpers/mac/WKWebViewForTestingImmediateActions.h"
@@ -1219,6 +1218,47 @@ TEST_P(EmbeddedPDFLookUpAfterPinch, LookUpTargetsTheSameWordAfterPinchZoom)
 
 INSTANTIATE_TEST_SUITE_P(UnifiedPDF, EmbeddedPDFLookUpAfterPinch, testing::ValuesIn(pinchZoomParams), &EmbeddedPDFLookUpAfterPinch::testNameGenerator);
 
+using ZoomSetter = void (^)(WKWebView *);
+
+static void testZoomBeyondPluginMaximum(ZoomSetter setZoom)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configurationForWebViewTestingUnifiedPDF().get()]);
+    [webView loadData:testPDFData().get() MIMEType:@"application/pdf" characterEncodingName:@"" baseURL:[NSURL URLWithString:@"https://www.apple.com/testPath"]];
+    [webView _test_waitForDidFinishNavigation];
+
+    __block bool done = false;
+    __block bool webProcessTerminated = false;
+    RetainPtr navigationDelegate = adoptNS([[TestNavigationDelegate alloc] init]);
+    navigationDelegate.get().webContentProcessDidTerminate = ^(WKWebView *, _WKProcessTerminationReason) {
+        webProcessTerminated = true;
+        done = true;
+    };
+    [webView setNavigationDelegate:navigationDelegate.get()];
+
+    setZoom(webView.get());
+    [webView _doAfterNextPresentationUpdate:^{
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+
+    EXPECT_FALSE(webProcessTerminated);
+    EXPECT_DOUBLE_EQ([webView pageZoom], 6);
+}
+
+UNIFIED_PDF_TEST(PageZoomBeyondPluginMaximumDoesNotTerminateWebProcess)
+{
+    testZoomBeyondPluginMaximum(^(WKWebView *webView) {
+        webView.pageZoom = 101;
+    });
+}
+
+UNIFIED_PDF_TEST(TextZoomBeyondPluginMaximumDoesNotTerminateWebProcess)
+{
+    testZoomBeyondPluginMaximum(^(WKWebView *webView) {
+        webView._textZoomFactor = 101;
+    });
+}
+
 #endif // PLATFORM(MAC)
 
 #if ENABLE(PDF_HUD)
@@ -1904,23 +1944,6 @@ UNIFIED_PDF_TEST(PasswordFormShouldDismissAfterNavigation)
     auto colorsAfter = [webView sampleColorsWithInterval:2];
 
     EXPECT_EQ(colorsBefore, colorsAfter);
-}
-
-UNIFIED_PDF_TEST(WebProcessShouldNotCrashWithUISideCompositingDisabled)
-{
-    UISideCompositingScope scope { UISideCompositingState::Disabled };
-
-    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 600, 600) configuration:configurationForWebViewTestingUnifiedPDF().get() addToWindow:YES]);
-    RetainPtr delegate = adoptNS([[ObserveWebContentCrashNavigationDelegate alloc] init]);
-    [webView setNavigationDelegate:delegate.get()];
-
-    RetainPtr request = [NSURLRequest requestWithURL:[NSBundle.test_resourcesBundle URLForResource:@"test" withExtension:@"pdf"]];
-    [webView loadRequest:request.get()];
-
-    Util::waitFor([delegate] {
-        return [delegate webProcessCrashed] || [delegate navigationFinished];
-    });
-    EXPECT_FALSE([delegate webProcessCrashed]);
 }
 
 static void runSelectAllAndVerifySelectedTextMatches(NSString *expected, void (^loadContent)(TestWKWebView *webView))

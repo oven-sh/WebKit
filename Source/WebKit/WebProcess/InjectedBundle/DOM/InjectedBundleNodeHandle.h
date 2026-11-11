@@ -54,7 +54,7 @@ public:
 
     virtual ~InjectedBundleNodeHandle();
 
-    WebCore::Node* LEGACY_NODELETE coreNode();
+    NODELETE WebCore::Node* coreNode();
 
     // Convenience DOM Operations
     RefPtr<InjectedBundleNodeHandle> document();
@@ -73,15 +73,13 @@ public:
     void setHTMLInputElementAutoFilledAndObscured(bool);
     bool isHTMLInputElementAutoFillButtonEnabled() const;
     void setHTMLInputElementAutoFillButtonEnabled(WebCore::AutoFillButtonType);
-    WebCore::AutoFillButtonType htmlInputElementAutoFillButtonType() const;
-    WebCore::AutoFillButtonType htmlInputElementLastAutoFillButtonType() const;
     bool isAutoFillAvailable() const;
     WebCore::IntRect htmlInputElementAutoFillButtonBounds();
     bool htmlInputElementLastChangeWasUserEdit();
     bool htmlTextAreaElementLastChangeWasUserEdit();
     bool isTextField() const;
-    bool LEGACY_NODELETE isSelectElement() const;
-    bool LEGACY_NODELETE isSelectableTextNode() const;
+    NODELETE bool isSelectElement() const;
+    NODELETE bool isSelectableTextNode() const;
     
     RefPtr<InjectedBundleNodeHandle> htmlTableCellElementCellAbove();
 

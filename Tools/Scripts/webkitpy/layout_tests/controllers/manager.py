@@ -183,6 +183,9 @@ class Manager(object):
             self._expectations[(driver_name, device_type)] = test_expectations.TestExpectations(self._port, test_names, force_expectations_pass=self._options.force, device_type=device_type)
             self._expectations[(driver_name, device_type)].parse_all_expectations()
             self._expectations[(driver_name, device_type)].add_test_list_expectations(self._finder.get_test_list_expectations())
+            if driver_name == 'DumpRenderTree':
+                # FIXME: DumpRenderTree can't render WPT print reftests as printed pages (rdar://191464040).
+                self._expectations[(driver_name, device_type)].add_skipped_tests({test.test_path for test in tests if test.is_wpt_print_reftest})
 
             tests_to_run = self._tests_to_run(tests, device_type=device_type)
             tests_to_run_by_device[device_type] = [test for test in tests_to_run if test not in aggregate_tests_to_run]
@@ -315,6 +318,7 @@ class Manager(object):
         else:
             should_run_pixel_test = True
 
+        expectations = self._expectations[(self._current_driver_name, device_type)]
         return TestInput(
             test_file,
             timeout=timeout,
@@ -322,6 +326,7 @@ class Manager(object):
             needs_servers=test_file.needs_any_server,
             should_dump_jsconsolelog_in_stderr=should_dump_jsconsolelog_in_stderr,
             should_run_pixel_test=should_run_pixel_test,
+            expected_results=frozenset(expectations.filtered_expectations_for_test(test_file.test_path, self._options.pixel_tests or bool(test_file.reference_files), self._options.world_leaks)),
         )
 
     def _test_is_slow(self, test_file, device_type):
@@ -380,6 +385,8 @@ class Manager(object):
                     _log.critical('')
                     _log.critical('--test-list file "{}" not found'.format(list_path))
                     return test_run_results.RunDetails(exit_code=-1)
+
+        self._port.warn_about_ignored_sanitizer_options()
 
         overall_initial_results = None
         overall_retry_results = None

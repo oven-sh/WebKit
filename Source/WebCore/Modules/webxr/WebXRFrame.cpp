@@ -47,6 +47,10 @@
 #include "WebXRTransientInputHitTestResult.h"
 #endif
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+#include "WebXRPlaneSet.h"
+#endif
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebXRFrame);
@@ -208,7 +212,7 @@ ExceptionOr<RefPtr<WebXRViewerPose>> WebXRFrame::getViewerPose(const Document& d
         // 8.6. Let offset be an new XRRigidTransform object equal to the view offset of view in the relevant realm of session.
         // 8.7. Set xrview’s transform property to the result of multiplying the XRViewerPose's transform by the offset transform in the relevant realm of session
         auto offset = matrixFromPose(frameData.views[index].offset);
-        Ref transform = WebXRRigidTransform::create(pose->transform().rawTransform() * offset);
+        Ref transform = WebXRRigidTransform::create(protect(pose->transform())->rawTransform() * offset);
 
         // Set projection matrix for each view
         std::array<float, 16> projection = WTF::switchOn(frameData.views[index].projection, [&](const PlatformXR::FrameData::Fov& fov) {
@@ -315,11 +319,12 @@ ExceptionOr<bool> WebXRFrame::fillJointRadii(const Vector<Ref<WebXRJointSpace>>&
     //     Set allValid to false.
     // 2. Increase offset by 1.
     for (size_t i = 0; i < jointSpaces.size(); ++i) {
-        if (jointSpaces[i]->handHasMissingPoses()) {
+        Ref jointSpace = jointSpaces[i];
+        if (jointSpace->handHasMissingPoses()) {
             radii.set(i, std::numeric_limits<float>::quiet_NaN());
             allValid = false;
         } else
-            radii.set(i, jointSpaces[i]->radius());
+            radii.set(i, jointSpace->radius());
     }
 
     return allValid;
@@ -424,6 +429,19 @@ ExceptionOr<Vector<Ref<WebXRTransientInputHitTestResult>>> WebXRFrame::getHitTes
         results.append(WebXRTransientInputHitTestResult::create(inputSource.releaseNonNull(), WTF::move(hitTestResults)));
     }
     return results;
+}
+#endif
+
+#if ENABLE(WEBXR_PLANE_DETECTION)
+// https://immersive-web.github.io/plane-detection/#dom-xrframe-detectedplanes
+ExceptionOr<Ref<WebXRPlaneSet>> WebXRFrame::detectedPlanes()
+{
+    if (!m_active)
+        return Exception { ExceptionCode::InvalidStateError, "Frame is not active"_s };
+
+    if (!m_detectedPlanes)
+        m_detectedPlanes = WebXRPlaneSet::create(m_session->detectedPlanes());
+    return Ref { *m_detectedPlanes };
 }
 #endif
 

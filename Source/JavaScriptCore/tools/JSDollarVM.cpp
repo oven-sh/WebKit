@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2015-2026 Apple Inc. All rights reserved.
+ * Copyright (C) 2026 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -73,6 +74,7 @@
 #include "OperationResult.h"
 #include "Options.h"
 #include "Parser.h"
+#include "PreventCollectionScope.h"
 #include "ProbeContext.h"
 #include "PropertyInlineCacheClearingWatchpoint.h"
 #include "PropertyRun.h"
@@ -210,7 +212,7 @@ class JSDollarVMCallFrame : public JSNonFinalObject {
     using Base = JSNonFinalObject;
 public:
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -300,12 +302,12 @@ public:
 
     typedef JSNonFinalObject Base;
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
 
-    Root* LEGACY_NODELETE root() const { return m_root.get(); }
+    NODELETE Root* root() const { return m_root.get(); }
     void setRoot(VM& vm, Root* root) { m_root.set(vm, this, root); }
 
     static Element* create(VM& vm, JSGlobalObject* globalObject, Root* root)
@@ -366,7 +368,7 @@ class Root final : public JSDestructibleObject {
 public:
     using Base = JSDestructibleObject;
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.destructibleObjectSpace();
     }
@@ -377,7 +379,7 @@ public:
         DollarVMAssertScope assertScope;
     }
 
-    Element* LEGACY_NODELETE element()
+    NODELETE Element* element()
     {
         return m_element.get();
     }
@@ -439,7 +441,7 @@ public:
 
     typedef JSNonFinalObject Base;
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -461,7 +463,7 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    JSValue LEGACY_NODELETE hiddenValue()
+    NODELETE JSValue hiddenValue()
     {
         return m_hiddenValue.get();
     }
@@ -472,7 +474,7 @@ public:
         m_hiddenValue.set(vm, this, value);
     }
 
-    static CallData LEGACY_NODELETE getConstructData(JSCell*)
+    NODELETE static CallData getConstructData(JSCell*)
     {
         CallData constructData;
         constructData.type = CallData::Type::Native;
@@ -513,7 +515,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::GetOwnPropertySlotIsImpure | JSC::OverridesGetOwnPropertySlot;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -595,7 +597,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -677,7 +679,7 @@ IGNORE_WARNINGS_BEGIN("unused-const-variable")
 IGNORE_WARNINGS_END
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -695,7 +697,7 @@ IGNORE_WARNINGS_END
 
     ~RuntimeArray() { }
 
-    static void LEGACY_NODELETE destroy(JSCell* cell)
+    NODELETE static void destroy(JSCell* cell)
     {
         DollarVMAssertScope assertScope;
         static_cast<RuntimeArray*>(cell)->RuntimeArray::~RuntimeArray();
@@ -732,21 +734,21 @@ IGNORE_WARNINGS_END
         return JSObject::getOwnPropertySlotByIndex(thisObject, globalObject, index, slot);
     }
 
-    static NO_RETURN_DUE_TO_CRASH bool LEGACY_NODELETE put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&)
+    NODELETE static NO_RETURN_DUE_TO_CRASH bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&)
     {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    static NO_RETURN_DUE_TO_CRASH bool LEGACY_NODELETE deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&)
+    NODELETE static NO_RETURN_DUE_TO_CRASH bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&)
     {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    unsigned LEGACY_NODELETE getLength() const { return m_vector.size(); }
+    NODELETE unsigned getLength() const { return m_vector.size(); }
 
     DECLARE_INFO;
 
-    static ArrayPrototype* LEGACY_NODELETE createPrototype(VM&, JSGlobalObject* globalObject)
+    NODELETE static ArrayPrototype* createPrototype(VM&, JSGlobalObject* globalObject)
     {
         DollarVMAssertScope assertScope;
         return globalObject->arrayPrototype();
@@ -854,7 +856,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable | OverridesGetOwnPropertySlot;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -951,7 +953,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -987,7 +989,7 @@ public:
     DECLARE_INFO;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -1035,7 +1037,7 @@ class ObjectDoingSideEffectPutWithoutCorrectSlotStatus : public JSNonFinalObject
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesPut | HasStaticPropertyTable;
 public:
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -1086,7 +1088,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -1120,12 +1122,12 @@ public:
         return getter;
     }
 
-    int32_t LEGACY_NODELETE value() const
+    NODELETE int32_t value() const
     {
         return m_value;
     }
 
-    static constexpr ptrdiff_t LEGACY_NODELETE offsetOfValue() { return OBJECT_OFFSETOF(DOMJITNode, m_value); }
+    NODELETE static constexpr ptrdiff_t offsetOfValue() { return OBJECT_OFFSETOF(DOMJITNode, m_value); }
 
 private:
     int32_t m_value { 42 };
@@ -1713,8 +1715,8 @@ public:
     Message(ArrayBufferContents&&, int32_t);
     ~Message();
 
-    ArrayBufferContents&& LEGACY_NODELETE releaseContents() { return WTF::move(m_contents); }
-    int32_t LEGACY_NODELETE index() const { return m_index; }
+    NODELETE ArrayBufferContents&& releaseContents() { return WTF::move(m_contents); }
+    NODELETE int32_t index() const { return m_index; }
 
 private:
     ArrayBufferContents m_contents;
@@ -1727,7 +1729,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -1957,7 +1959,7 @@ const ClassInfo StaticCustomValue::s_info = { "StaticCustomValue"_s, &Base::s_in
 const ClassInfo StaticDontDeleteDontEnum::s_info = { "StaticDontDeleteDontEnum"_s, &Base::s_info, &staticDontDeleteDontEnumTable, nullptr, CREATE_METHOD_TABLE(StaticDontDeleteDontEnum) };
 const ClassInfo ObjectDoingSideEffectPutWithoutCorrectSlotStatus::s_info = { "ObjectDoingSideEffectPutWithoutCorrectSlotStatus"_s, &Base::s_info, &staticCustomAccessorTable, nullptr, CREATE_METHOD_TABLE(ObjectDoingSideEffectPutWithoutCorrectSlotStatus) };
 
-ElementHandleOwner* LEGACY_NODELETE Element::handleOwner()
+NODELETE ElementHandleOwner* Element::handleOwner()
 {
     DollarVMAssertScope assertScope;
     static ElementHandleOwner* owner = nullptr;
@@ -1983,7 +1985,7 @@ class WasmStreamingParser : public JSDestructibleObject {
 public:
     using Base = JSDestructibleObject;
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.destructibleObjectSpace();
     }
@@ -2026,7 +2028,7 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    Wasm::StreamingParser& LEGACY_NODELETE streamingParser() { return m_streamingParser; }
+    NODELETE Wasm::StreamingParser& streamingParser() { return m_streamingParser; }
 
     void finishCreation(VM& vm)
     {
@@ -2083,7 +2085,7 @@ class WasmStreamingCompiler : public JSDestructibleObject {
 public:
     using Base = JSDestructibleObject;
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.destructibleObjectSpace();
     }
@@ -2112,9 +2114,9 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    Wasm::StreamingCompiler& LEGACY_NODELETE streamingCompiler() { return m_streamingCompiler.get(); }
+    NODELETE Wasm::StreamingCompiler& streamingCompiler() { return m_streamingCompiler.get(); }
 
-    JSPromise* LEGACY_NODELETE promise() const { return m_promise.get(); }
+    NODELETE JSPromise* promise() const { return m_promise.get(); }
 
     void finishCreation(VM& vm)
     {
@@ -2182,6 +2184,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionExit);
 static JSC_DECLARE_HOST_FUNCTION(functionDFGTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionFTLTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionOMGTrue);
+static JSC_DECLARE_HOST_FUNCTION(functionIsIPIntFrame);
+static JSC_DECLARE_HOST_FUNCTION(functionIsBBQFrame);
+static JSC_DECLARE_HOST_FUNCTION(functionIsOMGFrame);
+static JSC_DECLARE_HOST_FUNCTION(functionIsOMGForOSREntryFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuMfence);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuRdtsc);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuCpuid);
@@ -2550,6 +2556,96 @@ JSC_DEFINE_HOST_FUNCTION(functionOMGTrue, (JSGlobalObject* globalObject, CallFra
     return JSValue::encode(jsNumber(2));
 }
 
+#if ENABLE(WEBASSEMBLY)
+// Returns the compilation mode of the wasm function that called this host function through an import.
+static std::optional<Wasm::CompilationMode> callingWasmFrameCompilationMode(VM& vm, CallFrame* callFrame)
+{
+    std::optional<Wasm::CompilationMode> result;
+    unsigned frameIndex = 0;
+    StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
+        DollarVMAssertScope assertScope;
+        bool isWasmCallee = visitor->codeType() == StackVisitor::Frame::Wasm && visitor->callee().isNativeCallee();
+        switch (frameIndex) {
+        case 0:
+            if (visitor->codeType() != StackVisitor::Frame::Native)
+                return IterationStatus::Done;
+            break;
+        case 1:
+            if (!isWasmCallee || !isAnyWasmToJS(uncheckedDowncast<Wasm::Callee>(visitor->callee().asNativeCallee())->compilationMode()))
+                return IterationStatus::Done;
+            break;
+        default:
+            if (isWasmCallee)
+                result = uncheckedDowncast<Wasm::Callee>(visitor->callee().asNativeCallee())->compilationMode();
+            return IterationStatus::Done;
+        }
+        ++frameIndex;
+        return IterationStatus::Continue;
+    });
+    return result;
+}
+
+static EncodedJSValue isCallingWasmFrameInMode(JSGlobalObject* globalObject, CallFrame* callFrame, Wasm::CompilationMode mode)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto callerMode = callingWasmFrameCompilationMode(vm, callFrame);
+    if (!callerMode)
+        return throwVMTypeError(globalObject, scope, "must be called from wasm through an import"_s);
+    return JSValue::encode(jsBoolean(*callerMode == mode));
+}
+#endif // ENABLE(WEBASSEMBLY)
+
+// Usage: $vm.isIPIntFrame(), $vm.isBBQFrame(), $vm.isOMGFrame() and $vm.isOMGForOSREntryFrame() each
+// return whether the wasm function that calls it through an import is running in that tier.
+JSC_DEFINE_HOST_FUNCTION(functionIsIPIntFrame, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+#if ENABLE(WEBASSEMBLY)
+    return isCallingWasmFrameInMode(globalObject, callFrame, Wasm::CompilationMode::IPIntMode);
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsBoolean(false));
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionIsBBQFrame, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+#if ENABLE(WEBASSEMBLY)
+    return isCallingWasmFrameInMode(globalObject, callFrame, Wasm::CompilationMode::BBQMode);
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsBoolean(false));
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionIsOMGFrame, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+#if ENABLE(WEBASSEMBLY)
+    return isCallingWasmFrameInMode(globalObject, callFrame, Wasm::CompilationMode::OMGMode);
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsBoolean(false));
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionIsOMGForOSREntryFrame, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+#if ENABLE(WEBASSEMBLY)
+    return isCallingWasmFrameInMode(globalObject, callFrame, Wasm::CompilationMode::OMGForOSREntryMode);
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsBoolean(false));
+#endif
+}
+
 #if ENABLE(WEBASSEMBLY_DEBUGGER)
 JSC_DEFINE_HOST_FUNCTION(functionHasDebuggerContinued, (JSGlobalObject*, CallFrame*))
 {
@@ -2658,7 +2754,7 @@ public:
         DollarVMAssertScope assertScope;
     }
 
-    IterationStatus LEGACY_NODELETE operator()(StackVisitor& visitor) const
+    NODELETE IterationStatus operator()(StackVisitor& visitor) const
     {
         unsigned index = m_currentFrame++;
         // First frame (index 0) is `llintTrue` etc. function itself.
@@ -2670,14 +2766,14 @@ public:
         return IterationStatus::Continue;
     }
     
-    JITType LEGACY_NODELETE jitType() { return m_jitType; }
+    NODELETE JITType jitType() { return m_jitType; }
 
 private:
     mutable unsigned m_currentFrame { 0 };
     mutable JITType m_jitType { JITType::None };
 };
 
-static FunctionExecutable* LEGACY_NODELETE getExecutableForFunction(JSValue theFunctionValue)
+NODELETE static FunctionExecutable* getExecutableForFunction(JSValue theFunctionValue)
 {
     DollarVMAssertScope assertScope;
     if (!theFunctionValue.isCell())
@@ -4543,11 +4639,11 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateCustomTestGetterSetterWithSharedStructure
     return JSValue::encode(JSTestCustomGetterSetter::create(vm, globalObject, dollarVM->testCustomGetterSetterStructure()));
 }
 
-// Usage: $vm.installPropertyInlineCacheClearingWatchpointWithDeadOwner(proto, "propertyName") Creates a
+// Usage: $vm.installPropertyInlineCacheClearingWatchpointWithDeadOwner(proto, "propertyName", sibling) Creates a
 //
 // PolymorphicAccessJITStubRoutine with an AdaptiveValuePropertyInlineCacheClearingWatchpoint installed on
 // proto's Structure for the given Equivalence property condition, then simulates the dead-owner
-// state.
+// state while it transitions sibling, which shares proto's Structure, to fire the watchpoint.
 JSC_DEFINE_HOST_FUNCTION(functionInstallPropertyInlineCacheClearingWatchpointWithDeadOwner, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
 #if ENABLE(JIT)
@@ -4558,11 +4654,14 @@ JSC_DEFINE_HOST_FUNCTION(functionInstallPropertyInlineCacheClearingWatchpointWit
     RELEASE_ASSERT(proto);
     JSString* propNameStr = dynamicDowncast<JSString>(callFrame->argument(1));
     RELEASE_ASSERT(propNameStr);
+    JSObject* sibling = dynamicDowncast<JSObject>(callFrame->argument(2));
+    RELEASE_ASSERT(sibling);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto propertyName = propNameStr->toIdentifier(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
     Structure* structure = proto->structure();
+    RELEASE_ASSERT(sibling->structure() == structure);
     PropertyOffset offset = structure->get(vm, propertyName);
     RELEASE_ASSERT(isValidOffset(offset));
     JSValue value = proto->getDirect(offset);
@@ -4598,8 +4697,15 @@ JSC_DEFINE_HOST_FUNCTION(functionInstallPropertyInlineCacheClearingWatchpointWit
     RELEASE_ASSERT(dollarVM);
     dollarVM->m_testStubRoutine = WTF::move(stub);
 
-    // Scribble proto's cell header to simulate a swept dead cell.
+    // Scribble proto's cell header to simulate a swept dead cell. proto is live, so no collection may see it scribbled.
+    PreventCollectionScope preventCollectionScope(vm.heap);
+    DeferGC deferGC(vm);
+    static_assert(sizeof(JSCell) == sizeof(uint64_t));
+    auto* header = std::bit_cast<uint64_t*>(proto);
+    uint64_t savedHeader = *header;
     scribble(proto, sizeof(JSCell));
+    sibling->putDirect(vm, Identifier::fromString(vm, "triggerTransition"_s), jsBoolean(true));
+    *header = savedHeader;
 
     return JSValue::encode(jsUndefined());
 #else
@@ -6147,6 +6253,10 @@ void JSDollarVM::finishCreation(VM& vm)
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "dfgTrue"_s), 0, functionDFGTrue, ImplementationVisibility::Public, DFGTrueIntrinsic, jsDollarVMPropertyAttributes);
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "ftlTrue"_s), 0, functionFTLTrue, ImplementationVisibility::Public, FTLTrueIntrinsic, jsDollarVMPropertyAttributes);
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "omgTrue"_s), 0, functionOMGTrue, ImplementationVisibility::Public, NoIntrinsic, jsDollarVMPropertyAttributes);
+    putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "isIPIntFrame"_s), 0, functionIsIPIntFrame, ImplementationVisibility::Public, NoIntrinsic, jsDollarVMPropertyAttributes);
+    putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "isBBQFrame"_s), 0, functionIsBBQFrame, ImplementationVisibility::Public, NoIntrinsic, jsDollarVMPropertyAttributes);
+    putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "isOMGFrame"_s), 0, functionIsOMGFrame, ImplementationVisibility::Public, NoIntrinsic, jsDollarVMPropertyAttributes);
+    putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "isOMGForOSREntryFrame"_s), 0, functionIsOMGForOSREntryFrame, ImplementationVisibility::Public, NoIntrinsic, jsDollarVMPropertyAttributes);
 
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "cpuMfence"_s), 0, functionCpuMfence, ImplementationVisibility::Public, CPUMfenceIntrinsic, jsDollarVMPropertyAttributes);
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "cpuRdtsc"_s), 0, functionCpuRdtsc, ImplementationVisibility::Public, CPURdtscIntrinsic, jsDollarVMPropertyAttributes);
@@ -6285,7 +6395,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "loadGetterFromGetterSetter"_s, functionLoadGetterFromGetterSetter, 1);
     addFunction(vm, alwaysAllow, "createCustomTestGetterSetter"_s, functionCreateCustomTestGetterSetter, 1);
     addFunction(vm, allowIfNotFuzz, "createCustomTestGetterSetterWithSharedStructure"_s, functionCreateCustomTestGetterSetterWithSharedStructure, 0);
-    addFunction(vm, allowIfNotFuzz, "installPropertyInlineCacheClearingWatchpointWithDeadOwner"_s, functionInstallPropertyInlineCacheClearingWatchpointWithDeadOwner, 2);
+    addFunction(vm, allowIfNotFuzz, "installPropertyInlineCacheClearingWatchpointWithDeadOwner"_s, functionInstallPropertyInlineCacheClearingWatchpointWithDeadOwner, 3);
 
     addFunction(vm, allowIfNotFuzz, "deltaBetweenButterflies"_s, functionDeltaBetweenButterflies, 2);
     

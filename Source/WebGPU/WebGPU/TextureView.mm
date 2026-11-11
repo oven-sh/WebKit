@@ -81,6 +81,11 @@ void TextureView::setPreviouslyCleared(uint32_t mipLevel, uint32_t slice)
     m_parentTexture->setPreviouslyCleared(m_texture.parentRelativeLevel + mipLevel, m_texture.parentRelativeSlice + slice);
 }
 
+void TextureView::setProvisionallyCleared(const CommandEncoder& commandEncoder, uint32_t mipLevel, uint32_t slice)
+{
+    m_parentTexture->setProvisionallyCleared(m_texture.parentRelativeLevel + mipLevel, m_texture.parentRelativeSlice + slice, commandEncoder);
+}
+
 uint32_t TextureView::parentRelativeMipLevel() const
 {
     RELEASE_ASSERT(baseMipLevel() == m_texture.parentRelativeLevel);
@@ -199,7 +204,7 @@ void TextureView::destroy()
 
 void TextureView::setCommandEncoder(CommandEncoder& commandEncoder) const
 {
-    CommandEncoder::trackEncoder(commandEncoder, m_commandEncoders);
+    commandEncoder.trackEncoderForTextureView(*this, m_commandEncoders);
     m_parentTexture->setCommandEncoder(commandEncoder);
     if (isDestroyed() && !m_parentTexture->isCanvasBacking())
         commandEncoder.makeSubmitInvalid();
@@ -214,17 +219,21 @@ id<MTLRasterizationRateMap> TextureView::rasterizationMapForSlice(uint32_t slice
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuTextureViewAddRef(WGPUTextureView textureView)
+NODELETE void wgpuTextureViewAddRef(WGPUTextureView textureView)
 {
     WebGPU::Metal::fromAPI(textureView).ref();
 }
 
 void wgpuTextureViewRelease(WGPUTextureView textureView)
 {
-    WebGPU::Metal::fromAPI(textureView).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(textureView).deref();
+    }
 }
 
 void wgpuTextureViewSetLabel(WGPUTextureView textureView, WGPUStringView label)
 {
-    protect(WebGPU::Metal::fromAPI(textureView))->setLabel(WebGPU::Metal::fromAPI(label));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(textureView))->setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }

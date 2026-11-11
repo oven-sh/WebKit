@@ -79,12 +79,14 @@ dictionary WebExtensionCookieSetDetails {
 ] interface WebExtensionAPICookies {
 
     [RaisesException] void get([NSDictionary] any details, [Optional, CallbackHandler] function callback);
-    [RaisesException] void getAll([NSDictionary] any details, [Optional, CallbackHandler] function callback);
+    [RaisesException] void getAll([Optional, NSDictionary] any details, [Optional, CallbackHandler] function callback);
 
     [RaisesException] void set([NSDictionary] any details, [Optional, CallbackHandler] function callback);
     [RaisesException] void remove([NSDictionary] any details, [Optional, CallbackHandler] function callback);
 
     void getAllCookieStores([Optional, CallbackHandler] function callback);
+
+    [ImplementedAs=sameSiteStatus] readonly attribute any SameSiteStatus;
 
     readonly attribute WebExtensionAPIEvent onChanged;
 

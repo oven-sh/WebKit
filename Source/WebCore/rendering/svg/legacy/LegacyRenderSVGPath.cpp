@@ -187,7 +187,7 @@ void LegacyRenderSVGPath::strokeZeroLengthSubpaths(GraphicsContext& context) con
 
     AffineTransform nonScalingTransform;
     if (hasNonScalingStroke())
-        nonScalingTransform = nonScalingStrokeTransform();
+        nonScalingTransform = computeNonScalingStrokeTransform();
 
     GraphicsContextStateSaver stateSaver(context, true);
     legacyUseStrokeStyleToFill(context);
@@ -208,7 +208,7 @@ void LegacyRenderSVGPath::strokeZeroLengthSubpaths(GraphicsContext& context) con
     }
 }
 
-static inline LegacyRenderSVGResourceMarker* LEGACY_NODELETE markerForType(SVGMarkerType type, LegacyRenderSVGResourceMarker* markerStart, LegacyRenderSVGResourceMarker* markerMid, LegacyRenderSVGResourceMarker* markerEnd)
+NODELETE static inline LegacyRenderSVGResourceMarker* markerForType(SVGMarkerType type, LegacyRenderSVGResourceMarker* markerStart, LegacyRenderSVGResourceMarker* markerMid, LegacyRenderSVGResourceMarker* markerEnd)
 {
     switch (type) {
     case SVGMarkerType::Start:
@@ -312,14 +312,15 @@ bool LegacyRenderSVGPath::isRenderingDisabled() const
 
 void LegacyRenderSVGPath::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
-    if (oldStyle && oldStyle->hasMarkers() && !style().hasMarkers())
-        m_markerPositions.clear();
     if (RefPtr pathElement = dynamicDowncast<SVGPathElement>(graphicsElement())) {
         if (!oldStyle || style().d() != oldStyle->d())
             pathElement->pathDidChange();
     }
 
     LegacyRenderSVGShape::styleDidChange(diff, oldStyle);
+
+    if (!shouldGenerateMarkerPositions())
+        m_markerPositions.clear();
 }
 
 }

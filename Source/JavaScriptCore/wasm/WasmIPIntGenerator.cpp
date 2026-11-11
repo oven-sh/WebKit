@@ -134,28 +134,28 @@ struct IPIntControlType {
         , m_stackSize(stackSize)
     { }
 
-    static bool LEGACY_NODELETE isIf(const IPIntControlType& control) { return control.blockType() == BlockType::If; }
-    static bool LEGACY_NODELETE isElse(const IPIntControlType& control) { return control.blockType() == BlockType::Else; }
-    static bool LEGACY_NODELETE isTry(const IPIntControlType& control) { return control.blockType() == BlockType::Try; }
-    static bool LEGACY_NODELETE isTryTable(const IPIntControlType& control) { return control.blockType() == BlockType::TryTable; }
-    static bool LEGACY_NODELETE isAnyCatch(const IPIntControlType& control) { return control.blockType() == BlockType::Catch; }
-    static bool LEGACY_NODELETE isTopLevel(const IPIntControlType& control) { return control.blockType() == BlockType::TopLevel; }
-    static bool LEGACY_NODELETE isLoop(const IPIntControlType& control) { return control.blockType() == BlockType::Loop; }
-    static bool LEGACY_NODELETE isBlock(const IPIntControlType& control) { return control.blockType() == BlockType::Block; }
-    static bool LEGACY_NODELETE isCatch(const IPIntControlType& control)
+    NODELETE static bool isIf(const IPIntControlType& control) { return control.blockType() == BlockType::If; }
+    NODELETE static bool isElse(const IPIntControlType& control) { return control.blockType() == BlockType::Else; }
+    NODELETE static bool isTry(const IPIntControlType& control) { return control.blockType() == BlockType::Try; }
+    NODELETE static bool isTryTable(const IPIntControlType& control) { return control.blockType() == BlockType::TryTable; }
+    NODELETE static bool isAnyCatch(const IPIntControlType& control) { return control.blockType() == BlockType::Catch; }
+    NODELETE static bool isTopLevel(const IPIntControlType& control) { return control.blockType() == BlockType::TopLevel; }
+    NODELETE static bool isLoop(const IPIntControlType& control) { return control.blockType() == BlockType::Loop; }
+    NODELETE static bool isBlock(const IPIntControlType& control) { return control.blockType() == BlockType::Block; }
+    NODELETE static bool isCatch(const IPIntControlType& control)
     {
         if (control.blockType() != BlockType::Catch)
             return false;
         return control.catchKind() == CatchKind::Catch;
     }
 
-    void LEGACY_NODELETE dump(PrintStream&) const
+    NODELETE void dump(PrintStream&) const
     { }
 
-    BlockType LEGACY_NODELETE blockType() const { return m_blockType; }
-    CatchKind LEGACY_NODELETE catchKind() const { return m_catchKind; }
-    const BlockSignature& LEGACY_NODELETE signature() const { return m_signature; }
-    unsigned LEGACY_NODELETE stackSize() const { return m_stackSize; }
+    NODELETE BlockType blockType() const { return m_blockType; }
+    NODELETE CatchKind catchKind() const { return m_catchKind; }
+    NODELETE const BlockSignature& signature() const { return m_signature; }
+    NODELETE unsigned stackSize() const { return m_stackSize; }
 
     Type branchTargetType(unsigned i) const
     {
@@ -217,7 +217,7 @@ public:
     using CatchHandler = FunctionParser<IPIntGenerator>::CatchHandler;
     using ArgumentList = FunctionParser<IPIntGenerator>::ArgumentList;
 
-    static ExpressionType LEGACY_NODELETE emptyExpression() { return { }; };
+    NODELETE static ExpressionType emptyExpression() { return { }; };
     [[nodiscard]] PartialResult addDrop(ExpressionType);
 
     template <typename ...Args>
@@ -239,8 +239,8 @@ public:
 
     // SIMD
 
-    bool LEGACY_NODELETE usesSIMD() { return m_usesSIMD; }
-    void LEGACY_NODELETE notifyFunctionUsesSIMD() { ASSERT(Options::useWasmSIMD()); m_usesSIMD = true; }
+    NODELETE bool usesSIMD() { return m_usesSIMD; }
+    NODELETE void notifyFunctionUsesSIMD() { ASSERT(Options::useWasmSIMD()); m_usesSIMD = true; }
     [[nodiscard]] PartialResult addSIMDLoad(ExpressionType, uint64_t, ExpressionType&, uint8_t);
     [[nodiscard]] PartialResult addSIMDStore(ExpressionType, ExpressionType, uint64_t, uint8_t);
     [[nodiscard]] PartialResult addSIMDSplat(SIMDLane, ExpressionType, ExpressionType&);
@@ -521,10 +521,10 @@ public:
     [[nodiscard]] PartialResult endTopLevel(std::span<const TypedExpression>);
 
     // Fused comparison stubs (TODO: make use of these for better codegen)
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedBranchCompare(OpType, ControlType&, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedBranchCompare(OpType, ControlType&, ExpressionType, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedIfCompare(OpType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedIfCompare(OpType, ExpressionType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedBranchCompare(OpType, ControlType&, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedBranchCompare(OpType, ControlType&, ExpressionType, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedIfCompare(OpType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedIfCompare(OpType, ExpressionType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
 
     // Calls
 
@@ -534,19 +534,19 @@ public:
     [[nodiscard]] PartialResult addUnreachable();
     [[nodiscard]] PartialResult addCrash();
 
-    void LEGACY_NODELETE setParser(FunctionParser<IPIntGenerator>* parser) { m_parser = parser; };
-    size_t LEGACY_NODELETE getCurrentInstructionLength()
+    NODELETE void setParser(FunctionParser<IPIntGenerator>* parser) { m_parser = parser; };
+    NODELETE size_t getCurrentInstructionLength()
     {
         return m_parser->offset() - m_parser->currentOpcodeStartingOffset();
     }
-    void addTailCallCommonData(const RTT&, const CallInformation&);
-    void LEGACY_NODELETE didFinishParsingLocals()
+    void addTailCallCommonData(const RTT&);
+    NODELETE void didFinishParsingLocals()
     {
         m_metadata->m_bytecodeOffset = m_parser->offset();
     }
-    void LEGACY_NODELETE didPopValueFromStack(ExpressionType, ASCIILiteral) { }
-    void LEGACY_NODELETE willParseOpcode() { }
-    void LEGACY_NODELETE willParseExtendedOpcode() { }
+    NODELETE void didPopValueFromStack(ExpressionType, ASCIILiteral) { }
+    NODELETE void willParseOpcode() { }
+    NODELETE void willParseExtendedOpcode() { }
     void didParseOpcode()
     {
 #if ENABLE(WEBASSEMBLY_DEBUGGER)
@@ -615,16 +615,7 @@ public:
         }
     }
 
-    ALWAYS_INLINE const CallInformation& cachedCallInformationFor(const RTT& signature)
-    {
-        if (m_cachedSignature != &signature) {
-            m_cachedSignature = &signature;
-            m_cachedCallInformation = wasmCallingConvention().callInformationFor(signature, CallRole::Caller);
-        }
-        return m_cachedCallInformation;
-    }
-
-    static constexpr bool LEGACY_NODELETE tierSupportsSIMD() { return true; }
+    NODELETE static constexpr bool tierSupportsSIMD() { return true; }
     static constexpr bool validateFunctionBodySize = true;
 
 private:
@@ -666,10 +657,10 @@ private:
     // all jumps that go to the top level and return
     Vector<IPIntLocation> m_jumpLocationsAwaitingEnd;
 
-    inline uint32_t LEGACY_NODELETE curPC() { return Checked<uint32_t>(m_parser->currentOpcodeStartingOffset()) - m_metadata->m_bytecodeOffset; }
-    inline uint32_t LEGACY_NODELETE nextPC() { return Checked<uint32_t>(m_parser->offset()) - m_metadata->m_bytecodeOffset; }
+    NODELETE inline uint32_t curPC() { return Checked<uint32_t>(m_parser->currentOpcodeStartingOffset()) - m_metadata->m_bytecodeOffset; }
+    NODELETE inline uint32_t nextPC() { return Checked<uint32_t>(m_parser->offset()) - m_metadata->m_bytecodeOffset; }
     // FIXME: Should return size_t, but BlockMetadata::deltaMC is int32_t and the interpreter loads it with loadpairi.
-    inline uint32_t LEGACY_NODELETE curMC()
+    NODELETE inline uint32_t curMC()
     {
         Checked<uint32_t> size = m_metadata->m_metadata.size();
         return size;
@@ -681,9 +672,6 @@ private:
         Checked<int32_t> dMC = static_cast<int64_t>(to.mc) - static_cast<int64_t>(from.mc);
         return { dPC, dMC };
     }
-
-    CallInformation m_cachedCallInformation { };
-    const RTT* m_cachedSignature { nullptr };
 
     Checked<int32_t> m_argumentAndResultsStackSize;
 
@@ -2806,9 +2794,13 @@ auto IPIntGenerator::endTopLevel(std::span<const TypedExpression>) -> PartialRes
 
 // Calls
 
-void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& callConvention)
+void IPIntGenerator::addTailCallCommonData(const RTT& signature)
 {
-    size_t stackArgumentsAndResultsInBytes = roundUpToMultipleOf<stackAlignmentBytes()>(callConvention.headerAndArgumentStackSizeInBytes) - callConvention.headerIncludingThisSizeInBytes;
+    size_t headerAndArgumentStackSizeInBytes = wasmCallingConvention().headerAndArgumentStackSizeInBytes(signature, CallRole::Caller);
+    Checked<uint32_t> tailCallFrameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(headerAndArgumentStackSizeInBytes + sizeof(CallerFrameAndPC));
+    m_metadata->m_maxCalleeStackSize = std::max(static_cast<unsigned>(tailCallFrameSize), m_metadata->m_maxCalleeStackSize);
+
+    size_t stackArgumentsAndResultsInBytes = headerAndArgumentStackSizeInBytes - WasmCallingConvention::headerIncludingThisSizeInBytes(CallRole::Caller);
     // The WASM stack slots are always 16-bytes.
     size_t extraWasmStackInBytes = roundUpToMultipleOf<16>(stackArgumentsAndResultsInBytes);
     if (m_stackSize + extraWasmStackInBytes / 16 > m_maxStackSize)
@@ -2820,7 +2812,6 @@ void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& ca
 
 [[nodiscard]] PartialResult IPIntGenerator::addCall(unsigned callProfileIndex, FunctionSpaceIndex index, const RTT& signature, ArgumentList&, ResultList& results, CallType callType)
 {
-    const CallInformation& callConvention = cachedCallInformationFor(signature);
     m_metadata->addCallTarget(callProfileIndex, index);
 
     if (callType == CallType::TailCall) {
@@ -2829,8 +2820,6 @@ void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& ca
         // put arguments into registers / sp (reutilize mINT)
         // jump to entrypoint
         changeStackSize(-signature.argumentCount());
-        Checked<uint32_t> tailCallFrameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(callConvention.headerAndArgumentStackSizeInBytes + sizeof(CallerFrameAndPC));
-        m_metadata->m_maxCalleeStackSize = std::max(static_cast<unsigned>(tailCallFrameSize), m_metadata->m_maxCalleeStackSize);
 
         IPInt::TailCallMetadata functionIndexMetadata {
             .length = safeCast<uint8_t>(getCurrentInstructionLength()),
@@ -2840,7 +2829,7 @@ void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& ca
             .callerStackArgSize = static_cast<int32_t>(m_argumentAndResultsStackSize),
         };
         m_metadata->appendMetadata(functionIndexMetadata);
-        addTailCallCommonData(signature, callConvention);
+        addTailCallCommonData(signature);
         return { };
     }
 
@@ -2849,7 +2838,7 @@ void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& ca
     });
     changeStackSize(signature.returnCount() - signature.argumentCount());
 
-    Checked<uint32_t> frameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(callConvention.headerAndArgumentStackSizeInBytes);
+    Checked<uint32_t> frameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(wasmCallingConvention().headerAndArgumentStackSizeInBytes(signature, CallRole::Caller));
     m_metadata->m_maxCalleeStackSize = std::max(static_cast<unsigned>(frameSize), m_metadata->m_maxCalleeStackSize);
     IPInt::CallMetadata functionIndexMetadata {
         .length = safeCast<uint8_t>(getCurrentInstructionLength()),
@@ -2868,15 +2857,11 @@ void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& ca
 
 [[nodiscard]] PartialResult IPIntGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIndex, const RTT& signature, ArgumentList&, ResultList& results, CallType callType)
 {
-    const CallInformation& callConvention = cachedCallInformationFor(signature);
     m_metadata->addCallTarget(callProfileIndex, { });
 
     if (callType == CallType::TailCall) {
         const unsigned callIndex = 1;
         changeStackSize(-signature.argumentCount() - callIndex);
-
-        Checked<uint32_t> tailCallFrameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(callConvention.headerAndArgumentStackSizeInBytes + sizeof(CallerFrameAndPC));
-        m_metadata->m_maxCalleeStackSize = std::max(static_cast<unsigned>(tailCallFrameSize), m_metadata->m_maxCalleeStackSize);
 
         // on a tail call, we need to:
         // roll back to old SP, shift SP to accommodate arguments
@@ -2890,7 +2875,7 @@ void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& ca
             .callerStackArgSize = static_cast<int32_t>(m_argumentAndResultsStackSize),
         };
         m_metadata->appendMetadata(functionIndexMetadata);
-        addTailCallCommonData(signature, callConvention);
+        addTailCallCommonData(signature);
         return { };
     }
 
@@ -2900,7 +2885,7 @@ void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& ca
     const unsigned callIndex = 1;
     changeStackSize(signature.returnCount() - signature.argumentCount() - callIndex);
 
-    Checked<uint32_t> frameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(callConvention.headerAndArgumentStackSizeInBytes);
+    Checked<uint32_t> frameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(wasmCallingConvention().headerAndArgumentStackSizeInBytes(signature, CallRole::Caller));
     m_metadata->m_maxCalleeStackSize = std::max(static_cast<unsigned>(frameSize), m_metadata->m_maxCalleeStackSize);
     IPInt::CallIndirectMetadata functionIndexMetadata {
         .length = safeCast<uint8_t>(getCurrentInstructionLength()),
@@ -2920,15 +2905,11 @@ void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& ca
 
 [[nodiscard]] PartialResult IPIntGenerator::addCallRef(unsigned callProfileIndex, const RTT& signature, ArgumentList&, ResultList& results, CallType callType)
 {
-    const CallInformation& callConvention = cachedCallInformationFor(signature);
     m_metadata->addCallTarget(callProfileIndex, { });
 
     if (callType == CallType::TailCall) {
         const unsigned callIndex = 1;
         changeStackSize(-signature.argumentCount() - callIndex);
-
-        Checked<uint32_t> tailCallFrameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(callConvention.headerAndArgumentStackSizeInBytes + sizeof(CallerFrameAndPC));
-        m_metadata->m_maxCalleeStackSize = std::max(static_cast<unsigned>(tailCallFrameSize), m_metadata->m_maxCalleeStackSize);
 
         // on a tail call, we need to:
         // roll back to old SP, shift SP to accommodate arguments
@@ -2941,7 +2922,7 @@ void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& ca
             .callerStackArgSize = static_cast<int32_t>(m_argumentAndResultsStackSize),
         };
         m_metadata->appendMetadata(callMetadata);
-        addTailCallCommonData(signature, callConvention);
+        addTailCallCommonData(signature);
         return { };
     }
 
@@ -2951,7 +2932,7 @@ void IPIntGenerator::addTailCallCommonData(const RTT&, const CallInformation& ca
     const unsigned callRef = 1;
     changeStackSize(signature.returnCount() - signature.argumentCount() - callRef);
 
-    Checked<uint32_t> frameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(callConvention.headerAndArgumentStackSizeInBytes);
+    Checked<uint32_t> frameSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(wasmCallingConvention().headerAndArgumentStackSizeInBytes(signature, CallRole::Caller));
     m_metadata->m_maxCalleeStackSize = std::max(static_cast<unsigned>(frameSize), m_metadata->m_maxCalleeStackSize);
     IPInt::CallRefMetadata callMetadata {
         .length = safeCast<uint8_t>(getCurrentInstructionLength()),

@@ -77,7 +77,10 @@ void ExternalTexture::destroy()
 
 void ExternalTexture::undestroy()
 {
-    m_commandEncoders.clear();
+    if (!m_destroyed)
+        return;
+
+    m_device->makeSubmitInvalidClearingEncoders(m_commandEncoders);
     m_destroyed = false;
 }
 
@@ -125,17 +128,21 @@ size_t ExternalTexture::openCommandEncoderCount() const
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuExternalTextureAddRef(WGPUExternalTexture externalTexture)
+NODELETE void wgpuExternalTextureAddRef(WGPUExternalTexture externalTexture)
 {
     WebGPU::Metal::fromAPI(externalTexture).ref();
 }
 
 void wgpuExternalTextureRelease(WGPUExternalTexture externalTexture)
 {
-    WebGPU::Metal::fromAPI(externalTexture).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(externalTexture).deref();
+    }
 }
 
 void wgpuExternalTextureDestroy(WGPUExternalTexture externalTexture)
 {
-    protect(WebGPU::Metal::fromAPI(externalTexture))->destroy();
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(externalTexture))->destroy();
+    }
 }

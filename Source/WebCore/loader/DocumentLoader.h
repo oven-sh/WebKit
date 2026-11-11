@@ -149,6 +149,7 @@ enum class ContentExtensionDefaultEnablement : bool { Disabled, Enabled };
 using ContentExtensionEnablement = std::pair<ContentExtensionDefaultEnablement, HashSet<String>>;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DocumentLoader);
+
 class DocumentLoader
     : public RefCounted<DocumentLoader>
     , public FrameDestructionObserver
@@ -172,7 +173,7 @@ public:
 
     USING_CAN_MAKE_WEAKPTR(CachedRawResourceClient);
 
-    WEBCORE_EXPORT static DocumentLoader* LEGACY_NODELETE fromScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier);
+    NODELETE WEBCORE_EXPORT static DocumentLoader* fromScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier);
 
     WEBCORE_EXPORT virtual ~DocumentLoader();
 
@@ -186,8 +187,8 @@ public:
 
     WEBCORE_EXPORT virtual void detachFromFrame(LoadWillContinueInAnotherProcess);
 
-    WEBCORE_EXPORT FrameLoader* LEGACY_NODELETE frameLoader() const;
-    WEBCORE_EXPORT SubresourceLoader* LEGACY_NODELETE mainResourceLoader() const;
+    NODELETE WEBCORE_EXPORT FrameLoader* frameLoader() const;
+    NODELETE WEBCORE_EXPORT SubresourceLoader* mainResourceLoader() const;
     WEBCORE_EXPORT RefPtr<FragmentedSharedBuffer> mainResourceData() const;
     
     DocumentWriter& writer() const LIFETIME_BOUND { return m_writer; }
@@ -218,7 +219,7 @@ public:
     void stopLoading();
     void setCommitted(bool committed) { m_committed = committed; }
     bool isCommitted() const { return m_committed; }
-    WEBCORE_EXPORT bool LEGACY_NODELETE isLoading() const;
+    NODELETE WEBCORE_EXPORT bool isLoading() const;
 
     const ResourceError& mainDocumentError() const LIFETIME_BOUND { return m_mainDocumentError; }
 
@@ -232,7 +233,7 @@ public:
 
     bool isClientRedirect() const { return m_isClientRedirect; }
     void setIsClientRedirect(bool isClientRedirect) { m_isClientRedirect = isClientRedirect; }
-    void LEGACY_NODELETE dispatchOnloadEvents();
+    NODELETE void dispatchOnloadEvents();
     bool wasOnloadDispatched() { return m_wasOnloadDispatched; }
     WEBCORE_EXPORT bool isLoadingInAPISense() const;
     WEBCORE_EXPORT void setTitle(const StringWithDirection&);
@@ -248,7 +249,7 @@ public:
     WEBCORE_EXPORT void addAllArchiveResources(Archive&);
     WEBCORE_EXPORT void addArchiveResource(Ref<ArchiveResource>&&);
     RefPtr<Archive> popArchiveForSubframe(const String& frameName, const URL&);
-    WEBCORE_EXPORT SharedBuffer* LEGACY_NODELETE parsedArchiveData() const;
+    NODELETE WEBCORE_EXPORT SharedBuffer* parsedArchiveData() const;
 
     bool hasArchiveResourceCollection() const { return !!m_archiveResourceCollection; }
     WEBCORE_EXPORT bool scheduleArchiveLoad(ResourceLoader&, const ResourceRequest&);
@@ -314,7 +315,7 @@ public:
     void setDidCreateGlobalHistoryEntry(bool didCreateGlobalHistoryEntry) { m_didCreateGlobalHistoryEntry = didCreateGlobalHistoryEntry; }
 
     void setDefersLoading(bool);
-    void LEGACY_NODELETE setMainResourceDataBufferingPolicy(DataBufferingPolicy);
+    NODELETE void setMainResourceDataBufferingPolicy(DataBufferingPolicy);
 
     void startLoadingMainResource();
     WEBCORE_EXPORT void cancelMainResourceLoad(const ResourceError&, LoadWillContinueInAnotherProcess = LoadWillContinueInAnotherProcess::No);
@@ -387,11 +388,11 @@ public:
     void setModalContainerObservationPolicy(ModalContainerObservationPolicy policy) { m_modalContainerObservationPolicy = policy; }
 
     // FIXME: Why is this in a Loader?
-    WEBCORE_EXPORT ColorSchemePreference LEGACY_NODELETE colorSchemePreference() const;
+    NODELETE WEBCORE_EXPORT ColorSchemePreference colorSchemePreference() const;
     void setColorSchemePreference(ColorSchemePreference preference) { m_colorSchemePreference = preference; }
 
     HTTPSByDefaultMode httpsByDefaultMode() { return m_httpsByDefaultMode; }
-    WEBCORE_EXPORT void LEGACY_NODELETE setHTTPSByDefaultMode(HTTPSByDefaultMode);
+    NODELETE WEBCORE_EXPORT void setHTTPSByDefaultMode(HTTPSByDefaultMode);
 
     PushAndNotificationsEnabledPolicy pushAndNotificationsEnabledPolicy() const { return m_pushAndNotificationsEnabledPolicy; }
     void setPushAndNotificationsEnabledPolicy(PushAndNotificationsEnabledPolicy policy) { m_pushAndNotificationsEnabledPolicy = policy; }
@@ -435,7 +436,7 @@ public:
 
 #if USE(QUICK_LOOK)
     void setPreviewConverter(RefPtr<PreviewConverter>&&);
-    PreviewConverter* LEGACY_NODELETE previewConverter() const;
+    NODELETE PreviewConverter* previewConverter() const;
 #endif
 
 #if ENABLE(CONTENT_EXTENSIONS)
@@ -517,7 +518,7 @@ public:
     bool isRequestFromClientOrUserInput() const { return m_isRequestFromClientOrUserInput; }
     void setIsRequestFromClientOrUserInput(bool isRequestFromClientOrUserInput) { m_isRequestFromClientOrUserInput = isRequestFromClientOrUserInput; }
 
-    bool LEGACY_NODELETE hasCrossOriginRedirect() const;
+    NODELETE bool hasCrossOriginRedirect() const;
     void setHasCrossOriginRedirect(bool hasCrossOriginRedirect) { m_hasCrossOriginRedirect = hasCrossOriginRedirect; }
 
     bool loadStartedDuringSwipeAnimation() const { return m_loadStartedDuringSwipeAnimation; }
@@ -533,7 +534,7 @@ public:
 #endif
 
     std::optional<NavigationIdentifier> navigationID() const { return m_navigationID.asOptional(); }
-    WEBCORE_EXPORT void LEGACY_NODELETE setNavigationID(NavigationIdentifier);
+    NODELETE WEBCORE_EXPORT void setNavigationID(NavigationIdentifier);
     std::optional<NavigationIdentifier> takeNavigationID() { return std::exchange(m_navigationID, { }).asOptional(); }
 
     IsInitialAboutBlank isInitialAboutBlank() const { return m_isInitialAboutBlank; }
@@ -548,6 +549,11 @@ public:
     const std::optional<NavigationRequester>& crossSiteRequester() const LIFETIME_BOUND { return m_crossSiteRequester; }
     void setCrossSiteRequester(NavigationRequester&& crossSiteRequester) { m_crossSiteRequester = WTF::move(crossSiteRequester); }
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    void setForceDisableAXCustomColorMode(bool value) { m_forceDisableAXCustomColorMode = value; }
+    bool forceDisableAXCustomColorMode() const { return m_forceDisableAXCustomColorMode; }
+#endif
+
 protected:
     WEBCORE_EXPORT DocumentLoader(ResourceRequest&&, SubstituteData&&, ResourceRequest&&);
     WEBCORE_EXPORT DocumentLoader(ResourceRequest&&, SubstituteData&&);
@@ -555,7 +561,7 @@ protected:
     WEBCORE_EXPORT virtual void attachToFrame();
 
 private:
-    Document* LEGACY_NODELETE document() const;
+    NODELETE Document* document() const;
 
     void matchRegistration(const URL&, CompletionHandler<void(std::optional<ServiceWorkerRegistrationData>&&)>&&);
     void unregisterReservedServiceWorkerClient();
@@ -616,7 +622,7 @@ private:
 
     bool shouldClearContentSecurityPolicyForResponse(const ResourceResponse&) const;
 
-    bool LEGACY_NODELETE isMultipartReplacingLoad() const;
+    NODELETE bool isMultipartReplacingLoad() const;
     bool isPostOrRedirectAfterPost(const ResourceRequest&, const ResourceResponse&);
 
     bool tryLoadingSubstituteData();
@@ -792,6 +798,10 @@ private:
     std::optional<NavigationRequester> m_crossSiteRequester;
 
     Function<void(Document*)> m_whenDocumentIsCreatedCallback;
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    bool m_forceDisableAXCustomColorMode { false };
+#endif
 
     bool m_idempotentModeAutosizingOnlyHonorsPercentages { false };
 

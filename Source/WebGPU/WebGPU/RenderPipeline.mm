@@ -46,7 +46,7 @@
 
 namespace WebGPU::Metal {
 
-static MTLBlendOperation LEGACY_NODELETE blendOperation(WebGPU::BlendOperation operation)
+NODELETE static MTLBlendOperation blendOperation(WebGPU::BlendOperation operation)
 {
     switch (operation) {
     case WebGPU::BlendOperation::Add:
@@ -62,7 +62,7 @@ static MTLBlendOperation LEGACY_NODELETE blendOperation(WebGPU::BlendOperation o
     }
 }
 
-static MTLBlendFactor LEGACY_NODELETE blendFactor(WebGPU::BlendFactor factor)
+NODELETE static MTLBlendFactor blendFactor(WebGPU::BlendFactor factor)
 {
     switch (factor) {
     case WebGPU::BlendFactor::Constant:
@@ -91,10 +91,36 @@ static MTLBlendFactor LEGACY_NODELETE blendFactor(WebGPU::BlendFactor factor)
         return MTLBlendFactorSourceAlpha;
     case WebGPU::BlendFactor::SrcAlphaSaturated:
         return MTLBlendFactorSourceAlphaSaturated;
+    case WebGPU::BlendFactor::Src1:
+        return MTLBlendFactorSource1Color;
+    case WebGPU::BlendFactor::OneMinusSrc1:
+        return MTLBlendFactorOneMinusSource1Color;
+    case WebGPU::BlendFactor::Src1Alpha:
+        return MTLBlendFactorSource1Alpha;
+    case WebGPU::BlendFactor::OneMinusSrc1Alpha:
+        return MTLBlendFactorOneMinusSource1Alpha;
     }
 }
 
-static MTLColorWriteMask LEGACY_NODELETE colorWriteMask(OptionSet<WebGPU::ColorWrite> mask)
+static bool usesSecondBlendSource(WebGPU::BlendFactor factor)
+{
+    switch (factor) {
+    case WebGPU::BlendFactor::Src1:
+    case WebGPU::BlendFactor::OneMinusSrc1:
+    case WebGPU::BlendFactor::Src1Alpha:
+    case WebGPU::BlendFactor::OneMinusSrc1Alpha:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool usesSecondBlendSource(const WebGPU::BlendComponent& component)
+{
+    return usesSecondBlendSource(component.srcFactor) || usesSecondBlendSource(component.dstFactor);
+}
+
+NODELETE static MTLColorWriteMask colorWriteMask(OptionSet<WebGPU::ColorWrite> mask)
 {
     MTLColorWriteMask mtlMask = MTLColorWriteMaskNone;
 
@@ -110,7 +136,7 @@ static MTLColorWriteMask LEGACY_NODELETE colorWriteMask(OptionSet<WebGPU::ColorW
     return mtlMask;
 }
 
-static MTLWinding LEGACY_NODELETE frontFace(WebGPU::FrontFace frontFace)
+NODELETE static MTLWinding frontFace(WebGPU::FrontFace frontFace)
 {
     switch (frontFace) {
     case WebGPU::FrontFace::CW:
@@ -120,7 +146,7 @@ static MTLWinding LEGACY_NODELETE frontFace(WebGPU::FrontFace frontFace)
     }
 }
 
-static MTLCullMode LEGACY_NODELETE cullMode(WebGPU::CullMode cullMode)
+NODELETE static MTLCullMode cullMode(WebGPU::CullMode cullMode)
 {
     switch (cullMode) {
     case WebGPU::CullMode::None:
@@ -132,7 +158,7 @@ static MTLCullMode LEGACY_NODELETE cullMode(WebGPU::CullMode cullMode)
     }
 }
 
-static MTLPrimitiveType LEGACY_NODELETE primitiveType(WebGPU::PrimitiveTopology topology)
+NODELETE static MTLPrimitiveType primitiveType(WebGPU::PrimitiveTopology topology)
 {
     switch (topology) {
     case WebGPU::PrimitiveTopology::PointList:
@@ -148,7 +174,7 @@ static MTLPrimitiveType LEGACY_NODELETE primitiveType(WebGPU::PrimitiveTopology 
     }
 }
 
-static MTLPrimitiveTopologyClass LEGACY_NODELETE topologyType(WebGPU::PrimitiveTopology topology)
+NODELETE static MTLPrimitiveTopologyClass topologyType(WebGPU::PrimitiveTopology topology)
 {
     switch (topology) {
     case WebGPU::PrimitiveTopology::PointList:
@@ -162,7 +188,7 @@ static MTLPrimitiveTopologyClass LEGACY_NODELETE topologyType(WebGPU::PrimitiveT
     }
 }
 
-static std::optional<MTLIndexType> LEGACY_NODELETE indexType(WebGPU::IndexFormat format)
+NODELETE static std::optional<MTLIndexType> indexType(WebGPU::IndexFormat format)
 {
     switch (format) {
     case WebGPU::IndexFormat::Uint16:
@@ -187,7 +213,7 @@ bool Device::validateRenderPipeline(const WebGPU::RenderPipelineDescriptor& desc
     return true;
 }
 
-static MTLStencilOperation LEGACY_NODELETE convertToMTLStencilOperation(WebGPU::StencilOperation operation)
+NODELETE static MTLStencilOperation convertToMTLStencilOperation(WebGPU::StencilOperation operation)
 {
     switch (operation) {
     case WebGPU::StencilOperation::Keep:
@@ -209,7 +235,7 @@ static MTLStencilOperation LEGACY_NODELETE convertToMTLStencilOperation(WebGPU::
     }
 }
 
-static MTLCompareFunction LEGACY_NODELETE convertToMTLCompare(WebGPU::CompareFunction comparison)
+NODELETE static MTLCompareFunction convertToMTLCompare(WebGPU::CompareFunction comparison)
 {
     switch (comparison) {
     case WebGPU::CompareFunction::Never:
@@ -231,7 +257,7 @@ static MTLCompareFunction LEGACY_NODELETE convertToMTLCompare(WebGPU::CompareFun
     }
 }
 
-static MTLVertexFormat LEGACY_NODELETE vertexFormat(WebGPU::VertexFormat vertexFormat)
+NODELETE static MTLVertexFormat vertexFormat(WebGPU::VertexFormat vertexFormat)
 {
     switch (vertexFormat) {
     case WebGPU::VertexFormat::Uint8:
@@ -321,7 +347,7 @@ static MTLVertexFormat LEGACY_NODELETE vertexFormat(WebGPU::VertexFormat vertexF
     }
 }
 
-static size_t LEGACY_NODELETE vertexFormatSize(WebGPU::VertexFormat vertexFormat)
+NODELETE static size_t vertexFormatSize(WebGPU::VertexFormat vertexFormat)
 {
     switch (vertexFormat) {
     case WebGPU::VertexFormat::Uint8:
@@ -410,7 +436,7 @@ static size_t LEGACY_NODELETE vertexFormatSize(WebGPU::VertexFormat vertexFormat
     }
 }
 
-static MTLVertexStepFunction LEGACY_NODELETE stepFunction(WebGPU::VertexStepMode stepMode, auto arrayStride)
+NODELETE static MTLVertexStepFunction stepFunction(WebGPU::VertexStepMode stepMode, auto arrayStride)
 {
     if (!arrayStride)
         return MTLVertexStepFunctionConstant;
@@ -520,7 +546,7 @@ enum class VertexFormatType {
     Float
 };
 
-static constexpr VertexFormatType LEGACY_NODELETE formatType(WebGPU::VertexFormat format)
+NODELETE static constexpr VertexFormatType formatType(WebGPU::VertexFormat format)
 {
     switch (format) {
     case WebGPU::VertexFormat::Uint8:
@@ -574,7 +600,7 @@ static constexpr VertexFormatType LEGACY_NODELETE formatType(WebGPU::VertexForma
     }
 }
 
-static bool LEGACY_NODELETE matchesFormat(const ShaderModule::VertexStageIn& stageIn, uint32_t shaderLocation, WebGPU::VertexFormat format)
+NODELETE static bool matchesFormat(const ShaderModule::VertexStageIn& stageIn, uint32_t shaderLocation, WebGPU::VertexFormat format)
 {
     auto it = stageIn.find(shaderLocation);
     if (it == stageIn.end())
@@ -586,7 +612,7 @@ static bool LEGACY_NODELETE matchesFormat(const ShaderModule::VertexStageIn& sta
 static MTLVertexDescriptor *createVertexDescriptor(const WebGPU::VertexState& vertexState, const Limits& limits, const ShaderModule::VertexStageIn& stageIn, RenderPipeline::RequiredBufferIndicesContainer& requiredBufferIndices, NSString** error, ShaderModule::VertexStageIn& outShaderLocations)
 {
     MTLVertexDescriptor *vertexDescriptor = [MTLVertexDescriptor new];
-    Checked<uint32_t> totalAttributeCount = 0;
+    CheckedUint32 totalAttributeCount = 0;
     ASSERT(error);
 
     if (vertexState.buffers.size() > limits.maxVertexBuffers) {
@@ -704,7 +730,7 @@ static void populateStencilOperation(MTLStencilDescriptor *mtlStencil, const Web
     mtlStencil.readMask = stencilReadMask;
 }
 
-static BindGroupLayout::BufferBindingType LEGACY_NODELETE convertBindingType(WGSL::BufferBindingType bindingType)
+NODELETE static BindGroupLayout::BufferBindingType convertBindingType(WGSL::BufferBindingType bindingType)
 {
     switch (bindingType) {
     case WGSL::BufferBindingType::Uniform:
@@ -716,7 +742,7 @@ static BindGroupLayout::BufferBindingType LEGACY_NODELETE convertBindingType(WGS
     }
 }
 
-static WebGPU::SamplerBindingType LEGACY_NODELETE convertSamplerBindingType(WGSL::SamplerBindingType samplerType)
+NODELETE static WebGPU::SamplerBindingType convertSamplerBindingType(WGSL::SamplerBindingType samplerType)
 {
     switch (samplerType) {
     case WGSL::SamplerBindingType::Filtering:
@@ -728,7 +754,7 @@ static WebGPU::SamplerBindingType LEGACY_NODELETE convertSamplerBindingType(WGSL
     }
 }
 
-static OptionSet<WebGPU::ShaderStage> LEGACY_NODELETE convertVisibility(const OptionSet<WGSL::ShaderStage>& visibility)
+NODELETE static OptionSet<WebGPU::ShaderStage> convertVisibility(const OptionSet<WGSL::ShaderStage>& visibility)
 {
     OptionSet<WebGPU::ShaderStage> flags;
     if (visibility & WGSL::ShaderStage::Vertex)
@@ -741,7 +767,7 @@ static OptionSet<WebGPU::ShaderStage> LEGACY_NODELETE convertVisibility(const Op
     return flags;
 }
 
-static WebGPU::TextureSampleType LEGACY_NODELETE convertSampleType(WGSL::TextureSampleType sampleType)
+NODELETE static WebGPU::TextureSampleType convertSampleType(WGSL::TextureSampleType sampleType)
 {
     switch (sampleType) {
     case WGSL::TextureSampleType::Float:
@@ -757,7 +783,7 @@ static WebGPU::TextureSampleType LEGACY_NODELETE convertSampleType(WGSL::Texture
     }
 }
 
-static WebGPU::TextureViewDimension LEGACY_NODELETE convertViewDimension(WGSL::TextureViewDimension viewDimension)
+NODELETE static WebGPU::TextureViewDimension convertViewDimension(WGSL::TextureViewDimension viewDimension)
 {
     switch (viewDimension) {
     case WGSL::TextureViewDimension::OneDimensional:
@@ -775,7 +801,7 @@ static WebGPU::TextureViewDimension LEGACY_NODELETE convertViewDimension(WGSL::T
     }
 }
 
-static WebGPU::StorageTextureAccess LEGACY_NODELETE convertAccess(WGSL::StorageTextureAccess access)
+NODELETE static WebGPU::StorageTextureAccess convertAccess(WGSL::StorageTextureAccess access)
 {
     switch (access) {
     case WGSL::StorageTextureAccess::WriteOnly:
@@ -787,7 +813,7 @@ static WebGPU::StorageTextureAccess LEGACY_NODELETE convertAccess(WGSL::StorageT
     }
 }
 
-static WebGPU::TextureFormat LEGACY_NODELETE convertFormat(WGSL::TexelFormat format)
+NODELETE static WebGPU::TextureFormat convertFormat(WGSL::TexelFormat format)
 {
     switch (format) {
     case WGSL::TexelFormat::BGRA8unorm:
@@ -925,55 +951,40 @@ NSString* Device::addPipelineLayouts(Vector<Vector<ResolvedBindGroupLayoutEntry>
     for (auto& bindGroupLayout : pipelineLayout.bindGroupLayouts) {
         auto& entries = pipelineEntries[bindGroupLayout.group];
         HashMap<String, uint64_t> entryMap;
-        // Wrapping the bump would let the array-length entry alias a user binding and defeat the bounds check.
-        auto bumpForArrayLength = [&](uint32_t webBinding) -> std::optional<uint32_t> {
-            auto checked = checkedSum<uint32_t>(webBinding, limits().maxBindingsPerBindGroup);
-            if (checked.hasOverflowed())
-                return std::nullopt;
-            return checked.value();
-        };
         for (auto& entry : bindGroupLayout.entries) {
             auto visibility = convertVisibility(entry.visibility);
             // The entries of a shader have the visibility of its stage.
             auto stage = static_cast<size_t>(shaderStage(visibility));
             ResolvedBindGroupLayoutEntry newEntry;
             // FIXME: https://bugs.webkit.org/show_bug.cgi?id=265204 - use a set instead
-            bool isArrayLength = false;
+            bool isArrayLength = entry.name.length() && entry.name.endsWith("_ArrayLength"_s);
             uint32_t webBinding = entry.webBinding;
-            if (auto& entryName = entry.name; entryName.length()) {
-                if (entryName.endsWith("_ArrayLength"_s)) {
-                    auto bumped = bumpForArrayLength(webBinding);
-                    if (!bumped)
-                        return @"Binding index overflow in auto-generated layouts";
-                    webBinding = *bumped;
-                    isArrayLength = true;
-                }
-            }
-
-            if (auto existingBindingIndex = entries.findIf([&](const ResolvedBindGroupLayoutEntry& e) {
-                return e.binding == webBinding;
-            }); existingBindingIndex != notFound) {
-                entries[existingBindingIndex].visibility |= visibility;
-                std::span(entries[existingBindingIndex].metalBinding)[stage] = entry.binding;
-                if (!BindGroupLayout::equalBindingEntries(entries[existingBindingIndex].bindingLayout, makeBindingLayout(entry.bindingMember)))
-                    return @"Binding mismatch in auto-generated layouts";
-                entryMap.set(entry.name, webBinding);
-                continue;
-            }
             uint64_t bufferSizeForBinding = 0;
             std::optional<BindGroupLayout::BufferBindingType> bufferTypeOverride;
-            if (auto& entryName = entry.name; entryName.length()) {
-                if (isArrayLength) {
-                    auto bumped = bumpForArrayLength(webBinding);
-                    if (!bumped)
-                        return @"Binding index overflow in auto-generated layouts";
-                    webBinding = *bumped;
-                    bufferTypeOverride = BindGroupLayout::BufferBindingType::ArrayLength;
-                    auto shortName = entryName.substring(2, entryName.length() - (sizeof("_ArrayLength") + 1));
-                    if (auto it = entryMap.find(shortName); it != entryMap.end())
-                        bufferSizeForBinding = it->value;
-                } else
-                    entryMap.set(entryName, webBinding);
+
+            if (isArrayLength) {
+                auto checked = checkedSum<uint32_t>(webBinding, deviceLimits.maxBindingsPerBindGroup);
+                if (checked.hasOverflowed())
+                    return @"Binding index overflow in auto-generated layouts";
+                webBinding = checked.value();
+                bufferTypeOverride = BindGroupLayout::BufferBindingType::ArrayLength;
+                auto shortName = entry.name.substring(2, entry.name.length() - (sizeof("_ArrayLength") + 1));
+                if (auto it = entryMap.find(shortName); it != entryMap.end())
+                    bufferSizeForBinding = it->value;
+            } else {
+                if (auto existingBindingIndex = entries.findIf([&](const ResolvedBindGroupLayoutEntry& e) {
+                    auto* bufferLayout = std::get_if<BindGroupLayout::BufferBindingLayout>(&e.bindingLayout);
+                    return e.binding == webBinding && !(bufferLayout && bufferLayout->type == BindGroupLayout::BufferBindingType::ArrayLength);
+                }); existingBindingIndex != notFound) {
+                    entries[existingBindingIndex].visibility |= visibility;
+                    std::span(entries[existingBindingIndex].metalBinding)[stage] = entry.binding;
+                    if (!BindGroupLayout::equalBindingEntries(entries[existingBindingIndex].bindingLayout, makeBindingLayout(entry.bindingMember)))
+                        return @"Binding mismatch in auto-generated layouts";
+                    entryMap.set(entry.name, webBinding);
+                    continue;
+                }
+                if (entry.name.length())
+                    entryMap.set(entry.name, webBinding);
             }
 
             newEntry.binding = webBinding;
@@ -990,8 +1001,7 @@ NSString* Device::addPipelineLayouts(Vector<Vector<ResolvedBindGroupLayoutEntry>
 
 Ref<PipelineLayout> Device::generatePipelineLayout(const Vector<Vector<ResolvedBindGroupLayoutEntry>>& bindGroupEntries)
 {
-    Vector<Ref<WebGPU::BindGroupLayout>> bindGroupLayouts;
-    bindGroupLayouts.reserveInitialCapacity(bindGroupEntries.size());
+    Vector<Ref<WebGPU::BindGroupLayout>> bindGroupLayouts(ReserveCapacityTag { }, bindGroupEntries.size());
     for (auto& entries : bindGroupEntries) {
         auto layoutEntries = entries;
         auto bindGroupLayout = createBindGroupLayout("getBindGroup() generated layout"_s, WTF::move(layoutEntries), true);
@@ -1110,7 +1120,7 @@ static NSString* errorValidatingDepthStencilState(const WebGPU::DepthStencilStat
     return nil;
 }
 
-static bool LEGACY_NODELETE hasAlphaChannel(WebGPU::TextureFormat format)
+NODELETE static bool hasAlphaChannel(WebGPU::TextureFormat format)
 {
     switch (format) {
     case WebGPU::TextureFormat::R8unorm:
@@ -1228,7 +1238,7 @@ static bool LEGACY_NODELETE hasAlphaChannel(WebGPU::TextureFormat format)
     }
 }
 
-static bool LEGACY_NODELETE textureFormatAllowedForRetunType(WebGPU::TextureFormat format, MTLDataType dataType, bool readsAlpha)
+NODELETE static bool textureFormatAllowedForRetunType(WebGPU::TextureFormat format, MTLDataType dataType, bool readsAlpha)
 {
     if (dataType == MTLDataTypeNone)
         return true;
@@ -1303,7 +1313,7 @@ static bool LEGACY_NODELETE textureFormatAllowedForRetunType(WebGPU::TextureForm
     }
 }
 
-static uint32_t LEGACY_NODELETE componentsForDataType(MTLDataType dataType)
+NODELETE static uint32_t componentsForDataType(MTLDataType dataType)
 {
     switch (dataType) {
     case MTLDataTypeBool:
@@ -1508,9 +1518,11 @@ void Device::createRenderPipeline(const WebGPU::RenderPipelineDescriptor& descri
     std::optional<PreparedLibrary> preparedVertexLibrary;
     std::optional<PreparedLibrary> preparedFragmentLibrary;
     ShaderModule::VertexStageIn shaderLocations;
+    ShaderModule::ASTHandle vertexAST;
     {
         Ref vertexModule = metal(descriptor.vertex.stage.module.get());
-        if (!vertexModule->isValid() || !vertexModule->ast())
+        vertexAST = vertexModule->ast();
+        if (!vertexModule->isValid() || !vertexAST)
             return callback(returnInvalidRenderPipeline(*this, isAsync, "Vertex module is not valid"_s));
         if (&vertexModule->device() != this)
             return callback(returnInvalidRenderPipeline(*this, isAsync, "Vertex module was created with a different device"_s));
@@ -1538,26 +1550,28 @@ void Device::createRenderPipeline(const WebGPU::RenderPipelineDescriptor& descri
 
     bool usesFragDepth = false;
     bool usesSampleMask = false;
+    bool usesDualSourceBlending = false;
     bool hasAtLeastOneColorTarget = false;
     const ShaderModule::FragmentOutputs* fragmentReturnTypes { nullptr };
     const ShaderModule::FragmentInputs* fragmentInputs { nullptr };
     uint32_t colorAttachmentCount = 0;
     RefPtr<ShaderModule> fragmentModule;
+    ShaderModule::ASTHandle fragmentAST;
     if (descriptor.fragment) {
         const auto& fragmentDescriptor = *descriptor.fragment;
 
         fragmentModule = &metal(fragmentDescriptor.stage.module.get());
-        if (!fragmentModule->isValid() || !fragmentModule->ast())
+        fragmentAST = fragmentModule->ast();
+        if (!fragmentModule->isValid() || !fragmentAST)
             return callback(returnInvalidRenderPipeline(*this, isAsync, "Fragment module is invalid"_s));
 
         if (&fragmentModule->device() != this)
             return callback(returnInvalidRenderPipeline(*this, isAsync, "Fragment module was created with a different device"_s));
 
-        auto fragmentShaderModule = fragmentModule->ast();
-        RELEASE_ASSERT(fragmentShaderModule);
         const auto& fragmentEntryPoint = fragmentDescriptor.stage.entryPoint.isNull() ? fragmentModule->defaultFragmentEntryPoint() : fragmentDescriptor.stage.entryPoint;
         usesFragDepth = fragmentModule->usesFragDepth(fragmentEntryPoint);
         usesSampleMask = fragmentModule->usesSampleMaskInOutput(fragmentEntryPoint);
+        usesDualSourceBlending = fragmentModule->usesDualSourceBlending(fragmentEntryPoint);
 
         fragmentInputs = fragmentModule->fragmentInputsForEntryPoint(fragmentEntryPoint);
         fragmentReturnTypes = fragmentModule->fragmentReturnTypeForEntryPoint(fragmentEntryPoint);
@@ -1612,6 +1626,14 @@ void Device::createRenderPipeline(const WebGPU::RenderPipelineDescriptor& descri
                 };
                 if (!validateBlend(alphaBlend) || !validateBlend(colorBlend))
                     return callback(returnInvalidRenderPipeline(*this, isAsync, "Blend states are not valid"_s));
+                if (usesSecondBlendSource(alphaBlend) || usesSecondBlendSource(colorBlend)) {
+                    if (!hasFeature(WebGPU::FeatureName::DualSourceBlending))
+                        return callback(returnInvalidRenderPipeline(*this, isAsync, "Blend factor uses the second blend source but the dual-source-blending feature is not enabled"_s));
+                    if (fragmentDescriptor.targets.size() != 1)
+                        return callback(returnInvalidRenderPipeline(*this, isAsync, "Blend factor uses the second blend source but there is more than one color target"_s));
+                    if (!usesDualSourceBlending)
+                        return callback(returnInvalidRenderPipeline(*this, isAsync, "Blend factor uses the second blend source but the fragment shader does not use @blend_src"_s));
+                }
                 mtlColorAttachment.alphaBlendOperation = blendOperation(alphaBlend.operation);
                 mtlColorAttachment.sourceAlphaBlendFactor = blendFactor(alphaBlend.srcFactor);
                 mtlColorAttachment.destinationAlphaBlendFactor = blendFactor(alphaBlend.dstFactor);
@@ -1620,7 +1642,8 @@ void Device::createRenderPipeline(const WebGPU::RenderPipelineDescriptor& descri
                 mtlColorAttachment.sourceRGBBlendFactor = blendFactor(colorBlend.srcFactor);
                 mtlColorAttachment.destinationRGBBlendFactor = blendFactor(colorBlend.dstFactor);
                 auto readsAlphaFactor = [](WebGPU::BlendFactor factor) {
-                    return factor == WebGPU::BlendFactor::SrcAlpha || factor == WebGPU::BlendFactor::OneMinusSrcAlpha || factor == WebGPU::BlendFactor::SrcAlphaSaturated;
+                    return factor == WebGPU::BlendFactor::SrcAlpha || factor == WebGPU::BlendFactor::OneMinusSrcAlpha || factor == WebGPU::BlendFactor::SrcAlphaSaturated
+                        || factor == WebGPU::BlendFactor::Src1Alpha || factor == WebGPU::BlendFactor::OneMinusSrc1Alpha;
                 };
                 readsAlpha = readsAlphaFactor(colorBlend.srcFactor) || readsAlphaFactor(colorBlend.dstFactor);
             } else
@@ -2091,24 +2114,30 @@ id<MTLRenderPipelineState> RenderPipeline::icbRenderPipelineState() const
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuRenderPipelineAddRef(WGPURenderPipeline renderPipeline)
+NODELETE void wgpuRenderPipelineAddRef(WGPURenderPipeline renderPipeline)
 {
     WebGPU::Metal::fromAPI(renderPipeline).ref();
 }
 
 void wgpuRenderPipelineRelease(WGPURenderPipeline renderPipeline)
 {
-    WebGPU::Metal::fromAPI(renderPipeline).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(renderPipeline).deref();
+    }
 }
 
 WGPUBindGroupLayout wgpuRenderPipelineGetBindGroupLayout(WGPURenderPipeline renderPipeline, uint32_t groupIndex)
 {
-    // Every WebGPU::BindGroupLayout that a WebGPU::Metal::RenderPipeline returns is a WebGPU::Metal::BindGroupLayout.
-    Ref bindGroupLayout = downcast<WebGPU::Metal::BindGroupLayout>(protect(WebGPU::Metal::fromAPI(renderPipeline))->getBindGroupLayout(groupIndex).get());
-    return WebGPU::Metal::releaseToAPI(WTF::move(bindGroupLayout));
+    @autoreleasepool {
+        // Every WebGPU::BindGroupLayout that a WebGPU::Metal::RenderPipeline returns is a WebGPU::Metal::BindGroupLayout.
+        Ref bindGroupLayout = downcast<WebGPU::Metal::BindGroupLayout>(protect(WebGPU::Metal::fromAPI(renderPipeline))->getBindGroupLayout(groupIndex).get());
+        return WebGPU::Metal::releaseToAPI(WTF::move(bindGroupLayout));
+    }
 }
 
 void wgpuRenderPipelineSetLabel(WGPURenderPipeline renderPipeline, WGPUStringView label)
 {
-    WebGPU::Metal::fromAPI(renderPipeline).setLabel(WebGPU::Metal::fromAPI(label));
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(renderPipeline).setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }

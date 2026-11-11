@@ -70,7 +70,7 @@ using namespace HTMLNames;
 
 using DOMNodeHandleCache = WeakHashMap<Node, WeakRef<InjectedBundleNodeHandle>, WeakPtrImplWithEventTargetData>;
 
-static DOMNodeHandleCache& LEGACY_NODELETE domNodeHandleCache()
+NODELETE static DOMNodeHandleCache& domNodeHandleCache()
 {
     static NeverDestroyed<DOMNodeHandleCache> cache;
     return cache;
@@ -304,33 +304,6 @@ bool InjectedBundleNodeHandle::isHTMLInputElementAutoFillButtonEnabled() const
         return false;
     
     return input->autofillButtonType() != AutoFillButtonType::None;
-}
-
-void InjectedBundleNodeHandle::setHTMLInputElementAutoFillButtonEnabled(AutoFillButtonType autoFillButtonType)
-{
-    RefPtr input = dynamicDowncast<HTMLInputElement>(m_node);
-    if (!input)
-        return;
-
-    input->setAutofillButtonType(autoFillButtonType);
-}
-
-AutoFillButtonType InjectedBundleNodeHandle::htmlInputElementAutoFillButtonType() const
-{
-    RefPtr input = dynamicDowncast<HTMLInputElement>(m_node);
-    if (!input)
-        return AutoFillButtonType::None;
-
-    return input->autofillButtonType();
-}
-
-AutoFillButtonType InjectedBundleNodeHandle::htmlInputElementLastAutoFillButtonType() const
-{
-    RefPtr input = dynamicDowncast<HTMLInputElement>(m_node);
-    if (!input)
-        return AutoFillButtonType::None;
-
-    return input->lastAutofillButtonType();
 }
 
 bool InjectedBundleNodeHandle::isAutoFillAvailable() const

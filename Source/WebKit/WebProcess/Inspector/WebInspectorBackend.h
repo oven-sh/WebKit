@@ -35,9 +35,14 @@
 #include <WebCore/ResourceLoaderIdentifier.h>
 #include <utility>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/WTFString.h>
+
+namespace WebCore {
+struct Cookie;
+}
 
 namespace Inspector {
 struct FrameResourceData;
@@ -61,7 +66,7 @@ public:
     void ref() const final { ThreadSafeRefCounted::ref(); }
     void deref() const final { ThreadSafeRefCounted::deref(); }
 
-    WebPage* LEGACY_NODELETE page() const;
+    NODELETE WebPage* page() const;
 
     void updateDockingAvailability();
 
@@ -115,6 +120,7 @@ public:
     void suspendForDebugger(WebCore::DebuggerPauseSessionIdentifier);
     void resumeFromDebugger(WebCore::DebuggerPauseSessionIdentifier);
     void getFrameResourceData(Vector<WebCore::FrameIdentifier>&& frameIDs, CompletionHandler<void(Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>>&&)>&&);
+    void getFrameCookies(Vector<WebCore::FrameIdentifier>&& frameIDs, CompletionHandler<void(Vector<WebCore::Cookie>&&)>&&);
     void getFrameResourceContent(WebCore::FrameIdentifier, String url, CompletionHandler<void(String content, bool base64Encoded, String errorString)>&&);
 
     void searchInRequest(WebCore::ResourceLoaderIdentifier, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchMatch>&&, String errorString)>&&);
@@ -124,6 +130,8 @@ public:
     // Fan the paint-rects toggle and the bootstrap script out to every per-frame PageAgentProxy this process hosts.
     void setShowPaintRects(bool);
     void setBootstrapScript(const String&);
+
+    void setSettingOverride(const String& setting, std::optional<bool>);
 
     // Set up / tear down every per-frame instrumentation agent for a frame. Callers
     // don't need to know which agents are frame-scoped; each helper no-ops unless its
@@ -179,6 +187,7 @@ private:
     // only on the first (process, page) registration).
     bool m_showPaintRects { false };
     String m_bootstrapScript;
+    HashSet<String> m_overriddenSettings;
 };
 
 } // namespace WebKit

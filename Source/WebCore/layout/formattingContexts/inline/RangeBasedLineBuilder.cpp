@@ -33,7 +33,7 @@
 namespace WebCore {
 namespace Layout {
 
-static inline bool LEGACY_NODELETE hasInlineBoxesOnly(size_t inlineBoxCount, size_t numberOfInlineItems)
+NODELETE static inline bool hasInlineBoxesOnly(size_t inlineBoxCount, size_t numberOfInlineItems)
 {
     return !(numberOfInlineItems % 2) && inlineBoxCount == numberOfInlineItems / 2;
 }
@@ -170,6 +170,9 @@ bool RangeBasedLineBuilder::isEligibleForRangeInlineLayout(const InlineFormattin
     if (!isEmptyContent) {
         // Check the nested text content.
         if (!inlineItems.hasTextAndLineBreakOnlyContent() || inlineItems.requiresVisualReordering() || !placedFloats.isEmpty() || inlineItems.hasTextAutospace())
+            return false;
+        // The text style is taken from the root and the inline box.
+        if (inlineItems.hasTextWithStyleOfItsOwn())
             return false;
 
         CheckedRef rootStyle = inlineFormattingContext.root().style();

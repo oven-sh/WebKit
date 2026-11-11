@@ -157,17 +157,17 @@ public:
         ASSERT(!isEmpty() && !isMaterialized() && b3Value() == value);
     }
 
-    bool LEGACY_NODELETE isEmpty() const
+    NODELETE bool isEmpty() const
     {
         return !m_storage;
     }
 
-    bool LEGACY_NODELETE isMaterialized() const
+    NODELETE bool isMaterialized() const
     {
         return m_storage & isMaterializedMask;
     }
 
-    void LEGACY_NODELETE setMaterialized(B3::Variable* var)
+    NODELETE void setMaterialized(B3::Variable* var)
     {
         ASSERT(!isMaterialized());
         m_storage = reinterpret_cast<uintptr_t>(var) | isMaterializedMask;
@@ -175,20 +175,20 @@ public:
     }
 
     // Not named value() to disambiguate with TypedExpression::value()
-    B3::Value* LEGACY_NODELETE b3Value() const
+    NODELETE B3::Value* b3Value() const
     {
         ASSERT(!isMaterialized());
         // No need to mask in this common case since the isMaterialized bit will be 0
         return reinterpret_cast<B3::Value*>(m_storage);
     }
 
-    B3::Variable* LEGACY_NODELETE b3Variable() const
+    NODELETE B3::Variable* b3Variable() const
     {
         ASSERT(isMaterialized());
         return reinterpret_cast<B3::Variable*>(m_storage & ~isMaterializedMask);
     }
 
-    B3::Type LEGACY_NODELETE type() const
+    NODELETE B3::Type type() const
     {
         if (isMaterialized()) [[unlikely]]
             return b3Variable()->type();
@@ -217,7 +217,7 @@ public:
     using WasmConstRefValue = Const64Value;
 
     static constexpr bool shouldFuseBranchCompare = false;
-    static constexpr bool LEGACY_NODELETE tierSupportsSIMD() { return true; }
+    NODELETE static constexpr bool tierSupportsSIMD() { return true; }
     static constexpr bool validateFunctionBodySize = true;
 
     struct ControlData {
@@ -255,15 +255,15 @@ public:
         {
         }
 
-        static bool LEGACY_NODELETE isIf(const ControlData& control) { return control.blockType() == BlockType::If; }
-        static bool LEGACY_NODELETE isElse(const ControlData& control) { return control.blockType() == BlockType::Else; }
-        static bool LEGACY_NODELETE isTry(const ControlData& control) { return control.blockType() == BlockType::Try; }
-        static bool LEGACY_NODELETE isTryTable(const ControlData& control) { return control.blockType() == BlockType::TryTable; }
-        static bool LEGACY_NODELETE isAnyCatch(const ControlData& control) { return control.blockType() == BlockType::Catch; }
-        static bool LEGACY_NODELETE isTopLevel(const ControlData& control) { return control.blockType() == BlockType::TopLevel; }
-        static bool LEGACY_NODELETE isLoop(const ControlData& control) { return control.blockType() == BlockType::Loop; }
-        static bool LEGACY_NODELETE isBlock(const ControlData& control) { return control.blockType() == BlockType::Block; }
-        static bool LEGACY_NODELETE isCatch(const ControlData& control)
+        NODELETE static bool isIf(const ControlData& control) { return control.blockType() == BlockType::If; }
+        NODELETE static bool isElse(const ControlData& control) { return control.blockType() == BlockType::Else; }
+        NODELETE static bool isTry(const ControlData& control) { return control.blockType() == BlockType::Try; }
+        NODELETE static bool isTryTable(const ControlData& control) { return control.blockType() == BlockType::TryTable; }
+        NODELETE static bool isAnyCatch(const ControlData& control) { return control.blockType() == BlockType::Catch; }
+        NODELETE static bool isTopLevel(const ControlData& control) { return control.blockType() == BlockType::TopLevel; }
+        NODELETE static bool isLoop(const ControlData& control) { return control.blockType() == BlockType::Loop; }
+        NODELETE static bool isBlock(const ControlData& control) { return control.blockType() == BlockType::Block; }
+        NODELETE static bool isCatch(const ControlData& control)
         {
             if (control.blockType() != BlockType::Catch)
                 return false;
@@ -305,13 +305,13 @@ public:
                 out.print("None");
         }
 
-        BlockType LEGACY_NODELETE blockType() const { return controlBlockType; }
+        NODELETE BlockType blockType() const { return controlBlockType; }
 
-        const BlockSignature& LEGACY_NODELETE signature() const { return m_signature; }
+        NODELETE const BlockSignature& signature() const { return m_signature; }
 
         bool hasNonVoidresult() const { return m_signature.returnCount() > 0; }
 
-        BasicBlock* LEGACY_NODELETE targetBlockForBranch()
+        NODELETE BasicBlock* targetBlockForBranch()
         {
             if (blockType() == BlockType::Loop) {
                 m_hasBranchToHeader = true;
@@ -320,14 +320,14 @@ public:
             return continuation;
         }
 
-        void LEGACY_NODELETE convertIfToBlock()
+        NODELETE void convertIfToBlock()
         {
             ASSERT(blockType() == BlockType::If);
             controlBlockType = BlockType::Block;
             special = nullptr;
         }
 
-        void LEGACY_NODELETE convertTryToCatch(unsigned tryEndCallSiteIndex, Variable* exception)
+        NODELETE void convertTryToCatch(unsigned tryEndCallSiteIndex, Variable* exception)
         {
             ASSERT(blockType() == BlockType::Try);
             controlBlockType = BlockType::Catch;
@@ -336,7 +336,7 @@ public:
             m_exception = exception;
         }
 
-        void LEGACY_NODELETE convertTryToCatchAll(unsigned tryEndCallSiteIndex, Variable* exception)
+        NODELETE void convertTryToCatchAll(unsigned tryEndCallSiteIndex, Variable* exception)
         {
             ASSERT(blockType() == BlockType::Try);
             controlBlockType = BlockType::Catch;
@@ -358,7 +358,7 @@ public:
             m_tryTableTargets = WTF::move(targets);
         }
 
-        void LEGACY_NODELETE endTryTable(unsigned tryEndCallSiteIndex)
+        NODELETE void endTryTable(unsigned tryEndCallSiteIndex)
         {
             ASSERT(blockType() == BlockType::TryTable);
             m_tryEnd = tryEndCallSiteIndex;
@@ -379,31 +379,31 @@ public:
             return m_signature.returnType(i);
         }
 
-        unsigned LEGACY_NODELETE tryStart() const
+        NODELETE unsigned tryStart() const
         {
             ASSERT(controlBlockType == BlockType::Try || controlBlockType == BlockType::TryTable || controlBlockType == BlockType::Catch);
             return m_tryStart;
         }
 
-        unsigned LEGACY_NODELETE tryEnd() const
+        NODELETE unsigned tryEnd() const
         {
             ASSERT(controlBlockType == BlockType::Catch || controlBlockType == BlockType::TryTable);
             return m_tryEnd;
         }
 
-        unsigned LEGACY_NODELETE tryDepth() const
+        NODELETE unsigned tryDepth() const
         {
             ASSERT(controlBlockType == BlockType::Try || controlBlockType == BlockType::TryTable || controlBlockType == BlockType::Catch);
             return m_tryCatchDepth;
         }
 
-        CatchKind LEGACY_NODELETE catchKind() const
+        NODELETE CatchKind catchKind() const
         {
             ASSERT(controlBlockType == BlockType::Catch);
             return m_catchKind;
         }
 
-        Variable* LEGACY_NODELETE exception() const
+        NODELETE Variable* exception() const
         {
             ASSERT(controlBlockType == BlockType::Catch || controlBlockType == BlockType::TryTable);
             return m_exception;
@@ -449,7 +449,7 @@ public:
     typedef std::expected<std::unique_ptr<InternalFunction>, ErrorType> Result;
     typedef std::expected<void, ErrorType> PartialResult;
 
-    static ExpressionType LEGACY_NODELETE emptyExpression() { return { }; };
+    NODELETE static ExpressionType emptyExpression() { return { }; };
 
     enum class CastKind { Cast, Test };
 
@@ -468,14 +468,14 @@ public:
             return declineForImage(); \
     } while (0)
 
-    unsigned LEGACY_NODELETE advanceCallSiteIndex()
+    NODELETE unsigned advanceCallSiteIndex()
     {
         if (m_inlineParent)
             return m_inlineRoot->advanceCallSiteIndex();
         return ++m_callSiteIndex;
     }
 
-    unsigned LEGACY_NODELETE callSiteIndex() const
+    NODELETE unsigned callSiteIndex() const
     {
         if (m_inlineParent)
             return m_inlineRoot->callSiteIndex();
@@ -487,12 +487,12 @@ public:
 
     void computeStackCheckSize(bool& needsOverflowCheck, int32_t& checkSize);
 
-    Value* LEGACY_NODELETE wasmRefOfCell(Value* cell)
+    NODELETE Value* wasmRefOfCell(Value* cell)
     {
         return cell;
     }
 
-    Value* LEGACY_NODELETE pointerOfWasmRef(Value* ref)
+    NODELETE Value* pointerOfWasmRef(Value* ref)
     {
         return ref;
     }
@@ -518,8 +518,8 @@ public:
     }
 
     // SIMD
-    bool LEGACY_NODELETE usesSIMD() const { return m_info.usesSIMD(m_functionIndex); }
-    void LEGACY_NODELETE notifyFunctionUsesSIMD()
+    NODELETE bool usesSIMD() const { return m_info.usesSIMD(m_functionIndex); }
+    NODELETE void notifyFunctionUsesSIMD()
     {
         ASSERT(m_info.usesSIMD(m_functionIndex));
         m_proc.setUsesSIMD();
@@ -884,10 +884,10 @@ public:
     [[nodiscard]] PartialResult endTopLevel(std::span<const TypedExpression>) { return { }; }
 
     // Fused comparison stubs (B3 will do this for us later).
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedBranchCompare(OpType, ControlType&, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedBranchCompare(OpType, ControlType&, ExpressionType, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedIfCompare(OpType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedIfCompare(OpType, ExpressionType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedBranchCompare(OpType, ControlType&, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedBranchCompare(OpType, ControlType&, ExpressionType, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedIfCompare(OpType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
+    NODELETE [[nodiscard]] PartialResult addFusedIfCompare(OpType, ExpressionType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
 
     // Calls
     [[nodiscard]] PartialResult addCall(unsigned, FunctionSpaceIndex functionIndexSpace, const RTT&, ArgumentList& args, ResultList& results, CallType = CallType::Call);
@@ -909,11 +909,11 @@ public:
     [[nodiscard]] PartialResult emitInlineDirectCall(InliningNode*, FunctionCodeIndex calleeIndex, const RTT&, const ArgumentList& args, ValueResults&);
 
     void dump(const ControlStack&, const Stack* expressionStack);
-    void LEGACY_NODELETE setParser(FunctionParser<OMGIRGenerator>* parser) { m_parser = parser; };
+    NODELETE void setParser(FunctionParser<OMGIRGenerator>* parser) { m_parser = parser; };
     ALWAYS_INLINE void willParseOpcode() { }
     ALWAYS_INLINE void willParseExtendedOpcode() { }
     ALWAYS_INLINE void didParseOpcode() { }
-    void LEGACY_NODELETE didFinishParsingLocals() { }
+    NODELETE void didFinishParsingLocals() { }
     void didPopValueFromStack(ExpressionType expr, ASCIILiteral message)
     {
         TRACE_VALUE(Wasm::Types::Void, get(expr), "pop at height: ", m_parser->expressionStack().size() + 1, " site: [", message, "], ", expr);
@@ -940,20 +940,20 @@ public:
         m_stackmaps.add(CallSiteIndex(callSiteIndex), WTF::move(stackmap));
     }
 
-    StackMaps&& LEGACY_NODELETE takeStackmaps()
+    NODELETE StackMaps&& takeStackmaps()
     {
         RELEASE_ASSERT(m_inlineRoot == this);
         return WTF::move(m_stackmaps);
     }
 
-    Vector<UnlinkedHandlerInfo>&& LEGACY_NODELETE takeExceptionHandlers()
+    NODELETE Vector<UnlinkedHandlerInfo>&& takeExceptionHandlers()
     {
         RELEASE_ASSERT(m_inlineRoot == this);
         return WTF::move(m_exceptionHandlers);
     }
 
 private:
-    void LEGACY_NODELETE emitPrepareWasmOperation(BasicBlock*)
+    NODELETE void emitPrepareWasmOperation(BasicBlock*)
     {
     }
 
@@ -1174,7 +1174,7 @@ private:
         return set(m_currentBlock, dst, src);
     }
 
-    bool LEGACY_NODELETE useSignalingMemory0() const
+    NODELETE bool useSignalingMemory0() const
     {
         return m_mode == MemoryMode::Signaling;
     }
@@ -1253,22 +1253,22 @@ private:
     Value* m_baseMemoryValue { nullptr };
     Value* m_boundsCheckingSizeValue { nullptr };
 
-    Value* LEGACY_NODELETE instanceValue()
+    NODELETE Value* instanceValue()
     {
         return m_instanceValue;
     }
 
-    Value* LEGACY_NODELETE vmValue()
+    NODELETE Value* vmValue()
     {
         return m_vmValue;
     }
 
-    Value* LEGACY_NODELETE baseMemoryValue()
+    NODELETE Value* baseMemoryValue()
     {
         return m_baseMemoryValue;
     }
 
-    Value* LEGACY_NODELETE boundsCheckingSizeValue()
+    NODELETE Value* boundsCheckingSizeValue()
     {
         return m_boundsCheckingSizeValue;
     }
@@ -2616,18 +2616,33 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
 
     m_proc.requestCallArgAreaSizeInBytes(calleeStackSize);
 
-    // Tail call patchpoint is emitted before the B3-level context switch so
-    // wasmContextInstancePointer still holds the caller's instance.
+    // Both paths below install a cross-instance callee's pinned registers from inside their call
+    // patchpoint's own generator, immediately before transferring to the callee. The callee code
+    // pointer is the only input consumed after that switch, so it gets a fixed register the switch
+    // does not write. Air cannot express this as a rep constraint: an input rep is an early use,
+    // which by design does not interfere with a patchpoint's late clobbers, and a late use would
+    // interfere with all of them, which for a call patchpoint means every caller-save register.
+    // FIXME: B3 has no way to declare a clobber internal to a patchpoint:
+    //   see https://bugs.webkit.org/show_bug.cgi?id=151823
+    static_assert(noOverlap(GPRInfo::nonPreservedNonArgumentGPR0, GPRInfo::wasmContextInstancePointer, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister));
+
     if (isTailCallRootCaller) {
         const TypeSignatureIndex callerTypeSignatureIndex = m_info.internalFunctionTypeSignatureIndices[m_functionIndex];
         const RTT& callerType = m_info.rtt(callerTypeSignatureIndex);
         CallInformation wasmCallerInfoAsCallee = callingConvention.callInformationFor(callerType, CallRole::Callee);
 
         auto [patchpoint, _, prepareForCall] = createTailCallPatchpoint(m_currentBlock, signature, wasmCallerInfoAsCallee, wasmCalleeInfoAsCallee, args, boxedCalleeCallee);
-        unsigned patchArgsIndex = patchpoint->reps().size();
-        patchpoint->append(calleeCode, ValueRep(GPRInfo::nonPreservedNonArgumentGPR0));
-        patchpoint->append(calleeInstance, ValueRep::SomeRegister);
+        unsigned patchArgsIndex = patchpoint->reps().size() + m_proc.resultCount(patchpoint->type());
+        // See the static_assert above for why the code pointer needs a fixed register.
+        patchpoint->append(calleeCode, ValueRep(GPRInfo::nonPreservedNonArgumentGPR0)); // patchArgsIndex
+        patchpoint->append(calleeInstance, ValueRep::SomeRegister); // patchArgsIndex + 1
+        // The callee test guarding the restore frame below needs boxedCalleeCallee in a register; the rep
+        // createTailCallPatchpoint already appends is LateColdAny and may be on the stack.
+        ASSERT(boxedCalleeCallee);
+        patchpoint->append(boxedCalleeCallee, ValueRep::SomeRegister); // patchArgsIndex + 2
         // Cross-instance setup below reloads pinned registers before the tail-call shuffle consumes late inputs.
+        // FIXME: We should not have to do this, but the wasm->wasm stub assumes it can
+        // use all the pinned registers as scratch: https://bugs.webkit.org/show_bug.cgi?id=172181
         patchpoint->clobberLate(RegisterSet::wasmPinnedRegisters());
         // emitRestoreInstanceFrameIfNeeded needs two scratches. wasmBaseMemoryPointer is
         // always pinned so B3 won't allocate it. wasmBoundsCheckingSizeRegister
@@ -2635,14 +2650,24 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
         // scratch that avoids the inputs.
         if (m_mode == MemoryMode::Signaling)
             patchpoint->numGPScratchRegisters = 1;
-        patchArgsIndex += m_proc.resultCount(patchpoint->type());
         Checked<int32_t> callerStackSize = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(wasmCallerInfoAsCallee.headerAndArgumentStackSizeInBytes);
         patchpoint->setGenerator([prepareForCall = prepareForCall, patchArgsIndex, callerStackSize = static_cast<int32_t>(callerStackSize), mode = m_mode](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+            GPRReg calleeCode = params[patchArgsIndex].gpr();
             GPRReg calleeInstanceGPR = params[patchArgsIndex + 1].gpr();
             GPRReg scratch2 = mode == MemoryMode::Signaling ? params.gpScratch(0) : GPRInfo::wasmBoundsCheckingSizeRegister;
-            auto sameInstance = jit.branchPtr(CCallHelpers::Equal, calleeInstanceGPR, GPRInfo::wasmContextInstancePointer);
+            ASSERT_WITH_MESSAGE(calleeInstanceGPR != GPRInfo::wasmContextInstancePointer, "Cross-instance check is broken");
+            // We need a restore frame if the wasm instance is different or if the call goes out to JS.
+            // In the latter case JS can grow wasm memory, invalidating memory base cached in a callee save register.
+            auto needsRestoreFrame = jit.branchPtr(CCallHelpers::NotEqual, calleeInstanceGPR, GPRInfo::wasmContextInstancePointer);
+            // FIXME: consider overloading WasmCallableFunction::targetInstance to hold a JSFunction when the
+            // callee exits to JS. The instance comparison above would then fail for a JS import on its own and
+            // this second test could go away. See also BBQJIT::emitIndirectTailCall().
+            GPRReg calleeCalleeGPR = params[patchArgsIndex + 2].gpr();
+            CCallHelpers::Jump skipRestoreFrame;
             {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
+                skipRestoreFrame = branchIfCalleeNotWasmToJS(jit, calleeCalleeGPR);
+                needsRestoreFrame.link(&jit);
                 int32_t topSource = -static_cast<int32_t>(params.code().frameSize());
                 for (unsigned i = 0; i < params.size(); ++i) {
                     if (params[i].isStack())
@@ -2654,12 +2679,19 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
                 emitRestoreInstanceFrameIfNeeded(jit, GPRInfo::wasmContextInstancePointer, callerStackSize, params.code().frameSize(), topSourceOffsetFromFP, GPRInfo::wasmBaseMemoryPointer, scratch2);
                 jit.move(calleeInstanceGPR, GPRInfo::wasmContextInstancePointer);
                 jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
-                jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, calleeInstanceGPR);
+                // cageConditionally clobbers its scratch, so the scratch must not be one of the registers we
+                // just loaded, nor the jump target we still have to consume. In BoundsChecking mode
+                // wasmBoundsCheckingSizeRegister is pinned, so the callee instance (dead by now) cannot be
+                // it. In Signaling mode it is not pinned, clobberLate(wasmPinnedRegisters()) prevents
+                // scratch from overlapping.
+                GPRReg cageScratch = mode == MemoryMode::Signaling ? scratch2 : calleeInstanceGPR;
+                ASSERT(noOverlap(cageScratch, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, calleeCode));
+                jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, cageScratch);
             }
-            sameInstance.link(&jit);
+            skipRestoreFrame.link(&jit);
             prepareForCall->run(jit, params);
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            jit.farJump(params[patchArgsIndex].gpr(), WasmEntryPtrTag);
+            jit.farJump(calleeCode, WasmEntryPtrTag);
         });
         return { };
     }
@@ -2704,45 +2736,6 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
         return { };
     }
 
-    // Do a context switch if needed.
-    {
-        BasicBlock* continuation = m_proc.addBlock();
-        BasicBlock* doContextSwitch = m_proc.addBlock();
-
-        Value* isSameContextInstance = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(),
-            calleeInstance, instanceValue());
-        m_currentBlock->setSuccessors(FrequentedBlock(continuation), FrequentedBlock(doContextSwitch));
-        m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), isSameContextInstance);
-
-        PatchpointValue* patchpoint = doContextSwitch->appendNew<PatchpointValue>(m_proc, B3::Void, origin());
-        patchpoint->effects.writesPinned = true;
-        // We pessimistically assume we're calling something with BoundsChecking memory.
-        // FIXME: We shouldn't have to do this: https://bugs.webkit.org/show_bug.cgi?id=172181
-        patchpoint->clobber(RegisterSet::wasmPinnedRegisters());
-        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-        patchpoint->append(calleeInstance, ValueRep::SomeRegister);
-        patchpoint->numGPScratchRegisters = 1;
-
-        patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-            AllowMacroScratchRegisterUsage allowScratch(jit);
-            GPRReg calleeInstance = params[0].gpr();
-            ASSERT(calleeInstance != GPRInfo::wasmBaseMemoryPointer);
-            emitPrepareToCageMemoryBase(jit, GPRInfo::wasmContextInstancePointer, params.gpScratch(0));
-            jit.storeWasmContextInstance(calleeInstance);
-            static_assert(GPRInfo::wasmBoundsCheckingSizeRegister != GPRInfo::wasmBaseMemoryPointer);
-            // FIXME: We should support more than one memory size register
-            //   see: https://bugs.webkit.org/show_bug.cgi?id=162952
-            ASSERT(GPRInfo::wasmBoundsCheckingSizeRegister != calleeInstance);
-            GPRReg scratch = params.gpScratch(0);
-            jit.loadPairPtr(calleeInstance, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
-            emitCageMemoryBase(jit, scratch);
-        });
-        doContextSwitch->setSuccessors(continuation);
-        doContextSwitch->appendNew<Value>(m_proc, Jump, origin());
-
-        m_currentBlock = continuation;
-    }
-
     Value* functionInfo = nullptr;
     if (m_context.codeForImage)
         functionInfo = m_currentBlock->appendNew<Value>(m_proc, Sub, origin(), calleeCodeLocation, constant(pointerType(), OBJECT_OFFSETOF(WasmOrJSImportableFunction, importFunctionStub)));
@@ -2754,23 +2747,54 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
     // use all the pinned registers as scratch: https://bugs.webkit.org/show_bug.cgi?id=172181
     patchpoint->clobberLate(RegisterSet::wasmPinnedRegisters());
 
-    unsigned patchArgsIndex = patchpoint->reps().size();
-    patchpoint->append(calleeCode, ValueRep::SomeRegister);
-    patchpoint->append(boxedCalleeCallee, ValueRep::SomeRegister);
+    unsigned patchArgsIndex = patchpoint->reps().size() + m_proc.resultCount(patchpoint->type());
+    // See the static_assert above for why the code pointer needs a fixed register.
+    patchpoint->append(calleeCode, ValueRep(GPRInfo::nonPreservedNonArgumentGPR0)); // patchArgsIndex
+    patchpoint->append(boxedCalleeCallee, ValueRep::SomeRegister); // patchArgsIndex + 1
+    patchpoint->append(calleeInstance, ValueRep::SomeRegister); // patchArgsIndex + 2
     if (functionInfo)
-        patchpoint->append(functionInfo, ValueRep::SomeRegister);
-    patchArgsIndex += m_proc.resultCount(patchpoint->type());
-    patchpoint->setGenerator([this, handle = handle, prepareForCall = prepareForCall, patchArgsIndex, signature = Ref<const RTT>(signature), wasmCalleeInfo = WTF::move(wasmCalleeInfo)](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        patchpoint->append(functionInfo, ValueRep::SomeRegister); // patchArgsIndex + 3
+    // cageConditionally clobbers its scratch, so the scratch must not be one of the registers we
+    // just loaded, nor the jump target we still have to consume. In BoundsChecking mode
+    // wasmBoundsCheckingSizeRegister is pinned, so the callee instance (dead by now) cannot be
+    // it. In Signaling mode it is not pinned, clobberLate(wasmPinnedRegisters()) prevents the
+    // scratch from overlapping.
+    if (m_mode == MemoryMode::Signaling)
+        patchpoint->numGPScratchRegisters = 1;
+    patchpoint->setGenerator([this, handle = handle, prepareForCall = prepareForCall, patchArgsIndex, signature = Ref<const RTT>(signature), wasmCalleeInfo = WTF::move(wasmCalleeInfo), mode = m_mode](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         if (prepareForCall)
             prepareForCall->run(jit, params);
         if (handle)
             handle->collectStackMap(this, params);
 
-        jit.storeWasmCalleeToCalleeCallFrame(params[patchArgsIndex + 1].gpr());
+        GPRReg calleeCodeGPR = params[patchArgsIndex].gpr();
+        GPRReg boxedCalleeCalleeGPR = params[patchArgsIndex + 1].gpr();
+        jit.storeWasmCalleeToCalleeCallFrame(boxedCalleeCalleeGPR);
         if (m_context.codeForImage)
-            jit.storePtr(params[patchArgsIndex + 2].gpr(), CCallHelpers::calleeFrameCodeBlockBeforeCall());
-        jit.call(params[patchArgsIndex].gpr(), WasmEntryPtrTag);
+            jit.storePtr(params[patchArgsIndex + 3].gpr(), CCallHelpers::calleeFrameCodeBlockBeforeCall());
+        GPRReg calleeInstanceGPR = params[patchArgsIndex + 2].gpr();
+        // Safe to reuse the callee instance in BoundsChecking mode: it is dead once
+        // storeWasmContextInstance below has copied it, and the caging happens after that.
+        // Code for an image loads the base of the cage into the scratch before that store, while the callee instance is still needed.
+        // It takes the register of the boxed callee, which is dead since the store above: with six arguments in registers x86-64 has no other one left.
+        GPRReg cageScratch = mode == MemoryMode::Signaling ? params.gpScratch(0) : m_context.codeForImage ? boxedCalleeCalleeGPR : calleeInstanceGPR;
+
+        // Do a context switch if needed. We pessimistically assume we're calling something with
+        // BoundsChecking memory.
+        // FIXME: We shouldn't have to do this: https://bugs.webkit.org/show_bug.cgi?id=172181
+        ASSERT(noOverlap(cageScratch, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, GPRInfo::wasmContextInstancePointer));
+        // The code pointer is still live at the call below, so the scratch must not be it.
+        ASSERT(cageScratch != calleeCodeGPR);
+
+        auto isSameContextInstance = jit.branchPtr(CCallHelpers::Equal, calleeInstanceGPR, GPRInfo::wasmContextInstancePointer);
+        emitPrepareToCageMemoryBase(jit, GPRInfo::wasmContextInstancePointer, cageScratch);
+        jit.storeWasmContextInstance(calleeInstanceGPR);
+        jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
+        emitCageMemoryBase(jit, cageScratch);
+        isSameContextInstance.link(&jit);
+
+        jit.call(calleeCodeGPR, WasmEntryPtrTag);
         emitWasmCallStackResultsAndSPRestore(jit, params, signature, wasmCalleeInfo);
     });
     fillCallResults(patchpoint, signature, results);
@@ -6783,8 +6807,7 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
         Width width { Width64 };
     };
 
-    Vector<ShuffleEntry> entries;
-    entries.reserveInitialCapacity(calleeSaves.registerCount() + functionSignature.argumentCount() + 1);
+    Vector<ShuffleEntry> entries(ReserveCapacityTag { }, calleeSaves.registerCount() + functionSignature.argumentCount() + 1);
 
     for (const auto& regAtOffset : calleeSaves) {
         // Don't restore wasmBoundsCheckingSizeRegister since we may have set it when checking for
@@ -7410,8 +7433,8 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
 
     if (m_info.isImportedFunctionFromFunctionIndexSpace(functionIndexSpace)) {
         auto emitCallToImport = [&, this](PatchpointValue* patchpoint, RefPtr<PatchpointExceptionHandle> handle, RefPtr<B3::StackmapGenerator> prepareForCall) -> void {
-            unsigned patchArgsIndex = patchpoint->reps().size();
-            patchpoint->append(jumpDestination, ValueRep(GPRInfo::nonPreservedNonArgumentGPR0));
+            unsigned patchArgsIndex = patchpoint->reps().size() + m_proc.resultCount(patchpoint->type());
+            patchpoint->append(jumpDestination, ValueRep(GPRInfo::nonPreservedNonArgumentGPR0)); // patchArgsIndex
             // We need to clobber all potential pinned registers since we might be leaving the instance.
             // We pessimistically assume we could be calling to something that is bounds checking.
             // FIXME: We shouldn't have to do this: https://bugs.webkit.org/show_bug.cgi?id=172181
@@ -7425,7 +7448,6 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
             // scratch that avoids the inputs.
             if (isTailCallRootCaller && m_mode == MemoryMode::Signaling)
                 patchpoint->numGPScratchRegisters = 1;
-            patchArgsIndex += m_proc.resultCount(patchpoint->type());
             patchpoint->setGenerator([this, patchArgsIndex, handle, isTailCallRootCaller, tailCallStackOffsetFromFP, prepareForCall, signature = Ref<const RTT>(signature), wasmCalleeInfo, callerStackSize = static_cast<int32_t>(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(wasmCallerInfoAsCallee.headerAndArgumentStackSizeInBytes)), mode = m_mode](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 if (isTailCallRootCaller) {

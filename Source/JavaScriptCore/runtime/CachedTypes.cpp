@@ -833,8 +833,8 @@ public:
         friend class Encoder;
 
     public:
-        uint8_t* LEGACY_NODELETE buffer() const { return m_buffer; }
-        ptrdiff_t LEGACY_NODELETE offset() const { return m_offset; }
+        NODELETE uint8_t* buffer() const { return m_buffer; }
+        NODELETE ptrdiff_t offset() const { return m_offset; }
 
     private:
         Allocation(uint8_t* buffer, ptrdiff_t offset)
@@ -1334,14 +1334,14 @@ private:
         }
 
         // FIXME: Port call sites for span() / mutableSpan() and remove.
-        const uint8_t* LEGACY_NODELETE buffer() const { return m_buffer.span().data(); }
-        uint8_t* LEGACY_NODELETE buffer() { return m_buffer.mutableSpan().data(); }
+        NODELETE const uint8_t* buffer() const { return m_buffer.span().data(); }
+        NODELETE uint8_t* buffer() { return m_buffer.mutableSpan().data(); }
         size_t size() const { return static_cast<size_t>(m_offset); }
 
         std::span<uint8_t> mutableSpan() LIFETIME_BOUND { return m_buffer.mutableSpan().first(size()); }
         std::span<const uint8_t> span() const LIFETIME_BOUND { return m_buffer.span().first(size()); }
 
-        bool LEGACY_NODELETE getOffset(const void* address, ptrdiff_t& result) const
+        NODELETE bool getOffset(const void* address, ptrdiff_t& result) const
         {
             auto* addr = static_cast<const uint8_t*>(address);
             auto* bufferStart = buffer();
@@ -1352,7 +1352,7 @@ private:
             return false;
         }
 
-        void LEGACY_NODELETE alignEnd()
+        NODELETE void alignEnd()
         {
             ptrdiff_t size = roundUpToMultipleOf(encoderMaxAlignment, m_offset);
             if (size == m_offset)
@@ -1599,7 +1599,7 @@ public:
     {
     }
 
-    bool LEGACY_NODELETE isEmpty() const
+    NODELETE bool isEmpty() const
     {
         return m_offset == s_invalidOffset;
     }
@@ -1643,14 +1643,14 @@ public:
     }
 
 protected:
-    const uint8_t* LEGACY_NODELETE buffer() const
+    NODELETE const uint8_t* buffer() const
     {
         ASSERT(!isEmpty());
         return std::bit_cast<const uint8_t*>(this) + m_offset;
     }
 
     template<typename T>
-    const T* LEGACY_NODELETE buffer() const
+    NODELETE const T* buffer() const
     {
         ASSERT(!(std::bit_cast<uintptr_t>(buffer()) % alignof(T)));
         return std::bit_cast<const T*>(buffer());
@@ -1863,10 +1863,10 @@ public:
         return decode(decoder, unusedIsNewAllocation, std::forward<Args>(args)...);
     }
 
-    const T* LEGACY_NODELETE operator->() const { return get(); }
+    NODELETE const T* operator->() const { return get(); }
 
 private:
-    const T* LEGACY_NODELETE get() const
+    NODELETE const T* get() const
     {
         RELEASE_ASSERT(!this->isEmpty());
         return this->template buffer<T>();
@@ -1958,7 +1958,7 @@ class CachedWriteBarrier : public CachedObject<WriteBarrier<Source>> {
     friend struct CachedWriteBarrierOffsets;
 
 public:
-    bool LEGACY_NODELETE isEmpty() const { return m_ptr.isEmpty(); }
+    NODELETE bool isEmpty() const { return m_ptr.isEmpty(); }
     const CachedPtr<T, Source>& ptr() const { return m_ptr; }
 
     void encode(Encoder& encoder, const WriteBarrier<Source> src)
@@ -2379,8 +2379,8 @@ public:
     }
 
     static constexpr unsigned minimumLengthToAliasPayload = 48; // below this a copy is smaller than pinning part of a page
-    std::span<const Latin1Character> LEGACY_NODELETE span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
-    std::span<const char16_t> LEGACY_NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
+    NODELETE std::span<const Latin1Character> span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
+    NODELETE std::span<const char16_t> span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
 
 private:
     // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.",
@@ -4402,7 +4402,7 @@ enum class CachedCodeBlockTag {
     CachedBuiltinFunctionTag, // a root UnlinkedFunctionExecutable created by BuiltinExecutables (an embedder's JS builtins)
 };
 
-static CachedCodeBlockTag LEGACY_NODELETE tagFromSourceCodeType(SourceCodeType type)
+NODELETE static CachedCodeBlockTag tagFromSourceCodeType(SourceCodeType type)
 {
     switch (type) {
     case SourceCodeType::ProgramType:
@@ -4838,7 +4838,7 @@ void UnlinkedFunctionExecutable::materializeDeferredNameSlow() const
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
     auto v = m_members.pending().record->slotsView();
     self->m_ecmaName = v.name->decode(*m_members.pending().decoder);
-    WTF::atomicStore(&self->m_nameIsDeferred, false, std::memory_order_release); // tryGetEcmaNameConcurrently()
+    WTF::atomicStore<MemoryOrder::Release>(&self->m_nameIsDeferred, false); // tryGetEcmaNameConcurrently()
     if (!v.tdz && !v.rareData && !m_scalarsAreDeferred)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
 }
@@ -5328,8 +5328,9 @@ protected:
     // 13: upstream's op_iterator_close_check (with metadata) replaces the fork's, and op_iterator_open / op_iterator_next
     // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
     // 14: op_profile_control_flow says whether its basic block is in a loop header.
-    // 15: op_profile_control_flow says whether it counts a basic block or a branch of a decision.
-    static constexpr uint32_t cachedTypesFormatRevision = 15;
+    // 15: upstream's op_call_varargs_with_spread (325231@main; opcode numbering).
+    // 16: op_profile_control_flow says whether it counts a basic block or a branch of a decision.
+    static constexpr uint32_t cachedTypesFormatRevision = 16;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5340,7 +5341,7 @@ protected:
         UNUSED_PARAM(encoder);
     }
 
-    CachedCodeBlockTag LEGACY_NODELETE tag() const { return m_tag; }
+    NODELETE CachedCodeBlockTag tag() const { return m_tag; }
 
     bool isUpToDate(Decoder& decoder) const
     {

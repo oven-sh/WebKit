@@ -45,7 +45,7 @@ const CSSParserContext& strictCSSParserContext()
     return strictContext;
 }
 
-static void LEGACY_NODELETE applyUASheetBehaviorsToContext(CSSParserContext& context)
+NODELETE static void applyUASheetBehaviorsToContext(CSSParserContext& context)
 {
     // FIXME: We should turn all of the features on from their WebCore Settings defaults.
     context.cssAppearanceBaseEnabled = true;
@@ -88,7 +88,7 @@ CSSParserContext::CSSParserContext(const Document& document, const URL& sheetBas
     mode = document.inQuirksMode() ? HTMLQuirksMode : HTMLStandardMode;
     isHTMLDocument = document.isHTMLDocument();
     hasDocumentSecurityOrigin = sheetBaseURL.isNull() || protect(document.securityOrigin())->canRequest(baseURL, OriginAccessPatternsForWebProcess::singleton());
-    webkitMediaTextTrackDisplayQuirkEnabled = document.quirks().needsWebKitMediaTextTrackDisplayQuirk();
+    marginTrimInlineSupportsQuirkEnabled = document.quirks().needsMarginTrimInlineSupportsQuirk();
 }
 
 CSSParserContext::CSSParserContext(const Settings& settings)
@@ -138,6 +138,7 @@ CSSParserContext::CSSParserContext(const Settings& settings)
     , cssInheritFunctionEnabled { settings.cssInheritFunctionEnabled() }
     , cssFontPaletteMixFunctionEnabled { settings.cssFontPaletteMixFunctionEnabled() }
     , cssSymbolsFunctionEnabled { settings.cssSymbolsFunctionEnabled() }
+    , cssMeshGradientsEnabled { settings.cssMeshGradientsEnabled() }
     , viewportSegmentsAPIEnabled { settings.viewportSegmentsAPIEnabled() }
     , propertySettings { CSSPropertySettings { settings } }
 {
@@ -187,7 +188,7 @@ void add(Hasher& hasher, const CSSParserContext& context)
         context.cssTextTransformMathAutoEnabled,
         context.cssFontSynthesisStyleObliqueOnlyEnabled,
         context.cssInternalAutoBaseParsingEnabled,
-        context.webkitMediaTextTrackDisplayQuirkEnabled,
+        context.marginTrimInlineSupportsQuirkEnabled,
         context.cssMathDepthEnabled,
         context.openPseudoClassEnabled,
         context.cssScrollStateContainerQueriesEnabled,
@@ -197,6 +198,7 @@ void add(Hasher& hasher, const CSSParserContext& context)
         context.cssInheritFunctionEnabled,
         context.cssFontPaletteMixFunctionEnabled,
         context.cssSymbolsFunctionEnabled,
+        context.cssMeshGradientsEnabled,
         context.legacyFontFaceAttributeMode,
         context.viewportSegmentsAPIEnabled
     );

@@ -2020,15 +2020,15 @@ public:
         // The addition immediate may be used as a pointer offset. Keep aligned based on "imm".
         static const uint32_t maskTable[4] = { 0xfffffffc, 0xffffffff, 0xfffffffe, 0xffffffff };
 
-        // Both parts have the sign of the immediate and neither exceeds it, so their sum is right at every width.
-        int32_t value = imm.asTrustedImm32().m_value;
-        uint32_t magnitude = value < 0 ? -static_cast<uint32_t>(value) : value;
-        uint32_t key = keyForConstant(magnitude);
-        if (key > magnitude)
-            key = magnitude ? key % magnitude : 0;
-        key &= maskTable[magnitude & 3];
-        uint32_t rest = magnitude - key;
-        return value < 0 ? BlindedImm32(-rest, -key) : BlindedImm32(rest, key);
+        uint32_t baseValue = imm.asTrustedImm32().m_value;
+        uint32_t key = keyForConstant(baseValue) & maskTable[baseValue & 3];
+        if (key > baseValue)
+            key = key - baseValue;
+        // addPtr / subPtr apply both halves sign-extended, so their int32 sum must not overflow.
+        int64_t value1 = static_cast<int64_t>(static_cast<int32_t>(baseValue)) - static_cast<int32_t>(key);
+        if (value1 != static_cast<int32_t>(value1))
+            key ^= 0x80000000;
+        return BlindedImm32(baseValue - key, key);
     }
     
     BlindedImm32 andBlindedConstant(Imm32 imm)

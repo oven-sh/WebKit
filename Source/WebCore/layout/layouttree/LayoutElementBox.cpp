@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,31 +27,18 @@
 #include "LayoutElementBox.h"
 
 #include "RenderElement.h"
+#include "RenderListOutsideMarker.h"
 #include "StyleComputedStyle+GettersInlines.h"
-#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 namespace Layout {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(ElementBox);
-
-ElementBox::ElementBox(ElementAttributes&& attributes, Style::ComputedStyle&& style, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle, EnumSet<BaseTypeFlag> baseTypeFlags)
-    : Box(WTF::move(attributes), WTF::move(style), WTF::move(firstLineStyle), baseTypeFlags | ElementBoxFlag)
+ElementBox::ElementBox(Style::ComputedStyle&& style, ElementAttributes elementAttributes, EnumSet<BaseTypeFlag> baseTypeFlags)
+    : Box(WTF::move(style), elementAttributes, baseTypeFlags | ElementBoxFlag)
 {
 }
 
-ElementBox::ElementBox(ElementAttributes&& attributes, IsListMarkerImage isListMarkerImage, Style::ComputedStyle&& style, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle)
-    : Box(WTF::move(attributes), WTF::move(style), WTF::move(firstLineStyle), ElementBoxFlag)
-    , m_replacedData(makeUnique<ReplacedData>())
-{
-    ASSERT(isListMarkerBox());
-    m_replacedData->isListMarkerImage = isListMarkerImage == IsListMarkerImage::Yes;
-}
-
-ElementBox::~ElementBox()
-{
-    destroyChildren();
-}
+ElementBox::~ElementBox() = default;
 
 const Box* ElementBox::firstInFlowChild() const
 {
@@ -118,142 +105,17 @@ bool ElementBox::hasOutOfFlowChild() const
     return !!firstOutOfFlowChild();
 }
 
-void ElementBox::appendChild(UniqueRef<Box> childRef)
+bool ElementBox::isListMarkerImage() const
 {
-    insertChild(WTF::move(childRef), m_lastChild.get());
+    CheckedPtr listMarkerRenderer = dynamicDowncast<RenderListOutsideMarker>(rendererForIntegration());
+    return listMarkerRenderer && listMarkerRenderer->isImage();
 }
 
-void ElementBox::insertChild(UniqueRef<Box> childRef, Box* beforeChild)
+std::pair<float, float> ElementBox::layoutBoundsForListMarker() const
 {
-    auto childBox = childRef.moveToUniquePtr();
-    ASSERT(!childBox->m_parent);
-    ASSERT(!childBox->m_previousSibling);
-    ASSERT(!childBox->m_nextSibling);
-
-    childBox->m_parent = this;
-
-    if (!m_firstChild || (beforeChild && !beforeChild->m_nextSibling)) {
-        // Append as first and/or last.
-        childBox->m_previousSibling = m_lastChild;
-        auto& nextOrFirst = m_lastChild ? m_lastChild->m_nextSibling : m_firstChild;
-        ASSERT(!nextOrFirst);
-
-        m_lastChild = childBox.get();
-        nextOrFirst = WTF::move(childBox);
-        return;
-    }
-
-    if (!beforeChild) {
-        // Insert as first.
-        ASSERT(m_firstChild && m_lastChild);
-        m_firstChild->m_previousSibling = childBox.get();
-        childBox->m_nextSibling = WTF::move(m_firstChild);
-        m_firstChild = WTF::move(childBox);
-        return;
-    }
-
-    ASSERT(&beforeChild->parent() == this);
-    CheckedPtr nextSibling = beforeChild->m_nextSibling.get();
-    ASSERT(nextSibling);
-    childBox->m_previousSibling = beforeChild;
-    childBox->m_nextSibling = WTF::move(beforeChild->m_nextSibling);
-    nextSibling->m_previousSibling = childBox.get();
-    beforeChild->m_nextSibling = WTF::move(childBox);
-}
-
-void ElementBox::destroyChildren()
-{
-    m_lastChild = nullptr;
-
-    auto childToDestroy = std::exchange(m_firstChild, nullptr);
-    while (childToDestroy) {
-        childToDestroy->m_parent = nullptr;
-        childToDestroy->m_previousSibling = nullptr;
-        if (childToDestroy->m_nextSibling)
-            childToDestroy->m_nextSibling->m_previousSibling = nullptr;
-        childToDestroy = std::exchange(childToDestroy->m_nextSibling, nullptr);
-    }
-}
-
-bool ElementBox::hasIntrinsicWidth() const
-{
-    return (m_replacedData && m_replacedData->intrinsicSize) || style().logicalWidth().isIntrinsic();
-}
-
-bool ElementBox::hasIntrinsicHeight() const
-{
-    return (m_replacedData && m_replacedData->intrinsicSize) || style().logicalHeight().isIntrinsic();
-}
-
-bool ElementBox::hasIntrinsicRatio() const
-{
-    if (!hasAspectRatio())
-        return false;
-    return m_replacedData && (m_replacedData->intrinsicSize || m_replacedData->intrinsicRatio);
-}
-
-bool ElementBox::hasNaturalWidth() const
-{
-    return m_replacedData && m_replacedData->intrinsicSize;
-}
-
-bool ElementBox::hasNaturalHeight() const
-{
-    return m_replacedData && m_replacedData->intrinsicSize;
-}
-
-LayoutUnit ElementBox::naturalWidth() const
-{
-    ASSERT(hasNaturalWidth());
-    return m_replacedData->intrinsicSize->width();
-}
-
-LayoutUnit ElementBox::naturalHeight() const
-{
-    ASSERT(hasNaturalHeight());
-    return m_replacedData->intrinsicSize->height();
-}
-
-LayoutUnit ElementBox::intrinsicWidth() const
-{
-    ASSERT(hasIntrinsicWidth());
-    if (m_replacedData && m_replacedData->intrinsicSize)
-        return m_replacedData->intrinsicSize->width();
-
-    // FIXME: Document what invariant holds to allow not checking if the logicalWidth() is fixed.
-    return LayoutUnit { style().logicalWidth().tryFixed()->resolveZoom(style().usedZoomForLength()) };
-}
-
-LayoutUnit ElementBox::intrinsicHeight() const
-{
-    ASSERT(hasIntrinsicHeight());
-    if (m_replacedData && m_replacedData->intrinsicSize)
-        return m_replacedData->intrinsicSize->height();
-
-    // FIXME: Document what invariant holds to allow not checking if the logicalHeight() is fixed.
-    return LayoutUnit { style().logicalHeight().tryFixed()->resolveZoom(style().usedZoomForLength()) };
-}
-
-LayoutUnit ElementBox::intrinsicRatio() const
-{
-    ASSERT(hasIntrinsicRatio() || (hasIntrinsicWidth() && hasIntrinsicHeight()));
-    if (m_replacedData) {
-        if (m_replacedData->intrinsicRatio)
-            return *m_replacedData->intrinsicRatio;
-        if (m_replacedData->intrinsicSize->height())
-            return m_replacedData->intrinsicSize->width() / m_replacedData->intrinsicSize->height();
-    }
-    return 1;
-}
-
-bool ElementBox::hasAspectRatio() const
-{
-    return isImage();
-}
-
-RenderElement* ElementBox::rendererForIntegration() const
-{
-    return downcast<RenderElement>(Box::rendererForIntegration());
+    CheckedPtr listMarkerRenderer = dynamicDowncast<RenderListOutsideMarker>(rendererForIntegration());
+    ASSERT(listMarkerRenderer);
+    return listMarkerRenderer->layoutBounds();
 }
 
 }

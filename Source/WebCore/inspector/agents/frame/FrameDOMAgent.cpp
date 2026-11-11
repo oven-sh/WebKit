@@ -57,6 +57,7 @@
 #include "InspectorHistory.h"
 #include "InspectorIdentifierRegistry.h"
 #include "InspectorNodeFinder.h"
+#include "InspectorObjectIdentifier.h"
 #include "InspectorOverlayConfigParser.h"
 #include "InstrumentingAgents.h"
 #include "JSDOMBindingSecurity.h"
@@ -77,7 +78,6 @@
 #include "TextNodeTraversal.h"
 #include "WebInjectedScriptManager.h"
 #include "markup.h"
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/InjectedScript.h>
 #include <JavaScriptCore/InjectedScriptManager.h>
 #include <JavaScriptCore/InspectorProtocolObjects.h>
@@ -106,13 +106,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(FrameDOMAgent);
 static const size_t frameMaxTextSize = 10000;
 static const char16_t frameHorizontalEllipsisUTF16[] = { horizontalEllipsis, 0 };
 
-static bool LEGACY_NODELETE frameContainsOnlyASCIIWhitespace(Node* node)
+NODELETE static bool frameContainsOnlyASCIIWhitespace(Node* node)
 {
     auto* text = dynamicDowncast<Text>(node);
     return text && text->containsOnlyASCIIWhitespace();
 }
 
-static Inspector::Protocol::DOM::ShadowRootType LEGACY_NODELETE frameShadowRootType(ShadowRootMode mode)
+NODELETE static Inspector::Protocol::DOM::ShadowRootType frameShadowRootType(ShadowRootMode mode)
 {
     switch (mode) {
     case ShadowRootMode::UserAgent:
@@ -126,7 +126,7 @@ static Inspector::Protocol::DOM::ShadowRootType LEGACY_NODELETE frameShadowRootT
     return Inspector::Protocol::DOM::ShadowRootType::UserAgent;
 }
 
-static Inspector::Protocol::DOM::CustomElementState LEGACY_NODELETE frameCustomElementState(const Element& element)
+NODELETE static Inspector::Protocol::DOM::CustomElementState frameCustomElementState(const Element& element)
 {
     if (element.isDefinedCustomElement())
         return Inspector::Protocol::DOM::CustomElementState::Custom;
@@ -137,7 +137,7 @@ static Inspector::Protocol::DOM::CustomElementState LEGACY_NODELETE frameCustomE
     return Inspector::Protocol::DOM::CustomElementState::Builtin;
 }
 
-static bool LEGACY_NODELETE framePseudoElementType(PseudoElementType pseudoElementType, Inspector::Protocol::DOM::PseudoType* type)
+NODELETE static bool framePseudoElementType(PseudoElementType pseudoElementType, Inspector::Protocol::DOM::PseudoType* type)
 {
     switch (pseudoElementType) {
     case PseudoElementType::Before:
@@ -1023,7 +1023,7 @@ Inspector::CommandResultOf<String, int> FrameDOMAgent::performSearch(const Strin
     } else
         finder.performSearch(m_document.get());
 
-    auto searchId = IdentifiersFactory::createIdentifier();
+    auto searchId = generateInspectorObjectIdentifierString();
 
     auto& resultsVector = m_searchResults.add(searchId, Vector<RefPtr<Node>>()).iterator->value;
     for (auto& result : finder.results())

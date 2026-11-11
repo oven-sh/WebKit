@@ -80,10 +80,10 @@ void MultiImage::load(CachedResourceLoader& loader, const ResourceLoaderOptions&
     }
 
     if (RefPtr styleCachedImage = dynamicDowncast<CachedImage>(bestFitImage.image)) {
-        if (styleCachedImage->imageScaleFactor() == bestFitImage.scaleFactor.value)
+        if (styleCachedImage->imageResolution() == bestFitImage.resolution)
             m_selectedImage = WTF::move(styleCachedImage);
         else
-            m_selectedImage = CachedImage::copyOverridingScaleFactor(*styleCachedImage, bestFitImage.scaleFactor.value);
+            m_selectedImage = CachedImage::copyOverridingResolution(*styleCachedImage, bestFitImage.resolution);
 
         if (protect(m_selectedImage)->isPending())
             protect(m_selectedImage)->load(loader, options);
@@ -132,11 +132,11 @@ NaturalDimensions MultiImage::naturalDimensions(const RenderElement& renderer, c
     return protect(m_selectedImage)->naturalDimensions(renderer, context);
 }
 
-ImageDrawingExtras MultiImage::drawingExtrasForRenderer(const RenderElement& renderer) const
+ImageRenditionOptions MultiImage::renditionOptionsForRenderer(const RenderElement& renderer, ImageRenditionOptions rendition) const
 {
     if (!m_selectedImage)
-        return { };
-    return protect(m_selectedImage)->drawingExtrasForRenderer(renderer);
+        return rendition;
+    return protect(m_selectedImage)->renditionOptionsForRenderer(renderer, WTF::move(rendition));
 }
 
 void MultiImage::addClient(RenderElement& renderer)
@@ -160,32 +160,32 @@ bool MultiImage::hasClient(RenderElement& renderer) const
     return protect(m_selectedImage)->hasClient(renderer);
 }
 
-ImageDrawResult MultiImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options, bool isForFirstLine) const
+ImageDrawResult MultiImage::draw(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& source, bool isForFirstLine) const
 {
     if (!m_selectedImage)
         return ImageDrawResult::DidNothing;
-    return protect(m_selectedImage)->draw(context, renderer, concreteObjectSize, destination, source, options, isForFirstLine);
+    return protect(m_selectedImage)->draw(context, renderer, descriptor, destination, source, isForFirstLine);
 }
 
-ImageDrawResult MultiImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options, bool isForFirstLine) const
+ImageDrawResult MultiImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, bool isForFirstLine) const
 {
     if (!m_selectedImage)
         return ImageDrawResult::DidNothing;
-    return protect(m_selectedImage)->drawAsPattern(context, renderer, concreteObjectSize, destination, tile, patternTransform, phase, spacing, options, isForFirstLine);
+    return protect(m_selectedImage)->drawAsPattern(context, renderer, descriptor, destination, tile, patternTransform, phase, spacing, isForFirstLine);
 }
 
-ImageDrawResult MultiImage::drawTiled(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImageDrawingOptions options, bool isForFirstLine) const
+ImageDrawResult MultiImage::drawTiled(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, bool isForFirstLine) const
 {
     if (!m_selectedImage)
         return ImageDrawResult::DidNothing;
-    return protect(m_selectedImage)->drawTiled(context, renderer, concreteObjectSize, destination, phase, tileSize, spacing, options, isForFirstLine);
+    return protect(m_selectedImage)->drawTiled(context, renderer, descriptor, destination, phase, tileSize, spacing, isForFirstLine);
 }
 
-ImageDrawResult MultiImage::drawNinePiece(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const NinePieceGeometry& geometry, ImageDrawingOptions options) const
+ImageDrawResult MultiImage::drawNinePiece(GraphicsContext& context, const RenderElement& renderer, const ImageDrawDescriptor& descriptor, const NinePieceGeometry& geometry) const
 {
     if (!m_selectedImage)
         return ImageDrawResult::DidNothing;
-    return protect(m_selectedImage)->drawNinePiece(context, renderer, concreteObjectSize, geometry, options);
+    return protect(m_selectedImage)->drawNinePiece(context, renderer, descriptor, geometry);
 }
 
 bool MultiImage::currentFrameIsComplete(const RenderElement* renderer) const
@@ -193,11 +193,11 @@ bool MultiImage::currentFrameIsComplete(const RenderElement* renderer) const
     return m_selectedImage && protect(m_selectedImage)->currentFrameIsComplete(renderer);
 }
 
-float MultiImage::imageScaleFactor() const
+Resolution<> MultiImage::imageResolution() const
 {
     if (!m_selectedImage)
         return 1;
-    return protect(m_selectedImage)->imageScaleFactor();
+    return protect(m_selectedImage)->imageResolution();
 }
 
 bool MultiImage::knownToBeOpaque(const RenderElement& renderer) const
@@ -215,9 +215,9 @@ bool MultiImage::canDrawAtSize(const RenderElement& renderer, const FloatSize& s
     return m_selectedImage && protect(m_selectedImage)->canDrawAtSize(renderer, size);
 }
 
-RefPtr<NativeImage> MultiImage::nativeImage(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, float resolutionScale, ImageDrawingOptions options) const
+RefPtr<NativeImage> MultiImage::nativeImage(const RenderElement& renderer, const ImageDrawDescriptor& descriptor, float resolutionScale) const
 {
-    return m_selectedImage ? protect(m_selectedImage)->nativeImage(renderer, concreteObjectSize, resolutionScale, options) : nullptr;
+    return m_selectedImage ? protect(m_selectedImage)->nativeImage(renderer, descriptor, resolutionScale) : nullptr;
 }
 
 std::optional<IntPoint> MultiImage::hotSpot() const
@@ -242,10 +242,22 @@ bool MultiImage::isAnimated() const
     return m_selectedImage && protect(m_selectedImage)->isAnimated();
 }
 
+void MultiImage::startAnimation()
+{
+    if (m_selectedImage)
+        protect(m_selectedImage)->startAnimation();
+}
+
 void MultiImage::stopAnimation()
 {
     if (m_selectedImage)
         protect(m_selectedImage)->stopAnimation();
+}
+
+void MultiImage::clearAnimationOverride()
+{
+    if (m_selectedImage)
+        protect(m_selectedImage)->clearAnimationOverride();
 }
 
 void MultiImage::resetAnimation()

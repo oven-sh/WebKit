@@ -177,6 +177,20 @@
 #define SUPPRESS_TSAN
 #endif
 
+/* LSAN_ENABLED and SUPPRESS_LSAN */
+
+#ifdef __SANITIZE_LEAK__
+#define LSAN_ENABLED 1
+#else
+#define LSAN_ENABLED COMPILER_HAS_CLANG_FEATURE(leak_sanitizer)
+#endif
+
+#if LSAN_ENABLED
+#define SUPPRESS_LSAN __attribute__((no_sanitize("leak")))
+#else
+#define SUPPRESS_LSAN
+#endif
+
 /* COVERAGE_ENABLED and SUPPRESS_COVERAGE */
 
 #define COVERAGE_ENABLED COMPILER_HAS_CLANG_FEATURE(coverage_sanitizer)
@@ -211,6 +225,17 @@
 
 #if !defined(ALWAYS_INLINE_LAMBDA)
 #define ALWAYS_INLINE_LAMBDA
+#endif
+
+/* ALWAYS_INLINE_CALLEE */
+
+/* Inlines the calls in the statement that follows. Only Clang supports always_inline on a statement. */
+#if !defined(ALWAYS_INLINE_CALLEE) && defined(NDEBUG) && COMPILER(CLANG)
+#define ALWAYS_INLINE_CALLEE [[clang::always_inline]] // NOLINT: check-webkit-style does not understand annotations.
+#endif
+
+#if !defined(ALWAYS_INLINE_CALLEE)
+#define ALWAYS_INLINE_CALLEE
 #endif
 
 /* COLD */
@@ -596,6 +621,17 @@
 #define SUPPRESS_RETAINPTR_CTOR_ADOPT \
     IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("alpha.webkit.RetainPtrCtorAdoptChecker")
 #define CLANG_POINTER_CONVERSION [[clang::annotate_type("webkit.pointerconversion")]]
+
+// Add this annotation to a function when the function does not run any destruct a heap allocated object.
+// Static analyzer does not require the use of smart pointers in the code which calls a function with this annotation.
+// Only enabled for the static analyzer since [[clang::annotate]] forces the emission of every annotated inline function.
+#ifndef NODELETE
+#if defined(__clang_analyzer__)
+#define NODELETE [[clang::annotate("webkit.nodelete")]]
+#else
+#define NODELETE
+#endif
+#endif
 
 // Add this annotation to right after the return type of a function when the function does not run any destructor or free memory.
 // Static analyzer does not require the use of smart pointers in the code which calls a function with this annotation.

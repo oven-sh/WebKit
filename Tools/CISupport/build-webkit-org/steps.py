@@ -1407,16 +1407,31 @@ class RunWebDriverTests(shell.Test, CustomFlagsMixin, ShellMixin):
     description = ["webdriver-tests running"]
     descriptionDone = ["webdriver-tests"]
     jsonFileName = "webdriver_tests.json"
-    command = ["python3", "Tools/Scripts/run-webdriver-tests", "--verbose", f"--json-output={jsonFileName}", WithProperties("--%(configuration)s")]
+    command = [
+        "python3",
+        "Tools/Scripts/run-webdriver-tests",
+        "--verbose",
+        f"--json-output={jsonFileName}",
+        WithProperties("--%(configuration)s"),
+        "--buildbot-master", DNS_NAME,
+        "--builder-name", WithProperties("%(buildername)s"),
+        "--build-number", WithProperties("%(buildnumber)s"),
+        "--buildbot-worker", WithProperties("%(workername)s"),
+        "--report", RESULTS_WEBKIT_URL,
+    ]
     logfiles = {"json": jsonFileName}
 
     def __init__(self, **kwargs):
+        # Logging the environment would expose RESULTS_SERVER_API_KEY.
+        kwargs['logEnviron'] = False
         kwargs['timeout'] = 90 * 60
         kwargs['maxTime'] = 3 * 60 * 60
+        kwargs['sigtermTime'] = 30
         super().__init__(**kwargs)
 
     @defer.inlineCallbacks
     def run(self):
+        self.env[RESULTS_SERVER_API_KEY] = os.getenv(RESULTS_SERVER_API_KEY)
         additionalArguments = self.getProperty('additionalArguments')
         if additionalArguments:
             self.command += additionalArguments
@@ -1443,6 +1458,7 @@ class RunWebDriverTests(shell.Test, CustomFlagsMixin, ShellMixin):
         foundNewPasses = re.findall(r"Expected to .+, but passed \((\d+)\)", logText, re.MULTILINE)
         if foundNewPasses:
             self.newPassesCount = int(foundNewPasses[0])
+        self.failedResultsUpload = FAILED_RESULTS_UPLOAD_MESSAGE in logText
 
         steps_to_add = [
             GenerateS3URL(
@@ -1483,6 +1499,8 @@ class RunWebDriverTests(shell.Test, CustomFlagsMixin, ShellMixin):
             if self.newPassesCount:
                 suffix = "" if self.newPassesCount == 1 else "es"
                 summaries.append(f"{self.newPassesCount} new pass{suffix}")
+            if self.failedResultsUpload:
+                summaries.append('results upload failed')
 
             if len(summaries) >= 2:
                 last = summaries.pop()
@@ -2396,7 +2414,7 @@ class BuildSwift(steps.ShellSequence, ShellMixin):
         ]
 
         if rc != SUCCESS:
-            if self.getProperty('current_swift_tag', '') and self.getProperty('has_swift_toolchain', False):
+            if self.getProperty('has_swift_toolchain', False):
                 return WARNINGS
             self.build.buildFinished(['Failed to set up swift, retrying update'], RETRY)
         else:

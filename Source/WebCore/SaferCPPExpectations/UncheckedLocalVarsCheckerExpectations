@@ -1,13 +1,11 @@
 dom/Document.cpp
 dom/Position.cpp
-[ iOS ] editing/cocoa/NodeHTMLConverter.mm
 layout/formattingContexts/inline/InlineLineBoxBuilder.cpp
 layout/formattingContexts/inline/InlineLineBuilder.cpp
 layout/formattingContexts/inline/InlineQuirks.cpp
 layout/formattingContexts/inline/IntrinsicWidthHandler.cpp
 layout/formattingContexts/inline/display/InlineDisplayContentBuilder.cpp
 layout/integration/LayoutIntegrationBoxGeometryUpdater.cpp
-layout/integration/LayoutIntegrationBoxTreeUpdater.cpp
 layout/integration/inline/LayoutIntegrationLineLayout.cpp
 rendering/AutoTableLayout.cpp
 rendering/BackgroundPainter.cpp
@@ -115,4 +113,3 @@ style/computed/StyleComputedStyleBase.cpp
 style/values/grid/StyleGridPositionsResolver.cpp
 style/values/images/kinds/StyleCanvasImage.cpp
 style/values/primitives/StyleLengthResolution.cpp
-workers/WorkerGlobalScope.cpp

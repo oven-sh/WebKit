@@ -131,11 +131,12 @@ struct FontPlatformDataAttributes {
 #endif
 
 #if USE(SKIA)
-    FontPlatformDataAttributes(const FontMetadata& metadata, SkString familyName, SkFontStyle style, Vector<hb_feature_t>&& features)
+    FontPlatformDataAttributes(const FontMetadata& metadata, SkString familyName, SkFontStyle style, Vector<hb_feature_t>&& features, Vector<SkFontArguments::VariationPosition::Coordinate>&& variations)
         : m_metadata(metadata)
         , m_familyName(familyName)
         , m_style(style)
         , m_features(WTF::move(features))
+        , m_variations(WTF::move(variations))
         { }
 #endif
 
@@ -152,6 +153,7 @@ struct FontPlatformDataAttributes {
     SkString m_familyName;
     SkFontStyle m_style;
     Vector<hb_feature_t> m_features;
+    Vector<SkFontArguments::VariationPosition::Coordinate> m_variations;
 #endif
 };
 
@@ -307,11 +309,11 @@ public:
         float m_maximumValue;
     };
 
-    FontPlatformData(WTF::HashTableDeletedValueType);
-    FontPlatformData();
+    NODELETE FontPlatformData(WTF::HashTableDeletedValueType);
+    NODELETE FontPlatformData();
 
-    FontPlatformData(float size, bool syntheticBold, bool syntheticOblique, FontOrientation = FontOrientation::Horizontal, FontWidthVariant = FontWidthVariant::RegularWidth, TextRenderingMode = TextRenderingMode::Auto, const FontMetricsOverrides& = { }, const FontCustomPlatformData* = nullptr);
-    FontPlatformData(const FontMetadata&, const FontCustomPlatformData* = nullptr);
+    NODELETE FontPlatformData(float size, bool syntheticBold, bool syntheticOblique, FontOrientation = FontOrientation::Horizontal, FontWidthVariant = FontWidthVariant::RegularWidth, TextRenderingMode = TextRenderingMode::Auto, const FontMetricsOverrides& = { }, const FontCustomPlatformData* = nullptr);
+    NODELETE FontPlatformData(const FontMetadata&, const FontCustomPlatformData* = nullptr);
 
 #if USE(CORE_TEXT)
     WEBCORE_EXPORT FontPlatformData(RetainPtr<CTFontRef>&&, float size, bool syntheticBold = false, bool syntheticOblique = false, FontOrientation = FontOrientation::Horizontal, FontWidthVariant = FontWidthVariant::RegularWidth, TextRenderingMode = TextRenderingMode::Auto, const FontMetricsOverrides& = { }, const FontCustomPlatformData* = nullptr);
@@ -332,7 +334,7 @@ public:
 
     using Attributes = FontPlatformDataAttributes;
 
-    WEBCORE_EXPORT static FontPlatformData create(const Attributes&, const FontCustomPlatformData*);
+    WEBCORE_EXPORT static FontPlatformData create(const Attributes&, FontCustomPlatformData*);
 
     WEBCORE_EXPORT FontPlatformData(const FontPlatformData&);
     WEBCORE_EXPORT FontPlatformData& operator=(const FontPlatformData&);
@@ -424,7 +426,7 @@ public:
     static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
 
     RefPtr<SharedBuffer> openTypeTable(uint32_t table) const;
-    RefPtr<SharedBuffer> LEGACY_NODELETE platformOpenTypeTable(uint32_t table) const;
+    NODELETE RefPtr<SharedBuffer> platformOpenTypeTable(uint32_t table) const;
 
     String description() const;
 
@@ -436,7 +438,7 @@ public:
 #endif
     };
 
-    WEBCORE_EXPORT const CreationData* LEGACY_NODELETE creationData() const;
+    NODELETE WEBCORE_EXPORT const CreationData* creationData() const;
     const FontCustomPlatformData* customPlatformData() const
     {
         return m_customPlatformData.get();

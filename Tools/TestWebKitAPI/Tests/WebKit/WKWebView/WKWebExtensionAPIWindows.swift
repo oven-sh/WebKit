@@ -53,6 +53,59 @@ struct WKWebExtensionAPIWindowsTests {
     ]
 
     @Test
+    func createTypeEnum() async throws {
+        let backgroundScript = """
+            browser.test.assertEq(typeof browser.windows.CreateType, 'object', 'CreateType should be an object')
+
+            browser.test.assertEq(browser.windows.CreateType.NORMAL, 'normal', 'NORMAL should be defined')
+            browser.test.assertEq(browser.windows.CreateType.POPUP, 'popup', 'POPUP should be defined')
+
+            browser.test.assertDeepEq(Object.keys(browser.windows.CreateType).sort(), [ 'NORMAL', 'POPUP' ], 'CreateType should only define the supported values')
+
+            browser.test.notifyPass()
+            """
+
+        let manager = try loadWebExtension(manifest: windowsManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
+    func windowStateEnum() async throws {
+        let backgroundScript = """
+            browser.test.assertEq(typeof browser.windows.WindowState, 'object', 'WindowState should be an object')
+
+            browser.test.assertEq(browser.windows.WindowState.NORMAL, 'normal', 'NORMAL should be defined')
+            browser.test.assertEq(browser.windows.WindowState.MINIMIZED, 'minimized', 'MINIMIZED should be defined')
+            browser.test.assertEq(browser.windows.WindowState.MAXIMIZED, 'maximized', 'MAXIMIZED should be defined')
+            browser.test.assertEq(browser.windows.WindowState.FULLSCREEN, 'fullscreen', 'FULLSCREEN should be defined')
+
+            browser.test.assertDeepEq(Object.keys(browser.windows.WindowState).sort(), [ 'FULLSCREEN', 'MAXIMIZED', 'MINIMIZED', 'NORMAL' ], 'WindowState should only define the supported values')
+
+            browser.test.notifyPass()
+            """
+
+        let manager = try loadWebExtension(manifest: windowsManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
+    func windowTypeEnum() async throws {
+        let backgroundScript = """
+            browser.test.assertEq(typeof browser.windows.WindowType, 'object', 'WindowType should be an object')
+
+            browser.test.assertEq(browser.windows.WindowType.NORMAL, 'normal', 'NORMAL should be defined')
+            browser.test.assertEq(browser.windows.WindowType.POPUP, 'popup', 'POPUP should be defined')
+
+            browser.test.assertDeepEq(Object.keys(browser.windows.WindowType).sort(), [ 'NORMAL', 'POPUP' ], 'WindowType should only define the supported values')
+
+            browser.test.notifyPass()
+            """
+
+        let manager = try loadWebExtension(manifest: windowsManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
     func errors() async throws {
         #if WTF_PLATFORM_MAC
         // iOS does not support create() and update().
@@ -778,6 +831,22 @@ struct WKWebExtensionAPIWindowsTests {
         try await manager.run()
 
         #expect(manager.windows.count == 2)
+    }
+
+    @Test
+    func updateWithEmptyProperties() async throws {
+        let backgroundScript = """
+            const currentWindow = await browser.windows.getCurrent()
+
+            const updatedWithEmptyProperties = await browser.test.assertSafeResolve(() => browser.windows.update(currentWindow.id, { }))
+            browser.test.assertEq(updatedWithEmptyProperties?.id, currentWindow.id, 'update({ }) should return the window')
+            browser.test.assertEq(updatedWithEmptyProperties?.state, currentWindow.state, 'The window should be unchanged')
+
+            browser.test.notifyPass()
+            """
+
+        let manager = try loadWebExtension(manifest: windowsManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
     }
 
     @Test

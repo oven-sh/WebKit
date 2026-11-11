@@ -38,6 +38,8 @@
 #include "RenderSVGPath.h"
 #include "RenderSVGResourceMasker.h"
 #include "RenderSVGResourcePattern.h"
+#include "RenderSVGRoot.h"
+#include "RenderView.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGImageElement.h"
 #include "SVGMatrix.h"
@@ -62,7 +64,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGGraphicsElement);
 
 // FIXME: This doesn't match SVGElement::viewportElement() as it has an extra check for
 // foreign object.
-static bool LEGACY_NODELETE isViewportElement(const SVGElement* element)
+NODELETE static bool isViewportElement(const SVGElement* element)
 {
     if (!element)
         return false;
@@ -115,7 +117,20 @@ AffineTransform SVGGraphicsElement::computeCTM(SVGElement* element, CTMScope mod
 
         auto trackingMode { mode == CTMScope::ScreenScope ? TransformState::TrackSVGScreenCTMMatrix : TransformState::TrackSVGCTMMatrix };
         CheckedPtr stopAtRenderer = dynamicDowncast<RenderLayerModelObject>(stopAtElement ? stopAtElement->renderer() : nullptr);
-        return SVGTransformComputation(*renderer).computeAccumulatedTransform(stopAtRenderer.get(), trackingMode);
+        auto ctm = SVGTransformComputation(*renderer).computeAccumulatedTransform(stopAtRenderer.get(), trackingMode);
+        if (mode != CTMScope::ScreenScope)
+            return ctm;
+
+        // The accumulated transform is independent of the 'used zoom' of the outermost <svg>.
+        // getScreenCTM() must only be independent of the page zoom, so re-apply any CSS 'zoom' contribution (see webkit.org/b/96361).
+        CheckedPtr svgRoot = lineageOfType<RenderSVGRoot>(*renderer).first();
+        if (!svgRoot)
+            return ctm;
+
+        auto cssZoom = svgRoot->style().usedZoom() / svgRoot->view().pageZoomFactor();
+        if (cssZoom == 1)
+            return ctm;
+        return AffineTransform::makeScale({ cssZoom, cssZoom }).multiply(ctm);
     }
 
     AffineTransform ctm;

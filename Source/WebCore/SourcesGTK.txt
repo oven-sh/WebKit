@@ -61,6 +61,7 @@ platform/generic/ScrollbarsControllerGeneric.cpp
 
 platform/glib/DragDataGLib.cpp
 platform/glib/PasteboardGLib.cpp
+platform/glib/PlatformResourceGLib.cpp
 platform/glib/RunLoopObserverGLib.cpp
 
 platform/graphics/DMABufBuffer.cpp
@@ -88,7 +89,6 @@ platform/graphics/gbm/PlatformDisplayGBM.cpp @no-unify
 platform/graphics/gbm/VivanteSuperTiledTexture.cpp
 
 platform/graphics/glib/IconGLib.cpp
-platform/graphics/glib/ImageAdapterGLib.cpp
 platform/graphics/glib/SystemFontDatabaseGLib.cpp
 
 platform/graphics/opentype/OpenTypeVerticalData.cpp

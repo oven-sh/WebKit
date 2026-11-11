@@ -202,7 +202,7 @@ public:
         return *this << static_cast<uint32_t>(value);
     }
 
-    MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc> LEGACY_NODELETE finishEncoding(size_t& size)
+    NODELETE MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc> finishEncoding(size_t& size)
     {
         size = m_bufferSize;
         return WTF::move(m_buffer);
@@ -257,10 +257,10 @@ private:
         m_buffer.realloc(newCapacity.value());
     }
 
-    size_t LEGACY_NODELETE capacity() const { return m_buffer.span().size(); }
+    NODELETE size_t capacity() const { return m_buffer.span().size(); }
 
-    std::span<uint8_t> LEGACY_NODELETE mutableBuffer() { return m_buffer.mutableSpan(); }
-    std::span<const uint8_t> LEGACY_NODELETE buffer() const { return m_buffer.span(); }
+    NODELETE std::span<uint8_t> mutableBuffer() { return m_buffer.mutableSpan(); }
+    NODELETE std::span<const uint8_t> buffer() const { return m_buffer.span(); }
 
     size_t m_bufferSize { 0 };
     MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc> m_buffer;
@@ -504,29 +504,20 @@ RefPtr<API::Data> encodeLegacySessionState(const SessionState& sessionState)
     if (!CFWriteStreamOpen(writeStream.get()))
         return nullptr;
 
+    uint32_t versionNumber = CFSwapInt32HostToBig(sessionStateDataVersion);
+    auto versionBytes = asByteSpan(versionNumber);
+    if (CFWriteStreamWrite(writeStream.get(), versionBytes.data(), versionBytes.size()) != static_cast<CFIndex>(versionBytes.size()))
+        return nullptr;
+
     if (!CFPropertyListWrite(stateDictionary.get(), writeStream.get(), kCFPropertyListBinaryFormat_v1_0, 0, nullptr))
         return nullptr;
 
     auto data = adoptCF(checked_cf_cast<CFDataRef>(CFWriteStreamCopyProperty(writeStream.get(), kCFStreamPropertyDataWritten)));
-
-    CFIndex length = CFDataGetLength(data.get());
-
-    size_t bufferSize = length + sizeof(uint32_t);
-    auto mallocBuffer = MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc>::tryMalloc(bufferSize);
-    if (!mallocBuffer)
+    if (!data)
         return nullptr;
-    auto buffer = mallocBuffer.mutableSpan();
 
-    // Put the session state version number at the start of the buffer
-    buffer[0] = (sessionStateDataVersion & 0xff000000) >> 24;
-    buffer[1] = (sessionStateDataVersion & 0x00ff0000) >> 16;
-    buffer[2] = (sessionStateDataVersion & 0x0000ff00) >> 8;
-    buffer[3] = (sessionStateDataVersion & 0x000000ff);
-
-    // Copy in the actual session state data
-    CFDataGetBytes(data.get(), CFRangeMake(0, length), buffer.subspan(sizeof(uint32_t)).data());
-
-    return API::Data::createWithoutCopying(buffer, [mallocBuffer = WTF::move(mallocBuffer)] { });
+    auto bytes = span(data.get());
+    return API::Data::createWithoutCopying(bytes, [data = WTF::move(data)] { });
 }
 
 class HistoryEntryDataDecoder {
@@ -729,14 +720,14 @@ public:
         return *this;
     }
 
-    bool LEGACY_NODELETE isValid() const { return m_isValid; }
-    void LEGACY_NODELETE markInvalid()
+    NODELETE bool isValid() const { return m_isValid; }
+    NODELETE void markInvalid()
     {
         m_buffer = { };
         m_isValid = false;
     }
 
-    bool LEGACY_NODELETE finishDecoding() { return m_isValid && m_buffer.empty(); }
+    NODELETE bool finishDecoding() { return m_isValid && m_buffer.empty(); }
 
 private:
     template<typename Type>
@@ -757,7 +748,7 @@ private:
         memcpySpan(data, consumeSpan(m_buffer, data.size()));
     }
 
-    bool LEGACY_NODELETE alignBufferPosition(unsigned alignment, size_t size)
+    NODELETE bool alignBufferPosition(unsigned alignment, size_t size)
     {
         const uint8_t* alignedPosition = alignedBuffer(alignment);
         if (!alignedBufferIsLargeEnoughToContain(alignedPosition, size)) {
@@ -770,7 +761,7 @@ private:
         return true;
     }
 
-    const uint8_t* LEGACY_NODELETE alignedBuffer(unsigned alignment) const
+    NODELETE const uint8_t* alignedBuffer(unsigned alignment) const
     {
         ASSERT(alignment && !(alignment & (alignment - 1)));
 
@@ -779,7 +770,7 @@ private:
     }
 
     template<typename T>
-    bool LEGACY_NODELETE bufferIsLargeEnoughToContain(size_t numElements) const
+    NODELETE bool bufferIsLargeEnoughToContain(size_t numElements) const
     {
         static_assert(std::is_arithmetic<T>::value, "Type T must have a fixed, known encoded size!");
 
@@ -789,12 +780,12 @@ private:
         return bufferIsLargeEnoughToContain(alignof(T), numElements * sizeof(T));
     }
 
-    bool LEGACY_NODELETE bufferIsLargeEnoughToContain(unsigned alignment, size_t size) const
+    NODELETE bool bufferIsLargeEnoughToContain(unsigned alignment, size_t size) const
     {
         return alignedBufferIsLargeEnoughToContain(alignedBuffer(alignment), size);
     }
 
-    inline bool LEGACY_NODELETE alignedBufferIsLargeEnoughToContain(const uint8_t* alignedPosition, size_t size) const
+    NODELETE inline bool alignedBufferIsLargeEnoughToContain(const uint8_t* alignedPosition, size_t size) const
     {
         auto* bufferEnd = std::to_address(m_buffer.end());
         return bufferEnd >= alignedPosition && static_cast<size_t>(bufferEnd - alignedPosition) >= size;

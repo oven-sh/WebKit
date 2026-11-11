@@ -43,7 +43,7 @@ public:
     RenderMathMLOperator(Type, Document&, Style::ComputedStyle&&);
     virtual ~RenderMathMLOperator();
 
-    MathMLOperatorElement& LEGACY_NODELETE element() const;
+    NODELETE MathMLOperatorElement& element() const;
 
     void stretchTo(LayoutUnit heightAboveBaseline, LayoutUnit depthBelowBaseline);
     void stretchTo(LayoutUnit width);
@@ -73,7 +73,8 @@ protected:
 
 private:
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
-    void computeIntrinsicLogicalWidthContributions() final;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() final;
+    void constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const final;
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) final;
     void paint(PaintInfo&, const LayoutPoint&) final;
 

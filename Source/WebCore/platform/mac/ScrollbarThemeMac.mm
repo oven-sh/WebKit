@@ -110,7 +110,7 @@ namespace WebCore {
 
 using ScrollbarSet = HashSet<SingleThreadWeakRef<Scrollbar>>;
 
-static ScrollbarSet& LEGACY_NODELETE scrollbarMap()
+NODELETE static ScrollbarSet& scrollbarMap()
 {
     static NeverDestroyed<ScrollbarSet> instances;
     return instances;
@@ -316,7 +316,7 @@ ScrollbarButtonsPlacement ScrollbarThemeMac::buttonsPlacement() const
     return gButtonPlacement;
 }
 
-inline constexpr unsigned LEGACY_NODELETE scrollbarWidthToIndex(ScrollbarWidth scrollbarWidth)
+NODELETE inline constexpr unsigned scrollbarWidthToIndex(ScrollbarWidth scrollbarWidth)
 {
     switch (scrollbarWidth) {
     case ScrollbarWidth::Auto:
@@ -347,7 +347,7 @@ bool ScrollbarThemeMac::hasThumb(Scrollbar& scrollbar)
              scrollbar.height()) >= minLengthForThumb;
 }
 
-static IntRect LEGACY_NODELETE buttonRepaintRect(const IntRect& buttonRect, ScrollbarOrientation orientation, ScrollbarWidth widthStyle, bool start)
+NODELETE static IntRect buttonRepaintRect(const IntRect& buttonRect, ScrollbarOrientation orientation, ScrollbarWidth widthStyle, bool start)
 {
     ASSERT(gButtonPlacement != ScrollbarButtonsNone);
 
@@ -485,7 +485,7 @@ int ScrollbarThemeMac::minimumThumbLength(Scrollbar& scrollbar)
         return scrollbar.minimumThumbLength();
 }
 
-static bool LEGACY_NODELETE shouldCenterOnThumb(const PlatformMouseEvent& evt)
+NODELETE static bool shouldCenterOnThumb(const PlatformMouseEvent& evt)
 {
     if (evt.button() != MouseButton::Left)
         return false;
@@ -640,8 +640,10 @@ bool ScrollbarThemeMac::paint(Scrollbar& scrollbar, GraphicsContext& context, co
         context.translate(scrollbarRect.location());
         paintScrollbar(scrollbar, context);
     } else {
+        // AppKit draws the scroll bar into a CGContext, so display list and PDF contexts get an Unaccelerated buffer.
+        auto renderingMode = context.renderingMode() == RenderingMode::Accelerated ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
         if (auto imageBuffer = [&] -> RefPtr<ImageBuffer> {
-            if (auto buffer = context.createImageBuffer(scrollbarRect.size(), scrollbar.deviceScaleFactor(), ColorSpace::SRGB(), context.renderingMode(), RenderingMethod::Local)) {
+            if (auto buffer = context.createImageBuffer(scrollbarRect.size(), scrollbar.deviceScaleFactor(), ColorSpace::SRGB(), renderingMode, RenderingMethod::Local)) {
                 paintScrollbar(scrollbar, buffer->context());
                 return buffer;
             }

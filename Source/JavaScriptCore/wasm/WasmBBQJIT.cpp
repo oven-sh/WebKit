@@ -70,6 +70,7 @@
 #include <wtf/Compiler.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/MathExtras.h>
+#include <wtf/RecursableLambda.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 
@@ -4147,8 +4148,7 @@ void BBQJIT::prepareForExceptions()
             });
         }
     } else {
-        Vector<std::tuple<uint32_t, size_t>, 16> runs;
-        runs.reserveInitialCapacity(runCount);
+        Vector<std::tuple<uint32_t, size_t>, 16> runs(ReserveCapacityTag { }, runCount);
         for (unsigned i = 0; i < targets.size(); ) {
             unsigned start = i;
             while (i < targets.size() && targets[i] == targets[start])
@@ -4454,8 +4454,7 @@ void BBQJIT::saveValuesAcrossCallAndPassArguments(const Args& arguments, const C
     }
 
     // Finally, we parallel-move arguments to the parameter locations.
-    WTF::Vector<Location, 8> parameterLocations;
-    parameterLocations.reserveInitialCapacity(callInfo.params.size());
+    WTF::Vector<Location, 8> parameterLocations(ReserveCapacityTag { }, callInfo.params.size());
     for (unsigned i = 0; i < callInfo.params.size(); i++) {
         auto type = signature.argumentType(i);
         auto parameterLocation = Location::fromArgumentLocation(callInfo.params[i], type.kind());
@@ -4516,10 +4515,8 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const RTT& sign
     ASSERT(callInfo.results.size() == wasmCallerInfo.results.size());
     ASSERT(arguments.size() == callInfo.params.size());
 
-    Vector<Value, 8> resolvedArguments;
-    resolvedArguments.reserveInitialCapacity(arguments.size() + isX86());
-    Vector<Location, 8> parameterLocations;
-    parameterLocations.reserveInitialCapacity(arguments.size() + isX86());
+    Vector<Value, 8> resolvedArguments(ReserveCapacityTag { }, arguments.size() + isX86());
+    Vector<Location, 8> parameterLocations(ReserveCapacityTag { }, arguments.size() + isX86());
 
     // Save the old Frame Pointer for later and make sure the return address gets saved to its canonical location.
     emitRestoreCalleeSaves();
@@ -4827,10 +4824,25 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
         Checked<int32_t> topSourceOffsetFromFP = static_cast<int32_t>(roundUpToMultipleOf<stackAlignmentBytes()>(topSource));
 
         m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfTargetInstance()), wasmScratchGPR);
-        Jump isSameInstance = m_jit.branchPtr(RelationalCondition::Equal, wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
+        // We need a restore frame if the wasm instance is different or if the call goes out to JS.
+        // In the latter case JS can grow wasm memory, invalidating memory base cached in a callee save register.
+        Jump needsRestoreFrame = m_jit.branchPtr(RelationalCondition::NotEqual, wasmScratchGPR, GPRInfo::wasmContextInstancePointer);
+        // FIXME: consider overloading WasmCallableFunction::targetInstance to hold a JSFunction when the
+        // callee exits to JS. The instance comparison above would then fail for a JS import on its own and
+        // this second test could go away. See also OMGIRGenerator::emitIndirectCall().
+        Jump skipRestoreFrame;
+        if (m_codeForImage) {
+            // The instance is still the one that runs this code, and its pointer table has the callee that exits to JS.
+            loadImagePointer(m_jit, GPRInfo::wasmContextInstancePointer, ImagePointerTable::wasmToJSCallee, wasmScratchGPR);
+            skipRestoreFrame = m_jit.branchPtr(RelationalCondition::NotEqual, CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
+        } else {
+            m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
+            skipRestoreFrame = branchIfCalleeNotWasmToJS(m_jit, wasmScratchGPR);
+        }
+        needsRestoreFrame.link(m_jit);
         emitRestoreInstanceFrameIfNeeded(m_jit, GPRInfo::wasmContextInstancePointer, callerStackSize, m_frameSize, topSourceOffsetFromFP, wasmScratchGPR, wasmBaseMemoryPointer);
         emitSwitchToInstanceOf(importableFunction);
-        isSameInstance.link(m_jit);
+        skipRestoreFrame.link(m_jit);
     }
 
     m_jit.loadPtr(CCallHelpers::Address(importableFunction, WasmToWasmImportableFunction::offsetOfBoxedCallee()), wasmScratchGPR);
@@ -4839,8 +4851,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
     Vector<Value, 8> resolvedArguments;
     const unsigned calleeArgument = 1;
     resolvedArguments.reserveInitialCapacity(arguments.size() + calleeArgument + isX86() * 2);
-    Vector<Location, 8> parameterLocations;
-    parameterLocations.reserveInitialCapacity(arguments.size() + calleeArgument + isX86() * 2);
+    Vector<Location, 8> parameterLocations(ReserveCapacityTag { }, arguments.size() + calleeArgument + isX86() * 2);
 
     // It's ok if we clobber our Wasm::Callee at this point since we can't hit a GC safepoint / throw an exception until we've tail called into the callee.
     // FIXME: We should just have addCallIndirect put this in the right place to begin with.
@@ -5635,11 +5646,10 @@ void BBQJIT::emitShuffle(Vector<Value, N, OverflowHandler>& srcVector, Vector<Lo
     ASSERT(srcVector.size() == dstVector.size());
 
 #if ASSERT_ENABLED
-    // Destinations must not overlap: one move would otherwise overwrite another's result, and
-    // disjoint destinations are also what limit the moves to the single cycle emitShuffleMove can
-    // break with one scratch register: https://xavierleroy.org/publi/parallel-move.pdf
-    // Sources may repeat. Two moves that only read the same place need no ordering between them.
+    // Destinations must not overlap, or one move would overwrite another's result. Sources may
+    // repeat: two moves that only read the same place need no ordering between them.
     for (size_t i = 0; i < dstVector.size(); ++i) {
+        ASSERT(!dstVector[i].isNone());
         for (size_t j = i + 1; j < dstVector.size(); ++j)
             ASSERT(!Location::rangesOverlap(dstVector[i], srcVector[i].size(), dstVector[j], srcVector[j].size()));
     }
@@ -5650,13 +5660,198 @@ void BBQJIT::emitShuffle(Vector<Value, N, OverflowHandler>& srcVector, Vector<Lo
         return;
     }
 
-    // For multi-value return, a parallel move might be necessary. This is comparatively complex
-    // and slow, so we limit it to this slow path.
-    Vector<ShuffleStatus, N, OverflowHandler> statusVector(FillWith { }, srcVector.size(), ShuffleStatus::ToMove);
-    for (unsigned i = 0; i < srcVector.size(); i ++) {
-        if (statusVector[i] == ShuffleStatus::ToMove)
-            emitShuffleMove(srcVector, dstVector, statusVector, i);
+    auto otherSourcesUnder = [&](auto& sources, auto& destinations, size_t index) {
+        for (size_t i = 0; i < sources.size(); ++i) {
+            if (i != index && Location::rangesOverlap(locationOf(sources[i]), sources[i].size(), destinations[index], sources[index].size()))
+                return true;
+        }
+        return false;
+    };
+
+    // The walk breaks a cycle by copying a pending source to wasmScratchFPR or
+    // wasmScratchGPR, so at most one copied source per register class may be pending at a time.
+    // That holds if every source lies under at most one destination other than its own. A source
+    // may lie under more if its move writes a register that no other source reads: that move waits
+    // on nothing, so it is never pending.
+    auto walk = [&](auto& sources, auto& destinations) {
+#if ASSERT_ENABLED
+        for (size_t i = 0; i < sources.size(); ++i) {
+            if (destinations[i].isRegister() && !otherSourcesUnder(sources, destinations, i))
+                continue;
+            Location srcLocation = locationOf(sources[i]);
+            unsigned count = 0;
+            for (size_t j = 0; j < destinations.size(); ++j) {
+                if (j != i && Location::rangesOverlap(srcLocation, sources[i].size(), destinations[j], sources[j].size()))
+                    ++count;
+            }
+            ASSERT(count <= 1);
+        }
+#endif
+        Vector<ShuffleStatus, N, OverflowHandler> statusVector(FillWith { }, sources.size(), ShuffleStatus::ToMove);
+        auto emitShuffleMove = recursableLambda([&](auto self, unsigned index) -> void {
+            Location srcLocation = locationOf(sources[index]);
+            Location dst = destinations[index];
+            if (srcLocation == dst)
+                return;
+
+            uint32_t dstSize = sources[index].size();
+            statusVector[index] = ShuffleStatus::BeingMoved;
+            for (unsigned i = 0; i < sources.size(); ++i) {
+                // A source that overlaps its own destination needs no temp, since emitMove reads all
+                // of the source before writing any of the destination.
+                if (i == index)
+                    continue;
+                // A constant has location None, which overlaps nothing since no destination is None.
+                if (!Location::rangesOverlap(locationOf(sources[i]), sources[i].size(), dst, dstSize))
+                    continue;
+                switch (statusVector[i]) {
+                case ShuffleStatus::ToMove:
+                    self(i);
+                    break;
+                case ShuffleStatus::BeingMoved: {
+                    Location temp = sources[i].isFloat() ? Location::fromFPR(wasmScratchFPR) : Location::fromGPR(wasmScratchGPR);
+                    emitMove(sources[i], temp);
+                    sources[i] = Value::pinned(sources[i].type(), temp);
+                    break;
+                }
+                case ShuffleStatus::Moved:
+                    break;
+                }
+            }
+            emitMove(sources[index], dst);
+            statusVector[index] = ShuffleStatus::Moved;
+        });
+        for (unsigned i = 0; i < sources.size(); ++i) {
+            if (statusVector[i] == ShuffleStatus::ToMove)
+                emitShuffleMove(i);
+        }
+    };
+
+    // Destinations are disjoint and 8-byte aligned, so only a v128 stack source can lie under two
+    // of them. A rewritten move to the stack is split into 8-byte halves, each a destination of its
+    // own, which can push another v128 source over the limit, so each split goes on a worklist that
+    // recounts the sources under it.
+    auto piecesUnder = [&](size_t source, size_t destination, int32_t pieceSize) -> unsigned {
+        if (source == destination)
+            return 0;
+
+        if (!dstVector[destination].isStack())
+            return 0;
+
+        unsigned count = 0;
+        Location srcLocation = locationOf(srcVector[source]);
+        int32_t dstSize = srcVector[destination].size();
+        for (int32_t offset = 0; offset < dstSize; offset += pieceSize) {
+            if (Location::rangesOverlap(srcLocation, srcVector[source].size(), Location::fromStack(dstVector[destination].asStackOffset() + offset), pieceSize))
+                ++count;
+        }
+        return count;
+    };
+
+    // A move can need a rewrite only if all of the following hold:
+    // 1. src is a v128 value
+    // 2. src is on the stack
+    // 3. dst is not a register, or it is a register that another move reads.
+    Vector<size_t, N, OverflowHandler> moveCandidates;
+    for (size_t i = 0; i < srcVector.size(); ++i) {
+        if (srcVector[i].type() != TypeKind::V128 || !locationOf(srcVector[i]).isStack())
+            continue;
+        if (!dstVector[i].isRegister() || otherSourcesUnder(srcVector, dstVector, i))
+            moveCandidates.append(i);
     }
+
+    BitVector rewrite;
+    Vector<size_t, N, OverflowHandler> moveWorklist;
+    Vector<unsigned, N, OverflowHandler> pieceCounts(FillWith { }, srcVector.size(), 0u);
+    auto countPiece = [&](size_t index, unsigned count) {
+        pieceCounts[index] += count;
+        if (pieceCounts[index] < 2 || rewrite.get(index))
+            return;
+        rewrite.set(index);
+        if (dstVector[index].isStack())
+            moveWorklist.append(index);
+    };
+
+    // Count every destination as one whole piece; each split below then adds its difference exactly once.
+    for (size_t i : moveCandidates) {
+        for (size_t j = 0; j < dstVector.size(); ++j)
+            countPiece(i, piecesUnder(i, j, srcVector[j].size()));
+    }
+
+    while (!moveWorklist.isEmpty()) {
+        size_t split = moveWorklist.takeLast();
+
+        // split's move is emitted as two 8-byte moves, so recount each remaining candidate with its
+        // destination as two pieces.
+        for (size_t i : moveCandidates) {
+            if (!rewrite.get(i))
+                countPiece(i, piecesUnder(i, split, static_cast<int32_t>(sizeof(Register))) - piecesUnder(i, split, srcVector[split].size()));
+        }
+    }
+    if (rewrite.isEmpty()) {
+        walk(srcVector, dstVector);
+        return;
+    }
+
+    // A source copied away goes below every frame slot the shuffle touches, and above every slot it
+    // addresses from SP, which is m_frameSize below FP.
+    int32_t frameBottom = -static_cast<int32_t>(m_frameSize);
+    int32_t spillOffset = -static_cast<int32_t>(WTF::roundUpToMultipleOf<tempSlotSize>(m_frameSizeForValidation));
+    int32_t spillFloor = frameBottom;
+    auto reserve = [&](Location location, int32_t size) {
+        if (location.isStack())
+            spillOffset = std::min(spillOffset, location.asStackOffset());
+        else if (location.isStackArgument())
+            spillFloor = std::max(spillFloor, frameBottom + location.asStackArgumentOffset() + size);
+    };
+    for (size_t i = 0; i < srcVector.size(); ++i) {
+        reserve(locationOf(srcVector[i]), srcVector[i].size());
+        reserve(dstVector[i], srcVector[i].size());
+    }
+    spillOffset = -static_cast<int32_t>(WTF::roundUpToMultipleOf<tempSlotSize>(static_cast<uint32_t>(-spillOffset)));
+
+    // Split each move whose source lies under two other destinations into 8-byte halves or, if it
+    // writes a register that another move reads, copy its source away first.
+    Vector<Value, N, OverflowHandler> sources;
+    Vector<Location, N, OverflowHandler> destinations;
+    Vector<std::pair<Location, Location>, N, OverflowHandler> copies;
+    for (size_t i = 0; i < srcVector.size(); ++i) {
+        Value src = srcVector[i];
+        Location dst = dstVector[i];
+        if (!rewrite.get(i)) {
+            sources.append(src);
+            destinations.append(dst);
+            continue;
+        }
+        Location srcLocation = locationOf(src);
+        if (dst.isStack()) {
+            for (int32_t half = 0; half < static_cast<int32_t>(src.size()); half += sizeof(Register)) {
+                sources.append(Value::pinned(TypeKind::I64, Location::fromStack(srcLocation.asStackOffset() + half)));
+                destinations.append(Location::fromStack(dst.asStackOffset() + half));
+            }
+            continue;
+        }
+        size_t copyIndex = copies.findIf([&](auto& copy) {
+            return copy.first == srcLocation;
+        });
+        if (copyIndex == notFound) {
+            // Only a tail call gets here, since only its destinations can lie unevenly over v128
+            // slots. Each copied source is a distinct 16-byte slot of this frame inside the callee's
+            // outgoing area, so the copies need at most calleeStackSize - callerStackSize bytes and
+            // at most m_frameSizeForValidation bytes. The frame keeps calleeStackSize below
+            // m_frameSizeForValidation, and callerStackSize covers at least the 48-byte header,
+            // which leaves room for the copies plus the callee slot addressed from SP.
+            spillOffset -= tempSlotSize;
+            RELEASE_ASSERT(spillOffset >= spillFloor);
+            Location temp = Location::fromStack(spillOffset);
+            emitMove(src, temp);
+            copyIndex = copies.size();
+            copies.append({ srcLocation, temp });
+        }
+        sources.append(Value::pinned(src.type(), copies[copyIndex].second));
+        destinations.append(dst);
+    }
+    walk(sources, destinations);
 }
 
 ControlData& BBQJIT::currentControlData()
