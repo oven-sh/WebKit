@@ -391,7 +391,7 @@ JSObject* createTDZError(JSGlobalObject* globalObject, const Identifier& ident)
         return createTDZError(globalObject);
     }
 
-    return createReferenceError(globalObject, makeString("Cannot access '"_s, ident.string(), "' before initialization."_s));
+    return createTDZError(globalObject, StringView(ident.string()));
 }
 
 JSObject* createInvalidPrivateNameError(JSGlobalObject* globalObject)

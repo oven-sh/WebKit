@@ -316,18 +316,15 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_tdz)
 {
     BEGIN();
     auto bytecode = pc->as<OpCheckTdz>();
-    if (bytecode.m_targetVirtualRegister == codeBlock->thisRegister())  {
+    if (bytecode.m_targetVirtualRegister == codeBlock->thisRegister())
         THROW(createReferenceError(globalObject, "'super()' must be called in derived constructor before accessing |this| or returning non-object."_s));
-    } else {
-        auto [block, index] = getBytecodeIndex(codeBlock->vm(), callFrame);
-        auto info = block->expressionInfoForBytecodeIndex(index);
-        int expressionStart = info.divot - info.startOffset;
-        int expressionStop = info.divot + info.endOffset;
-
-        RefPtr provider = codeBlock->source().provider();
-        auto ident = provider->getRange(expressionStart, expressionStop);
-        THROW(createTDZError(globalObject, ident));
-    }
+    // Bun: the check carries the name of its binding (BytecodeGenerator::emitTDZCheck). Upstream cuts the name out of the
+    // source at the expression info of the frame that getBytecodeIndex() finds. When this frame is hidden from stack
+    // traces (a class field initializer, the outer half of an async function) that is a caller's frame, or none. And the
+    // expression info in front of a check is not always the name (x++, x += 1, [x] = y).
+    if (!bytecode.m_identifier)
+        THROW(createTDZError(globalObject));
+    THROW(createTDZError(globalObject, codeBlock->identifier(bytecode.m_identifier - 1)));
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_throw_strict_mode_readonly_property_write_error)

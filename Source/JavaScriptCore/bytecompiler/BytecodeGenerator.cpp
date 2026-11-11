@@ -3362,12 +3362,15 @@ RegisterID* BytecodeGenerator::emitInstanceFieldInitializationIfNeeded(RegisterI
 
 void BytecodeGenerator::emitTDZCheck(RegisterID* target, const Variable& variable)
 {
-    OpCheckTdz::emit(this, target, addConstantValue(addStringConstant(variable.ident())));
+    // The operand is the index of the name in the identifier table plus one. Zero is a check without a name.
+    OpCheckTdz::emit(this, target, addConstant(variable.ident()) + 1);
 }
 
 void BytecodeGenerator::emitTDZCheck(RegisterID* target)
 {
-    OpCheckTdz::emit(this, target, addConstantValue(jsUndefined()));
+    // Only `this` has no name, and slow_path_check_tdz knows it by its register.
+    ASSERT(target == thisRegister());
+    OpCheckTdz::emit(this, target, 0);
 }
 
 bool BytecodeGenerator::needsTDZCheck(const Variable& variable)
