@@ -142,11 +142,6 @@ const UTF8CString& FFIContext::cacheUTF8(StringImpl& impl, UTF8CString&& utf8)
     return victim->utf8;
 }
 
-void StringArena::enter()
-{
-    ++m_depth;
-}
-
 void FFIContext::didGarbageCollect(CollectionScope)
 {
     m_arena.shrinkWhenIdle();
@@ -174,39 +169,55 @@ void FFIContext::clearCachesInEpilogue()
     m_utf8CacheClockAtLastCollection = m_utf8CacheClock;
 }
 
+void StringArena::releaseUnusedChunks()
+{
+    if (m_chunks.size() <= m_position.usedChunks)
+        return;
+    bool keepsSpareChunk = m_chunks[m_position.usedChunks].sizeInBytes() <= maximumRetainedChunkBytes;
+    m_chunks.shrink(m_position.usedChunks + keepsSpareChunk);
+}
+
 void StringArena::reset()
 {
     ASSERT(!m_depth);
-    m_offsetInLastChunk = 0;
-    if (m_chunks.isEmpty())
-        return;
-    if (m_chunks[0].sizeInBytes() > maximumRetainedChunkBytes) {
-        m_chunks.clear();
-        return;
-    }
-    m_chunks.shrink(1);
+    m_position = { };
+    releaseUnusedChunks();
+}
+
+void StringArena::goBackToLastMark()
+{
+    m_position = m_marks.takeLast().position;
+    m_depthOfLastMark = m_marks.isEmpty() ? 0 : m_marks.last().depth;
+    releaseUnusedChunks();
 }
 
 std::span<char> StringArena::allocate(size_t bytes)
 {
     ASSERT(m_depth);
 
-    if (!m_chunks.isEmpty()) {
-        auto lastChunk = m_chunks.last().mutableSpan();
-        if (lastChunk.size() - m_offsetInLastChunk >= bytes) {
-            auto result = lastChunk.subspan(m_offsetInLastChunk, bytes);
-            m_offsetInLastChunk += bytes;
+    if (m_depth > 1 && m_depth != m_depthOfLastMark) [[unlikely]] {
+        m_marks.append({ m_depth, m_position });
+        m_depthOfLastMark = m_depth;
+    }
+
+    if (m_position.usedChunks) {
+        auto lastUsedChunk = m_chunks[m_position.usedChunks - 1].mutableSpan();
+        if (lastUsedChunk.size() - m_position.offsetInLastUsedChunk >= bytes) {
+            auto result = lastUsedChunk.subspan(m_position.offsetInLastUsedChunk, bytes);
+            m_position.offsetInLastUsedChunk += bytes;
             return result;
         }
     }
 
-    size_t capacity = std::max(defaultChunkBytes, bytes);
-    auto chunk = MallocSpan<char>::tryMalloc(capacity);
-    if (!chunk)
-        return { };
-    m_chunks.append(WTF::move(chunk));
-    m_offsetInLastChunk = bytes;
-    return m_chunks.last().mutableSpan().first(bytes);
+    if (m_chunks.size() == m_position.usedChunks || m_chunks[m_position.usedChunks].sizeInBytes() < bytes) {
+        auto chunk = MallocSpan<char>::tryMalloc(std::max(defaultChunkBytes, bytes));
+        if (!chunk)
+            return { };
+        m_chunks.shrink(m_position.usedChunks);
+        m_chunks.append(WTF::move(chunk));
+    }
+    m_position.offsetInLastUsedChunk = bytes;
+    return m_chunks[m_position.usedChunks++].mutableSpan().first(bytes);
 }
 
 } } // namespace JSC::FFI

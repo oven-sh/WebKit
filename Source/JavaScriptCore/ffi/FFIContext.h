@@ -123,11 +123,14 @@ public:
     StringArena() = default;
     ~StringArena() = default;
 
-    JS_EXPORT_PRIVATE void enter();
+    // Scopes nest: exit() frees what was allocated since the matching enter().
+    void enter() { ++m_depth; }
     void exit()
     {
         ASSERT(m_depth);
-        if (!--m_depth)
+        if (m_depth == m_depthOfLastMark) [[unlikely]]
+            goBackToLastMark();
+        if (!--m_depth && m_position.usedChunks)
             reset();
     }
     unsigned depth() const { return m_depth; }
@@ -137,19 +140,32 @@ public:
     {
         if (m_depth)
             return;
-        m_offsetInLastChunk = 0;
+        ASSERT(!m_position.usedChunks);
         m_chunks.clear();
     }
 
 private:
-    void reset();
+    struct Position {
+        unsigned usedChunks { 0 };
+        size_t offsetInLastUsedChunk { 0 };
+    };
+    struct Mark {
+        unsigned depth;
+        Position position;
+    };
+
+    JS_EXPORT_PRIVATE void goBackToLastMark();
+    JS_EXPORT_PRIVATE void reset();
+    void releaseUnusedChunks();
 
     static constexpr size_t defaultChunkBytes = 4096;
     static constexpr size_t maximumRetainedChunkBytes = 64 * 1024;
 
-    Vector<MallocSpan<char>, 4> m_chunks;
-    size_t m_offsetInLastChunk { 0 };
+    Vector<MallocSpan<char>, 4> m_chunks; // At most one past m_position.usedChunks: a spare.
+    Position m_position;
     unsigned m_depth { 0 };
+    unsigned m_depthOfLastMark { 0 };
+    Vector<Mark> m_marks; // Where the inner scopes began that have allocated.
 };
 
 class FFIContext final : public HeapObserver {
