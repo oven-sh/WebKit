@@ -834,6 +834,10 @@ IGNORE_GCC_WARNINGS_END
     if (functionNode->needsNewTargetRegisterForThisScope() || isNewTargetUsedInInnerArrowFunction() || usesEval())
         m_newTargetRegister = addVar();
 
+    // Not for the body of an async arrow function, which is resumed without |this|: ensureThis() has a rule for it.
+    if (codeBlock->derivedContextHasInnerSuperCall() && parseMode != SourceParseMode::AsyncArrowFunctionBodyMode && (functionNode->usesThis() || functionNode->usesSuperProperty()))
+        m_lexicalEnvironmentOfThisRegister = addVar();
+
     auto shouldEmitToThis = [&] {
         if (functionNode->usesThis() || usesEval() || m_scopeNode->doAnyInnerArrowFunctionsUseThis() || m_scopeNode->doAnyInnerArrowFunctionsUseEval())
             return true;
@@ -960,7 +964,9 @@ IGNORE_GCC_WARNINGS_END
     // We need load |super| & |this| for arrow function before initializeDefaultParameterValuesAndSetupFunctionScopeStack
     // if we have default parameter expression. Because |super| & |this| values can be used there
     if ((SourceParseModeSet(SourceParseMode::ArrowFunctionMode, SourceParseMode::AsyncArrowFunctionMode).contains(parseMode) && !isSimpleParameterList) || parseMode == SourceParseMode::AsyncArrowFunctionBodyMode) {
-        if (functionNode->usesThis() || functionNode->usesSuperProperty())
+        if (m_lexicalEnvironmentOfThisRegister)
+            emitLoadLexicalEnvironmentOfThis();
+        else if (functionNode->usesThis() || functionNode->usesSuperProperty())
             emitLoadThisFromArrowFunctionLexicalEnvironment();
 
         if (m_scopeNode->needsNewTargetRegisterForThisScope())
@@ -988,7 +994,9 @@ IGNORE_GCC_WARNINGS_END
     // after initializeDefaultParameterValuesAndSetupFunctionScopeStack() because that function sets up the
     // SymbolTable stack and emitLoadThisFromArrowFunctionLexicalEnvironment() consults the SymbolTable stack
     if (SourceParseModeSet(SourceParseMode::ArrowFunctionMode, SourceParseMode::AsyncArrowFunctionMode).contains(parseMode) && isSimpleParameterList) {
-        if (functionNode->usesThis() || functionNode->usesSuperProperty())
+        if (m_lexicalEnvironmentOfThisRegister)
+            emitLoadLexicalEnvironmentOfThis();
+        else if (functionNode->usesThis() || functionNode->usesSuperProperty())
             emitLoadThisFromArrowFunctionLexicalEnvironment();
     
         if (m_scopeNode->needsNewTargetRegisterForThisScope())
@@ -1081,7 +1089,10 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCod
     if (evalNode->needsNewTargetRegisterForThisScope())
         m_newTargetRegister = addVar();
 
-    if (codeBlock->isArrowFunctionContext() && (evalNode->usesThis() || evalNode->usesSuperProperty()))
+    if (codeBlock->derivedContextHasInnerSuperCall() && (evalNode->usesThis() || evalNode->usesSuperProperty())) {
+        m_lexicalEnvironmentOfThisRegister = addVar();
+        emitLoadLexicalEnvironmentOfThis();
+    } else if (codeBlock->isArrowFunctionContext() && (evalNode->usesThis() || evalNode->usesSuperProperty()))
         emitLoadThisFromArrowFunctionLexicalEnvironment();
 
     if (evalNode->needsNewTargetRegisterForThisScope())
@@ -5409,6 +5420,14 @@ RegisterID* BytecodeGenerator::emitLoadArrowFunctionLexicalEnvironment(const Ide
     return emitResolveScope(nullptr, variable(identifier, ThisResolutionType::Scoped));
 }
 
+void BytecodeGenerator::emitLoadLexicalEnvironmentOfThis()
+{
+    // The non-local case of emitResolveScope(), with a destination that is not a temporary. An arrow function has no scope of its own with |this|.
+    Variable thisVariable = variable(propertyNames().builtinNames().thisPrivateName(), ThisResolutionType::Scoped);
+    ASSERT(thisVariable.offset().kind() == VarKind::Invalid);
+    OpResolveScope::emit(this, kill(m_lexicalEnvironmentOfThisRegister), scopeRegister(), addConstant(thisVariable.ident()), resolveType(), localScopeDepth());
+}
+
 void BytecodeGenerator::emitLoadThisFromArrowFunctionLexicalEnvironment()
 {
     emitGetFromScope(thisRegister(), emitLoadArrowFunctionLexicalEnvironment(propertyNames().builtinNames().thisPrivateName()), variable(propertyNames().builtinNames().thisPrivateName(), ThisResolutionType::Scoped), DoNotThrowIfNotFound);
@@ -5439,7 +5458,9 @@ RegisterID* BytecodeGenerator::emitLoadDerivedConstructor()
 RegisterID* BytecodeGenerator::ensureThis()
 {
     if (constructorKind() == ConstructorKind::Extends || isDerivedConstructorContext()) {
-        if ((needsToUpdateArrowFunctionContext() && isSuperCallUsedInInnerArrowFunction()) || m_codeBlock->parseMode() == SourceParseMode::AsyncArrowFunctionBodyMode)
+        if (m_lexicalEnvironmentOfThisRegister)
+            emitGetFromScope(thisRegister(), m_lexicalEnvironmentOfThisRegister, variable(propertyNames().builtinNames().thisPrivateName(), ThisResolutionType::Scoped), DoNotThrowIfNotFound);
+        else if ((needsToUpdateArrowFunctionContext() && isSuperCallUsedInInnerArrowFunction()) || m_codeBlock->parseMode() == SourceParseMode::AsyncArrowFunctionBodyMode)
             emitLoadThisFromArrowFunctionLexicalEnvironment();
 
         emitTDZCheck(thisRegister());

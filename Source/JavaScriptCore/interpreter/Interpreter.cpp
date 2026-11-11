@@ -209,7 +209,7 @@ static ALWAYS_INLINE JSValue evaluateDirectEvalAt(JSGlobalObject* globalObject, 
         JSScope::collectClosureVariablesUnderTDZ(caller.scope, variablesUnderTDZ, privateNameEnvironment);
         SourceTaintedness sourceTaintedOrigin = computeNewSourceTaintednessFromStack(vm, caller.callFrame);
 
-        eval = DirectEvalExecutable::create(globalObject, makeSource(programSource, caller.sourceOrigin, sourceTaintedOrigin), caller.lexicallyScopedFeatures, caller.derivedContextType, caller.needsClassFieldInitializer, caller.privateBrandRequirement, caller.isArrowFunctionContext, caller.isInsideOrdinaryFunction, caller.evalContextType, &variablesUnderTDZ, caller.privateNames ? caller.privateNames : &privateNameEnvironment);
+        eval = DirectEvalExecutable::create(globalObject, makeSource(programSource, caller.sourceOrigin, sourceTaintedOrigin), caller.lexicallyScopedFeatures, caller.derivedContextType, caller.derivedContextHasInnerSuperCall, caller.needsClassFieldInitializer, caller.privateBrandRequirement, caller.isArrowFunctionContext, caller.isInsideOrdinaryFunction, caller.evalContextType, &variablesUnderTDZ, caller.privateNames ? caller.privateNames : &privateNameEnvironment);
         EXCEPTION_ASSERT(!!scope.exception() == !eval);
         if (!eval) [[unlikely]]
             return { };
@@ -249,10 +249,13 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
         bool isArrowFunctionContext = callerUnlinkedCodeBlock->isArrowFunction() || callerUnlinkedCodeBlock->isArrowFunctionContext();
 
         DerivedContextType derivedContextType = callerUnlinkedCodeBlock->derivedContextType();
+        bool derivedContextHasInnerSuperCall = callerUnlinkedCodeBlock->derivedContextHasInnerSuperCall();
         if (!isArrowFunctionContext && callerUnlinkedCodeBlock->isClassContext()) {
             derivedContextType = callerUnlinkedCodeBlock->isConstructor()
                 ? DerivedContextType::DerivedConstructorContext
                 : DerivedContextType::DerivedMethodContext;
+            // The eval code of a derived constructor can call super().
+            derivedContextHasInnerSuperCall = callerUnlinkedCodeBlock->isConstructor() && callerUnlinkedCodeBlock->constructorKind() == ConstructorKind::Extends;
         }
 
         EvalContextType evalContextType;
@@ -268,6 +271,7 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
             .sourceOrigin = callerBaselineCodeBlock->source().provider()->sourceOrigin(),
             .lexicallyScopedFeatures = lexicallyScopedFeatures,
             .derivedContextType = derivedContextType,
+            .derivedContextHasInnerSuperCall = derivedContextHasInnerSuperCall,
             .evalContextType = evalContextType,
             .needsClassFieldInitializer = callerUnlinkedCodeBlock->needsClassFieldInitializer(),
             .privateBrandRequirement = callerUnlinkedCodeBlock->privateBrandRequirement(),

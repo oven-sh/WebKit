@@ -246,6 +246,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         SourceOrigin sourceOrigin;
         LexicallyScopedFeatures lexicallyScopedFeatures;
         DerivedContextType derivedContextType;
+        bool derivedContextHasInnerSuperCall;
         EvalContextType evalContextType;
         NeedsClassFieldInitializer needsClassFieldInitializer;
         PrivateBrandRequirement privateBrandRequirement;

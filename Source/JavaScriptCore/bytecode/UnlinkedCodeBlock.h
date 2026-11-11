@@ -169,6 +169,7 @@ public:
     bool hasTailCalls() const { return m_hasTailCalls; }
     void setHasTailCalls() { m_hasTailCalls = true; }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
+    bool derivedContextHasInnerSuperCall() const { return m_derivedContextHasInnerSuperCall; }
 
     // Decoded on first use when the block came from a persistent bytecode cache.
     // Any thread, including the collector's end phase (ErrorInstance::computeErrorInfo): the first call takes m_lock
@@ -445,6 +446,7 @@ private:
     unsigned m_hasTailCalls : 1;
     unsigned m_constructorKind : 2;
     unsigned m_derivedContextType : 2;
+    unsigned m_derivedContextHasInnerSuperCall : 1;
     unsigned m_evalContextType : 2;
     unsigned m_codeType : 2;
     unsigned m_age : 3;

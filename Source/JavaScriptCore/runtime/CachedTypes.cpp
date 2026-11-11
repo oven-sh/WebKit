@@ -3974,6 +3974,7 @@ public:
         unsigned scriptMode;
         unsigned superBinding;
         unsigned derivedContextType;
+        bool derivedContextHasInnerSuperCall;
         unsigned evalContextType;
         bool inlineAttribute;
         bool needsClassFieldInitializer;
@@ -3997,7 +3998,7 @@ public:
         const CachedPtr<CachedFunctionExecutableRareData>* rareData { nullptr };
         const uint8_t* tail { nullptr };
         const uint8_t* tailEnd { nullptr }; // end of what was parsed: the hot part only for view(HotScalarsOnly)
-        Scalars scalars;
+        Scalars scalars { };
     };
     enum ScalarsToView { AllScalars, HotScalarsOnly };
 
@@ -4103,6 +4104,7 @@ public:
         unsigned isClassContext : 1;
         unsigned constructorKind : 2;
         unsigned derivedContextType : 2;
+        unsigned derivedContextHasInnerSuperCall : 1;
         unsigned evalContextType : 2;
         unsigned hasTailCalls : 1;
         unsigned codeType : 2;
@@ -4140,7 +4142,7 @@ public:
     };
     struct Tail {
         Layout layout;
-        Scalars scalars;
+        Scalars scalars { };
     };
 
     static Record* create(Encoder&, const CodeBlockType&);
@@ -4463,6 +4465,7 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_hasTailCalls = scalars.hasTailCalls;
     m_constructorKind = scalars.constructorKind;
     m_derivedContextType = scalars.derivedContextType;
+    m_derivedContextHasInnerSuperCall = scalars.derivedContextHasInnerSuperCall;
     m_evalContextType = scalars.evalContextType;
     m_codeType = scalars.codeType;
     m_hasCheckpoints = scalars.hasCheckpoints;
@@ -4668,6 +4671,7 @@ enum CachedFunctionExecutableFlag : uint32_t {
     ExecutableNeedsClassFieldInitializerShift = 16,
     ExecutableIsBuiltinFunctionShift = 17,
     ExecutableIsBuiltinDefaultClassConstructorShift = 18,
+    ExecutableDerivedContextHasInnerSuperCallShift = 19,
 };
 static_assert(bitWidthOfImplementationVisibility <= 2);
 
@@ -4686,7 +4690,8 @@ void CachedFunctionExecutable::packScalars(const UnlinkedFunctionExecutable& exe
         | static_cast<uint32_t>(executable.m_inlineAttribute) << ExecutableInlineAttributeShift
         | static_cast<uint32_t>(executable.m_needsClassFieldInitializer) << ExecutableNeedsClassFieldInitializerShift
         | static_cast<uint32_t>(executable.m_isBuiltinFunction) << ExecutableIsBuiltinFunctionShift
-        | static_cast<uint32_t>(executable.m_isBuiltinDefaultClassConstructor) << ExecutableIsBuiltinDefaultClassConstructorShift;
+        | static_cast<uint32_t>(executable.m_isBuiltinDefaultClassConstructor) << ExecutableIsBuiltinDefaultClassConstructorShift
+        | static_cast<uint32_t>(executable.m_derivedContextHasInnerSuperCall) << ExecutableDerivedContextHasInnerSuperCallShift;
     executable.materializeDeferredScalarsIfNeeded();
     // Hot part: what link() (the FunctionExecutable's SourceCode), JSFunction structure selection, the first call
     // (features, ScriptExecutable::newCodeBlockFor) and compiler threads (parameterCount) need. Source positions cluster
@@ -4786,6 +4791,7 @@ auto CachedFunctionExecutable::view(ScalarsToView scalarsToView) const -> View
     s.needsClassFieldInitializer = bits(ExecutableNeedsClassFieldInitializerShift);
     s.isBuiltinFunction = bits(ExecutableIsBuiltinFunctionShift);
     s.isBuiltinDefaultClassConstructor = bits(ExecutableIsBuiltinDefaultClassConstructorShift);
+    s.derivedContextHasInnerSuperCall = bits(ExecutableDerivedContextHasInnerSuperCallShift);
     s.lexicallyScopedFeatures = static_cast<LexicallyScopedFeatures>(reader.u8());
     s.hasCapturedVariables = v.header & HasCapturedVariables;
     s.sourceParseMode = static_cast<SourceParseMode>((v.header >> ParseModeShift) & 0xff);
@@ -5045,6 +5051,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     m_implementationVisibility = static_cast<unsigned>(scalars.implementationVisibility);
     m_functionMode = scalars.functionMode;
     m_derivedContextType = scalars.derivedContextType;
+    m_derivedContextHasInnerSuperCall = scalars.derivedContextHasInnerSuperCall;
     m_inlineAttribute = scalars.inlineAttribute;
     m_evalContextType = scalars.evalContextType;
     m_hasName = scalars.hasName;
@@ -5081,6 +5088,7 @@ enum CachedCodeBlockFlag : uint32_t {
     CodeBlockCodeTypeShift = 13, // 2
     CodeBlockIsBuiltinFunctionShift = 15,
     CodeBlockIsBuiltinDefaultClassConstructorShift = 16,
+    CodeBlockDerivedContextHasInnerSuperCallShift = 17,
 };
 
 template<typename CodeBlockType>
@@ -5098,7 +5106,8 @@ void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBl
         | static_cast<uint32_t>(codeBlock.m_evalContextType) << CodeBlockEvalContextTypeShift
         | static_cast<uint32_t>(codeBlock.m_codeType) << CodeBlockCodeTypeShift
         | static_cast<uint32_t>(codeBlock.m_isBuiltinFunction) << CodeBlockIsBuiltinFunctionShift
-        | static_cast<uint32_t>(codeBlock.m_isBuiltinDefaultClassConstructor) << CodeBlockIsBuiltinDefaultClassConstructorShift;
+        | static_cast<uint32_t>(codeBlock.m_isBuiltinDefaultClassConstructor) << CodeBlockIsBuiltinDefaultClassConstructorShift
+        | static_cast<uint32_t>(codeBlock.m_derivedContextHasInnerSuperCall) << CodeBlockDerivedContextHasInnerSuperCallShift;
     writer.u32(flags);
     writer.u8(static_cast<uint8_t>(codeBlock.m_parseMode));
     writer.u8(codeBlock.m_codeGenerationMode.toRaw());
@@ -5176,6 +5185,7 @@ auto CachedCodeBlock<CodeBlockType>::readTail() const -> Tail
     s.codeType = bits(CodeBlockCodeTypeShift, 2);
     s.isBuiltinFunction = bits(CodeBlockIsBuiltinFunctionShift);
     s.isBuiltinDefaultClassConstructor = bits(CodeBlockIsBuiltinDefaultClassConstructorShift);
+    s.derivedContextHasInnerSuperCall = bits(CodeBlockDerivedContextHasInnerSuperCallShift);
     s.parseMode = static_cast<SourceParseMode>(reader.u8());
     s.codeGenerationMode = OptionSet<CodeGenerationMode>::fromRaw(reader.u8());
     s.thisRegister = VirtualRegister(reader.i32());
@@ -5328,7 +5338,8 @@ protected:
     // 13: upstream's op_iterator_close_check (with metadata) replaces the fork's, and op_iterator_open / op_iterator_next
     // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
     // 14: op_profile_control_flow says whether its basic block is in a loop header.
-    static constexpr uint32_t cachedTypesFormatRevision = 14;
+    // 15: a function executable's and a code block's flags have derivedContextHasInnerSuperCall.
+    static constexpr uint32_t cachedTypesFormatRevision = 15;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

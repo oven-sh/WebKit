@@ -907,6 +907,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDirectEval, EncodedJSValue, (Instance* inst
         .sourceOrigin = instance->state->modules->sourceOrigin(ModuleID(request.module)),
         .lexicallyScopedFeatures = request.isStrict ? StrictModeLexicallyScopedFeature : NoLexicallyScopedFeatures,
         .derivedContextType = request.allowsSuperCall ? DerivedContextType::DerivedConstructorContext : request.allowsSuperProperty ? DerivedContextType::DerivedMethodContext : DerivedContextType::None,
+        .derivedContextHasInnerSuperCall = !!request.isInDerivedConstructor,
         .evalContextType = request.isInFieldInitializer ? EvalContextType::InstanceFieldEvalContext : request.isInFunction ? EvalContextType::FunctionEvalContext : EvalContextType::None,
         .needsClassFieldInitializer = initializesInstances ? NeedsClassFieldInitializer::Yes : NeedsClassFieldInitializer::No,
         .privateBrandRequirement = PrivateBrandRequirement::None,

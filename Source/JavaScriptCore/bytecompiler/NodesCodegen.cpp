@@ -243,6 +243,14 @@ static RegisterID* emitGetSuperFunctionForConstruct(BytecodeGenerator& generator
 
 RegisterID* SuperNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    // A super property needs |this| before its key and the assigned value are evaluated. The check at the store comes after
+    // them. In code that reads |this| at each use, that check would accept a |this| that the key or the value gave a value.
+    // Other code, the body of the constructor too, has only the check at the store.
+    if (generator.readsThisAtEachUse()) {
+        generator.emitExpressionInfo(position(), position(), position());
+        generator.ensureThis();
+    }
+
     RegisterID* result = emitSuperBaseForCallee(generator);
     return generator.move(generator.finalDestination(dst), result);
 }
