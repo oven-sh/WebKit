@@ -145,7 +145,8 @@ public:
 
     // Every record that is going to evaluate the module with this executable says so (JSModuleRecord::getOrMakeExecutable),
     // and says when it is done with it (JSModuleRecord::didFinishWithExecutable): its body ran to the end or threw, or the
-    // record got an error from a module it depends on, and never runs. Once none is left, and until
+    // record got an error before its body started, and never runs it. (A record that gets an error while its body is
+    // suspended at a top-level await is not done: the body is resumed.) Once none is left, and until
     // another record adopts the executable, nothing needs the linked code; the unlinked code is dropped too if it can be had back for the asking.
     // An executable that is shared (isShared()) keeps both: more records are expected, and they run this code.
     void willBeEvaluatedByAnotherRecord() { ++m_recordsYetToFinishEvaluation; }

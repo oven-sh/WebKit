@@ -81,9 +81,10 @@ public:
     CodeFeatures features() const { return m_features; }
 
     ModuleProgramExecutable* getOrMakeExecutable(JSGlobalObject*);
-    // This record will not run its body (again): it ran to the end, it threw, or a module it depends on did. (Not where a
-    // failed link is rolled back: such a record keeps its environment and its executable for the next attempt.)
-    void didFinishWithExecutable(VM&);
+    // The record got an [[EvaluationError]] (CyclicModuleRecord::setEvaluationError). A body that has not started never
+    // runs, so the record is done with its executable. A body that has started is not affected: one that is suspended
+    // at a top-level await is resumed and runs to its end, and evaluate() is done with the executable then.
+    void didReceiveEvaluationError(VM&);
 
     // Options::useLazyModuleFunctionDeclarations(). InitializeEnvironment hands over the function declarations it did
     // not instantiate; each is instantiated into its module environment slot when the slot is first read while empty.
@@ -120,6 +121,12 @@ private:
     JSModuleRecord(VM&, Structure*, JSModuleLoader*, const Identifier&, const SourceCode&, CodeFeatures);
 
     void finishCreation(JSGlobalObject*, VM&);
+
+    bool hasTopLevelExecutionStarted() const;
+    // This record will not run its body (again): it ran to the end, it threw, or the record got an error before it
+    // started. (Not where a failed link is rolled back: such a record keeps its environment and its executable for the
+    // next attempt.)
+    void didFinishWithExecutable(VM&);
 
     const Vector<Identifier>& importSlotNames(); // not prelinked: the local names that have a slot, in the import entries' order
     const Identifier& importSlotLocalName(unsigned index);
