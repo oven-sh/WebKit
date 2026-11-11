@@ -46,6 +46,12 @@ namespace JSC {
 
 const ClassInfo RegExp::s_info = { "RegExp"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(RegExp) };
 
+#if !ENABLE(REGEXP_TRACING)
+// The cell's size classes are 16 bytes apart, so one more word costs every RegExp 16 bytes. What only some RegExps
+// need goes behind m_rareData or m_lazyData.
+static_assert(sizeof(RegExp) <= 80);
+#endif
+
 #if REGEXP_FUNC_TEST_DATA_GEN
 const char* const RegExpFunctionalTestCollector::s_fileName = "/tmp/RegExpTestsData";
 RegExpFunctionalTestCollector* RegExpFunctionalTestCollector::s_instance = 0;
@@ -318,8 +324,15 @@ size_t RegExp::estimatedSize(JSCell* cell, VM& vm)
         regexDataSize += jitCode->size();
 #endif
     regexDataSize += thisObject->m_ovector.byteSize();
-    if (thisObject->m_firstCharacterBitmap.get())
-        regexDataSize += sizeof(WTF::BitSet<256>);
+    if (LazyData* lazyData = thisObject->m_lazyData.get()) {
+        regexDataSize += sizeof(LazyData);
+        if (lazyData->m_firstCharacterBitmap.get())
+            regexDataSize += sizeof(WTF::BitSet<256>);
+        // A source that is the pattern text itself is no new memory.
+        StringImpl* escapedPattern = lazyData->m_escapedPattern.impl();
+        if (escapedPattern && escapedPattern != thisObject->m_patternString.impl())
+            regexDataSize += escapedPattern->costDuringGC();
+    }
     return Base::estimatedSize(cell, vm) + regexDataSize;
 }
 
@@ -333,6 +346,8 @@ void RegExp::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (thisObject->m_rareData)
         visitor.append(thisObject->m_rareData->m_cachedGroupsStructureID);
 #endif
+    if (LazyData* lazyData = thisObject->m_lazyData.get())
+        visitor.append(lazyData->m_sourceString);
 }
 
 DEFINE_VISIT_CHILDREN(RegExp);
@@ -686,7 +701,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
 const WTF::BitSet<256>* RegExp::firstCharacterBitmap(FirstCharacterFilterPosition position)
 {
     ASSERT_UNUSED(position, position == FirstCharacterFilterPosition::AtStart ? !globalOrSticky() : sticky());
-    const auto& result = m_firstCharacterBitmap.ensure([&] {
+    const auto& result = ensureLazyData().m_firstCharacterBitmap.ensure([&] {
         auto bitmap = Yarr::computeFirstCharacterBitmap(m_patternString, m_flags);
         if (!bitmap || bitmap->isFull()) {
             WTF::BitSet<256> full;
@@ -1169,13 +1184,33 @@ String RegExp::escapedPattern(const String& pattern)
     return pattern.is8Bit() ? escapePattern(pattern, pattern.span8()) : escapePattern(pattern, pattern.span16());
 }
 
-String RegExp::escapedPattern() const
+RegExp::LazyData& RegExp::ensureLazyData() const
 {
+    return m_lazyData.ensure([] {
+        return makeUnique<LazyData>();
+    });
+}
+
+const String& RegExp::escapedPattern() const
+{
+    ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
+    LazyData& lazyData = ensureLazyData();
+    if (lazyData.m_escapedPattern.isNull()) {
+        bool sourceIsPattern = false;
 #if ENABLE(AOT)
-    if (m_imageRecordNumber && imageRecord()->sourceIsPattern)
-        return m_patternString;
+        sourceIsPattern = m_imageRecordNumber && imageRecord()->sourceIsPattern;
 #endif
-    return escapedPattern(m_patternString);
+        // The static function returns the pattern's own string when there is nothing to escape, and never a null one.
+        lazyData.m_escapedPattern = sourceIsPattern ? m_patternString : escapedPattern(m_patternString);
+    }
+    return lazyData.m_escapedPattern;
+}
+
+JSString* RegExp::sourceStringSlow(VM& vm)
+{
+    JSString* string = jsString(vm, escapedPattern());
+    ensureLazyData().m_sourceString.set(vm, this, string);
+    return string;
 }
 
 String RegExp::toSourceString() const
