@@ -270,8 +270,6 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules, ModulesAsked
             }
             if (m_mocks) [[unlikely]]
                 noteLoadBehindMock(exporter, false);
-            if (m_mocks && data(exporter).isESModuleOfProgram()) [[unlikely]]
-                tellOfNameLeftToLaterStar(module, requiredName);
             if (isFoundInTextOfFile(requiredName))
                 continue;
             if (data(exporter).hasExportTable()) {
@@ -1571,6 +1569,10 @@ void Modules::releaseNamespaceBeforeMock(ModuleID file)
 
 JSObject* Modules::namespaceBeforeMock(ModuleID file)
 {
+    ModuleID facade = moduleWithExportsOf(file);
+    bool isImported = facade != file && status(facade) >= ModuleStatus::Evaluating && !m_facadesCapturedForMock.get(facade.index());
+    if (data(file).kind == ModuleKind::CommonJs && isImported && hasIntactOriginal(file) && status(file) == ModuleStatus::Evaluated && !delegatesWithoutPlugins(file))
+        return originalNamespace(facade);
     if (data(file).kind != ModuleKind::CommonJs || !m_modulesEvaluatedBeforeMock.get(file.index()) || status(file) != ModuleStatus::Evaluated || delegatesWithoutPlugins(file))
         return nullptr;
     LoadedModule* loaded = loadedIfExists(file);

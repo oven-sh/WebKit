@@ -637,7 +637,11 @@ void Modules::noteCallOfMock(ModuleID fileOrModule, bool keepsActiveMock)
 
 void Modules::tellIfMockedBelowImport(ModuleID file, std::optional<ModuleID> caller)
 {
-    if (m_loadsInFlight.isEmpty() || status(file) != ModuleStatus::Evaluated || isMocked(file) || activeMock(file) || !host().didRunOriginal) [[likely]]
+    bool isLoaded = status(file) > ModuleStatus::Unlinked;
+    bool isOver = !m_loadsInFlight.isEmpty() && status(file) == ModuleStatus::Evaluated && !isMocked(file) && !activeMock(file);
+    bool isBesideHostImport = !(m_hostImportCalls.isEmpty() && m_importsInFlight.isEmpty()) && (isLoaded || isMocked(file)) && !isGraphRunning();
+    bool ranDuringOwnFetch = status(file) == ModuleStatus::Evaluated && !isMocked(file) && !activeMock(file) && std::ranges::any_of(batchedFetches(), [&](const BatchedFetch& fetch) { return fileOf(fetch.module) == file; });
+    if ((!isOver && !isBesideHostImport && !ranDuringOwnFetch) || !host().didRunOriginal) [[likely]]
         return;
     auto leadsToFile = [&](ModuleID root) {
         bool found = false;
@@ -657,12 +661,30 @@ void Modules::tellIfMockedBelowImport(ModuleID file, std::optional<ModuleID> cal
         }
         return found;
     };
-    for (LoadInFlight& load : m_loadsInFlight) {
-        if (load.promise->status() == JSPromise::Status::Pending && leadsToFile(load.root)) {
-            host().didRunOriginal(m_instance.globalObject, m_table.fullPath(file), OriginalRun::MockedDuringImport);
-            return;
+    auto isBelowImport = [&] {
+        for (LoadInFlight& load : m_loadsInFlight) {
+            if (isOver && load.promise->status() == JSPromise::Status::Pending && leadsToFile(load.root))
+                return true;
         }
-    }
+        for (auto& [module, promise] : m_hostImportCalls) {
+            if (isBesideHostImport && promise->status() == JSPromise::Status::Pending && leadsToFile(module))
+                return true;
+        }
+        for (auto& [promise, import] : m_importsInFlight) {
+            if (isBesideHostImport && promise->status() == JSPromise::Status::Pending && leadsToFile(import.module))
+                return true;
+        }
+        return false;
+    };
+    if (ranDuringOwnFetch || isBelowImport())
+        host().didRunOriginal(m_instance.globalObject, m_table.fullPath(file), OriginalRun::MockedDuringImport);
+}
+
+void Modules::noteHostImportCall(ModuleID module, JSPromise* promise)
+{
+    m_hostImportCalls.removeAllMatching([](const auto& call) { return call.second->status() != JSPromise::Status::Pending; });
+    if (promise->status() == JSPromise::Status::Pending)
+        m_hostImportCalls.append({ module, Strong<JSPromise>(*m_instance.vm, promise) });
 }
 
 void Modules::tellIfFactoryImportsAbsentExport(ModuleID requested)
@@ -1555,8 +1577,29 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
     isOnPath.quickSet(root.index());
     Vector<Entered, 16> path { Entered { root, m_table.evaluationRequests(root) } };
 
+    BitVector notedMocks;
+    BitVector mocksWithOriginal;
+    bool areMocksListed = false;
+    bool knowWhatIsHeld = false;
+    auto didRunCode = [&] {
+        areMocksListed = false;
+        knowWhatIsHeld = false;
+    };
+    auto listMocks = [&] {
+        if (std::exchange(areMocksListed, true))
+            return;
+        notedMocks.clearAll();
+        mocksWithOriginal.clearAll();
+        for (const ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks) {
+            if (above.root == root)
+                notedMocks.set(above.mocked.index());
+            if (above.original)
+                mocksWithOriginal.set(above.mocked.index());
+        }
+    };
     auto evaluateNow = [&](ModuleID module) {
         if (status(module) <= ModuleStatus::Linked) {
+            didRunCode();
             JSPromise* evaluation = evaluate(module, std::nullopt, nullptr, nullptr);
             RETURN_IF_EXCEPTION(scope, false);
             evaluation->markAsHandled();
@@ -1568,11 +1611,13 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
     auto holdPath = [&] {
         for (Entered& each : path) {
             each.isHeld = true;
-            held.quickSet(each.module.index());
+            knowWhatIsHeld &= held.quickSet(each.module.index());
         }
-        for (ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks) {
-            if (above.root == root)
-                above.entered.merge(held);
+        if (!std::exchange(knowWhatIsHeld, true)) {
+            for (ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks) {
+                if (above.root == root)
+                    above.entered.merge(held);
+            }
         }
         for (size_t index = 0; index < path.size(); ++index) {
             for (ModuleID finished : std::exchange(path[index].finished, { })) {
@@ -1597,8 +1642,10 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
         return true;
     };
     auto noteMock = [&](ModuleID mocked) {
-        if (m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == mocked && above.root == root; }))
+        listMocks();
+        if (notedMocks.set(mocked.index()))
             return false;
+        knowWhatIsHeld = false;
         size_t ofAnotherLoad = m_importersEnteredAboveMocks.findIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == mocked && above.original; });
         Strong<JSPromise> original = ofAnotherLoad == notFound ? Strong<JSPromise>() : m_importersEnteredAboveMocks[ofAnotherLoad].original;
         m_importersEnteredAboveMocks.append({ mocked, root, BitVector(m_table.size()), BitVector(m_table.size()), WTF::move(original) });
@@ -1620,6 +1667,7 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
     for (ModuleID mocked : commonJSOriginalsInGraph(root)) {
         if (isOriginalDelegatedToHost(mocked, held, isOnPath) || !noteMock(mocked))
             continue;
+        didRunCode();
         OriginalInSweep original = runOriginalInSweep(mocked);
         EXCEPTION_ASSERT(!scope.exception() || original == OriginalInSweep::Failed);
         if (original == OriginalInSweep::Failed)
@@ -1665,8 +1713,12 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
             }
             if (isOriginalDelegatedToHost(mocked, held, isOnPath))
                 break;
-            bool hasBeenEvaluated = m_importersEnteredAboveMocks.containsIf([&](const ImportersEnteredAboveMock& above) { return above.mocked == mocked && above.original; });
-            OriginalInSweep original = hasBeenEvaluated ? OriginalInSweep::Evaluated : runOriginalInSweep(mocked);
+            listMocks();
+            OriginalInSweep original = OriginalInSweep::Evaluated;
+            if (!mocksWithOriginal.get(mocked.index())) {
+                didRunCode();
+                original = runOriginalInSweep(mocked);
+            }
             EXCEPTION_ASSERT(!scope.exception() || original == OriginalInSweep::Failed);
             if (original == OriginalInSweep::DelegatedToHost)
                 break;
@@ -2563,6 +2615,12 @@ bool importsStatically(JSGlobalObject* realm, ModuleID importer, ModuleID import
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->importsStatically(importer, imported);
+}
+
+bool wasLoadedByPreloadHook(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasLoadedByPreloadHook(module);
 }
 
 void setNeedsMockReinstall(JSGlobalObject* realm, ModuleID module, bool waits)

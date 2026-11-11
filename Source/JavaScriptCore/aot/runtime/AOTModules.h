@@ -270,6 +270,7 @@ public:
         m_modulesWithPassthroughMock.clearAll();
         m_rootsOfImportsThatHaveGoneOn.clear();
         m_detachedLoads.clear();
+        m_rootsDueBehindImports.clear();
         m_originalsThatImportTheirImporters.clearAll();
         m_filesThatRanDuringMockThatOnlyWaited.clearAll();
         m_blockedRequiresWithError.clearAll();
@@ -584,6 +585,10 @@ public:
     void evictOnceLoaded(ModuleID mocked);
     void evictAbandonedModules();
     bool isEvictedModuleImported();
+    bool hasRootsDueBehindImports() const { return !m_rootsDueBehindImports.isEmpty(); }
+    void didEvaluateForLoader(ModuleID imported);
+    void evaluateRootsDueBehind(ModuleID imported);
+    Vector<ModuleID, 1> m_rootsDueBehindImports;
     void tellIfOriginalImports(ModuleID mocked, ModuleID importer);
     BitVector m_originalsThatImportTheirImporters;
     void didPatchPendingMock(ModuleID mocked);
@@ -789,6 +794,7 @@ public:
     void reportKeptImporters(ModuleID);
     bool isMockLoadedInPreload(ModuleID module) const { return m_preloadedMocks.get(fileOf(module).index()); }
     bool wasLoadedInPreload(ModuleID module) const { return m_loadedInPreload.get(module.index()); }
+    bool wasLoadedByPreloadHook(ModuleID module) const { return m_loadedByPreloadHooks.get(module.index()); }
     bool takeFailureBeforeMock(ModuleID);
     bool isReplacedByHost(ModuleID, LoadKind);
     bool isKeptInRequireCache(ModuleID) const;
@@ -991,6 +997,8 @@ public:
     bool isCurrentImportTargetAfterWait(ModuleID module) const { return m_currentImportWaitState && isCurrentImportTarget(module); }
     JSValue currentImportWaitState() const { return m_currentImportWaitState; }
     void tellIfMockedBelowImport(ModuleID file, std::optional<ModuleID> caller);
+    void noteHostImportCall(ModuleID, JSPromise*);
+    Vector<std::pair<ModuleID, Strong<JSPromise>>, 2> m_hostImportCalls;
     void tellIfFactoryImportsAbsentExport(ModuleID requested);
     void forgetCallOfMock(ModuleID fileOrModule);
     bool isBeingEvaluated(ModuleID module) const { return status(module) == ModuleStatus::Evaluating || status(module) == ModuleStatus::EvaluatingAsync; }
@@ -1191,6 +1199,7 @@ public:
     void unlinkInstances(ModuleID root, std::span<const ModuleID>);
     BitVector findModulesLinkedBefore(ModuleID root, ModuleID importer) const;
     void noteLinkFailure(ModuleID root, ModuleID importer);
+    void tellOfFailedLoad(ModuleID module, ModuleID target);
     bool wasLinkedBeforeTestFile(ModuleID) const;
     void linkFailedLoads();
     void tryLinkFailedLoads();
@@ -1426,7 +1435,6 @@ public:
     void keepUnderActualKey(ModuleID fileOrModule);
     void noteWhereOriginalLiesBehindEndOfMock(ModuleID fileOrModule);
     bool hasBypassingImporterBelow(ModuleID root, ModuleID moduleOrFacade) const;
-    void tellOfNameLeftToLaterStar(ModuleID importer, const RequiredNameData&);
     bool hasUnevaluatedImporterInGraph(ModuleID root, ModuleID file) const;
     bool isDisplacedRunKept(ModuleID facade, ModuleID root) const;
     bool wasOriginalEvaluated(ModuleID mocked) const;
@@ -2074,6 +2082,7 @@ private:
         const void* holder { nullptr };
         uint64_t place { 0 };
         UniquedStringImpl* name { nullptr };
+        bool isLackedByMock { false };
     };
     struct BindingSearch {
         using Query = std::tuple<uint32_t, const Environment*, UniquedStringImpl*>;
@@ -2958,6 +2967,7 @@ private:
     BitVector m_modulesLoadedBesideGroups;
     Vector<uint32_t> m_momentsOfLoads;
     BitVector m_loadedInPreload;
+    BitVector m_loadedByPreloadHooks;
     BitVector m_modulesLoadedAsMocksAlone;
     BitVector m_libraryModulesAskedForInPreload;
     bool m_hasBegunTestFile { false };
@@ -3203,6 +3213,7 @@ private:
     ModuleID m_moduleWithCheckedNames;
     ModuleID m_lastLinkFailureImporter;
     Vector<ModuleID, 4> m_modulesLinkedBeforeFailures;
+    BitVector m_modulesBeforeLinkFailures;
     std::optional<Vector<ModuleID>> m_checksOfNames;
     BitVector m_linkedByFailedLoads;
     UncheckedKeyHashMap<ModuleID, uint32_t> m_failedLoadTestFiles;

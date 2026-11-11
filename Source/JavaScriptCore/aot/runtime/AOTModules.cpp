@@ -211,6 +211,7 @@ void Modules::forgetUnfinishedLoads()
     m_modulesWithPassthroughMock.clearAll();
     m_rootsOfImportsThatHaveGoneOn.clear();
     m_detachedLoads.clear();
+    m_rootsDueBehindImports.clear();
     m_originalsThatImportTheirImporters.clearAll();
     m_filesThatRanDuringMockThatOnlyWaited.clearAll();
     m_blockedRequiresWithError.clearAll();
@@ -9172,8 +9173,11 @@ JSObject* namespaceBeforeMock(JSGlobalObject* realm, ModuleID module)
 
 void didCallHostImport(JSGlobalObject* realm, ModuleID imported, JSPromise* promise)
 {
-    if (Modules* modules = modulesOf(realm))
-        modules->recordImportForOriginalBodies(imported, std::nullopt, promise);
+    Modules* modules = modulesOf(realm);
+    if (!modules)
+        return;
+    modules->recordImportForOriginalBodies(imported, std::nullopt, promise);
+    modules->noteHostImportCall(imported, promise);
 }
 
 JSPromise* pendingOriginalEvaluation(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> factoryCallerLoad)
@@ -9516,8 +9520,11 @@ unsigned ModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Modul
     EvaluationContext context { stack, index, referrerAsyncOrder < 0 ? std::nullopt : std::optional(referrerAsyncOrder), dynamicImportPromise };
     modules().innerModuleEvaluation(m_module, context);
     Exception* exception = scope.exception();
-    if (!exception) [[likely]]
+    if (!exception) [[likely]] {
+        if (!index && modules().hasRootsDueBehindImports()) [[unlikely]]
+            modules().didEvaluateForLoader(m_module);
         return context.index;
+    }
     recordTerminationAfterEvaluation(globalObject->vm(), exception);
     return invalidIndex;
 }

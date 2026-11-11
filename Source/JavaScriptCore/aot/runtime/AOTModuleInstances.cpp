@@ -527,10 +527,23 @@ bool Modules::releaseAbsentModuleImporters(const String& key, ReleasedImporters 
 
 void Modules::tellIfOriginalImports(ModuleID mocked, ModuleID importer)
 {
-    if (!host().didRunOriginal || m_originalsThatImportTheirImporters.get(mocked.index()) || !importClosureOfOriginal(mocked).get(importer.index()))
+    if (!host().didRunOriginal || m_originalsThatImportTheirImporters.get(mocked.index()))
+        return;
+    const CyclesOfImports::Member* original = cyclesOfImports().find(mocked);
+    const CyclesOfImports::Member* above = original ? cyclesOfImports().find(importer) : nullptr;
+    if (!above || above->cycle != original->cycle)
         return;
     m_originalsThatImportTheirImporters.set(mocked.index());
     host().didRunOriginal(m_instance.globalObject, m_table.fullPath(fileOf(mocked)), OriginalRun::LoadsItsImporter);
+}
+
+void Modules::tellOfFailedLoad(ModuleID module, ModuleID target)
+{
+    auto failed = m_failedLoadTestFiles.find(module);
+    if (failed == m_failedLoadTestFiles.end() || failed->value != m_instance.vm->aotState().momentOfTestFile || !m_failedLoadTestFiles.contains(target) || !m_modulesBeforeLinkFailures.get(target.index()))
+        return;
+    if (m_table.hasFilePath(target) && host().didRunOriginal)
+        host().didRunOriginal(m_instance.globalObject, m_table.fullPath(target), OriginalRun::LoadFailsToLink);
 }
 
 void Modules::linkInstances(std::span<const ModuleID> modules)
@@ -574,6 +587,8 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
             ModuleNamespace* word = wordForLoad(target, isMockSeenByLoad(target, module));
             if (m_mocks && isMocked(target) && !activeMock(target)) [[unlikely]]
                 tellIfOriginalImports(target, module);
+            if (!m_failedLoadTestFiles.isEmpty() && word && !word->isLoadWord()) [[unlikely]]
+                tellOfFailedLoad(module, target);
             if (!word)
                 didLoadDataFile(target, LoadKind::Import);
             if (data(target).isOfLibrary())
@@ -594,7 +609,9 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
         m_linkMoments.fill(0, m_table.size());
         m_linkTestFiles.fill(0, m_table.size());
     }
+    bool isInPreloadHook = m_hasBegunTestFile && host().isInPreload && !holdsCodeThatMayBeEvicted() && host().isInPreload(m_instance.globalObject).value_or(false);
     for (ModuleID module : modules) {
+        m_loadedByPreloadHooks.set(module.index(), isInPreloadHook && !m_linkTestFiles[module.index()]);
         m_linkedInstances.set(module.index());
         m_linkMoments[module.index()] = m_numberOfReleases;
         m_linkTestFiles[module.index()] = m_instance.vm->aotState().momentOfTestFile;
@@ -659,7 +676,9 @@ void Modules::noteLinkFailure(ModuleID root, ModuleID importer)
         if (hasInstances(module) && status(module) <= ModuleStatus::Linked && !isMocked(module) && !wasLoadedWithGraph(module))
             m_failedLoadTestFiles.add(module, m_instance.vm->aotState().momentOfTestFile);
     }
-    for (size_t index : findModulesLinkedBefore(root, importer)) {
+    BitVector linkedBefore = findModulesLinkedBefore(root, importer);
+    m_modulesBeforeLinkFailures.merge(linkedBefore);
+    for (size_t index : linkedBefore) {
         ModuleID module(index);
         if (hasInstances(module) && !m_linkedInstances.get(index) && !isEvicted(module) && !isMocked(module))
             m_modulesLinkedBeforeFailures.append(module);
@@ -670,6 +689,7 @@ void Modules::unlinkInstances(ModuleID root, std::span<const ModuleID> modules)
 {
     didChangeLinkState();
     BitVector linked = findModulesLinkedBefore(root, m_lastLinkFailureImporter);
+    m_modulesBeforeLinkFailures.merge(linked);
     for (ModuleID module : modules) {
         if (hasInstances(module) && status(module) <= ModuleStatus::Linked && !isMocked(module))
             m_failedLoadTestFiles.add(module, m_instance.vm->aotState().momentOfTestFile);
@@ -1280,34 +1300,43 @@ auto Modules::bindingOfExport(ModuleID module, unsigned index, Environment* inst
         LinkedBinding binding = follow(indirect.targetModule(), indirect.importName);
         RETURN_IF_EXCEPTION(scope, { });
         search.numberOfOrderedResults += search.numberOfRevisits != revisitsBefore;
-        if (binding.type == Type::NotFound && search.numberOfRevisits == revisitsBefore)
+        if (binding.type == Type::NotFound && !binding.isLackedByMock && search.numberOfRevisits == revisitsBefore)
             return { Type::Resolved, Kind::Name, false, nullptr, indirect.module, identifier(indirect.importName).impl() };
         return binding;
     }
+    bool isLackedByMock = false;
     if (const ReexportedFieldData* reexported = entry.isFromStarExport || entry.kind() == ModuleExportKind::Namespace ? nullptr : m_table.findReexportedField(module, index)) {
         LinkedBinding binding = follow(reexported->namedModule(), reexported->importName);
         RETURN_IF_EXCEPTION(scope, { });
         search.numberOfOrderedResults += search.numberOfRevisits != revisitsBefore;
         if (binding.type != Type::NotFound || search.numberOfRevisits != revisitsBefore)
             return binding;
+        isLackedByMock = binding.isLackedByMock;
     }
+    auto bindingOfMock = [&](ModuleNamespace* word, uint32_t nameInMock, bool isFromStarExport) -> LinkedBinding {
+        bool hasName = !isLackedByMock || !isFromStarExport || hasNameInMock(word, identifier(nameInMock));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!hasName)
+            return { .isLackedByMock = true };
+        return { Type::Resolved, Kind::Name, true, word, 0, identifier(nameInMock).impl() };
+    };
     switch (entry.kind()) {
     case ModuleExportKind::Field: {
         ResolvedField resolved = resolveField(module, index, instance);
         if (resolved.mockWord)
-            return { Type::Resolved, Kind::Name, true, resolved.mockWord, 0, identifier(resolved.nameInMock).impl() };
+            RELEASE_AND_RETURN(scope, bindingOfMock(resolved.mockWord, resolved.nameInMock, resolved.isFromStarExport));
         return { Type::Resolved, Kind::Field, false, resolved.instance, resolved.slot.encoded() };
     }
     case ModuleExportKind::Variable: {
         ResolvedVariable resolved = resolveVariable(module, index, instance);
         if (resolved.mockWord)
-            return { Type::Resolved, Kind::Name, true, resolved.mockWord, 0, identifier(resolved.nameInMock).impl() };
+            RELEASE_AND_RETURN(scope, bindingOfMock(resolved.mockWord, resolved.nameInMock, resolved.isFromStarExport));
         return { Type::Resolved, Kind::Variable, false, nullptr, entry.variable.encoded() };
     }
     case ModuleExportKind::Namespace: {
         ResolvedNamespace resolved = resolveNamespace(module, index, instance);
         if (resolved.mockWord && resolved.nameInMock)
-            return { Type::Resolved, Kind::Name, true, resolved.mockWord, 0, identifier(*resolved.nameInMock).impl() };
+            RELEASE_AND_RETURN(scope, bindingOfMock(resolved.mockWord, *resolved.nameInMock, resolved.isFromStarExport));
         if (resolved.mockWord)
             return { Type::Resolved, Kind::Namespace, false, resolved.mockWord };
         return { Type::Resolved, Kind::Namespace, false, resolved.instance, entry.module };
@@ -1324,8 +1353,10 @@ auto Modules::resolveBindingAmongStars(ModuleID module, const Identifier& name, 
     using Type = LinkedBinding::Type;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     LinkedBinding binding;
+    bool isLackedByMock = false;
     auto merge = [&](const LinkedBinding& found) {
         search.numberOfOrderedResults += found.isOfMock;
+        isLackedByMock |= found.isLackedByMock;
         if (found.type == Type::NotFound)
             return true;
         if (found.type == Type::Ambiguous) {
@@ -1347,6 +1378,7 @@ auto Modules::resolveBindingAmongStars(ModuleID module, const Identifier& name, 
         if (ModuleNamespace* word = link ? mockWord(*link, instance) : nullptr) {
             bool hasName = hasNameInMock(word, name);
             RETURN_IF_EXCEPTION(scope, false);
+            isLackedByMock |= !hasName;
             return !hasName || merge({ Type::Resolved, Kind::Name, true, word, 0, name.impl() });
         }
         if (JSObject* mock = !hasInstances(module) && someMockIsSeen() ? mockSeenBy(target, module) : nullptr) [[unlikely]] {
@@ -1366,6 +1398,8 @@ auto Modules::resolveBindingAmongStars(ModuleID module, const Identifier& name, 
         return !hasName || merge({ Type::Resolved, Kind::Name, false, nullptr, fileOf(target).index(), name.impl() });
     });
     RETURN_IF_EXCEPTION(scope, { });
+    if (binding.type == Type::NotFound)
+        binding.isLackedByMock = isLackedByMock;
     return binding;
 }
 
@@ -1425,8 +1459,11 @@ auto Modules::resolveBinding(ModuleID module, const Identifier& name, Environmen
         RETURN_IF_EXCEPTION(scope, { });
     }
     if (binding.type == Type::NotFound && name != vm.propertyNames->defaultKeyword) {
+        bool isLackedByMock = binding.isLackedByMock;
         binding = resolveBindingAmongStars(module, name, instance, search);
         RETURN_IF_EXCEPTION(scope, { });
+        if (binding.type == Type::NotFound)
+            binding.isLackedByMock |= isLackedByMock;
         if (binding.type == Type::NotFound && index && isFromStarExport && !isProvidedByDynamicStar(module, *index)) {
             search.numberOfOrderedResults += search.numberOfRevisits != revisitsBefore;
             binding = bindingOfExport(module, *index, instance, search);
@@ -1570,6 +1607,13 @@ std::optional<Modules::StarResolution> Modules::resolveThroughStars(ModuleID mod
             word = resolveVariable(target, *index, linked).mockWord;
         bool isLacking = word && !hasNameInMock(word, name);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (linked && !entry.isFromStarExport && (entry.kind() == ModuleExportKind::Indirect || m_table.findReexportedField(target, *index))) {
+            BindingSearch search;
+            LinkedBinding binding = resolveBinding(target, name, linked, search);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            if (binding.type == LinkedBinding::Type::NotFound && binding.isLackedByMock)
+                continue;
+        }
         if (!isLacking)
             return StarResolution { nullptr, nullptr, target, *index, linked };
         std::optional<StarResolution> further = resolveThroughStars(target, name, linked, seen);
@@ -2254,6 +2298,7 @@ void Modules::resetLinkedInstances(const WTF::Function<bool(const String&)>& isK
     if (!m_table.anyModuleHasInstances()) [[likely]]
         return;
     m_modulesLinkedBeforeFailures.clear();
+    m_modulesBeforeLinkFailures.clearAll();
     m_modulesWithPrivateCopy.clearAll();
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID module(index);
@@ -3012,6 +3057,8 @@ void Modules::releaseLoadedModule(ModuleID module)
         uint32_t& last = m_lastLinksOfReleasedImporters.add(target, 0).iterator->value;
         last = std::max(last, momentLinked(module));
     }
+    if (m_loadedByPreloadHooks.clear(module.index())) [[unlikely]]
+        tellOfKeptRun(fileOf(module));
     LoadedModule& loaded = ensureLoaded(module);
     if (loaded.instanceBesideMock.get())
         m_modulesThatRanBesideMockAlone.set(module.index());

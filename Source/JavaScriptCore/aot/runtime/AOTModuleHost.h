@@ -378,6 +378,7 @@ JS_EXPORT_PRIVATE bool needsRetryInDetachedLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE uint64_t factoryCallOfResumedLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void removeUnusedLingeringMocks(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool importsStatically(JSGlobalObject*, ModuleID importer, ModuleID imported);
+JS_EXPORT_PRIVATE bool wasLoadedByPreloadHook(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void setNeedsMockReinstall(JSGlobalObject*, ModuleID, bool waits = true);
 JS_EXPORT_PRIVATE bool evaluateLinkedModuleBeforeMock(JSGlobalObject*, ModuleID, bool displacesEarlierMock, bool displacesModule, bool keepsOriginalIntact);
 JS_EXPORT_PRIVATE JSPromise* pendingEvaluation(JSGlobalObject*, ModuleID, bool hasAlreadyWaited);

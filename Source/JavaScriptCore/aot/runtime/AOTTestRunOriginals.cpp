@@ -49,7 +49,7 @@ bool Modules::importsOriginalDespiteMock(ModuleID fileOrModule, ModuleID importe
         return false;
     if (!isMocked(mocked))
         return askedBy == OriginalRequester::Statement && keepsOriginalAfterRemoval(mocked, importer);
-    if (!host().shouldBypassMock || !m_table.hasFilePath(mocked) || !m_table.hasFilePath(importer))
+    if (!host().shouldBypassMock)
         return false;
     bool isFile = data(mocked).kind == ModuleKind::CommonJs && !data(mocked).isOfLibrary();
     if (isFile ? moduleWithExportsOf(mocked) == mocked || fileOf(importer) == mocked : !data(mocked).isESModuleOfProgram() && data(mocked).kind != ModuleKind::Data)
@@ -60,6 +60,8 @@ bool Modules::importsOriginalDespiteMock(ModuleID fileOrModule, ModuleID importe
             return false;
         m_importersLinkedToMock.remove(gotMock);
     }
+    if (!m_importersAskedAboutOriginal.contains(pair) && (!m_table.hasFilePath(mocked) || !m_table.hasFilePath(importer)))
+        return false;
     auto asked = m_importersAskedAboutOriginal.add(pair, AnswersOfHostOnOriginal { });
     if (asked.isNewEntry) {
         asked.iterator->value.isGiven = host().shouldBypassMock(m_instance.globalObject, m_table.fullPath(mocked), m_table.fullPath(importer), true);
@@ -199,36 +201,6 @@ bool Modules::isDisplacedRunKept(ModuleID facade, ModuleID root) const
         return false;
     ModuleID file = fileOf(facade);
     return file != facade && root != facade && m_displacedRunImporters.contains(file.index()) && !hasUnevaluatedImporterInGraph(root, file);
-}
-
-void Modules::tellOfNameLeftToLaterStar(ModuleID importer, const RequiredNameData& requiredName)
-{
-    ModuleID exporter = requiredName.exporterModule();
-    const Identifier& name = identifier(requiredName.name);
-    std::optional<unsigned> own = m_table.findExport(exporter, name.impl());
-    if (own && !m_table.exports(exporter)[*own].isFromStarExport)
-        return;
-    unsigned providers = 0;
-    bool isOverMock = false;
-    for (const ModuleRequestData& request : m_table.imports(exporter)) {
-        if (request.isHoisted || request.isRequire)
-            continue;
-        ModuleID target = request.targetModule();
-        std::optional<unsigned> index = data(target).hasExportTable() ? m_table.findExport(target, name.impl()) : std::nullopt;
-        providers += !!index;
-        if (!index || m_table.exports(target)[*index].isFromStarExport || !hasInstances(target))
-            continue;
-        const ReexportedFieldData* reexported = m_table.findReexportedField(target, *index);
-        if (reexported && m_table.findExport(reexported->namedModule(), identifier(reexported->importName).impl()))
-            continue;
-        const ModuleExportData& entry = m_table.exports(target)[*index];
-        if (!reexported && entry.kind() != ModuleExportKind::Indirect && entry.kind() != ModuleExportKind::Variable)
-            continue;
-        for (size_t below : staticImportClosure(target, MockTraversal::Stop))
-            isOverMock |= ModuleID(below) != target && isMocked(ModuleID(below));
-    }
-    if (providers > 1 && isOverMock)
-        tellOfKeptRun(importer);
 }
 
 void Modules::runOriginalsOwedTo(ModuleID importer)

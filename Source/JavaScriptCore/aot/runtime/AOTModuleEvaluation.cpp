@@ -3352,6 +3352,7 @@ void Modules::leaveStepsOfLoaderToJobs()
 
 static JSC_DECLARE_HOST_FUNCTION(detachedLoadEvaluatedJob);
 static JSC_DECLARE_HOST_FUNCTION(evictedLoadJob);
+static JSC_DECLARE_HOST_FUNCTION(rootsDueBehindImportJob);
 static JSC_DECLARE_HOST_FUNCTION(removedMockLoadJob);
 static JSC_DECLARE_HOST_FUNCTION(detachedFactorySettledJob);
 static JSC_DECLARE_HOST_FUNCTION(detachedFactoryFailedJob);
@@ -3460,13 +3461,24 @@ void Modules::didSettleDetachedFactory(unsigned number)
         m_detachedLoads[left].wait->reject(vm, thrown->value());
         return;
     }
-    if (factoryHasNotSettled && !modulesToRetry.isEmpty()) {
+    auto laterCall = [&](const std::pair<ModuleID, uint64_t>& call) {
+        uint64_t later = pendingFactoryCallID(call.first);
+        return later == call.second ? 0 : later;
+    };
+    bool asksLaterMock = factoryHasNotSettled && m_detachedLoads[left].awaitedFactoryCalls.containsIf([&](const auto& call) { return !!laterCall(call); });
+    if (factoryHasNotSettled && (asksLaterMock || !modulesToRetry.isEmpty())) {
         unsigned heard = subscribeToPendingFactories(required, number);
         RETURN_IF_EXCEPTION(scope, void());
         left = find();
         if (left == notFound)
             return;
         m_detachedLoads[left].pendingFactoryCount += heard;
+        if (heard) {
+            for (auto& call : m_detachedLoads[left].awaitedFactoryCalls) {
+                if (uint64_t later = laterCall(call))
+                    call.second = later;
+            }
+        }
         for (size_t file : modulesToRetry) {
             m_detachedLoads[left].awaitedFactoryCalls.removeAllMatching([&](const auto& call) { return call.first.index() == file; });
             if (uint64_t call = pendingFactoryCallID(ModuleID(file)))
@@ -3485,11 +3497,15 @@ void Modules::didSettleDetachedFactory(unsigned number)
     for (size_t fetched : m_detachedLoads[left].unmockedModules)
         wasMockLaidSince |= isMocked(ModuleID(fetched));
     bool someMockBelowIsNotInPlace = false;
+    bool isOverRemovedMock = false;
     for (size_t below : staticImportClosure(required, MockTraversal::Stop)) {
         bool isServedByLingeringMock = isMockLingering(ModuleID(below)) && !m_modulesWhoseFactoryWasCalled.get(below);
         someMockBelowIsNotInPlace |= (m_modulesWithPendingMock.get(below) && !isServedByLingeringMock) || (isMocked(ModuleID(below)) && !activeMock(ModuleID(below)));
+        isOverRemovedMock |= isServedByLingeringMock && m_modulesWithPendingMock.get(below) && wasOriginalEvaluated(ModuleID(below));
     }
     if ((current == ModuleStatus::Unlinked || current == ModuleStatus::Linked) && !m_detachedLoads[left].wasEvaluatedByRequire && !isEvicted(required) && !isMocked(required) && !wasMockLaidSince && !someMockBelowIsNotInPlace) {
+        if (isOverRemovedMock && m_detachedLoads[left].wasAwaitedMockRemoved && host().didRunOriginal) [[unlikely]]
+            host().didRunOriginal(m_instance.globalObject, m_table.fullPath(fileOf(required)), OriginalRun::RunsAmongLoads);
         m_detachedLoads[left].isEvaluationDue = true;
         if (m_detachedLoads[left].pendingLoaderWaits)
             return;
@@ -3570,6 +3586,45 @@ bool Modules::isEvictedModuleImported()
     return false;
 }
 
+JSC_DEFINE_HOST_FUNCTION(rootsDueBehindImportJob, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    modulesOf(realm)->evaluateRootsDueBehind(ModuleID(callFrame->argument(1).asUInt32()));
+    return JSValue::encode(jsUndefined());
+}
+
+void Modules::didEvaluateForLoader(ModuleID imported)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    JSFunction* job = JSFunction::create(vm, realm, 2, String(), rootsDueBehindImportJob, ImplementationVisibility::Private);
+    JSPromise* turn = JSPromise::create(vm, realm->promiseStructure());
+    turn->fulfill(vm, jsUndefined());
+    turn->performPromiseThenWithContext(vm, realm, job, job, jsUndefined(), jsNumber(imported.index()));
+}
+
+void Modules::evaluateRootsDueBehind(ModuleID imported)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<ModuleID, 1> due;
+    m_rootsDueBehindImports.removeAllMatching([&](ModuleID root) {
+        if (!staticImportClosure(root, MockTraversal::Stop).get(imported.index()))
+            return false;
+        due.append(root);
+        return true;
+    });
+    for (ModuleID root : due) {
+        if ((status(root) != ModuleStatus::Unlinked && status(root) != ModuleStatus::Linked) || isEvicted(root) || isMocked(root))
+            continue;
+        JSPromise* evaluation = evaluate(root, std::nullopt, nullptr);
+        if (Exception* failure = scope.exception()) {
+            if (vm.isTerminationException(failure) || !scope.tryClearException())
+                return;
+        } else if (evaluation)
+            evaluation->markAsHandled();
+    }
+}
+
 void Modules::finishDetachedLoad(unsigned number)
 {
     VM& vm = *m_instance.vm;
@@ -3580,6 +3635,10 @@ void Modules::finishDetachedLoad(unsigned number)
         return;
     bool wasMockReplaced = m_detachedLoads[left].wasEndedByLaterMock && m_detachedLoads[left].awaitedFactoryCalls.containsIf([&](const auto& call) { return isMockLingering(call.first); });
     if (wasMockReplaced && isEvictedModuleImported()) {
+        for (ModuleID root : evaluationOrderedRoots(m_detachedLoads[left])) {
+            if (!m_rootsDueBehindImports.contains(root))
+                m_rootsDueBehindImports.append(root);
+        }
         restoreRequiredValue(m_detachedLoads[left].required);
         m_detachedLoads[left].wait->fulfill(vm, jsUndefined());
         return;
@@ -4015,6 +4074,7 @@ void Modules::didPatchPendingMock(ModuleID mocked)
 
 void Modules::evictAbandonedModules()
 {
+    m_rootsDueBehindImports.clear();
     evictLoadedModules();
     m_modulesToEvictOnceLoaded.clear();
 }

@@ -200,13 +200,16 @@ void emitBranchUnlessResultIsAwaited(StubAssembler& jit, Address returnAddressOn
 void emitReturnFulfillmentIfTakenInsteadOfPromise(StubAssembler& jit, GPRReg value, GPRReg result, const AwaitedResultRegisters& registers)
 {
     JumpList isNotAwaited;
+    JumpList needsPromise;
+    Jump isNoCell = jit.branchIfNotCell(value);
+    needsPromise.append(jit.branchIfType(value, JSPromiseType));
+    isNoCell.link(&jit);
     emitBranchUnlessResultIsAwaited(jit, Address(sp), registers, isNotAwaited);
     if (value != result)
         jit.move(value, result);
     jit.returnToCaller();
 
     isNotAwaited.link(&jit);
-    JumpList needsPromise;
     jit.loadStubAddress(handlerOfJobReturn(), registers.scratch);
     needsPromise.append(jit.branchPtr(CCallHelpers::NotEqual, registers.returnAddress, registers.scratch));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), registers.returnAddress);

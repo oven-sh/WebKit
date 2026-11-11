@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTConstantEmitter.h"
 #include "AOTGuardEmitter.h"
 #include "AOTInstance.h"
 #include "AOTTypeTable.h"

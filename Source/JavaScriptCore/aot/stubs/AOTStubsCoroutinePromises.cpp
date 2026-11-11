@@ -214,6 +214,7 @@ void emitBranchIfMayBeThenable(StubAssembler& jit, GPRReg value, GPRReg structur
 {
     Jump isNotCell = jit.branchIfNotCell(value);
     Jump isNotObject = jit.branchIfNotObject(value);
+    mayBeThenable.append(jit.branchIfType(value, JSPromiseType));
     loadStructure(jit, value, structure);
     jit.load32(Address(structure, Structure::bitFieldOffset()), scratch);
     jit.and32(TrustedImm32(Structure::s_definitelyNonThenableStateBits), scratch);

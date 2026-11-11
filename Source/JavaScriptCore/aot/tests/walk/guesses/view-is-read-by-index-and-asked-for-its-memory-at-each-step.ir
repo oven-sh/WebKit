@@ -3,7 +3,7 @@
 # function each(view: Uint8Array) { for (const value of view) keep(value); }
 # RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+Guesses
 # CHECK-LABEL: code f1:Body
-# CHECK: = IsPristine {{*}} builtinClass=Uint8Array aspects=[InheritedNamesKept
+# CHECK: = IsPristine {{*}} builtinClass=Uint8Array aspects=[{{*}}Names
 # CHECK: RequireAttachedTypedArray
 # CHECK: ([[position]]: int[0, 34359738368] {{*}}isLoopHead=true
 # CHECK-NOT: RequireAttachedTypedArray

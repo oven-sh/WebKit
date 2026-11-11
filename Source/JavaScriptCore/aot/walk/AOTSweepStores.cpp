@@ -320,6 +320,11 @@ static bool birthMayMoveInSweep(const Program& program, const Facts& facts, cons
         LayoutID declared = declaredLayoutOf(program, made.layout());
         if (!declared || ((made.prototypeOperand() || program.at(declared).has(LayoutFlags::IsConstructorFunction)) && (!made.endsNoGuards() || !code.at(made.block()).isInLoop)))
             return false;
+        if (!made.prototypeOperand() && program.at(declared).has(LayoutFlags::IsConstructorFunction)) {
+            const auto& layouts = facts.linked().layouts;
+            if (declared.index() >= layouts.size() || !layouts[declared.index()].prototypeObjectIsSettledAheadOfEveryObject)
+                return false;
+        }
         switch (program.at(declared).kind) {
         case LayoutKind::Record:
         case LayoutKind::Environment:

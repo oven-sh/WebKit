@@ -540,7 +540,9 @@ static HiddenWordUse hiddenWordUseInSlotPlan(const Program& program, const LinkT
     if (!link.layout(id).possibleChanges.containsAny(changesThatMakeExtraProperties))
         return HiddenWordUse::Never;
     bool isExtendedAlone = link.layout(id).isExtendedAlone || id.index() >= held.layouts.size() || held.layout(id).isExtendedAlone;
-    return kind == LayoutKind::Instance && !isExtendedAlone ? HiddenWordUse::Unseen : HiddenWordUse::Seen;
+    FunctionID constructor = program.at(id).constructor;
+    bool isConstructedBySeveralCalls = constructor && constructor.index() < link.functions.size() && !link.function(constructor).hasSingleCallSite && (link.function(constructor).everyCallerIsKnown || program.at(id).has(LayoutFlags::IsConstructorFunction));
+    return kind == LayoutKind::Instance && !isExtendedAlone && isConstructedBySeveralCalls ? HiddenWordUse::Unseen : HiddenWordUse::Seen;
 }
 
 static BitVector findLayoutsWithHiddenWordsForSlotPlan(const Program& program, const LinkTables* link, const LinkTables& held, const BitVector& layoutsWithSlotsThatStoresMayEmpty, const BitVector& layoutsThatRepeatTheirBases, const Families* families, std::span<const StorageOfLayoutInSlotPlan> storage, const CellSizesForFields& cellSizes)
