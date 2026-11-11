@@ -65,16 +65,38 @@ bool CommonData::invalidateLinkedCode()
     if (!m_isStillValid)
         return false;
 
+    // Serialize the fire() / map-remove / m_isStillValid transition with
+    // installVMTrapBreakpoints() (which the VMTraps SignalSender runs on a
+    // WorkQueue thread while the mutator is suspended) and with the signal
+    // handler's codeBlockForVMTrapPC() lookup. Without this:
+    //
+    //  - removing the pcCodeBlockMap entry before fire() leaves a window
+    //    where a live HLT has no map entry, so the AccessFault handler in
+    //    VMTraps.cpp returns SignalAction::NotHandled and chains to the
+    //    embedder's fault handler;
+    //
+    //  - reading m_hasVMTrapsBreakpointsInstalled / writing m_isStillValid
+    //    outside the lock lets installVMTrapBreakpoints() observe
+    //    m_isStillValid == true after fire() has already run here and
+    //    write a fresh HLT over the jump. That HLT's CodeBlock then reports
+    //    hasInstalledVMTrapsBreakpoints() == false once m_isStillValid is
+    //    cleared below, tripping RELEASE_ASSERT(sawCurrentCodeBlock) in the
+    //    AccessFault handler.
+    //
+    // The lock is uncontended unless a VMTraps async event is in flight.
+    Locker locker { pcCodeBlockMapLock };
+    if (!m_isStillValid)
+        return false;
+
+    for (unsigned i = m_jumpReplacements.size(); i--;)
+        m_jumpReplacements[i].fire();
+
     if (m_hasVMTrapsBreakpointsInstalled) [[unlikely]] {
-        Locker locker { pcCodeBlockMapLock };
         auto& map = pcCodeBlockMap();
         for (auto& jumpReplacement : m_jumpReplacements)
             map.remove(jumpReplacement.dataLocation());
         m_hasVMTrapsBreakpointsInstalled = false;
     }
-
-    for (unsigned i = m_jumpReplacements.size(); i--;)
-        m_jumpReplacements[i].fire();
 
     m_isStillValid = false;
     return true;
