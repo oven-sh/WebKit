@@ -835,6 +835,13 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     if (importPromise->status() == JSPromise::Status::Fulfilled) {
         auto result = importPromise->result();
         promise->fulfill(vm, result);
+    } else if (importPromise->status() == JSPromise::Status::Pending && importPromise->isHandled() && !importPromise->hasInlineReaction() && !importPromise->payloadCell()) {
+        // The loader's own promise: marked as handled with no reaction on it, so no program has it, and nothing can observe how it
+        // settles `promise`. It does so with a reaction that is added here. resolve() would look up `then` on it, and would add the
+        // reaction from a job: until that job ran, a walk over the reactions of the loader's promise
+        // (AbstractModuleRecord::importPromiseGatesAsyncDependency(), the embedder) would not find who awaits `promise`.
+        promise->setFlags(promise->flags() | JSPromise::isFirstResolvingFunctionCalledFlag);
+        importPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promise, jsUndefined());
     } else {
         promise->resolve(globalObject, vm, importPromise);
     }
