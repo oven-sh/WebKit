@@ -35,6 +35,7 @@ class JSString;
 class ScriptFetchParameters;
 class SourceOrigin;
 class VM;
+enum class ExportOverrideEnd : uint8_t;
 
 namespace AOT {
 
@@ -284,6 +285,14 @@ JS_EXPORT_PRIVATE void willSetExtensionLoader(JSGlobalObject*, StringView extens
 
 JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 JS_EXPORT_PRIVATE bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue);
+// As JSModuleNamespaceObject::layExportOverride() and its fellows, for an export that is a variable of the program. layExportOverride() answers false for
+// any other export and stores nothing: tryReplaceExport() stores there, and its caller keeps what it replaces.
+JS_EXPORT_PRIVATE bool layExportOverride(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue, JSCell* owner);
+JS_EXPORT_PRIVATE ExportOverrideEnd removeExportOverride(JSCell* moduleNamespace, UniquedStringImpl* name, JSCell* owner, JSCell** ownerAbove = nullptr);
+JS_EXPORT_PRIVATE bool exportFoundByOverride(JSCell* moduleNamespace, UniquedStringImpl* name, JSCell* owner, JSValue& found);
+// The end of the mock of a file hands what it found to the owner that laid over it. didRemoveMock() keeps that owner and what it has found from then on
+// until this is called. The owner is one of layExportOverride(), or one that the run time made for the mock of another file: a caller knows its own.
+JS_EXPORT_PRIVATE void takeOwnersHandedByMocks(JSGlobalObject*, const ScopedLambda<void(JSCell* owner, JSValue found)>&);
 JS_EXPORT_PRIVATE String spyOnExportErrorMessage(JSCell* moduleNamespace, UniquedStringImpl* name, const String& uncompiledCaller);
 JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE String mockModuleErrorMessage(JSGlobalObject*, const String& path, const String& uncompiledCaller);
