@@ -196,7 +196,7 @@ JSValue supportedLocales(JSGlobalObject*, const LocaleSet& availableLocales, con
 String removeUnicodeLocaleExtension(StringView locale);
 String extractNonUnicodeBCP47Extensions(StringView locale);
 String bestAvailableLocale(const LocaleSet& availableLocales, const String& requestedLocale);
-template<typename Predicate> String bestAvailableLocale(const String& requestedLocale, Predicate);
+template<typename StringType, typename Predicate> StringType bestAvailableLocale(const StringType& requestedLocale, Predicate);
 Vector<String> numberingSystemsForLocale(const String& locale);
 String defaultNumberingSystemForLocale(const String& dataLocale);
 String defaultCalendarForLocale(const String& dataLocale);

@@ -830,6 +830,100 @@ JSArray* IntlLocale::calendars(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
 }
 
+// language[_Script][_REGION] at its longest: 8 + 1 + 4 + 1 + 3.
+static constexpr size_t maximumPlainLocaleIDLength = 17;
+
+// The length of localeID without its keywords, when that part is language[_Script][_REGION] as uloc_canonicalize()
+// spells it and the region is not one that uloc_toLanguageTag() replaces (DEPRECATEDREGIONS in ICU's uloc_tag.cpp).
+// 0 for every other locale ID.
+static size_t plainLocaleIDLength(std::span<const char> localeID)
+{
+    size_t length = localeID.size();
+    if (size_t keywords = WTF::find(localeID, ULOC_KEYWORD_SEPARATOR); keywords != notFound)
+        length = keywords;
+    if (length > maximumPlainLocaleIDLength)
+        return 0;
+
+    size_t index = 0;
+    while (index < length && isASCIILower(localeID[index]))
+        ++index;
+    if (index < 2 || index == 4 || index > 8)
+        return 0;
+
+    if (length - index >= 5 && localeID[index] == '_' && isASCIIUpper(localeID[index + 1]) && isASCIILower(localeID[index + 2]) && isASCIILower(localeID[index + 3]) && isASCIILower(localeID[index + 4]))
+        index += 5;
+
+    if (index == length)
+        return length;
+    if (localeID[index] != '_')
+        return 0;
+
+    auto region = localeID.subspan(index + 1, length - index - 1);
+    if (region.size() == 3)
+        return isASCIIDigit(region[0]) && isASCIIDigit(region[1]) && isASCIIDigit(region[2]) ? length : 0;
+    if (region.size() != 2 || !isASCIIUpper(region[0]) || !isASCIIUpper(region[1]))
+        return 0;
+
+    static constexpr std::array<std::array<char, 2>, 6> deprecatedRegions { { { 'B', 'U' }, { 'D', 'D' }, { 'F', 'X' }, { 'T', 'P' }, { 'Y', 'D' }, { 'Z', 'R' } } };
+    for (auto& deprecated : deprecatedRegions) {
+        if (region[0] == deprecated[0] && region[1] == deprecated[1])
+            return 0;
+    }
+    return length;
+}
+
+// The locale that an info getter of Intl.Locale takes its data from: what ECMA-402 LookupMatchingLocaleByPrefix finds
+// for the tag of the locale in the available locales of a service, as an ICU locale ID. ICU answers for a locale it
+// has no data for from the data of its default locale, which comes from the host, so it only gets a locale from here.
+class DataLocaleID {
+    WTF_MAKE_NONCOPYABLE(DataLocaleID);
+public:
+    DataLocaleID(const LocaleSet& availableLocales, const ASCIICString& localeID, IntlLocale&);
+
+    // Null when no prefix of the tag is an available locale.
+    const char* get() const { return m_localeID; }
+
+private:
+    const char* m_localeID { nullptr };
+    std::array<char, maximumPlainLocaleIDLength + 1> m_prefix;
+    ASCIICString m_ofBaseName;
+};
+
+DataLocaleID::DataLocaleID(const LocaleSet& availableLocales, const ASCIICString& localeID, IntlLocale& locale)
+{
+    // A plain locale ID with '-' for '_' is the tag of the locale without its extensions, which baseName() builds
+    // with two calls into ICU and a String. The exception is a language that uloc_toLanguageTag() replaces ("iw" is
+    // "he" in the tag), and no available locale starts with one of those, so such a locale ID finds nothing here.
+    auto characters = localeID.span();
+    if (size_t length = plainLocaleIDLength(characters)) {
+        std::array<char, maximumPlainLocaleIDLength> tag;
+        for (size_t index = 0; index < length; ++index)
+            tag[index] = characters[index] == '_' ? '-' : characters[index];
+
+        StringView found = bestAvailableLocale(StringView { std::span<const char> { tag }.first(length) }, [&](StringView candidate) {
+            return availableLocales.contains<StringViewHashTranslator>(candidate);
+        });
+        ASSERT(found.isEmpty() || found == bestAvailableLocale(availableLocales, locale.baseName()));
+        if (found.length() == length) {
+            m_localeID = localeID.data();
+            return;
+        }
+        if (!found.isEmpty()) {
+            memcpySpan(std::span { m_prefix }, characters.first(found.length()));
+            m_prefix[found.length()] = '\0';
+            m_localeID = m_prefix.data();
+            return;
+        }
+    }
+
+    String found = bestAvailableLocale(availableLocales, locale.baseName());
+    if (found.isNull())
+        return;
+    m_ofBaseName = found.ascii();
+    m_localeID = m_ofBaseName.data();
+}
+
+// https://tc39.es/ecma402/#sec-collationsoflocale
 JSArray* IntlLocale::collations(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -837,15 +931,20 @@ JSArray* IntlLocale::collations(JSGlobalObject* globalObject)
 
     Vector<String, 1> elements;
 
+    // [[Collation]] is the empty string for "-u-co-true".
     String preferred = collation();
-    if (!preferred.isEmpty()) {
+    if (!preferred.isNull()) {
         elements.append(WTF::move(preferred));
         RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
     }
 
+    DataLocaleID dataLocale(intlCollatorAvailableLocales(), m_localeID, *this);
+    if (!dataLocale.get())
+        RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, Vector<String, 2> { "emoji"_s, "eor"_s }));
+
     UErrorCode status = U_ZERO_ERROR;
     constexpr bool commonlyUsed = true;
-    auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucol_getKeywordValuesForLocale("collation", m_localeID.data(), commonlyUsed, &status));
+    auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucol_getKeywordValuesForLocale("collation", dataLocale.get(), commonlyUsed, &status));
     if (!U_SUCCESS(status)) {
         throwTypeError(globalObject, scope, "invalid locale"_s);
         return nullptr;
@@ -931,20 +1030,29 @@ JSArray* IntlLocale::hourCycles(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
 }
 
+// https://tc39.es/ecma402/#sec-numberingsystemsoflocale
 JSArray* IntlLocale::numberingSystems(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Vector<String, 1> elements;
+
+    // [[NumberingSystem]] is the empty string for "-u-nu-true".
     String preferred = numberingSystem();
-    if (!preferred.isEmpty()) {
+    if (!preferred.isNull()) {
         elements.append(WTF::move(preferred));
         RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
     }
 
+    DataLocaleID dataLocale(intlNumberFormatAvailableLocales(), m_localeID, *this);
+    if (!dataLocale.get()) {
+        elements.append("latn"_s);
+        RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
+    }
+
     UErrorCode status = U_ZERO_ERROR;
-    auto numberingSystem = std::unique_ptr<UNumberingSystem, ICUDeleter<unumsys_close>>(unumsys_open(m_localeID.data(), &status));
+    auto numberingSystem = std::unique_ptr<UNumberingSystem, ICUDeleter<unumsys_close>>(unumsys_open(dataLocale.get(), &status));
     if (!U_SUCCESS(status)) {
         throwTypeError(globalObject, scope, "invalid locale"_s);
         return nullptr;
