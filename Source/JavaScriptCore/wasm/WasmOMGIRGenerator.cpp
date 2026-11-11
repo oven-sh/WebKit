@@ -2285,8 +2285,7 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
     // wasmBoundsCheckingSizeRegister is pinned, so the callee instance (dead by now) cannot be
     // it. In Signaling mode it is not pinned, clobberLate(wasmPinnedRegisters()) prevents the
     // scratch from overlapping.
-    // Code for an image loads the base of the cage into the scratch while the callee instance is still needed, so it has a scratch of its own in both modes.
-    if (m_mode == MemoryMode::Signaling || m_context.codeForImage)
+    if (m_mode == MemoryMode::Signaling)
         patchpoint->numGPScratchRegisters = 1;
     patchpoint->setGenerator([this, handle = handle, prepareForCall = prepareForCall, patchArgsIndex, signature = Ref<const RTT>(signature), wasmCalleeInfo = WTF::move(wasmCalleeInfo), mode = m_mode](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -2296,11 +2295,16 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
             handle->collectStackMap(this, params);
 
         GPRReg calleeCodeGPR = params[patchArgsIndex].gpr();
-        jit.storeWasmCalleeToCalleeCallFrame(params[patchArgsIndex + 1].gpr());
+        GPRReg boxedCalleeCalleeGPR = params[patchArgsIndex + 1].gpr();
+        jit.storeWasmCalleeToCalleeCallFrame(boxedCalleeCalleeGPR);
+        if (m_context.codeForImage)
+            jit.storePtr(params[patchArgsIndex + 3].gpr(), CCallHelpers::calleeFrameCodeBlockBeforeCall());
         GPRReg calleeInstanceGPR = params[patchArgsIndex + 2].gpr();
         // Safe to reuse the callee instance in BoundsChecking mode: it is dead once
         // storeWasmContextInstance below has copied it, and the caging happens after that.
-        GPRReg cageScratch = mode == MemoryMode::Signaling || m_context.codeForImage ? params.gpScratch(0) : calleeInstanceGPR;
+        // Code for an image loads the base of the cage into the scratch before that store, while the callee instance is still needed.
+        // It takes the register of the boxed callee, which is dead since the store above: with six arguments in registers x86-64 has no other one left.
+        GPRReg cageScratch = mode == MemoryMode::Signaling ? params.gpScratch(0) : m_context.codeForImage ? boxedCalleeCalleeGPR : calleeInstanceGPR;
 
         // Do a context switch if needed. We pessimistically assume we're calling something with
         // BoundsChecking memory.
@@ -2316,8 +2320,6 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
         emitCageMemoryBase(jit, cageScratch);
         isSameContextInstance.link(&jit);
 
-        if (m_context.codeForImage)
-            jit.storePtr(params[patchArgsIndex + 3].gpr(), CCallHelpers::calleeFrameCodeBlockBeforeCall());
         jit.call(calleeCodeGPR, WasmEntryPtrTag);
         emitWasmCallStackResultsAndSPRestore(jit, params, signature, wasmCalleeInfo);
     });
