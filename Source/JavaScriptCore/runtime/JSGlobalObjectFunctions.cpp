@@ -35,6 +35,7 @@
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
 #include "JSPromise.h"
+#include "JSPromisePrototype.h"
 #include "JSSet.h"
 #include "LiteralParser.h"
 #include "ObjectConstructorInlines.h"
@@ -835,6 +836,15 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     if (importPromise->status() == JSPromise::Status::Fulfilled) {
         auto result = importPromise->result();
         promise->fulfill(vm, result);
+    } else if (importPromise->status() == JSPromise::Status::Pending && importPromise->isHandled() && !importPromise->hasInlineReaction() && !importPromise->payloadCell()
+        && importPromise->isThenFastAndNonObservable() && promiseSpeciesWatchpointIsValid(vm, importPromise) && !vm.synchronousModuleQueue()) {
+        // The loader's own promise: marked as handled with no reaction on it, so no program has it. With `then` and the species the originals,
+        // resolve() would queue a job (PromiseResolveThenableJobFast) that adds this reaction, and that calls the program only if the species
+        // is replaced before the job runs. Until then a walk over the reactions of the loader's promise (the embedder,
+        // AbstractModuleRecord::importPromiseGatesAsyncDependency()) would not find who awaits `promise`, which the program has from now on.
+        // Not under a synchronous load: there the loader's promise settles before that job runs, and the job keeps the import() calls in their order.
+        promise->setFlags(promise->flags() | JSPromise::isFirstResolvingFunctionCalledFlag);
+        importPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promise, jsUndefined());
     } else {
         promise->resolve(globalObject, vm, importPromise);
     }
