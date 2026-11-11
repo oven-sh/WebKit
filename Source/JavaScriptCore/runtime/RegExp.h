@@ -227,8 +227,19 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     RegExpKey key() { return RegExpKey(m_flags, m_patternString); }
 
-    String escapedPattern() const;
+    // The text of `source`. Computed at the first call and kept: the pattern text of a RegExp never changes.
+    // Mutator only. Allocates no cell, so the heap snapshot and the profiler can call it.
+    const String& escapedPattern() const LIFETIME_BOUND;
     JS_EXPORT_PRIVATE static String escapedPattern(const String& pattern);
+    // escapedPattern() as the one JSString that every read of `source` returns.
+    JSString* sourceString(VM& vm)
+    {
+        if (LazyData* lazyData = m_lazyData.get()) [[likely]] {
+            if (JSString* string = lazyData->m_sourceString.get()) [[likely]]
+                return string;
+        }
+        return sourceStringSlow(vm);
+    }
 
     String toSourceString() const;
 
@@ -331,6 +342,20 @@ private:
         std::unique_ptr<const Yarr::CharacterSetWithRanges> m_specificCharacterClass;
     };
 
+    // What most RegExps are never asked for. Allocated at the first request for one of the members, so that the cell keeps its size.
+    struct LazyData {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LazyData);
+        // Installed from any thread: the DFG asks for it on a compiler thread.
+        ThreadSafeLazyUniquePtr<const WTF::BitSet<256>> m_firstCharacterBitmap;
+        // Read and written by the mutator alone.
+        String m_escapedPattern;
+        // Written by the mutator, read by the mutator and the marker.
+        WriteBarrier<JSString> m_sourceString;
+    };
+
+    LazyData& ensureLazyData() const;
+    JSString* sourceStringSlow(VM&);
+
     String m_patternString;
     String m_atom;
     RegExpState m_state { NotCompiled };
@@ -349,7 +374,7 @@ private:
 #endif
     std::unique_ptr<RareData> m_rareData;
     FixedVector<int> m_ovector;
-    mutable ThreadSafeLazyUniquePtr<const WTF::BitSet<256>> m_firstCharacterBitmap;
+    mutable ThreadSafeLazyUniquePtr<LazyData> m_lazyData;
 #if ENABLE(REGEXP_TRACING)
     double m_rtMatchOnlyTotalSubjectStringLen { 0.0 };
     double m_rtMatchTotalSubjectStringLen { 0.0 };
