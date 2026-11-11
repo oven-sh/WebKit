@@ -2235,6 +2235,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionGetPID);
 static JSC_DECLARE_HOST_FUNCTION(functionVMTaintedState);
 static JSC_DECLARE_HOST_FUNCTION(functionHaveABadTime);
 static JSC_DECLARE_HOST_FUNCTION(functionIsHavingABadTime);
+static JSC_DECLARE_HOST_FUNCTION(functionDeletePropertyIgnoringConfigurable);
 static JSC_DECLARE_HOST_FUNCTION(functionMakePropertiesImmutable);
 static JSC_DECLARE_HOST_FUNCTION(functionHasImmutableProperties);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithStackSize);
@@ -3406,6 +3407,22 @@ static Vector<Identifier> identifiersInArrayLike(JSGlobalObject* globalObject, J
     });
     RETURN_IF_EXCEPTION(scope, { });
     return result;
+}
+
+// Deletes an own property in VM::DeletePropertyMode::IgnoreConfigurable, so one that is not configurable too. Returns what the delete returns.
+// Usage: $vm.deletePropertyIgnoringConfigurable(object, key)
+JSC_DEFINE_HOST_FUNCTION(functionDeletePropertyIgnoringConfigurable, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object)
+        return throwVMTypeError(globalObject, scope, "deletePropertyIgnoringConfigurable expects an object"_s);
+    Identifier key = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    VM::DeletePropertyModeScope ignoreConfigurable(vm, VM::DeletePropertyMode::IgnoreConfigurable);
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(JSCell::deleteProperty(object, globalObject, key))));
 }
 
 // Calls JSObject::makePropertiesImmutable() and returns the object. Throws a TypeError for an object of a class that does not support it.
@@ -6279,6 +6296,7 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, alwaysAllow, "haveABadTime"_s, functionHaveABadTime, 1);
     addFunction(vm, alwaysAllow, "isHavingABadTime"_s, functionIsHavingABadTime, 1);
+    addFunction(vm, allowIfNotFuzz, "deletePropertyIgnoringConfigurable"_s, functionDeletePropertyIgnoringConfigurable, 2);
     addFunction(vm, alwaysAllow, "makePropertiesImmutable"_s, functionMakePropertiesImmutable, 1);
     addFunction(vm, alwaysAllow, "hasImmutableProperties"_s, functionHasImmutableProperties, 1);
 

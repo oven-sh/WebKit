@@ -734,6 +734,7 @@ Structure::PristineBits Structure::pristineBitsAfterTransition(VM& vm, Structure
     case TransitionKind::MakePropertiesImmutable:
     case TransitionKind::MakeListedPropertiesImmutable:
     case TransitionKind::AllocateElementsStartOffset:
+    case TransitionKind::DeleteNonConfigurableElement:
         return bits;
     case TransitionKind::Unknown:
     case TransitionKind::AllocateSlowPutArrayStorage:
@@ -2632,6 +2633,9 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
         break;
     case TransitionKind::AllocateElementsStartOffset:
         kindName = "AllocateElementsStartOffset";
+        break;
+    case TransitionKind::DeleteNonConfigurableElement:
+        kindName = "DeleteNonConfigurableElement";
         break;
     }
 

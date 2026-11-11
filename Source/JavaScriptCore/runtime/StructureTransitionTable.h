@@ -73,6 +73,9 @@ enum class TransitionKind : uint8_t {
     FreezeElementsInPlace = 20,
     PropertyRunAddition = 21,
     AllocateElementsStartOffset = 22,
+
+    // VM::DeletePropertyMode::IgnoreConfigurable deleted an element that is not configurable. Nothing but the StructureID changes.
+    DeleteNonConfigurableElement = 23,
 };
 
 static constexpr auto FirstNonPropertyTransitionKind = TransitionKind::AllocateUndecided;
