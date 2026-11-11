@@ -4702,14 +4702,20 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
 
             if (m_propertyCache.accessType == AccessType::GetById) {
                 bool allGetters = !cases.empty();
+                unsigned numberOfUndesiredMegamorphicAccessVariants = 0;
                 for (auto& accessCase : cases) {
                     if (accessCase->type() != AccessCase::Getter || accessCase->viaGlobalProxy() || accessCase->usesPolyProto()) {
                         allGetters = false;
                         break;
                     }
+                    if (!canUseMegamorphicGetByIdFastPath(accessCase->structure()))
+                        ++numberOfUndesiredMegamorphicAccessVariants;
                 }
-                if (allGetters)
+                if (allGetters) {
+                    if ((numberOfUndesiredMegamorphicAccessVariants / static_cast<double>(cases.size())) >= Options::thresholdForUndesiredMegamorphicAccessVariantListSize())
+                        return nullptr;
                     return AccessCase::create(vm(), codeBlock, AccessCase::LoadMegamorphicGetter, identifier);
+                }
             }
 
             unsigned numberOfUndesiredMegamorphicAccessVariants = 0;
@@ -4720,7 +4726,7 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
                 if (accessCase->viaGlobalProxy())
                     return nullptr;
 
-                if (accessCase->usesPolyProto())
+                if (accessCase->usesPolyProto() || !canUseMegamorphicGetByIdFastPath(accessCase->structure()))
                     ++numberOfUndesiredMegamorphicAccessVariants;
             }
 
@@ -4741,7 +4747,7 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
                 if (accessCase->viaGlobalProxy())
                     return nullptr;
 
-                if (accessCase->usesPolyProto())
+                if (accessCase->usesPolyProto() || !canUseMegamorphicGetFastPath(accessCase->structure()))
                     ++numberOfUndesiredMegamorphicAccessVariants;
             }
 
@@ -4819,7 +4825,7 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
                 if (accessCase->viaGlobalProxy())
                     return nullptr;
 
-                if (accessCase->usesPolyProto())
+                if (accessCase->usesPolyProto() || !canUseMegamorphicGetFastPath(accessCase->structure()))
                     ++numberOfUndesiredMegamorphicAccessVariants;
             }
 
@@ -4843,7 +4849,7 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
                 if (accessCase->viaGlobalProxy())
                     return nullptr;
 
-                if (accessCase->usesPolyProto())
+                if (accessCase->usesPolyProto() || !canUseMegamorphicGetFastPath(accessCase->structure()))
                     ++numberOfUndesiredMegamorphicAccessVariants;
             }
 
