@@ -10,6 +10,7 @@
 #include "AOTOperationData.h"
 #include "AOTStubDescriptor.h"
 #include "AOTStubHelpers.h"
+#include <span>
 
 namespace JSC { namespace AOT {
 
@@ -29,6 +30,8 @@ struct LazyHeaderRegisters {
     GPRReg lazyHeaders;
     GPRReg word;
 };
+
+void loadStringConstantsAndJump(StubAssembler&, std::span<const GPRReg> numbers, StubKey target);
 
 void createLazyHeader(StubAssembler&, const LazyHeaderRegisters&, unsigned longestTextWithoutHeader, JumpList& cannot);
 

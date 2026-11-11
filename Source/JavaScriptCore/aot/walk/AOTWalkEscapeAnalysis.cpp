@@ -184,6 +184,7 @@ static void noteWhatNewObjectFillsIn(Walker& walker, Reference object, const Ope
     }
     if (!isEnvironment && fields.size() == numberOfFieldsWritten && fillers.empty())
         state.noteElement(object, keyOfPropertiesAsListed(), object);
+    state.noteElementsLieOutsideViews(object);
 }
 
 static Reference positionInFreshList(Walker& walker, uint32_t position)
@@ -212,6 +213,7 @@ static void noteWhatNewArrayFillsIn(Walker& walker, Reference object, const Oper
             state.noteElement(object, key, valueHeldByFreshObject(walker.code(), element));
     }
     state.noteElement(object, keyOfLengthOfFreshList(walker), positionInFreshList(walker, position + static_cast<uint32_t>(holes.size())));
+    state.noteElementsLieOutsideViews(object);
     state.noteShape(object, made.type);
 }
 
@@ -245,6 +247,7 @@ static void noteWhatArgumentsObjectHolds(Walker& walker, Reference object, const
     if (function && walker.program().at(function).has(FunctionFlags::HasHiddenRest))
         state.noteElement(object, keyOfListBehindParameters(), list);
     state.noteElement(object, keyOfLengthOfFreshList(walker), valueHeldByFreshObject(code, made.countOperand()));
+    state.noteElementsLieOutsideViews(object);
     state.noteShape(object, made.type);
 }
 
@@ -272,6 +275,7 @@ static bool noteWhatListMadeWithLengthHolds(Walker& walker, Reference object, co
         return false;
     WalkState& state = walker.state();
     state.noteElement(object, keyOfLengthOfFreshList(walker), positionInFreshList(walker, static_cast<uint32_t>(known)));
+    state.noteElementsLieOutsideViews(object);
     state.noteShape(object, made.type);
     return true;
 }
@@ -826,7 +830,7 @@ static bool followStoreIntoFreshObject(Walker& walker, const Draft& store, const
         if (!cleared)
             return false;
         WalkState& state = walker.state();
-        state.noteSlot(written.object, *cleared, Reference());
+        state.noteSlot(written.object, *cleared, walker.constant(Draft(Opcode::Absent)));
         state.noteOrderWord(written.object, std::nullopt);
         state.noteElement(written.object, keyOfPropertiesAsListed(), Reference());
         state.invalidateCellFacts(written.object, CellFact::BearsNoMark);

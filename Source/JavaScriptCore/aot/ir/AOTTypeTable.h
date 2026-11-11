@@ -160,7 +160,31 @@ public:
     static constexpr TypeID cellOrMarker = idAt<TypeID>(IDHome::Program, 5);
     static constexpr TypeID int16 = idAt<TypeID>(IDHome::Program, 6);
     static constexpr TypeID uint16 = idAt<TypeID>(IDHome::Program, 7);
-    static constexpr uint32_t numberOfTypesInternedAtStart = 8;
+    static constexpr TypeID anythingButUndefined = idAt<TypeID>(IDHome::Program, 8);
+    static constexpr TypeID anythingButNull = idAt<TypeID>(IDHome::Program, 9);
+    static constexpr TypeID anythingButNullish = idAt<TypeID>(IDHome::Program, 10);
+    static constexpr TypeID anythingButString = idAt<TypeID>(IDHome::Program, 11);
+    static constexpr TypeID anythingButNumber = idAt<TypeID>(IDHome::Program, 12);
+    static constexpr TypeID anythingButBoolean = idAt<TypeID>(IDHome::Program, 13);
+    static constexpr uint32_t numberOfTypesInternedAtStart = 14;
+    static constexpr bool passesEveryObject(TypeID id) { return id == anything || (id.bits() >= anythingButUndefined.bits() && id.bits() <= anythingButBoolean.bits()); }
+    static constexpr bool isAnythingButNullish(TypeID id) { return id == anythingButUndefined || id == anythingButNull || id == anythingButNullish; }
+    static constexpr TypeID anythingBut(TypeID primitives)
+    {
+        if (primitives == undefined)
+            return anythingButUndefined;
+        if (primitives == null)
+            return anythingButNull;
+        if (primitives == nullish)
+            return anythingButNullish;
+        if (primitives == string)
+            return anythingButString;
+        if (primitives == number)
+            return anythingButNumber;
+        if (primitives == boolean)
+            return anythingButBoolean;
+        return { };
+    }
     static constexpr TypeID valuesOf(TypeID held) { return held == anythingOrAbsent ? anything : held; }
 
     const BuiltinTable& builtins() const { return m_builtins; }
@@ -203,6 +227,7 @@ public:
     void endStableNumbersOfPropertyKeys(const ParallelLoops&);
     void addKeysOfTexts(uint32_t numberOfStrings, const ParallelLoops&);
     bool hasStableNumber(PropertyKeyID key) const { return key.index() < m_numberOfKeysWithStableNumbers; }
+    bool isLookedUpAsName(PropertyKeyID key) const { return key.index() < m_keysLookedUpAsNames.size() && m_keysLookedUpAsNames[key.index()]; }
     std::optional<uint8_t> locationBitOf(PropertyKeyID key) const
     {
         if (key.index() >= m_locationBitsOfKeys.size())
@@ -299,6 +324,7 @@ private:
     std::array<uintptr_t, numberOfInternedSegments> m_addressesOfPositionZeroInKeySegments { };
     uint32_t m_numberOfKeysWithStableNumbers { UINT32_MAX };
     Vector<uint8_t> m_locationBitsOfKeys;
+    Vector<uint8_t> m_keysLookedUpAsNames;
     Vector<TypeID> m_typeOfWireIndex;
     Vector<TypeID> m_typesOfLiteralStrings;
 };

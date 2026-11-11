@@ -111,7 +111,7 @@ private:
                     foundConversionCandidate = true;
 
                     Value* child = value->child(0);
-                    if (child->opcode() == FloatToDouble) {
+                    if (child->opcode() == FloatToDouble && !m_procedure.isWasm()) {
                         // We don't really need to simplify this early but it simplifies debugging.
                         replaceWithIdentity(value, child->child(0));
                     }
@@ -235,6 +235,12 @@ private:
         }
     }
 
+    // A double holds every 32-bit integer. It rounds a 64-bit one before the float does.
+    static bool isExactInDouble(Value* integer)
+    {
+        return integer->type() == Int32 || integer->opcode() == ZExt32 || integer->opcode() == SExt32;
+    }
+
     NODELETE bool canBeTransformedToFloat(Value* value)
     {
         if (value->opcode() == FloatToDouble)
@@ -260,6 +266,15 @@ private:
                 || (value->type() == Double && !m_phisContainingDouble.contains(value));
         }
         return false;
+    }
+
+    // Each conversion of WebAssembly turns a signaling NaN into a quiet one.
+    Value* withQuietNaN(Value* value, unsigned valueIndex, InsertionSet& insertionSet)
+    {
+        if (!m_procedure.isWasm() || givesQuietNaN(value))
+            return value;
+        Value* one = insertionSet.insert<ConstFloatValue>(valueIndex, value->origin(), 1.0f);
+        return insertionSet.insert<Value>(valueIndex, Mul, value->origin(), value, one);
     }
 
     Value* transformToFloat(Value* value, unsigned valueIndex, InsertionSet& insertionSet)
@@ -370,6 +385,8 @@ private:
                     break;
                 }
                 case IToD: {
+                    if (!isExactInDouble(value->child(0)))
+                        break;
                     Value* iToF = insertionSet.insert<Value>(index, IToF, value->origin(), value->child(0));
                     value->setType(Float);
                     replaceWithIdentity(value, iToF);
@@ -436,7 +453,7 @@ private:
             for (unsigned index = 0; index < block->size(); ++index) {
                 Value* value = block->at(index);
                 if (value->opcode() == DoubleToFloat && value->child(0)->type() == Float) {
-                    replaceWithIdentity(value, value->child(0));
+                    replaceWithIdentity(value, withQuietNaN(value->child(0), index, insertionSet));
                     continue;
                 }
 

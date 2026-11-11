@@ -73,7 +73,7 @@ static uint64_t wordOfNameInLinkPrototypes(LayoutID layout, PropertyKeyID key)
 void LinkFlow::indexConstructorFunctions()
 {
     size_t numberOfLayouts = program.layouts.size();
-    for (BitVector* byLayout : { &m_layoutsOfConstructorFunctions, &m_layoutsBelowConstructorFunctions, &m_prototypesPassedByLookups, &m_prototypesWithDefinitions, &m_prototypesAboveLostLayouts, &m_prototypesPassedByNumbers })
+    for (BitVector* byLayout : { &m_layoutsOfConstructorFunctions, &m_layoutsBelowConstructorFunctions, &m_layoutsWithFollowedPrototypes, &m_layoutsBelowFollowedPrototypes, &m_prototypesPassedByLookups, &m_prototypesWithDefinitions, &m_prototypesAboveLostLayouts, &m_prototypesPassedByNumbers })
         byLayout->ensureSize(numberOfLayouts);
     m_nearestConstructorFunctionsFrom.fill(LayoutID(), numberOfLayouts);
     auto noteConstructorFunctionAbove = [&](LayoutID below, LayoutID above) {
@@ -97,6 +97,81 @@ void LinkFlow::indexConstructorFunctions()
             noteConstructorFunctionAbove(below, LayoutID(index));
         }
     }
+
+    BitVector classesWithFollowedPrototypes = findClassesWithFollowedPrototypes();
+    for (size_t index = 0; index < numberOfLayouts; ++index) {
+        if (!m_layoutsOfConstructorFunctions.quickGet(index) && !classesWithFollowedPrototypes.quickGet(index))
+            continue;
+        m_layoutsWithFollowedPrototypes.quickSet(index);
+        m_layoutsBelowFollowedPrototypes.quickSet(index);
+        for (LayoutID below : program.layoutsExpectedBelow(LayoutID(index)))
+            m_layoutsBelowFollowedPrototypes.quickSet(below.index());
+    }
+}
+
+static LayoutID classNamedAtInLinkPrototypes(const Program& program, FunctionID asker, const SummaryNode& node)
+{
+    FunctionID constructor;
+    auto takeFrom = [&](TypeID written) {
+        if (!written || holdsOnlyPrimitives(written))
+            return;
+        Type type = program.at(written);
+        type.primitives &= ~Primitive::Absent;
+        constructor = !type.primitives && type.isJavaScriptValue() ? singleFunctionOf(TypeReader(program), type) : FunctionID();
+    };
+    switch (node.kind) {
+    case SummaryNode::Kind::Closure:
+        constructor = FunctionID(node.first);
+        break;
+    case SummaryNode::Kind::Variable:
+        takeFrom(program.provenTypeOf(program.variables[node.first].declared));
+        break;
+    case SummaryNode::Kind::Capture:
+        takeFrom(program.provenTypeOf(program.at(node.second ? FunctionID(node.second - 1) : asker).captures[node.first]));
+        break;
+    default:
+        break;
+    }
+    LayoutID constructed = constructor && isClassConstructorOf(program.at(constructor).kind) ? program.at(constructor).constructedClass : LayoutID();
+    bool isClass = constructed && program.at(constructed).kind == LayoutKind::Instance && program.at(constructed).constructor == constructor && !program.at(constructed).has(LayoutFlags::IsConstructorFunction);
+    return isClass ? constructed : LayoutID();
+}
+
+bool LinkFlow::instancesMayHoldName(LayoutID layout, PropertyKeyID key) const
+{
+    return m_namesStoredOnObjects.get(key.index()) || program.at(layout).findField(key) || std::ranges::any_of(program.layoutsExpectedBelow(layout), [&](LayoutID below) {
+        return !!program.at(below).findField(key);
+    });
+}
+
+BitVector LinkFlow::findClassesWithFollowedPrototypes()
+{
+    PropertyKeyID prototype = program.keyOf(BuiltinNames::prototype);
+    Vector<std::pair<LayoutID, PropertyKeyID>, 8> namesOnPrototypes;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (isLibraryCode(program, program.functions[index]))
+            continue;
+        FunctionID function(index);
+        const ThinSummary& summary = summaries.at(function);
+        for (const SummaryAccess& access : summary.accesses) {
+            bool isWrite = access.kind == SummaryAccess::Kind::Store || access.kind == SummaryAccess::Kind::Define;
+            if (!isWrite || !access.key || access.subject == noSummaryNode)
+                continue;
+            const SummaryNode& object = summary.nodes[access.subject];
+            const SummaryAccess* read = object.kind == SummaryNode::Kind::ResultOfAccess ? &summary.accesses[object.first] : nullptr;
+            if (read && read->kind == SummaryAccess::Kind::Read && read->key == prototype && read->subject != noSummaryNode) {
+                if (LayoutID written = classNamedAtInLinkPrototypes(program, function, summary.nodes[read->subject]))
+                    namesOnPrototypes.append({ written, access.key });
+            } else if (!classNamedAtInLinkPrototypes(program, function, object))
+                m_namesStoredOnObjects.set(access.key.index());
+        }
+    }
+    BitVector classes(program.layouts.size());
+    for (auto [layout, key] : namesOnPrototypes) {
+        if (!instancesMayHoldName(layout, key))
+            classes.quickSet(layout.index());
+    }
+    return classes;
 }
 
 LayoutID LinkFlow::layoutOfConstructorFunction(FunctionID function) const
@@ -135,11 +210,11 @@ bool LinkFlow::mayBeDefinedUnderUnknownKeyOnPrototypeOf(LayoutID layout, Propert
 bool LinkFlow::mayLieOnPrototypeAbove(LayoutID layout, PropertyKeyID key, bool countsKeysThatNobodyKnows) const
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
-    if (!isBelowConstructorFunction(layout))
+    if (!isBelowFollowedPrototype(layout))
         return false;
     size_t stepsLeft = program.layouts.size();
     for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
-        if (!isOfConstructorFunction(current))
+        if (!followsNamesOnPrototypeOf(current))
             continue;
         const NameOnPrototype* underKey = findNameOnPrototype(current, key);
         if (underKey && (underKey->isStoredInto || underKey->mayHoldAccessor()))
@@ -165,7 +240,7 @@ static void openHalvesOfAccessorInLinkPrototypes(LinkFlow& flow, LinkFlow::NameO
 uint32_t LinkFlow::recordOfNameOnPrototype(LayoutID layout, PropertyKeyID key)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
-    RELEASE_ASSERT(isOfConstructorFunction(layout));
+    RELEASE_ASSERT(followsNamesOnPrototypeOf(layout));
     uint32_t record = static_cast<uint32_t>(m_namesOnPrototypes.size());
     auto added = m_recordsOfNamesOnPrototypes.add(wordOfNameInLinkPrototypes(layout, key), record);
     if (!added.isNewEntry)
@@ -229,7 +304,7 @@ void LinkFlow::forEachPrototypePassedAbove(LayoutID layout, PropertyKeyID key, c
 {
     size_t stepsLeft = program.layouts.size();
     for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
-        if (isOfConstructorFunction(current)) {
+        if (followsNamesOnPrototypeOf(current)) {
             uint32_t record = recordOfNameOnPrototype(current, key);
             m_namesOnPrototypes[record].isPassedByLookups = true;
             m_prototypesPassedByLookups.set(current.index());
@@ -272,12 +347,12 @@ bool LinkFlow::letAccessorOnPrototypeEscape(uint32_t record)
 
 void LinkFlow::letAccessorsOnPrototypesAboveEscape(LayoutID layout, PropertyKeyID key)
 {
-    if (!isDefinedByDescriptorSomewhere(key) || !m_layoutsBelowConstructorFunctions.get(layout.index()))
+    if (!isDefinedByDescriptorSomewhere(key) || !m_layoutsBelowFollowedPrototypes.get(layout.index()))
         return;
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     size_t stepsLeft = program.layouts.size();
     for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
-        if (!isOfConstructorFunction(current))
+        if (!followsNamesOnPrototypeOf(current))
             continue;
         uint32_t record = recordOfNameOnPrototype(current, key);
         m_namesOnPrototypes[record].isPassedByLookupsThatEnterNoAccessor = true;
@@ -289,12 +364,12 @@ void LinkFlow::letAccessorsOnPrototypesAboveEscape(LayoutID layout, PropertyKeyI
 Vector<FlowNodeID, 2> LinkFlow::halvesOfAccessorsOnPrototypesAbove(LayoutID layout, PropertyKeyID key, bool ofSetters)
 {
     Vector<FlowNodeID, 2> halves;
-    if (!isDefinedByDescriptorSomewhere(key) || !m_layoutsBelowConstructorFunctions.get(layout.index()))
+    if (!isDefinedByDescriptorSomewhere(key) || !m_layoutsBelowFollowedPrototypes.get(layout.index()))
         return halves;
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     size_t stepsLeft = program.layouts.size();
     for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
-        if (isOfConstructorFunction(current)) {
+        if (followsNamesOnPrototypeOf(current)) {
             uint32_t record = recordOfNameOnPrototype(current, key);
             halves.append(ofSetters ? m_namesOnPrototypes[record].setter : m_namesOnPrototypes[record].getter);
         }
@@ -365,7 +440,7 @@ void LinkFlow::layAccessorOnPrototypeOf(LayoutID layout, PropertyKeyID key, Func
 
 FlowNodeID LinkFlow::foundOnPrototypesAbove(LayoutID layout, PropertyKeyID key, AccessorsAbove accessors)
 {
-    if (!m_layoutsBelowConstructorFunctions.get(layout.index()))
+    if (!m_layoutsBelowFollowedPrototypes.get(layout.index()))
         return { };
     if (accessors == AccessorsAbove::AreEnteredByNobody)
         letAccessorsOnPrototypesAboveEscape(layout, key);
@@ -394,7 +469,7 @@ FlowNodeID LinkFlow::foundOnPrototypesAbove(LayoutID layout, PropertyKeyID key, 
 FlowNodeID LinkFlow::foundOnPrototypesAboveUnderNumbers(LayoutID layout)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
-    if (!m_layoutsBelowConstructorFunctions.get(layout.index()))
+    if (!m_layoutsBelowFollowedPrototypes.get(layout.index()))
         return { };
     passPrototypesAboveUnderNumbers(layout);
     return foundBesideFieldsUnderAnyNumber();
@@ -402,12 +477,12 @@ FlowNodeID LinkFlow::foundOnPrototypesAboveUnderNumbers(LayoutID layout)
 
 void LinkFlow::passPrototypesAboveUnderNumbers(LayoutID layout)
 {
-    if (!m_layoutsBelowConstructorFunctions.get(layout.index()))
+    if (!m_layoutsBelowFollowedPrototypes.get(layout.index()))
         return;
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
     size_t stepsLeft = program.layouts.size();
     for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
-        if (!isOfConstructorFunction(current) || m_prototypesPassedByNumbers.set(current.index()) || !m_prototypesWithDefinitions.get(current.index()))
+        if (!followsNamesOnPrototypeOf(current) || m_prototypesPassedByNumbers.set(current.index()) || !m_prototypesWithDefinitions.get(current.index()))
             continue;
         bool mayFindAccessor = false;
         for (uint32_t record = firstNameOnPrototypeOf(current); record != UINT32_MAX; record = m_namesOnPrototypes[record].nextOfLayout) {
@@ -425,7 +500,7 @@ void LinkFlow::passPrototypesAboveUnderNumbers(LayoutID layout)
 
 void LinkFlow::lookForSetterOnPrototypesAbove(LayoutID layout, PropertyKeyID key, AccessorsAbove accessors)
 {
-    if (!m_layoutsBelowConstructorFunctions.get(layout.index()))
+    if (!m_layoutsBelowFollowedPrototypes.get(layout.index()))
         return;
     if (accessors == AccessorsAbove::AreEnteredByNobody)
         letAccessorsOnPrototypesAboveEscape(layout, key);
@@ -499,11 +574,11 @@ void LinkFlow::defineOnPrototypeOf(LayoutID layout, PropertyKeyID key, UnknownKe
 
 void LinkFlow::tiePrototypesAboveLostLayout(LayoutID lost)
 {
-    if (!m_layoutsBelowConstructorFunctions.get(lost.index()))
+    if (!m_layoutsBelowFollowedPrototypes.get(lost.index()))
         return;
     size_t stepsLeft = program.layouts.size();
     for (LayoutID current = lost; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
-        if (!isOfConstructorFunction(current) || m_prototypesAboveLostLayouts.set(current.index()))
+        if (!followsNamesOnPrototypeOf(current) || m_prototypesAboveLostLayouts.set(current.index()))
             continue;
         for (uint32_t record = firstNameOnPrototypeOf(current); record != UINT32_MAX; record = m_namesOnPrototypes[record].nextOfLayout) {
             NameOnPrototype name = m_namesOnPrototypes[record];
@@ -532,7 +607,7 @@ bool LinkFlow::letPrototypesFoundThroughLostEscape()
 
 void LinkFlow::openPrototypeOf(LayoutID layout)
 {
-    if (!isOfConstructorFunction(layout))
+    if (!followsNamesOnPrototypeOf(layout))
         return;
     for (uint32_t record = firstNameOnPrototypeOf(layout); record != UINT32_MAX; record = m_namesOnPrototypes[record].nextOfLayout) {
         FlowNodeID stored = m_namesOnPrototypes[record].stored;

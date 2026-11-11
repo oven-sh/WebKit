@@ -12,6 +12,7 @@
 #include "AOTInstance.h"
 #include "AOTOperationData.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSlotRepresentation.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
@@ -42,7 +43,13 @@ StubSignature signatureOfStringEqualsLiteral(StubKey) { return tableComparisonSi
 StubSignature signatureOfValueEqualsLiteral(StubKey) { return tableComparisonSignature(comparedSubjectRegister).fillingOperandInFront(0); }
 StubSignature signatureOfStringEqualsLiteralOfLength(StubKey) { return registerComparisonSignature().standingBehindEntryThatFillsOperandInFront(0); }
 StubSignature signatureOfValueEqualsLiteralOfLength(StubKey) { return registerComparisonSignature().fillingOperandInFront(0); }
-StubSignature signatureOfNarrowCharactersOfString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11) }); }
+StubSignature signatureOfNarrowCharactersOfString(StubKey)
+{
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::T11) });
+    signature.result = StubResult::TwoGPRs;
+    signature.secondResult = gprOf(StubRegister::T12);
+    return signature;
+}
 
 void generateStringEqualsLiteral(StubAssembler& jit)
 {
@@ -81,10 +88,16 @@ void generateStringEqualsLiteral(StubAssembler& jit)
         returnResult(jit, TrustedImm32(0));
         return;
     }
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringWords)), number);
-    jit.load32(BaseIndex(number, stringIndex, CCallHelpers::TimesFour), number);
-    hasNoHeader.append(jit.branchTest32(CCallHelpers::NonZero, number, TrustedImm32(ImageString::hasNoHeaderFlag)));
-    jit.and32(TrustedImm32(ImageString::hashMask), number);
+    auto loadNumberOfHeader = [&](JumpList& hasNone) {
+        jit.zeroExtend32ToWord(stringIndex, number);
+        Jump isIdentifier = jit.branch32(CCallHelpers::Above, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.endOfIdentifiers)), number);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringWords)), number);
+        jit.load32(BaseIndex(number, stringIndex, CCallHelpers::TimesFour), number);
+        hasNone.append(jit.branchTest32(CCallHelpers::NonZero, number, TrustedImm32(ImageString::hasNoHeaderFlag)));
+        jit.and32(TrustedImm32(ImageString::hashMask), number);
+        isIdentifier.link(&jit);
+    };
+    loadNumberOfHeader(hasNoHeader);
     if (lengthOfLiteral) {
         jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), header);
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
@@ -105,13 +118,15 @@ void generateStringEqualsLiteral(StubAssembler& jit)
             isSameImpl.link(&jit);
             returnResult(jit, TrustedImm32(1));
         }
-        isRope.link(&jit);
         hasNoHeader.link(&jit);
+        Label mayBeEqual = jit.label();
         jit.jumpToStub(equalsLiteral(ComparedOperand::String));
         if (lengthOfLiteral < sizeof(uint64_t)) {
             isSameImpl.link(&jit);
             returnResult(jit, TrustedImm32(1));
         }
+        isRope.link(&jit);
+        jit.branch32(CCallHelpers::Equal, Address(subject, JSRopeString::offsetOfLength()), TrustedImm32(lengthOfLiteral)).linkTo(mayBeEqual, &jit);
         isNotEqual.link(&jit);
         returnResult(jit, TrustedImm32(0));
         return;
@@ -152,6 +167,7 @@ void generateStringEqualsLiteral(StubAssembler& jit)
     returnResult(jit, TrustedImm32(1));
 
     isNotEqual.link(&jit);
+    Label answersNo = jit.label();
     returnResult(jit, TrustedImm32(0));
 
     hasNoHeader.link(&jit);
@@ -161,6 +177,17 @@ void generateStringEqualsLiteral(StubAssembler& jit)
     jit.returnToCaller();
 
     isRope.link(&jit);
+    if (!jit.options().isPositionIndependent) {
+        JumpList hasNoLength;
+        loadNumberOfHeader(hasNoLength);
+        jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), header);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
+        jit.getEffectiveAddress(BaseIndex(headers, header, CCallHelpers::TimesEight), header);
+        jit.load32(Address(header, OBJECT_OFFSETOF(ImageStringHeader, length)), length);
+        hasNoLength.append(jit.branchTest32(CCallHelpers::Zero, length));
+        jit.branch32(CCallHelpers::NotEqual, Address(subject, JSRopeString::offsetOfLength()), length).linkTo(answersNo, &jit);
+        hasNoLength.link(&jit);
+    }
     static_assert(leafArgumentGPR(2) == gprOf(StubRegister::A2));
     JumpList needsOperation;
     load8BitCharactersOfSubstring(jit, subject, fiber, length, needsOperation);
@@ -244,7 +271,7 @@ void generateStringEqualsLiteralOfLength(StubAssembler& jit)
         return;
     }
     isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(fiber, StringImpl::lengthMemoryOffset()), TrustedImm32(length)));
-    slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
     jit.loadPtr(Address(fiber, StringImpl::dataOffset()), characters);
     Label hasCharacters = jit.label();
     loadPackedCharacters(jit, length, characters, packed);
@@ -256,8 +283,26 @@ void generateStringEqualsLiteralOfLength(StubAssembler& jit)
     isRope.link(&jit);
     isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(subject, JSRopeString::offsetOfLength()), TrustedImm32(length)));
     Jump hasPieces = jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer));
-    load8BitCharactersOfSubstring(jit, subject, characters, offsetInBase, slowCases);
+    JumpList baseIs16Bit;
+    load8BitCharactersOfSubstring(jit, subject, characters, offsetInBase, baseIs16Bit);
     jit.jump().linkTo(hasCharacters, &jit);
+
+    baseIs16Bit.link(&jit);
+    jit.lshift64(TrustedImm32(1), offsetInBase);
+    jit.addPtr(Address(fiber, StringImpl::dataOffset()), offsetInBase);
+    jit.move(offsetInBase, characters);
+    Jump has16BitCharacters = jit.jump();
+    is16Bit.link(&jit);
+    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), characters);
+    has16BitCharacters.link(&jit);
+    jit.load16(Address(characters), packed);
+    jit.zeroExtend8To32(text, characters);
+    if (length == 1)
+        jit.returnFlags32(CCallHelpers::Equal, packed, characters);
+    else {
+        isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, packed, characters));
+        slowCases.append(jit.jump());
+    }
 
     hasPieces.link(&jit);
     const GPRReg count = gprOf(StubRegister::T10);
@@ -321,7 +366,57 @@ void generateStringEqualsLiteralOfLength(StubAssembler& jit)
 
 void generateNarrowCharactersOfString(StubAssembler& jit)
 {
-    jit.callOperationAndReturn(Entry::operationAOTNarrowCharactersOfString, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = jit.operand(0) });
+    const GPRReg string = jit.operand(0);
+    const GPRReg characters = jit.result();
+    const GPRReg length = jit.secondResult();
+    const GPRReg offset = jit.allocateScratch(StubRegister::T9);
+    const GPRReg index = offset;
+    RELEASE_ASSERT(noOverlap(string, characters, length, offset));
+
+    JumpList isNoSubstringOfLatin1;
+    JumpList isOther;
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), characters);
+    load8BitCharactersOfSubstring(jit, string, characters, offset, isNoSubstringOfLatin1);
+    jit.load32(Address(string, JSRopeString::offsetOfLength()), length);
+    jit.returnToCaller();
+
+    isNoSubstringOfLatin1.link(&jit);
+    const GPRReg value = length;
+    const GPRReg flags = offset;
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), value);
+    Jump isRope = jit.branchIfRopeStringImpl(value);
+    jit.loadPtr(Address(value, StringImpl::dataOffset()), characters);
+    jit.load32(Address(value, StringImpl::flagsOffset()), flags);
+    jit.load32(Address(value, StringImpl::lengthMemoryOffset()), length);
+    Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(StringImpl::flagIs8Bit()));
+    jit.returnToCaller();
+
+    isRope.link(&jit);
+    isOther.append(jit.branchTestPtr(CCallHelpers::Zero, value, TrustedImm32(JSRopeString::isSubstringInPointer)));
+    jit.load32(Address(string, JSRopeString::offsetOfLength()), length);
+    jit.lshift64(TrustedImm32(1), offset);
+    jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
+    jit.addPtr(offset, characters);
+
+    is16Bit.link(&jit);
+    constexpr int32_t highByte = 1;
+    isOther.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(std::tuple_size_v<decltype(NarrowCharactersOfString::characters)>)));
+    jit.move(TrustedImm32(0), index);
+    Label next = jit.label();
+    isOther.append(jit.branch32(CCallHelpers::AboveOrEqual, index, length));
+    Jump isWide = jit.branchTest8(CCallHelpers::NonZero, BaseIndex(characters, index, CCallHelpers::TimesTwo, highByte));
+    jit.add32(TrustedImm32(1), index);
+    jit.jump().linkTo(next, &jit);
+
+    isWide.link(&jit);
+    jit.move(TrustedImm32(static_cast<int32_t>(NarrowCharactersOfString::lengthOfNoNarrowText)), length);
+    jit.returnToCaller();
+
+    isOther.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTNarrowCharactersOfString, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = string }, [&] {
+        jit.load32(Address(characters, OBJECT_OFFSETOF(NarrowCharactersOfString, length)), length);
+        jit.addPtr(TrustedImm32(OBJECT_OFFSETOF(NarrowCharactersOfString, characters)), characters);
+    });
 }
 
 } } // namespace JSC::AOT

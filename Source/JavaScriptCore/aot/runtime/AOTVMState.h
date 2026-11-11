@@ -9,6 +9,7 @@
 
 #include "AOTVector.h"
 #include <JavaScriptCore/CollectionScope.h>
+#include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <memory>
 #include <wtf/BitVector.h>
@@ -43,8 +44,43 @@ class VMPropertyCaches;
 struct CyclesOfImports;
 struct FormatPatternState;
 struct FunctionTables;
+struct ImportersOfModules;
 struct Instance;
 struct ReexportedNames;
+
+class PlacesSeenByPlans {
+public:
+    uint32_t takeMark(size_t numberOfModules)
+    {
+        if (m_numberOfModules != numberOfModules || m_nextMark > std::numeric_limits<uint32_t>::max() - 3 - numberOfModules) {
+            m_numberOfModules = numberOfModules;
+            m_groups.clear();
+            m_groups.grow((numberOfModules + modulesInGroup - 1) / modulesInGroup);
+            m_nextMark = 1;
+        }
+        return m_nextMark++;
+    }
+
+    void setNextMark(uint32_t mark) { m_nextMark = mark; }
+
+    uint32_t& operator[](size_t module)
+    {
+        std::unique_ptr<Group>& group = m_groups[module / modulesInGroup];
+        if (!group)
+            group = makeUnique<Group>();
+        return group->places[module % modulesInGroup];
+    }
+
+private:
+    static constexpr size_t modulesInGroup = 64;
+    struct Group {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Group);
+        std::array<uint32_t, modulesInGroup> places { };
+    };
+    Vector<std::unique_ptr<Group>> m_groups;
+    size_t m_numberOfModules { 0 };
+    uint32_t m_nextMark { 1 };
+};
 
 class StructuresWithFastIndexing {
 public:
@@ -103,7 +139,9 @@ public:
     std::unique_ptr<CallSiteCache> callSiteCache;
     std::unique_ptr<FunctionTables> functionTables;
     std::unique_ptr<CyclesOfImports> cyclesOfImports;
+    std::unique_ptr<ImportersOfModules> importersOfModules;
     std::unique_ptr<ReexportedNames> reexportedNames;
+    PlacesSeenByPlans placesSeenByPlans;
     std::unique_ptr<RegExpLiterals> regExpLiterals;
     std::unique_ptr<FormatPatternState, FormatPatternStateDeleter> formatPatternState;
     BitVector filesWithKnownFirstLoad;
@@ -145,13 +183,20 @@ public:
     void* exceptionCatcherStackPointer { nullptr };
     const void* returnAddressOfCallThatCollected { nullptr };
     void* stackPointerOfImport { nullptr };
-    CallFrame* frameOfImportThatAsksLoader { nullptr };
+    CallFrame* importFrameInLoader { nullptr };
     bool requesterRejectsUncompiledCode { false };
     bool isResolvingImportCall { false };
     bool isResolvingImportCallWithoutAttributes { false };
     bool requireRunsMocks { false };
     std::unique_ptr<ProgramIdentifiers> identifiers;
     CountedFiles countedFiles;
+    struct ComputedFunctionName {
+        Weak<JSString> name;
+        unsigned hash { 0 };
+        unsigned length { 0 };
+        bool isOneOfSeveral { false };
+    };
+    UncheckedKeyHashMap<uint32_t, ComputedFunctionName, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> computedFunctionNames;
     struct KeysComparedLastWithLongNames {
         UncheckedKeyHashMap<const UniquedStringImpl*, const JSString*> byName;
         uint64_t versionOfHeap { 0 };

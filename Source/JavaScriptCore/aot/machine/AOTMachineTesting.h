@@ -63,6 +63,7 @@ struct RandomProcedureOptions {
     bool withLandingPads { true };
     bool withNumbers { true };
     bool withScaledSums { false };
+    bool withCombinedOperands { false };
     bool withArmsThatReturn { false };
 };
 struct RandomProgram;

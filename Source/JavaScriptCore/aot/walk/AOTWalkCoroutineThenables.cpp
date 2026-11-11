@@ -107,6 +107,11 @@ static bool isFreshListWithoutThenForThenables(Walker& walker, Reference value)
     });
 }
 
+bool hasNoThen(const Walker& walker, TypeID type)
+{
+    return isProvenToHaveNoThen(walker.program(), walker.facts(), walker.types(), type);
+}
+
 bool isProvenToHaveNoThen(Walker& walker, Reference value)
 {
     if (!value)

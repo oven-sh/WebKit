@@ -19,6 +19,7 @@ constexpr StubKey callHostFunction(unsigned count) { return StubKey(StubFamily::
 constexpr StubKey callHostFunctionWithoutBoxedCall(unsigned count) { return StubKey(StubFamily::CallHostFunctionWithoutBoxedCall).withCount(count); }
 constexpr StubKey callHostFunctionThatMayBeUnfetched(unsigned count) { return StubKey(StubFamily::CallHostFunctionThatMayBeUnfetched).withCount(count); }
 constexpr StubKey callHostFunctionWithCount() { return StubKey(StubFamily::CallHostFunctionWithCount); }
+constexpr StubKey callHostGetter() { return StubKey(StubFamily::CallHostGetter); }
 
 enum class DirectFunctionCall : uint8_t { WithFrame, Leaf, WithHostFrame, LeafReturningNumber };
 

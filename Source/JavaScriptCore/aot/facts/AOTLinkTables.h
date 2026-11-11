@@ -42,8 +42,10 @@ struct LinkedFunction {
     bool everyCallerIsKnown { false };
     bool everyCallHasOneCallee { false };
     bool everyTakerOfResultKnowsCallee { false };
+    bool hasSingleCallSite { false };
     bool ringsOfTailCallsAreListed { false };
     bool runsAtMostOnce { false };
+    bool isIterationCallback { false };
     bool isNamedInItsCycle { true };
     bool liesUnderNameOrIsLost { false };
     bool isInQueueFromStart { false };
@@ -114,7 +116,9 @@ inline constexpr uint32_t maxAppendedFieldsOutOfLine = maxExtensionGranules;
 struct LinkedLayout {
     FamilyID family;
     bool isAllocated { true };
+    bool hasDirectInstances { true };
     bool reachesUnseenCode { true };
+    bool instancesMayBeLocked { true };
     OptionSet<LayoutChange> possibleChanges { LayoutChange::IsFrozen, LayoutChange::GainsProperty, LayoutChange::LosesProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor, LayoutChange::GetsObjectAbove };
     bool isRedefinedByLiteralsAlone { false };
     bool isDefinedOnByDescriptorsThatLayValuesAlone { false };
@@ -247,6 +251,12 @@ struct LinkedGetterAtRead {
 };
 
 struct LinkedResultOfRead {
+    FunctionID function;
+    ValueID site;
+    TypeID proven;
+};
+
+struct LinkedNativeCallResult {
     FunctionID function;
     ValueID site;
     TypeID proven;
@@ -423,6 +433,10 @@ struct LinkedFunctionUnderName {
     friend constexpr auto operator<=>(const LinkedFunctionUnderName&, const LinkedFunctionUnderName&) = default;
 };
 
+class Program;
+struct LinkTables;
+bool instancesMayBeLocked(const Program&, const LinkTables&, TypeID testedType);
+
 struct LinkTables {
     std::unique_ptr<Families> familiesBehindFlow;
     BitVector exportsThatStayIn;
@@ -444,6 +458,8 @@ struct LinkTables {
     Vector<LinkedCoroutine> coroutines;
     const LinkedCoroutine* findCoroutine(FunctionID) const;
     Vector<LinkedResultOfRead> resultsOfReadsByKey;
+    Vector<LinkedNativeCallResult> nativeCallResults;
+    BitVector nativeFunctionCallers;
     Vector<LinkedContentsAtOperation> contentsAtOperations;
     Vector<LinkedReceiverAsMade> receiversThatStayAsMade;
     Vector<LinkedReceiverAsMade> receiversThatNobodyChanges;
@@ -729,6 +745,15 @@ struct LinkTables {
             return placeOfSite(access.function, access.site);
         });
         return found ? found->key : PropertyKeyID();
+    }
+    TypeID nativeCallResult(FunctionID function, ValueID site) const
+    {
+        if (!nativeFunctionCallers.get(function.index()))
+            return { };
+        const LinkedNativeCallResult* found = findListedUnder(nativeCallResults.span(), placeOfSite(function, site), [](const LinkedNativeCallResult& call) {
+            return placeOfSite(call.function, call.site);
+        });
+        return found ? found->proven : TypeID();
     }
     TypeID resultOfReadByKey(FunctionID function, ValueID site) const
     {

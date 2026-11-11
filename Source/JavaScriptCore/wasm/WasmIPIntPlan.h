@@ -64,6 +64,7 @@ public:
     }
 
     void work() final;
+    bool hasCodeInImage() const { return m_moduleInImage; }
 
     bool didReceiveFunctionData(FunctionCodeIndex, const FunctionData&) final;
 

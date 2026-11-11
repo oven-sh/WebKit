@@ -4481,6 +4481,9 @@ private:
         case RangeReduction::Kind::Comparison:
             replaceWithNew<Value>(reduction.opcode, m_value->origin(), reduction.value, reduction.right);
             return true;
+        case RangeReduction::Kind::ComparisonWithConstant:
+            replaceWithNew<Value>(reduction.opcode, m_value->origin(), reduction.value, m_insertionSet.insertIntConstant(m_index, m_value->origin(), Int32, reduction.constant));
+            return true;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }

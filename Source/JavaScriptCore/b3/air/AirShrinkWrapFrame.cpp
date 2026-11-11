@@ -105,6 +105,9 @@ private:
     void addCrowdedBlocks(const BitVector&);
     Vector<unsigned> findCyclesWithoutRareEdge(unsigned& numberOfCycles);
     bool closeOverCertainPaths();
+    bool addUnlikelySwitches();
+    bool hasLikelyFramelessPath() const;
+    bool canSinkFrameBelowEntry() const;
     bool closeOverWritesAheadOfFrame();
     bool growOverLiveScratchRegisters(const RegLiveness&);
     void closeRegion(const RegLiveness*);
@@ -116,6 +119,7 @@ private:
     void insertOnOutgoingEdges(BasicBlock* from);
     bool shouldSetUpFrameAtHead(BasicBlock*) const;
     void insertSetups();
+    static bool leavesFunction(BasicBlock*);
     void insertTeardowns();
 
     Code& m_code;
@@ -129,6 +133,7 @@ private:
     BitVector m_takesSlotAddress;
     BitVector m_isKnownNotToWriteMemory;
     BitVector m_setsUpFrameAtHead;
+    bool m_sinksFrameBelowEntry { false };
     Vector<SplitEdge> m_latestSplitByTarget;
     uint64_t m_savedCalleeSaves { 0 };
     uint64_t m_scratchRegisters { 0 };
@@ -595,6 +600,8 @@ bool FrameShrinkWrapper::closeOverCertainPaths()
 
     bool changed = false;
     for (BasicBlock* block : m_code) {
+        if (block == m_code[0] && m_sinksFrameBelowEntry)
+            continue;
         if (!reachesExitWithoutFrame.quickGet(block->index()) || !isReachedWithoutFrame.quickGet(block->index()))
             changed |= addToRegion(block);
     }
@@ -651,13 +658,76 @@ bool FrameShrinkWrapper::growOverLiveScratchRegisters(const RegLiveness& livenes
     return changed;
 }
 
+bool FrameShrinkWrapper::addUnlikelySwitches()
+{
+    bool changed = false;
+    for (BasicBlock* block : m_code) {
+        if (block->numSuccessors() <= 2 || isInRegion(block) || m_isOnLikelyPath.quickGet(block->index()))
+            continue;
+        unsigned numberOfEdgesIntoRegion = 0;
+        for (BasicBlock* successor : block->successorBlocks())
+            numberOfEdgesIntoRegion += isInRegion(successor);
+        if (numberOfEdgesIntoRegion > 1)
+            changed |= addToRegion(block);
+    }
+    return changed;
+}
+
+bool FrameShrinkWrapper::hasLikelyFramelessPath() const
+{
+    BitVector isReached(m_code.size());
+    Vector<BasicBlock*, 16> worklist;
+    auto visit = [&](BasicBlock* block) {
+        if (!isInRegion(block) && !isReached.quickSet(block->index()))
+            worklist.append(block);
+    };
+    visit(m_code[0]);
+    while (!worklist.isEmpty()) {
+        BasicBlock* block = worklist.takeLast();
+        if (leavesFunction(block))
+            return true;
+        for (const FrequentedBlock& edge : block->successors()) {
+            if (edge.isLikely())
+                visit(edge.block());
+        }
+    }
+    return false;
+}
+
+bool FrameShrinkWrapper::canSinkFrameBelowEntry() const
+{
+    BasicBlock* entry = m_code[0];
+    if (!m_code.policy().frame.sinksFrameBelowEntry || isInRegion(entry) || entry->numPredecessors() || entry->numSuccessors() != 2)
+        return false;
+    if (entry->successor(0).isLikely() && entry->successor(1).isLikely())
+        return false;
+    return std::ranges::all_of(*entry, [&](const Inst& inst) {
+        return inst.kind.opcode == Patch || inst.isMoveBetweenRegisters() || &inst == &entry->last();
+    });
+}
+
 void FrameShrinkWrapper::closeRegion(const RegLiveness* liveness)
 {
+    const FramePolicy& policy = m_code.policy().frame;
+    m_sinksFrameBelowEntry = canSinkFrameBelowEntry();
     findLikelyPaths();
+    bool mayCoverEntry = policy.needsLikelyFramelessPath;
     bool changed;
     do {
         changed = closeOverLikelyPaths();
         changed |= closeOverCertainPaths();
+        if (policy.hoistsFrameAboveSwitches)
+            changed |= addUnlikelySwitches();
+        if (!changed && mayCoverEntry && !m_isInRegion.isEmpty()) {
+            mayCoverEntry = false;
+            if (!isInRegion(m_code[0]) && !hasLikelyFramelessPath()) {
+                if (m_sinksFrameBelowEntry) {
+                    for (BasicBlock* successor : m_code[0]->successorBlocks())
+                        changed |= addToRegion(successor);
+                } else
+                    changed |= addToRegion(m_code[0]);
+            }
+        }
         changed |= closeOverWritesAheadOfFrame();
         if (liveness && m_scratchRegisters)
             changed |= growOverLiveScratchRegisters(*liveness);
@@ -793,13 +863,17 @@ void FrameShrinkWrapper::insertSetups()
     }
 }
 
+// A terminal patch that runs without a frame, such as a tail call.
+bool FrameShrinkWrapper::leavesFunction(BasicBlock* block)
+{
+    return isReturn(block->last().kind.opcode) || (block->last().kind.opcode == Patch && !block->numSuccessors() && !block->last().needsFrame());
+}
+
 void FrameShrinkWrapper::insertTeardowns()
 {
     for (size_t blockIndex : m_isInRegion) {
         BasicBlock* block = m_code[blockIndex];
-        // A patch that ends the function and runs without a frame: a tail call.
-        bool leavesFunction = isReturn(block->last().kind.opcode) || (block->last().kind.opcode == Patch && !block->numSuccessors() && !block->last().needsFrame());
-        if (!leavesFunction) {
+        if (!leavesFunction(block)) {
             insertOnOutgoingEdges(block);
             continue;
         }

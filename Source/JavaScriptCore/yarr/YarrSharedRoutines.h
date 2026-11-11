@@ -90,6 +90,7 @@ static_assert(areCanonicallyEquivalentCharArgReg == GPRInfo::returnValueGPR);
 enum class SurrogatePairAdvance : uint8_t { ByCaller, ClaimsSecondUnit, ClaimsSecondUnitBeforeCallerAdvances };
 enum class InputCheck : uint8_t { DoneByCaller, FailsIfIndexIsAboveLength, FailsIfIndexIsLength };
 enum class ClassWords : uint8_t { Low, High, Both };
+enum class PositionUnits : uint8_t { One, IgnoreCase, Two };
 
 #if CPU(X86_64)
 inline constexpr GPRReg classTableRegister = MacroAssembler::s_scratchRegister;
@@ -157,8 +158,8 @@ struct SharedRoutine {
     struct FindFirstPairOfUnits {
         CharSize charSize;
         uint8_t distance;
-        bool foldsCaseOfFirst;
-        bool foldsCaseOfSecond;
+        PositionUnits first;
+        PositionUnits second;
 
         friend bool operator==(const FindFirstPairOfUnits&, const FindFirstPairOfUnits&) = default;
     };

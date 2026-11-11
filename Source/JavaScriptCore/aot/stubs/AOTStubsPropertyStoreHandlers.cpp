@@ -100,7 +100,7 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::FieldCreation:
     case Slot::Kind::ExtraPropertyAddition:
         return !isPacked;
-    case Slot::Kind::FieldOrInheritedSetter:
+    case Slot::Kind::FieldOrInheritedAccessor:
         return !isDefinition && !isPacked;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -368,7 +368,7 @@ void generateStoreSlot(StubAssembler& jit)
         linkToUncachedExit(arm);
         break;
     }
-    case Slot::Kind::FieldOrInheritedSetter: {
+    case Slot::Kind::FieldOrInheritedAccessor: {
         const FieldAddressRegisters field { .object = receiver, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = T14 };
         const GPRReg getterSetter = T10;
         JumpList isAbsent;
@@ -454,6 +454,7 @@ void generateStoreSlot(StubAssembler& jit)
 
         isFirstStorage.link(&jit);
         cannot.append(jit.branchTestPtr(CCallHelpers::NonZero, butterfly));
+        CCallHelpers::Label hasNoStorage = jit.label();
         branchUnlessOrdinaryFunction(newStructureID);
         jit.move(TrustedImm32(0), oldCapacity);
 
@@ -477,6 +478,7 @@ void generateStoreSlot(StubAssembler& jit)
             slot.loadSecondPayloadWord(jit, newCapacity);
             cannot.append(jit.branch32(CCallHelpers::NotEqual, newCapacity, TrustedImm32(initialOutOfLineCapacity)));
             jit.loadPtr(butterfly, distanceToButterfly);
+            jit.branchTestPtr(CCallHelpers::Zero, distanceToButterfly).linkTo(hasNoStorage, &jit);
             jit.subPtr(receiver, distanceToButterfly);
             cannot.append(jit.branch64(CCallHelpers::NotEqual, distanceToButterfly, TrustedImm32(static_cast<int32_t>(sizeOfArrayWithStorage(0, propertyRoomOfArray)))));
             emitAdditionInStorage();

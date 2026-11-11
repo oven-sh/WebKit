@@ -6,7 +6,11 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
+#include <bit>
+#include <concepts>
 #include <cstddef>
+#include <cstring>
 #include <functional>
 #include <iterator>
 #include <memory>
@@ -22,6 +26,8 @@ namespace JSC { namespace AOT {
 inline constexpr std::ptrdiff_t largestRangeSortedByInsertion = 32;
 
 inline constexpr std::ptrdiff_t longestRunThatMergingStartsFrom = 16;
+
+inline constexpr std::ptrdiff_t fewestIntegersSortedByDigits = 2048;
 
 template<typename Iterator, typename IsLess, typename Projection>
 void insertEachWhereItBelongs(Iterator first, Iterator next, Iterator last, IsLess& isLess, Projection& projection)
@@ -81,6 +87,36 @@ NEVER_INLINE void mergeSortKeepingEqualElementsInOrder(Element* first, Element* 
     fastFree(room);
 }
 
+template<std::unsigned_integral Integer>
+NEVER_INLINE void sortIntegersByDigits(Integer* first, Integer* last)
+{
+    constexpr unsigned bitsInDigit = 11;
+    constexpr size_t valuesOfDigit = 1 << bitsInDigit;
+    size_t size = last - first;
+    Integer bitsThatDiffer = 0;
+    for (size_t index = 1; index < size; ++index)
+        bitsThatDiffer |= first[index] ^ *first;
+    Integer* room = static_cast<Integer*>(fastMalloc(size * sizeof(Integer)));
+    Integer* from = first;
+    Integer* to = room;
+    while (bitsThatDiffer) {
+        unsigned shift = std::countr_zero(bitsThatDiffer);
+        bitsThatDiffer &= ~static_cast<Integer>(static_cast<Integer>(valuesOfDigit - 1) << shift);
+        std::array<size_t, valuesOfDigit> places { };
+        for (size_t index = 0; index < size; ++index)
+            ++places[from[index] >> shift & (valuesOfDigit - 1)];
+        size_t next = 0;
+        for (size_t& place : places)
+            next += std::exchange(place, next);
+        for (size_t index = 0; index < size; ++index)
+            to[places[from[index] >> shift & (valuesOfDigit - 1)]++] = from[index];
+        std::swap(from, to);
+    }
+    if (from != first)
+        memcpy(first, from, size * sizeof(Integer));
+    fastFree(room);
+}
+
 template<std::ranges::random_access_range Range, typename IsLess, typename Projection>
 void sortKeepingEqualElementsInOrder(Range&& range, IsLess isLess, Projection projection)
 {
@@ -91,6 +127,12 @@ void sortKeepingEqualElementsInOrder(Range&& range, IsLess isLess, Projection pr
         return;
     if (last - first > largestRangeSortedByInsertion) {
         static_assert(std::contiguous_iterator<decltype(first)>);
+        if constexpr (std::unsigned_integral<std::iter_value_t<decltype(first)>> && std::same_as<IsLess, std::ranges::less> && std::same_as<Projection, std::identity>) {
+            if (last - first >= fewestIntegersSortedByDigits) {
+                sortIntegersByDigits(std::to_address(first), std::to_address(last));
+                return;
+            }
+        }
         mergeSortKeepingEqualElementsInOrder(std::to_address(first), std::to_address(first) + (last - first), isLess, projection);
         return;
     }

@@ -215,7 +215,7 @@ bool anyInstUsesFlags(Code& code)
 bool flagsAfter(bool areDefined, const Inst& inst)
 {
     Opcode opcode = inst.kind.opcode;
-    return definesFlags(opcode) || setsFlagsToResult(inst) || (areDefined && preservesFlags(opcode));
+    return definesFlags(opcode) || setsFlagsToResult(inst) || (areDefined && (preservesFlags(opcode) || isFlagPreservingMove(inst)));
 }
 
 bool flagsAtTail(bool areDefinedAtHead, BasicBlock* block)

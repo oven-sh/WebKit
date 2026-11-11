@@ -2017,6 +2017,11 @@ public:
         m_formatter.oneByteOp(OP_CMP_GvEv, src, base, offset);
     }
 
+    void cmpl_mr(int offset, RegisterID base, RegisterID index, int scale, RegisterID src)
+    {
+        m_formatter.oneByteOp(OP_CMP_GvEv, src, base, index, scale, offset);
+    }
+
     void cmpl_ir(int imm, RegisterID dst)
     {
         if (CAN_SIGN_EXTEND_8_32(imm)) {
@@ -2095,6 +2100,11 @@ public:
     void cmpq_mr(int offset, RegisterID base, RegisterID src)
     {
         m_formatter.oneByteOp64(OP_CMP_GvEv, src, base, offset);
+    }
+
+    void cmpq_mr(int offset, RegisterID base, RegisterID index, int scale, RegisterID src)
+    {
+        m_formatter.oneByteOp64(OP_CMP_GvEv, src, base, index, scale, offset);
     }
 
     void cmpq_ir(int imm, RegisterID dst)
@@ -3588,6 +3598,17 @@ public:
     void movq_rip(RegisterID dst)
     {
         m_formatter.oneByteOp64RIPRelative(OP_MOV_GvEv, dst);
+    }
+
+    void cmpq_rip(RegisterID left)
+    {
+        m_formatter.oneByteOp64RIPRelative(OP_CMP_GvEv, left);
+    }
+
+    void movsd_rip(XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOpRIPRelative(OP2_MOVSD_VsdWsd, (RegisterID)dst);
     }
 
     // Flow control:
@@ -7439,6 +7460,7 @@ private:
         void oneByteOpAddr(OneByteOpcodeID opcode, int reg, uint32_t address)
         {
             SingleInstructionBufferWriter writer(m_buffer);
+            writer.emitRexIfNeeded(reg, 0, 0);
             writer.putByteUnchecked(opcode);
             writer.memoryModRMAddr(reg, address);
         }
@@ -7707,6 +7729,16 @@ private:
         {
             SingleInstructionBufferWriter writer(m_buffer);
             writer.emitRexW(reg, 0, 0);
+            writer.putByteUnchecked(opcode);
+            writer.putModRm(ModRmMemoryNoDisp, reg, SingleInstructionBufferWriter::noBase);
+            writer.putIntUnchecked(0);
+        }
+
+        void twoByteOpRIPRelative(TwoByteOpcodeID opcode, int reg)
+        {
+            SingleInstructionBufferWriter writer(m_buffer);
+            writer.emitRexIfNeeded(reg, 0, 0);
+            writer.putByteUnchecked(OP_2BYTE_ESCAPE);
             writer.putByteUnchecked(opcode);
             writer.putModRm(ModRmMemoryNoDisp, reg, SingleInstructionBufferWriter::noBase);
             writer.putIntUnchecked(0);

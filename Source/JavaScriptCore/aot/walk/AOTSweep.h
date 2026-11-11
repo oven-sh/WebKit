@@ -133,6 +133,7 @@ private:
 
     bool beginLookingForBirthsToMove();
     void noteIfBirthMayMove(ValueID, const Operation&);
+    bool isWhereBirthMayMove(ValueID, const Operation&) const;
     bool moveBirthsToWhereCellsAreNeeded();
     SweepTotals sweepAgainBehindMovedBirths(const SweepInputs&, Code&);
 
@@ -332,7 +333,7 @@ inline constexpr OpcodeSet sweptOperationsWithOwnerBarriers = opcodesWhere([](Op
     return runsOwnerBarrierOf(opcode) && remembersOwnerOf(opcode);
 });
 inline constexpr OpcodeSet sweptAllocationsWithFences { Opcode::NewObject, Opcode::NewClosure, Opcode::NewArray, Opcode::CreateRest };
-inline constexpr OpcodeSet birthsThatSweepMayMove { Opcode::NewObject, Opcode::NewArray, Opcode::NewClosure };
+inline constexpr OpcodeSet birthsThatSweepMayMove { Opcode::NewObject, Opcode::NewArray, Opcode::NewClosure, Opcode::CreateRest, Opcode::CreateUnmappedArguments };
 inline constexpr OpcodeSet storesThatMoveWithBirthsInSweep { Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::PutEnvironmentField, Opcode::SetMappedArgument, Opcode::FinishBirth, Opcode::TryFinishBirth };
 
 bool newObjectFencesBeforeHandingCellOn(const Program&, const Plan&, const Operation& newObject);

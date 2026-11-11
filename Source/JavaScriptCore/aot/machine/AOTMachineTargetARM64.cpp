@@ -110,6 +110,60 @@ static constexpr bool isARM64TargetArithmeticImmediate(int64_t value)
 static_assert(isARM64TargetArithmeticImmediate(0xfff) && isARM64TargetArithmeticImmediate(-0xfff) && isARM64TargetArithmeticImmediate(0xfff000) && isARM64TargetArithmeticImmediate(-0xfff000));
 static_assert(!isARM64TargetArithmeticImmediate(0x1001) && !isARM64TargetArithmeticImmediate(0x1000000) && !isARM64TargetArithmeticImmediate(std::numeric_limits<int64_t>::min()));
 
+static constexpr bool isARM64TargetArithmeticMagnitude(uint64_t magnitude)
+{
+    return !(magnitude & ~uint64_t { 0xfff }) || !(magnitude & ~uint64_t { 0xfff000 });
+}
+
+std::optional<ConstantComparison> findConstantComparison(Opcode relation, Width width, int64_t constant)
+{
+    ASSERT(width == Width32 || width == Width64);
+    if (isARM64TargetArithmeticImmediate(constant))
+        return ConstantComparison { ConstantComparison::Immediate, relation, constant };
+
+    bool is32 = width == Width32;
+    if (relation == Above || relation == BelowEqual || relation == AboveEqual || relation == Below) {
+        uint64_t greatest = is32 ? UINT32_MAX : UINT64_MAX;
+        uint64_t bound = is32 ? static_cast<uint32_t>(constant) : static_cast<uint64_t>(constant);
+        if (relation == Above || relation == BelowEqual) {
+            if (bound == greatest)
+                return std::nullopt;
+            ++bound;
+            relation = relation == Above ? AboveEqual : Below;
+            int64_t canonical = is32 ? static_cast<int32_t>(bound) : static_cast<int64_t>(bound);
+            if (bound && isARM64TargetArithmeticImmediate(canonical))
+                return ConstantComparison { ConstantComparison::Immediate, relation, canonical };
+        }
+        if (!std::has_single_bit(bound))
+            return std::nullopt;
+        return ConstantComparison { ConstantComparison::HighBits, relation, 0, static_cast<unsigned>(std::countr_zero(bound)) };
+    }
+
+    if (relation != LessThan && relation != LessEqual && relation != GreaterThan && relation != GreaterEqual)
+        return std::nullopt;
+    int64_t least = is32 ? std::numeric_limits<int32_t>::min() : std::numeric_limits<int64_t>::min();
+    int64_t greatest = is32 ? std::numeric_limits<int32_t>::max() : std::numeric_limits<int64_t>::max();
+    ASSERT(constant >= least && constant <= greatest);
+    if (relation == LessEqual || relation == GreaterThan) {
+        if (constant == greatest)
+            return std::nullopt;
+        ++constant;
+        relation = relation == LessEqual ? LessThan : GreaterEqual;
+        if (isARM64TargetArithmeticImmediate(constant))
+            return ConstantComparison { ConstantComparison::Immediate, relation, constant };
+    }
+
+    uint64_t distanceFromLeast = static_cast<uint64_t>(constant) - static_cast<uint64_t>(least);
+    if (distanceFromLeast && isARM64TargetArithmeticMagnitude(distanceFromLeast))
+        return ConstantComparison { ConstantComparison::Overflow, relation, static_cast<int64_t>(distanceFromLeast), 0, relation == LessThan };
+    uint64_t distanceToGreatest = static_cast<uint64_t>(greatest) - static_cast<uint64_t>(constant) + 1;
+    if (isARM64TargetArithmeticMagnitude(distanceToGreatest))
+        return ConstantComparison { ConstantComparison::Overflow, relation, -static_cast<int64_t>(distanceToGreatest), 0, relation == GreaterEqual };
+    if (constant > 0 && std::has_single_bit(static_cast<uint64_t>(constant)))
+        return ConstantComparison { ConstantComparison::HighBits, relation, 0, static_cast<unsigned>(std::countr_zero(static_cast<uint64_t>(constant))) };
+    return std::nullopt;
+}
+
 static bool isARM64TargetZeroNumber(const Operation& constant)
 {
     if (constant.hasDouble())
@@ -209,7 +263,7 @@ bool acceptsImmediate(const Operation& user, unsigned childIndex, const Operatio
         if (childIndex != 1)
             return false;
         if (constant.hasInt())
-            return isARM64TargetArithmeticImmediate(constant.asInt());
+            return !!findConstantComparison(user.opcode(), widthOf(constant.type()), constant.asInt());
         return isARM64TargetZeroNumber(constant);
 
     case BitAnd:

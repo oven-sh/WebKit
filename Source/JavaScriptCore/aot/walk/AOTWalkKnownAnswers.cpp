@@ -822,7 +822,7 @@ void endKnown(Walker& walker, KnownNote kind, Reference subject, Reference other
 }
 
 static constexpr OpcodeSet testsNumberedInKnownAnswers = allEqualities | allRelations | OpcodeSet { Opcode::ToBoolean, Opcode::HasArrayStorage };
-static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::PrivateGet, Opcode::GetValueAtSiteOrAbsent };
+static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::WholeDivisor, Opcode::RemainderByWholeDivisor, Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::PrivateGet, Opcode::GetValueAtSiteOrAbsent, Opcode::CallInline };
 static constexpr OpcodeSet operationsThatDoNothingAgainInKnownAnswers { Opcode::GetBuiltinValue, Opcode::ModuleBuiltin };
 static bool doesNothingAgainInKnownAnswers(const Walker& walker, const Draft& draft)
 {
@@ -852,11 +852,11 @@ static bool givesNewAnswerUnaskedInKnownAnswers(const Walker& walker, const Draf
 static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& draft, AnswersOfWalk::WordsOfKey& words)
 {
     words.shrink(0);
-    uint32_t numberOfOperands = draft.numberOfOperands();
+    Opcode opcode = draft.opcode;
+    uint32_t numberOfOperands = opcode == Opcode::RemainderByWholeDivisor ? OperandIndex::RemainderByWholeDivisor::wholeDivisor : draft.numberOfOperands();
     if (numberOfOperands > mostValuesInKeyOfKnownAnswer)
         return false;
 
-    Opcode opcode = draft.opcode;
     words.append(headOfKeyOfKnownAnswer(KnownAnswer::Family::Operation, static_cast<uint32_t>(opcode)));
     switch (opcode) {
     case Opcode::GetBuiltinValue:
@@ -872,6 +872,9 @@ static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& d
         break;
     case Opcode::GetValueAtSiteOrAbsent:
         words.append(draft.key().bits());
+        break;
+    case Opcode::CallInline:
+        words.append(static_cast<uint32_t>(draft.inlineBuiltin()));
         break;
     case Opcode::ToInt32:
         words.append(draft.flags);
@@ -943,6 +946,24 @@ static Reference answerOfTestBuiltInKnownAnswers(Walker& walker, const Draft& te
 constinit const OpcodeSet opcodesThatFindEqualOperationBuiltTakes = operationsFoundInKnownAnswers;
 constinit const OpcodeSet opcodesThatNoteOperationBuiltTakes = operationsFoundInKnownAnswers;
 
+static bool isNumberedInKnownAnswers(const Draft& draft)
+{
+    return draft.opcode != Opcode::CallInline || isLookupInTable(draft.inlineBuiltin());
+}
+
+static bool makesTextOfItsKeyInKnownAnswers(const Draft& draft, const Effects& effects)
+{
+    return draft.opcode == Opcode::CallInline && (effects.reads.containsAny(bookkeepingHeaps) || effects.writes.containsAny(bookkeepingHeaps));
+}
+
+static Effects besideTextOfItsKeyInKnownAnswers(const Effects& effects)
+{
+    Effects besideText = effects;
+    besideText.reads.remove(bookkeepingHeaps);
+    besideText.writes.remove(bookkeepingHeaps);
+    return besideText;
+}
+
 static bool touchesItsSiteInKnownAnswers(const Draft& draft, const Effects& effects)
 {
     return draft.opcode == Opcode::GetValueAtSiteOrAbsent && (effects.reads.containsAny(AbstractHeapSet { AbstractHeap::RuntimeState }) || effects.writes.containsAny(AbstractHeapSet { AbstractHeap::RuntimeState }));
@@ -960,6 +981,10 @@ Reference findEqualOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft
 {
     if (touchesItsSiteInKnownAnswers(draft, effects))
         return findEqualOperationBuiltOfItsOpcodes(walker, draft, besideItsSiteInKnownAnswers(effects));
+    if (!isNumberedInKnownAnswers(draft))
+        return { };
+    if (makesTextOfItsKeyInKnownAnswers(draft, effects))
+        return findEqualOperationBuiltOfItsOpcodes(walker, draft, besideTextOfItsKeyInKnownAnswers(effects));
     Opcode opcode = draft.opcode;
     if (!walker.has(Mechanism::Folding) || !walker.state().remembersPlaces())
         return { };
@@ -993,6 +1018,10 @@ void noteOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Ef
 {
     if (touchesItsSiteInKnownAnswers(draft, effects))
         return noteOperationBuiltOfItsOpcodes(walker, draft, besideItsSiteInKnownAnswers(effects), built);
+    if (!isNumberedInKnownAnswers(draft))
+        return;
+    if (makesTextOfItsKeyInKnownAnswers(draft, effects))
+        return noteOperationBuiltOfItsOpcodes(walker, draft, besideTextOfItsKeyInKnownAnswers(effects), built);
     Opcode opcode = draft.opcode;
     if (!walker.has(Mechanism::Folding) || !built.isValue())
         return;
@@ -1152,9 +1181,18 @@ std::optional<PassedTest> Walker::findUpperBoundProof(Reference value, Reference
 std::optional<PassedTest> Walker::findNonNegativeProof(Reference value)
 {
     TypeID type = typeOf(value);
-    if (!type || !m_types.at(type).isInteger() || m_types.at(type).integers.minimum < 0)
+    if (!type || !m_types.at(type).isInteger())
         return std::nullopt;
-    return PassedTest();
+    if (m_types.at(type).integers.minimum >= 0)
+        return PassedTest();
+    if (m_state.answers().isEmpty())
+        return std::nullopt;
+    Draft zero(Opcode::Integer);
+    zero.setInteger(0);
+    std::optional<uint64_t> comparison = findKnown(*this, KnownNote::Relation, constant(WTF::move(zero)), value, 1);
+    if (!comparison || !(*comparison & 1))
+        return std::nullopt;
+    return findPassedTest(Reference::fromBits(static_cast<uint32_t>(*comparison >> 32)), true);
 }
 
 bool isKnownToLieBelow(Walker& walker, Reference value, Reference bound)

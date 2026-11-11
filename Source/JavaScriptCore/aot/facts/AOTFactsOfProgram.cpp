@@ -405,7 +405,7 @@ void RowsOfProgramFacts::listSpecifiersOfLibrary(const Program& program)
 }
 
 struct FindingOfProgramFacts {
-    enum class Kind : uint8_t { UseOfBuiltin, ReadOfAnyMember, WriteOnBuiltin, PrototypeChangeOfBuiltin, NameReadOffUnknownValue, ReadThatNoRowAnswers, PartOfClassIsUsed, KeysOfBuiltinListed, OptionThatRunsCode, InstanceThatMayAnswerEveryName, UnseenCode, WorkerEntry, WorkerStartWithoutName, WorkerURL, URLThatLeavesBody, NamedModule, LoaderHandedToText, CallOfEvent, BuiltinSpelledInText, LightFormIsAskedForMore, CallUnderComputedKey, StandsAboveClass, NamespaceIsGivenByImportCall };
+    enum class Kind : uint8_t { UseOfBuiltin, ReadOfAnyMember, WriteOnBuiltin, PrototypeChangeOfBuiltin, NameReadOffUnknownValue, ReadThatNoRowAnswers, PartOfClassIsUsed, KeysOfBuiltinListed, OptionThatRunsCode, InstanceThatMayAnswerEveryName, UnseenCode, WorkerEntry, WorkerStartWithoutName, WorkerStartFromURL, NamedModule, LoaderHandedToText, CallOfEvent, BuiltinSpelledInText, LightFormIsAskedForMore, CallUnderComputedKey, StandsAboveClass, NamespaceIsGivenByImportCall };
 
     Kind kind { Kind::UseOfBuiltin };
     uint8_t detail { 0 };
@@ -571,7 +571,7 @@ private:
     BuiltinID builtinSurelyAt(ValueID value) const { return value && !m_mayBeSomethingElse.get(value.index()) ? m_builtinOfValue[value.index()] : BuiltinID(); }
     BuiltinID builtinHeldBy(VariableID variable) const { return variable.index() < m_builtinsHeldByVariables.size() ? m_builtinsHeldByVariables[variable.index()] : BuiltinID(); }
     ValueID originOfURL(ValueID value) const { return value && !m_originOfURLOfValue.isEmpty() ? m_originOfURLOfValue[value.index()] : ValueID(); }
-    ValueID originOfURLOrOfItsText(ValueID) const;
+    bool isURLOrItsText(ValueID) const;
     BuiltinID holderOfMethodServed(ValueID) const;
     BuiltinID classOfPartAt(ValueID value) const { return value && !m_classOfPartOfValue.isEmpty() ? m_classOfPartOfValue[value.index()] : BuiltinID(); }
     BuiltinID builtinThatLinkLedToAt(ValueID value) const { return value && !m_builtinThatLinkLedToOfValue.isEmpty() ? m_builtinThatLinkLedToOfValue[value.index()] : BuiltinID(); }
@@ -788,10 +788,6 @@ void BodyLookOfProgramFacts::noteFate(ValueID value, Fate fate, const auto& plac
         note(Finding::Kind::PartOfClassIsUsed, 0, objectOfClass.index(), witnessAt(place));
     if (BuiltinID above = builtinThatLinkLedToAt(value); above && fate != Fate::IsInspected)
         noteUse(above, BuiltinUse::Escaped, place);
-    if (fate != Fate::IsLetGo && fate != Fate::IsFollowedByLink && fate != Fate::IsAskedForAnyMember)
-        return;
-    if (ValueID origin = originOfURL(value))
-        note(Finding::Kind::URLThatLeavesBody, 0, Wire::none, witnessAt(m_index.value(origin)));
 }
 
 void BodyLookOfProgramFacts::handOn(ValueID from, ValueID to)
@@ -1333,18 +1329,18 @@ BodyLookOfProgramFacts::Fate BodyLookOfProgramFacts::fateOf(const BodyValue& use
     return fateAt(BuiltinOperand::argument(argument));
 }
 
-ValueID BodyLookOfProgramFacts::originOfURLOrOfItsText(ValueID value) const
+bool BodyLookOfProgramFacts::isURLOrItsText(ValueID value) const
 {
-    if (ValueID origin = originOfURL(value))
-        return origin;
+    if (originOfURL(value))
+        return true;
     BodyValue read = stripCasts(value);
     if (!m_rows.href || read.opcode() != Opcode::PropGet || builtinMemberNameOf(m_program, read.as<Opcode::PropGet>().key()).name != m_rows.href)
-        return { };
+        return false;
     ValueID origin = originOfURL(read.operand(0));
     if (!origin || !callsThatSpellOutArgumentsInProgramFacts.contains(m_index.opcodeOf(origin)))
-        return { };
+        return false;
     std::span<const ValueID> written = m_index.value(origin).variadicOperands();
-    return !written.empty() && stripCasts(written[0]).opcode() == Opcode::String ? origin : ValueID();
+    return !written.empty() && stripCasts(written[0]).opcode() == Opcode::String;
 }
 
 void BodyLookOfProgramFacts::noteConstructionWhoseOperandsNobodySees(BuiltinID row, const Witness& witness)
@@ -1365,7 +1361,7 @@ void BodyLookOfProgramFacts::noteStartOfWorker(const BodyValue& call, bool spell
         return note(Finding::Kind::WorkerStartWithoutName, 0, Wire::none, witnessAt(call));
 
     bool mayHaveOptions = !m_rows.fileArguments;
-    bool namesFile = false;
+    bool isFromURL = false;
     bool mayGetUnknownFile = false;
     Vector<StringID, 1> paths;
     std::span<const ValueID> arguments = call.variadicOperands();
@@ -1379,16 +1375,17 @@ void BodyLookOfProgramFacts::noteStartOfWorker(const BodyValue& call, bool spell
         }
         if (opcode == Opcode::String)
             paths.append(passed.as<Opcode::String>().string());
-        else if (ValueID origin = originOfURLOrOfItsText(arguments[argument])) {
-            namesFile = true;
-            note(Finding::Kind::WorkerURL, 0, Wire::none, witnessAt(m_index.value(origin)));
-        } else
+        else if (isURLOrItsText(arguments[argument]))
+            isFromURL = true;
+        else
             mayGetUnknownFile |= !isNullish;
     }
     for (StringID path : paths)
         note(Finding::Kind::WorkerEntry, mayHaveOptions, path.index(), witnessAt(call));
-    if (mayGetUnknownFile || (paths.isEmpty() && !namesFile))
+    if (mayGetUnknownFile || (paths.isEmpty() && !isFromURL))
         note(Finding::Kind::WorkerStartWithoutName, 0, Wire::none, witnessAt(call));
+    else if (isFromURL)
+        note(Finding::Kind::WorkerStartFromURL, 0, Wire::none, witnessAt(call));
 }
 
 bool BodyLookOfProgramFacts::listKeysOfLiteral(ValueID value, Vector<PropertyKeyID, 4>& keys) const
@@ -3096,8 +3093,7 @@ void WritesOnBuiltinsInProgramFacts::take(const FindingOfProgramFacts& finding)
     case Kind::BuiltinSpelledInText:
     case Kind::WorkerEntry:
     case Kind::WorkerStartWithoutName:
-    case Kind::WorkerURL:
-    case Kind::URLThatLeavesBody:
+    case Kind::WorkerStartFromURL:
     case Kind::NamedModule:
     case Kind::LoaderHandedToText:
     case Kind::LightFormIsAskedForMore:
@@ -3557,7 +3553,6 @@ private:
     std::optional<bool> m_codeThatNobodyNamesMayLeave;
     BitVector m_partOfClassIsUsed;
     Vector<Finding> m_callsOfEventsNamedInBodies;
-    Vector<Witness> m_urlsThatLeaveBodies;
     Vector<Witness> m_whereProgramReadsNames;
     Vector<Finding> m_callsUnderComputedKeys;
     Witness m_whereNameOfRunIsCalled { noWitness };
@@ -3899,11 +3894,8 @@ void BuilderOfProgramFacts::take(std::span<const Finding> findings)
         case Finding::Kind::LoaderHandedToText:
             m_loaderIsHandedToText = true;
             break;
-        case Finding::Kind::WorkerURL:
-            m_program.workerURLs.append(finding.witness);
-            break;
-        case Finding::Kind::URLThatLeavesBody:
-            m_urlsThatLeaveBodies.append(finding.witness);
+        case Finding::Kind::WorkerStartFromURL:
+            m_program.workerStartsFromURLs.append(finding.witness);
             break;
         case Finding::Kind::NamedModule:
             if (finding.detail) {
@@ -4191,7 +4183,7 @@ void BuilderOfProgramFacts::noteWhatRowsMake(BuiltinID canonical)
         bool mayPrintWhatNobodyKnows = mayBeHandedWhatNobodyKnows && std::ranges::any_of(overload.parameters, [&](const BuiltinParameter& parameter) {
             return m_builtins.isPrintedByFormatter(canonical, parameter);
         });
-        bool mayDescribeWhatNobodyKnows = mayBeHandedWhatNobodyKnows && (m_instancesLoseTheirConstructor || unseenCodeCanRun()) && std::ranges::any_of(overload.parameters, [](const BuiltinParameter& parameter) {
+        bool mayDescribeWhatNobodyKnows = mayBeHandedWhatNobodyKnows && !m_builtins.isUnder(canonical, Builtins::NativeFunctions) && (m_instancesLoseTheirConstructor || unseenCodeCanRun()) && std::ranges::any_of(overload.parameters, [](const BuiltinParameter& parameter) {
             return parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused);
         });
         if (mayPrintWhatNobodyKnows || mayDescribeWhatNobodyKnows)
@@ -6013,14 +6005,12 @@ void BuilderOfProgramFacts::listWorkers()
     }
     entries.shrink(kept);
 
-    Vector<Witness>& urls = m_program.workerURLs;
-    if (isNamedByOperation)
-        urls.appendVector(m_urlsThatLeaveBodies);
+    Vector<Witness>& startsFromURLs = m_program.workerStartsFromURLs;
     auto placeOf = [](const Witness& witness) {
         return std::tuple(witness.function, witness.value);
     };
-    AOT::sort(urls, { }, placeOf);
-    urls.shrink(std::ranges::unique(urls, { }, placeOf).begin() - urls.begin());
+    AOT::sort(startsFromURLs, { }, placeOf);
+    startsFromURLs.shrink(std::ranges::unique(startsFromURLs, { }, placeOf).begin() - startsFromURLs.begin());
 }
 
 bool BuilderOfProgramFacts::needsOneInstanceAtMost() const

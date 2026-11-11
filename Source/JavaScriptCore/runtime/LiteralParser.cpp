@@ -51,6 +51,10 @@
 
 #include "KeywordLookup.h"
 
+#if ENABLE(AOT)
+#include "AOTJSONHooks.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -2982,6 +2986,12 @@ JSValue JSONParse(JSGlobalObject* globalObject, std::span<const char8_t> utf8)
     RELEASE_ASSERT(utf8.size() <= String::MaxLength);
     if (!charactersAreAllASCII(utf8))
         return { };
+#if ENABLE(AOT)
+    if (globalObject->aotInstance()) [[unlikely]] {
+        if (JSValue parsed = AOT::tryParseJSON(globalObject, StringView { byteCast<Latin1Character>(utf8) }))
+            return parsed;
+    }
+#endif
     LiteralParser<Latin1Character, JSONReviverMode::Disabled> parser(globalObject, byteCast<Latin1Character>(utf8), StrictJSON);
     return parser.tryLiteralParse();
 }

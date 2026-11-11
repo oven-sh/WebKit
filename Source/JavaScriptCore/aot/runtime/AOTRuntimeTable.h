@@ -43,6 +43,7 @@ enum class LeafPresence : size_t { TakeSlowPath, Absent, Inherited, Own };
     v(VirtualCallTrampoline) \
     v(ErrorConstructorClassInfo) \
     v(BooleanConstructorClassInfo) \
+    v(CustomGetterClassInfo) \
     v(NumberConstructorClassInfo) \
     v(StringConstructorClassInfo) \
     v(NonConstructorHostFunction) \
@@ -294,6 +295,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(ArrayMutationOperations, ArraySpeciesCreate) \
     v(ArrayMutationOperations, ArraySplice) \
     v(ArrayMutationOperations, ArrayUnshift) \
+    v(ArrayMutationOperations, SortNumbers) \
     v(ArrayMutationOperations, SetArrayLength) \
     v(ArrayMutationOperations, SetArrayLengthInSloppyCode) \
     v(ArraySearchOperations, ArrayIndexOfDouble) \
@@ -327,11 +329,13 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(ArrayCreationOperations, ThrowIfTooLongForList) \
     v(ArrayCreationOperations, ThrowNotIterable) \
     v(ArrayCreationOperations, TruncateNewArray) \
+    v(StringSearchOperations, StringFindLiteral16) \
     v(StringSearchOperations, StringFindLiteral8) \
     v(StringSearchOperations, StringIndexOfCharacter) \
     v(StringSearchOperations, StringIndexOfLiteral) \
     v(StringSearchOperations, StringLastIndexOf) \
     v(StringSearchOperations, StringLastIndexOfLiteral) \
+    v(StringSearchOperations, StringReverseFindLiteral16) \
     v(StringSearchOperations, StringReverseFindLiteral8) \
     v(StringCreationOperations, CharToString) \
     v(StringCreationOperations, CodeURIOfAnyValue) \
@@ -349,6 +353,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(StringCreationOperations, ToString) \
     v(StringComparisonOperations, CompareStrings) \
     v(StringComparisonOperations, NarrowCharactersOfString) \
+    v(StringComparisonOperations, StringCodeUnitAt) \
     v(StringComparisonOperations, StringEqualsLiteral) \
     v(StringComparisonOperations, StringEqualsLiteralInRegister) \
     v(StringComparisonOperations, StringsAreEqual) \
@@ -517,6 +522,8 @@ private:
     Structure* m_textBufferStructure { nullptr };
     uint32_t m_compactTableIterationEntry { 0 };
 };
+
+inline constexpr int64_t noOrderOfStringsInPlace = 2;
 
 } } // namespace JSC::AOT
 

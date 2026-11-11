@@ -11017,6 +11017,8 @@ class YarrGenerator final : public YarrJITInfo {
     struct SearchForPairOfUnits {
         unsigned firstPlace;
         std::array<char16_t, 2> units;
+        char16_t alternateUnit;
+        unsigned rarity;
         SharedRoutine::FindFirstPairOfUnits routine;
     };
 
@@ -11025,7 +11027,8 @@ class YarrGenerator final : public YarrJITInfo {
         struct Place {
             unsigned place;
             char16_t unit;
-            bool foldsCase;
+            char16_t alternateUnit;
+            PositionUnits units;
             unsigned rarity;
         };
         if (m_decodeSurrogatePairs || m_direction != Forward || m_executionMode == ExecutionMode::InlineTest)
@@ -11037,31 +11040,57 @@ class YarrGenerator final : public YarrJITInfo {
             auto [map, exact] = info.createCandidateBitmap(place, place + 1);
             if (!exact.isValid() || exact.isEmpty() || exact.at(0) > 0xffff)
                 continue;
-            Place found { place, static_cast<char16_t>(exact.at(0)), false, rarityOfUnits({ map.storage()[0], map.storage()[1] }, false) };
+            Place found { place, static_cast<char16_t>(exact.at(0)), 0, PositionUnits::One, rarityOfUnits({ map.storage()[0], map.storage()[1] }, false) };
             if (exact.size() == 2) {
-                if (!isASCIIAlpha(exact.at(0)) || (exact.at(0) ^ exact.at(1)) != 0x20)
+                if (exact.at(1) > 0xffff)
                     continue;
-                found.unit = toASCIILower(found.unit);
-                found.foldsCase = true;
+                if (isASCIIAlpha(exact.at(0)) && (exact.at(0) ^ exact.at(1)) == 0x20) {
+                    found.unit = toASCIILower(found.unit);
+                    found.units = PositionUnits::IgnoreCase;
+                } else {
+                    found.alternateUnit = static_cast<char16_t>(exact.at(1));
+                    found.units = PositionUnits::Two;
+                }
             }
             places.append(found);
         }
-        auto rarest = std::ranges::max_element(places, { }, &Place::rarity);
-        if (rarest == places.end())
-            return std::nullopt;
-        auto next = places.end();
-        for (auto place = places.begin(); place != places.end(); ++place) {
-            if (place->unit != rarest->unit && (next == places.end() || place->rarity > next->rarity))
-                next = place;
+        // The routine has one extra vector: for the second unit of one position, or for the ASCII case bit.
+        auto matchesTwoUnits = [](const Place& place) {
+            return place.units == PositionUnits::Two;
+        };
+        auto canPair = [&](const Place& a, const Place& b) {
+            if (!matchesTwoUnits(a) && !matchesTwoUnits(b))
+                return a.unit != b.unit;
+            const Place& two = matchesTwoUnits(a) ? a : b;
+            const Place& one = matchesTwoUnits(a) ? b : a;
+            return one.units == PositionUnits::One && one.unit != two.unit && one.unit != two.alternateUnit;
+        };
+        const Place* rarest = nullptr;
+        const Place* next = nullptr;
+        unsigned bestRank = 0;
+        for (const Place& place : places) {
+            for (const Place& other : places) {
+                if (&place == &other || place.rarity < other.rarity || !canPair(place, other))
+                    continue;
+                unsigned rank = 2 * (place.rarity + other.rarity) + (matchesTwoUnits(place) || matchesTwoUnits(other) ? 1 : 2);
+                if (rank > bestRank) {
+                    rarest = &place;
+                    next = &other;
+                    bestRank = rank;
+                }
+            }
         }
-        if (next == places.end())
+        if (!rarest)
             return std::nullopt;
-        unsigned costOfSearch = (m_charSize == CharSize::Char8 ? 6 : 8) + (320u >> std::min(rarest->rarity + next->rarity, 31u));
+        bool hasTwoUnitPosition = matchesTwoUnits(*rarest) || matchesTwoUnits(*next);
+        unsigned rarity = rarest->rarity + next->rarity;
+        unsigned costOfSearch = (m_charSize == CharSize::Char8 ? 6 : 8) + (hasTwoUnitPosition ? 2 : 0) + (320u >> std::min(rarity, 31u));
         if (costOfSearch >= costOtherwise)
             return std::nullopt;
         const Place& first = rarest->place < next->place ? *rarest : *next;
         const Place& second = rarest->place < next->place ? *next : *rarest;
-        SearchForPairOfUnits search { first.place, { first.unit, second.unit }, { m_charSize, static_cast<uint8_t>(second.place - first.place), first.foldsCase, second.foldsCase } };
+        char16_t alternateUnit = matchesTwoUnits(first) ? first.alternateUnit : second.alternateUnit;
+        SearchForPairOfUnits search { first.place, { first.unit, second.unit }, alternateUnit, rarity, { m_charSize, static_cast<uint8_t>(second.place - first.place), first.units, second.units } };
         if (!canGenerateSharedRoutine(SharedRoutine { search.routine }))
             return std::nullopt;
         return search;
@@ -11092,6 +11121,8 @@ class YarrGenerator final : public YarrJITInfo {
         dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for the units at places ", search.firstPlace, " and ", search.firstPlace + search.routine.distance, " of a match in ", m_charSize == CharSize::Char8 ? "narrow" : "wide", " texts");
         m_jit.sub32(MacroAssembler::Imm32(claimed), m_regs.index);
         moveConstant(search.units[0] * repeats | search.units[1] * repeats << 32, m_regs.regT1);
+        if (search.routine.first == PositionUnits::Two || search.routine.second == PositionUnits::Two)
+            moveConstant(search.alternateUnit * repeats, m_regs.regT0);
         callRoutine(SharedRoutine::FindFirstPairOfUnits { search.routine });
         m_jit.add32(MacroAssembler::Imm32(claimed), m_regs.index);
         matched.append(m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.index, m_regs.length));
@@ -11108,6 +11139,17 @@ class YarrGenerator final : public YarrJITInfo {
         return rarityOfUnits({ map.storage()[0], map.storage()[1] }, false) + std::bit_width(end - begin) - 1;
     }
 
+    bool hasRareUnitPair(const YarrOp& op, std::tuple<unsigned, unsigned> range) const
+    {
+        auto [begin, end] = range;
+        if (isARM64() && m_charSize == CharSize::Char8)
+            return false;
+        if (rarityOfStops(*op.m_bmInfo, range) < leastRarityOfStartWorthSearchingFor || (end - begin == 1 && op.m_startPositionSearch) || startPositionSearchIsCheaperThanStride(op, end - begin))
+            return false;
+        auto search = planSearchForPairOfUnits(*op.m_bmInfo, costOfStride(*op.m_bmInfo, range));
+        return search && search->rarity >= 2 * leastRarityWorthSearchingFor;
+    }
+
     bool hasSelectiveStartSearch()
     {
         for (auto& op : m_ops) {
@@ -11117,7 +11159,7 @@ class YarrGenerator final : public YarrJITInfo {
                 return true;
             if (op.m_bmInfo) {
                 if (auto range = op.m_bmInfo->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan()))
-                    return rarityOfStops(*op.m_bmInfo, *range) >= leastRarityWorthSearchingFor;
+                    return rarityOfStops(*op.m_bmInfo, *range) >= leastRarityWorthSearchingFor || hasRareUnitPair(op, *range);
             }
             return op.m_startPositionSearch && rarityOfUnits(op.m_startPositionSearch->asciiMembers, op.m_startPositionSearch->matchesAllNonASCII) >= leastRarityWorthSearchingFor;
         }

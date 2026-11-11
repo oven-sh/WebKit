@@ -1,0 +1,101 @@
+# function atEnd(n, key) { const list = []; for (let i = 0; i < n; i++) list.push(i); let sum = 0; for (let i = 0; i < n; i++) sum += list[i]; if (sum < 0) return sum; return list[key]; }
+# function inFront(n, key) { const list = []; for (let i = 0; i < n; i++) list.push(i); const got = list[key]; let sum = 0; for (let i = 0; i < n; i++) sum += list[i]; return got === sum; }
+# A getter on Array.prototype under an unknown key gets the list as `this`. Behind the read in atEnd() this call does not use the list again.
+# RUN: walk f1 mechanisms=all
+# CHECK: undefined|int|whole @OptionalDouble = GetArrayElement {{*}}level=Proven
+# RUN(FRONT): walk f2 mechanisms=all
+# FRONT-NOT: undefined|int|whole @OptionalDouble = GetArrayElement
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    PropSet v2, v0 key="atEnd"
+    PropSet v2, v1 key="inFront"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="atEnd" module=m0 position=14 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v2 key="push"
+    v9 = Call v8, v2, v5 calleeKey="push"
+    v10 = Increment v5
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v11)
+  b3():
+    v12 = Integer
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Integer
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b4(v13, v15)
+  b4(v16, v17):
+    LoopHint
+    v19 = Less v17, v0
+    Branch v19 -> taken b5(), notTaken b6()
+  b5():
+    v20 = ElemGet v2, v17
+    v21 = Add v16, v20
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    v23 = Increment v17
+    v24 = Convert v23 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b4(v22, v24)
+  b6():
+    v25 = Integer
+    v26 = Less v16, v25
+    Branch v26 -> taken b7(), notTaken b8()
+  b7():
+    Return v16
+  b8():
+    v27 = ElemGet v2, v1
+    Return v27
+}
+function f2 name="inFront" module=m0 position=300 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v2 key="push"
+    v9 = Call v8, v2, v5 calleeKey="push"
+    v10 = Increment v5
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v11)
+  b3():
+    v12 = Integer
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = ElemGet v2, v1
+    v15 = Integer
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b4(v13, v16)
+  b4(v17, v18):
+    LoopHint
+    v20 = Less v18, v0
+    Branch v20 -> taken b5(), notTaken b6()
+  b5():
+    v21 = ElemGet v2, v18
+    v22 = Add v17, v21
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    v24 = Increment v18
+    v25 = Convert v24 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b4(v23, v25)
+  b6():
+    v26 = StrictEq v14, v17
+    Return v26
+}

@@ -1,0 +1,109 @@
+# A file of the library:
+# class Base {}   class Near extends Base {}   class Below extends Base { [key]() {} }
+# function store(object, value) { if ($isPlainHeirOf(object, Base)) { object.first = value; object.second = value; } }
+# The answer proves the three classes. A store that may create a field has no typed form on Below, whose member may have any name, so a guess takes the other two.
+# LIBRARY: own
+# OPTIONS: mechanisms=all
+# RUN(WALK): walk f1
+# WALK: IsPlainInstanceOf v0 {{*}}receivers=[L0, L1, L2]
+# WALK: ShapeTest {{*}}layouts=[L0, L1]
+# WALK: PutSlotOrAdd {{*}}key="first" receivers=[L0, L1]
+# WALK: PutSlotOrAdd {{*}}key="second" receivers=[L0, L1]
+# RUN(SHELL): run-in-shell globalThis.key = "other"; globalThis.show = objects => { for (const object of objects) print(JSON.stringify(object), object.constructor.name); };
+# SHELL: {"first":7,"second":7} Base
+# SHELL-NEXT: {"first":7,"second":7} Near
+# SHELL-NEXT: {"first":7,"second":7} Below
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 position=60 constructor=f2 place=60
+layout L1 kind=Instance name="Near" module=m0 position=74 base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage] place=74
+layout L2 kind=Instance name="Below" module=m0 position=101 base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage] place=101
+variable g0 name="Base" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable] place=3
+variable g1 module=m0 declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable] place=34
+variable g2 module=m0 declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable] place=42
+variable g3 module=m0 declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable] place=50
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = NewClosure function=f2 @54
+    v3 = NewClass v2 layout=L0 @54
+    PutModuleVariable v3 variable=g1 @54
+    v5 = FinishClass v3 layout=L0 @54
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @54
+    PutModuleVariable v6 variable=g0 @54
+    v8 = ResolveHeritage v6 @87
+    v9 = NewClosure function=f3 @68
+    v10 = NewClass v9, v6, v8 layout=L1 @68
+    PutModuleVariable v10 variable=g2 @68
+    v12 = FinishClass v10 layout=L1 @68
+    v13 = Convert v12 declared={type=f3 flags=[IsFromCompiler]} @68
+    v14 = ResolveHeritage v6 @115
+    v15 = NewClosure function=f4 @95
+    v16 = NewClass v15, v6, v14 layout=L2 @95
+    PutModuleVariable v16 variable=g3 @95
+    v18 = ToPropertyKey v1 @123
+    v19 = NewClosure function=f5 @122
+    SetFunctionName v19, v18 @122
+    DefineMethod v16, v19, v18 layout=L2 @122
+    v22 = FinishClass v16 layout=L2 @95
+    v23 = Convert v22 declared={type=f4 flags=[IsFromCompiler]} @95
+    v24 = NewClosure function=f1 @0
+    v25 = Integer integer=7 @285
+    v26 = Construct v6 calleeName="Base" @286
+    v27 = Construct v13 calleeName="Near" @298
+    v28 = Construct v23 calleeName="Below" @310
+    v29 = Call v24, -, v26, v25 calleeName="store" @320
+    v30 = Call v24, -, v27, v25 calleeName="store" @330
+    v31 = Call v24, -, v28, v25 calleeName="store" @340
+    v32 = NewArray v26, v27, v28 contents=anything @350
+    v33 = PropGet v0 key="show" [isFreeName] @360
+    v34 = Call v33, -, v32 calleeName="show" @360
+    v35 = NewArray v24, v6, v13, v23 contents=anything @370
+    PropSet v0, v35 key="published" @380
+    v37 = Undefined
+    Return v37
+}
+function f1 name="store" module=m1 position=146 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0 @202
+    v3 = CheckInitialized v2 name="Base" @202
+    v4 = IsPlainHeirOf v0, v3 @202
+    Branch v4 -> taken b1(), notTaken b2() @184
+  b1():
+    PropSet v0, v1 key="first" @214
+    PropSet v0, v1 key="second" @240
+    Jump -> next b2() @240
+  b2():
+    v7 = Undefined @240
+    Return v7 @240
+}
+function f2 name="Base" module=m0 position=60 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @60
+    v2 = NewObject v1 layout=L0 @60
+    v3 = Convert v2 declared={type=L0} @60
+    Return v3 @60
+}
+function f3 name="Near" module=m0 position=74 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @74
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @74
+    v5 = Convert v4 declared={type=L1} @74
+    Return v5 @74
+}
+function f4 name="Below" module=m0 position=101 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @101
+    v4 = SuperConstructList v3, v1, v2 layout=L2 @101
+    v5 = Convert v4 declared={type=L2} @101
+    Return v5 @101
+}
+function f5 module=m1 position=122 kind=Method role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1 @139
+    Return v0 @139
+}

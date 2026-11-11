@@ -304,7 +304,7 @@ public:
                 functor(m_held->m_holders[holder].object);
         }
     }
-    void forEachEnvironmentFieldNotSharedWithAll(std::span<const WalkState* const> ways, NOESCAPE const Invocable<void(Reference environment, FieldReference, Reference value)> auto& functor) const
+    void forEachFieldNotSharedWithAll(std::span<const WalkState* const> ways, NOESCAPE const Invocable<void(Reference holder, FieldReference, Reference value, bool isSlot)> auto& functor) const
     {
         if (!mayHold(Kinds::places) || !m_held->m_numberOfPlaces)
             return;
@@ -317,7 +317,7 @@ public:
             m_held->m_places.forEachStretchNotSharedWith(way->m_held->m_places, [&](uint32_t begin, uint32_t end) {
                 for (uint32_t position = begin; position < end; ++position) {
                     const Place& place = m_held->m_places[position];
-                    if (place.value && place.kind == PlaceKind::EnvironmentField)
+                    if (place.value && (place.kind == PlaceKind::EnvironmentField || place.kind == PlaceKind::Slot))
                         positions.append(position);
                 }
             });
@@ -330,7 +330,7 @@ public:
             const Place& place = m_held->m_places[position];
             const Holder& holder = m_held->m_holders[place.holder];
             if (!holder.hasEnded && holder.object)
-                functor(holder.object, FieldReference { LayoutID(place.first), place.second }, place.value);
+                functor(holder.object, FieldReference { LayoutID(place.first), place.second }, place.value, place.kind == PlaceKind::Slot);
         }
     }
     void forEachBeliefOfFreshHolderLackingIn(const WalkState& arriving, NOESCAPE const Invocable<void(Reference holder, std::optional<FieldReference> fieldOfScope, Reference believed)> auto& functor) const

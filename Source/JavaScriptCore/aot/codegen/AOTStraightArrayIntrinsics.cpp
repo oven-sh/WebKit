@@ -23,7 +23,7 @@ OpcodeSet StraightEmitter::opcodesOfArrayIntrinsics()
         Opcode::IsPristineArray, Opcode::ArrayStorageKind,
         Opcode::HasContiguousIndex, Opcode::GetContiguousIndex, Opcode::GetDoubleIndex,
         Opcode::NewContiguousArray, Opcode::NewArrayLike,
-        Opcode::TryPutByValDirect, Opcode::TryPutIndex, Opcode::TryCopyFilledElements, Opcode::TryPutElements, Opcode::TryFillNewArray,
+        Opcode::TryPutByValDirect, Opcode::TryPutIndex, Opcode::TryCopyFilledElements, Opcode::TryPutElements, Opcode::SortNumbers, Opcode::TryFillNewArray,
         Opcode::TruncateNewArray,
     };
 }
@@ -197,6 +197,7 @@ void StraightEmitter::generateArrayIntrinsic(const BodyValue& value)
     case Opcode::TryPutByValDirect:
     case Opcode::TryPutIndex:
     case Opcode::TryPutElements:
+    case Opcode::SortNumbers:
     case Opcode::TryFillNewArray:
         jit().move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), takeResultRegister());
         define(value);

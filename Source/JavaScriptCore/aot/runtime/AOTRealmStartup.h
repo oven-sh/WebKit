@@ -58,6 +58,7 @@ using BufferStructureProvider = Structure* (*)(JSGlobalObject*);
 JS_EXPORT_PRIVATE void setBufferStructureProvider(BufferStructureProvider);
 JS_EXPORT_PRIVATE void hostDidCreateConstructor(JSGlobalObject*, JSObject* constructor);
 JS_EXPORT_PRIVATE void hostDidCreateNodeModule(JSGlobalObject*, JSObject* constructor);
+JS_EXPORT_PRIVATE void acceptForeignBinaryData(JSGlobalObject*);
 JS_EXPORT_PRIVATE void hostDidCreateGlobalMember(JSGlobalObject*, UniquedStringImpl* key, JSObject*);
 JS_EXPORT_PRIVATE void hostDidFillObjectWithFoldedMembers(JSGlobalObject*, JSObject*, ASCIILiteral holder, std::span<const ASCIILiteral> names);
 

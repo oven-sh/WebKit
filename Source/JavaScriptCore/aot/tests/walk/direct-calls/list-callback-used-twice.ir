@@ -1,6 +1,5 @@
-# function user(k, n) { const list = [k]; let found; do { found = list.some(x => sink(x)); } while (n); return found; }   sink(user);
-# The arrow calls another function, and goes on calling it in a copy: the copy of the method would buy one call of two a turn, for all of its text. So the method is called directly, in a loop too
-# (method-of-a-list-with-two-texts-is-copied-in-a-loop.ir has the arrow that calls nobody).
+# function user(k, n) { const list = [k]; let found; do { const test = x => sink(x); found = list.some(test, test); } while (n); return found; }   sink(user);
+# The arrow calls another function and is used twice: the method is called directly, in a loop too, and not copied.
 # The library here is a stand-in.
 # LIBRARY: own
 # RUN: walk f1 mechanisms=all
@@ -32,7 +31,7 @@ function f1 name="user" module=m0 length=2 thisType={type=anything} parameters=[
     LoopHint
     v4 = PropGet v2 key="some"
     v5 = NewClosure v0 function=f4
-    v6 = Call v4, v2, v5 calleeKey="some" calleeName="list.some"
+    v6 = Call v4, v2, v5, v5 calleeKey="some" calleeName="list.some"
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return v6

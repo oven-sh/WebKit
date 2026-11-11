@@ -590,6 +590,18 @@ const RegisterAtOffsetList* JSToWasmCallee::calleeSaveRegistersImpl()
 
 #if ENABLE(WEBASSEMBLY_BBQJIT) || ENABLE(WEBASSEMBLY_OMGJIT)
 
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+Ref<OMGCallee> OMGCallee::createWithoutSavedRegisters(const OMGCallee& callee)
+{
+    Ref result = adoptRef(*new OMGCallee(callee.index(), { }, Ref { callee.profiledCallee() }));
+    result->setIndexOrName(callee.indexOrName());
+    auto [start, end] = callee.range();
+    result->setCodeInImage(std::span { static_cast<const uint8_t*>(start), static_cast<const uint8_t*>(end) }, { });
+    NativeCalleeRegistry::singleton().registerCallee(result.ptr());
+    return result;
+}
+#endif
+
 void OptimizingJITCallee::linkExceptionHandlers(Vector<UnlinkedHandlerInfo> unlinkedExceptionHandlers, Vector<CodeLocationLabel<ExceptionHandlerPtrTag>> exceptionHandlerLocations)
 {
     size_t count = unlinkedExceptionHandlers.size();

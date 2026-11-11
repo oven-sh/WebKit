@@ -328,6 +328,8 @@ protected:
         JITCallee::setEntrypoint(WTF::move(entrypoint));
     }
 
+    IPIntCallee& profiledCallee() const { return m_profiledCallee.get(); }
+
 private:
     void linkExceptionHandlers(Vector<UnlinkedHandlerInfo>, Vector<CodeLocationLabel<ExceptionHandlerPtrTag>>);
 
@@ -396,6 +398,7 @@ public:
     {
         return adoptRef(*new OMGCallee(index, WTF::move(name), WTF::move(profiledCallee)));
     }
+    static Ref<OMGCallee> createWithoutSavedRegisters(const OMGCallee&);
 
     using OptimizingJITCallee::setEntrypoint;
 

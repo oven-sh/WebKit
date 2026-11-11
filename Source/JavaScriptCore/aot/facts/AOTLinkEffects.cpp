@@ -251,6 +251,7 @@ private:
     struct GivenArgumentsInKnownEffects {
         uint32_t parametersTakenAsExpected { 0 };
         uint32_t parametersCalled { 0 };
+        Vector<uint32_t> parametersThatBringObjectsAlone;
     };
 
     static EffectsOfComponentInKnownEffects knownEffectsOfUnknownCode() { return { Effects::unknownCode(), LocationMasks::top(), objectsOfAnyLayout }; }
@@ -270,7 +271,9 @@ private:
     static void takeKnownEffects(const Effects& all, const LocationMasks& writesOnReturn, uint64_t layoutsWritten, WayInKnownEffects, EffectsOfComponentInKnownEffects& into);
     void takeKnownEffectsOfFunction(FunctionID callee, WayInKnownEffects, EffectsOfComponentInKnownEffects& into) const;
     bool mergeKnownEffectsOfCodeOutside(const CodeEntered&, uint32_t component, WayInKnownEffects, EffectsOfComponentInKnownEffects&) const;
-    void addEffectsOfOperatorsLeftApart(FunctionID, const ThinSummary&, EffectsOfComponentInKnownEffects&) const;
+    void addEffectsOfOperatorsLeftApart(FunctionID, const ThinSummary&, EffectsOfComponentInKnownEffects&, GivenArgumentsInKnownEffects&) const;
+    std::optional<uint16_t> primitivesExpectedOfParameter(FunctionID, uint32_t entryParameter) const;
+    uint32_t parametersExpectedPrimitiveThatBringObjectsAlone(FunctionID, const ThinSummary&, uint32_t node, GivenArgumentsInKnownEffects&) const;
     bool readMayMakeClosureOfField(const LinkType& subject, PropertyKeyID) const;
     void addEffectsOfAccessItself(FunctionID, const ThinSummary&, const SummaryAccess&, const LinkType& subject, PropertyKeyID, WayInKnownEffects, EffectsOfComponentInKnownEffects&);
     static std::optional<uint32_t> entryParameterAt(const ThinSummary&, uint32_t node);

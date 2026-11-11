@@ -1249,7 +1249,7 @@ static void runModuleRegistryModuleSettled(JSGlobalObject* globalObject, VM& vm,
     // pending-modulePromise guard used in moduleRegistryFetchSettled.
     if (modulePromise->status() != JSPromise::Status::Pending) {
 #if ENABLE(AOT)
-        if (status == JSPromise::Status::Rejected && vm.hasCompiledCode())
+        if (status == JSPromise::Status::Rejected && modulePromise->status() == JSPromise::Status::Fulfilled && vm.hasCompiledCode())
             AOT::ModuleRecord::didDiscardModuleError(globalObject, entry->key());
 #endif
         return;

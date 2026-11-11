@@ -3710,11 +3710,14 @@ private:
         // Merges the other group into this one.
         void merge(GreedyAllocator& allocator, AffinityGroup& other)
         {
-            if (m_liveness || other.m_liveness) {
-                ensureMap(allocator);
-                other.ensureMap(allocator);
-                m_liveness->merge(WTF::move(*other.m_liveness));
-                other.m_liveness = nullptr;
+            if (m_liveness && other.m_liveness)
+                m_liveness->merge(WTF::move(*std::exchange(other.m_liveness, nullptr)));
+            else if (m_liveness)
+                addToMap(allocator, other.members());
+            else if (other.m_liveness) {
+                m_liveness = WTF::move(other.m_liveness);
+                addToMap(allocator, members());
+                m_range = LiveRange();
             } else
                 m_range = LiveRange::unionOf(allocator.m_intervalArena, m_range, other.m_range);
             other.m_range = LiveRange();
@@ -3760,8 +3763,7 @@ private:
             if (m_liveness)
                 return;
             m_liveness = makeUnique<LivenessMap<bank>>();
-            for (Tmp member : members())
-                m_liveness->add(member, allocator.m_map.template get<bank>(member).liveRange);
+            addToMap(allocator, members());
             m_range = LiveRange();
         }
 
@@ -3787,6 +3789,12 @@ private:
         Tmp m_representative; // Only set for non-empty groups at finalization
 
     private:
+        void addToMap(GreedyAllocator& allocator, std::span<const Tmp> tmps)
+        {
+            for (Tmp tmp : tmps)
+                m_liveness->add(tmp, allocator.m_map.template get<bank>(tmp).liveRange);
+        }
+
         void makeMapIfLarge(GreedyAllocator& allocator)
         {
             if (m_size > AirLimits::maxAffinityGroupSizeWithoutMap || m_range.intervals().size() > AirLimits::maxAffinityGroupSizeWithoutMap) [[unlikely]]
@@ -3891,6 +3899,20 @@ private:
     }
 
     template<Bank bank>
+    bool interferesWithMap(Tmp tmp, const AffinityGroup<bank>& group)
+    {
+        ASSERT(group.hasMap());
+        const TmpData& data = m_map.get<bank>(tmp);
+        bool interferes = false;
+        group.forEachOverlap(data.liveRange, [&](const auto& tmpList) {
+            // Pigeonhole principle
+            interferes = tmpList.size() > data.coalescables.size() || std::ranges::any_of(tmpList, [&](Tmp member) { return !data.coalescables.template contains<bank>(member); });
+            return interferes ? IterationStatus::Done : IterationStatus::Continue;
+        });
+        return interferes;
+    }
+
+    template<Bank bank>
     bool tryCoalesceSingletonWithGroup(Tmp singleton, GroupIndex groupIndex, Vector<AffinityGroup<bank>>& groups, TmpGroupMap<bank>& tmpToGroup)
     {
         const auto& group = groups[groupIndex];
@@ -3906,19 +3928,8 @@ private:
                     }
                 }
             }
-        } else group.forEachOverlap(singletonData.liveRange, [&](const auto& tmpList) {
-            if (tmpList.size() > singletonData.coalescables.size()) {
-                conflict = true; // Pigeonhole principle
-                return IterationStatus::Done;
-            }
-            for (Tmp member : tmpList) {
-                if (!singletonData.coalescables.contains<bank>(member)) {
-                    conflict = true;
-                    return IterationStatus::Done;
-                }
-            }
-            return IterationStatus::Continue;
-        });
+        } else
+            conflict = interferesWithMap<bank>(singleton, group);
         if (conflict)
             return false;
 
@@ -3951,11 +3962,10 @@ private:
                         break;
                 }
             }
-        } else {
-            group0.ensureMap(*this);
-            group1.ensureMap(*this);
-        }
-        if (group0.hasMap()) AffinityGroup<bank>::forEachPairwiseOverlap(group0, group1, [&](const auto& tmpListA, const auto& tmpListB) {
+        } else if (!group0.hasMap() || !group1.hasMap()) {
+            const auto& groupWithMap = group0.hasMap() ? group0 : group1;
+            conflict = std::ranges::any_of((group0.hasMap() ? group1 : group0).members(), [&](Tmp member) { return interferesWithMap<bank>(member, groupWithMap); });
+        } else AffinityGroup<bank>::forEachPairwiseOverlap(group0, group1, [&](const auto& tmpListA, const auto& tmpListB) {
             for (Tmp tmpA : tmpListA) {
                 const Coalescables& coalescables = m_map.get<bank>(tmpA).coalescables;
                 if (tmpListB.size() > coalescables.size()) {
@@ -4039,6 +4049,9 @@ private:
             return a.tmp1.tmpIndex(bank) < b.tmp1.tmpIndex(bank);
         });
 
+        // Groups only grow, so two groups that interfere keep interfering.
+        UncheckedKeyHashSet<std::pair<GroupIndex, GroupIndex>> interferingGroups;
+
         for (Move& move : moves) {
             dataLogLnIf(verbose(), "Processing move: ", move);
             auto groupIndex0 = tmpToGroup[move.tmp0];
@@ -4051,9 +4064,13 @@ private:
 
             if (groupIndex0 == noGroup && groupIndex1 == noGroup)
                 coalesceSingletons<bank>(move.tmp0, move.tmp1, groups, tmpToGroup);
-            else if (groupIndex0 != noGroup && groupIndex1 != noGroup)
-                tryCoalesceGroups<bank>(groupIndex0, groupIndex1, groups, tmpToGroup);
-            else {
+            else if (groupIndex0 != noGroup && groupIndex1 != noGroup) {
+                std::pair<GroupIndex, GroupIndex> pair = std::minmax(groupIndex0, groupIndex1);
+                if (interferingGroups.contains(pair))
+                    continue;
+                if (!tryCoalesceGroups<bank>(groupIndex0, groupIndex1, groups, tmpToGroup) && (groups[groupIndex0].hasMap() || groups[groupIndex1].hasMap()))
+                    interferingGroups.add(pair);
+            } else {
                 auto groupIndex = groupIndex0 != noGroup ? groupIndex0 : groupIndex1;
                 Tmp singleton = groupIndex0 != noGroup ? move.tmp1 : move.tmp0;
                 tryCoalesceSingletonWithGroup<bank>(singleton, groupIndex, groups, tmpToGroup);
@@ -6344,13 +6361,13 @@ private:
             // FIXME: reconsider that, see https://bugs.webkit.org/show_bug.cgi?id=288122
             ASSERT(hole.begin() > positionOfHead(block));
             // Model gapTmp interference with any other tmp split at this location by starting
-            // the gapTmp's range one position before the hole. Otherwise, the same register
+            // the gapTmp's range where the instruction begins. Otherwise, the same register
             // may be chosen for the gapTmp and another splitTmp, which wouldn't be valid
             // since there could be a cycle among the set of fixup Move instructions.
             // An alternative would be to use the Shuffle opcode (which can handle that
             // rotation of register assignments) but that would trigger an extra liveness
             // analysis (see lowerAfterRegAlloc()), and that's unlikely to be worth it.
-            Interval gapInterval = hole | Interval(hole.begin() - 1);
+            Interval gapInterval = hole | Interval(pointAtOffset(hole.begin(), PointOffsets::Pre));
             if (spansStretches)
                 gapInterval = Interval(pointAtOffset(hole.begin(), PointOffsets::Pre), pointAtOffset(hole.end() - 1, PointOffsets::Post) + 1);
             Tmp gapTmp = addSplitTmp(tmp, UseDefCost(freq), gapInterval);
@@ -7133,7 +7150,9 @@ private:
                                     imm = Arg::bigImm(value);
                                 ASSERT(inst.isValidForm(m_code.targetFeatures()));
                                 arg = imm;
-                                if (inst.isValidForm(m_code.targetFeatures())) {
+                                std::span<const Arg> args = inst.args();
+                                bool isInExtendedForm = args.size() == 2 ? isExtendedForm(inst.kind.opcode, args[0].kind(), args[1].kind()) : args.size() == 3 && isExtendedForm(inst.kind.opcode, args[0].kind(), args[1].kind(), args[2].kind());
+                                if (inst.isValidForm(m_code.targetFeatures()) && (m_usesExtendedForms || !isInExtendedForm)) {
                                     m_stats[bank].numRematerializeConst++;
                                     dataLogLnIf(verbose(), "Rematerialized (direct imm), BB", *block, " arg=", oldArg, ", inst=", inst);
                                     return;
@@ -7644,7 +7663,9 @@ private:
         // We can coalesce a Move32 so long as either of the following holds:
         // - The input is already zero-filled.
         // - The output only cares about the low 32 bits.
-        if (inst.kind.opcode == Move32 && m_tmpWidth.defWidth(inst.args()[0].tmp()) > Width32)
+        Tmp source = inst.args()[0].tmp();
+        bool isZeroFilledRegister = source.isReg() && m_registerPolicy.zeroExtended.contains(source.reg(), IgnoreVectors);
+        if (inst.kind.opcode == Move32 && !isZeroFilledRegister && m_tmpWidth.defWidth(source) > Width32)
             return false;
         return true;
     }

@@ -358,6 +358,50 @@ static void testTwoBoundsOfOneValue()
     }
 }
 
+enum class KindOfArms : uint8_t { OnlyHandOn, HoldStores, HandOnDifferentValues };
+
+template<KindOfArms kind>
+static void testArmsOfTwoBounds()
+{
+    TestOfPhiTest test;
+    Output& out = test.out;
+    const AbstractHeap& heap = test.testProcedure.heaps().argumentBuffer;
+    LBasicBlock below = out.newBlock();
+    LBasicBlock asksUpperBound = out.newBlock();
+    LBasicBlock above = out.newBlock();
+    LBasicBlock inside = out.newBlock();
+    LBasicBlock join = out.newBlock();
+    LValue answer = out.phiIn(join, Int64);
+    LValue value = out.castToInt32(test.first);
+    auto arm = [&](LBasicBlock block, int32_t stored, ptrdiff_t offset, int64_t handedOn) {
+        out.appendTo(block);
+        if (kind == KindOfArms::HoldStores)
+            out.store32(out.constInt32(stored), out.address(heap, test.second, offset));
+        out.upsilon(out.constInt64(handedOn), answer);
+        out.jump(join);
+    };
+    out.branch(out.lessThan(value, out.constInt32(3)), normalEdge(below), normalEdge(asksUpperBound));
+    arm(below, 5, 0, 10);
+    out.appendTo(asksUpperBound);
+    out.branch(out.greaterThan(value, out.constInt32(9)), normalEdge(above), normalEdge(inside));
+    arm(above, 7, 4, kind == KindOfArms::HandOnDifferentValues ? 11 : 10);
+    out.appendTo(inside);
+    out.upsilon(out.constInt64(20), answer);
+    out.jump(join);
+    out.appendTo(join);
+    out.ret(answer);
+    const Order& order = test.compile();
+
+    AOT_TEST_OF_PHI_CHECK(test, order.of(asksUpperBound).isReached() == (kind != KindOfArms::OnlyHandOn));
+    for (int32_t asked : { std::numeric_limits<int32_t>::min(), -1, 0, 2, 3, 4, 9, 10, 11, std::numeric_limits<int32_t>::max() }) {
+        std::array<int32_t, 2> words { 0, 0 };
+        int64_t expected = asked < 3 ? 10 : asked > 9 ? (kind == KindOfArms::HandOnDifferentValues ? 11 : 10) : 20;
+        AOT_TEST_OF_PHI_CHECK(test, test.run(asked, reinterpret_cast<int64_t>(words.data())) == expected);
+        AOT_TEST_OF_PHI_CHECK(test, words[0] == (kind == KindOfArms::HoldStores && asked < 3 ? 5 : 0));
+        AOT_TEST_OF_PHI_CHECK(test, words[1] == (kind == KindOfArms::HoldStores && asked > 9 ? 7 : 0));
+    }
+}
+
 static void testNeighboringStoresOfConstantsAreOneStore()
 {
     size_t neighbors = bytesOfStoresInTestOfPhiTest(Int32, 7, 0, 4, 1);
@@ -398,6 +442,9 @@ std::span<const NativeTest> machineTestsOfPhisTests()
         { "machine-tests-of-phis/a-signed-lower-bound-not-below-nought-and-an-unsigned-upper-bound-are-asked-at-once"_s, Machine::testTwoBoundsOfOneValue<Machine::KindOfTwoBounds::LowerIsSignedAndNotBelowNought> },
         { "machine-tests-of-phis/a-signed-lower-bound-below-nought-and-an-unsigned-upper-bound-stay-two-tests"_s, Machine::testTwoBoundsOfOneValue<Machine::KindOfTwoBounds::LowerIsSignedAndBelowNought> },
         { "machine-tests-of-phis/an-unsigned-lower-and-a-signed-upper-bound-stay-two-tests"_s, Machine::testTwoBoundsOfOneValue<Machine::KindOfTwoBounds::LowerIsUnsignedAndUpperSigned> },
+        { "machine-tests-of-phis/arms-of-two-bounds-that-only-hand-on-one-value-are-one-arm"_s, Machine::testArmsOfTwoBounds<Machine::KindOfArms::OnlyHandOn> },
+        { "machine-tests-of-phis/arms-of-two-bounds-that-each-store-are-two-arms"_s, Machine::testArmsOfTwoBounds<Machine::KindOfArms::HoldStores> },
+        { "machine-tests-of-phis/arms-of-two-bounds-that-hand-on-different-values-are-two-arms"_s, Machine::testArmsOfTwoBounds<Machine::KindOfArms::HandOnDifferentValues> },
     };
     return tests;
 }

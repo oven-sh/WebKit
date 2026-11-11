@@ -916,7 +916,7 @@ void checkStorageOfFields(const Program& program, const Facts& facts, const Plan
             build.diagnostics().add(InternalError { .kind = InternalErrorKind::PlacementCheckFailed, .layout = layout, .detail = String(words) });
     };
     auto hasCellsInUse = [&](LayoutID id) {
-        return plan.isInUse(id) && plan.layout(id).holdsCompiledObjects() && !plan.layout(id).slots.isEmpty();
+        return plan.isAllocatable(id) && plan.layout(id).holdsCompiledObjects() && !plan.layout(id).slots.isEmpty();
     };
     const LinkTables& linked = facts.linked();
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {

@@ -741,8 +741,8 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
         bool mutatorIsRunningWithHeapAccess = (worldState & Heap::hasAccessBit) && !(worldState & Heap::mutatorWaitingBit);
         {
             ParallelModeEnabler enabler(visitor);
-            // If the mutator is running, don't compete for a core.
-            if (Options::numberOfGCMarkers() > 1 && mutatorIsRunningWithHeapAccess)
+            // If the mutator is running, don't compete for a core. Helpers that start lazily may never start: this thread marks then.
+            if (Options::numberOfGCMarkers() > 1 && !startsHelpersLazily() && mutatorIsRunningWithHeapAccess)
                 visitor.drainInParallelPassively(m_scheduler->timeToStop());
             else
                 visitor.drainInParallel(m_scheduler->timeToStop());

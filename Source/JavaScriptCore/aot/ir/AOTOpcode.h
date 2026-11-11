@@ -73,6 +73,7 @@ class EnumeratorBitSet {
 public:
     using Word = typename WordOfEnumeratorBitSet<E>::Type;
     static constexpr unsigned bitsPerWord = sizeof(Word) * 8;
+    static constexpr unsigned numberOfWords = std::bit_ceil((count + bitsPerWord - 1) / bitsPerWord);
 
     constexpr EnumeratorBitSet() = default;
     constexpr EnumeratorBitSet(std::initializer_list<E> enumerators)
@@ -81,8 +82,8 @@ public:
             add(enumerator);
     }
 
-    constexpr void add(E enumerator) { m_words[static_cast<unsigned>(enumerator) / bitsPerWord] |= static_cast<Word>(1) << (static_cast<unsigned>(enumerator) % bitsPerWord); }
-    constexpr bool contains(E enumerator) const { return m_words[static_cast<unsigned>(enumerator) / bitsPerWord] >> (static_cast<unsigned>(enumerator) % bitsPerWord) & 1; }
+    constexpr void add(E enumerator) { m_words[wordOf(enumerator)] |= static_cast<Word>(1) << (static_cast<unsigned>(enumerator) % bitsPerWord); }
+    constexpr bool contains(E enumerator) const { return m_words[wordOf(enumerator)] >> (static_cast<unsigned>(enumerator) % bitsPerWord) & 1; }
     constexpr bool isEmpty() const
     {
         Word all = 0;
@@ -128,7 +129,9 @@ public:
     friend constexpr bool operator==(const EnumeratorBitSet&, const EnumeratorBitSet&) = default;
 
 private:
-    std::array<Word, (count + bitsPerWord - 1) / bitsPerWord> m_words { };
+    static constexpr unsigned wordOf(E enumerator) { return static_cast<unsigned>(enumerator) / bitsPerWord % numberOfWords; }
+
+    std::array<Word, numberOfWords> m_words { };
 };
 
 using OpcodeSet = EnumeratorBitSet<Opcode, numberOfEnumerators<Opcode>>;

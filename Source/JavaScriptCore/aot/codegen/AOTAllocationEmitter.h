@@ -70,7 +70,7 @@ private:
     void storeInitialFields(CellPointer, LayoutID, const InitialFields&);
     void storeEmptySlots(CellPointer, LayoutID, std::span<const FieldIndex> emptySlots, ZeroedBy, BlockID);
     void storeFieldsInExtension(const ValueContext&, CellPointer, LayoutID, const InitialFields&);
-    void storePrototype(const ValueContext&, CellPointer, ValueID prototype);
+    void storePrototype(const ValueContext&, CellPointer, CellPointer requested);
     bool looksAtPrototypeBeforeAllocating(const ValueContext&);
     CellPointer allocateInstance(const ValueContext&, const MentionedAllocation&, ValueID prototype);
     CellPointer allocateCopyFromOtherLayout(const ValueContext&, ValueID copy);

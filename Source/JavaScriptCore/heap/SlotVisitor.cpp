@@ -945,16 +945,6 @@ SlotVisitor::SharedDrainResult SlotVisitor::drainInParallelPassively(MonotonicTi
     Locker locker { collector().m_markingMutex };
     donateAll(locker);
 
-#if USE(BUN_JSC_ADDITIONS)
-    // Bun: upstream starts the helpers when a collection begins. Here they start with the first work that is donated
-    // (Collector::startHelpers()), and a collection of Heap::collectForExhaustedCage() starts none. Where none has
-    // started, nobody marks what this thread donated and nobody wakes it, so it marks itself.
-    if (!collector().hasStartedHelpers()) {
-        locker.unlockEarly();
-        return drainFromShared(MainDrain, timeout);
-    }
-#endif
-
     // Wait for termination.
     for (;;) {
         if (hasElapsed(timeout))

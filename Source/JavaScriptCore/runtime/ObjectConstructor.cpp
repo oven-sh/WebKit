@@ -191,7 +191,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorSetPrototypeOf, (JSGlobalObject* globa
     return JSValue::encode(objectValue);
 }
 
-// Inlined into the host function, as the compiler did by itself before the test for locked properties was added.
+// Inlined into the host function.
 static ALWAYS_INLINE JSValue describeOwnProperty(JSGlobalObject* globalObject, JSObject* object, const Identifier& propertyName)
 {
     VM& vm = globalObject->vm();

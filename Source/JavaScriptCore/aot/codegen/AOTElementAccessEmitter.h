@@ -60,6 +60,8 @@ public:
     void generateIsElementInStorage(const ValueContext&);
     void generateGetElementInStorageOrAbsent(const ValueContext&);
     bool asksTruthOfRawElement(ValueID read);
+    bool asksTruthOfNumberInList(ValueID read);
+    void branchOnTruthOfNumberInList(const ValueContext&);
     void generateGetStringLength(const ValueContext&);
     void generateGetStringCodeUnit(const ValueContext&);
 
@@ -87,6 +89,7 @@ public:
     Condition holdsBoxedElements(CellPointer array);
     Condition holdsWritableBoxedElements(CellPointer array);
     Condition takesNumbersByKindOfStorage(CellPointer array, bool admitsInt32Storage);
+    Condition hasWritableNumericStorage(CellPointer array);
     Condition hasWritableShape(Word32 modeWithWritability, const ArrayStorageForm& form) { return equal(modeWithWritability, word32(form.indexingType)); }
 
     CellPointer askedAnew(CellPointer cell) { return CellPointer(m_out.opaque(cell.value())); }
@@ -121,6 +124,7 @@ public:
     ArrayStorageFormList candidateFormsFor(ValueID stored, ArrayStorage expected);
     ArrayStorageFormList formExpectedToHold(ValueID list, ValueID stored);
     bool goesByKindOfListOfNumbers(ValueID list, ValueID stored);
+    const ArrayStorageForm& expectedFormOf(ValueID array);
     ArrayStorageFormList formsOfListOfNumbersFor(ValueID stored, bool hasArmForEveryKind);
     ArrayStorageFormList formsThatMayHold(ValueID list, ValueID stored);
     void storeInProvenList(const ValueContext&, const ArrayStorageFormList&);
@@ -132,8 +136,11 @@ public:
 
     enum class NaNIndexMode : bool { TakeSlowPath, ProduceOutOfBoundsIndex };
     Integer indexOrElse(ValueID position, bool keyIsIntegral, LBasicBlock isNotAnIndex, NaNIndexMode = NaNIndexMode::TakeSlowPath);
+    std::optional<Boxed> wordOfPosition(ValueID position);
+    Integer indexOfWordOrElse(Boxed, bool keyIsIntegral, LBasicBlock isNotAnIndex, NaNIndexMode);
     Integer indexOfAccessOrElse(const ValueContext& access, LBasicBlock isNotAnIndex, NaNIndexMode = NaNIndexMode::TakeSlowPath);
     Integer indexInsideLength(ValueID position);
+    bool addsConstantToIndex(ValueID position, LValue sum);
     Integer indexFoundBelowLength(Integer index);
     Condition isBelowLengthOfView(Integer index, Integer length, TypedArrayType);
     std::optional<Integer> indexBesideWholeNumber(ValueID position, Number, LBasicBlock isNotAnIndex);
@@ -145,7 +152,7 @@ public:
     const PlacedSlot* extraPropertiesWordOfReadByPosition(const ValueContext& read);
     Boxed readElementOfExtraProperties(CellPointer object, const PlacedSlot& extraPropertiesWord, Integer index, LBasicBlock notFound);
     void overwriteElementOfExtraProperties(const ValueContext& store, CellPointer object, const PlacedSlot& extraPropertiesWord, Integer index, Boxed stored, LBasicBlock notFound);
-    Operand readElementInsideLength(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isHole);
+    Operand readElementInsideLength(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isHole, std::optional<Representation> = std::nullopt);
     void branchOnPresentElement(const ValueContext& test, const ArrayStorageForm&, BranchTargets);
     void branchOnPresentElementInAnyStorage(const ValueContext& test, BranchTargets);
 
@@ -172,7 +179,7 @@ private:
     void readWithOneArmInLine(const ValueContext&, const ArrayStorageForm* knownForm);
     void readFromDoubleOrInt32Storage(const ValueContext&);
     Operand numberOfInt32Element(const ValueContext&, Boxed element);
-    Operand readNumberInsideLength(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isHole);
+    Operand readNumberInsideLength(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isHole, std::optional<Representation> = std::nullopt);
     Boxed readOutOfLine(const ValueContext&, CellPointer array);
     bool findsElement(const ValueContext& read);
     Boxed readBoxedElement(const ValueContext&, const ArrayElements&, Integer index, LBasicBlock isAbsent);

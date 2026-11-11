@@ -1,9 +1,17 @@
 # the source declares a promise of a Point, so a Point is expected of what the await gives
-# async function read(p: Promise<Point>) { const o = await p; return o.x; }
-# RUN: walk f1:CoroutineBody mechanisms=none+TypedOperations+Guesses
+# async function read(p: Promise<Point>) { const o = await p; return o.x + o.y; }
+# one read outside loops of an async body opens no guess
+# async function readOne(p: Promise<Point>) { return (await p).x; }
+# RUN: walk f1:CoroutineBody f2:CoroutineBody mechanisms=none+TypedOperations+Guesses
 # CHECK-LABEL: code f1:CoroutineBody
 # CHECK: = AwaitBySavingFrame
-# CHECK: = GetSlot {{*}}key="x" receivers=[L0] level=Expected
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: = GetSlot {{*}}key="x" receivers=[L0]
+# CHECK: = GetSlot {{*}}key="y" receivers=[L0]
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# CHECK-NOT: GetSlot
+# CHECK: = PropGet {{*}}key="x"
 
 layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
 module m0 path="main.ts" displayPath="main.ts" body=f0
@@ -19,9 +27,19 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     PropDefine v4, v3 key="y"
     v7 = FinishObject v4
     v8 = Call v1, -, v7
+    v9 = NewClosure function=f2
+    v10 = Call v1, -, v9
     Return v8
 }
 function f1 name="read" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=Promise<L0>}] results=[{type=anything}] {
+  b0(v0: Promise<L0>):
+    v1 = Await v0
+    v2 = PropGet v1 key="x"
+    v3 = PropGet v1 key="y"
+    v4 = Add v2, v3
+    Return v4
+}
+function f2 name="readOne" module=m0 flags=[IsAsync] length=1 thisType={type=anything} parameters=[{type=Promise<L0>}] results=[{type=anything}] {
   b0(v0: Promise<L0>):
     v1 = Await v0
     v2 = PropGet v1 key="x"

@@ -16,11 +16,11 @@
 # CHECK-NEXT: HasArrayStorage arrayStorage=Double: code
 # CHECK-NEXT: HasArrayStorage arrayStorage=Double [admitsInt32Storage]: code
 # CHECK-NEXT: HasArrayStorage arrayStorage=Double [isWritable]: code
-# CHECK-NEXT: HasArrayStorage arrayStorage=Double [isWritable, admitsInt32Storage]: no code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Double [isWritable, admitsInt32Storage]: code
 # CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous: code
 # CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous [admitsInt32Storage]: code
 # CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous [isWritable]: code
-# CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous [isWritable, admitsInt32Storage]: no code
+# CHECK-NEXT: HasArrayStorage arrayStorage=Contiguous [isWritable, admitsInt32Storage]: code
 # CHECK-NEXT: IsElementPresent: code
 # CHECK-NEXT: IsElementPresent [admitsInt32Storage]: no code
 # CHECK-NEXT: IsElementPresent arrayStorage=Int32: code
@@ -28,7 +28,7 @@
 # CHECK-NEXT: IsElementPresent arrayStorage=Double: code
 # CHECK-NEXT: IsElementPresent arrayStorage=Double [admitsInt32Storage]: code
 # CHECK-NEXT: IsElementPresent arrayStorage=Contiguous: code
-# CHECK-NEXT: IsElementPresent arrayStorage=Contiguous [admitsInt32Storage]: no code
+# CHECK-NEXT: IsElementPresent arrayStorage=Contiguous [admitsInt32Storage]: code
 # CHECK-NEXT: GetArrayElement: code
 # CHECK-NEXT: GetArrayElement [admitsInt32Storage]: no code
 # CHECK-NEXT: GetArrayElement arrayStorage=Int32: code
@@ -36,7 +36,7 @@
 # CHECK-NEXT: GetArrayElement arrayStorage=Double: code
 # CHECK-NEXT: GetArrayElement arrayStorage=Double [admitsInt32Storage]: code
 # CHECK-NEXT: GetArrayElement arrayStorage=Contiguous: code
-# CHECK-NEXT: GetArrayElement arrayStorage=Contiguous [admitsInt32Storage]: no code
+# CHECK-NEXT: GetArrayElement arrayStorage=Contiguous [admitsInt32Storage]: code
 # -- code
 # code f1:Body {
 #   b0(v0: Array @JSValue, v1: int[0, 100] @JSValue) entry=0:

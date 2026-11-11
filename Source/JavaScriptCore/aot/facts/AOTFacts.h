@@ -77,7 +77,7 @@ struct ProgramFactTables {
 
     Vector<WorkerEntry> workerEntries;
     Vector<Witness> workerStartsWithoutName;
-    Vector<Witness> workerURLs;
+    Vector<Witness> workerStartsFromURLs;
     Vector<RuntimeFunctionID> missingLibraryFunctions;
     Vector<ModuleID> missingLibraryModules;
     Vector<RegExpTextInSight> regExpTextsInSight;
@@ -125,6 +125,7 @@ public:
     BitVector functionsTakenToRunOnce;
     FactRows<ClassMember> membersOfClass;
     Vector<uint32_t> placesOfMembersOfClassByKey;
+    BitVector keysOfMembersOfClass;
     BitVector layoutsThatParsersMayMake;
     LayoutSetID layoutsThatStayWithCompiledCode;
 

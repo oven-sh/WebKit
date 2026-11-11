@@ -15,10 +15,12 @@
 #include "MarkedBlockCage.h"
 #include "RememberedSlot.h"
 #include <array>
+#include <bit>
 #include <optional>
 #include <span>
 #include <utility>
 #include <wtf/ASCIICType.h>
+#include <wtf/Int128.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UnalignedAccess.h>
@@ -171,11 +173,12 @@ public:
     static constexpr unsigned keyOfPairSetShift = 6;
     static_assert(waysOfKeysOfPairs * sizeof(KeyOfPair) == 1 << keyOfPairSetShift);
     static constexpr uint32_t keyOfPairMultiplier = 0x9e3779b1u;
+    static constexpr uint32_t keyOfPairMultiplierOfSecond = 0x213bca7fu;
     static constexpr unsigned keyOfPairHashShift = 13;
     static constexpr uint64_t keyOfPairMaskFor(size_t tableSize) { return (tableSize / waysOfKeysOfPairs - 1) << keyOfPairSetShift; }
     static constexpr uint32_t hashOfPair(EncodedJSValue first, EncodedJSValue second)
     {
-        uint32_t mixed = static_cast<uint32_t>(static_cast<uint64_t>(first) + (static_cast<uint64_t>(second) << 3));
+        uint32_t mixed = static_cast<uint32_t>(first) + static_cast<uint32_t>(second) * keyOfPairMultiplierOfSecond;
         return mixed * keyOfPairMultiplier >> keyOfPairHashShift;
     }
     JS_EXPORT_PRIVATE static const KeyOfPair* noKeysOfPairs();
@@ -195,6 +198,143 @@ public:
         return uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)));
     }
     JSString* textOfInt32(VM&, int32_t);
+
+    struct FewCharacters {
+        static constexpr uint32_t bytesOfWord = sizeof(uint64_t);
+        static constexpr uint32_t mostCharacters = 2 * bytesOfWord;
+        static constexpr uint32_t limitOfIntegers = 100000000;
+
+        ALWAYS_INLINE bool tryAppend(uint64_t text, uint32_t size)
+        {
+            ASSERT(size && size <= sizeof(uint64_t));
+            uint32_t end = length + size;
+            if (end > mostCharacters)
+                return false;
+            if (length >= bytesOfWord)
+                last |= text << (8 * (length - bytesOfWord));
+            else {
+                first |= text << (8 * length);
+                if (end > bytesOfWord)
+                    last = text >> (8 * (bytesOfWord - length));
+            }
+            length = end;
+            return true;
+        }
+
+        ALWAYS_INLINE bool tryAppend(std::span<const Latin1Character> text)
+        {
+            const Latin1Character* from = text.data();
+            size_t size = text.size();
+            if (size == 1)
+                return tryAppend(*from, 1);
+            if (size > mostCharacters - length)
+                return false;
+            if (size >= sizeof(uint64_t)) {
+                if (!tryAppend(WTF::unalignedLoad<uint64_t>(from), sizeof(uint64_t)))
+                    return false;
+                uint32_t rest = static_cast<uint32_t>(size - sizeof(uint64_t));
+                return !rest || tryAppend(WTF::unalignedLoad<uint64_t>(from + rest) >> (8 * (sizeof(uint64_t) - rest)), rest);
+            }
+            if (size >= sizeof(uint32_t))
+                return tryAppend(WTF::unalignedLoad<uint32_t>(from) | static_cast<uint64_t>(WTF::unalignedLoad<uint32_t>(from + size - sizeof(uint32_t))) << (8 * (size - sizeof(uint32_t))), static_cast<uint32_t>(size));
+            return !size || tryAppend(from[0] | static_cast<uint64_t>(from[size / 2]) << (8 * (size / 2)) | static_cast<uint64_t>(from[size - 1]) << (8 * (size - 1)), static_cast<uint32_t>(size));
+        }
+
+        ALWAYS_INLINE bool tryAppendInteger(uint32_t integer)
+        {
+            constexpr uint32_t limitOfTwoDigits = 100;
+            if (integer - limitOfTwoDigits >= limitOfIntegers - limitOfTwoDigits) {
+                if (integer >= limitOfIntegers)
+                    return false;
+                uint32_t tens = integer * 103 >> 10;
+                uint32_t digits = (tens | (integer - 10 * tens) << 8) | 0x3030;
+                uint32_t leadingZeros = integer < 10;
+                return tryAppend(digits >> (8 * leadingZeros), 2 - leadingZeros);
+            }
+            if (integer < 10000) {
+                uint32_t pairs = integer / 100 | (integer % 100) << 16;
+                uint32_t tens = pairs * 103 >> 10 & 0x000f000f;
+                uint32_t digits = (tens | (pairs - 10 * tens) << 8) | 0x30303030;
+                uint32_t leadingZeros = integer < 1000;
+                return tryAppend(digits >> (8 * leadingZeros), 4 - leadingZeros);
+            }
+            uint64_t halves = integer / 10000 | static_cast<uint64_t>(integer % 10000) << 32;
+            uint64_t hundreds = halves * 10486 >> 20 & 0x0000007f0000007full;
+            uint64_t pairs = hundreds | (halves - 100 * hundreds) << 16;
+            uint64_t tens = pairs * 103 >> 10 & 0x000f000f000f000full;
+            uint64_t digits = tens | (pairs - 10 * tens) << 8;
+            uint32_t leadingZeros = static_cast<uint32_t>(std::countr_zero(digits)) / 8;
+            return tryAppend((digits | 0x3030303030303030ull) >> (8 * leadingZeros), 8 - leadingZeros);
+        }
+
+        uint64_t byteAt(uint32_t offset) const { return static_cast<uint8_t>(first >> (8 * offset)); }
+        std::array<Latin1Character, mostCharacters> text() const { return std::bit_cast<std::array<Latin1Character, mostCharacters>>(std::array<uint64_t, 2> { first, last }); }
+        ALWAYS_INLINE uint64_t lastEightBytes() const
+        {
+            ASSERT(length >= bytesOfWord);
+            uint32_t bytesBehindFirst = length - bytesOfWord;
+            return bytesBehindFirst == bytesOfWord ? last : first >> (8 * bytesBehindFirst) | (last << 1) << (8 * (bytesOfWord - bytesBehindFirst) - 1);
+        }
+
+        ALWAYS_INLINE unsigned hash() const
+        {
+            ASSERT(length && length <= mostCharacters);
+            constexpr auto mix = [](uint64_t a, uint64_t b) ALWAYS_INLINE_LAMBDA {
+                UInt128 product = static_cast<UInt128>(a) * b;
+                return std::pair<uint64_t, uint64_t> { static_cast<uint64_t>(product), static_cast<uint64_t>(product >> 64) };
+            };
+            constexpr std::array<uint64_t, 3> secret = RapidHash::secret;
+            constexpr auto seeds = mix(secret[0], secret[1]);
+            uint64_t a;
+            uint64_t b;
+            if (length >= bytesOfWord) [[likely]] {
+                uint64_t end = lastEightBytes();
+                a = first << 32 | end >> 32;
+                b = first >> 32 << 32 | static_cast<uint32_t>(end);
+            } else if (length >= sizeof(uint32_t))
+                a = b = first << 32 | static_cast<uint32_t>(first >> (8 * (length - sizeof(uint32_t))));
+            else {
+                a = byteAt(0) << 56 | byteAt(length / 2) << 32 | byteAt(length - 1);
+                b = 0;
+            }
+            auto [low, high] = mix(a ^ secret[1], b ^ seeds.first ^ seeds.second ^ length);
+            auto [lowOfHash, highOfHash] = mix(low ^ secret[0] ^ length, high ^ secret[1]);
+            unsigned hash = static_cast<unsigned>(lowOfHash ^ highOfHash) & RapidHash::maskHash;
+            return hash ? hash : 0x80000000 >> RapidHash::flagCount;
+        }
+
+        ALWAYS_INLINE bool isTextOf(const StringImpl& impl) const
+        {
+            ASSERT(length >= 2);
+            if (impl.length() != length || !impl.is8Bit())
+                return false;
+            const Latin1Character* other = impl.span8().data();
+            if (length >= bytesOfWord)
+                return WTF::unalignedLoad<uint64_t>(other) == first && WTF::unalignedLoad<uint64_t>(other + length - bytesOfWord) == lastEightBytes();
+            if (length >= sizeof(uint32_t))
+                return WTF::unalignedLoad<uint32_t>(other) == static_cast<uint32_t>(first) && WTF::unalignedLoad<uint32_t>(other + length - sizeof(uint32_t)) == static_cast<uint32_t>(first >> (8 * (length - sizeof(uint32_t))));
+            return other[0] == byteAt(0) && other[length / 2] == byteAt(length / 2) && other[length - 1] == byteAt(length - 1);
+        }
+
+        uint64_t first { 0 };
+        uint64_t last { 0 };
+        uint32_t length { 0 };
+    };
+    ALWAYS_INLINE JSString* tryFindCachedKey(const FewCharacters& characters, unsigned hash) const
+    {
+        size_t tableSize = m_cachedKeys.size();
+        if (!tableSize) [[unlikely]]
+            return nullptr;
+        const uint64_t* pair = m_cachedKeys.span().data() + firstIndex(hash, tableSize);
+        for (size_t i = 0; i < 2; ++i) {
+            if (pair[i] >> 32 != hash)
+                continue;
+            JSString* candidate = uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(pair[i])));
+            if (characters.isTextOf(*candidate->tryGetValueImpl()))
+                return candidate;
+        }
+        return nullptr;
+    }
 
     JSString* findOrAdd(VM&, std::span<const Latin1Character>);
     ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const

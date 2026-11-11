@@ -764,6 +764,7 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         return context;
     };
 
+    SmallSet<JSCell*> visitedCombinators;
     auto getParentGenerator = [&](JSCell* gen) -> JSCell* {
         JSPromise* awaitedPromise = asyncFunctionPromise(gen);
         JSValue promiseContext = getContextValueFromPromise(awaitedPromise);
@@ -774,6 +775,9 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         // handle simple `await`
         if (auto* generator = asyncFunctionIn(promiseContext))
             return generator;
+
+        if (!promiseContext.isCell() || !visitedCombinators.add(promiseContext.asCell()).isNewEntry)
+            return nullptr;
 
         // handle `Promise.all`, `Promise.allSettled`, and `Promise.any`
         if (auto* globalContext = dynamicDowncast<JSPromiseCombinatorsGlobalContext>(promiseContext)) {
@@ -960,7 +964,7 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
 
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) [[unlikely]] {
-        if (skippedFrames < framesToSkip && vm.aotState().frameOfImportThatAsksLoader == callFrame) [[unlikely]]
+        if (skippedFrames < framesToSkip && vm.aotState().importFrameInLoader == callFrame) [[unlikely]]
             ++skippedFrames;
         if (caller || !AOT::tryGetStackTrace(vm, owner, results, framesToSkip - skippedFrames, maxStackSize, filter))
             appendStackTrace(owner, results, { .callFrame = callFrame, .framesToSkip = framesToSkip - skippedFrames, .caller = caller, .filter = filter }, maxStackSize);

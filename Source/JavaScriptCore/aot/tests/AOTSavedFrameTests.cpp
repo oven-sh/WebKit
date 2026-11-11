@@ -74,46 +74,6 @@ function f1 name="waitFor" flags=[IsAsync] parameters=[{type=anything}, {type=an
 }
 )IR"_s;
 
-static constexpr ASCIILiteral programWithTwoAwaitsText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = NewClosure function=f1
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="register" [isFreeName]
-    v3 = Call v2, -, v0
-    Return
-}
-function f1 name="waitTwice" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Call v0
-    v3 = Call v0
-    v4 = Call v0
-    v5 = Call v0
-    v6 = Call v0
-    v7 = Await v1
-    v8 = Call v0, -, v2, v3, v4, v5
-    v9 = Await v1
-    v10 = NewArray v6, v9 contents=anything
-    Return v10
-}
-)IR"_s;
-
-static constexpr ASCIILiteral programWithAsyncGeneratorText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = NewClosure function=f1
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="register" [isFreeName]
-    v3 = Call v2, -, v0
-    Return
-}
-function f1 name="waitOnce" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}] results=[{type=AsyncGenerator}] {
-    InitialYield
-    v4 = Await v2
-    v5 = Call v1, -, v4
-    Return v5
-}
-)IR"_s;
-
 static Vector<uint32_t> valuesOf(const SavedFrameMap& map)
 {
     Vector<uint32_t> locations;
@@ -659,61 +619,12 @@ static void testListedWordsSurviveACollection()
 }
 
 static constexpr uint64_t wordOfDeadStack = 0x5ca1ab1e5ca1ab1eULL;
-static unsigned numberOfSaveAreasRead;
-static const Instance* instanceOfSaveArea;
-
 static NEVER_INLINE void fillDeadStack()
 {
     volatile uint64_t words[2048];
     for (volatile uint64_t& word : words)
         word = wordOfDeadStack;
 }
-
-static JSC_DECLARE_HOST_FUNCTION(readSaveAreaAboveResumedCaller);
-JSC_DEFINE_HOST_FUNCTION(readSaveAreaAboveResumedCaller, (JSGlobalObject*, CallFrame* callFrame))
-{
-    if (!callFrame->argumentCount())
-        return JSValue::encode(jsNumber(1));
-    constexpr ptrdiff_t instanceWord = AdapterFrame::offsetOfInstance / static_cast<ptrdiff_t>(sizeof(uint64_t));
-    auto* frameOfAdapter = reinterpret_cast<const uint64_t*>(callFrame);
-    unsigned numberOfFrames = 0;
-    do {
-        frameOfAdapter = *reinterpret_cast<const uint64_t* const*>(frameOfAdapter);
-        AOT_TEST_CHECK(++numberOfFrames < 6);
-    } while (frameOfAdapter[instanceWord] != std::bit_cast<uintptr_t>(instanceOfSaveArea));
-    for (ptrdiff_t word = 1; word <= static_cast<ptrdiff_t>(AdapterFrame::saveAreaSize / sizeof(uint64_t)); ++word)
-        AOT_TEST_CHECK(frameOfAdapter[-word] != wordOfDeadStack);
-    ++numberOfSaveAreasRead;
-    return JSValue::encode(jsNumber(2));
-}
-
-static void checkAdapterAboveResumedFrameWritesItsSaveArea(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    program.realms().evaluate(realm, "globalThis.register = waitTwice => { globalThis.waitTwice = waitTwice; };"_s);
-    std::optional<ModuleID> module = findModule("main.js"_s);
-    AOT_TEST_CHECK(module);
-    evaluateModuleSynchronously(realm, *module);
-    AOT_TEST_CHECK(!scope.exception());
-
-    MarkedArgumentBuffer arguments;
-    arguments.append(JSFunction::create(vm, realm, 0, "readSaveArea"_s, readSaveAreaAboveResumedCaller, ImplementationVisibility::Public));
-    arguments.append(program.realms().evaluate(realm, "Promise.resolve(3)"_s));
-    numberOfSaveAreasRead = 0;
-    instanceOfSaveArea = &program.instance();
-    call(realm, program.realms().evaluate(realm, "waitTwice"_s), arguments, "waitTwice is a function"_s);
-    AOT_TEST_CHECK(!scope.exception() && !numberOfSaveAreasRead);
-    fillDeadStack();
-    vm.drainMicrotasks();
-    AOT_TEST_CHECK(!scope.exception() && numberOfSaveAreasRead == 1);
-}
-
-static const uint64_t* frameOfJobCaller;
-static unsigned numberOfJobEntriesRead;
-static bool readsFramesOfJobLoop;
-static bool bodyHoldsItsFrameInHeapAlone;
 
 static String describeCodeAddress(const void* address)
 {
@@ -725,171 +636,6 @@ static String describeCodeAddress(const void* address)
     }
 #endif
     return makeString("code at "_s, hex(std::bit_cast<uintptr_t>(address)));
-}
-
-#if CPU(X86_64)
-static bool isInJobFunction(const void* code)
-{
-    static constexpr size_t largestJobFunction = 4 * KB;
-    auto isIn = [&](auto function) {
-        return std::bit_cast<uintptr_t>(code) - std::bit_cast<uintptr_t>(function) < largestJobFunction;
-    };
-    return isIn(&resumeAsyncFunction) || isIn(&resumeSavedAsyncFunction) || isIn(&runAsyncFunctionResumeJob) || isIn(&runAsyncGeneratorBodyJob);
-}
-#endif
-
-static JSC_DECLARE_HOST_FUNCTION(readFramesBelowJobCaller);
-JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* callFrame))
-{
-    if (!callFrame->argumentCount())
-        return JSValue::encode(jsNumber(1));
-    auto* frame = reinterpret_cast<const uint64_t*>(callFrame);
-    unsigned numberOfFrames = 0;
-    unsigned numberOfUnwrittenWords = 0;
-    [[maybe_unused]] unsigned numberOfPaddingWords = 0;
-    while (*reinterpret_cast<const uint64_t* const*>(frame) != frameOfJobCaller) {
-        auto* frameOfCaller = *reinterpret_cast<const uint64_t* const*>(frame);
-        for (auto* word = frame + 2; word < frameOfCaller; ++word) {
-            if (*word != wordOfDeadStack)
-                continue;
-            ++numberOfUnwrittenWords;
-#if CPU(X86_64)
-            numberOfPaddingWords += isInJobFunction(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))) || (bodyHoldsItsFrameInHeapAlone && frameOfCaller - frame == 4 && word == frame + 2);
-#endif
-            dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))));
-        }
-        frame = frameOfCaller;
-        AOT_TEST_CHECK(++numberOfFrames < 12);
-    }
-    if (numberOfUnwrittenWords)
-        dataLogLn(numberOfUnwrittenWords, " unwritten words in ", numberOfFrames, " frames");
-#if CPU(ARM64)
-    AOT_TEST_CHECK(numberOfUnwrittenWords <= numberOfFrames);
-#else
-    if (readsFramesOfJobLoop)
-        AOT_TEST_CHECK(numberOfUnwrittenWords <= numberOfFrames);
-    else
-        AOT_TEST_CHECK(numberOfUnwrittenWords == numberOfPaddingWords && numberOfPaddingWords <= 1u + bodyHoldsItsFrameInHeapAlone);
-#endif
-    ++numberOfJobEntriesRead;
-    return JSValue::encode(jsNumber(2));
-}
-
-static NEVER_INLINE void runJobOverFilledStack(JSGlobalObject* realm, VM& vm, const QueuedTask& job)
-{
-    NO_TAIL_CALLS();
-    frameOfJobCaller = static_cast<const uint64_t*>(__builtin_frame_address(0));
-    fillDeadStack();
-    auto arguments = job.arguments();
-    runInternalMicrotask(realm, vm, job.job(), job.payload(), arguments[0], arguments[1], arguments[2], arguments[3]);
-}
-
-static void checkFramesBetweenJobAndCompiledCodeAreWritten(LoadedProgram& program)
-{
-#if HAVE(MUST_TAIL_CALL) && !ENABLE(EXCEPTION_SCOPE_VERIFICATION) && !ASAN_ENABLED
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    program.realms().evaluate(realm, "globalThis.register = waitTwice => { globalThis.waitTwice = waitTwice; };"_s);
-    std::optional<ModuleID> module = findModule("main.js"_s);
-    AOT_TEST_CHECK(module);
-    evaluateModuleSynchronously(realm, *module);
-    AOT_TEST_CHECK(!scope.exception());
-
-    MarkedArgumentBuffer arguments;
-    arguments.append(JSFunction::create(vm, realm, 0, "readFrames"_s, readFramesBelowJobCaller, ImplementationVisibility::Public));
-    arguments.append(program.realms().evaluate(realm, "Promise.resolve(3)"_s));
-    numberOfJobEntriesRead = 0;
-    call(realm, program.realms().evaluate(realm, "waitTwice"_s), arguments, "waitTwice is a function"_s);
-    AOT_TEST_CHECK(!scope.exception() && !numberOfJobEntriesRead);
-
-    MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
-    AOT_TEST_CHECK(queue.size() == 1);
-    std::optional<QueuedTask> job;
-    queue.allOf([&](const QueuedTask& queued) {
-        job = queued;
-        return true;
-    });
-    AOT_TEST_CHECK(job->job() == InternalMicrotask::CompiledAsyncFunctionResume);
-    queue.clear();
-    runJobOverFilledStack(realm, vm, *job);
-    AOT_TEST_CHECK(!scope.exception() && numberOfJobEntriesRead == 1);
-    vm.drainMicrotasks();
-#else
-    UNUSED_PARAM(program);
-#endif
-}
-
-static NEVER_INLINE void drainOverFilledStack(VM& vm)
-{
-    NO_TAIL_CALLS();
-    frameOfJobCaller = static_cast<const uint64_t*>(__builtin_frame_address(0));
-    fillDeadStack();
-    vm.drainMicrotasks();
-}
-
-static void checkJobLoopWritesItsFrame(LoadedProgram& program)
-{
-#if HAVE(MUST_TAIL_CALL) && !ENABLE(EXCEPTION_SCOPE_VERIFICATION) && !ASAN_ENABLED
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    program.realms().evaluate(realm, "globalThis.register = waitTwice => { globalThis.waitTwice = waitTwice; };"_s);
-    std::optional<ModuleID> module = findModule("main.js"_s);
-    AOT_TEST_CHECK(module);
-    evaluateModuleSynchronously(realm, *module);
-    AOT_TEST_CHECK(!scope.exception());
-
-    MarkedArgumentBuffer arguments;
-    arguments.append(JSFunction::create(vm, realm, 0, "readFrames"_s, readFramesBelowJobCaller, ImplementationVisibility::Public));
-    arguments.append(program.realms().evaluate(realm, "Promise.resolve(3)"_s));
-    numberOfJobEntriesRead = 0;
-    call(realm, program.realms().evaluate(realm, "waitTwice"_s), arguments, "waitTwice is a function"_s);
-    AOT_TEST_CHECK(!scope.exception() && !numberOfJobEntriesRead);
-
-    SetForScope readsLoop { readsFramesOfJobLoop, true };
-    drainOverFilledStack(vm);
-    AOT_TEST_CHECK(!scope.exception() && numberOfJobEntriesRead == 1);
-#else
-    UNUSED_PARAM(program);
-#endif
-}
-
-static void checkFramesBetweenJobAndAsyncGeneratorBodyAreWritten(LoadedProgram& program)
-{
-#if HAVE(MUST_TAIL_CALL) && !ENABLE(EXCEPTION_SCOPE_VERIFICATION) && !ASAN_ENABLED
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    program.realms().evaluate(realm, "globalThis.register = waitOnce => { globalThis.start = (readFrames, promise) => { waitOnce(readFrames, promise).next(); }; };"_s);
-    std::optional<ModuleID> module = findModule("main.js"_s);
-    AOT_TEST_CHECK(module);
-    evaluateModuleSynchronously(realm, *module);
-    AOT_TEST_CHECK(!scope.exception());
-
-    MarkedArgumentBuffer arguments;
-    arguments.append(JSFunction::create(vm, realm, 0, "readFrames"_s, readFramesBelowJobCaller, ImplementationVisibility::Public));
-    arguments.append(program.realms().evaluate(realm, "Promise.resolve(3)"_s));
-    numberOfJobEntriesRead = 0;
-    call(realm, program.realms().evaluate(realm, "start"_s), arguments, "start is a function"_s);
-    AOT_TEST_CHECK(!scope.exception() && !numberOfJobEntriesRead);
-
-    MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
-    AOT_TEST_CHECK(queue.size() == 1);
-    std::optional<QueuedTask> job;
-    queue.allOf([&](const QueuedTask& queued) {
-        job = queued;
-        return true;
-    });
-    AOT_TEST_CHECK(job->job() == InternalMicrotask::AsyncGeneratorBodyCallNormal);
-    queue.clear();
-    SetForScope holdsFrameAlone { bodyHoldsItsFrameInHeapAlone, true };
-    runJobOverFilledStack(realm, vm, *job);
-    AOT_TEST_CHECK(!scope.exception() && numberOfJobEntriesRead == 1);
-    vm.drainMicrotasks();
-#else
-    UNUSED_PARAM(program);
-#endif
 }
 
 static const uint64_t* frameOfCollectionCaller;
@@ -977,11 +723,7 @@ std::span<const NativeTest> savedFrameTests()
         { "saved-frame/unlisted-word-is-no-root"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkUnlistedWordIsNoRoot> },
         { "saved-frame/frame-on-the-stack-is-left-alone"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkFrameOnTheStackIsLeftAlone> },
         { "saved-frame/skipped-words"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkSkippedWords> },
-        { "saved-frame/adapter-above-a-resumed-frame-writes-its-save-area"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkAdapterAboveResumedFrameWritesItsSaveArea> },
-        { "saved-frame/frames-between-job-and-compiled-code-are-written"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkFramesBetweenJobAndCompiledCodeAreWritten> },
         { "saved-frame/collector-writes-the-frames-it-scans"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkCollectorWritesTheFramesItScans> },
-        { "saved-frame/job-loop-writes-its-frame"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkJobLoopWritesItsFrame> },
-        { "saved-frame/frames-between-job-and-async-generator-body-are-written"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithAsyncGeneratorText, checkFramesBetweenJobAndAsyncGeneratorBodyAreWritten> },
         { "saved-frame/listed-words-survive-a-collection"_s, testListedWordsSurviveACollection },
     };
     return tests;

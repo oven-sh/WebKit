@@ -59,7 +59,7 @@ static unsigned bucketIndexOf(ElementBase base)
 {
     LocationMasks masks;
     masks.add(MemoryLocation::elements(base));
-    uint64_t mask = masks.maskOf(IRHeap::Elements) & ~Typed::markOfElementsOfArraysNotStoredAsRawDoubles;
+    uint64_t mask = masks.maskOf(IRHeap::Elements) & ~Typed::markOfElementsThatMayHoldCells;
     RELEASE_ASSERT(std::popcount(mask) == 1);
     return std::countr_zero(mask);
 }
@@ -168,7 +168,7 @@ const Machine::AbstractHeap& AOTHeaps::at(const Program& program, const MemoryLo
 
     uint64_t mask = Typed::maskOf(program, location);
     if (heap == IRHeap::Elements)
-        mask &= ~Typed::markOfElementsOfArraysNotStoredAsRawDoubles;
+        mask &= ~Typed::markOfElementsThatMayHoldCells;
     if (std::popcount(mask) != 1)
         return entire(heap);
 
@@ -188,7 +188,7 @@ void AOTHeaps::appendHeaps(const LocationMasks& masks, HeapList& list) const
             return;
         }
         if (heap == IRHeap::Elements)
-            mask &= ~Typed::markOfElementsOfArraysNotStoredAsRawDoubles;
+            mask &= ~Typed::markOfElementsThatMayHoldCells;
         for (uint64_t remainingBits = mask; remainingBits; remainingBits &= remainingBits - 1)
             list.append(&bucketOf(heap, std::countr_zero(remainingBits)));
         for (const Machine::AbstractHeap* fieldHeap : m_fieldHeapsBelow[static_cast<size_t>(heap)])

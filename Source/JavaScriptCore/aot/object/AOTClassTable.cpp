@@ -203,6 +203,11 @@ Structure* ClassTable::classObjectStructureInheritingFrom(VM& vm, JSObject* pare
     return structure;
 }
 
+bool ClassTable::sharesStructureOfRootClasses(Structure* structure) const
+{
+    return structure && structure == m_classObjectStructures.get(m_state.instance.globalObject->functionPrototype());
+}
+
 Closure* ClassTable::createClassObject(VM& vm, const LayoutData& classLayout)
 {
     ClosureTable& closures = m_state.objects->closures;
@@ -965,7 +970,7 @@ void ClassDefinition::run(JSValue heritage, JSValue prototypeParent)
         m_prototype->structure()->setMayBePrototype(true);
     if (scope.exception()) [[unlikely]]
         return;
-    if (m_mayShareStructures && !isShared() && m_hasOnlyPlainMembers)
+    if (m_mayShareStructures && !isShared() && m_hasOnlyPlainMembers && !m_classes.sharesStructureOfRootClasses(m_classObject->structure()))
         m_state.objects->caches->classStructures.add(m_classLayout.index, m_classObjectParent, prototypeParentCell(), { m_classObject->structure(), m_prototype->structure() });
     m_earlyStores.restoreTo(m_globalObject, m_classObject, m_requestedPart == ClassPart::Everything ? StoreTime::BeforeDefinition : StoreTime::AfterDefinition);
     m_earlyPrototypeStores.restoreTo(m_globalObject, m_prototype, StoreTime::AfterDefinition);
@@ -1321,7 +1326,7 @@ bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, 
 {
     VM& vm = globalObject->vm();
     const ClassData& classData = classLayout.classData();
-    if (classData.numberOfMethods || classData.numberOfStaticMethods || classData.numberOfStaticFields || classLayout.assumedBase() != LayoutData::noBase)
+    if (classData.numberOfMethods || classData.numberOfStaticMethods || classLayout.assumedBase() != LayoutData::noBase)
         return false;
     if (classObject->butterfly() || classObject->mayBePrototype())
         return false;
@@ -1352,6 +1357,8 @@ bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, 
     classObject->setStructure(vm, kept.classObjectStructure);
     classObject->putDirectOffset(vm, offsetOfPrototype, prototype);
     prototype->putDirectOffset(vm, offsetOfConstructor, classObject);
+    if (classData.numberOfStaticFields)
+        markFunctionPropertiesDeclaredAsFields(vm, classObject, classLayout);
     if (structureOfHolderLeftOut) {
         nameClassObjectOnPrototypeMadeLeftOut(vm, classLayout, classObject, prototype);
         return true;

@@ -1,5 +1,5 @@
-# The first function has met four others at one place and five others at another: all ten are one family. If the two rows of parameters were not tied when the families are united, the text would not come to the second, with which the first may be confused where numbers are passed, nor the number to the eighth.
-# callFew(<one of five>, 1);  callMany(<the first of them, or one of five others>, "text");
+# The first function has met eight others at one place and nine others at another: all eighteen are one family. If the two rows of parameters were not tied when the families are united, the text would not come to the second, with which the first may be confused where numbers are passed, nor the number to the eighth.
+# callFew(<one of nine>, 1);  callMany(<the first of them, or one of nine others>, "text");
 # RUN(HELD): link held functions mechanisms=all
 # HELD: function f3 
 # HELD-NEXT: parameter 0 expected=undefined|i32|string proven=undefined|i32|string
@@ -26,19 +26,35 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v11 = NewClosure function=f12
     v12 = Integer integer=1
     v13 = String string="text"
-    v14 = Call v0, -, v2, v12 calleeName="callFew"
-    v15 = Call v0, -, v3, v12 calleeName="callFew"
-    v16 = Call v0, -, v4, v12 calleeName="callFew"
-    v17 = Call v0, -, v5, v12 calleeName="callFew"
-    v18 = Call v0, -, v6, v12 calleeName="callFew"
-    v19 = Call v1, -, v2, v13 calleeName="callMany"
-    v20 = Call v1, -, v7, v13 calleeName="callMany"
-    v21 = Call v1, -, v8, v13 calleeName="callMany"
-    v22 = Call v1, -, v9, v13 calleeName="callMany"
-    v23 = Call v1, -, v10, v13 calleeName="callMany"
-    v24 = Call v1, -, v11, v13 calleeName="callMany"
-    v25 = Undefined
-    Return v25
+    v14 = NewClosure function=f13
+    v15 = NewClosure function=f14
+    v16 = NewClosure function=f15
+    v17 = NewClosure function=f16
+    v18 = NewClosure function=f17
+    v19 = NewClosure function=f18
+    v20 = NewClosure function=f19
+    v21 = NewClosure function=f20
+    v22 = Call v0, -, v2, v12 calleeName="callFew"
+    v23 = Call v0, -, v3, v12 calleeName="callFew"
+    v24 = Call v0, -, v4, v12 calleeName="callFew"
+    v25 = Call v0, -, v5, v12 calleeName="callFew"
+    v26 = Call v0, -, v6, v12 calleeName="callFew"
+    v27 = Call v0, -, v14, v12 calleeName="callFew"
+    v28 = Call v0, -, v15, v12 calleeName="callFew"
+    v29 = Call v0, -, v16, v12 calleeName="callFew"
+    v30 = Call v0, -, v17, v12 calleeName="callFew"
+    v31 = Call v1, -, v2, v13 calleeName="callMany"
+    v32 = Call v1, -, v7, v13 calleeName="callMany"
+    v33 = Call v1, -, v8, v13 calleeName="callMany"
+    v34 = Call v1, -, v9, v13 calleeName="callMany"
+    v35 = Call v1, -, v10, v13 calleeName="callMany"
+    v36 = Call v1, -, v11, v13 calleeName="callMany"
+    v37 = Call v1, -, v18, v13 calleeName="callMany"
+    v38 = Call v1, -, v19, v13 calleeName="callMany"
+    v39 = Call v1, -, v20, v13 calleeName="callMany"
+    v40 = Call v1, -, v21, v13 calleeName="callMany"
+    v41 = Undefined
+    Return v41
 }
 function f1 name="callFew" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
@@ -87,6 +103,38 @@ function f11 module=m0 length=1 thisType={type=anything} parameters=[{type=anyth
     Return v0
 }
 function f12 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f13 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f14 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f15 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f16 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f17 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f18 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f19 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f20 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     Return v0
 }

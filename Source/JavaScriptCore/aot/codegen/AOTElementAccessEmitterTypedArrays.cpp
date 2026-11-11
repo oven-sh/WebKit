@@ -100,7 +100,7 @@ void ElementAccessEmitter::askViewWherePositionIsNotBelowNamedLength(LBasicBlock
 
 bool ElementAccessEmitter::becomesIndexWithoutTest(const ValueContext& access)
 {
-    return get(access->positionOperand()).representation != Representation::Double || (access->keyIsIntegral() && isX86_64());
+    return representationOf(access->positionOperand()) != Representation::Double || (access->keyIsIntegral() && isX86_64());
 }
 
 void ElementAccessEmitter::holdPositionInsideView(const ValueContext& access, Integer index, const TypedArrayElements& elements)
@@ -302,11 +302,11 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
     LBasicBlock isNotBelowNamedLength = named ? newBlock() : nullptr;
     TypedArrayElements elements = named ? *named : typedArrayElementsOf(value->viewOperand(), otherwise);
     branchUnless(isBelowLengthOfView(index, elements.length, type), named ? isNotBelowNamedLength : outside);
-    if (nothingIsNaN)
+    if (nothingIsNaN && isFloat(type))
         join.add(loadBytesOfTypedArrayElement(elements, indexFoundBelowLength(index), type));
     else {
         Operand element = loadElement(elements, indexFoundBelowLength(index));
-        join.add(TypedArraySupport(generator()).inRepresentation(value, representation, element, elementType));
+        join.add(TypedArraySupport(generator()).inRepresentation(value, nothingIsNaN ? Representation::Double : representation, element, elementType));
     }
 
     if (named)
@@ -345,7 +345,8 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
     auto storeElement = [&](const TypedArrayElements& elements, Integer index) {
         Operand element = elementToStore();
         if (!isOfSeveralKinds) {
-            storeTypedArrayElement(elements, index, type, element);
+            bool isByte = isClamped(type) && typeOf(storedValue).isInteger() && typeOf(storedValue).integers.isSubsetOf(Range { 0, UINT8_MAX }) && !element.is<Number>();
+            storeTypedArrayElement(elements, index, isByte ? TypeUint8 : type, element);
             return;
         }
         if (std::optional<TypedArrayType> found = kindOfViewFoundInFrontOfTurns(value, value->viewOperand())) {

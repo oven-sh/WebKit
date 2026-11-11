@@ -394,15 +394,16 @@ static void emitStringOrder(StubAssembler& jit, const BinaryRegisters& registers
     const auto [left, right, first, second, scratch, leftNumber, rightNumber] = registers;
     const Comparison& comparison = comparisonOf(operation);
 
-    JumpList notTwoFlatStrings;
-    notTwoFlatStrings.append(jit.branchIfNotCell(left));
-    notTwoFlatStrings.append(jit.branchIfNotCell(right));
-    notTwoFlatStrings.append(jit.branchIfNotString(left));
-    notTwoFlatStrings.append(jit.branchIfNotString(right));
+    JumpList isLeftToOperation;
+    isLeftToOperation.append(jit.branchIfNotCell(left));
+    isLeftToOperation.append(jit.branchIfNotCell(right));
+    isLeftToOperation.append(jit.branchIfNotString(left));
+    isLeftToOperation.append(jit.branchIfNotString(right));
     jit.loadPtr(Address(left, JSString::offsetOfValue()), first);
     jit.loadPtr(Address(right, JSString::offsetOfValue()), second);
-    notTwoFlatStrings.append(jit.branchIfRopeStringImpl(first));
-    notTwoFlatStrings.append(jit.branchIfRopeStringImpl(second));
+    JumpList oneIsRope;
+    oneIsRope.append(jit.branchIfRopeStringImpl(first));
+    oneIsRope.append(jit.branchIfRopeStringImpl(second));
 
     JumpList needsLeaf;
     JumpList isLess;
@@ -426,7 +427,19 @@ static void emitStringOrder(StubAssembler& jit, const BinaryRegisters& registers
     jit.compare64(comparison.ofIntegers, GPRInfo::returnValueGPR, TrustedImm32(0), left);
     jit.returnToCaller();
 
-    notTwoFlatStrings.link(&jit);
+    oneIsRope.link(&jit);
+    const GPRReg order = scratch;
+    RELEASE_ASSERT(right == secondArgument && noOverlap(order, left, right));
+    jit.preserving({ left, right }, [&] {
+        jit.move(left, firstArgument);
+        jit.callLeaf(Entry::operationAOTCompareStringsInPlace, 2 * sizeof(CPURegister));
+        jit.move(GPRInfo::returnValueGPR, order);
+    });
+    isLeftToOperation.append(jit.branch64(CCallHelpers::Equal, order, TrustedImm32(noOrderOfStringsInPlace)));
+    jit.compare64(comparison.ofIntegers, order, TrustedImm32(0), left);
+    jit.returnToCaller();
+
+    isLeftToOperation.link(&jit);
 }
 
 StubSignature signatureOfBinaryOperation(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1) }); }

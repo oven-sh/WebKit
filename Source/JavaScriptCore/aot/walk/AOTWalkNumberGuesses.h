@@ -19,6 +19,7 @@ struct ExpectationOfNumber {
 ExpectationOfNumber numbersExpectedOf(Walker&, ValueID input, ExpectationOfNumber found);
 TypeID typeHeldAtPositionOf(Walker&, ValueID input);
 bool usesSpeakForInt32(Walker&, ValueID input);
+ExpectationOfNumber numberExpectedOfAddendOfPosition(Walker&, const BodyValue& operation, ValueID operand, ExpectationOfNumber found);
 ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker&, ValueID input, ExpectationOfNumber found);
 
 struct TestOfNumber {

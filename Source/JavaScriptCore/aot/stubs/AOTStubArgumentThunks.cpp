@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTConvention.h"
+#include "AOTInstance.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
@@ -18,6 +19,7 @@
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "Butterfly.h"
+#include "JSArrayBufferView.h"
 #include "JSObject.h"
 #include "JSString.h"
 #include <algorithm>
@@ -146,7 +148,7 @@ static void emitConstantsOfThunk(CCallHelpers& jit, std::span<const uint64_t> mo
     });
 }
 
-static void returnLengthOfListOrTextInFrontOfMoves(CCallHelpers& jit, const StubSignature& signature, std::span<const uint64_t> moves, std::optional<int32_t> asked)
+static void returnLengthOfListOrTextInFrontOfMoves(CCallHelpers& jit, const StubSignature& signature, std::span<const uint64_t> moves, std::optional<int32_t> asked, bool checksWalk)
 {
     const GPRReg operand = signature.operands[0].gpr();
     const GPRReg scratch = *signature.immediate;
@@ -198,6 +200,17 @@ static void returnLengthOfListOrTextInFrontOfMoves(CCallHelpers& jit, const Stub
     jit.load8(CCallHelpers::Address(receiver, JSCell::indexingTypeAndMiscOffset()), scratch);
     jit.sub32(CCallHelpers::TrustedImm32(ArrayWithUndecided), scratch);
     jit.branchTest32(CCallHelpers::Zero, scratch, CCallHelpers::TrustedImm32(0xff & ~(6 | CopyOnWrite | MayHaveIndexedAccessors))).linkTo(hasPlainStorage, &jit);
+    CCallHelpers::JumpList isNoPlainBuffer;
+    if (!checksWalk) {
+        jit.load32(CCallHelpers::Address(receiver, JSCell::structureIDOffset()), scratch);
+        isNoPlainBuffer.append(jit.branch32(CCallHelpers::NotEqual, scratch, CCallHelpers::Address(instanceGPR, Instance::offsetOfReceiverStructureID(Receiver::Buffer))));
+        isNoPlainBuffer.append(jit.branchTest8(CCallHelpers::NonZero, CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(builtins.someClassOfViewsWasWrittenAbove))));
+        isNoPlainBuffer.append(jit.branchTest8(CCallHelpers::NonZero, CCallHelpers::Address(receiver, JSArrayBufferView::offsetOfMode()), CCallHelpers::TrustedImm32(resizabilityAndAutoLengthMask)));
+        jit.load64(CCallHelpers::Address(receiver, JSArrayBufferView::offsetOfLength()), scratch);
+        isNoPlainBuffer.append(jit.branch64(CCallHelpers::Above, scratch, CCallHelpers::TrustedImm32(std::numeric_limits<int32_t>::max())));
+        answer(CCallHelpers::Address(receiver, JSArrayBufferView::offsetOfLength()));
+    }
+    isNoPlainBuffer.link(&jit);
     isNotCell.link(&jit);
 }
 
@@ -222,9 +235,9 @@ static std::expected<ArgumentThunks, LinkFailure> generateArgumentThunksOfChunk(
 
         labels.append(jit.label());
         if (key.family() == StubFamily::GetLengthAtSite)
-            returnLengthOfListOrTextInFrontOfMoves(jit, signature, moves, std::nullopt);
+            returnLengthOfListOrTextInFrontOfMoves(jit, signature, moves, std::nullopt, catalog.options().checksWalk);
         if (key.family() == StubFamily::LengthIs)
-            returnLengthOfListOrTextInFrontOfMoves(jit, signature, moves, static_cast<int32_t>(key.count()));
+            returnLengthOfListOrTextInFrontOfMoves(jit, signature, moves, static_cast<int32_t>(key.count()), catalog.options().checksWalk);
         emitRegisterMovesOfThunk(jit, moves);
         emitLoadsOfThunk(jit, moves);
         emitConstantsOfThunk(jit, moves);

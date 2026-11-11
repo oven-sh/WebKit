@@ -223,6 +223,8 @@ bool getLineColumnAndSource(VM& vm, Vector<StackFrame>* stackTrace, LineColumn& 
                 continue;
             lineColumn = position->lineColumn;
             sourceURL = AOT::sourceProviderURLOf(position->source);
+            if (!sourceURL.isEmpty())
+                sourceURL = AOT::displayPathOf(position->source);
             return true;
         }
 #endif

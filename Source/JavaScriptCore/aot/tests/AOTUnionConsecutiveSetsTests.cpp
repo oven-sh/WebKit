@@ -91,6 +91,54 @@ static void testSetThatNoOrderKeepsTogetherIsRefusedAndChangesNothing()
     AOT_TEST_CHECK(standSideBySideForConsecutiveSetsTests(orderByNumberForConsecutiveSetsTests(sets, 5), { 3, 4 }));
 }
 
+static void testNestedSetsMatchLeafSets()
+{
+    uint32_t state = 12345;
+    auto random = [&](uint32_t limit) {
+        state = state * 1664525 + 1013904223;
+        return (state >> 8) % limit;
+    };
+    for (unsigned round = 0; round < 200; ++round) {
+        uint32_t numberOfLeaves = 2 + random(40);
+        Vector<Vector<uint32_t>> groups;
+        for (uint32_t leaf = 0; leaf < numberOfLeaves; ++leaf)
+            groups.append(Vector<uint32_t> { leaf });
+        Vector<Vector<uint32_t>> nested;
+        while (groups.size() > 1 && random(8)) {
+            Vector<uint32_t> united;
+            for (unsigned count = 2 + random(3); count && !groups.isEmpty(); --count) {
+                size_t taken = random(groups.size());
+                united.appendVector(groups[taken]);
+                groups.removeAt(taken);
+            }
+            nested.append(united);
+            groups.append(united);
+        }
+        std::ranges::stable_sort(nested, { }, &Vector<uint32_t>::size);
+        ConsecutiveSets leafByLeaf(numberOfLeaves);
+        ConsecutiveSets byNodes(numberOfLeaves);
+        for (const Vector<uint32_t>& set : nested) {
+            AOT_TEST_CHECK(leafByLeaf.tryKeepTogether(set.span()));
+            AOT_TEST_CHECK(byNodes.tryKeepNestedSetTogether(set.span()));
+        }
+        for (unsigned count = 0; count < 12; ++count) {
+            Vector<uint32_t> set;
+            for (uint32_t leaf = 0; leaf < numberOfLeaves; ++leaf) {
+                if (!random(4))
+                    set.append(leaf);
+            }
+            AOT_TEST_CHECK(leafByLeaf.tryKeepTogether(set.span()) == byNodes.tryKeepTogether(set.span()));
+        }
+        AOT_TEST_CHECK(orderByNumberForConsecutiveSetsTests(leafByLeaf, numberOfLeaves) == orderByNumberForConsecutiveSetsTests(byNodes, numberOfLeaves));
+    }
+    ConsecutiveSets sets(4);
+    Vector<uint32_t> first { 0, 1 };
+    Vector<uint32_t> overlapping { 1, 2 };
+    AOT_TEST_CHECK(sets.tryKeepNestedSetTogether(first.span()));
+    AOT_TEST_CHECK(!sets.tryKeepNestedSetTogether(overlapping.span()));
+    AOT_TEST_CHECK(sets.tryKeepTogether(overlapping.span()));
+}
+
 static void testLeafThatIsNamedTwiceCountsOnce()
 {
     ConsecutiveSets sets(4);
@@ -302,6 +350,7 @@ std::span<const NativeTest> unionConsecutiveSetsTests()
         { "union-consecutive-sets/the-order-of-the-keys-where-nothing-is-kept-together"_s, testOrderOfKeysWhereNothingIsKeptTogether },
         { "union-consecutive-sets/nested-and-separate-sets-are-all-kept-together"_s, testNestedAndSeparateSetsAreAllKeptTogether },
         { "union-consecutive-sets/a-set-that-no-order-keeps-together-is-refused-and-changes-nothing"_s, testSetThatNoOrderKeepsTogetherIsRefusedAndChangesNothing },
+        { "union-consecutive-sets/nested-sets-match-leaf-sets"_s, testNestedSetsMatchLeafSets },
         { "union-consecutive-sets/a-leaf-that-is-named-twice-counts-once"_s, testLeafThatIsNamedTwiceCountsOnce },
         { "union-consecutive-sets/the-tree-grows-as-its-leaves-do"_s, testTreeGrowsAsItsLeavesDo },
         { "union-consecutive-sets/the-plan-grows-as-the-unions-do"_s, testPlanGrowsAsUnionsDo },

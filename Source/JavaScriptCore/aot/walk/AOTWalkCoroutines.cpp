@@ -223,6 +223,13 @@ static bool generatorGoesIntoIterationAloneOfCoroutine(const BodyIndex& body, co
 
 bool nobodyLooksAboveGeneratorsOf(const Walker& walker, FunctionID generatorFunction, uint32_t* numberOfListedCalls)
 {
+    return nobodyLooksAboveGeneratorsOf(walker, generatorFunction, numberOfListedCalls, scopedLambda<bool(const BodyIndex&, const LinkedCall&, FunctionID)>([](const BodyIndex&, const LinkedCall&, FunctionID) {
+        return false;
+    }));
+}
+
+bool nobodyLooksAboveGeneratorsOf(const Walker& walker, FunctionID generatorFunction, uint32_t* numberOfListedCalls, const ScopedLambda<bool(const BodyIndex&, const LinkedCall&, FunctionID caller)>& passesForIteration)
+{
     const Function& function = walker.program().at(generatorFunction);
     if (!function.has(FunctionFlags::IsGenerator) || function.has(FunctionFlags::IsAsync) || !walker.facts().mechanisms().contains(Mechanism::TypedOperations))
         return false;
@@ -244,7 +251,7 @@ bool nobodyLooksAboveGeneratorsOf(const Walker& walker, FunctionID generatorFunc
                 ++*numberOfListedCalls;
             if (!body)
                 body = walker.facts().bodies().find(referrer);
-            if (!body || !generatorGoesIntoIterationAloneOfCoroutine(*body, call))
+            if (!body || (!generatorGoesIntoIterationAloneOfCoroutine(*body, call) && !passesForIteration(*body, call, referrer)))
                 return false;
         }
     }
