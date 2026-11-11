@@ -267,7 +267,7 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
             Resolution resolution = resolveImport(globalObject, localName);
             RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
 #if ENABLE(AOT)
-            if (vm.hasCompiledCode() && resolution.type == Resolution::Type::Resolved && resolution.moduleRecord->inherits<AOT::ModuleRecord>())
+            if (vm.hasCompiledCode() && resolution.type == Resolution::Type::Resolved && (resolution.moduleRecord->inherits<AOT::ModuleRecord>() || resolution.moduleRecord->isCompiledOriginal()))
                 return IterationStatus::Continue;
 #endif
             if (resolution.type == Resolution::Type::Resolved)
@@ -495,7 +495,7 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
             return IterationStatus::Continue;
 #if USE(BUN_JSC_ADDITIONS)
         // Live exports are looked up by name at runtime. The exporter may have no binding with this name.
-        if (resolution.isLiveExport(vm)) [[unlikely]] {
+        if (resolution.isLiveExport(vm) || resolution.isNamespaceOfCompiledOriginal(vm)) [[unlikely]] {
             bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), 0, index, true });
             return IterationStatus::Continue;
         }
@@ -535,7 +535,7 @@ String JSModuleRecord::liveImports(JSGlobalObject* globalObject)
     forEachImportSlot([&](unsigned, const Identifier& localName) {
         Resolution resolution = resolveImport(globalObject, localName);
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
-        if (resolution.isLiveExport(vm))
+        if (resolution.isLiveExport(vm) || resolution.isNamespaceOfCompiledOriginal(vm))
             builder.append(StringView(localName.impl()), ',');
         return IterationStatus::Continue;
     });

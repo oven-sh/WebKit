@@ -27,7 +27,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = NewClosure function=f4
     v9 = NewClosure function=f7
     v10 = NewClosure function=f8
-    v11 = Call v4, -, v2, v5, v6, v7, v8, v9, v10
+    v11 = NewClosure function=f9
+    v12 = Call v4, -, v2, v5, v6, v7, v8, v9, v10, v11
     Return
 }
 function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
@@ -71,11 +72,15 @@ function f8 name="get" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = PropGet v0 key="shared"
     Return v1
 }
+function f9 name="load" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
 )IR"_s;
 
 static constexpr ASCIILiteral statementsThatCount = R"JS(
 globalThis.shared = 0;
-globalThis.publish = (Counter, make, store, define, readRun, put, get) => {
+globalThis.publish = (Counter, make, store, define, readRun, put, get, load) => {
     const counted = (what, names, work, most = 3) => {
         const sum = () => { let total = 0; for (let at = 0; at < names.length; at++) total += Number(aotOperationCount("operationAOT" + names[at])); return total; };
         for (let i = 0; i < 8; i++) work(i);
@@ -86,6 +91,7 @@ globalThis.publish = (Counter, make, store, define, readRun, put, get) => {
     const record = make(0), counter = new Counter, grown = make(1);
     counted("replaced", ["PutByVal"], i => store(record, i & 7, i));
     counted("replaced in an instance", ["PutByVal"], i => store(counter, i & 7, i));
+    counted("read in an instance", ["GetByVal", "GetByValAndCache"], i => load(counter, i & 7));
     const whereFreeListsRunOut = 8;
     counted("first", ["PutByVal"], i => { const t = make(i); store(t, 0, i); store(t, 1, t); }, whereFreeListsRunOut);
     counted("grown", ["PutByVal"], i => store(grown, i & 63, i), whereFreeListsRunOut);
@@ -96,7 +102,7 @@ globalThis.publish = (Counter, make, store, define, readRun, put, get) => {
 static void testStubsServe()
 {
     String counted = outputOfProgramInShell(programOfStores, { "references=narrow"_s }, statementsThatCount, { "--aotCountsPath=/dev/null"_s }, waysToCompilePrograms[0]);
-    checkPrintedLines(__FILE__, __LINE__, optionWordsOfReason(waysToCompilePrograms[0], { "references=narrow"_s }), counted, "replaced: by the stub\nreplaced in an instance: by the stub\nfirst: by the stub\ngrown: by the stub\ncomputed: the key: by the stub\ncomputed: the definition: by the stub\n"_s);
+    checkPrintedLines(__FILE__, __LINE__, optionWordsOfReason(waysToCompilePrograms[0], { "references=narrow"_s }), counted, "replaced: by the stub\nreplaced in an instance: by the stub\nread in an instance: by the stub\nfirst: by the stub\ngrown: by the stub\ncomputed: the key: by the stub\ncomputed: the definition: by the stub\n"_s);
 }
 static constexpr ASCIILiteral statementsThatAnswer = R"JS(
 globalThis.publish = (Counter, make, store, define, readRun) => {

@@ -269,6 +269,8 @@ public:
         // True if this binding has to be read with moduleRecord->getLiveExport(localName) instead of from the module environment.
         // `export * as ns` from a live record doesn't count: it resolves to the namespace object, which is an ordinary binding.
         bool isLiveExport(VM&) const;
+        // `export * as ns` from a compiled original, which has no module environment. It is read with moduleRecord->getModuleNamespace().
+        bool isNamespaceOfCompiledOriginal(VM&) const;
 #endif
 
         Type type;

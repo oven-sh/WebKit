@@ -1878,6 +1878,25 @@ void Modules::restoreOriginalForRequire(ModuleID module)
         tryRestoreCompiledOriginalUnderMock(module);
 }
 
+void Modules::noteOriginalsRequestedBySource(JSModuleRecord* importer)
+{
+    if (!m_table.anyModuleHasInstances())
+        return;
+    for (const auto& request : importer->requestedModules()) {
+        AbstractModuleRecord* requested = JSModuleLoader::getImportedModule(importer, request);
+        if (!requested || !requested->isCompiledOriginal())
+            continue;
+        if (std::optional<ModuleID> original = originalNamedBy(requested->moduleKey()))
+            noteCompiledOriginal(*original, OriginalRun::SecondInstance);
+    }
+}
+
+void noteOriginalsRequestedBySource(JSGlobalObject* realm, JSModuleRecord* importer)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->noteOriginalsRequestedBySource(importer);
+}
+
 void tryBindOriginal(JSGlobalObject* realm, JSModuleRecord* record)
 {
     if (Modules* modules = modulesOf(realm))

@@ -462,6 +462,11 @@ Reference buildWideProduct(Walker& walker, const BodyValue& sum)
         shiftOfHighHalf = WTF::fastLog2(scale);
         if (!multiplier || shiftOfHighHalf >= digitBits)
             return { };
+        const FactorInWideProduct& high = reader.factorAt(halves[1]);
+        Range told = walker.types().at(walker.typeOf(high.value)).integers.intersectWith(high.needed);
+        Range raised { told.minimum * (int64_t { 1 } << shiftOfHighHalf), told.maximum * (int64_t { 1 } << shiftOfHighHalf) };
+        if (told.isEmpty() || !raised.isSubsetOf(Range::int32()))
+            return { };
     }
 
     Origin origin = walker.originOf(sum);

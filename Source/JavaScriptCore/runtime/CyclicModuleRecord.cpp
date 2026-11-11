@@ -130,6 +130,8 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 #if ENABLE(AOT)
     // Compiled code has the environment of such a module. Only the requested names are checked here.
     const bool isCompiled = isCompiledOriginal();
+    if (jsModule && !isCompiled && vm.hasCompiledCode())
+        AOT::noteOriginalsRequestedBySource(globalObject, jsModule);
 #else
     constexpr bool isCompiled = false;
 #endif

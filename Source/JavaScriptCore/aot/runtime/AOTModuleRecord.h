@@ -217,6 +217,7 @@ private:
 };
 
 void tryBindOriginal(JSGlobalObject*, JSModuleRecord*);
+void noteOriginalsRequestedBySource(JSGlobalObject*, JSModuleRecord* importer);
 void linkOriginal(JSGlobalObject*, JSModuleRecord*);
 JSValue evaluateOriginal(JSGlobalObject*, JSModuleRecord*);
 void evaluateOriginalAsync(JSGlobalObject*, JSModuleRecord*);

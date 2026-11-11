@@ -10816,6 +10816,9 @@ bool isUsedForKey(Walker& walker, ValueID value, KeyHolders holders)
     LoopID loop = index.loopOf(index.blockOf(value));
     if (!loop || !index.holdsAnyOf(OpcodeSet { Opcode::ElemGet, Opcode::ElemSet }))
         return false;
+    static constexpr OpcodeSet usersOfKeys = opcodesThatStateTypes | OpcodeSet { Opcode::ElemGet, Opcode::ElemSet, Opcode::Add, Opcode::Sub };
+    if (std::optional<BodyUser> first = index.firstUser(value); !first || first->kind != BodyUseKind::Operand || !usersOfKeys.contains(index.opcodeOf(first->value)))
+        return false;
     auto holderIsList = [&](const BodyValue& access) {
         ValueID written = index.stripCasts(access.objectOperand());
         if (holders == KeyHolders::AnyValues || (written && !index.isParameter(written) && index.opcodeOf(written) == Opcode::ElemGet))

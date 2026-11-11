@@ -38,6 +38,11 @@ static bool isNumberRepresentation(Representation representation)
     }
 }
 
+static bool mayHoldBigInt(const Operation& operation)
+{
+    return operation.representation == Representation::JSValue || operation.representation == Representation::Cell;
+}
+
 bool BigIntValues::isArithmetic(const Operation& operation)
 {
     return arithmeticInFrame.contains(operation.opcode) && hasBigIntRepresentation(operation) && (operation.representation == Representation::JSValue || operation.representation == Representation::Cell);
@@ -173,13 +178,13 @@ void BigIntValues::findValuesForFrame()
         const Block& block = m_code.at(id);
         if (!block.isHandlerBlock() && !block.isEntry) {
             for (ValueID parameter : block.parameters()) {
-                if (isLikely(parameter))
+                if (isLikely(parameter) && mayHoldBigInt(m_code.at(parameter)))
                     isCandidate.quickSet(parameter.index());
             }
         }
         for (ValueID value : m_code.valuesOf(id)) {
             const Operation& operation = m_code.at(value);
-            if (!isLikely(value))
+            if (!isLikely(value) || !mayHoldBigInt(operation))
                 continue;
             if (isArithmetic(operation) && mayUseFrame(id)) {
                 isCandidate.quickSet(value.index());
@@ -214,7 +219,7 @@ void BigIntValues::findValuesForFrame()
         for (ValueID value : m_code.valuesOf(id)) {
             const Operation& operation = m_code.at(value);
             operation.forEachOperand([&](ValueID operand, uint32_t) {
-                if (!isCandidate.quickGet(operand.index()))
+                if (!isCandidate.quickGet(operand.index()) || (passesOperandOn.contains(operation.opcode) && !mayHoldBigInt(operation)))
                     return;
                 if (readsOperands(operation)) {
                     if (m_code.blockOf(operand) != id || operation.opcode == Opcode::Mul)

@@ -2593,6 +2593,11 @@ bool AbstractModuleRecord::Resolution::isLiveExport(VM& vm) const
     return type == Type::Resolved && moduleRecord->hasExportsSource() && localName != vm.propertyNames->starNamespacePrivateName;
 }
 
+bool AbstractModuleRecord::Resolution::isNamespaceOfCompiledOriginal(VM& vm) const
+{
+    return type == Type::Resolved && moduleRecord->isCompiledOriginal() && localName == vm.propertyNames->starNamespacePrivateName;
+}
+
 void AbstractModuleRecord::setHasLiveExports()
 {
     RELEASE_ASSERT(!m_prelinked);

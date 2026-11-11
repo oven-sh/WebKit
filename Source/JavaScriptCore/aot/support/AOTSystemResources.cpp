@@ -75,7 +75,7 @@ void* tryReserveAddresses(size_t bytes)
 void releaseAddresses(void* addresses, size_t bytes)
 {
 #if OS(WINDOWS)
-    OSAllocator::releaseDecommitted(addresses, bytes);
+    OSAllocator::releaseDecommitted(addresses, bytes, 0);
 #else
     munmap(addresses, bytes);
 #endif

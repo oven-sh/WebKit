@@ -20,6 +20,7 @@ class JSFunction;
 class JSValue;
 class ObjectPropertyCondition;
 class PropertyName;
+struct CallerFrameAndPC;
 
 namespace AOT {
 

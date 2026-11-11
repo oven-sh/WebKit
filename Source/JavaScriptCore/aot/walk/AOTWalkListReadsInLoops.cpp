@@ -3091,6 +3091,22 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
     }
     if (lists.isEmpty())
         return;
+    Vector<uint32_t, 2> changesOfLists;
+    changesOfLists.fill(0, lists.size());
+    for (BlockID member : index.membersOf(loop)) {
+        for (BodyValue operation : index.block(member).values()) {
+            ValueID changed;
+            if (operation.opcode() == Opcode::Call && operation.as<Opcode::Call>().thisValueOperand() && (operation.as<Opcode::Call>().calleeKey() == walker.program().keyOf(BuiltinNames::push) || operation.as<Opcode::Call>().calleeKey() == walker.program().keyOf(BuiltinNames::pop)))
+                changed = index.stripCasts(operation.as<Opcode::Call>().thisValueOperand());
+            else if (operation.opcode() == Opcode::ElemSet || (operation.opcode() == Opcode::PropSet && operation.key() == walker.program().keyOf(BuiltinNames::length)))
+                changed = index.stripCasts(operation.objectOperand());
+            Reference list = changed && changed.index() < firstValueOfLoop ? walker.referenceOf(changed) : Reference();
+            for (size_t place = 0; list && place < lists.size(); ++place) {
+                if (lists[place] == list && ++changesOfLists[place] == 2 && !listsFilledTwiceInATurn.contains(list))
+                    listsFilledTwiceInATurn.append(list);
+            }
+        }
+    }
     if (lengthJoinedOfTheRest > JSString::MaxLength || timesTextsAreJoined > JSString::MaxLength)
         hasExactTripCount = false;
 

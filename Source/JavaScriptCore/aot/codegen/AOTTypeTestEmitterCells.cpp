@@ -21,6 +21,7 @@
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include "AOTVector.h"
+#include "JSArrayBufferView.h"
 #include "JSTypeInfo.h"
 #include <utility>
 

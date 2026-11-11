@@ -1226,6 +1226,7 @@ public:
     void restoreCompiledOriginal(JSModuleRecord*);
     bool tryRestoreCompiledOriginalUnderMock(ModuleID);
     void tryBindOriginal(JSModuleRecord*);
+    void noteOriginalsRequestedBySource(JSModuleRecord* importer);
     void bindOriginal(JSModuleRecord*, ModuleID);
     void linkOriginal(JSModuleRecord*);
     AbstractModuleRecord* findRecordRequestedByOriginal(JSModuleRecord*, ModuleID target) const;

@@ -225,6 +225,9 @@ public:
     static constexpr ptrdiff_t offsetOfExtraPropertiesCellSize() { return OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.extraPropertiesCellSize); }
     static constexpr ptrdiff_t offsetOfNumberOfExtraKeys() { return OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.numberOfExtraKeys); }
     static constexpr ptrdiff_t offsetOfExtraPropertiesSlot() { return OBJECT_OFFSETOF(CompiledStructure, m_extraPropertiesSlot); }
+    static constexpr ptrdiff_t offsetOfLowBitsOfRareData() { return OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.lowBitsOfRareData); }
+    static constexpr ptrdiff_t offsetOfHighBitsOfRareData() { return OBJECT_OFFSETOF(CompiledStructure, m_highBitsOfRareData); }
+    static constexpr ptrdiff_t offsetOfHeldExtraPropertiesInRareData() { return OBJECT_OFFSETOF(RareData, heldExtraProperties); }
     static constexpr ptrdiff_t offsetOfExtensionSlot() { return OBJECT_OFFSETOF(CompiledStructure, m_extensionSlot); }
     static constexpr ptrdiff_t offsetOfEnvironmentShapePage() { return OBJECT_OFFSETOF(CompiledStructure, m_environmentShapePage); }
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(CompiledStructure, m_flags); }

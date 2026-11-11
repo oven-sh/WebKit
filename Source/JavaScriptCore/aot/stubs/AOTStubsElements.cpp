@@ -197,10 +197,7 @@ static void loadExtraPropertiesOfCompiledObject(StubAssembler& jit, const Elemen
 
     (noneWereMade ? *noneWereMade : hasNone).append(jit.branchTest32(CCallHelpers::Zero, Address(base, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
     loadStructure(jit, base, extraProperties);
-    jit.load32(Address(extraProperties, CompiledStructure::offsetOfExtraPropertiesSlot()), hiddenWordOffset);
-    hasNone.append(jit.branchTest32(CCallHelpers::Zero, hiddenWordOffset, TrustedImm32(SlotData::maxOffset)));
-    jit.and32(TrustedImm32(SlotData::maxOffset), hiddenWordOffset);
-    loadExtraProperties(jit, base, hiddenWordOffset, extraProperties, hasNone);
+    loadExtraPropertiesByStructure(jit, base, extraProperties, hiddenWordOffset, extraProperties, hasNone);
 }
 
 static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& isNeitherStringNorCompiledObject, JumpList& isInsideView)
@@ -962,10 +959,7 @@ void generateStoreElementOfCompiledObject(StubAssembler& jit)
 
     Jump hasNoExtraProperties = jit.branchTest32(CCallHelpers::Zero, orderWord, TrustedImm32(orderWordHasExtraProperties));
     loadStructure(jit, base, structure);
-    jit.load32(Address(structure, CompiledStructure::offsetOfExtraPropertiesSlot()), hiddenWordOffset);
-    slow.append(jit.branchTest32(CCallHelpers::Zero, hiddenWordOffset, TrustedImm32(SlotData::maxOffset)));
-    jit.and32(TrustedImm32(SlotData::maxOffset), hiddenWordOffset);
-    loadExtraProperties(jit, base, hiddenWordOffset, extraProperties, slow);
+    loadExtraPropertiesByStructure(jit, base, structure, hiddenWordOffset, extraProperties, slow);
     jit.load8(Address(extraProperties, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask | CopyOnWrite), shape);
     Jump isContiguous = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(ContiguousShape));

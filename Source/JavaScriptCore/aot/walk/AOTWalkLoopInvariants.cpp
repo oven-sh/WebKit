@@ -1383,8 +1383,10 @@ bool Walker::collectGuardExits(uint32_t loopIndex, PendingGuards& pending) const
         return { m_code.at(first).from, &end };
     };
     ValueID headerTest;
-    if (BodyTerminator end = m_frames[loop.frame].index->block(exited->inputHead).terminator(); isOwnVersion && exited->headAsksLesserBound && end.kind() == TerminatorKind::Branch) {
-        if (Reference test = referenceBoundIn(m_frames[loop.frame], end.as<TerminatorKind::Branch>().conditionOperand()); test && test.isValue())
+    if (isOwnVersion && exited->headAsksLesserBound) {
+        BodyTerminator end = m_frames[loop.frame].index->block(exited->inputHead).terminator();
+        Reference test = end.kind() == TerminatorKind::Branch ? referenceBoundIn(m_frames[loop.frame], end.as<TerminatorKind::Branch>().conditionOperand()) : Reference();
+        if (test && test.isValue())
             headerTest = test.id();
     }
     auto leavesAtHeaderTest = [&](BlockID block) {

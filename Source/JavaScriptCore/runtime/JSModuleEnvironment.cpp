@@ -33,6 +33,7 @@
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironmentInlines.h"
+#include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
 #include "SymbolTableInlines.h"
 
@@ -141,6 +142,15 @@ bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glo
                     value = resolution.moduleRecord->getLiveExport(globalObject, resolution.localName);
                 else
                     value = resolution.moduleRecord->getReexportedLiveExport(globalObject, resolution.localName);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            slot.setValue(thisObject, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly, value);
+            return true;
+        }
+        if (resolution.isNamespaceOfCompiledOriginal(vm)) [[unlikely]] {
+            JSValue value = jsUndefined();
+            if (slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::GetOwnProperty) {
+                value = resolution.moduleRecord->getModuleNamespace(globalObject);
                 RETURN_IF_EXCEPTION(scope, false);
             }
             slot.setValue(thisObject, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly, value);

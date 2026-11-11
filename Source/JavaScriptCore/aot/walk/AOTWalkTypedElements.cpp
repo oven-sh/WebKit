@@ -4300,6 +4300,11 @@ static bool buildPushAtLength(Walker& walker, const BodyValue& call, Reference l
     Reference pushed = walker.referenceOf(call.as<Opcode::Call>().argumentsOperands()[0]);
     if (!pushed || !walker.typeOf(pushed) || !walker.typeOf(list) || !findListTestedForStoresInFrontOfLoop(walker, list) || !callsArrayPush(walker, call, list))
         return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    for (LoopID loop = index.loopOf(index.blockOf(call.id())); loop; loop = index.loop(loop).parent) {
+        if (findKnown(walker, KnownNote::LengthEqualsInitialCounter, list, { }, index.loop(loop).head.index()))
+            return false;
+    }
     Draft read(Opcode::GetArrayLength, walker.originOf(call));
     walker.chooseConservativeFields(read);
     read.setArrayOperand(list);
