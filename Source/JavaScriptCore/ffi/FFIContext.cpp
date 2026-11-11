@@ -28,6 +28,7 @@
 
 #if ENABLE(FFI)
 
+#include "FFIConversions.h"
 #include "JSCJSValueInlines.h"
 #include "JSFFICallback.h"
 #include "SlotVisitorInlines.h"
@@ -39,6 +40,30 @@ namespace JSC { namespace FFI {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FFIContext);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ThreadsafeInvocation);
+
+void ThreadsafeInvocation::decodeCStrings(const Signature& signature)
+{
+    static_assert(Signature::maxArguments <= std::numeric_limits<decltype(m_stringSlots)>::digits);
+    auto types = signature.arguments();
+    for (unsigned i = 0; i < types.size(); ++i) {
+        if (types[i] != Type::CString || !m_slots[i])
+            continue;
+        String string = stringFromCString(reinterpret_cast<const char*>(static_cast<uintptr_t>(m_slots[i])));
+        if (string.isNull()) [[unlikely]]
+            string = emptyString();
+        m_slots[i] = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(string.releaseImpl().leakRef()));
+        m_stringSlots |= 1u << i;
+    }
+}
+
+ThreadsafeInvocation::~ThreadsafeInvocation()
+{
+    // One that did not run.
+    for (unsigned i = 0; m_stringSlots; ++i) {
+        if (hasString(i))
+            takeString(i);
+    }
+}
 
 FFIContext::ThreadsafeDispatchFunction FFIContext::s_threadsafeDispatch { nullptr };
 

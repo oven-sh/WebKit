@@ -425,6 +425,8 @@ JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatchThreadsafe, EncodedJSValue, (JSFFICa
     RELEASE_ASSERT(dispatch);
     if (callback->tryBeginThreadsafeInvocation()) [[likely]] {
         auto invocation = FFI::ThreadsafeInvocation::create(callback, callback->embedderContext(), std::span<const uint64_t>(slots, argumentCount));
+        if (callback->hasCStringArguments())
+            invocation->decodeCStrings(signature);
         dispatch(invocation.get());
     }
     slots[argumentCount] = 0;
@@ -543,6 +545,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(ffiCallbackEnter, void, (uint32_t entryInBlock
 
 namespace FFI {
 
+static NEVER_INLINE JSValue jsStringFromSlot(VM& vm, ThreadsafeInvocation& invocation, unsigned argumentIndex)
+{
+    return jsString(vm, invocation.takeString(argumentIndex));
+}
+
 void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
 {
     JSFFICallback* callback = invocation.callback();
@@ -572,7 +579,7 @@ void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
     ASSERT(slots.size() == signature.argumentCount());
     MarkedArgumentBuffer arguments;
     for (unsigned i = 0; i < signature.argumentCount(); ++i) {
-        arguments.append(jsValueFromSlot(globalObject, context, signature.argumentType(i), slots[i]));
+        arguments.append(invocation.hasString(i) ? jsStringFromSlot(vm, invocation, i) : jsValueFromSlot(globalObject, context, signature.argumentType(i), slots[i]));
         RETURN_IF_EXCEPTION(scope, void());
     }
     if (arguments.hasOverflowed()) [[unlikely]] {

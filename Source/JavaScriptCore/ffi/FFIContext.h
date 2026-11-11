@@ -42,6 +42,7 @@
 #include <wtf/Vector.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringImpl.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC {
 class AbstractSlotVisitor;
@@ -51,12 +52,27 @@ class VM;
 
 namespace JSC { namespace FFI {
 
+class Signature;
+
 class ThreadsafeInvocation final : public ThreadSafeRefCounted<ThreadsafeInvocation> {
     WTF_MAKE_TZONE_ALLOCATED(ThreadsafeInvocation);
 public:
     static Ref<ThreadsafeInvocation> create(JSFFICallback* callback, void* embedderContext, std::span<const uint64_t> slots)
     {
         return adoptRef(*new ThreadsafeInvocation(callback, embedderContext, slots));
+    }
+
+    JS_EXPORT_PRIVATE ~ThreadsafeInvocation();
+
+    // In the C caller's call, which is as long as a `cstring` argument is valid. The slot of one that is not null becomes
+    // a reference to a StringImpl.
+    void decodeCStrings(const Signature&);
+    bool hasString(unsigned argumentIndex) const { return m_stringSlots & (1u << argumentIndex); }
+    String takeString(unsigned argumentIndex)
+    {
+        ASSERT(hasString(argumentIndex));
+        m_stringSlots &= ~(1u << argumentIndex);
+        return String { adoptRef(*reinterpret_cast<StringImpl*>(static_cast<uintptr_t>(m_slots[argumentIndex]))) };
     }
 
     JSFFICallback* callback() const { return m_callback; }
@@ -72,6 +88,7 @@ private:
     {
     }
 
+    uint32_t m_stringSlots { 0 };
     JSFFICallback* m_callback;
     void* m_embedderContext;
     Vector<uint64_t, 8> m_slots;

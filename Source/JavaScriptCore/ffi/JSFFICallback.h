@@ -73,6 +73,7 @@ public:
     const char* setReturnCString(const UTF8CString&);
     FFI::Signature& signature() const { return m_signature.get(); }
     bool isThreadsafe() const { return m_threadsafe; }
+    bool hasCStringArguments() const { return m_hasCStringArguments; }
     void* embedderContext() const { return m_embedderContext; }
     static constexpr unsigned closedBit = 0x80000000u;
     static constexpr unsigned countMask = 0x7fffffffu;
@@ -109,6 +110,7 @@ private:
     void* m_embedderContext { nullptr }; // opaque, embedder-owned; passed to threadsafe dispatch
     std::atomic<unsigned> m_threadsafeState { 0 }; // closedBit | pending-invocation count (see above)
     bool m_threadsafe { false };
+    bool m_hasCStringArguments { false };
     bool m_closed { false };
 };
 
